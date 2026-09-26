@@ -22,10 +22,11 @@ import io
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from bettermemory.events import Recorder, iter_events
+from bettermemory.events import Recorder
 from bettermemory.hook import (
     _disabled_scopes_from_events,
     _extract_last_exchange,
@@ -39,7 +40,8 @@ from bettermemory.hook import (
     run_audit,
     run_prompt_recall,
 )
-from bettermemory.store import Store
+from bettermemory.models import Memory
+from bettermemory.store import STORE_FILENAME, Store
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +81,20 @@ def test_read_payload_returns_empty_on_non_dict_root() -> None:
 
 def _write_transcript(path: Path, *rows: dict[str, object]) -> None:
     path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+
+
+def _events(mem_dir: Path) -> list[dict[str, Any]]:
+    """Every telemetry event the store under `mem_dir` holds, oldest first."""
+    with Store.open(mem_dir) as store:
+        return list(store.iter_events())
+
+
+def _backdate(store: Store, memory: Memory, age: timedelta) -> None:
+    """Re-put `memory` with `created` and `updated` moved `age` into the
+    past. The put is logged like any write, so the row keeps a verified
+    pointer into the log and still reads as local."""
+    stamp = datetime.now(timezone.utc) - age
+    store.put_memory(memory.model_copy(update={"created": stamp, "updated": stamp}))
 
 
 def test_extract_last_exchange_finds_last_pair(tmp_path: Path) -> None:
@@ -361,7 +377,7 @@ def test_main_no_op_when_payload_empty(
     monkeypatch.setattr("sys.stdin", _StdinMock(b""))
     code = hook_main(["--quiet"])
     assert code == 0
-    assert not (tmp_path / ".events.jsonl").exists()
+    assert not (tmp_path / STORE_FILENAME).exists()
 
 
 def test_main_no_op_when_stdin_oversized(
@@ -383,9 +399,9 @@ def test_main_no_op_when_stdin_oversized(
     code = hook_main(["--quiet"])
     # Must NOT raise; must exit 0 quietly.
     assert code == 0
-    # Oversized payload is treated as "nothing to audit" — no events
-    # land in the log because we didn't reach the audit branch.
-    assert not (tmp_path / ".events.jsonl").exists()
+    # Oversized payload is treated as "nothing to audit": the audit
+    # branch is never reached, so no store is opened and no event lands.
+    assert not (tmp_path / STORE_FILENAME).exists()
 
 
 def test_main_no_op_when_user_message_missing(
@@ -415,7 +431,7 @@ def test_main_no_op_when_user_message_missing(
         ]
     )
     assert code == 0
-    assert not (tmp_path / "mem" / ".events.jsonl").exists()
+    assert not (tmp_path / "mem" / STORE_FILENAME).exists()
 
 
 def test_main_runs_audit_and_logs_turn_audited(
@@ -467,7 +483,7 @@ def test_main_runs_audit_and_logs_turn_audited(
         ]
     )
     assert code == 0
-    events = list(iter_events(mem_dir))
+    events = _events(mem_dir)
     kinds = [e["kind"] for e in events]
     assert "turn_audited" in kinds, f"no turn_audited event in {kinds}"
     audited = next(e for e in events if e["kind"] == "turn_audited")
@@ -548,7 +564,7 @@ def test_main_records_assistant_present_false_when_no_response(
         ["--transcript-path", str(transcript), "--session-id", "sess-q", "--quiet"]
     )
     assert code == 0
-    events = list(iter_events(mem_dir))
+    events = _events(mem_dir)
     audited = next(e for e in events if e["kind"] == "turn_audited")
     assert audited["assistant_present"] is False
 
@@ -602,7 +618,7 @@ def test_main_respects_telemetry_disabled(
 
     Fixture writes a config.toml with `[telemetry] enabled = false`
     and points BETTERMEMORY_CONFIG_PATH at it; the hook should run
-    cleanly but produce no .events.jsonl."""
+    cleanly but record no event."""
     mem_dir = tmp_path / "mem"
     mem_dir.mkdir()
     monkeypatch.setenv("BETTERMEMORY_DIR", str(mem_dir))
@@ -644,9 +660,8 @@ def test_main_respects_telemetry_disabled(
         session_id="sess",
         config=cfg,
     )
-    assert not (mem_dir / ".events.jsonl").exists(), (
-        "telemetry-disabled config must suppress the Stop-hook "
-        "event log; got an events.jsonl anyway"
+    assert _events(mem_dir) == [], (
+        "telemetry-disabled config must suppress the Stop-hook events; got some anyway"
     )
 
 
@@ -674,9 +689,6 @@ def test_dry_run_reports_without_writing_any_event(
     Negative control: neuter the `if dry_run:` telemetry override in
     `run_audit` and the second half fails.
     """
-    from bettermemory.events import iter_events
-    from bettermemory.hook import main as hook_main
-    from bettermemory.store import Store
 
     def _fixture(dirname: str) -> Path:
         mem_dir = tmp_path / dirname
@@ -703,7 +715,7 @@ def test_dry_run_reports_without_writing_any_event(
     wet = _fixture("wet")
     monkeypatch.setenv("BETTERMEMORY_DIR", str(wet))
     assert hook_main(["--transcript-path", str(transcript), "--session-id", "s1"]) == 0
-    wet_events = list(iter_events(wet))
+    wet_events = _events(wet)
     assert wet_events, (
         "baseline run wrote nothing — fixture no longer exercises the path"
     )
@@ -715,10 +727,9 @@ def test_dry_run_reports_without_writing_any_event(
         ["--transcript-path", str(transcript), "--session-id", "s1", "--dry-run"]
     )
     assert code == 0
-    assert list(iter_events(dry)) == [], (
+    assert _events(dry) == [], (
         "--dry-run wrote events; inspection must not mutate the store"
     )
-    assert not (dry / ".events.jsonl").exists()
 
 
 def test_main_rejects_non_file_transcript_path(
@@ -749,7 +760,7 @@ def test_main_rejects_non_file_transcript_path(
         ]
     )
     assert code == 0
-    assert not (mem_dir / ".events.jsonl").exists()
+    assert not (mem_dir / STORE_FILENAME).exists()
 
     # Point at a missing path.
     code = hook_main(
@@ -762,7 +773,7 @@ def test_main_rejects_non_file_transcript_path(
         ]
     )
     assert code == 0
-    assert not (mem_dir / ".events.jsonl").exists()
+    assert not (mem_dir / STORE_FILENAME).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -776,9 +787,7 @@ def _seed_search_event(mem_dir: Path, *, session_id: str, returned: list[str]) -
     memory_ids as recently retrieved in this session. Avoids spinning
     up the MCP server just to populate the precondition for an
     attribution test."""
-    from bettermemory.events import Recorder
-
-    Recorder(root=mem_dir, session_id=session_id).record(
+    Recorder(store=Store(mem_dir), session_id=session_id).record(
         "search",
         query="seed",
         scopes_filter=None,
@@ -800,9 +809,7 @@ def _seed_list_event(mem_dir: Path, *, session_id: str, returned: list[str]) -> 
     so the hook treats the listed memory_ids as retrieved this turn. The
     handler records the listed ids under the same `returned` field name a
     `search` uses, so attribution can read one shape across both kinds."""
-    from bettermemory.events import Recorder
-
-    Recorder(root=mem_dir, session_id=session_id).record(
+    Recorder(store=Store(mem_dir), session_id=session_id).record(
         "list",
         returned=returned,
         scope=None,
@@ -979,7 +986,7 @@ def test_hook_attributes_use_when_listed_body_appears_in_reply(
     )
     assert code == 0
 
-    events = list(iter_events(mem_dir))
+    events = _events(mem_dir)
     use_events = [e for e in events if e["kind"] == "use"]
     assert len(use_events) == 1, (
         f"expected one hook attribution from a list-retrieval; got: {use_events}. "
@@ -1042,7 +1049,7 @@ def test_hook_attributes_use_when_body_appears_in_reply(
     )
     assert code == 0
 
-    events = list(iter_events(mem_dir))
+    events = _events(mem_dir)
     use_events = [e for e in events if e["kind"] == "use"]
     assert len(use_events) == 1, f"expected one use event; got: {use_events}"
     ev = use_events[0]
@@ -1131,7 +1138,7 @@ def test_hook_attributes_across_session_id_spaces(
     )
     assert code == 0
 
-    events = list(iter_events(mem_dir))
+    events = _events(mem_dir)
     use_events = [e for e in events if e["kind"] == "use"]
     assert len(use_events) == 1, (
         f"expected one cross-id-space hook attribution; got: {use_events}. "
@@ -1169,9 +1176,7 @@ def test_hook_skips_attribution_when_already_used(
     _seed_search_event(mem_dir, session_id="sess-dup", returned=[written.id])
 
     # Pre-record a model-explicit use for the same memory.
-    from bettermemory.events import Recorder
-
-    Recorder(root=mem_dir, session_id="sess-dup").record(
+    Recorder(store=Store(mem_dir), session_id="sess-dup").record(
         "use",
         ids=[written.id],
         outcome="applied",
@@ -1205,7 +1210,7 @@ def test_hook_skips_attribution_when_already_used(
     )
     assert code == 0
 
-    events = list(iter_events(mem_dir))
+    events = _events(mem_dir)
     use_events = [e for e in events if e["kind"] == "use"]
     # Only the pre-seeded model use stays — no hook duplicate.
     assert len(use_events) == 1
@@ -1250,7 +1255,7 @@ def test_hook_emits_auto_fallback_when_reply_doesnt_quote(
     )
     assert code == 0
 
-    events = list(iter_events(mem_dir))
+    events = _events(mem_dir)
     use_events = [e for e in events if e["kind"] == "use"]
     assert len(use_events) == 1
     auto_event = use_events[0]
@@ -1259,329 +1264,6 @@ def test_hook_emits_auto_fallback_when_reply_doesnt_quote(
     assert auto_event["auto"] is True
     assert auto_event["attribution"] == "auto"
     assert auto_event["triggered_from"] == "stop_hook"
-
-
-# ---------------------------------------------------------------------------
-# Opt-in self-improving loop — auto-consolidate fired from the Stop hook
-# ---------------------------------------------------------------------------
-
-
-def test_run_audit_auto_consolidates_when_opted_in(tmp_path: Path) -> None:
-    """With [consolidate] auto_apply on (and telemetry on), run_audit fires
-    the structurally-safe consolidation subset at turn end and records a
-    reviewable auto_consolidate event."""
-    from bettermemory.config import Config, ConsolidateConfig, StorageConfig
-    from bettermemory.hook import run_audit
-
-    mem_dir = tmp_path / "mem"
-    store = Store(mem_dir)
-    store.write(content="alpha beta gamma delta epsilon zeta", scopes=["tools"])
-    store.write(content="alpha beta gamma delta epsilon zeta", scopes=["tools"])
-
-    cfg = Config(
-        storage=StorageConfig(directory=str(mem_dir)),
-        consolidate=ConsolidateConfig(auto_apply=True),
-    )
-    run_audit(
-        user_message="hello",
-        assistant_response="hi",
-        session_id="sess-auto",
-        config=cfg,
-    )
-    auto_events = [e for e in iter_events(mem_dir) if e["kind"] == "auto_consolidate"]
-    assert len(auto_events) == 1
-    assert auto_events[0]["status"] == "ran"
-    assert len(store.load_all()) == 1  # duplicate consolidated away
-
-
-def test_run_audit_no_consolidate_when_disabled(tmp_path: Path) -> None:
-    """Default config (auto_apply off) never auto-mutates the store."""
-    from bettermemory.config import Config, StorageConfig
-    from bettermemory.hook import run_audit
-
-    mem_dir = tmp_path / "mem"
-    store = Store(mem_dir)
-    store.write(content="alpha beta gamma delta", scopes=["tools"])
-    store.write(content="alpha beta gamma delta", scopes=["tools"])
-
-    cfg = Config(storage=StorageConfig(directory=str(mem_dir)))
-    run_audit(
-        user_message="hello",
-        assistant_response="hi",
-        session_id="sess-noop",
-        config=cfg,
-    )
-    assert [e for e in iter_events(mem_dir) if e["kind"] == "auto_consolidate"] == []
-    assert len(store.load_all()) == 2  # untouched
-
-
-def test_run_audit_no_consolidate_when_telemetry_off(tmp_path: Path) -> None:
-    """Auto-consolidate refuses to run without the event log — its debounce
-    clock AND audit trail — even when auto_apply is on."""
-    from bettermemory.config import (
-        Config,
-        ConsolidateConfig,
-        StorageConfig,
-        TelemetryConfig,
-    )
-    from bettermemory.hook import run_audit
-
-    mem_dir = tmp_path / "mem"
-    store = Store(mem_dir)
-    store.write(content="alpha beta gamma delta", scopes=["tools"])
-    store.write(content="alpha beta gamma delta", scopes=["tools"])
-
-    cfg = Config(
-        storage=StorageConfig(directory=str(mem_dir)),
-        consolidate=ConsolidateConfig(auto_apply=True),
-        telemetry=TelemetryConfig(enabled=False),
-    )
-    run_audit(
-        user_message="hello",
-        assistant_response="hi",
-        session_id="sess-telemoff",
-        config=cfg,
-    )
-    assert len(store.load_all()) == 2  # not mutated
-    assert not (mem_dir / ".events.jsonl").exists()  # telemetry off → no log
-
-
-def test_run_audit_size_guard_sees_the_store_not_the_probe_pool(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The hook→`run_auto_consolidate` wiring: the bounded-store guard
-    must measure the STORE, never the audit probe's candidate pool.
-
-    `run_auto_consolidate`'s `memories` argument feeds `active =
-    memories if memories is not None else store.load_all()`, and the
-    Bounded safety contract skips the unattended O(N²) dedup when
-    `len(active) > max_memories`. Once the probe started ranking
-    production's pool instead of a full `load_all()`, the only list this
-    hook holds is a `_PREFILTER_CAP`-capped, query-biased slice — so
-    forwarding it would cap the measured size at 50 and run the pass on
-    exactly the oversized stores the guard defers. Shipped defaults make
-    that collision exact: `_INDEX_THRESHOLD_DEFAULT` and
-    `auto_apply_max_memories` are both 500.
-
-    Engage the prefilter for real and assert the guard still fires with
-    the TRUE active count. The two duplicate bodies are the teeth: with
-    the guard defeated, the dedup pass tombstones one and the store
-    shrinks."""
-    from bettermemory import index
-    from bettermemory.config import (
-        Config,
-        ConsolidateConfig,
-        StorageConfig,
-        TelemetryConfig,
-    )
-    from bettermemory.consolidate import AUTO_CONSOLIDATE_EVENT
-
-    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
-    mem_dir = tmp_path / "mem"
-    store = Store(mem_dir)
-    for i in range(58):
-        store.write(
-            content=f"alpha beta gamma delta epsilon zeta filler-{i}",
-            scopes=["tools"],
-        )
-    for _ in range(2):
-        store.write(
-            content="alpha beta gamma delta epsilon zeta duplicate marker",
-            scopes=["tools"],
-        )
-    total = len(store.load_all())
-    assert total == 60
-    index.rebuild(mem_dir, store.iter_active())
-
-    pool_sizes: list[int] = []
-    import bettermemory.handlers.search as search_mod
-
-    real_pool = search_mod.resolve_search_pool
-
-    def pool_spy(*args: object, **kwargs: object) -> object:
-        pool = real_pool(*args, **kwargs)  # type: ignore[arg-type]
-        pool_sizes.append(len(pool.memories))
-        return pool
-
-    monkeypatch.setattr(search_mod, "resolve_search_pool", pool_spy)
-
-    cfg = Config(
-        storage=StorageConfig(directory=str(mem_dir)),
-        telemetry=TelemetryConfig(enabled=True),
-        # Between the prefilter cap (50) and the store (60): a pool-sized
-        # count passes the guard, a store-sized count trips it.
-        consolidate=ConsolidateConfig(auto_apply=True, auto_apply_max_memories=55),
-    )
-    run_audit(
-        user_message="alpha beta",
-        assistant_response="hi",
-        session_id="sess-guard",
-        config=cfg,
-    )
-
-    assert pool_sizes and pool_sizes[0] <= 50 < total, (
-        "sanity: the FTS prefilter must actually have capped the probe's "
-        "pool, or this test is not exercising the divergence"
-    )
-    auto_events = [
-        e for e in iter_events(mem_dir) if e["kind"] == AUTO_CONSOLIDATE_EVENT
-    ]
-    assert len(auto_events) == 1
-    assert auto_events[0]["status"] == "skipped_store_too_large"
-    assert auto_events[0]["active_count"] == total, (
-        "the guard measured the probe's capped pool instead of the store"
-    )
-    assert len(store.load_all()) == total  # nothing tombstoned
-
-
-# ---------------------------------------------------------------------------
-# Write-reflex closure — proposal capture fired from the Stop hook
-# ---------------------------------------------------------------------------
-
-
-def test_run_audit_proposes_writes_when_opted_in(tmp_path: Path) -> None:
-    """With [proposals] auto_propose on, run_audit captures a durable
-    statement from the user message into the (inert) proposal queue."""
-    from bettermemory.config import Config, ProposalsConfig, StorageConfig
-    from bettermemory.hook import run_audit
-    from bettermemory.proposals import ProposalQueue
-
-    mem_dir = tmp_path / "mem"
-    cfg = Config(
-        storage=StorageConfig(directory=str(mem_dir)),
-        proposals=ProposalsConfig(auto_propose=True),
-    )
-    run_audit(
-        user_message="I prefer hands-on tutorials with runnable code, not screenshots.",
-        assistant_response="sure",
-        session_id="sess-prop",
-        config=cfg,
-    )
-    pending = ProposalQueue(mem_dir).load()
-    assert len(pending) == 1
-    assert "runnable code" in pending[0].body
-
-
-def test_run_audit_proposes_nothing_while_capture_is_on(tmp_path: Path) -> None:
-    """Session capture reads the same user messages and writes what it
-    keeps through the gates, so the write-reflex queue stands down while
-    `[capture] enabled` is on rather than proposing the same statements
-    a second time."""
-    from bettermemory.config import (
-        CaptureConfig,
-        Config,
-        ProposalsConfig,
-        StorageConfig,
-    )
-    from bettermemory.hook import run_audit
-    from bettermemory.proposals import ProposalQueue
-
-    mem_dir = tmp_path / "mem"
-    cfg = Config(
-        storage=StorageConfig(directory=str(mem_dir)),
-        proposals=ProposalsConfig(auto_propose=True),
-        capture=CaptureConfig(enabled=True),
-    )
-    run_audit(
-        user_message="I prefer hands-on tutorials with runnable code, not screenshots.",
-        assistant_response="sure",
-        session_id="sess-capture",
-        config=cfg,
-    )
-    assert ProposalQueue(mem_dir).load() == []
-
-
-def test_run_audit_no_proposals_when_disabled(tmp_path: Path) -> None:
-    """Default config (auto_propose off) captures nothing."""
-    from bettermemory.config import Config, StorageConfig
-    from bettermemory.hook import run_audit
-    from bettermemory.proposals import ProposalQueue
-
-    mem_dir = tmp_path / "mem"
-    cfg = Config(storage=StorageConfig(directory=str(mem_dir)))
-    run_audit(
-        user_message="I prefer hands-on tutorials with runnable code, not screenshots.",
-        assistant_response="sure",
-        session_id="sess-noprop",
-        config=cfg,
-    )
-    assert ProposalQueue(mem_dir).load() == []
-
-
-# ---------------------------------------------------------------------------
-# Failure isolation — a consolidate / proposals hiccup must neither block the
-# turn end nor drop the audit result. run_audit's comments assert this; these
-# pin it so a regression that lets the exception escape would fail CI.
-# ---------------------------------------------------------------------------
-
-
-def test_run_audit_isolates_consolidate_failure(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """A raising auto-consolidate is swallowed: run_audit still returns the
-    report and the already-recorded turn_audited event survives."""
-    from bettermemory.config import (
-        Config,
-        ConsolidateConfig,
-        StorageConfig,
-        TelemetryConfig,
-    )
-    from bettermemory.hook import run_audit
-
-    def boom(*_a: object, **_k: object) -> None:
-        raise RuntimeError("consolidate exploded")
-
-    monkeypatch.setattr("bettermemory.consolidate.run_auto_consolidate", boom)
-    mem_dir = tmp_path / "mem"
-    cfg = Config(
-        storage=StorageConfig(directory=str(mem_dir)),
-        consolidate=ConsolidateConfig(auto_apply=True),
-        telemetry=TelemetryConfig(enabled=True),
-    )
-    result = run_audit(
-        user_message="some durable turn content here",
-        assistant_response=None,
-        session_id="sess-iso-c",
-        config=cfg,
-    )
-    assert isinstance(result, dict)  # returned, did not propagate
-    assert "consolidate exploded" in capsys.readouterr().err  # caught + logged
-    kinds = [e.get("kind") for e in iter_events(mem_dir)]
-    assert "turn_audited" in kinds  # audit result was NOT dropped
-
-
-def test_run_audit_isolates_proposals_failure(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Same isolation guarantee for the write-reflex capture half."""
-    from bettermemory.config import (
-        Config,
-        ProposalsConfig,
-        StorageConfig,
-        TelemetryConfig,
-    )
-    from bettermemory.hook import run_audit
-
-    def boom(*_a: object, **_k: object) -> None:
-        raise RuntimeError("proposals exploded")
-
-    monkeypatch.setattr("bettermemory.proposals.propose_from_exchange", boom)
-    mem_dir = tmp_path / "mem"
-    cfg = Config(
-        storage=StorageConfig(directory=str(mem_dir)),
-        proposals=ProposalsConfig(auto_propose=True),
-        telemetry=TelemetryConfig(enabled=True),
-    )
-    result = run_audit(
-        user_message="I prefer hands-on tutorials with runnable code.",
-        assistant_response=None,
-        session_id="sess-iso-p",
-        config=cfg,
-    )
-    assert isinstance(result, dict)
-    assert "proposals exploded" in capsys.readouterr().err
-    kinds = [e.get("kind") for e in iter_events(mem_dir)]
-    assert "turn_audited" in kinds
 
 
 # ---------------------------------------------------------------------------
@@ -1633,7 +1315,7 @@ def test_latest_in_process_session_prefers_matching_worktree_stamp() -> None:
         # Second window's server starting up — wrote last, different worktree.
         {
             "session": "sess_B",
-            "kind": "scope_overview",
+            "kind": "write",
             "worktree_root": "/wt/other",
         },
     ]
@@ -1716,15 +1398,8 @@ def _write_miss_memory(mem_dir: Path) -> str:
     lookback (600s). Returns the memory id."""
     store = Store(mem_dir)
     written = store.write(content=_MISS_BODY, scopes=["infrastructure"])
-    backdated = datetime.now(timezone.utc) - timedelta(hours=1)
-    for path, mem in store.iter_active():
-        if mem.id == written.id:
-            store._write_path(
-                path,
-                mem.model_copy(update={"created": backdated, "updated": backdated}),
-            )
-            return written.id
-    raise AssertionError(f"memory {written.id!r} not found in store")
+    _backdate(store, written, timedelta(hours=1))
+    return written.id
 
 
 def test_run_audit_baseline_flags_miss(tmp_path: Path) -> None:
@@ -1762,7 +1437,7 @@ def test_run_audit_recent_retrieval_under_server_session_suppresses_miss(
 
     # The server emits a retrieval event under its own session id, exactly
     # as memory_search does. The hook reads it back cross-process.
-    Recorder(root=mem_dir, session_id="sess_server").record("search")
+    Recorder(store=Store(mem_dir), session_id="sess_server").record("search")
 
     result = run_audit(
         user_message=_MISS_QUERY,
@@ -1797,10 +1472,12 @@ def test_run_audit_foreign_worktree_event_does_not_unshield(
     )
 
     # This window's server searched (stamped with this worktree)…
-    Recorder(root=mem_dir, session_id="sess_A", worktree_root=wt_this).record("search")
+    Recorder(store=Store(mem_dir), session_id="sess_A", worktree_root=wt_this).record(
+        "search"
+    )
     # …then the other window's server wrote the LATEST event.
-    Recorder(root=mem_dir, session_id="sess_B", worktree_root=wt_other).record(
-        "scope_overview"
+    Recorder(store=Store(mem_dir), session_id="sess_B", worktree_root=wt_other).record(
+        "write"
     )
 
     result = run_audit(
@@ -1837,13 +1514,15 @@ def test_run_audit_foreign_worktree_search_does_not_shield(
         lambda *a, **k: Origin(worktree_root=wt_this),
     )
 
-    # This window's server is alive (session-start overview) but never
+    # This window's server is alive (a non-retrieval write) but never
     # searched this turn…
-    Recorder(root=mem_dir, session_id="sess_A", worktree_root=wt_this).record(
-        "scope_overview"
+    Recorder(store=Store(mem_dir), session_id="sess_A", worktree_root=wt_this).record(
+        "write"
     )
     # …while the other window's server searched for its own topic.
-    Recorder(root=mem_dir, session_id="sess_B", worktree_root=wt_other).record("search")
+    Recorder(store=Store(mem_dir), session_id="sess_B", worktree_root=wt_other).record(
+        "search"
+    )
 
     result = run_audit(
         user_message=_MISS_QUERY,
@@ -1886,11 +1565,15 @@ def test_run_audit_same_worktree_concurrent_session_retrieval_shields(
     )
 
     # This worktree's first server session searched within the window…
-    Recorder(root=mem_dir, session_id="sess_A", worktree_root=wt_this).record("search")
+    Recorder(store=Store(mem_dir), session_id="sess_A", worktree_root=wt_this).record(
+        "search"
+    )
     # …then a second SAME-worktree session wrote the latest in-process
     # event (a non-retrieval `write`, so only the orphaned search can
     # feed the shield), flipping the anchor to sess_B.
-    Recorder(root=mem_dir, session_id="sess_B", worktree_root=wt_this).record("write")
+    Recorder(store=Store(mem_dir), session_id="sess_B", worktree_root=wt_this).record(
+        "write"
+    )
 
     result = run_audit(
         user_message=_MISS_QUERY,
@@ -1921,14 +1604,7 @@ def test_run_audit_flags_miss_on_memory_minutes_old(tmp_path: Path) -> None:
     # Backdate to 300s — outside the 60s creation shield, INSIDE the
     # hook's 600s attribution lookback. (`_write_miss_memory`'s 1h
     # backdate clears both windows, so it cannot discriminate.)
-    backdated = datetime.now(timezone.utc) - timedelta(seconds=300)
-    for path, mem in store.iter_active():
-        if mem.id == written.id:
-            store._write_path(
-                path,
-                mem.model_copy(update={"created": backdated, "updated": backdated}),
-            )
-            break
+    _backdate(store, written, timedelta(seconds=300))
 
     result = run_audit(
         user_message=_MISS_QUERY,
@@ -1953,7 +1629,7 @@ def test_run_audit_disabled_scope_suppresses_stop_hook_miss(tmp_path: Path) -> N
 
     # Seed the in-process server's disable event onto disk, exactly as
     # memory_scope_disable would. The hook reads it back cross-process.
-    Recorder(root=mem_dir, session_id="sess_server").record(
+    Recorder(store=Store(mem_dir), session_id="sess_server").record(
         "scope_disable", scope="infrastructure"
     )
 
@@ -1977,7 +1653,7 @@ def test_run_audit_reenabled_scope_reflags_miss(tmp_path: Path) -> None:
     mem_dir.mkdir()
     _write_miss_memory(mem_dir)
 
-    rec = Recorder(root=mem_dir, session_id="sess_server")
+    rec = Recorder(store=Store(mem_dir), session_id="sess_server")
     rec.record("scope_disable", scope="infrastructure")
     rec.record("scope_enable", scope="infrastructure")
 
@@ -2006,10 +1682,10 @@ def test_run_audit_disable_resets_after_server_restart(tmp_path: Path) -> None:
     # would (correctly) trip the retrieval shield and mask the reset behind
     # an unrelated mechanism — the shield itself is covered by
     # test_run_audit_recent_retrieval_under_server_session_suppresses_miss.
-    Recorder(root=mem_dir, session_id="sess_old").record(
+    Recorder(store=Store(mem_dir), session_id="sess_old").record(
         "scope_disable", scope="infrastructure"
     )
-    Recorder(root=mem_dir, session_id="sess_new").record("write")
+    Recorder(store=Store(mem_dir), session_id="sess_new").record("write")
 
     result = run_audit(
         user_message=_MISS_QUERY,
@@ -2037,7 +1713,7 @@ def test_run_audit_stale_disable_shields_during_restart_gap(tmp_path: Path) -> N
     # Prior server disabled the scope, then restarted. The new server has
     # not yet written ANY in-process event, so the latest non-stop-hook
     # event is still sess_old's disable.
-    Recorder(root=mem_dir, session_id="sess_old").record(
+    Recorder(store=Store(mem_dir), session_id="sess_old").record(
         "scope_disable", scope="infrastructure"
     )
 
@@ -2065,16 +1741,13 @@ def test_run_audit_shields_search_older_than_sixty_seconds(tmp_path: Path) -> No
     mem_dir.mkdir()
     _write_miss_memory(mem_dir)
 
-    # Backdate the server's search event 120s — the recorder always
-    # stamps "now", so write the line directly in the recorder's shape.
+    # Backdate the server's search event 120s. The recorder always
+    # stamps "now", so append the row directly in the recorder's shape
+    # with the older `ts`, signed into the chain like any other row.
     ts = (utcnow() - timedelta(seconds=120)).isoformat().replace("+00:00", "Z")
-    (mem_dir / ".events.jsonl").write_text(
-        json.dumps(
-            {"ts": ts, "session": "sess_server", "kind": "search", "returned": []}
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    store = Store(mem_dir)
+    with store._transaction() as tx:
+        store._append(tx, "search", {"returned": []}, session="sess_server", ts=ts)
 
     result = run_audit(
         user_message=_MISS_QUERY,
@@ -2086,136 +1759,6 @@ def test_run_audit_shields_search_older_than_sixty_seconds(tmp_path: Path) -> No
         "a server search 120s old must shield a tool-heavy turn; 'miss' "
         "means the probe lookback regressed below the attribution window"
     )
-
-
-def test_run_audit_shield_survives_event_log_rotation(tmp_path: Path) -> None:
-    """End-to-end pin for the rotation false-miss: rotation archives the
-    ENTIRE active log when it crosses max_bytes, at a moment independent
-    of turn boundaries. Pre-fix the hook read the active log only, so a
-    turn straddling a rotation lost its own `search` event and re-fired
-    as a miss. Force a rotation AFTER the server's search; the
-    window-aware read must still see it and return "ok"."""
-    mem_dir = tmp_path / "mem"
-    mem_dir.mkdir()
-    _write_miss_memory(mem_dir)
-
-    # The server searches this turn...
-    Recorder(root=mem_dir, session_id="sess_server").record("search")
-    # ...then a mid-turn write trips rotation (max_bytes=1: any non-empty
-    # active log rotates before the append), archiving the search event.
-    # The new event is deliberately a non-retrieval `write` so the shield
-    # can only be fed by the ARCHIVED search.
-    Recorder(root=mem_dir, session_id="sess_server", max_bytes=1).record("write")
-    assert list(mem_dir.glob(".events-*.jsonl.gz")), "rotation did not fire"
-
-    result = run_audit(
-        user_message=_MISS_QUERY,
-        assistant_response=None,
-        session_id="claude-rotated",
-        config=_miss_config(mem_dir),  # type: ignore[arg-type]
-    )
-    assert result["verdict"] == "ok", (
-        "the archived search must still shield the turn; 'miss' means the "
-        "hook is reading the active log only again"
-    )
-
-
-def test_run_audit_endorsement_tally_uses_production_window(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Item 7 regression: the endorsement tally in `hook.run_audit` (the
-    PRIMARY production audit producer) must be counted over the SAME window
-    production search uses (`ATTRIBUTION_LOOKBACK_SECONDS`, 600s) — NOT the
-    dedup-widened `recent` read (`REAUDIT_DEDUP_WINDOW_SECONDS`, 3600s).
-
-    The F7 hardening fixed only the sibling (`handlers/audit_turn.py`); the
-    shipped hook still fed `recent` (the 3600s coverage list) straight into
-    `_explicit_applied_counts`, which applies no cutoff of its own.
-    `iter_events_window` differs between the two windows only in whether it
-    prepends the newest rotated archive (it does when the active log's oldest
-    event is younger than `now - window`), so the 3600s read counts applies
-    from an archive that production's 600s ranker would never have prepended
-    — an endorsement nudge the model's real retrieval never saw, enough to
-    flip a near-tie top-1 into a false `search_miss`.
-
-    Assert the hook issues an `iter_events_window` read at the 600s
-    attribution window when `endorsement_boost` is on (pre-fix it reused the
-    3600s `recent` list and never read the narrower window). Reverting the
-    fix drops the 600s call, so the final assertion fails."""
-    import bettermemory.hook as hook_mod
-    from bettermemory.audit import (
-        ATTRIBUTION_LOOKBACK_SECONDS,
-        REAUDIT_DEDUP_WINDOW_SECONDS,
-    )
-    from bettermemory.config import (
-        BehaviorConfig,
-        Config,
-        StorageConfig,
-        TelemetryConfig,
-    )
-    from bettermemory.events import iter_events_window as real_iew
-    from bettermemory.models import utcnow
-
-    # The two constants must not be accidentally equal — the whole fix rests
-    # on the dedup window being strictly wider than the attribution window.
-    assert ATTRIBUTION_LOOKBACK_SECONDS == 600
-    assert REAUDIT_DEDUP_WINDOW_SECONDS == 3600
-    assert ATTRIBUTION_LOOKBACK_SECONDS != REAUDIT_DEDUP_WINDOW_SECONDS
-
-    windows: list[int] = []
-
-    def spy(root: object, window_seconds: int, **kw: object) -> object:
-        windows.append(window_seconds)
-        return real_iew(root, window_seconds, **kw)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(hook_mod, "iter_events_window", spy)
-
-    mem_dir = tmp_path / "mem"
-    mem_dir.mkdir()
-    mem_id = _write_miss_memory(mem_dir)
-
-    # Seed the endorsement signal the tally reads: an explicit (non-auto)
-    # applied `use` in-window, plus a second one backdated past the 600s
-    # attribution window but inside the 3600s dedup window. Under the buggy
-    # 3600s tally both would be counted; the fix scopes the read to 600s.
-    Recorder(root=mem_dir, session_id="sess_server").record(
-        "use", ids=[mem_id], outcome="applied", auto=False
-    )
-    stale_ts = (utcnow() - timedelta(seconds=1800)).isoformat().replace("+00:00", "Z")
-    with (mem_dir / ".events.jsonl").open("a", encoding="utf-8") as fh:
-        fh.write(
-            json.dumps(
-                {
-                    "ts": stale_ts,
-                    "session": "sess_server",
-                    "kind": "use",
-                    "ids": [mem_id],
-                    "outcome": "applied",
-                    "auto": False,
-                }
-            )
-            + "\n"
-        )
-
-    cfg = Config(
-        storage=StorageConfig(directory=str(mem_dir)),
-        telemetry=TelemetryConfig(enabled=True),
-        behavior=BehaviorConfig(endorsement_boost=True),
-    )
-    run_audit(
-        user_message=_MISS_QUERY,
-        assistant_response=None,
-        session_id="claude-endorsement",
-        config=cfg,
-    )
-
-    # The dedup / shield / attribution consumers still get the full 3600s
-    # coverage read...
-    assert REAUDIT_DEDUP_WINDOW_SECONDS in windows
-    # ...but the endorsement tally is scoped to production's 600s window, so
-    # the audit ranker matches what the model's retrieval actually saw. This
-    # 600s read is absent pre-fix (the tally reused `recent`).
-    assert ATTRIBUTION_LOOKBACK_SECONDS in windows
 
 
 def test_run_audit_legacy_semantic_config_file_audits_as_hybrid(
@@ -2258,7 +1801,7 @@ def test_run_audit_legacy_semantic_config_file_audits_as_hybrid(
     # Pre-4.0 this was a structural no_signal; now the probe really ran.
     assert result["verdict"] != "no_signal"
     assert result.get("no_signal_reason") is None
-    audited = [e for e in iter_events(mem_dir) if e["kind"] == "turn_audited"]
+    audited = [e for e in _events(mem_dir) if e["kind"] == "turn_audited"]
     assert len(audited) == 1
     assert audited[0]["probe_mode"] == "hybrid"
 
@@ -2267,20 +1810,17 @@ def test_run_audit_threads_ranker_config_into_probe(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The Stop hook must hand the probe the configured ranker knobs —
-    `recency_boost_half_life_days` and (when `endorsement_boost` is on)
-    the explicit-applied tally. Pre-fix the probe ranked with hardwired
-    defaults for every config."""
+    `recency_boost_half_life_days` (and `conversational`, pinned by its
+    own test below) — and the shared attribution window as the probe's
+    lookback, not the old hardcoded 60s. Pre-fix the probe ranked with
+    hardwired defaults for every config. The usage multipliers left in
+    9.0.0, so no tally reaches the probe."""
     from bettermemory.audit import probe_for_miss as real_probe
     from bettermemory.config import BehaviorConfig, Config, StorageConfig
 
     mem_dir = tmp_path / "mem"
     mem_dir.mkdir()
-    memory_id = _write_miss_memory(mem_dir)
-    # An explicit (non-auto) applied use — the only kind the endorsement
-    # tally counts.
-    Recorder(root=mem_dir, session_id="sess_server").record(
-        "use", ids=[memory_id], outcome="applied", auto=False
-    )
+    _write_miss_memory(mem_dir)
 
     captured: dict[str, object] = {}
 
@@ -2291,9 +1831,7 @@ def test_run_audit_threads_ranker_config_into_probe(
     monkeypatch.setattr("bettermemory.hook.probe_for_miss", spy)
     cfg = Config(
         storage=StorageConfig(directory=str(mem_dir)),
-        behavior=BehaviorConfig(
-            recency_boost_half_life_days=7.0, endorsement_boost=True
-        ),
+        behavior=BehaviorConfig(recency_boost_half_life_days=7.0),
     )
     run_audit(
         user_message=_MISS_QUERY,
@@ -2302,7 +1840,10 @@ def test_run_audit_threads_ranker_config_into_probe(
         config=cfg,
     )
     assert captured["half_life_days"] == 7.0
-    assert captured["applied_by_id"] == {memory_id: 1}
+    assert captured["lookback_seconds"] == 600
+    assert "applied_by_id" not in captured
+    assert "negative_by_id" not in captured
+    assert "rescue_expansion" not in captured
 
 
 def test_run_audit_threads_conversational_opt_out_into_probe(
@@ -2319,7 +1860,7 @@ def test_run_audit_threads_conversational_opt_out_into_probe(
     prompt the probe then scored with a different ranker than the
     model's actual retrieval — masked and phantom misses, and a recall
     injection production's own ranking would never have surfaced. The
-    flag travels with the rest of the `RankingInputs` SET."""
+    flag is read off the config beside the recency half-life."""
     from bettermemory.audit import probe_for_miss as real_probe
     from bettermemory.config import BehaviorConfig, Config, StorageConfig
 
@@ -2347,195 +1888,6 @@ def test_run_audit_threads_conversational_opt_out_into_probe(
     assert captured["conversational"] is False
 
 
-def test_run_audit_endorsement_tally_drops_out_of_window_applies(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Mutation-sound: `_explicit_applied_counts` now enforces its OWN 600s
-    cutoff, so an explicit apply backdated past `ATTRIBUTION_LOOKBACK_SECONDS`
-    can no longer reach `applied_by_id` — even though it rides in on the
-    active-log read the hook feeds the tally. The prior contract applied no
-    cutoff of its own and trusted the caller to pre-window, so a stale apply
-    (t-1800s: inside the 3600s dedup horizon, outside the 600s attribution
-    window) was counted, nudging the probe's near-tie ranker. Seed one apply
-    at t-100s (in-window) and one at t-1800s (out-of-window); the probe must
-    see only the in-window count. Reverting the internal `ts` drop re-counts
-    the stale apply as ``{id: 2}`` and this fails."""
-    from bettermemory.audit import probe_for_miss as real_probe
-    from bettermemory.config import BehaviorConfig, Config, StorageConfig
-    from bettermemory.models import utcnow
-
-    mem_dir = tmp_path / "mem"
-    mem_dir.mkdir()
-    memory_id = _write_miss_memory(mem_dir)
-
-    now = utcnow()
-    fresh_ts = (now - timedelta(seconds=100)).isoformat().replace("+00:00", "Z")
-    stale_ts = (now - timedelta(seconds=1800)).isoformat().replace("+00:00", "Z")
-    with (mem_dir / ".events.jsonl").open("a", encoding="utf-8") as fh:
-        for ts in (fresh_ts, stale_ts):
-            fh.write(
-                json.dumps(
-                    {
-                        "ts": ts,
-                        "session": "sess_server",
-                        "kind": "use",
-                        "ids": [memory_id],
-                        "outcome": "applied",
-                        "auto": False,
-                    }
-                )
-                + "\n"
-            )
-
-    captured: dict[str, object] = {}
-
-    def spy(*args: object, **kwargs: object) -> object:
-        captured.update(kwargs)
-        return real_probe(*args, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr("bettermemory.hook.probe_for_miss", spy)
-    cfg = Config(
-        storage=StorageConfig(directory=str(mem_dir)),
-        behavior=BehaviorConfig(endorsement_boost=True),
-    )
-    run_audit(
-        user_message=_MISS_QUERY,
-        assistant_response=None,
-        session_id="claude-window",
-        config=cfg,
-    )
-    # Only the t-100s apply is in-window; the t-1800s apply is dropped by the
-    # tally's internal cutoff even though both sit in the read it was fed.
-    assert captured["applied_by_id"] == {memory_id: 1}
-    # And the probe window is the shared attribution window, not the
-    # old hardcoded 60.
-    assert captured["lookback_seconds"] == 600
-
-
-# A two-memory near-tie the bounded `search._demotion_factor` can
-# re-rank. Both memories carry the SAME body, so both clear the v1
-# "high" threshold and only recency separates them before any demotion.
-# What differs is suppression eligibility: the project-scoped memory was
-# written from the caller's repo, so `_caller_in_top_hit_project`
-# explains away the missing search while it holds rank 1; the global one
-# cannot. Mirrors `_demotion_pair` in test_audit.py.
-_DEMOTION_QUERY = "restic replication"
-_DEMOTION_BODY = "restic replication runbook lives in the homelab tree"
-_DEMOTION_REPO = "git@github.com:owner/homelab.git"
-
-
-def _write_demotion_pair(mem_dir: Path, worktree: str) -> tuple[str, str]:
-    """Seed `(project_memory_id, global_memory_id)`.
-
-    The project memory is a day fresher — a real, deterministic score
-    lead under the default half-life, far inside the demotion factor's
-    reach. Both are backdated well past the probe's creation shield, and
-    past the point where a negative outcome recorded "now" would be
-    treated as resolved by a newer `updated`."""
-    from bettermemory.origin import Origin
-
-    store = Store(mem_dir)
-    project = store.write(
-        content=_DEMOTION_BODY,
-        scopes=["projects:homelab"],
-        origin=Origin(cwd=worktree, repo=_DEMOTION_REPO, worktree_root=worktree),
-    )
-    global_memory = store.write(content=_DEMOTION_BODY, scopes=["infrastructure"])
-    now = datetime.now(timezone.utc)
-    ages = {
-        project.id: timedelta(hours=1),
-        global_memory.id: timedelta(days=1, hours=1),
-    }
-    for path, mem in store.iter_active():
-        age = ages.get(mem.id)
-        if age is None:
-            continue
-        stamp = now - age
-        store._write_path(
-            path, mem.model_copy(update={"created": stamp, "updated": stamp})
-        )
-    return project.id, global_memory.id
-
-
-def test_run_audit_demotion_changes_the_probe_verdict(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The Stop hook — the PRIMARY production audit producer — must tally
-    active negative outcomes and feed them to the probe whenever
-    `[behavior] outcome_demotion` is on.
-
-    Pre-fix it tallied only explicit applies, so a memory production
-    retrieval had demoted out of the top slot still held rank 1 in the
-    probe. Since the miss verdict reads ONLY the rank-1 hit, the audit
-    then reported on a ranking the model never performed — in both
-    directions (the demoted memory's suppression masking a real miss
-    here; elsewhere a demotion-promoted top hit the probe never saw).
-
-    Same store, same message, same flag: the only difference between the
-    two runs is one recorded rejection."""
-    from bettermemory.config import (
-        BehaviorConfig,
-        Config,
-        StorageConfig,
-        TelemetryConfig,
-    )
-    from bettermemory.origin import Origin as _Origin
-
-    mem_dir = tmp_path / "mem"
-    mem_dir.mkdir()
-    worktree = str(tmp_path / "homelab-wt")
-    project_id, global_id = _write_demotion_pair(mem_dir, worktree)
-    monkeypatch.setattr(
-        "bettermemory.hook.capture_origin",
-        lambda *a, **k: _Origin(
-            cwd=worktree, repo=_DEMOTION_REPO, worktree_root=worktree
-        ),
-    )
-
-    cfg = Config(
-        storage=StorageConfig(directory=str(mem_dir)),
-        telemetry=TelemetryConfig(enabled=True),
-        # Keyword mode ranks on the raw scorer, where the bounded factor
-        # is directly visible; hybrid's RRF would only show it once a
-        # per-ranker rank actually swapped.
-        behavior=BehaviorConfig(search_mode="keyword", outcome_demotion=True),
-    )
-
-    neutral = run_audit(
-        user_message=_DEMOTION_QUERY,
-        assistant_response=None,
-        session_id="claude-demotion-neutral",
-        config=cfg,
-    )
-    assert neutral["top_hits"][0]["id"] == project_id
-    assert neutral["top_hits"][0]["relevance"] == "high"
-    assert neutral["recent_retrieval_count"] == 0
-    # Rank 1 is the caller's own project memory → "the model has this
-    # repo open" explains the missing search.
-    assert neutral["verdict"] == "ok"
-
-    # One explicit rejection, postdating the memory's `updated` so it is
-    # unresolved and still testifies.
-    Recorder(root=mem_dir, session_id="sess_server").record(
-        "use", ids=[project_id], outcome="contradicted", auto=False
-    )
-
-    demoted = run_audit(
-        user_message=_DEMOTION_QUERY,
-        assistant_response=None,
-        # A fresh session id: the re-audit dedup matches on (session,
-        # message) and would mark the second run a repeat, which
-        # suppresses the companion `search_miss` event.
-        session_id="claude-demotion-rejected",
-        config=cfg,
-    )
-    assert demoted["top_hits"][0]["id"] == global_id
-    assert demoted["top_hits"][0]["relevance"] == "high"
-    assert demoted["verdict"] == "miss"
-    misses = [e for e in iter_events(mem_dir) if e["kind"] == "search_miss"]
-    assert len(misses) == 1, "the flipped verdict must reach the event log"
-
-
 # A store where the FTS5 candidate prefilter is SATURATED and the memory
 # that would win a full-corpus ranking sits past the cap. Above
 # `_INDEX_THRESHOLD_DEFAULT` production ranks that capped slice; a probe
@@ -2556,7 +1908,6 @@ def _write_prefilter_starved_store(mem_dir: Path, worktree: str) -> str:
     rank 1. It is also the only project-scoped memory written from the
     caller's repo, so holding rank 1 lets `_caller_in_top_hit_project`
     suppress the verdict to `ok`."""
-    from bettermemory import index
     from bettermemory.origin import Origin
 
     store = Store(mem_dir)
@@ -2571,15 +1922,10 @@ def _write_prefilter_starved_store(mem_dir: Path, worktree: str) -> str:
         scopes=["projects:repo-a"],
         origin=Origin(cwd=worktree, repo=_STARVED_REPO, worktree_root=worktree),
     )
-    now = datetime.now(timezone.utc)
-    for path, mem in store.iter_active():
+    for mem in store.load_all():
         age = timedelta(minutes=30) if mem.id == target.id else timedelta(days=30)
-        stamp = now - age
-        store._write_path(
-            path, mem.model_copy(update={"created": stamp, "updated": stamp})
-        )
-    index.rebuild(mem_dir, store.iter_active())
-    top = {cid for cid, _ in index.query(mem_dir, _STARVED_QUERY, max_results=50)}
+        _backdate(store, mem, age)
+    top = {cid for cid, _ in store.query_candidates(_STARVED_QUERY, max_results=50)}
     assert len(top) == 50, "prefilter slice is not saturated — densify the decoys"
     assert target.id not in top, (
         "precondition drift: the target landed inside the FTS top-50, so "
@@ -2640,7 +1986,7 @@ def test_run_audit_ranks_productions_candidate_pool(
     )
     assert result["top_hits"][0]["scopes"] == ["infrastructure"]
     assert result["verdict"] == "miss"
-    misses = [e for e in iter_events(mem_dir) if e["kind"] == "search_miss"]
+    misses = [e for e in _events(mem_dir) if e["kind"] == "search_miss"]
     assert len(misses) == 1
 
 
@@ -2677,7 +2023,7 @@ def test_run_prompt_recall_injects_on_would_be_miss(tmp_path: Path) -> None:
     assert "memory_show" in block
     assert "infrastructure" in block
 
-    events = list(iter_events(mem_dir))
+    events = _events(mem_dir)
     recalls = [e for e in events if e["kind"] == "prompt_recall"]
     assert len(recalls) == 1
     event = recalls[0]
@@ -2696,9 +2042,11 @@ def test_run_prompt_recall_silent_when_probe_says_ok(tmp_path: Path) -> None:
     mem_dir.mkdir()
     memory_id = _write_miss_memory(mem_dir)
 
-    recorder = Recorder(root=mem_dir, session_id="transcript-recall", enabled=True)
+    recorder = Recorder(
+        store=Store(mem_dir), session_id="transcript-recall", enabled=True
+    )
     recorder.record("search", query=_MISS_QUERY, returned=[memory_id])
-    before = list(iter_events(mem_dir))
+    before = _events(mem_dir)
 
     block = run_prompt_recall(
         prompt=_MISS_QUERY,
@@ -2706,7 +2054,7 @@ def test_run_prompt_recall_silent_when_probe_says_ok(tmp_path: Path) -> None:
         config=_miss_config(mem_dir),  # type: ignore[arg-type]
     )
     assert block is None
-    assert list(iter_events(mem_dir)) == before
+    assert _events(mem_dir) == before
 
 
 def test_run_prompt_recall_self_suppresses_within_window(tmp_path: Path) -> None:
@@ -2731,7 +2079,7 @@ def test_run_prompt_recall_self_suppresses_within_window(tmp_path: Path) -> None
     )
     assert first is not None
     assert second is None
-    events = list(iter_events(mem_dir))
+    events = _events(mem_dir)
     assert len([e for e in events if e["kind"] == "prompt_recall"]) == 1
 
 
@@ -2762,7 +2110,7 @@ def test_stop_audit_reports_ok_after_recall(tmp_path: Path) -> None:
     )
     assert result["verdict"] == "ok"
     assert result["recent_retrieval_count"] >= 1
-    kinds = [e["kind"] for e in iter_events(mem_dir)]
+    kinds = [e["kind"] for e in _events(mem_dir)]
     assert "search_miss" not in kinds
     assert "turn_audited" in kinds
 
@@ -2774,24 +2122,13 @@ def _write_project_memory(mem_dir: Path, repo: str) -> str:
     from bettermemory.origin import Origin
 
     store = Store(mem_dir)
-    written = store.write(content=_MISS_BODY, scopes=["projects:foo"])
-    backdated = datetime.now(timezone.utc) - timedelta(hours=1)
-    for path, mem in store.iter_active():
-        if mem.id == written.id:
-            store._write_path(
-                path,
-                mem.model_copy(
-                    update={
-                        "created": backdated,
-                        "updated": backdated,
-                        "origin": Origin(
-                            cwd="/tmp/foo", repo=repo, worktree_root="/tmp/foo"
-                        ),
-                    }
-                ),
-            )
-            return written.id
-    raise AssertionError(f"memory {written.id!r} not found in store")
+    written = store.write(
+        content=_MISS_BODY,
+        scopes=["projects:foo"],
+        origin=Origin(cwd="/tmp/foo", repo=repo, worktree_root="/tmp/foo"),
+    )
+    _backdate(store, written, timedelta(hours=1))
+    return written.id
 
 
 def test_run_prompt_recall_delivers_on_project_cohort(
@@ -2822,7 +2159,7 @@ def test_run_prompt_recall_delivers_on_project_cohort(
     )
     assert block is not None
     assert memory_id in block
-    recalls = [e for e in iter_events(mem_dir) if e["kind"] == "prompt_recall"]
+    recalls = [e for e in _events(mem_dir) if e["kind"] == "prompt_recall"]
     assert len(recalls) == 1
     assert recalls[0]["delivered_reason"] == "project_cohort"
 
@@ -2858,7 +2195,7 @@ def test_run_prompt_recall_project_cohort_respects_knob_off(
         prompt=_MISS_QUERY, session_id="transcript-cohort-off", config=cfg
     )
     assert block is None
-    assert [e for e in iter_events(mem_dir) if e["kind"] == "prompt_recall"] == []
+    assert [e for e in _events(mem_dir) if e["kind"] == "prompt_recall"] == []
 
 
 def test_stop_audit_reports_ok_after_cohort_delivery(
@@ -2894,7 +2231,7 @@ def test_stop_audit_reports_ok_after_cohort_delivery(
         config=cfg,  # type: ignore[arg-type]
     )
     assert result["verdict"] == "ok"
-    kinds = [e["kind"] for e in iter_events(mem_dir)]
+    kinds = [e["kind"] for e in _events(mem_dir)]
     assert "search_miss" not in kinds
 
 
@@ -2920,7 +2257,7 @@ def test_run_prompt_recall_respects_knob_off(tmp_path: Path) -> None:
         prompt=_MISS_QUERY, session_id="transcript-off", config=cfg
     )
     assert block is None
-    assert list(iter_events(mem_dir)) == []
+    assert _events(mem_dir) == []
 
 
 def test_run_prompt_recall_refuses_without_telemetry(tmp_path: Path) -> None:
@@ -2941,7 +2278,7 @@ def test_run_prompt_recall_refuses_without_telemetry(tmp_path: Path) -> None:
         prompt=_MISS_QUERY, session_id="transcript-quiet", config=cfg
     )
     assert block is None
-    assert list(iter_events(mem_dir)) == []
+    assert _events(mem_dir) == []
 
 
 def test_recall_event_does_not_hijack_server_session_anchor() -> None:
@@ -3116,7 +2453,7 @@ def test_prompt_main_injects_and_exits_zero(
     assert code == 0
     out = capsys.readouterr().out
     assert memory_id in out
-    recalls = [e for e in iter_events(mem_dir) if e["kind"] == "prompt_recall"]
+    recalls = [e for e in _events(mem_dir) if e["kind"] == "prompt_recall"]
     assert len(recalls) == 1
     assert recalls[0]["injected_chars"] == len(out.rstrip("\n"))
 
@@ -3134,7 +2471,7 @@ def test_prompt_main_no_op_when_payload_empty(
     code = prompt_main([])
     assert code == 0
     assert capsys.readouterr().out == ""
-    assert not (tmp_path / "mem" / ".events.jsonl").exists()
+    assert not (tmp_path / "mem" / STORE_FILENAME).exists()
 
 
 def test_prompt_main_no_op_when_stdin_oversized(
@@ -3241,22 +2578,25 @@ def test_render_recall_block_names_a_remote_stamp() -> None:
     )
 
 
-def test_run_prompt_recall_names_a_remote_stamp_on_the_pointer(tmp_path: Path) -> None:
+def test_run_prompt_recall_names_a_remote_stamp_on_the_pointer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """End to end: the top hit's row is synced with a stamp this host never
     made (the shape a pull leaves), so the pointer says so. After a local
     verify the qualifier is gone."""
-    from bettermemory import index as _index
+    from bettermemory.models import utcnow
+    from bettermemory.origin import Origin
 
     mem_dir = tmp_path / "mem"
     mem_dir.mkdir()
     memory_id = _write_miss_memory(mem_dir)
     store = Store(mem_dir)
-    store.mark_verified(memory_id)
-    name = next(p.name for p in mem_dir.glob("*.md"))
-    _index.upsert(
-        mem_dir, store.load_one(memory_id), filename=name, provenance="synced"
+    # A pulled row: labelled synced, `last_verified_at` stamped by the
+    # other host, and no verification row of this host's own.
+    stamped = store.load_one(memory_id).model_copy(
+        update={"last_verified_at": utcnow()}
     )
-    assert _index.clear_local_verification(mem_dir, [name]) == 1
+    store.put_memory(stamped, provenance="synced")
 
     block = run_prompt_recall(
         prompt=_MISS_QUERY,
@@ -3269,12 +2609,16 @@ def test_run_prompt_recall_names_a_remote_stamp_on_the_pointer(tmp_path: Path) -
     )
 
     store.mark_verified(memory_id)
-    # The first delivery recorded a `prompt_recall`, and the hook
-    # self-suppresses within its window; clear the log so the second
-    # probe is judged on the store alone (the stamp lives in the index,
-    # not in the events).
-    for path in mem_dir.glob(".events*"):
-        path.unlink()
+    # The first delivery recorded a `prompt_recall` stamped with this
+    # worktree, and the hook self-suppresses within its window for the
+    # same worktree or session. The second probe runs as another session
+    # from another worktree, so it is judged on the store alone.
+    monkeypatch.setattr(
+        "bettermemory.hook.capture_origin",
+        lambda *a, **k: Origin(
+            cwd=str(tmp_path), worktree_root=str(tmp_path / "wt-two")
+        ),
+    )
     block = run_prompt_recall(
         prompt=_MISS_QUERY,
         session_id="transcript-remote-two",
@@ -3310,7 +2654,7 @@ def test_run_audit_declines_a_miss_when_git_could_not_be_asked(
         config=_miss_config(mem_dir),  # type: ignore[arg-type]
     )
     assert result["verdict"] == "ok"
-    assert not [e for e in iter_events(mem_dir) if e["kind"] == "search_miss"]
+    assert not [e for e in _events(mem_dir) if e["kind"] == "search_miss"]
 
     nowhere = Origin(cwd=str(tmp_path))
     monkeypatch.setattr("bettermemory.hook.capture_origin", lambda *a, **k: nowhere)
@@ -3345,29 +2689,33 @@ def test_run_prompt_recall_delivers_nothing_when_git_could_not_be_asked(
         config=_miss_config(mem_dir),  # type: ignore[arg-type]
     )
     assert block is None
-    assert not [e for e in iter_events(mem_dir) if e["kind"] == "prompt_recall"]
+    assert not [e for e in _events(mem_dir) if e["kind"] == "prompt_recall"]
 
 
-def test_run_prompt_recall_names_a_label_it_could_not_read(tmp_path: Path) -> None:
+def test_run_prompt_recall_names_a_label_it_could_not_read(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """The recall pointer carries `[provenance: <label>]` for a record that
-    did not enter through the store's own paths. With the index
-    unreadable no label can be derived, and the pointer used to render
-    as a plain local record — the one delivery that reaches the model
+    did not enter through the store's own paths. A store opened without
+    its key cannot verify any row's pointer into the log (`trust_rows`
+    is None), so no label can be derived, and the pointer used to render
+    as a plain local record: the one delivery that reaches the model
     without a tool call, announcing nothing. It now says so."""
-    from bettermemory import index
-
     mem_dir = tmp_path / "mem"
     mem_dir.mkdir()
     memory_id = _write_miss_memory(mem_dir)
-    store = Store(mem_dir)
-    index.rebuild(mem_dir, store.iter_active())
-    index_file = index.index_path(mem_dir)
-    index_file.write_bytes(index_file.read_bytes()[:100])
+
+    def _open_blind(path: Path | str, *, keys_dir: Path | str | None = None) -> Store:
+        # The hook's own open, minus the key: `allow_rekey=False` keeps
+        # the store readable and unable to vouch for any row.
+        return Store.open(path, keys_dir=tmp_path / "elsewhere", allow_rekey=False)
+
+    monkeypatch.setattr(Store, "open_or_create", staticmethod(_open_blind))
 
     block = run_prompt_recall(
         prompt=_MISS_QUERY,
-        session_id="transcript-index-torn",
+        session_id="transcript-key-absent",
         config=_miss_config(mem_dir),  # type: ignore[arg-type]
     )
     assert block is not None and memory_id in block
-    assert "[provenance: unknown, index unreadable]" in block
+    assert "[provenance: unknown, key absent]" in block

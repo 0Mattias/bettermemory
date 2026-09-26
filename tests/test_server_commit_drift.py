@@ -2,7 +2,7 @@
 
 `compute_commit_drift` is unit-tested in `test_verify.py`. The
 `CommitDriftDebt` rollup has no unit-test module of its own — it is
-covered here, through `memory_health`, alongside the rest of the
+covered here, through `memory_admin(action="health")`, alongside the rest of the
 wiring. These tests cover that wiring on the MCP tools — that
 `memory_show`, `memory_search(expand_top=True)`, and `memory_health`
 actually surface the signal end-to-end against a real git repo and a
@@ -27,6 +27,7 @@ import pytest
 
 from bettermemory.config import Config, StorageConfig
 from bettermemory.events import Recorder
+from bettermemory.health import curation_counts
 from bettermemory.origin import Origin
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
@@ -205,6 +206,7 @@ def server_with_fake_origin(memory_dir: Path, monkeypatch: pytest.MonkeyPatch):
     """
     state = SessionState()
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    store = Store(memory_dir)
 
     def make(origin: Origin):
         # `capture_origin` is imported into `_handlers` where the tool
@@ -213,10 +215,10 @@ def server_with_fake_origin(memory_dir: Path, monkeypatch: pytest.MonkeyPatch):
         import bettermemory._handlers as handlers_module
         import bettermemory.server as server_module
 
-        rec = Recorder(root=memory_dir, session_id=state.session_id)
+        rec = Recorder(store=store, session_id=state.session_id)
         server = build_server(
             config=cfg,
-            store=Store(memory_dir),
+            store=store,
             state=state,
             recorder=rec,
         )
@@ -1024,7 +1026,7 @@ async def test_memory_health_commit_drift_debt_lists_drifted_rows(
     _commit_touching(repo, "c2", when=datetime(2099, 2, 1, tzinfo=timezone.utc))
     _commit_touching(repo, "c3", when=datetime(2099, 3, 1, tzinfo=timezone.utc))
 
-    report = await _call(server, "memory_health")
+    report = await _call(server, "memory_admin", action="health")
     cd = report["commit_drift_debt"]
     assert cd is not None
     assert cd["current_repo"] == _REMOTE
@@ -1055,7 +1057,7 @@ async def test_memory_health_commit_drift_debt_clean_when_caught_up(
     )
     await _call(server, "memory_verify", id=written["id"])
 
-    report = await _call(server, "memory_health")
+    report = await _call(server, "memory_admin", action="health")
     cd = report["commit_drift_debt"]
     assert cd is not None
     assert cd["total_drifted"] == 0
@@ -1094,7 +1096,7 @@ async def test_memory_health_commit_drift_debt_null_when_no_anchored_memories(
 
     # Now run memory_health from the original repo, which has no anchored memory.
     server = server_with_fake_origin(Origin(cwd=str(repo), repo=_REMOTE, branch="main"))
-    report = await _call(server, "memory_health")
+    report = await _call(server, "memory_admin", action="health")
     assert report["commit_drift_debt"] is None
 
 
@@ -1108,7 +1110,7 @@ async def test_memory_health_commit_drift_debt_null_when_caller_not_in_repo(
 
     await _call(server, "memory_write", content="durable", scopes=["tools"])
 
-    report = await _call(server, "memory_health")
+    report = await _call(server, "memory_admin", action="health")
     assert report["commit_drift_debt"] is None
 
 
@@ -1146,7 +1148,7 @@ async def test_memory_health_commit_drift_debt_honors_verified_paths(
     _commit_at(repo, "post-1", when=datetime(2099, 1, 1, tzinfo=timezone.utc))
     _commit_at(repo, "post-2", when=datetime(2099, 2, 1, tzinfo=timezone.utc))
 
-    report = await _call(server, "memory_health")
+    report = await _call(server, "memory_admin", action="health")
     cd = report["commit_drift_debt"]
     assert cd is not None
     # Narrowed to the verified path (untouched) -> not the unfiltered 2.
@@ -1155,15 +1157,15 @@ async def test_memory_health_commit_drift_debt_honors_verified_paths(
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
-async def test_scope_overview_curation_drifted_honors_verified_paths(
-    server_with_fake_origin, tmp_path: Path
+async def test_curation_counts_drifted_honors_verified_paths(
+    server_with_fake_origin, tmp_path: Path, memory_dir: Path
 ) -> None:
-    """Regression: `curation_counts` (which drives `memory_scope_overview`'s
-    `curation_pending.drifted`) was the only commit-drift surface that never
-    applied the verified_paths filter — so the session-start hint reported
-    drift on memories attested as stable, the loudest false-positive of all.
-    With the fix, a memory whose verified_paths were untouched by post-verify
-    commits is not counted as drifted in the session-start rollup.
+    """Regression: `curation_counts` (the session-start rollup's `drifted`)
+    was the only commit-drift surface that never applied the
+    verified_paths filter, so the rollup reported drift on memories
+    attested as stable, the loudest false-positive of all. With the fix,
+    a memory whose verified_paths were untouched by post-verify commits
+    is not counted as drifted.
     """
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -1185,8 +1187,11 @@ async def test_scope_overview_curation_drifted_honors_verified_paths(
     _commit_at(repo, "post-1", when=datetime(2099, 1, 1, tzinfo=timezone.utc))
     _commit_at(repo, "post-2", when=datetime(2099, 2, 1, tzinfo=timezone.utc))
 
-    res = await _call(server, "memory_scope_overview")
-    assert res["curation_pending"]["drifted"] == 0
+    store = Store.open(memory_dir)
+    counts = curation_counts(
+        store.load_all(), store.iter_events(), caller_origin=origin, store=store
+    )
+    assert counts["drifted"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1243,7 +1248,7 @@ async def _drift_counts_for(
             search_count = hit.get("commit_drift_count")
             break
 
-    report = await _call(server, "memory_health")
+    report = await _call(server, "memory_admin", action="health")
     cd = report["commit_drift_debt"]
     health_count: int | None = None
     if cd is not None:
@@ -1558,7 +1563,7 @@ async def test_memory_search_hits_omit_count_for_untethered_even_when_caught_up(
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
 async def test_memory_health_commit_drift_debt_excludes_untethered(
-    server_with_fake_origin, tmp_path: Path
+    server_with_fake_origin, tmp_path: Path, memory_dir: Path
 ) -> None:
     """The rollup counts only claim-anchored memories: an anchored memory
     whose cited file was touched drifts; an untethered memory verified at
@@ -1587,16 +1592,19 @@ async def test_memory_health_commit_drift_debt_excludes_untethered(
 
     _commit_touching(repo, "c1", when=datetime(2099, 1, 1, tzinfo=timezone.utc))
 
-    report = await _call(server, "memory_health")
+    report = await _call(server, "memory_admin", action="health")
     cd = report["commit_drift_debt"]
     assert cd is not None
     assert cd["total_drifted"] == 1
     assert [r["id"] for r in cd["rows"]] == [anchored["id"]]
 
-    # The curation rollup agrees — scope_overview's `drifted` counts only
-    # the anchored memory (lockstep between the two health surfaces).
-    overview = await _call(server, "memory_scope_overview")
-    assert overview["curation_pending"]["drifted"] == 1
+    # The curation rollup agrees: its `drifted` counts only the anchored
+    # memory (lockstep between the two health surfaces).
+    store = Store.open(memory_dir)
+    counts = curation_counts(
+        store.load_all(), store.iter_events(), caller_origin=origin, store=store
+    )
+    assert counts["drifted"] == 1
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
@@ -1876,12 +1884,14 @@ async def test_a_branch_authored_before_the_stamp_and_merged_after_it_counts(
     assert "commit_drift_count" not in by_id[untethered["id"]]
     assert "commit_drift_basis" not in by_id[untethered["id"]]
 
-    report = await _call(server, "memory_health")
+    report = await _call(server, "memory_admin", action="health")
     rows = {r["id"]: r for r in report["commit_drift_debt"]["rows"]}
     assert set(rows) == {anchored["id"]}
     assert rows[anchored["id"]]["basis"] == "reachability"
-    overview = await _call(server, "memory_scope_overview")
-    assert overview["curation_pending"]["drifted"] == 1
+    counts = curation_counts(
+        store.load_all(), store.iter_events(), caller_origin=origin, store=store
+    )
+    assert counts["drifted"] == 1
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
@@ -1926,7 +1936,7 @@ async def test_a_rewritten_anchor_falls_back_to_the_author_date_count(
     )
     hit = next(h for h in _unwrap(raw) if h["id"] == written["id"])
     assert hit["commit_drift_basis"] == "author-date"
-    report = await _call(server, "memory_health")
+    report = await _call(server, "memory_admin", action="health")
     row = next(
         r for r in report["commit_drift_debt"]["rows"] if r["id"] == written["id"]
     )

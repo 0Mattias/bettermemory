@@ -18,7 +18,6 @@ from pathlib import Path
 import pytest
 
 from bettermemory.cli import rollback as cli_rollback
-from bettermemory.consolidate import consolidate
 from bettermemory.identity import Actor
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.rollback import (
@@ -85,56 +84,6 @@ def _isolate_store(memory_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------------
 # G1 — structural isolation: a rollback is NOT a consolidation pass
 # ---------------------------------------------------------------------------
-
-
-def test_g1_rollback_does_not_run_the_consolidation_passes(store: Store) -> None:
-    """G1, the most important gate in the unit.
-
-    `consolidate()` runs its four structural passes unconditionally
-    before every mode flag fires, so a by-actor rollback implemented as
-    one more `consolidate` flag would ALSO commit whole-store dedup
-    tombstones and demotions. A separate command cannot: this asserts
-    the store genuinely HAS dedup candidates the consolidation pass
-    would have taken, then that a committed rollback left every one of
-    them alone.
-    """
-    # Premise: a pair of near-duplicates consolidate would tombstone.
-    store.write(
-        content="the user prefers terse code-driven explanations over prose",
-        scopes=["tools"],
-    )
-    dup = store.write(
-        content="the user prefers terse code-driven explanations over long prose",
-        scopes=["tools"],
-    )
-    store.update(dup)
-    target = store.write(
-        content="written by the rolled-back agent", scopes=["tools"], actor=HERMES
-    )
-
-    premise = consolidate(store, apply=False)
-    assert premise.dedup_candidates, (
-        "premise failed: the fixture produced no dedup candidates, so this "
-        "test could not tell an isolated rollback from a ride-along one"
-    )
-    would_be_tombstoned = {c.duplicate_id for c in premise.dedup_candidates}
-    assert target.id not in would_be_tombstoned
-
-    # Drive the CLI, not the library: the ride-along trap lives on the
-    # command path (where a `consolidate` mode flag would fire AFTER the
-    # four passes had already run), so a gate that called `plan_rollback`
-    # directly would pass no matter how the command was wired.
-    cli_rollback.run(_args(apply=True, yes=True))
-
-    active = {m.id for m in store.load_all()}
-    assert target.id not in active, "the rollback did not remove its own target"
-    # The conclusion: nothing the consolidation passes wanted was taken.
-    for dup_id in would_be_tombstoned:
-        assert dup_id in active, (
-            f"{dup_id} was tombstoned by a rollback — the consolidation "
-            f"passes rode along, which is exactly what this command exists "
-            f"to prevent"
-        )
 
 
 # ---------------------------------------------------------------------------

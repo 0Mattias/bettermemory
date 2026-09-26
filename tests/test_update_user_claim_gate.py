@@ -58,10 +58,10 @@ from typing import Any
 import pytest
 
 from bettermemory.config import Config, StorageConfig
-from bettermemory.events import Recorder, iter_events
+from bettermemory.events import Recorder
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
-from bettermemory.store import Store
+from bettermemory.store import CONTROL_KINDS, MUTATION_KINDS, Store
 
 from ._mcp import call_tool as _mcp_call, input_schema as _input_schema
 
@@ -76,17 +76,18 @@ _TEAM_PRACTICE = "We use ruff for linting in this repo."
 
 
 @pytest.fixture
-def server_with_events(memory_dir: Path) -> tuple[Any, Path]:
+def server_with_events(memory_dir: Path) -> tuple[Any, Store]:
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
     state = SessionState()
-    rec = Recorder(root=memory_dir, session_id=state.session_id)
+    store = Store(memory_dir)
+    rec = Recorder(store=store, session_id=state.session_id)
     server = build_server(
         config=cfg,
-        store=Store(memory_dir),
+        store=store,
         state=state,
         recorder=rec,
     )
-    return server, memory_dir
+    return server, store
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
@@ -95,6 +96,18 @@ async def _call(server: Any, name: str, **kwargs: Any) -> Any:
     Delegates to `tests/_mcp.py`, which owns the SDK's return shape.
     """
     return await _mcp_call(server, name, kwargs)
+
+
+def _raw_event_log(store: Store) -> str:
+    """The telemetry rows' raw payload text, straight from the log table:
+    what the v8 tests read as the bytes of `.events*.jsonl`. The store's
+    mutation rows carry committed bodies by design and are not the log
+    this contract is about."""
+    return "".join(
+        str(row["payload"])
+        for row in store.conn.execute("SELECT kind, payload FROM log ORDER BY seq")
+        if row["kind"] not in MUTATION_KINDS and row["kind"] not in CONTROL_KINDS
+    )
 
 
 async def _seed_fact(server: Any) -> str:
@@ -110,21 +123,21 @@ async def _seed_fact(server: Any) -> str:
 
 
 async def test_update_cannot_launder_a_user_claim_into_a_fact(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The defect, end to end. Decisive assertion is the body on disk:
     a refusal that still persisted the edit would close nothing."""
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     memory_id = await _seed_fact(server)
     res = await _call(server, "memory_update", id=memory_id, content=_CLAIM)
     assert res["status"] == "user_claim_warning"
     assert res["markers"][0]["phrase"] == "Mattias prefers"
     assert res["markers"][0]["sentence"] == _CLAIM
-    assert Store(memory_dir).load_one(memory_id).body.strip() == _CLEAN
+    assert store.load_one(memory_id).body.strip() == _CLEAN
 
 
 async def test_update_refuses_with_the_write_surfaces_own_status(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """Parity, asserted against `memory_write`'s live answer instead of a
     literal. A future rename of the status on one surface and not the
@@ -140,7 +153,7 @@ async def test_update_refuses_with_the_write_surfaces_own_status(
 
 
 async def test_first_person_body_edit_is_gated_too(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """`_find_user_claims` applies per sentence after apostrophe
     normalization; handing it the raw body kills the `^(?:my|our)` branch.
@@ -161,7 +174,7 @@ async def test_first_person_body_edit_is_gated_too(
 
 
 async def test_ambient_records_are_gated_exactly_as_facts_are(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """`PendingGate` reads the category label, and `ambient` is as unstaged
     as `fact` — so an `ambient` record is the same laundering vector."""
@@ -183,7 +196,7 @@ async def test_ambient_records_are_gated_exactly_as_facts_are(
 
 
 async def test_a_user_inference_record_accepts_a_claim_body_edit(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The acknowledged path that exists today. A claim about the user is
     legal in a `user-inference` memory — the label says it is one — so
@@ -209,7 +222,7 @@ async def test_a_user_inference_record_accepts_a_claim_body_edit(
 
 
 async def test_the_hint_names_a_route_that_exists(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """A refusal with no legal escape is the failure `_CONFIRM_GATES`
     documents as its reason for excluding the body gates. This one has
@@ -238,7 +251,7 @@ async def test_the_hint_names_a_route_that_exists(
 
 
 async def test_the_override_is_served_on_the_wire_defaulting_to_off(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The failure this pins is a SILENT one, and it is the one that
     shipped: a parameter honoured by the handler but absent from the
@@ -263,7 +276,7 @@ async def test_the_override_is_served_on_the_wire_defaulting_to_off(
 
 
 async def test_the_override_commits_the_body_the_write_path_accepts(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The asymmetry, closed, asserted from both ends in one test.
 
@@ -273,7 +286,7 @@ async def test_the_override_commits_the_body_the_write_path_accepts(
     edited. Decisive assertion is the body on disk, the same way the
     refusal test's is: a `committed` status over an unchanged file would
     close nothing."""
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     memory_id = await _seed_fact(server)
 
     refused = await _call(server, "memory_update", id=memory_id, content=_TEAM_PRACTICE)
@@ -299,16 +312,16 @@ async def test_the_override_commits_the_body_the_write_path_accepts(
         acknowledge_user_claim=True,
     )
     assert updated["status"] == written["status"] == "committed"
-    assert Store(memory_dir).load_one(memory_id).body.strip() == _TEAM_PRACTICE
+    assert store.load_one(memory_id).body.strip() == _TEAM_PRACTICE
 
 
 async def test_the_override_is_off_by_default_at_the_handler_too(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """Passing the flag explicitly False is not the same code path as
     omitting it, and a gate that only fires on the omitted path would
     pass every other test in this module."""
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     memory_id = await _seed_fact(server)
     res = await _call(
         server,
@@ -318,18 +331,18 @@ async def test_the_override_is_off_by_default_at_the_handler_too(
         acknowledge_user_claim=False,
     )
     assert res["status"] == "user_claim_warning"
-    assert Store(memory_dir).load_one(memory_id).body.strip() == _CLEAN
+    assert store.load_one(memory_id).body.strip() == _CLEAN
 
 
 async def test_the_override_waves_through_one_gate_and_not_the_chain(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """`acknowledge_user_claim` is ONE gate's escape hatch, the same
     contract `tests/test_server.py` pins for the write surface. A body
     carrying a secret must still be refused with it set — otherwise the
     flag a caller reaches for to file a teammate's preference also
     smuggles a credential into a plain-text store."""
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     memory_id = await _seed_fact(server)
     secret = "".join(("AKIA", "IOSFODNN7EXAMPLE"))
     res = await _call(
@@ -340,11 +353,11 @@ async def test_the_override_waves_through_one_gate_and_not_the_chain(
         acknowledge_user_claim=True,
     )
     assert res["status"] == "credential_warning"
-    assert Store(memory_dir).load_one(memory_id).body.strip() == _CLEAN
+    assert store.load_one(memory_id).body.strip() == _CLEAN
 
 
 async def test_the_override_does_not_license_the_user_inference_retag(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The other thing the flag must not buy. A retag INTO
     `user-inference` is refused on this surface (the category rule above;
@@ -363,7 +376,7 @@ async def test_the_override_does_not_license_the_user_inference_retag(
 
 
 async def test_the_override_records_the_phrase_it_waved_through(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """Override-rate telemetry per marker is the entry ticket for
     widening or narrowing the detector (`UserClaimGate`'s docstring), and
@@ -376,7 +389,7 @@ async def test_the_override_records_the_phrase_it_waved_through(
     ABSENT field and a zero-override edit are indistinguishable to any
     later tally, which is the same contract `credentials_acknowledged`
     carries on this handler."""
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     memory_id = await _seed_fact(server)
     await _call(
         server,
@@ -389,7 +402,7 @@ async def test_the_override_records_the_phrase_it_waved_through(
 
     commits = [
         e
-        for e in iter_events(memory_dir)
+        for e in store.iter_events()
         if e["kind"] == "update" and e.get("status") is None
     ]
     assert len(commits) == 2, f"expected two committed update events, got {commits}"
@@ -397,9 +410,7 @@ async def test_the_override_records_the_phrase_it_waved_through(
     assert commits[1]["user_claims_acknowledged"] == []
     # The phrase, not the sentence — the acknowledged body is the caller's
     # to store, and the event log is a marker tally either way.
-    raw = "".join(
-        p.read_text(encoding="utf-8") for p in sorted(memory_dir.glob(".events*.jsonl"))
-    )
+    raw = _raw_event_log(store)
     assert _TEAM_PRACTICE not in raw
 
 
@@ -409,26 +420,26 @@ async def test_the_override_records_the_phrase_it_waved_through(
 
 
 async def test_metadata_only_edits_on_a_mis_filed_record_still_work(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """Records mis-filed before the gate existed are seeded the way they
     got there — straight through the Store API. Re-scoping one must not
     re-raise a verdict about a body this call does not touch, or curating
     the backlog the gate exists to prevent becomes impossible."""
-    server, memory_dir = server_with_events
-    seeded = Store(memory_dir).write(content=_CLAIM, scopes=["learning-style"])
+    server, store = server_with_events
+    seeded = store.write(content=_CLAIM, scopes=["learning-style"])
     res = await _call(
         server, "memory_update", id=seeded.id, scopes=["learning-style", "tools"]
     )
     assert res["status"] == "committed"
-    assert sorted(Store(memory_dir).load_one(seeded.id).scopes) == [
+    assert sorted(store.load_one(seeded.id).scopes) == [
         "learning-style",
         "tools",
     ]
 
 
 async def test_credential_in_a_claim_shaped_body_reports_the_credential(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """Ordering, stated as what it protects: the user-claim refusal logs
     body-derived `claim_phrases`, so a secret has to be refused before it
@@ -446,18 +457,18 @@ async def test_credential_in_a_claim_shaped_body_reports_the_credential(
 
 
 async def test_the_refusal_event_logs_the_phrase_and_not_the_body(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """Override-rate telemetry per marker is the entry ticket for widening
     or narrowing the pattern (`UserClaimGate`'s docstring), and it only
     exists if the update surface records the phrase it fired on — the same
     contract `credentials_acknowledged` carries here for secrets."""
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     memory_id = await _seed_fact(server)
     await _call(server, "memory_update", id=memory_id, content=_CLAIM)
     refusals = [
         e
-        for e in iter_events(memory_dir)
+        for e in store.iter_events()
         if e["kind"] == "update" and e.get("status") == "user_claim_warning"
     ]
     assert refusals, "no user_claim_warning update event recorded"
@@ -466,7 +477,5 @@ async def test_the_refusal_event_logs_the_phrase_and_not_the_body(
     # The phrase, not the sentence: the event is a marker tally, and the
     # rejected body has no business being persisted by the refusal that
     # kept it out of the store.
-    raw = "".join(
-        p.read_text(encoding="utf-8") for p in sorted(memory_dir.glob(".events*.jsonl"))
-    )
+    raw = _raw_event_log(store)
     assert _CLAIM not in raw

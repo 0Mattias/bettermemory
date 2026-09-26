@@ -7,117 +7,133 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
-## Unreleased
+## 9.0.0 - Unreleased
+
+A major by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract),
+and the first one to change the store. The markdown directory with a
+derived index becomes one SQLite file whose tables are the fold of a
+hash-chained log; the twenty-seven tools become nine; ten off-by-default
+flags leave with their code; and the modules that served the removed
+surfaces leave with them. An 8.x directory is imported once by
+`bettermemory migrate v8` and never written again; `bettermemory export
+--mirror` writes the store back out as that directory, byte for byte.
 
 ### Added
 
 - **The bettermemory 9 store and its hash-chained log.** One SQLite
   file per store, `memory.sqlite`, whose tables are the records and
   whose FTS5 table and triggers are the v8 index's own, so the candidate
-  query returns the same ids in the same order on the same rows
-  (`bench/parity/sqlite_candidates.py` records the comparison). Every
+  query returns the same ids in the same order on the same rows. Every
   mutation and telemetry event is a row of the `log` table, MAC'd with
-  a key kept outside the store and chained to the row before it, with a
-  head checkpoint beside the key; `bettermemory log verify` reports an
+  a key kept outside the store (`keys/<store_id>.key` under the user
+  config directory) and chained to the row before it, with a head
+  checkpoint beside the key. `bettermemory log verify` reports an
   edited row, a row inserted without the key, a deleted tail, and a
-  table edit that no log row accounts for. The store is not yet wired
-  into the tool surface: the v8 file store stays the product until the
-  engine port lands on it.
+  table edit that no log row accounts for. (`src/bettermemory/store.py`,
+  `src/bettermemory/log.py`)
+- **Provenance at read.** Every memories, tombstones and episodes row
+  carries `log_mac`, the MAC of the log row that produced it, and every
+  search, show and handoff verifies the pointer: the row exists, is of
+  the producing kind, names the record and verifies under the store's
+  key. A row planted around the tool, and a row whose log row was
+  forged without the key, read `unaccounted` on the next read without
+  a refold. The labels are `local`, `imported`, `synced` and
+  `unaccounted`; a store opened without its key reads
+  `trust_unavailable` on every row.
 - **`bettermemory migrate v8` and `bettermemory export --mirror`.** The
-  migration reads a v8 store directory with the v8 readers and writes it
-  into the bettermemory 9 store in one transaction: active memories as
-  `imported` rows with their filenames, in the order the v8 index held
-  them; tombstones with the links and corroborations their files kept;
-  episodes, conflicts and the ingest watermark; every event from every
-  shard, archive and the legacy file as a telemetry row under its
-  original timestamp, verbatim query text redacted; and one `migrate_v8`
-  control row ahead of them with the counts. The directory is never
-  written, a re-run imports only what is new, and `--dry-run` reports
-  without writing. The mirror writes the store back out as a v8
-  directory, byte for byte what v8 wrote, into a directory it made or an
-  empty one and never over a store; `bench/parity/migrate_v8.py` records
-  the round trip. (`src/bettermemory/migrate_v8.py`,
+  migration reads an 8.x store directory with the frozen v8 readers
+  (`src/bettermemory/v8.py`) and writes it into the store in one
+  transaction: active memories as `imported` rows with their filenames,
+  in the order the v8 index held them; tombstones with the links and
+  corroborations their files kept; episodes, conflicts and the ingest
+  watermark; every event from every shard, archive and the legacy file
+  as a telemetry row under its original timestamp, verbatim query text
+  redacted; and one `migrate_v8` control row ahead of them with the
+  counts. The directory is never written, a re-run imports only what is
+  new, and `--dry-run` reports without writing. The mirror writes the
+  store back out as a v8 directory, pinned byte for byte against golden
+  files written by 8.0.0 (`tests/fixtures/v8/`), into a directory it
+  made or an empty one and never over a store; `bench/parity/migrate_v8.py`
+  records the round trip. (`src/bettermemory/migrate_v8.py`,
   `src/bettermemory/mirror.py`)
-- **`bettermemory capture`: a Claude Code session in, dated memories
-  out.** Step 2 of session capture. The command reads a transcript from
-  where the last capture of that session stopped, asks a model for
-  memories with `session_capture`'s prompt and validator, and writes the
-  survivors through `memory_write`'s gate chain (`CAPTURE_GATES`, the
-  whole chain but the pending stage). It keeps each segment the model
-  saw in `captures/<session>/`, host-local and never synced, with a
-  watermark that makes a re-run write nothing twice. `--dry-run` shows
-  what would be saved and writes nothing. The memories are written by
-  the model the captured session was talking to, read off the
-  transcript's assistant rows, through `claude -p` on Claude Code's own
-  login. There is no API key, no model setting and no default model: a
-  transcript that names no model is not captured. `docs/api.md` has the
-  full contract.
-- **Session capture from the hooks, behind `[capture] enabled` (default
-  off).** A session is captured at three moments, each in a detached
-  background process so no hook waits on a model. When the session
-  ends: the new `bettermemory session-end` command, bound to the
-  plugin's new SessionEnd hook. While it is open: the Stop hook starts a
-  checkpoint capture once the uncaptured conversation passes
-  `[capture] checkpoint_tokens` (40,000), holding the newest segment
-  back, so a session left open for days is captured as it goes rather
-  than never. After it went quiet without ending (a crash, a killed
-  process, a closed laptop): the SessionStart hook starts
-  `bettermemory capture --pending` for registered sessions idle past
-  `[capture] idle_minutes` (30). Only sessions the Stop hook registered
-  are candidates, so turning capture on never reaches back into older
-  sessions. Background output goes to `captures/capture.log`.
-- `bettermemory capture --pending` and `--checkpoint`, what the hooks
-  run.
-- A failed model call is recorded on the session's watermark
-  (`failures`, `last_failure_at`, `last_error`), and the hooks back off
-  (an hour, doubling after each failure, giving up after six in a row),
-  counting any failure after a model call, not only the call, so a
-  broken login or an exhausted budget is retried once per backoff, not
-  on every turn. The watermark also records `settled_size`, the
-  transcript's size when a capture last read it to the end.
-- Captured memories carry scope `session-capture`, source `inferred`,
-  and an `actor` whose client is `bettermemory-capture`, so
-  `bettermemory rollback --by-actor bettermemory-capture` undoes a run
-  and the `client` filter on `memory_search` and `memory_list` can
-  include or leave them out.
-- Two checks run only on captured memories, after the gates. A plan with
-  no date later than the conversation is dropped as `open_plan`: a
-  working session's to-do list belongs in its journal. A memory whose
-  content words, and every number and identifier in it, already sit in
-  one stored memory is dropped as `covered`. Both were measured on two
-  real sessions against a 443-memory store: of 44 memories the model
-  proposed, the 12 at or above the 0.85 coverage line were each a
-  restatement of a stored memory.
-- `session_capture.WORK_SESSION_RULES`, added to the prompt for a coding
-  session: skip to-dos and progress notes, keep decisions, changes,
-  releases, failures and what the user says about themselves. The
-  benchmark (`bench/aml`) keeps the base prompt.
+- **`memory_admin` and `episode`.** Two tools that take an `action`:
+  `memory_admin` carries `restore`, `tombstones`, `health`,
+  `rename_scope`, `conflicts`, `acknowledge_miss`, `disable_scope` and
+  `enable_scope`, each returning what its former tool returned
+  (`tombstones` under one key); `episode` carries `write` and
+  `handoff`. `acknowledge_miss` gains a `before` form that writes the
+  `silent_miss_cutoff` event `consolidate --acknowledge-misses-before`
+  used to.
+- **`exclude_scopes` on `memory_search`**: the scopes to drop, applied
+  before ranking like the session's disabled set.
+- `bench/toolcost` records the served `instructions` block beside the
+  descriptions and schemas (`instructions_bytes`, `instructions_chars`,
+  `session_bytes`).
 
 ### Changed
 
-- While `[capture] enabled` is on, `[proposals] auto_propose` stands
-  down: both read the same user messages, and capture writes what it
-  keeps through the gates instead of queueing it.
-- The `claude -p` child a capture runs gets an environment without the
-  live session's Claude Code variables (`CLAUDECODE`, the session and
-  host ids, the messaging socket and token), so it never takes itself
-  for part of the session a hook started it from. Login and provider
-  variables are kept.
-- `events.AttributedRecorder` and `cli._common.cli_recorder` take a
-  `triggered_from` that is stamped on every event, like `attribution`.
-  `session_capture` joins `hook._OUT_OF_PROCESS_TRIGGERS` and
-  `audit._VALID_TRIGGERED_FROM`, so capture's events, recorded under a
-  transcript's session id from outside the server, are never read as the
-  live server session's.
-- `handlers.write._persist` and `_file_conflicts` take the narrow
-  `GateDeps` protocol instead of `ToolHandlers`, which is how capture
-  commits through the same persist step as `memory_write` (supersession
-  links, disagreements filed for `memory_conflicts`).
-- Two event kinds: `capture_write`, one per memory capture commits (a
-  provenance creation kind, so the memory reads `local`), and
-  `capture_run`, one summary per run. Capture records no `write`
-  event, so `bettermemory eval --tool-usage` and the write telemetry in
-  `memory_health` count only the model's own writes.
+- **Nine tools, always registered.** `memory_search`, `memory_show`,
+  `memory_write`, `memory_update`, `memory_remove`, `memory_verify`,
+  `memory_record_use`, `episode` and `memory_admin`. The seven single
+  tools keep their parameter names, enum values and return keys, with
+  one exception: `memory_remove` returns `{removed: id}`, since the
+  `tombstone_path` it returned named a file. Every description, the
+  server `instructions` block, the system-prompt addendum
+  (`docs/system_prompt.md`, `prompts.SYSTEM_PROMPT_ADDENDUM`) and the
+  plugin skill are rewritten for the nine.
+- **The runtime runs on the store.** Handlers, the response builder,
+  health, eval, the audit, the hooks, the CLI and the benches read and
+  write `Store`; the recorder writes each event as a log row; episodes
+  and conflicts are rows; this host's verification stamp is a
+  `verifications` row written by `memory_verify`. Query text is always
+  redacted in the log.
+- The session-start hint reads its per-scope counts off the store; the
+  Stop hook and the recall hook open the store as spawned processes.
+- The plugin's SessionEnd hook is gone with session capture; the Stop,
+  SessionStart and UserPromptSubmit hooks stay.
+- A config file that still sets a removed key or section loads with one
+  logged warning per key and the line ignored.
+
+### Removed
+
+- **Eighteen MCP tools.** `memory_list`, `memory_scope_overview`,
+  `memory_write_confirm`, `memory_write_cancel`, `memory_audit_turn`,
+  `memory_health`, `memory_curate`, `memory_conflicts`,
+  `memory_acknowledge_miss`, `memory_rename_scope`, `memory_restore`,
+  `memory_list_tombstones`, `memory_proposals`, `memory_scope_disable`,
+  `memory_scope_enable`, `episode_search`, `episode_promote` and
+  `episode_patterns`. Eight are `memory_admin` actions and two are
+  `episode` actions; the session-start hook and `bettermemory export`
+  cover the listings; a promotion is a `memory_write` the model makes
+  from a handoff it has read; the rest went with their modules.
+- **Ten off-by-default flags, with their code.** `[behavior]`
+  `require_write_confirmation` (with the pending-write machinery),
+  `rescue_expansion` (the retrieval bench still measures the leg),
+  `endorsement_boost` and `outcome_demotion` (a wash on the owner's
+  labelled replay), `standing_tier`, `full_tool_surface`,
+  `curation_hint_enabled` and `curation_hint_threshold`;
+  `[telemetry] log_queries_verbatim` and `max_bytes`; the
+  `[consolidate]`, `[proposals]` and `[capture]` sections whole.
+- **The modules that served them.** `consolidate`, `proposals`,
+  `patterns`, `capture`, `capture_hook`, `session_capture`, `llm`,
+  `doctor`, `sync`, `ingest`, `migrate` (the origin backfill),
+  `quarantine`, `provenance`, `index`, the v8 `episodes` and `store`,
+  and the `doctor`, `reindex`, `sync`, `consolidate`, `ingest`,
+  `capture`, `session-end` and `proposals` commands. Session capture
+  returns in a later release from its own design.
+- The ratchet-test genre (`test_doc_claims`, `test_symbol_citations`,
+  `test_resident_footprint`, `test_changelog` and their siblings) and
+  the tests of the removed modules.
+
+### Migration
+
+Run `bettermemory migrate v8` once per store directory (`--dry-run`
+first to read the report). The 8.x files stay where they are, unread by
+the server from then on; `bettermemory export --mirror DIR` writes the
+store back out as an 8.x directory at any time. A `config.toml` that
+sets a removed key keeps loading, with a warning naming it. Client
+registrations do not change: the server key, the binary and the
+`instructions` block are served as before.
 
 ## 8.0.0 - 2026-09-24
 

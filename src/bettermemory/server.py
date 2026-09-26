@@ -22,26 +22,20 @@ What's left in this module:
   ``test_server_commit_drift`` patch
   ``bettermemory.server.capture_origin``; the binding must stay
   importable here.
-* Re-exports of ``_cli_export`` /
-  ``_cli_consolidate_acknowledge_debt`` /
-  ``_cli_consolidate_acknowledge_misses`` for ``test_export`` and
-  ``test_consolidate``.
+* Re-export of ``_cli_export`` for ``test_export``.
 
-The full tool surface (mirrored in ``prompts.SYSTEM_PROMPT_ADDENDUM``
-so the consuming model sees an identical list):
+The tool surface (mirrored in ``prompts.SYSTEM_PROMPT_ADDENDUM`` so the
+consuming model sees an identical list):
 
-- Retrieval: memory_search, memory_show, memory_list, memory_scope_overview
-- Writing:   memory_write (+ _confirm / _cancel staged-write pair),
-             memory_update
-- Lifecycle: memory_remove, memory_restore, memory_list_tombstones
+- Retrieval: memory_search, memory_show
+- Writing:   memory_write, memory_update
+- Lifecycle: memory_remove
 - Verification: memory_verify
-- Curation:  memory_record_use, memory_health, memory_audit_turn,
-             memory_acknowledge_miss, memory_rename_scope,
-             memory_conflicts, memory_curate, memory_proposals,
-             episode_patterns
-- Episodes:  episode_write, episode_search, episode_handoff,
-             episode_promote
-- Session:   memory_scope_disable / memory_scope_enable
+- Curation:  memory_record_use
+- Episodes:  episode (action: write, handoff)
+- Admin:     memory_admin (action: restore, tombstones, health,
+             rename_scope, conflicts, acknowledge_miss, disable_scope,
+             enable_scope)
 
 That is 22 ``memory_*`` plus 5 ``episode_*``; 18 of the 27 register by
 default, the rest behind ``[behavior] full_tool_surface``.
@@ -82,11 +76,9 @@ from .prompts import SYSTEM_PROMPT_ADDENDUM
 #    for `load_config` is now `bettermemory.config.load_config` —
 #    every CLI module imports it from `..config` directly, so no
 #    back-edge through this module is needed.)
-# 3. `tests/test_consolidate.py` and `tests/test_export.py` import
-#    `_cli_export`, `_cli_consolidate_acknowledge_debt`, and
-#    `_cli_consolidate_acknowledge_misses` directly from
-#    `bettermemory.server`. The re-exports below preserve those import
-#    paths after the move into `cli/`.
+# 3. `tests/test_export.py` imports `_cli_export` directly from
+#    `bettermemory.server`. The re-export below preserves that import
+#    path after the move into `cli/`.
 
 
 def main() -> None:
@@ -102,15 +94,10 @@ def main() -> None:
     _main()
 
 
-# Re-exports for the test suite. `_cli_export` is exercised directly by
-# `tests/test_export.py`; the two `_cli_consolidate_acknowledge_*`
-# helpers by `tests/test_consolidate.py`. Pulling them through here lets
-# the tests keep their `from bettermemory.server import …` lines without
-# the refactor cascading into every test file.
-from .cli.consolidate import (  # noqa: E402
-    _cli_consolidate_acknowledge_debt,
-    _cli_consolidate_acknowledge_misses,
-)
+# Re-export for the test suite. `_cli_export` is exercised directly by
+# `tests/test_export.py`. Pulling it through here lets the test keep its
+# `from bettermemory.server import …` line without the refactor
+# cascading into the test file.
 from .cli.export import _cli_export  # noqa: E402
 
 
@@ -125,6 +112,4 @@ __all__ = [
     "SYSTEM_PROMPT_ADDENDUM",
     "capture_origin",
     "_cli_export",
-    "_cli_consolidate_acknowledge_debt",
-    "_cli_consolidate_acknowledge_misses",
 ]

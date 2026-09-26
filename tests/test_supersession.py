@@ -22,7 +22,7 @@ import pytest
 
 from bettermemory.config import BehaviorConfig, Config, StorageConfig
 from bettermemory.conflicts import ConflictQueue
-from bettermemory.events import Recorder, iter_events
+from bettermemory.events import Recorder
 from bettermemory.models import Confidence, Memory, Source, generate_ulid, snippet_for
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
@@ -336,21 +336,14 @@ def test_the_poison_lever_is_pinned(replay: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def memory_dir(tmp_path: Path) -> Path:
-    return tmp_path / "memories"
-
-
-def _build(memory_dir: Path, **behavior: Any) -> Any:
+def _build(store: Store, **behavior: Any) -> Any:
     cfg = Config(
-        storage=StorageConfig(directory=str(memory_dir)),
-        behavior=BehaviorConfig(full_tool_surface=True, **behavior),
+        storage=StorageConfig(directory=str(store.path.parent)),
+        behavior=BehaviorConfig(**behavior),
     )
     state = SessionState()
-    recorder = Recorder(root=memory_dir, session_id=state.session_id, enabled=True)
-    return build_server(
-        config=cfg, store=Store(memory_dir), state=state, recorder=recorder
-    )
+    recorder = Recorder(store=store, session_id=state.session_id, enabled=True)
+    return build_server(config=cfg, store=store, state=state, recorder=recorder)
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
@@ -369,8 +362,8 @@ def _hit(hits: list[dict[str, Any]], mid: str) -> dict[str, Any]:
     return next(h for h in hits if h["id"] == mid)
 
 
-async def test_write_sets_the_link_and_search_renders_it(memory_dir: Path) -> None:
-    server = _build(memory_dir)
+async def test_write_sets_the_link_and_search_renders_it(store: Store) -> None:
+    server = _build(store)
     old = await _call(
         server, "memory_write", content=_PORT_OLD, scopes=["infrastructure"]
     )
@@ -407,7 +400,7 @@ async def test_write_sets_the_link_and_search_renders_it(memory_dir: Path) -> No
 
     events = [
         e
-        for e in iter_events(memory_dir)
+        for e in store.iter_events()
         if e.get("kind") == "write" and e.get("id") == new["id"]
     ]
     assert events and events[0]["supersedes"] == [old["id"]]
@@ -415,8 +408,8 @@ async def test_write_sets_the_link_and_search_renders_it(memory_dir: Path) -> No
     assert "conflicts_filed" not in events[0]
 
 
-async def test_cue_less_divergence_files_a_conflict(memory_dir: Path) -> None:
-    server = _build(memory_dir)
+async def test_cue_less_divergence_files_a_conflict(store: Store) -> None:
+    server = _build(store)
     old = await _call(
         server, "memory_write", content=_PORT_OLD, scopes=["infrastructure"]
     )
@@ -429,14 +422,14 @@ async def test_cue_less_divergence_files_a_conflict(memory_dir: Path) -> None:
     assert row["id"] == old["id"]
     assert (row["new_value"], row["old_value"]) == ("9443", "8443")
     assert "cue" not in row
-    assert "memory_conflicts" in new["hint"]
+    assert 'memory_admin(action="conflicts")' in new["hint"]
 
-    (pending,) = ConflictQueue(memory_dir).pending()
+    (pending,) = ConflictQueue(store).pending()
     assert pending.id == row["pair_id"]
     assert {pending.a_id, pending.b_id} == {new["id"], old["id"]}
     assert pending.detector == "numeric"
 
-    listed = _unwrap(await _call(server, "memory_conflicts"))
+    listed = _unwrap(await _call(server, "memory_admin", action="conflicts"))
     assert listed["pending_total"] == 1
     assert listed["pending"][0]["id"] == row["pair_id"]
 
@@ -444,15 +437,15 @@ async def test_cue_less_divergence_files_a_conflict(memory_dir: Path) -> None:
     assert shown.get("links", []) == []
     events = [
         e
-        for e in iter_events(memory_dir)
+        for e in store.iter_events()
         if e.get("kind") == "write" and e.get("id") == new["id"]
     ]
     assert events[0]["conflicts_filed"] == [row["pair_id"]]
     assert "supersedes" not in events[0]
 
 
-async def test_declared_supersedes_sets_the_link(memory_dir: Path) -> None:
-    server = _build(memory_dir)
+async def test_declared_supersedes_sets_the_link(store: Store) -> None:
+    server = _build(store)
     old = await _call(
         server,
         "memory_write",
@@ -475,7 +468,7 @@ async def test_declared_supersedes_sets_the_link(memory_dir: Path) -> None:
     assert [e["id"] for e in _hit(hits, old["id"])["superseded_by"]] == [new["id"]]
     events = [
         e
-        for e in iter_events(memory_dir)
+        for e in store.iter_events()
         if e.get("kind") == "write" and e.get("id") == new["id"]
     ]
     assert events[0]["supersedes"] == [old["id"]]
@@ -483,9 +476,9 @@ async def test_declared_supersedes_sets_the_link(memory_dir: Path) -> None:
 
 
 async def test_declared_supersedes_refuses_what_is_not_an_active_memory(
-    memory_dir: Path,
+    store: Store,
 ) -> None:
-    server = _build(memory_dir)
+    server = _build(store)
     old = await _call(
         server, "memory_write", content=_PORT_OLD, scopes=["infrastructure"]
     )
@@ -516,27 +509,8 @@ async def test_declared_supersedes_refuses_what_is_not_an_active_memory(
         )
 
 
-async def test_a_pending_write_sets_its_links_at_confirm(memory_dir: Path) -> None:
-    server = _build(memory_dir, require_write_confirmation=True)
-    staged = await _call(
-        server, "memory_write", content=_PORT_OLD, scopes=["infrastructure"]
-    )
-    old = await _call(server, "memory_write_confirm", pending_id=staged["pending_id"])
-    staged = await _call(
-        server, "memory_write", content=_PORT_NEW, scopes=["infrastructure"]
-    )
-    assert staged["status"] == "pending" and "supersedes" not in staged
-    new = await _call(server, "memory_write_confirm", pending_id=staged["pending_id"])
-    assert new["status"] == "committed"
-    assert [row["id"] for row in new["supersedes"]] == [old["id"]]
-    hits = await _search(server, "auth service port ingress")
-    assert [e["id"] for e in _hit(hits, old["id"])["superseded_by"]] == [new["id"]]
-    events = [e for e in iter_events(memory_dir) if e.get("kind") == "write_confirm"]
-    assert events[-1]["supersedes"] == [old["id"]]
-
-
-async def test_a_forced_write_still_detects(memory_dir: Path) -> None:
-    server = _build(memory_dir)
+async def test_a_forced_write_still_detects(store: Store) -> None:
+    server = _build(store)
     old = await _call(
         server, "memory_write", content=_PORT_OLD, scopes=["infrastructure"]
     )
@@ -552,8 +526,8 @@ async def test_a_forced_write_still_detects(memory_dir: Path) -> None:
     assert [row["id"] for row in new["supersedes"]] == [old["id"]]
 
 
-async def test_the_flag_off_leaves_links_to_the_writer(memory_dir: Path) -> None:
-    server = _build(memory_dir, write_supersession=False)
+async def test_the_flag_off_leaves_links_to_the_writer(store: Store) -> None:
+    server = _build(store, write_supersession=False)
     old = await _call(
         server, "memory_write", content=_PORT_OLD, scopes=["infrastructure"]
     )

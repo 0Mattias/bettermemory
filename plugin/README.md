@@ -6,56 +6,36 @@ layer between an agent and its own past: every retrieved fact carries
 a staleness verdict, every use an attribution, and whether it helped
 is measured rather than assumed.
 
-The plugin bundles six things:
+The plugin bundles five things:
 
-1. **MCP server registration** ([`.mcp.json`](.mcp.json)) — spawns
-   `uvx bettermemory` as a stdio MCP server. 18 of the 27 tools
-   register by default; the curation/power-user tools sit behind
-   `[behavior] full_tool_surface = true` (see
-   [docs/api.md](../docs/api.md)).
+1. **MCP server registration** ([`.mcp.json`](.mcp.json)): spawns
+   `uvx bettermemory` as a stdio MCP server, which registers the nine
+   tools (see [docs/api.md](../docs/api.md)).
 2. **Memory-discipline skill**
-   ([`skills/bettermemory/SKILL.md`](skills/bettermemory/SKILL.md)) —
-   the long-form retrieval/writing policy at the system-prompt level.
-   The server's own `instructions` block carries a short summary;
-   Claude Code truncates that block at ~1.8 KB, the skill has no cap.
-3. **Stop hook** ([`hooks/hooks.json`](hooks/hooks.json)) — runs
-   `uvx bettermemory audit-turn --quiet` at each turn end to log
-   silent retrieval misses. Always exits 0, so a transient failure
-   never surfaces as a hook-error banner.
-4. **SessionStart hook** (same file) — runs
+   ([`skills/bettermemory/SKILL.md`](skills/bettermemory/SKILL.md)):
+   the long-form retrieval and writing policy at the system-prompt
+   level. The server's own `instructions` block carries a short
+   summary; Claude Code truncates that block, the skill has no cap.
+3. **Stop hook** ([`hooks/hooks.json`](hooks/hooks.json)): runs
+   `uvx bettermemory audit-turn --quiet` at each turn end to settle the
+   turn's retrievals and log silent retrieval misses. Always exits 0,
+   so a transient failure never surfaces as a hook-error banner.
+4. **SessionStart hook** (same file): runs
    `uvx bettermemory session-start` when a conversation opens and
    prints the per-scope memory counts for the current repository.
    Claude Code injects a SessionStart hook's stdout into the model's
    context, so the session begins knowing what is stored without
-   spending a `memory_scope_overview` call on it. Reads the search
-   index only (never memory bodies), records nothing, prints nothing
-   when the store is empty, and always exits 0. With `[behavior]
-   standing_tier = true` (default off) the same block additionally
-   carries in full the repository's `ambient` memories that the index
-   labels local and the verdict reads fresh (the one delivery that
-   fires without being asked), points at the other ambient memories
-   by id, scopes and provenance label, never the body, capped at ~1 KB
-   together and truncated only at whole-memory boundaries, with stale
-   local ambient memories collapsed to one "verify to restore
-   delivery" line.
-5. **UserPromptSubmit hook** (same file) — runs
+   spending a tool call on it. Reads the store's scope counts only
+   (never memory bodies), records nothing, prints nothing when the
+   store is empty, and always exits 0.
+5. **UserPromptSubmit hook** (same file): runs
    `uvx bettermemory prompt-recall` on each prompt submission. Probes
    the prompt with the same silent-miss predicate the Stop hook
-   audits with; on the ~2% of prompts that clear it, prints a one-hit
-   pointer block (memory id + scopes + snippet — never a body) that
+   audits with; on the few prompts that clear it, prints a one-hit
+   pointer block (memory id, scopes and snippet, never a body) that
    Claude Code injects into context, and records a `prompt_recall`
    event the audit counts as retrieval. `[behavior]
    prompt_recall = false` disables it. Always exits 0.
-6. **SessionEnd hook** (same file) — runs `uvx bettermemory session-end`
-   when a session ends. With `[capture] enabled = true` (default off)
-   it starts a background capture of the session's transcript: the
-   model the session was talking to, on your own Claude Code login,
-   distils dated memories from it and writes them through the same
-   gates as `memory_write`, tagged `session-capture`. Two more capture
-   moments ride the hooks above: the Stop hook starts a checkpoint
-   capture of a long open session, and the SessionStart hook starts one
-   for sessions that went quiet without ending (a crash, a closed
-   laptop). With capture off it does nothing. Always exits 0.
 
 ## Install
 
@@ -74,17 +54,20 @@ instead, `uv tool install bettermemory` and edit `.mcp.json` to
 Ask the model *"what memory tools do you have?"* — you should see tools
 with the `mcp__bettermemory__` prefix. Then try *"remember that I
 prefer hands-on tutorials with runnable code"*: the model should call
-`memory_write` with `category="user-inference"`, and a markdown file
-lands in `~/.claude-memory/` without a confirmation round trip.
+`memory_write` with `category="user-inference"`, and the record lands
+in `~/.claude-memory/memory.sqlite` without a confirmation round trip.
 
 ## Troubleshooting
 
 ```sh
-uvx bettermemory doctor
+uvx bettermemory try
 ```
 
-Checks the install end to end (binary, config, storage, event log,
-hook cadence, stale client paths), one fix hint per failed check.
+The offline demo proves the package runs; if the tools still do not
+appear in the session, run `uvx bettermemory` by hand and read its
+startup log, which names the store directory and any config problem.
+`uvx bettermemory health` says whether the Stop hook's settlement
+telemetry is landing (`telemetry_coverage`).
 
 ## Uninstall
 

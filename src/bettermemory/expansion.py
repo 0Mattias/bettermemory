@@ -26,9 +26,11 @@ test-side views identical.
 Measurement provenance for every constant here: the probe grid recorded
 in the retrieval-bench notes (2026-08-09) — recall@1/@5 as-asked
 35%/60% -> 50%/90% with requery byte-stable at 80%/100% on the
-technical-prose gold set. The lane ships OPT-IN (`[behavior]
-rescue_expansion`, default off): its preregistered held-out check on
-LongMemEval's conversational stores killed default-on — inflection
+technical-prose gold set. The lane is OFF in the product (`search.search`'s
+`rescue_expansion` parameter, default False; since 9.0.0 there is no
+config key) and is measured by bench/retrieval's requery arm: its
+preregistered held-out check on LongMemEval's conversational stores
+killed default-on — inflection
 variants of common chat verbs are promiscuous matchers there, the
 inverse of a technical corpus where expansion vocabulary is rare and
 discriminating. The kill, the ablation that isolated it to the

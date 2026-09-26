@@ -1,84 +1,478 @@
-"""Filesystem operations for bettermemory.
+"""One SQLite file per store: the bettermemory 9 store.
 
-Pure file I/O — no search logic, no MCP awareness. The store owns the layout
-of the memory directory and the on-disk format; callers pass in `Memory`
-objects and get them back.
+The v8 store was a directory of markdown files with a derived FTS5 index
+beside it; markdown is now the export and import format (``mirror`` and
+``migrate_v8``). This store is one file, ``memory.sqlite``, whose tables
+ARE the records: memories,
+tombstones, episodes, verifications, conflicts, imports and quarantine,
+plus the hash-chained log every mutation and telemetry event is a row of
+(``bettermemory.log``). There is no derived index to rebuild or to skew:
+the FTS5 table and its triggers are the v8 index's own, verbatim, so the
+candidate query and its bm25 order are unchanged.
+
+The fold. A mutation row carries the whole record after the change, and
+the live write path and ``refold`` apply a row through the same function,
+``_apply_mutation``. Replaying the log into a scratch database therefore
+reproduces the tables exactly, and a row the replay does not produce is
+one that entered outside the store: ``unaccounted``, the label
+``provenance_for`` reports for it. ``log_verify`` merges that fold with
+the chain report from ``bettermemory.log``.
+
+Transactions. Each mutating method runs ``BEGIN IMMEDIATE``, changes the
+table, appends its log rows and commits, then moves the head checkpoint
+forward. A failure anywhere rolls the table change and the rows back
+together.
+
+Keys. ``create`` writes the store's key under the keys directory
+(``log.default_keys_dir`` unless the caller names one) and records only
+its fingerprint in ``meta``. ``open`` finds the key by fingerprint; a
+missing or foreign key is retired, a fresh one written, and a ``rekey``
+row appended, unless the caller opens with ``allow_rekey=False``, which
+leaves the store readable and refuses mutations.
 """
 
 from __future__ import annotations
 
-import hashlib
-from collections import OrderedDict
-from collections.abc import Callable, Iterable
-
 import contextlib
-import errno
-import logging as _logging
+import hmac
+import json
+import logging
 import os
-import stat
-import sys
-import threading
-from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+import secrets
+import sqlite3
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterator, Protocol
+from typing import Any, NamedTuple, Protocol
 
-import yaml
-from pydantic import ValidationError as PydanticValidationError
+from pydantic import ValidationError
 
-from . import _frontmatter as frontmatter
-from ._decorators import best_effort
-from ._fsutil import ensure_owner_only_dir, atomic_write_bytes, flock_excl, fsync_dir
-
-# We use a vendored frontmatter parser (`_frontmatter.py`) which pins the
-# pure-Python yaml.SafeLoader / yaml.SafeDumper. Two reasons:
-#
-# 1. CSafeDumper has a state-machine bug that surfaces under coverage
-#    instrumentation: it raises `EmitterError: expected SCALAR, ...` when
-#    coverage filters by a specific submodule (e.g. `--cov=bettermemory.store`).
-#    Pure-Python yaml is unaffected.
-# 2. `python-frontmatter` 1.1.0 (current release) calls `codecs.open()`,
-#    which Python 3.14 emits a DeprecationWarning for. The library is
-#    effectively unmaintained. Vendoring is shorter than living with the
-#    warning or shimming around it.
-#
-# Memory frontmatter is dozens of bytes per write; the libyaml speedup is
-# irrelevant here. Robustness wins.
-
-
+from ._fsutil import ensure_owner_only_dir
+from .events import _redact_event_fields
+from .identity import Actor
+from . import log as _chain
+from .config import KEYS_DIR_ENV
+from .log import (
+    CONTROL_KINDS,
+    MIGRATE_V8,
+    REKEY,
+    STORE_CREATED,
+    KeyRing,
+    LogRow,
+    append_row,
+    canonical_payload,
+    compute_mac,
+    fingerprint,
+    iter_rows,
+    verify_chain,
+)
 from .models import (
-    SCHEMA_VERSION,
     Category,
     Confidence,
+    Episode,
     Memory,
     MemoryLink,
     MemorySummary,
     Source,
     TombstonedMemory,
     TombstonedSummary,
-    build_filename,
     first_summary_line,
     generate_ulid,
     is_valid_ulid,
-    make_slug,
     utcnow,
 )
-from .identity import SOURCE_PROCESS_CWD, Actor
 from .origin import Origin, is_full_commit_sha
-from .quarantine import quarantined_names
+from .search import fts_index_text, fts_match_query, tokenizer_fingerprint
+from .time_utils import isoformat_utc
+
+log = logging.getLogger("bettermemory.store")
+
+STORE_FILENAME = "memory.sqlite"
+SCHEMA_VERSION = 1
+
+# Set on a store's first open, before its first table and before WAL mode
+# fixes it. A record row (body, its token stream, the JSON columns) runs
+# past the largest payload a 4 KB page keeps in line, so at 4 KB most rows
+# spill into an overflow page of their own; 8 KB keeps them in line and
+# measured 16 percent smaller on the rank-parity corpus at the same write
+# cost, where 16 KB saved nothing more and cost a third on every write
+# (bench/parity/results/sqlite-candidates-8.0.0-2026-09-26.json records
+# both sizes beside the parity).
+PAGE_SIZE = 8192
+
+# How a record entered the store. `local`: written through this store's
+# own code path. `imported`: brought in by the migration or an import.
+# `synced`: arrived from another machine (phase 3). `unaccounted`: a row
+# the fold does not produce; reported by `log_verify`, never written.
+LOCAL = "local"
+IMPORTED = "imported"
+SYNCED = "synced"
+UNACCOUNTED = "unaccounted"
+PROVENANCE_LABELS = frozenset({LOCAL, IMPORTED, SYNCED, UNACCOUNTED})
+_WRITABLE_PROVENANCE = frozenset({LOCAL, IMPORTED, SYNCED})
+
+# The tables a replay of the log reproduces, and the log kinds that
+# mutate them: one put and one delete per table. `memory_links` is
+# derived from each memory's link list and folded with it.
+FOLDED_TABLES = (
+    "memories",
+    "memory_links",
+    "tombstones",
+    "episodes",
+    "verifications",
+    "conflicts",
+    "imports",
+    "quarantine",
+)
+_MUTATION_TABLES = (
+    "memory",
+    "tombstone",
+    "episode",
+    "verification",
+    "conflict",
+    "import",
+    "quarantine",
+)
+MUTATION_KINDS = frozenset(
+    f"{table}_{op}" for table in _MUTATION_TABLES for op in ("put", "delete")
+)
+
+# Key columns per folded table, for the fold's row comparison.
+_TABLE_KEYS: dict[str, tuple[str, ...]] = {
+    "memories": ("id",),
+    "memory_links": ("source_id", "type", "target_id", "note"),
+    "tombstones": ("id",),
+    "episodes": ("id",),
+    "verifications": ("memory_id", "machine_id"),
+    "conflicts": ("id",),
+    "imports": ("source",),
+    "quarantine": ("name",),
+}
+
+_CONFLICT_COLUMNS = (
+    "id",
+    "a_id",
+    "b_id",
+    "summary_a",
+    "summary_b",
+    "similarity",
+    "method",
+    "detector",
+    "created",
+    "status",
+    "verdict_ts",
+    "note",
+    "verdict_hash_a",
+    "verdict_hash_b",
+)
+_QUARANTINE_COLUMNS = ("name", "reason", "detail", "remote", "at", "size", "sha256")
+_IMPORT_COLUMNS = ("source", "content_hash", "imported_at", "memory_id")
+_VERIFICATION_LISTS = (
+    "verified_paths",
+    "verified_commits",
+    "verified_versions",
+    "verified_absent_paths",
+)
+
+_PROVENANCE_BATCH = 500
+
+# What an imported row's payload says about where it came from. The v8
+# migration is the one importer today; a later `import` names itself.
+IMPORTED_FROM_V8 = "v8"
+
+
+class TrustRow(NamedTuple):
+    """One record's trust facts the record itself cannot supply: how it
+    entered the store (the verified provenance label) and when this host
+    last verified it (None: never, or not since it arrived from
+    elsewhere)."""
+
+    provenance: str
+    verified_locally_at: str | None
+
+
+@dataclass(frozen=True)
+class EpisodeVolume:
+    """How big the journal is: the growth gauge the health report
+    carries. ``prunable_sessions`` counts the sessions whose newest
+    episode is past the TTL, which the next ``prune_episode_sessions``
+    takes."""
+
+    sessions: int
+    episodes: int
+    bytes: int
+    prunable_sessions: int
+    ttl_days: int
+
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "sessions": self.sessions,
+            "episodes": self.episodes,
+            "bytes": self.bytes,
+            "prunable_sessions": self.prunable_sessions,
+            "ttl_days": self.ttl_days,
+        }
+
+
+# How long a journal session lives before the write path prunes it.
+DEFAULT_EPISODE_TTL_DAYS = 30
+
+
+def _scopes_after_rename(scopes: list[str], old: str, new: str) -> list[str] | None:
+    """The scope list with `old` replaced by `new` and duplicates collapsed,
+    or None when `old` is not present."""
+    if old not in scopes:
+        return None
+    out: list[str] = []
+    seen: set[str] = set()
+    for scope in scopes:
+        name = new if scope == old else scope
+        if name in seen:
+            continue
+        out.append(name)
+        seen.add(name)
+    return out
+
+
+@dataclass(frozen=True)
+class MemoryRow:
+    """An active record with the two columns the record itself does not
+    carry: how it entered the store and the v8 filename it keeps."""
+
+    memory: Memory
+    provenance: str
+    filename: str | None
+
+
+@dataclass(frozen=True)
+class TombstoneRow:
+    """A tombstone with what the record carried while active and the
+    tombstone model drops: its links, its corroboration rollup, and the
+    active filename the mirror derives the tombstone's name from."""
+
+    tombstone: TombstonedMemory
+    provenance: str
+    filename: str | None
+    links: list[dict[str, Any]]
+    corroborations: int
+    last_corroborated: datetime | None
 
 
 # ---------------------------------------------------------------------------
-# Errors
+# Schema
 # ---------------------------------------------------------------------------
+#
+# `memories` opens with the v8 index's columns in the v8 order, minus
+# `verified_locally_at` (this host's stamps are `verifications` rows
+# now) and `content_sha256` (the log covers integrity), then carries the
+# rest of the record and, last, `log_mac`: the MAC of the log row that
+# produced the row, which `provenance_for` verifies on every read so a
+# row that entered outside the log reads `unaccounted` without a refold.
+# Tombstones and episodes carry the same column. The FTS5 table, its three triggers, the `updated`
+# index, `memory_links` and its cleanup trigger are the v8 index's
+# statements verbatim; tests/test_store.py compares the text.
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS memories (
+    rowid INTEGER PRIMARY KEY,
+    id TEXT NOT NULL UNIQUE,
+    created TEXT NOT NULL,
+    updated TEXT NOT NULL,
+    last_verified_at TEXT,
+    confidence TEXT NOT NULL,
+    category TEXT,
+    body TEXT NOT NULL,
+    body_fts TEXT NOT NULL DEFAULT '',
+    scopes_text TEXT NOT NULL,
+    scopes_fts TEXT NOT NULL DEFAULT '',
+    scopes_json TEXT NOT NULL,
+    filename TEXT,
+    origin_repo TEXT,
+    origin_worktree TEXT,
+    provenance TEXT NOT NULL,
+    verified_head TEXT,
+    actor_client TEXT,
+    actor_model TEXT,
+    source TEXT NOT NULL,
+    origin_json TEXT,
+    actor_json TEXT,
+    verified_paths_json TEXT NOT NULL DEFAULT '[]',
+    verified_commits_json TEXT NOT NULL DEFAULT '[]',
+    verified_versions_json TEXT NOT NULL DEFAULT '[]',
+    verified_absent_paths_json TEXT NOT NULL DEFAULT '[]',
+    claims_json TEXT NOT NULL DEFAULT '[]',
+    links_json TEXT NOT NULL DEFAULT '[]',
+    corroborations INTEGER NOT NULL DEFAULT 0,
+    last_corroborated TEXT,
+    log_mac TEXT
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+    body_fts, scopes_fts,
+    content='memories', content_rowid='rowid',
+    tokenize='unicode61'
+);
+
+CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+    INSERT INTO memories_fts(rowid, body_fts, scopes_fts)
+    VALUES (new.rowid, new.body_fts, new.scopes_fts);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, body_fts, scopes_fts)
+    VALUES ('delete', old.rowid, old.body_fts, old.scopes_fts);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, body_fts, scopes_fts)
+    VALUES ('delete', old.rowid, old.body_fts, old.scopes_fts);
+    INSERT INTO memories_fts(rowid, body_fts, scopes_fts)
+    VALUES (new.rowid, new.body_fts, new.scopes_fts);
+END;
+
+CREATE INDEX IF NOT EXISTS memories_by_updated ON memories(updated DESC);
+
+CREATE TABLE IF NOT EXISTS memory_links (
+    source_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    note TEXT,
+    PRIMARY KEY (source_id, type, target_id, note)
+);
+
+CREATE INDEX IF NOT EXISTS memory_links_by_target ON memory_links(target_id);
+
+CREATE TRIGGER IF NOT EXISTS memory_links_cleanup AFTER DELETE ON memories BEGIN
+    DELETE FROM memory_links
+    WHERE source_id = old.id OR target_id = old.id;
+END;
+
+CREATE TABLE IF NOT EXISTS tombstones (
+    id TEXT PRIMARY KEY,
+    created TEXT NOT NULL,
+    updated TEXT NOT NULL,
+    last_verified_at TEXT,
+    confidence TEXT NOT NULL,
+    category TEXT,
+    body TEXT NOT NULL,
+    scopes_json TEXT NOT NULL,
+    filename TEXT,
+    origin_repo TEXT,
+    origin_worktree TEXT,
+    provenance TEXT NOT NULL,
+    verified_head TEXT,
+    actor_client TEXT,
+    actor_model TEXT,
+    source TEXT NOT NULL,
+    origin_json TEXT,
+    actor_json TEXT,
+    verified_paths_json TEXT NOT NULL DEFAULT '[]',
+    verified_commits_json TEXT NOT NULL DEFAULT '[]',
+    verified_versions_json TEXT NOT NULL DEFAULT '[]',
+    verified_absent_paths_json TEXT NOT NULL DEFAULT '[]',
+    claims_json TEXT NOT NULL DEFAULT '[]',
+    links_json TEXT NOT NULL DEFAULT '[]',
+    corroborations INTEGER NOT NULL DEFAULT 0,
+    last_corroborated TEXT,
+    removed TEXT NOT NULL,
+    removed_reason TEXT NOT NULL,
+    removed_session TEXT,
+    log_mac TEXT
+);
+
+CREATE INDEX IF NOT EXISTS tombstones_by_removed ON tombstones(removed);
+
+CREATE TABLE IF NOT EXISTS episodes (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    created TEXT NOT NULL,
+    body TEXT NOT NULL,
+    scopes_json TEXT NOT NULL DEFAULT '[]',
+    takeaway TEXT,
+    origin_json TEXT,
+    is_floor INTEGER NOT NULL DEFAULT 0,
+    swarm_id TEXT,
+    log_mac TEXT
+);
+
+CREATE INDEX IF NOT EXISTS episodes_by_session ON episodes(session_id, created);
+
+CREATE TABLE IF NOT EXISTS log (
+    seq INTEGER PRIMARY KEY,
+    ts TEXT NOT NULL,
+    session TEXT,
+    kind TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    prev_mac TEXT NOT NULL,
+    mac TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS log_by_kind ON log(kind, seq);
+CREATE INDEX IF NOT EXISTS log_by_ts ON log(ts);
+CREATE INDEX IF NOT EXISTS log_by_mac ON log(mac);
+
+CREATE TABLE IF NOT EXISTS verifications (
+    memory_id TEXT NOT NULL,
+    machine_id TEXT,
+    verified_at TEXT NOT NULL,
+    verified_head TEXT,
+    verified_paths_json TEXT NOT NULL DEFAULT '[]',
+    verified_commits_json TEXT NOT NULL DEFAULT '[]',
+    verified_versions_json TEXT NOT NULL DEFAULT '[]',
+    verified_absent_paths_json TEXT NOT NULL DEFAULT '[]'
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS verifications_by_memory_machine
+    ON verifications(memory_id, COALESCE(machine_id, ''));
+
+CREATE TABLE IF NOT EXISTS conflicts (
+    id TEXT PRIMARY KEY,
+    a_id TEXT NOT NULL,
+    b_id TEXT NOT NULL,
+    summary_a TEXT NOT NULL,
+    summary_b TEXT NOT NULL,
+    similarity REAL NOT NULL,
+    method TEXT NOT NULL,
+    detector TEXT NOT NULL,
+    created TEXT NOT NULL,
+    status TEXT NOT NULL,
+    verdict_ts TEXT,
+    note TEXT,
+    verdict_hash_a TEXT,
+    verdict_hash_b TEXT
+);
+
+CREATE TABLE IF NOT EXISTS imports (
+    source TEXT PRIMARY KEY,
+    content_hash TEXT NOT NULL,
+    imported_at TEXT NOT NULL,
+    memory_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS quarantine (
+    name TEXT PRIMARY KEY,
+    reason TEXT NOT NULL,
+    detail TEXT,
+    remote TEXT,
+    at TEXT NOT NULL,
+    size INTEGER,
+    sha256 TEXT
+);
+"""
 
 
 class MemoryNotFoundError(KeyError):
-    """No active memory with that ID."""
+    """No active memory with that id."""
 
 
 class TombstonedError(KeyError):
-    """ID exists but the memory is tombstoned."""
+    """The id exists but the memory is tombstoned."""
 
 
 class NotTombstonedError(KeyError):
@@ -86,588 +480,1806 @@ class NotTombstonedError(KeyError):
 
 
 class ConcurrentUpdateError(Exception):
-    """`Store.update` saw a different `updated` on disk than the caller's
-    snapshot. The caller's edit was built on top of a now-stale read; the
-    write was refused rather than silently clobbering whoever bumped the
-    record in the interim.
-
-    `current_updated` is the on-disk `updated` timestamp at the moment the
-    CAS check failed — the caller should re-load via `Store.load_one` (or
-    `memory_show` at the handler boundary), rebase the edit on top, and
-    retry. The store retains the prior writer's change; this exception
-    means "your snapshot is older than the file, retry on top," not
-    "your write was lost."
-
-    Not a subclass of `KeyError` (unlike the sibling errors above) because
-    the record IS still findable by id — the failure mode is "stale
-    snapshot," not "id gone." Subclassing `Exception` keeps a
-    `try: ... except KeyError:` block from accidentally swallowing this
-    one as if it were a not-found case.
-    """
+    """`Store.update` saw a different `updated` in the store than the
+    caller's snapshot. The caller's edit was built on a now-stale read
+    and was refused rather than clobbering whoever bumped the record in
+    between; `current_updated` is the stored stamp at the moment the
+    check failed. Not a KeyError: the record is still findable, the
+    failure is a stale snapshot."""
 
     def __init__(self, memory_id: str, current_updated: datetime) -> None:
         self.memory_id = memory_id
         self.current_updated = current_updated
         super().__init__(
             f"memory {memory_id} was updated concurrently "
-            f"(your snapshot is stale; on-disk updated={current_updated.isoformat()})"
+            f"(your snapshot is stale; stored updated={current_updated.isoformat()})"
         )
 
 
-# ---------------------------------------------------------------------------
-# File locking
-# ---------------------------------------------------------------------------
-#
-# `_locked` is the local alias for the canonical fcntl-based exclusive
-# flock in `_fsutil.flock_excl`. Re-exported as `_locked` here so the
-# rest of `store.py` keeps reading naturally (`with _locked(path):`).
-# Single source of truth: a future fix to the locking discipline lands
-# in `_fsutil.flock_excl` and applies to events.py and sync.py too —
-# see the 2.6.3 pattern-generalization audit note.
-#
-# Top-level assignment (not `import flock_excl as _locked`) so mypy strict's
-# no_implicit_reexport rule accepts external imports of `_locked` here —
-# `migrate.py` and the locking tests reach into this module by name.
-_locked = flock_excl
+class NotFoundError(KeyError):
+    """No record with that key in the table asked."""
 
 
 # ---------------------------------------------------------------------------
-# Parse-failure skip set
-# ---------------------------------------------------------------------------
-#
-# The ONE skip-set every per-file catch around `_parse_memory_file` uses:
-# the bulk readers (`load_all`, `iter_active`), the id walks (`load_one`,
-# `rename_scope`'s active branch), the search prefilter's per-candidate
-# load (`_handlers.load_search_candidates`), and the divergence counter
-# (`count_unparseable_memory_files`). Deliberately `(Exception,)` rather
-# than an enumerated tuple: the parser delegates to pydantic and enum
-# internals whose raise surface can't be enumerated durably — the audited
-# escapes already include TypeError on valid-YAML-but-wrong-shape values
-# (`scopes: 5` → `list(meta["scopes"])`), which slipped past the historic
-# (ValueError, KeyError, OSError) tuple and crashed `memory_search` on the
-# same file that construction had already been taught to survive. The
-# contract: any parse failure == unparseable file — counted by the counter,
-# skipped by every reader, never a crash. One shared name keeps the
-# surfaces aligned; a catch that drifts narrower re-opens a gap the
-# parse-aware divergence arithmetic (the S4 warning, doctor's index_health)
-# can never explain, because "counted here" must equal "skipped there".
-# Targeted mutators (`update`, `mark_verified`, `restore`) deliberately do
-# NOT catch: a parse failure on the specific id being mutated is a loud
-# error, not a skippable neighbor.
-PARSE_SKIP_EXCEPTIONS: tuple[type[Exception], ...] = (Exception,)
-
-
-# ---------------------------------------------------------------------------
-# Store
+# Connection
 # ---------------------------------------------------------------------------
 
 
-TOMBSTONE_DIR = ".tombstones"
-
-# Batch ceiling for the ONE `index.filenames_for_ids` call behind
-# `Store.load_many`. That helper binds one SQL host parameter per id in a
-# single `IN (…)` and does not chunk, and SQLite's default parameter
-# ceiling is 999 on older builds. Matches `index._PROVENANCE_BATCH`, which
-# exists for the same reason on the same ceiling.
-_FILENAMES_FOR_IDS_CHUNK = 500
-
-
-def _tighten_dir_mode(path: Path) -> None:
-    """Drop group/other bits from `path` when it carries any, leaving an
-    already-restrictive directory alone.
-
-    Exists because `Path.mkdir(mode=…)` only applies to a directory it
-    actually creates — a store that predates the explicit-0o700 change is
-    still whatever the caller's umask produced (0o755 under the usual 022),
-    and nothing else in the lifecycle re-checks it.
-
-    Best-effort by design. POSIX mode bits are meaningless on Windows, and
-    a sandboxed or network filesystem can reject `chmod` on a directory the
-    caller genuinely owns; in both cases the store is still fully usable and
-    `doctor` reports the residual exposure. Mirrors the guard/suppress shape
-    `_fsutil.atomic_write_bytes` uses for its fchmod.
-    """
-    if sys.platform == "win32":  # pragma: no cover - non-unix
-        return
+def _connect(path: Path) -> sqlite3.Connection:
+    """The one way a store file is opened: the page size for a new file,
+    WAL, synchronous NORMAL, a 5-second busy timeout, foreign keys on,
+    autocommit off so every write is an explicit transaction, and
+    owner-only modes on the file and its WAL siblings."""
+    conn = sqlite3.connect(str(path), timeout=5.0, isolation_level=None)
     try:
-        current = stat.S_IMODE(path.stat().st_mode)
-        if current & 0o077:
-            path.chmod(current & 0o700)
-    except OSError:
-        pass
+        # A no-op on an existing store: the page size is fixed once the
+        # file holds a table, and WAL mode fixes it for good.
+        conn.execute(f"PRAGMA page_size = {PAGE_SIZE}")
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.row_factory = sqlite3.Row
+        for sibling in (
+            path,
+            path.with_suffix(path.suffix + "-wal"),
+            path.with_suffix(path.suffix + "-shm"),
+        ):
+            if sibling.exists():
+                with contextlib.suppress(OSError):
+                    os.chmod(sibling, 0o600)
+    except Exception:
+        conn.close()
+        raise
+    return conn
 
 
-class MemoryStore(Protocol):
-    """The store surface the rest of bettermemory depends on.
-
-    Phase 1 of the Teams work: a NAME for the seam, so a consumer can
-    say what it needs from a store without naming the local filesystem
-    implementation. It carries exactly the public instance surface of
-    `Store` — every method below is implemented there, and
-    `test_store_satisfies_the_memory_store_protocol` fails if `Store`
-    grows a public method this forgets.
-
-    Three things about it are deliberate.
-
-    **It lives in `store.py`, beside the implementation, not in a new
-    module.** `migrate.py` and `doctor.py` import ten module-level
-    privates from here; splitting the file breaks those at IMPORT, which
-    makes `test_migrate.py` and `test_doctor.py` fail to COLLECT rather
-    than fail to pass — 5.8% of the suite going dark instead of red —
-    and the project turns its own DeprecationWarnings into errors, so
-    there is no warn-then-migrate lane to soften it.
-
-    **The concrete class keeps the name `Store`; the protocol takes the
-    new name.** The reverse is the expensive mistake available here: ten
-    `monkeypatch.setattr(Store, "load_all", ...)` failure-injection
-    sites would then patch a Protocol, which raises nothing and patches
-    nothing, and every one of them would go green while testing
-    nothing — failing OPEN, on exactly the behaviour a shared store
-    changes.
-
-    **`root` is on the protocol, and that is temporary.** Some 59 sites
-    hand a store's root to a sibling subsystem that never goes through
-    a Store at all — the event log, the index, eleven sidecar queues —
-    so a hosted backend still has to present a real local directory
-    today. Removing `root` means giving each of those subsystems its
-    own seam, which is the product rather than this phase. It stays
-    until they have one."""
-
-    root: Path
-
-    def ensure(self) -> MemoryStore: ...
-    @property
-    def tombstone_dir(self) -> Path: ...
-    def load_all(self) -> list[Memory]: ...
-    def iter_active(self) -> Iterator[tuple[Path, Memory]]: ...
-    def list_summaries(
-        self, scopes: list[str] | None = None
-    ) -> list[MemorySummary]: ...
-    def load_one(self, memory_id: str) -> Memory: ...
-    def load_many(self, memory_ids: list[str]) -> list[Memory]: ...
-    def show(self, memory_id: str) -> Memory: ...
-    def write(
-        self,
-        *,
-        content: str,
-        scopes: list[str],
-        confidence: Confidence = Confidence.MEDIUM,
-        source: Source = Source.EXPLICIT,
-        origin: Origin | None = None,
-        category: Category | None = None,
-        claims: list[str] | None = None,
-        links: list[Any] | None = None,
-        actor: Actor | dict[str, Any] | None = None,
-    ) -> Memory: ...
-    def update(
-        self,
-        memory: Memory,
-        *,
-        force: bool = False,
-        preserve_verification: bool = False,
-    ) -> Memory: ...
-    def mark_verified(
-        self,
-        memory_id: str,
-        *,
-        verified_paths: list[str] | None = None,
-        verified_commits: list[str] | None = None,
-        verified_versions: list[str] | None = None,
-        verified_absent_paths: list[str] | None = None,
-        claims: list[str] | None = None,
-        verified_head: str | None = None,
-        expected_last_verified_at: datetime | None = None,
-        expected_updated: datetime | None = None,
-        check_expected: bool = False,
-    ) -> Memory: ...
-    def record_corroboration(self, memory_id: str) -> Memory: ...
-    def tombstone(
-        self, memory_id: str, reason: str, *, session_id: str | None = None
-    ) -> Path: ...
-    def load_tombstones(self) -> list[TombstonedMemory]: ...
-    def list_tombstones(
-        self, scopes: list[str] | None = None
-    ) -> list[TombstonedSummary]: ...
-    def load_tombstone(self, memory_id: str) -> TombstonedMemory: ...
-    def restore(
-        self,
-        memory_id: str,
-        *,
-        drop_claims: Iterable[str] = (),
-        drop_verified_paths: Iterable[str] = (),
-        clear_verification: bool = False,
-        drop_verified_head: bool = False,
-    ) -> Memory: ...
-    def rename_scope(
-        self, old: str, new: str, *, include_tombstones: bool = True
-    ) -> dict[str, list[Any]]: ...
-    def prune_tombstones(
-        self, older_than: timedelta, *, now: datetime | None = None
-    ) -> list[str]: ...
+# ---------------------------------------------------------------------------
+# Records to rows and back
+# ---------------------------------------------------------------------------
 
 
-@dataclass
-class Store:
-    """A memory store rooted at a single directory.
+def _iso(dt: datetime) -> str:
+    return dt.isoformat()
 
-    Layout:
-        <root>/2025-03-14-<slug>.md
-        <root>/.tombstones/<original-filename>.tombstone.md
+
+def _iso_opt(dt: datetime | None) -> str | None:
+    return None if dt is None else dt.isoformat()
+
+
+def _dt(text: str) -> datetime:
+    parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+
+def _dt_opt(text: str | None) -> datetime | None:
+    return None if text is None else _dt(text)
+
+
+def _scopes_text(scopes: Sequence[str]) -> str:
+    """The space-padded scope list the LIKE filter matches whole tokens
+    in, exactly as the v8 index spelled it."""
+    if not scopes:
+        return " "
+    return " " + " ".join(scopes) + " "
+
+
+def _json_text(value: Any) -> str:
+    """The one JSON spelling a column holds: sorted keys, so the text a
+    live write stores equals the text the fold derives from the log row,
+    whose payload is canonical (sorted) JSON too."""
+    return json.dumps(value, sort_keys=True, ensure_ascii=False)
+
+
+def _json_or_none(value: Mapping[str, Any]) -> str | None:
+    return _json_text(value) if value else None
+
+
+def _load_json(text: str | None, default: Any) -> Any:
+    return default if text is None else json.loads(text)
+
+
+def _origin_json(origin: Origin | None) -> str | None:
+    if origin is None:
+        return None
+    return _json_or_none(origin.model_dump(mode="json", exclude_none=True))
+
+
+def _actor_json(actor: Actor | None) -> str | None:
+    if actor is None:
+        return None
+    return _json_or_none(actor.to_record())
+
+
+def _record_columns(
+    record: Memory | TombstonedMemory,
+) -> dict[str, Any]:
+    """The columns a memory and a tombstone share, straight off the record."""
+    origin = record.origin
+    actor = record.actor
+    return {
+        "id": record.id,
+        "created": _iso(record.created),
+        "updated": _iso(record.updated),
+        "last_verified_at": _iso_opt(record.last_verified_at),
+        "confidence": record.confidence.value,
+        "category": record.category.value if record.category is not None else None,
+        "body": record.body,
+        "scopes_json": _json_text(list(record.scopes)),
+        "origin_repo": origin.repo if origin is not None else None,
+        "origin_worktree": origin.worktree_root if origin is not None else None,
+        "verified_head": record.verified_head,
+        "actor_client": actor.client if actor is not None else None,
+        "actor_model": actor.model if actor is not None else None,
+        "source": record.source.value,
+        "origin_json": _origin_json(origin),
+        "actor_json": _actor_json(actor),
+        "verified_paths_json": _json_text(list(record.verified_paths)),
+        "verified_commits_json": _json_text(list(record.verified_commits)),
+        "verified_versions_json": _json_text(list(record.verified_versions)),
+        "verified_absent_paths_json": _json_text(list(record.verified_absent_paths)),
+        "claims_json": _json_text(list(record.claims)),
+    }
+
+
+def _links_json(links: Iterable[MemoryLink]) -> str:
+    return _json_text(
+        [link.model_dump(mode="json", exclude_none=True) for link in links]
+    )
+
+
+_MEMORY_COLUMNS = (
+    "id",
+    "created",
+    "updated",
+    "last_verified_at",
+    "confidence",
+    "category",
+    "body",
+    "body_fts",
+    "scopes_text",
+    "scopes_fts",
+    "scopes_json",
+    "filename",
+    "origin_repo",
+    "origin_worktree",
+    "provenance",
+    "verified_head",
+    "actor_client",
+    "actor_model",
+    "source",
+    "origin_json",
+    "actor_json",
+    "verified_paths_json",
+    "verified_commits_json",
+    "verified_versions_json",
+    "verified_absent_paths_json",
+    "claims_json",
+    "links_json",
+    "corroborations",
+    "last_corroborated",
+    "log_mac",
+)
+
+_TOMBSTONE_COLUMNS = (
+    "id",
+    "created",
+    "updated",
+    "last_verified_at",
+    "confidence",
+    "category",
+    "body",
+    "scopes_json",
+    "filename",
+    "origin_repo",
+    "origin_worktree",
+    "provenance",
+    "verified_head",
+    "actor_client",
+    "actor_model",
+    "source",
+    "origin_json",
+    "actor_json",
+    "verified_paths_json",
+    "verified_commits_json",
+    "verified_versions_json",
+    "verified_absent_paths_json",
+    "claims_json",
+    "links_json",
+    "corroborations",
+    "last_corroborated",
+    "removed",
+    "removed_reason",
+    "removed_session",
+    "log_mac",
+)
+
+
+def _upsert_sql(table: str, columns: Sequence[str], key: str) -> str:
+    updates = ", ".join(f"{c} = excluded.{c}" for c in columns if c != key)
+    return (
+        f"INSERT INTO {table}({', '.join(columns)}) "
+        f"VALUES ({', '.join('?' for _ in columns)}) "
+        f"ON CONFLICT({key}) DO UPDATE SET {updates}"
+    )
+
+
+_UPSERT_MEMORY = _upsert_sql("memories", _MEMORY_COLUMNS, "id")
+_UPSERT_TOMBSTONE = _upsert_sql("tombstones", _TOMBSTONE_COLUMNS, "id")
+
+
+def _sync_links(conn: sqlite3.Connection, memory: Memory) -> None:
+    """Replace the outbound link rows for the memory, exact duplicates
+    collapsed the way the v8 index collapsed them."""
+    conn.execute("DELETE FROM memory_links WHERE source_id = ?", (memory.id,))
+    if not memory.links:
+        return
+    seen: set[tuple[str, str, str, str | None]] = set()
+    rows: list[tuple[str, str, str, str | None]] = []
+    for link in memory.links:
+        key = (memory.id, link.type.value, link.target_id, link.note)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(key)
+    conn.executemany(
+        "INSERT OR IGNORE INTO memory_links(source_id, type, target_id, note) "
+        "VALUES (?, ?, ?, ?)",
+        rows,
+    )
+
+
+def _write_memory_row(
+    conn: sqlite3.Connection,
+    memory: Memory,
+    *,
+    provenance: str,
+    filename: str | None,
+    log_mac: str | None,
+) -> None:
+    columns = _record_columns(memory)
+    columns.update(
+        {
+            "body_fts": fts_index_text(memory.body),
+            "scopes_text": _scopes_text(memory.scopes),
+            "scopes_fts": fts_index_text(" ".join(memory.scopes)),
+            "filename": filename,
+            "provenance": provenance,
+            "links_json": _links_json(memory.links),
+            "corroborations": memory.corroborations,
+            "last_corroborated": _iso_opt(memory.last_corroborated),
+            "log_mac": log_mac,
+        }
+    )
+    conn.execute(_UPSERT_MEMORY, tuple(columns[c] for c in _MEMORY_COLUMNS))
+    _sync_links(conn, memory)
+
+
+def _write_tombstone_row(
+    conn: sqlite3.Connection,
+    dead: TombstonedMemory,
+    *,
+    provenance: str,
+    filename: str | None,
+    links: list[dict[str, Any]],
+    corroborations: int,
+    last_corroborated: str | None,
+    log_mac: str | None,
+) -> None:
+    columns = _record_columns(dead)
+    columns.update(
+        {
+            "filename": filename,
+            "provenance": provenance,
+            "links_json": _json_text(links),
+            "corroborations": corroborations,
+            "last_corroborated": last_corroborated,
+            "removed": _iso(dead.removed),
+            "removed_reason": dead.removed_reason,
+            "removed_session": dead.removed_session,
+            "log_mac": log_mac,
+        }
+    )
+    conn.execute(_UPSERT_TOMBSTONE, tuple(columns[c] for c in _TOMBSTONE_COLUMNS))
+
+
+def _anchor_or_none(value: Any) -> str | None:
+    """The loader drops an anchor the store would have refused (a branch
+    name or an abbreviation edited into the row), so a revision string
+    planted there never reaches git and never fails a load."""
+    if value is None:
+        return None
+    candidate = str(value).strip().lower()
+    return candidate if is_full_commit_sha(candidate) else None
+
+
+def _row_to_memory(row: sqlite3.Row) -> Memory:
+    return Memory(
+        id=row["id"],
+        created=_dt(row["created"]),
+        updated=_dt(row["updated"]),
+        scopes=_load_json(row["scopes_json"], []),
+        confidence=row["confidence"],
+        source=row["source"],
+        body=row["body"],
+        origin=(
+            Origin.model_validate(_load_json(row["origin_json"], {}))
+            if row["origin_json"] is not None
+            else None
+        ),
+        actor=(
+            Actor.model_validate(_load_json(row["actor_json"], {}))
+            if row["actor_json"] is not None
+            else None
+        ),
+        last_verified_at=_dt_opt(row["last_verified_at"]),
+        category=row["category"],
+        verified_paths=_load_json(row["verified_paths_json"], []),
+        verified_commits=_load_json(row["verified_commits_json"], []),
+        verified_versions=_load_json(row["verified_versions_json"], []),
+        verified_absent_paths=_load_json(row["verified_absent_paths_json"], []),
+        claims=_load_json(row["claims_json"], []),
+        verified_head=_anchor_or_none(row["verified_head"]),
+        links=[
+            MemoryLink.model_validate(entry)
+            for entry in _load_json(row["links_json"], [])
+        ],
+        corroborations=int(row["corroborations"]),
+        last_corroborated=_dt_opt(row["last_corroborated"]),
+    )
+
+
+def _row_to_tombstone(row: sqlite3.Row) -> TombstonedMemory:
+    return TombstonedMemory(
+        id=row["id"],
+        created=_dt(row["created"]),
+        updated=_dt(row["updated"]),
+        scopes=_load_json(row["scopes_json"], []),
+        confidence=row["confidence"],
+        source=row["source"],
+        body=row["body"],
+        origin=(
+            Origin.model_validate(_load_json(row["origin_json"], {}))
+            if row["origin_json"] is not None
+            else None
+        ),
+        actor=(
+            Actor.model_validate(_load_json(row["actor_json"], {}))
+            if row["actor_json"] is not None
+            else None
+        ),
+        last_verified_at=_dt_opt(row["last_verified_at"]),
+        category=row["category"],
+        verified_paths=_load_json(row["verified_paths_json"], []),
+        verified_commits=_load_json(row["verified_commits_json"], []),
+        verified_versions=_load_json(row["verified_versions_json"], []),
+        verified_absent_paths=_load_json(row["verified_absent_paths_json"], []),
+        claims=_load_json(row["claims_json"], []),
+        verified_head=_anchor_or_none(row["verified_head"]),
+        removed=_dt(row["removed"]),
+        removed_reason=row["removed_reason"],
+        removed_session=row["removed_session"],
+    )
+
+
+def _write_episode_row(
+    conn: sqlite3.Connection, episode: Episode, *, log_mac: str | None
+) -> None:
+    conn.execute(
+        "INSERT INTO episodes(id, session_id, created, body, scopes_json, takeaway, "
+        "origin_json, is_floor, swarm_id, log_mac) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(id) DO UPDATE SET session_id = excluded.session_id, "
+        "created = excluded.created, body = excluded.body, "
+        "scopes_json = excluded.scopes_json, takeaway = excluded.takeaway, "
+        "origin_json = excluded.origin_json, is_floor = excluded.is_floor, "
+        "swarm_id = excluded.swarm_id, log_mac = excluded.log_mac",
+        (
+            episode.id,
+            episode.session_id,
+            _iso(episode.created),
+            episode.body,
+            _json_text(list(episode.scopes)),
+            episode.takeaway,
+            _origin_json(episode.origin),
+            1 if episode.is_floor else 0,
+            episode.swarm_id,
+            log_mac,
+        ),
+    )
+
+
+def _row_to_episode(row: sqlite3.Row) -> Episode:
+    return Episode(
+        id=row["id"],
+        session_id=row["session_id"],
+        created=_dt(row["created"]),
+        body=row["body"],
+        scopes=_load_json(row["scopes_json"], []),
+        takeaway=row["takeaway"],
+        origin=(
+            Origin.model_validate(_load_json(row["origin_json"], {}))
+            if row["origin_json"] is not None
+            else None
+        ),
+        is_floor=bool(row["is_floor"]),
+        swarm_id=row["swarm_id"],
+    )
+
+
+def _verification_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "memory_id": row["memory_id"],
+        "machine_id": row["machine_id"],
+        "verified_at": row["verified_at"],
+        "verified_head": row["verified_head"],
+        **{name: _load_json(row[f"{name}_json"], []) for name in _VERIFICATION_LISTS},
+    }
+
+
+# ---------------------------------------------------------------------------
+# Mutations: one function, used by the live path and by the fold
+# ---------------------------------------------------------------------------
+
+
+def _apply_mutation(
+    conn: sqlite3.Connection,
+    kind: str,
+    payload: Mapping[str, Any],
+    *,
+    log_mac: str | None,
+) -> None:
+    """Apply one mutation row to the tables on ``conn``; ``log_mac`` is
+    the MAC of the row being applied, stamped on the record it puts. Raises
+    ValueError, KeyError, TypeError or a pydantic ValidationError on a
+    payload that does not carry what the kind needs; the fold reports
+    those rows as ``payload_invalid``."""
+    if kind == "memory_put":
+        memory = Memory.model_validate(payload["memory"])
+        provenance = str(payload["provenance"])
+        if provenance not in _WRITABLE_PROVENANCE:
+            raise ValueError(f"unknown provenance {provenance!r}")
+        _write_memory_row(
+            conn,
+            memory,
+            provenance=provenance,
+            filename=payload.get("filename"),
+            log_mac=log_mac,
+        )
+    elif kind == "memory_delete":
+        conn.execute("DELETE FROM memories WHERE id = ?", (str(payload["id"]),))
+    elif kind == "tombstone_put":
+        dead = TombstonedMemory.model_validate(payload["tombstone"])
+        provenance = str(payload["provenance"])
+        if provenance not in _WRITABLE_PROVENANCE:
+            raise ValueError(f"unknown provenance {provenance!r}")
+        links = payload.get("links") or []
+        if not isinstance(links, list):
+            raise TypeError("links must be a list")
+        _write_tombstone_row(
+            conn,
+            dead,
+            provenance=provenance,
+            filename=payload.get("filename"),
+            links=links,
+            corroborations=int(payload.get("corroborations") or 0),
+            last_corroborated=payload.get("last_corroborated"),
+            log_mac=log_mac,
+        )
+    elif kind == "tombstone_delete":
+        conn.execute("DELETE FROM tombstones WHERE id = ?", (str(payload["id"]),))
+    elif kind == "episode_put":
+        _write_episode_row(
+            conn, Episode.model_validate(payload["episode"]), log_mac=log_mac
+        )
+    elif kind == "episode_delete":
+        conn.execute("DELETE FROM episodes WHERE id = ?", (str(payload["id"]),))
+    elif kind == "verification_put":
+        memory_id = str(payload["memory_id"])
+        machine_id = payload.get("machine_id")
+        lists = {name: list(payload.get(name) or []) for name in _VERIFICATION_LISTS}
+        conn.execute(
+            "DELETE FROM verifications WHERE memory_id = ? "
+            "AND COALESCE(machine_id, '') = COALESCE(?, '')",
+            (memory_id, machine_id),
+        )
+        conn.execute(
+            "INSERT INTO verifications(memory_id, machine_id, verified_at, "
+            "verified_head, verified_paths_json, verified_commits_json, "
+            "verified_versions_json, verified_absent_paths_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                memory_id,
+                machine_id,
+                str(payload["verified_at"]),
+                payload.get("verified_head"),
+                *(_json_text(lists[name]) for name in _VERIFICATION_LISTS),
+            ),
+        )
+    elif kind == "verification_delete":
+        conn.execute(
+            "DELETE FROM verifications WHERE memory_id = ? "
+            "AND COALESCE(machine_id, '') = COALESCE(?, '')",
+            (str(payload["memory_id"]), payload.get("machine_id")),
+        )
+    elif kind == "conflict_put":
+        record = payload["conflict"]
+        conn.execute(
+            f"INSERT OR REPLACE INTO conflicts({', '.join(_CONFLICT_COLUMNS)}) "
+            f"VALUES ({', '.join('?' for _ in _CONFLICT_COLUMNS)})",
+            tuple(record.get(c) for c in _CONFLICT_COLUMNS),
+        )
+    elif kind == "conflict_delete":
+        conn.execute("DELETE FROM conflicts WHERE id = ?", (str(payload["id"]),))
+    elif kind == "import_put":
+        conn.execute(
+            f"INSERT OR REPLACE INTO imports({', '.join(_IMPORT_COLUMNS)}) "
+            "VALUES (?, ?, ?, ?)",
+            (
+                str(payload["source"]),
+                str(payload["content_hash"]),
+                str(payload["imported_at"]),
+                payload.get("memory_id"),
+            ),
+        )
+    elif kind == "import_delete":
+        conn.execute("DELETE FROM imports WHERE source = ?", (str(payload["source"]),))
+    elif kind == "quarantine_put":
+        conn.execute(
+            f"INSERT OR REPLACE INTO quarantine({', '.join(_QUARANTINE_COLUMNS)}) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(payload["name"]),
+                str(payload["reason"]),
+                payload.get("detail"),
+                payload.get("remote"),
+                str(payload["at"]),
+                payload.get("size"),
+                payload.get("sha256"),
+            ),
+        )
+    elif kind == "quarantine_delete":
+        conn.execute("DELETE FROM quarantine WHERE name = ?", (str(payload["name"]),))
+    else:
+        raise ValueError(f"unknown mutation kind {kind!r}")
+
+
+def _table_rows(
+    conn: sqlite3.Connection, table: str
+) -> dict[tuple[Any, ...], tuple[Any, ...]]:
+    """Every row of a folded table keyed by its key columns, rowid left
+    out: the fold compares records, and rowids are the tie order the
+    candidate query is graded on elsewhere."""
+    columns = [
+        str(r[1])
+        for r in conn.execute(f"PRAGMA table_info({table})")
+        if r[1] != "rowid"
+    ]
+    keys = _TABLE_KEYS[table]
+    out: dict[tuple[Any, ...], tuple[Any, ...]] = {}
+    for row in conn.execute(f"SELECT {', '.join(columns)} FROM {table}"):
+        values = tuple(row[c] for c in columns)
+        out[tuple(row[k] for k in keys)] = values
+    return out
+
+
+def _key_label(table: str, key: tuple[Any, ...]) -> Any:
+    if len(key) == 1:
+        return key[0]
+    return list(key)
+
+
+_ROW_COLUMNS = ("ts", "session", "kind")
+
+
+def event_import_payload(
+    event: Mapping[str, Any], *, imported_from: str = IMPORTED_FROM_V8
+) -> tuple[str | None, str | None, str, dict[str, Any]]:
+    """The row a v8 event becomes: ``(ts, session, kind, payload)``.
+
+    ``ts``, ``session`` and ``kind`` leave the event for the row's own
+    columns; every other field stays in the payload, ``query`` and
+    ``probe_query`` redacted the way ``record_event`` redacts them, and
+    ``imported_from`` names the source. An absent or empty ``ts`` comes
+    back as None (the caller stamps the row). Raises ValueError on an
+    event without a string kind, or whose kind names a mutation or a
+    control row: those are not events in any store.
     """
+    kind = event.get("kind")
+    if not isinstance(kind, str) or not kind:
+        raise ValueError("an event needs a string kind")
+    if kind in MUTATION_KINDS or kind in CONTROL_KINDS:
+        raise ValueError(f"{kind!r} is a mutation or control kind, not an event")
+    ts = event.get("ts")
+    session = event.get("session")
+    payload = _redact_event_fields(
+        {k: v for k, v in event.items() if k not in _ROW_COLUMNS}
+    )
+    payload["imported_from"] = imported_from
+    return (
+        ts if isinstance(ts, str) and ts else None,
+        session if isinstance(session, str) and session else None,
+        kind,
+        payload,
+    )
 
-    root: Path
-    # Set once `ensure()` has provisioned this instance's root, so the
-    # per-write call below costs an attribute read rather than four
-    # syscalls. `compare=False` / `repr=False` keep `Store` equality and
-    # `repr` exactly what they were before provisioning became explicit —
-    # a cache flag is not part of a store's identity.
-    _provisioned: bool = field(default=False, compare=False, repr=False)
 
-    # ---- lifecycle --------------------------------------------------------
+# ---------------------------------------------------------------------------
+# The store
+# ---------------------------------------------------------------------------
 
-    def __post_init__(self) -> None:
-        """Normalise the root. NOTHING ELSE — construction is pure.
 
-        This used to mkdir the root and the tombstone dir, chmod both,
-        rebuild a flagged index, and run the S4 divergence check, which
-        made `Store(path)` a migration with a filesystem write, a
-        possible `git` subprocess (`_rebuild_index_if_flagged` ->
-        `index.rebuild` -> `provenance.gather_evidence`), and a
-        user-facing stderr warning — all from a constructor.
+def resolve_keys_dir() -> Path:
+    """The keys directory a store opens with when the caller names none:
+    ``BETTERMEMORY_KEYS_DIR`` when set, else the user's config directory
+    (`log.default_keys_dir`)."""
+    override = os.environ.get(KEYS_DIR_ENV)
+    if override:
+        return Path(override).expanduser()
+    return _chain.default_keys_dir()
 
-        The tree had already paid for that twice, in writing.
-        `count_active_memory_files` and its siblings below were written
-        for callers that had no Store instance and MUST NOT construct
-        one, precisely because constructing one mkdir'd and auto-rebuilt;
-        and
-        `_warn_on_index_divergence` declines a full reconcile partly to
-        stay cheap "on every cheap `Store()`", which is what a
-        constructor doing four syscalls and a subprocess was not.
 
-        Provisioning is now `ensure()`, a precondition every mutator
-        states; the startup checks are `Store.open()`, which the
-        process entry points call and a diagnostic deliberately does
-        not. A read against a root that does not exist reads EMPTY
-        rather than creating it (see `iter_active_memory_paths`)."""
-        self.root = Path(self.root).expanduser().resolve()
+def store_path(path: Path | str) -> Path:
+    """The store file for a path that names either the file or the
+    directory it lives in: the file is always ``memory.sqlite``, so a path
+    with any other name is the directory."""
+    resolved = Path(path).expanduser()
+    if resolved.name == STORE_FILENAME:
+        return resolved
+    return resolved / STORE_FILENAME
 
-    def ensure(self) -> Store:
-        """Provision this store's directories. Idempotent; returns self.
 
-        The precondition of WRITING, not of existing, so every mutator
-        calls it and no reader does. Splitting it out of `__post_init__`
-        is what lets a diagnostic construct a Store without altering the
-        thing it is diagnosing.
+class Store:
+    """One store, one file, one connection. ``Store(directory)`` opens the
+    store in the directory, creating it on first use, which is what every
+    runtime entry point wants; ``create``, ``open`` and ``open_or_create``
+    are the explicit forms, and each takes the directory or the file
+    itself."""
 
-        Modes are explicit rather than umask-derived, and both
-        directories take 0o700 for the reason SECURITY.md gives: the
-        store root is the access-control boundary, and a memory's
-        FILENAME embeds the first ~43 chars of its summary, so 0o600 on
-        the `.md` bodies is worth nothing against a plain `ls` of a
-        0o755 root — under the common 022 umask every local account
-        could read a slug like
-        `2026-07-20-acquisition-talks-with-northstar-closing-in-....md`.
-        Tombstones carry the same trust boundary (paths cited in
-        `removed_reason`, body hashes for dedup), so listing them
-        requires the owner too.
+    _path: Path
+    _conn: sqlite3.Connection
+    _keyring: KeyRing
+    _key: bytes | None
+    _store_id: str
+    _last_appended: LogRow | None
+    _in_batch: bool
+    _unaccounted_memory_ids: set[str]
+    # (id, log_mac) pairs whose pointer into the log verified; a row gets
+    # a new MAC on every mutation, so a stale entry never matches.
+    _pointer_cache: dict[tuple[str, str], bool]
+    # The chain's segments as (first seq, key fingerprint), read from the
+    # rekey rows once; the keys themselves by fingerprint.
+    _segments: list[tuple[int, str]] | None
+    _keys_by_fingerprint: dict[str, bytes | None]
 
-        `_tighten_dir_mode` heals a store created before the explicit
-        mode landed: `mkdir(mode=...)` is a no-op on a directory that
-        already exists, so those roots are still 0o755 on disk. It only
-        clears group/other bits, so an owner who went STRICTER than
-        0o700 keeps their choice; best-effort and POSIX-only."""
-        if self._provisioned:
-            return self
-        # `_fsutil.ensure_owner_only_dir` is the ONE definition of "a
-        # directory this project owns", shared with `EpisodeStore`. The two
-        # hand-rolled it separately once and drifted silently: the episode
-        # side reached `parents=True` without tightening the ancestors it
-        # created, which left the memory ROOT world-readable.
-        ensure_owner_only_dir(self.root, parents=True)
-        ensure_owner_only_dir(self.root / TOMBSTONE_DIR)
-        self._provisioned = True
+    def __init__(self, path: Path | str, *, keys_dir: Path | str | None = None) -> None:
+        opened = self.open_or_create(path, keys_dir=keys_dir)
+        self._adopt(
+            opened._path, opened._conn, opened._keyring, opened._key, opened._store_id
+        )
+
+    def _adopt(
+        self,
+        path: Path,
+        conn: sqlite3.Connection,
+        keyring: KeyRing,
+        key: bytes | None,
+        store_id: str,
+    ) -> None:
+        self._path = path
+        self._conn = conn
+        self._keyring = keyring
+        self._key = key
+        self._store_id = store_id
+        self._last_appended = None
+        self._in_batch = False
+        self._unaccounted_memory_ids = set()
+        self._pointer_cache = {}
+        self._segments = None
+        self._keys_by_fingerprint = {}
+
+    @classmethod
+    def _bind(
+        cls,
+        path: Path,
+        conn: sqlite3.Connection,
+        keyring: KeyRing,
+        key: bytes | None,
+        store_id: str,
+    ) -> Store:
+        self = cls.__new__(cls)
+        self._adopt(path, conn, keyring, key, store_id)
         return self
 
     @classmethod
-    def open(cls, root: Path | str) -> Store:
-        """Construct, provision, and run the once-per-process STARTUP
-        checks. What a process ENTRY POINT wants; not what a diagnostic
-        wants.
+    def create(cls, path: Path | str, *, keys_dir: Path | str | None = None) -> Store:
+        """A new store at ``path`` with a fresh key. Refuses an existing file."""
+        path = store_path(path)
+        if path.exists():
+            raise FileExistsError(f"a store already exists at {path}")
+        ensure_owner_only_dir(path.parent, parents=True)
+        conn = _connect(path)
+        try:
+            conn.executescript(SCHEMA)
+            store_id = secrets.token_hex(16)
+            keyring = KeyRing(
+                Path(keys_dir) if keys_dir is not None else resolve_keys_dir(),
+                store_id,
+            )
+            key = keyring.create_key()
+            from . import __version__
 
-        The two checks moved here from `__post_init__` because neither
-        is a property of having a Store object — both are things a
-        program does when it starts up against a store:
+            created = isoformat_utc(datetime.now(timezone.utc))
+            meta = {
+                "store_id": store_id,
+                "schema_version": str(SCHEMA_VERSION),
+                "tokenizer_fingerprint": tokenizer_fingerprint(),
+                "engine_version": __version__,
+                "key_fingerprint": fingerprint(key),
+                "created": created,
+            }
+            store = cls._bind(path, conn, keyring, key, store_id)
+            with store._transaction() as tx:
+                tx.executemany(
+                    "INSERT INTO meta(key, value) VALUES (?, ?)", list(meta.items())
+                )
+                store._append(
+                    tx,
+                    STORE_CREATED,
+                    {
+                        "store_id": store_id,
+                        "schema_version": SCHEMA_VERSION,
+                        "tokenizer_fingerprint": meta["tokenizer_fingerprint"],
+                        "engine_version": __version__,
+                        "created": created,
+                    },
+                    session=None,
+                )
+            with contextlib.suppress(OSError):
+                os.chmod(path, 0o600)
+            return store
+        except Exception:
+            conn.close()
+            raise
 
-        * `_rebuild_index_if_flagged` is the schema-upgrade auto-heal.
-          It runs BEFORE the divergence check so that a `SCHEMA_VERSION`
-          bump which emptied the index (`meta.needs_rebuild`) resolves
-          as an INFO note instead of the S4 WARNING below.
-        * `_warn_on_index_divergence` is the S4 one-shot check. The FTS5
-          index is a derived cache kept consistent with disk only via
-          Store hooks under the per-file flock, so any path that writes
-          `.md` files directly — an external editor, `sync pull`, a
-          sub-agent using a generic write tool on a memory file path —
-          leaves it stale with no warning, and `memory_search` then
-          ranks against stale ids. Surfacing it at startup is what keeps
-          it from cascading into a wrong answer.
+    @classmethod
+    def open(
+        cls,
+        path: Path | str,
+        *,
+        keys_dir: Path | str | None = None,
+        allow_rekey: bool = True,
+    ) -> Store:
+        """An existing store. With ``allow_rekey`` (the default) a missing
+        or foreign key is replaced and a ``rekey`` row appended; without
+        it the store opens for reading and refuses to mutate."""
+        path = store_path(path)
+        if not path.is_file():
+            raise FileNotFoundError(f"no store at {path}")
+        conn = _connect(path)
+        try:
+            meta = {
+                str(r["key"]): str(r["value"])
+                for r in conn.execute("SELECT key, value FROM meta")
+            }
+            store_id = meta.get("store_id")
+            expected = meta.get("key_fingerprint")
+            if not store_id or not expected:
+                raise ValueError(f"{path} carries no store id or key fingerprint")
+            schema = int(meta.get("schema_version", "0"))
+            if schema > SCHEMA_VERSION:
+                raise ValueError(
+                    f"{path} is schema {schema}; this build reads up to {SCHEMA_VERSION}"
+                )
+            keyring = KeyRing(
+                Path(keys_dir) if keys_dir is not None else resolve_keys_dir(),
+                store_id,
+            )
+            key = keyring.load_current()
+            if key is not None and fingerprint(key) == expected:
+                return cls._bind(path, conn, keyring, key, store_id)
+            if not allow_rekey:
+                return cls._bind(path, conn, keyring, None, store_id)
+            if key is not None:
+                keyring.retire_current()
+            key = keyring.create_key()
+            store = cls._bind(path, conn, keyring, key, store_id)
+            with store._transaction() as tx:
+                tx.execute(
+                    "UPDATE meta SET value = ? WHERE key = 'key_fingerprint'",
+                    (fingerprint(key),),
+                )
+                store._append(
+                    tx,
+                    REKEY,
+                    {"old_fingerprint": expected, "new_fingerprint": fingerprint(key)},
+                    session=None,
+                )
+            log.warning(
+                "store %s was opened without its key (fingerprint %s); a new key "
+                "%s was written and the log rekeyed",
+                path,
+                expected[:16],
+                fingerprint(key)[:16],
+            )
+            return store
+        except Exception:
+            conn.close()
+            raise
 
-        `bettermemory doctor` must NOT use this: rebuilding the index it
-        was asked to inspect destroys the evidence, and emitting the
-        divergence warning from inside a diagnostic reports the
-        constructor's opinion rather than the check's."""
-        store = cls(Path(root)).ensure()
-        _rebuild_index_if_flagged(store)
-        _warn_on_index_divergence(store.root)
-        return store
+    @classmethod
+    def open_or_create(
+        cls, path: Path | str, *, keys_dir: Path | str | None = None
+    ) -> Store:
+        path = store_path(path)
+        if path.is_file():
+            return cls.open(path, keys_dir=keys_dir)
+        return cls.create(path, keys_dir=keys_dir)
+
+    def close(self) -> None:
+        self._conn.close()
+
+    def __enter__(self) -> Store:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    # -- identity -----------------------------------------------------------
 
     @property
-    def tombstone_dir(self) -> Path:
-        return self.root / TOMBSTONE_DIR
+    def path(self) -> Path:
+        return self._path
 
-    # ---- iteration --------------------------------------------------------
+    @property
+    def conn(self) -> sqlite3.Connection:
+        return self._conn
 
-    def _iter_active_paths(self) -> Iterator[Path]:
-        # The one definition of "active memory file on disk" lives in
-        # the module-level `iter_active_memory_paths`, shared with the
-        # Store-free counters (`active_memory_filenames`,
-        # `scan_active_memory_ids`) so a file this walk skips is a file
-        # they skip too.
-        yield from iter_active_memory_paths(self.root)
+    @property
+    def keyring(self) -> KeyRing:
+        return self._keyring
 
-    def _iter_tombstone_paths(self) -> Iterator[Path]:
-        if not self.tombstone_dir.exists():
+    @property
+    def keys_dir(self) -> Path:
+        return self._keyring.keys_dir
+
+    @property
+    def store_id(self) -> str:
+        return self._store_id
+
+    @property
+    def key_fingerprint(self) -> str:
+        return self.meta()["key_fingerprint"]
+
+    @property
+    def has_key(self) -> bool:
+        return self._key is not None
+
+    def meta(self) -> dict[str, str]:
+        return {
+            str(r["key"]): str(r["value"])
+            for r in self._conn.execute("SELECT key, value FROM meta ORDER BY key")
+        }
+
+    # -- transactions -------------------------------------------------------
+
+    @contextlib.contextmanager
+    def _transaction(self) -> Iterator[sqlite3.Connection]:
+        """One mutating method's transaction. Inside a ``batch`` the
+        batch owns the transaction and the head write, and this yields
+        the connection as it is."""
+        conn = self._conn
+        if self._in_batch:
+            yield conn
             return
-        # Same symlink-rejection rule as `_iter_active_paths`.
-        for entry in self.tombstone_dir.iterdir():
-            if entry.is_file() and not entry.is_symlink() and entry.suffix == ".md":
-                yield entry
+        self._last_appended = None
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield conn
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+        conn.execute("COMMIT")
+        self._move_head()
 
-    # ---- read -------------------------------------------------------------
+    @contextlib.contextmanager
+    def batch(self) -> Iterator[Store]:
+        """One transaction around many mutations: everything put or
+        deleted inside the block commits together or not at all, and the
+        head checkpoint moves once, at the commit. A migration runs in
+        one, so a failure part way leaves the store as it was. Batches
+        do not nest."""
+        if self._in_batch:
+            raise RuntimeError(f"a batch is already open on store {self._path}")
+        conn = self._conn
+        self._last_appended = None
+        self._in_batch = True
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield self
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+        finally:
+            self._in_batch = False
+        conn.execute("COMMIT")
+        self._move_head()
 
-    def load_all(self) -> list[Memory]:
-        """All active (non-tombstoned) memories. Sort by `created` desc.
-
-        Skips per-file failures on `PARSE_SKIP_EXCEPTIONS` (any parse
-        failure; see the tuple's rationale). The motivating modes:
-        - **Malformed file** (ValueError, KeyError, TypeError from
-          valid-YAML-but-wrong-shape values): skip and continue.
-          Better to operate on the rest of the store than refuse to
-          start because of one bad memory.
-        - **Concurrent tombstone race** (FileNotFoundError): skip and
-          continue. `_iter_active_paths` lists the dir, then `_load_path`
-          opens each file; another writer can move a file to
-          `.tombstones/` in between. The right answer is to act as if
-          we'd listed the dir one moment later, not to crash whatever
-          callable triggered the load (memory_search, memory_list,
-          memory_health all call this).
-        - **Other I/O errors** (PermissionError, etc.): skip too. A
-          single inaccessible file shouldn't blind the rest of the
-          store; the OS-level cause is logged via the file's absence
-          from the result, and a fresh load picks up changes.
-        """
-        memories: list[Memory] = []
-        for path in self._iter_active_paths():
+    def _move_head(self) -> None:
+        appended = self._last_appended
+        if appended is not None:
             try:
-                memories.append(self._load_path(path))
-            except PARSE_SKIP_EXCEPTIONS:
-                continue
-        memories.sort(key=lambda m: m.created, reverse=True)
-        return memories
+                self._keyring.write_head(seq=appended.seq, mac=appended.mac)
+            except OSError as exc:
+                log.warning("head checkpoint for %s not written: %s", self._path, exc)
 
-    def iter_active(self) -> Iterator[tuple[Path, Memory]]:
-        """`(path, memory)` pairs for every active (non-tombstoned)
-        memory. Skips malformed / racing files on the same
-        `PARSE_SKIP_EXCEPTIONS` width as `load_all`, so the rebuild
-        feed and the bulk read see the same set.
+    def _append(
+        self,
+        conn: sqlite3.Connection,
+        kind: str,
+        payload: Mapping[str, Any],
+        *,
+        session: str | None,
+        ts: str | None = None,
+    ) -> LogRow:
+        if self._key is None:
+            raise RuntimeError(
+                f"store {self._path} has no key (opened with allow_rekey=False)"
+            )
+        row = append_row(
+            conn, key=self._key, kind=kind, payload=payload, session=session, ts=ts
+        )
+        self._last_appended = row
+        return row
 
-        Use this when the on-disk filename matters to the caller —
-        notably `index.rebuild`, which needs the actual filename (not
-        a re-derived one) so the `filename` column points at
-        collision-suffixed files correctly."""
-        for path in self._iter_active_paths():
-            try:
-                memory = self._load_path(path)
-            except PARSE_SKIP_EXCEPTIONS:
-                # Must skip exactly the files
-                # `count_unparseable_memory_files` counts, or the
-                # parse-aware divergence arithmetic (the S4 warning,
-                # doctor's index_health) reports gaps a rebuild can
-                # never clear.
-                continue
-            yield path, memory
+    def _mutate(
+        self,
+        conn: sqlite3.Connection,
+        kind: str,
+        payload: Mapping[str, Any],
+        *,
+        session: str | None,
+    ) -> None:
+        """Log a mutation and apply it, inside the caller's transaction.
+        The row is appended first so the record it puts can carry the
+        row's MAC."""
+        row = self._append(conn, kind, payload, session=session)
+        _apply_mutation(conn, kind, payload, log_mac=row.mac)
 
-    def list_summaries(self, scopes: list[str] | None = None) -> list[MemorySummary]:
-        """Like `load_all` but body-stripped, filtered by scope match."""
-        out: list[MemorySummary] = []
-        for memory in self.load_all():
-            if scopes and not _scope_intersect(memory.scopes, scopes):
+    # -- memories -----------------------------------------------------------
+
+    def put_memory(
+        self,
+        memory: Memory,
+        *,
+        provenance: str | None = None,
+        filename: str | None = None,
+        session: str | None = None,
+    ) -> Memory:
+        """Insert or replace the record. ``provenance`` None keeps the row's
+        label (``local`` for a new row); ``filename`` None keeps the row's
+        name. Both are resolved before the row is logged, so the log
+        carries what the table holds."""
+        if provenance is not None and provenance not in _WRITABLE_PROVENANCE:
+            raise ValueError(
+                f"provenance must be one of {sorted(_WRITABLE_PROVENANCE)}, got {provenance!r}"
+            )
+        existing = self._conn.execute(
+            "SELECT provenance, filename FROM memories WHERE id = ?", (memory.id,)
+        ).fetchone()
+        if existing is not None:
+            provenance = provenance or str(existing["provenance"])
+            filename = filename if filename is not None else existing["filename"]
+        payload = {
+            "memory": memory.model_dump(mode="json"),
+            "provenance": provenance or LOCAL,
+            "filename": filename,
+        }
+        with self._transaction() as tx:
+            self._mutate(tx, "memory_put", payload, session=session)
+        return memory
+
+    def get_memory(self, memory_id: str) -> Memory:
+        row = self._conn.execute(
+            "SELECT * FROM memories WHERE id = ?", (memory_id,)
+        ).fetchone()
+        if row is None:
+            raise NotFoundError(memory_id)
+        return _row_to_memory(row)
+
+    def has_memory(self, memory_id: str) -> bool:
+        return (
+            self._conn.execute(
+                "SELECT 1 FROM memories WHERE id = ?", (memory_id,)
+            ).fetchone()
+            is not None
+        )
+
+    def get_many(self, memory_ids: Sequence[str]) -> list[Memory]:
+        """The records found, in the order asked; unknown ids are skipped."""
+        out: list[Memory] = []
+        for memory_id in memory_ids:
+            row = self._conn.execute(
+                "SELECT * FROM memories WHERE id = ?", (memory_id,)
+            ).fetchone()
+            if row is not None:
+                out.append(_row_to_memory(row))
+        return out
+
+    def iter_memories(self) -> Iterator[Memory]:
+        for row in self._conn.execute("SELECT * FROM memories ORDER BY rowid"):
+            yield _row_to_memory(row)
+
+    def iter_memory_rows(self) -> Iterator[MemoryRow]:
+        """Every active record with its provenance and filename, in
+        rowid order: what the mirror writes."""
+        for row in self._conn.execute("SELECT * FROM memories ORDER BY rowid"):
+            yield MemoryRow(
+                memory=_row_to_memory(row),
+                provenance=str(row["provenance"]),
+                filename=None if row["filename"] is None else str(row["filename"]),
+            )
+
+    def memory_ids(self) -> list[str]:
+        return [
+            str(r["id"])
+            for r in self._conn.execute("SELECT id FROM memories ORDER BY rowid")
+        ]
+
+    def count_memories(self) -> int:
+        return int(self._conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0])
+
+    def filename_for(self, memory_id: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT filename FROM memories WHERE id = ?", (memory_id,)
+        ).fetchone()
+        if row is None:
+            raise NotFoundError(memory_id)
+        return None if row["filename"] is None else str(row["filename"])
+
+    # -- tombstones ---------------------------------------------------------
+
+    def tombstone(
+        self,
+        memory_id: str,
+        reason: str,
+        *,
+        session: str | None = None,
+        now: datetime | None = None,
+    ) -> TombstonedMemory:
+        row = self._conn.execute(
+            "SELECT * FROM memories WHERE id = ?", (memory_id,)
+        ).fetchone()
+        if row is None:
+            raise NotFoundError(memory_id)
+        memory = _row_to_memory(row)
+        removed = now or datetime.now(timezone.utc)
+        dead = TombstonedMemory(
+            **{
+                name: getattr(memory, name)
+                for name in TombstonedMemory.model_fields
+                if name not in ("removed", "removed_reason", "removed_session")
+            },
+            removed=removed,
+            removed_reason=reason,
+            removed_session=session,
+        )
+        payload = {
+            "tombstone": dead.model_dump(mode="json"),
+            "provenance": str(row["provenance"]),
+            "filename": row["filename"],
+            "links": json.loads(row["links_json"]),
+            "corroborations": int(row["corroborations"]),
+            "last_corroborated": row["last_corroborated"],
+        }
+        with self._transaction() as tx:
+            self._mutate(tx, "memory_delete", {"id": memory_id}, session=session)
+            self._mutate(tx, "tombstone_put", payload, session=session)
+        return dead
+
+    def put_tombstone(
+        self,
+        dead: TombstonedMemory,
+        *,
+        provenance: str | None = None,
+        filename: str | None = None,
+        links: Sequence[MemoryLink | Mapping[str, Any]] = (),
+        corroborations: int = 0,
+        last_corroborated: datetime | None = None,
+        session: str | None = None,
+    ) -> TombstonedMemory:
+        """Insert or replace a tombstone row directly, with the link list
+        and the corroboration rollup the record carried while active, so
+        a later ``restore`` is as lossless as one after ``tombstone``.
+        ``provenance`` None keeps the row's label (``local`` for a new
+        row) and ``filename`` None the row's name, as ``put_memory`` does.
+        Refuses an id that is active: a record is in one table or the
+        other."""
+        if provenance is not None and provenance not in _WRITABLE_PROVENANCE:
+            raise ValueError(
+                f"provenance must be one of {sorted(_WRITABLE_PROVENANCE)}, got {provenance!r}"
+            )
+        if self.has_memory(dead.id):
+            raise ValueError(f"{dead.id} is active; tombstone it instead")
+        existing = self._conn.execute(
+            "SELECT provenance, filename FROM tombstones WHERE id = ?", (dead.id,)
+        ).fetchone()
+        if existing is not None:
+            provenance = provenance or str(existing["provenance"])
+            filename = filename if filename is not None else existing["filename"]
+        payload = {
+            "tombstone": dead.model_dump(mode="json"),
+            "provenance": provenance or LOCAL,
+            "filename": filename,
+            "links": [
+                MemoryLink.model_validate(link).model_dump(
+                    mode="json", exclude_none=True
+                )
+                for link in links
+            ],
+            "corroborations": int(corroborations),
+            "last_corroborated": _iso_opt(last_corroborated),
+        }
+        with self._transaction() as tx:
+            self._mutate(tx, "tombstone_put", payload, session=session)
+        return dead
+
+    def get_tombstone(self, memory_id: str) -> TombstonedMemory:
+        row = self._conn.execute(
+            "SELECT * FROM tombstones WHERE id = ?", (memory_id,)
+        ).fetchone()
+        if row is None:
+            raise NotFoundError(memory_id)
+        return _row_to_tombstone(row)
+
+    def iter_tombstones(self) -> Iterator[TombstonedMemory]:
+        for row in self._conn.execute(
+            "SELECT * FROM tombstones ORDER BY removed, rowid"
+        ):
+            yield _row_to_tombstone(row)
+
+    def iter_tombstone_rows(self) -> Iterator[TombstoneRow]:
+        """Every tombstone with what its row keeps beside the record, in
+        removal order: what the mirror writes."""
+        for row in self._conn.execute(
+            "SELECT * FROM tombstones ORDER BY removed, rowid"
+        ):
+            yield TombstoneRow(
+                tombstone=_row_to_tombstone(row),
+                provenance=str(row["provenance"]),
+                filename=None if row["filename"] is None else str(row["filename"]),
+                links=list(_load_json(row["links_json"], [])),
+                corroborations=int(row["corroborations"]),
+                last_corroborated=_dt_opt(row["last_corroborated"]),
+            )
+
+    def count_tombstones(self) -> int:
+        return int(self._conn.execute("SELECT COUNT(*) FROM tombstones").fetchone()[0])
+
+    def restore(self, memory_id: str, *, session: str | None = None) -> Memory:
+        """Bring a tombstoned record back as an active one, labelled
+        ``local``: this store's own code path put it back."""
+        row = self._conn.execute(
+            "SELECT * FROM tombstones WHERE id = ?", (memory_id,)
+        ).fetchone()
+        if row is None:
+            raise NotFoundError(memory_id)
+        dead = _row_to_tombstone(row)
+        memory = Memory(
+            **{
+                name: getattr(dead, name)
+                for name in Memory.model_fields
+                if name not in ("links", "corroborations", "last_corroborated")
+            },
+            links=[
+                MemoryLink.model_validate(entry)
+                for entry in json.loads(row["links_json"])
+            ],
+            corroborations=int(row["corroborations"]),
+            last_corroborated=_dt_opt(row["last_corroborated"]),
+        )
+        payload = {
+            "memory": memory.model_dump(mode="json"),
+            "provenance": LOCAL,
+            "filename": row["filename"],
+        }
+        with self._transaction() as tx:
+            self._mutate(tx, "tombstone_delete", {"id": memory_id}, session=session)
+            self._mutate(tx, "memory_put", payload, session=session)
+        return memory
+
+    def delete_tombstone(self, memory_id: str, *, session: str | None = None) -> None:
+        if (
+            self._conn.execute(
+                "SELECT 1 FROM tombstones WHERE id = ?", (memory_id,)
+            ).fetchone()
+            is None
+        ):
+            raise NotFoundError(memory_id)
+        with self._transaction() as tx:
+            self._mutate(tx, "tombstone_delete", {"id": memory_id}, session=session)
+
+    # -- episodes -----------------------------------------------------------
+
+    def put_episode(self, episode: Episode, *, session: str | None = None) -> Episode:
+        payload = {"episode": episode.model_dump(mode="json")}
+        with self._transaction() as tx:
+            self._mutate(tx, "episode_put", payload, session=session)
+        return episode
+
+    def get_episode(self, episode_id: str) -> Episode:
+        row = self._conn.execute(
+            "SELECT * FROM episodes WHERE id = ?", (episode_id,)
+        ).fetchone()
+        if row is None:
+            raise NotFoundError(episode_id)
+        return _row_to_episode(row)
+
+    def iter_episodes(self, *, session_id: str | None = None) -> Iterator[Episode]:
+        if session_id is None:
+            cursor = self._conn.execute("SELECT * FROM episodes ORDER BY rowid")
+        else:
+            cursor = self._conn.execute(
+                "SELECT * FROM episodes WHERE session_id = ? ORDER BY rowid",
+                (session_id,),
+            )
+        for row in cursor:
+            yield _row_to_episode(row)
+
+    def count_episodes(self) -> int:
+        return int(self._conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0])
+
+    def delete_episode(self, episode_id: str, *, session: str | None = None) -> None:
+        if (
+            self._conn.execute(
+                "SELECT 1 FROM episodes WHERE id = ?", (episode_id,)
+            ).fetchone()
+            is None
+        ):
+            raise NotFoundError(episode_id)
+        with self._transaction() as tx:
+            self._mutate(tx, "episode_delete", {"id": episode_id}, session=session)
+
+    # -- verifications ------------------------------------------------------
+
+    def put_verification(
+        self,
+        memory_id: str,
+        *,
+        verified_at: datetime,
+        machine_id: str | None = None,
+        verified_head: str | None = None,
+        verified_paths: Sequence[str] = (),
+        verified_commits: Sequence[str] = (),
+        verified_versions: Sequence[str] = (),
+        verified_absent_paths: Sequence[str] = (),
+        session: str | None = None,
+    ) -> None:
+        """This host's stamp on a record (``machine_id`` None until the
+        per-machine identity of phase 3 fills it). One row per memory and
+        machine; a later stamp replaces the earlier."""
+        payload = {
+            "memory_id": memory_id,
+            "machine_id": machine_id,
+            "verified_at": _iso(verified_at),
+            "verified_head": verified_head,
+            "verified_paths": list(verified_paths),
+            "verified_commits": list(verified_commits),
+            "verified_versions": list(verified_versions),
+            "verified_absent_paths": list(verified_absent_paths),
+        }
+        with self._transaction() as tx:
+            self._mutate(tx, "verification_put", payload, session=session)
+
+    def verifications_for(
+        self, memory_ids: Sequence[str]
+    ) -> dict[str, list[dict[str, Any]]]:
+        out: dict[str, list[dict[str, Any]]] = {}
+        ids = list(dict.fromkeys(memory_ids))
+        for start in range(0, len(ids), _PROVENANCE_BATCH):
+            batch = ids[start : start + _PROVENANCE_BATCH]
+            placeholders = ",".join("?" * len(batch))
+            for row in self._conn.execute(
+                "SELECT * FROM verifications "
+                f"WHERE memory_id IN ({placeholders}) ORDER BY memory_id, machine_id",
+                batch,
+            ):
+                out.setdefault(str(row["memory_id"]), []).append(_verification_row(row))
+        return out
+
+    def delete_verification(
+        self,
+        memory_id: str,
+        *,
+        machine_id: str | None = None,
+        session: str | None = None,
+    ) -> None:
+        found = self._conn.execute(
+            "SELECT 1 FROM verifications WHERE memory_id = ? "
+            "AND COALESCE(machine_id, '') = COALESCE(?, '')",
+            (memory_id, machine_id),
+        ).fetchone()
+        if found is None:
+            raise NotFoundError((memory_id, machine_id))
+        with self._transaction() as tx:
+            self._mutate(
+                tx,
+                "verification_delete",
+                {"memory_id": memory_id, "machine_id": machine_id},
+                session=session,
+            )
+
+    # -- conflicts, imports, quarantine ------------------------------------
+
+    def put_conflict(
+        self, record: Mapping[str, Any], *, session: str | None = None
+    ) -> None:
+        conflict = {c: record.get(c) for c in _CONFLICT_COLUMNS}
+        for required in ("id", "a_id", "b_id"):
+            if not conflict[required]:
+                raise ValueError(f"a conflict needs {required}")
+        with self._transaction() as tx:
+            self._mutate(tx, "conflict_put", {"conflict": conflict}, session=session)
+
+    def list_conflicts(self) -> list[dict[str, Any]]:
+        return [
+            {c: row[c] for c in _CONFLICT_COLUMNS}
+            for row in self._conn.execute(
+                f"SELECT {', '.join(_CONFLICT_COLUMNS)} FROM conflicts ORDER BY created, id"
+            )
+        ]
+
+    def delete_conflict(self, conflict_id: str, *, session: str | None = None) -> None:
+        if (
+            self._conn.execute(
+                "SELECT 1 FROM conflicts WHERE id = ?", (conflict_id,)
+            ).fetchone()
+            is None
+        ):
+            raise NotFoundError(conflict_id)
+        with self._transaction() as tx:
+            self._mutate(tx, "conflict_delete", {"id": conflict_id}, session=session)
+
+    def put_import(
+        self,
+        source: str,
+        *,
+        content_hash: str,
+        imported_at: str,
+        memory_id: str | None = None,
+        session: str | None = None,
+    ) -> None:
+        payload = {
+            "source": source,
+            "content_hash": content_hash,
+            "imported_at": imported_at,
+            "memory_id": memory_id,
+        }
+        with self._transaction() as tx:
+            self._mutate(tx, "import_put", payload, session=session)
+
+    def list_imports(self) -> list[dict[str, Any]]:
+        return [
+            {c: row[c] for c in _IMPORT_COLUMNS}
+            for row in self._conn.execute(
+                f"SELECT {', '.join(_IMPORT_COLUMNS)} FROM imports ORDER BY source"
+            )
+        ]
+
+    def delete_import(self, source: str, *, session: str | None = None) -> None:
+        if (
+            self._conn.execute(
+                "SELECT 1 FROM imports WHERE source = ?", (source,)
+            ).fetchone()
+            is None
+        ):
+            raise NotFoundError(source)
+        with self._transaction() as tx:
+            self._mutate(tx, "import_delete", {"source": source}, session=session)
+
+    def put_quarantine(
+        self,
+        name: str,
+        *,
+        reason: str,
+        at: str,
+        detail: str | None = None,
+        remote: str | None = None,
+        size: int | None = None,
+        sha256: str | None = None,
+        session: str | None = None,
+    ) -> None:
+        payload = {
+            "name": name,
+            "reason": reason,
+            "detail": detail,
+            "remote": remote,
+            "at": at,
+            "size": size,
+            "sha256": sha256,
+        }
+        with self._transaction() as tx:
+            self._mutate(tx, "quarantine_put", payload, session=session)
+
+    def list_quarantine(self) -> list[dict[str, Any]]:
+        return [
+            {c: row[c] for c in _QUARANTINE_COLUMNS}
+            for row in self._conn.execute(
+                f"SELECT {', '.join(_QUARANTINE_COLUMNS)} FROM quarantine ORDER BY name"
+            )
+        ]
+
+    def delete_quarantine(self, name: str, *, session: str | None = None) -> None:
+        if (
+            self._conn.execute(
+                "SELECT 1 FROM quarantine WHERE name = ?", (name,)
+            ).fetchone()
+            is None
+        ):
+            raise NotFoundError(name)
+        with self._transaction() as tx:
+            self._mutate(tx, "quarantine_delete", {"name": name}, session=session)
+
+    # -- telemetry ----------------------------------------------------------
+
+    def record_event(
+        self,
+        kind: str,
+        *,
+        session: str | None = None,
+        actor: Actor | Mapping[str, Any] | None = None,
+        best_effort: bool = True,
+        **fields: Any,
+    ) -> LogRow | None:
+        """One telemetry row. ``query`` and ``probe_query`` are redacted to
+        a hash, a short preview and a length before the row is signed, as
+        the v8 recorder redacted them. With ``best_effort`` a storage
+        failure is logged and swallowed, so telemetry never fails the tool
+        call it describes; a kind that names a mutation or a control row
+        is a programming error and always raises."""
+        if kind in MUTATION_KINDS or kind in CONTROL_KINDS:
+            raise ValueError(f"{kind!r} is a mutation or control kind, not an event")
+        payload: dict[str, Any] = _redact_event_fields(dict(fields))
+        if actor is not None:
+            record = actor.to_record() if isinstance(actor, Actor) else dict(actor)
+            if record:
+                payload.setdefault("actor", record)
+        try:
+            with self._transaction() as tx:
+                return self._append(tx, kind, payload, session=session)
+        except (sqlite3.Error, OSError, RuntimeError) as exc:
+            if not best_effort:
+                raise
+            log.warning("event %s not recorded: %s", kind, exc)
+            return None
+
+    def import_event(
+        self, event: Mapping[str, Any], *, imported_from: str = IMPORTED_FROM_V8
+    ) -> LogRow:
+        """One v8 event as a telemetry row under its original ``ts`` and
+        ``session``, the rest of its fields as the payload plus
+        ``imported_from``, query fields redacted (``event_import_payload``
+        says exactly what). An event without a ``ts`` is stamped now.
+        Raises rather than swallowing: a migration wants to know."""
+        ts, session, kind, payload = event_import_payload(
+            event, imported_from=imported_from
+        )
+        with self._transaction() as tx:
+            return self._append(tx, kind, payload, session=session, ts=ts)
+
+    def imported_event_keys(
+        self, imported_from: str = IMPORTED_FROM_V8
+    ) -> set[tuple[str, str | None, str, str]]:
+        """``(ts, session, kind, payload text)`` of every telemetry row
+        that names ``imported_from``: what a re-run of the importer skips.
+        The payload text is the canonical one the row stores, so the
+        caller compares ``canonical_payload`` of what it would write."""
+        needle = canonical_payload({"imported_from": imported_from})[1:-1]
+        out: set[tuple[str, str | None, str, str]] = set()
+        for row in self._conn.execute(
+            "SELECT ts, session, kind, payload FROM log WHERE payload LIKE ? "
+            "ORDER BY seq",
+            (f"%{needle}%",),
+        ):
+            kind = str(row["kind"])
+            if kind in MUTATION_KINDS or kind in CONTROL_KINDS:
                 continue
-            out.append(
-                MemorySummary(
-                    id=memory.id,
-                    scopes=memory.scopes,
-                    confidence=memory.confidence,
-                    summary=first_summary_line(memory.body),
-                    created=memory.created,
-                    updated=memory.updated,
-                    last_verified_at=memory.last_verified_at,
-                    category=memory.category,
-                    actor=memory.actor,
+            out.add(
+                (
+                    str(row["ts"]),
+                    None if row["session"] is None else str(row["session"]),
+                    kind,
+                    str(row["payload"]),
                 )
             )
         return out
 
-    def load_one(self, memory_id: str) -> Memory:
-        """Load one memory by ID. Raises if missing or tombstoned."""
-        if not is_valid_ulid(memory_id):
-            raise MemoryNotFoundError(f"invalid id: {memory_id!r}")
-
-        # Fast path: resolve id -> path through the index in O(1)
-        # instead of walking + reparsing the whole active directory.
-        # A concurrent move between resolve and load is still possible,
-        # so a failed or mismatched load falls through to the
-        # authoritative walk below rather than being trusted blindly.
-        hit = _indexed_path_for_id(self.root, memory_id)
-        if hit is not None:
-            try:
-                fast = self._load_path(hit)
-            except PARSE_SKIP_EXCEPTIONS:
-                fast = None
-            if fast is not None and fast.id == memory_id:
-                return fast
-
-        for path in self._iter_active_paths():
-            try:
-                memory = self._load_path(path)
-            except PARSE_SKIP_EXCEPTIONS:
-                # A file the bulk readers skip must not block the walk
-                # to a different id. If the requested id IS the
-                # unparseable file, the walk ends in
-                # MemoryNotFoundError — matching its invisibility to
-                # `load_all` / memory_search.
+    def iter_events(self, since_seq: int = 0) -> Iterator[dict[str, Any]]:
+        """The telemetry rows in the v8 event shape, seq order: ``ts``,
+        ``session`` (when the row has one), ``kind``, then the payload's
+        fields. Mutation and control rows are not events and are
+        skipped; so is a row whose payload is not an object."""
+        for row in iter_rows(self._conn, since_seq):
+            if row.kind in MUTATION_KINDS or row.kind in CONTROL_KINDS:
                 continue
-            if memory.id == memory_id:
-                return memory
-
-        # If it's tombstoned, give a clearer error so the model can say so.
-        # Match the discipline `load_tombstones` uses for the bulk read:
-        # one corrupt/truncated tombstone or a race with
-        # `prune_tombstones` (FileNotFoundError) must not crash the whole
-        # callsite. Same skip-don't-crash discipline, narrower catch here:
-        # that reader skips its full `_load_tombstone_path` parse on the
-        # blanket `PARSE_SKIP_EXCEPTIONS`, while this raw
-        # `frontmatter.load` probe enumerates its catch tuple.
-        # `yaml.YAMLError` is redundant after the `_frontmatter`
-        # boundary fix translates it to ValueError, but we list it
-        # explicitly as defense-in-depth + signal to future readers.
-        for path in self._iter_tombstone_paths():
             try:
-                post = frontmatter.load(path)
-            except (FileNotFoundError, ValueError, KeyError, OSError, yaml.YAMLError):
+                payload = json.loads(row.payload)
+            except ValueError:
                 continue
-            if post.metadata.get("id") == memory_id:
-                raise TombstonedError(
-                    f"memory {memory_id} was removed: "
-                    f"{post.metadata.get('removed_reason', '<no reason>')}"
-                )
+            if not isinstance(payload, dict):
+                continue
+            event: dict[str, Any] = {"ts": row.ts}
+            if row.session is not None:
+                event["session"] = row.session
+            event["kind"] = row.kind
+            for key, value in payload.items():
+                if key not in _ROW_COLUMNS:
+                    event[key] = value
+            yield event
 
-        raise MemoryNotFoundError(f"no memory with id {memory_id}")
+    def record_migration(
+        self,
+        *,
+        source: str,
+        counts: Mapping[str, Any],
+        session: str | None = None,
+    ) -> LogRow:
+        """The ``migrate_v8`` control row: which v8 directory was read and
+        how much of it this run imports, written before the imports it
+        counts so the log says what was attested when."""
+        from . import __version__
 
-    def load_many(self, memory_ids: list[str]) -> list[Memory]:
-        """Load several memories by ID through ONE index lookup.
+        payload = {
+            "imported_from": IMPORTED_FROM_V8,
+            "source": source,
+            "counts": dict(counts),
+            "engine_version": __version__,
+        }
+        with self._transaction() as tx:
+            return self._append(tx, MIGRATE_V8, payload, session=session)
 
-        This is the plural of ``load_one`` for callers that already hold
-        a candidate set, and it exists because the search prefilter used
-        to spell it out by hand: resolve every id through
-        ``_index.filenames_for_ids``, then ``Store._load_path`` each one.
-        That loop is the fast shape — one index connection for the whole
-        batch — and it belongs on the store rather than in a handler, so
-        a consumer that only knows the protocol can reach it.
+    # -- search seams ---------------------------------------------------------
 
-        **Not the plural of ``load_one``, deliberately.** A
-        ``[self.load_one(i) for i in ids]`` implementation resolves each
-        id through its own ``_indexed_path_for_id`` call, which opens
-        and closes the index once per id: benchmarked at 50 candidates on
-        a 200-memory store, 46.39 ms across 50 connections against
-        12.52 ms across 1 here — i.e. already indistinguishable from the
-        full-corpus ``load_all`` this path exists to avoid. The
-        connection count is the metric that matters; the milliseconds
-        are noise. Do not reintroduce the plural shape.
-
-        **Failures PROPAGATE.** No ``@best_effort`` here, unlike
-        ``_indexed_path_for_id``, because the search prefilter wraps this
-        call in a guard that warns and degrades to ``load_all``. A
-        swallowing version would instead return whichever candidates
-        happened to resolve, which the caller cannot distinguish from a
-        complete pool — it would still set ``prefiltered=True`` and so
-        silently narrow the BM25 corpus-IDF denominator while looking
-        like a full result set. Degrade is the caller's decision to make
-        loudly, not this method's to make quietly.
-
-        **Index-only resolution, with the same asymmetry as the search
-        prefilter it replaces.** An id with no index row is omitted
-        rather than resolved through the O(corpus) directory walk, so a
-        miss costs nothing and a batch that resolves nothing appears as
-        an empty list — the caller's existing "every candidate missed"
-        fallback covers it. ``load_one`` owns the authoritative walk
-        instead; this method is the batched hint, not the fallback.
-        ``_indexed_path_for_id``'s never-raise contract stays as it is.
-
-        Two candidate-level skips, both inherited from the loop this
-        replaces: a name the quarantine sidecar refuses (a pulled file
-        the admission chain rejected keeps its index row until the next
-        rebuild, and must not reach a search hit with its body), and a
-        row whose file no longer carries that id (``sync pull`` rewrites
-        files in place, so the filename column can briefly point at a
-        body belonging to a different memory). Skipped parse failures
-        use the shared ``PARSE_SKIP_EXCEPTIONS`` width, so a file
-        ``load_all`` would skip cannot crash this path either.
-        """
-        if not memory_ids:
+    def query_candidates(
+        self,
+        text: str,
+        *,
+        scopes: Sequence[str] | None = None,
+        client: str | None = None,
+        model: str | None = None,
+        max_results: int = 100,
+    ) -> list[tuple[str, float]]:
+        """``[(memory_id, bm25), ...]`` ascending, the v8 index query
+        verbatim: the MATCH from ``fts_match_query``, scopes as an OR over
+        the space-padded list, the actor filters as exact equality that an
+        undeclared row never matches, and the cap applied in SQL."""
+        if not text.strip():
             return []
-        # `filenames_for_ids` binds one host parameter per id in a single
-        # `IN (…)` and does not chunk; 50 candidates is far under the
-        # ceiling, but this is a public method and a bigger batch is a
-        # caller's choice. Chunked here rather than documented as a
-        # ceiling so no caller has to know the number — one connection
-        # per chunk, not per id.
-        from . import index as _index
+        match_query = fts_match_query(text)
+        if not match_query:
+            return []
+        sql = (
+            "SELECT m.id, bm25(memories_fts) AS score "
+            "FROM memories_fts "
+            "JOIN memories m ON m.rowid = memories_fts.rowid "
+            "WHERE memories_fts MATCH ? "
+        )
+        params: list[Any] = [match_query]
+        if scopes:
+            sql += "AND (" + " OR ".join(["m.scopes_text LIKE ?"] * len(scopes)) + ") "
+            params.extend(f"% {s} %" for s in scopes)
+        if client is not None:
+            sql += "AND m.actor_client IS NOT NULL AND m.actor_client = ? "
+            params.append(client)
+        if model is not None:
+            sql += "AND m.actor_model IS NOT NULL AND m.actor_model = ? "
+            params.append(model)
+        sql += "ORDER BY score ASC LIMIT ?"
+        params.append(int(max_results))
+        rows = self._conn.execute(sql, params).fetchall()
+        return [(str(row["id"]), float(row["score"])) for row in rows]
 
-        filenames: dict[str, str] = {}
-        for start in range(0, len(memory_ids), _FILENAMES_FOR_IDS_CHUNK):
-            chunk = memory_ids[start : start + _FILENAMES_FOR_IDS_CHUNK]
-            filenames.update(_index.filenames_for_ids(self.root, chunk))
-
-        excluded = quarantined_names(self.root)
-        out: list[Memory] = []
-        for memory_id in memory_ids:
-            filename = filenames.get(memory_id)
-            if not filename:
-                continue
-            if excluded and filename in excluded:
-                continue
-            try:
-                memory = self._load_path(self.root / filename)
-            except PARSE_SKIP_EXCEPTIONS:
-                continue
-            if memory.id != memory_id:
-                continue
-            out.append(memory)
+    def links_for_many(
+        self, memory_ids: Iterable[str]
+    ) -> dict[
+        str, tuple[list[tuple[str, str, str | None]], list[tuple[str, str, str | None]]]
+    ]:
+        """Outbound and inbound link rows per id, the v8 shape: outbound
+        ``(type, target_id, note)``, inbound ``(type, source_id, note)``."""
+        ids = list(dict.fromkeys(memory_ids))
+        out: dict[
+            str,
+            tuple[list[tuple[str, str, str | None]], list[tuple[str, str, str | None]]],
+        ] = {mid: ([], []) for mid in ids}
+        if not ids:
+            return out
+        placeholders = ",".join("?" * len(ids))
+        for row in self._conn.execute(
+            "SELECT source_id, type, target_id, note FROM memory_links "
+            f"WHERE source_id IN ({placeholders}) ORDER BY source_id, type, target_id",
+            ids,
+        ):
+            out[row["source_id"]][0].append(
+                (row["type"], row["target_id"], row["note"])
+            )
+        for row in self._conn.execute(
+            "SELECT target_id, type, source_id, note FROM memory_links "
+            f"WHERE target_id IN ({placeholders}) ORDER BY target_id, type, source_id",
+            ids,
+        ):
+            out[row["target_id"]][1].append(
+                (row["type"], row["source_id"], row["note"])
+            )
         return out
 
-    def show(self, memory_id: str) -> Memory:
-        """Public alias matching the MCP `memory_show` tool name."""
-        return self.load_one(memory_id)
+    def provenance_for(self, memory_ids: Sequence[str]) -> dict[str, str]:
+        """``{id: label}`` for the active records asked. The label is the
+        row's, unless the row's pointer into the log fails: the ``log_mac``
+        names no row, names a row that put a different record, or names a
+        row whose MAC does not verify under the segment's key. Such a row
+        reads ``unaccounted``, as does one the last ``refold`` in this
+        process found so. A store opened without its key cannot verify
+        pointers and returns the row labels as stored; ``trust_rows`` says
+        when that is the case."""
+        ids = list(dict.fromkeys(memory_ids))
+        if not ids:
+            return {}
+        out: dict[str, str] = {}
+        for start in range(0, len(ids), _PROVENANCE_BATCH):
+            batch = ids[start : start + _PROVENANCE_BATCH]
+            placeholders = ",".join("?" * len(batch))
+            for row in self._conn.execute(
+                "SELECT id, provenance, log_mac FROM memories "
+                f"WHERE id IN ({placeholders})",
+                batch,
+            ):
+                memory_id = str(row["id"])
+                label = str(row["provenance"])
+                if memory_id in self._unaccounted_memory_ids:
+                    label = UNACCOUNTED
+                elif (
+                    self._pointer_verified(memory_id, "memory_put", row["log_mac"])
+                    is False
+                ):
+                    label = UNACCOUNTED
+                out[memory_id] = label
+        return out
 
-    def _load_path(self, path: Path) -> Memory:
-        # Instance hook over the module-level parser: kept as a method so
-        # tests can monkeypatch per-Store read behavior (the CAS races in
-        # test_concurrency), while Store-free callers
-        # (`count_unparseable_memory_files`) share the exact same parse
-        # semantics via `_parse_memory_file`.
-        return _parse_memory_file(path)
+    def _segment_key(self, seq: int) -> bytes | None:
+        """The key that signed the row at ``seq``: the segment's, read
+        off the rekey rows. None when that key is not on this machine."""
+        if self._segments is None:
+            segments: list[tuple[int, str]] = []
+            first = self.key_fingerprint
+            for row in self._conn.execute(
+                "SELECT seq, payload FROM log WHERE kind = ? ORDER BY seq", (REKEY,)
+            ):
+                try:
+                    names = json.loads(row["payload"])
+                    old, new = (
+                        str(names["old_fingerprint"]),
+                        str(names["new_fingerprint"]),
+                    )
+                except (ValueError, KeyError, TypeError):
+                    continue
+                if not segments:
+                    first = old
+                segments.append((int(row["seq"]), new))
+            self._segments = [(1, first)] + segments
+        segments_known = self._segments
+        fingerprint_for_seq = segments_known[0][1]
+        for first_seq, name in segments_known:
+            if seq >= first_seq:
+                fingerprint_for_seq = name
+        if fingerprint_for_seq not in self._keys_by_fingerprint:
+            key = self._key if fingerprint_for_seq == self.key_fingerprint else None
+            if key is None:
+                key = self._keyring.key_for_fingerprint(fingerprint_for_seq)
+            self._keys_by_fingerprint[fingerprint_for_seq] = key
+        return self._keys_by_fingerprint[fingerprint_for_seq]
 
-    # ---- write ------------------------------------------------------------
+    def _pointer_verified(self, record_id: str, kind: str, log_mac: Any) -> bool | None:
+        """Does the record's ``log_mac`` name a log row of ``kind`` that
+        put this very record, and does that row's MAC verify under its
+        segment's key? None when the key is not on this machine; the
+        other two answers are cached per (id, mac)."""
+        if self._key is None:
+            return None
+        if not isinstance(log_mac, str) or not log_mac:
+            return False
+        cache_key = (record_id, log_mac)
+        cached = self._pointer_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        raw = self._conn.execute(
+            "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log "
+            "WHERE mac = ?",
+            (log_mac,),
+        ).fetchone()
+        verdict = False
+        if raw is not None and str(raw["kind"]) == kind:
+            try:
+                payload = json.loads(raw["payload"])
+                record = payload[kind.split("_", 1)[0]]
+                named = str(record["id"])
+            except (ValueError, KeyError, TypeError):
+                named = ""
+            if named == record_id:
+                key = self._segment_key(int(raw["seq"]))
+                if key is None:
+                    return None
+                expected = compute_mac(
+                    key,
+                    seq=int(raw["seq"]),
+                    ts=str(raw["ts"]),
+                    session=None if raw["session"] is None else str(raw["session"]),
+                    kind=str(raw["kind"]),
+                    payload=str(raw["payload"]),
+                    prev_mac=str(raw["prev_mac"]),
+                )
+                verdict = hmac.compare_digest(expected, log_mac)
+        self._pointer_cache[cache_key] = verdict
+        return verdict
+
+    def trust_rows(self, memory_ids: Sequence[str]) -> dict[str, TrustRow] | None:
+        """``{id: TrustRow}`` for the active records asked: the provenance
+        verdict ``provenance_for`` gives and this host's verification stamp
+        (the ``verifications`` row with no machine id), or None when the
+        store was opened without its key, so no pointer can be verified and
+        the response must say trust is unavailable."""
+        if self._key is None:
+            return None
+        labels = self.provenance_for(memory_ids)
+        if not labels:
+            return {}
+        stamps: dict[str, str] = {}
+        ids = list(labels)
+        for start in range(0, len(ids), _PROVENANCE_BATCH):
+            batch = ids[start : start + _PROVENANCE_BATCH]
+            placeholders = ",".join("?" * len(batch))
+            for row in self._conn.execute(
+                "SELECT memory_id, verified_at FROM verifications "
+                f"WHERE machine_id IS NULL AND memory_id IN ({placeholders})",
+                batch,
+            ):
+                stamps[str(row["memory_id"])] = str(row["verified_at"])
+        return {
+            memory_id: TrustRow(label, stamps.get(memory_id))
+            for memory_id, label in labels.items()
+        }
+
+    def unaccounted_ids(self) -> list[str]:
+        """Every active record whose pointer into the log fails, newest
+        first: the planted shape, found by one pass over the rows rather
+        than by a refold."""
+        out: list[tuple[str, str]] = []
+        for row in self._conn.execute(
+            "SELECT id, created, log_mac FROM memories ORDER BY created DESC, id"
+        ):
+            memory_id = str(row["id"])
+            if (
+                memory_id in self._unaccounted_memory_ids
+                or self._pointer_verified(memory_id, "memory_put", row["log_mac"])
+                is False
+            ):
+                out.append((str(row["created"]), memory_id))
+        return [memory_id for _, memory_id in out]
+
+    def provenance_counts(self) -> dict[str, int]:
+        """How many active records carry each label, with ``unaccounted``
+        counted by the pointer check rather than by any stored label."""
+        counts: dict[str, int] = {}
+        unaccounted = set(self.unaccounted_ids())
+        for row in self._conn.execute("SELECT id, provenance FROM memories"):
+            label = (
+                UNACCOUNTED if str(row["id"]) in unaccounted else str(row["provenance"])
+            )
+            counts[label] = counts.get(label, 0) + 1
+        return counts
+
+    # -- the record surface the runtime uses -----------------------------------
+    #
+    # The v8 store's names, kept where the semantics are unchanged, so the
+    # handlers, the CLI and the benches port without a rename of their own.
 
     def write(
         self,
@@ -681,35 +2293,12 @@ class Store:
         claims: list[str] | None = None,
         links: list[Any] | None = None,
         actor: Actor | dict[str, Any] | None = None,
+        session: str | None = None,
     ) -> Memory:
-        """Create a new memory. Generates ID, slug, filename.
-
-        `actor` is who is writing — the `identity.Actor` the handler
-        resolved for the request, or its dict (a staged pending-write
-        payload carries the dict, being JSON). Persisted beside `origin`
-        and, like it, only when it carries something.
-
-        `links` are the record's outbound edges at birth — `MemoryLink`
-        instances or their `{type, target_id, note}` dicts (the staged
-        pending-write payload carries dicts, being JSON). The write path
-        sets `supersedes` edges here rather than through a second
-        `update` so the record and its index rows land in one locked
-        write. Validated by the `Memory` constructor like every other
-        field; a self-link is impossible because the id is minted below.
-
-        `category` is persisted on the record. Legacy callers that don't
-        pass it land with `category=None`, which the runtime treats as
-        the fact-default — same behavior as memories written before the
-        field existed.
-
-        `claims` are persisted verbatim — parsing, the declare-time
-        oracle check, and normalization are the memory_write HANDLER's
-        job (they need the origin worktree, which this primitive only
-        carries, never resolves). Mirrors the `mark_verified` split.
-        """
-        # Provisioning is a precondition of writing, not of existing:
-        # `__post_init__` is pure, so every mutator states it here.
-        self.ensure()
+        """Create a new memory: mints the id, stamps created and updated,
+        stores the body stripped with one trailing newline. `claims` are
+        stored verbatim; parsing and the declare-time check are the write
+        handler's job, since they need the origin worktree."""
         now = utcnow()
         memory = Memory(
             id=generate_ulid(),
@@ -730,31 +2319,7 @@ class Store:
                 for entry in (links or [])
             ],
         )
-        path = self._path_for(memory)
-        with _locked(path):
-            content_sha = self._write_path(path, memory)
-            # perf: index upsert under lock is intentional — see audit
-            # H1. Two concurrent updates on the same id used to release
-            # the file lock in order A→B, but their SQLite upserts
-            # could still interleave so the index ended up with A's
-            # body while disk had B's. The SQLite serialization
-            # overhead is worth it: stale FTS5 ranking quietly
-            # misleads `memory_search`, and the file-lock cost is
-            # bounded (we're already holding it through `_write_path`).
-            #
-            # `local`: this process created the record through its own
-            # code path. Stamped here rather than derived from the event
-            # the handler records afterwards, so a write made with
-            # telemetry off (or through a caller that records nothing)
-            # still reads local on every surface.
-            _index_upsert_quietly(
-                self.root,
-                memory,
-                filename=path.name,
-                provenance="local",
-                content_sha256=content_sha,
-            )
-        return memory
+        return self.put_memory(memory, provenance=LOCAL, session=session)
 
     def update(
         self,
@@ -762,163 +2327,39 @@ class Store:
         *,
         force: bool = False,
         preserve_verification: bool = False,
+        session: str | None = None,
     ) -> Memory:
-        """Overwrite an existing memory in place; bump `updated`.
-
-        Optimistic concurrency (W2): the caller's `memory.updated` is the
-        snapshot timestamp they READ when they built this edit (via
-        `load_one(id).updated`). Under the lock, after the C2 recheck,
-        we re-load the current Memory from disk and compare its `updated`
-        to the caller's. On mismatch we raise `ConcurrentUpdateError` so
-        the caller can re-fetch and retry on top of the current snapshot
-        rather than silently clobbering whoever bumped the record in the
-        interim. The two-agent disjoint-edit race that previously dropped
-        one write now surfaces as a structured retry signal.
-
-        `force=True` is a low-level escape hatch for callers who legitimately
-        want to overwrite without the CAS — e.g. migration tooling that has
-        already reconciled concurrent edits out-of-band. Not exposed through
-        the MCP handler boundary; reach for it from in-process code only. It
-        skips the CAS comparison, not the under-lock re-load: the current
-        record is read on every path (see the corroboration note below), so
-        a file whose frontmatter parses but no longer validates as a
-        `Memory` raises out of that load instead of being force-overwritten
-        — the same outcome the default CAS path has always had.
-
-        `preserve_verification=True` keeps the on-disk `last_verified_at` and
-        `verified_*` lists instead of the caller's snapshot copy. The
-        metadata-update handler passes it so a metadata-only edit cannot
-        clobber a `mark_verified` that landed concurrently: verify bumps
-        `last_verified_at` but NOT `updated`, so the `updated` CAS alone
-        wouldn't catch it. Content edits leave it False — they reset
-        verification on purpose (the attested body no longer exists).
-
-        The corroboration rollup (`corroborations` / `last_corroborated`) is
-        NOT caller-editable through this method: it is store-owned lifecycle
-        state like `updated`, so the on-disk values are re-copied onto the
-        write on EVERY path — with or without `preserve_verification`, with
-        or without `force`. Same cross-axis race as verification, one axis
-        over: `record_corroboration` deliberately never bumps `updated`
-        (a recurrence is not a rewrite), so a bump landing between the
-        caller's snapshot read and this lock sails through the `updated`
-        CAS, and writing the snapshot's stale counter back would silently
-        erase it. Unlike verification there is no opt-out — a content edit
-        does not invalidate the recurrence evidence the way it invalidates
-        an attestation, and the counter is monotonic, so re-copying is
-        always the correct merge. Callers that want to move the rollup go
-        through `record_corroboration`.
-
-        Raises:
-            MemoryNotFoundError: no active record with that id, or the file
-              was tombstoned/renamed concurrently (by a parallel `tombstone`
-              or any other path-moving mutator) between the find walk and
-              the under-lock recheck.
-            ConcurrentUpdateError: a parallel `update` landed between the
-              caller's snapshot read and our CAS — the on-disk `updated`
-              no longer matches `memory.updated`. The caller should re-fetch
-              via `memory_show` and retry on top of the current snapshot.
-              Not raised when `force=True`.
-            OSError: a genuine disk-level failure in the atomic write path
-              (`_write_path` → `_atomic_write_post`): EIO mid-write, ENOSPC
-              on the tmp write or rename, EACCES on the directory. The MCP
-              handler boundary translates this to a structured `ValueError`.
-        """
-        # Provisioning is a precondition of writing, not of existing:
-        # `__post_init__` is pure, so every mutator states it here.
-        self.ensure()
-        existing_path = self._find_path_for_id(memory.id)
-        if existing_path is None:
-            raise MemoryNotFoundError(f"no memory with id {memory.id}")
-
-        now = utcnow()
-        new_memory = memory.model_copy(update={"updated": now})
-        with _locked(existing_path):
-            # Re-verify the path under the lock. `_find_path_for_id`
-            # above walked the directory unlocked, so a concurrent
-            # `tombstone()` could have moved the file into
-            # `.tombstones/` between the find and this lock; without
-            # the recheck, our write would resurrect the tombstoned
-            # memory by re-creating an active file at the original
-            # path — silently overriding the removal and leaving the
-            # tombstone orphaned in `.tombstones/`.
-            #
-            # Cheapest correct check: the file still exists AND its id
-            # frontmatter still matches. If either fails, the path no
-            # longer represents the same logical memory and the caller
-            # must retry through `_find_path_for_id` (or accept the
-            # tombstone). We surface MemoryNotFoundError rather than a
-            # custom race-flag — the calling tool layer (`memory_update`)
-            # treats it the same way as the find-time miss above.
-            if not _id_still_at_path(existing_path, memory.id):
-                raise MemoryNotFoundError(
-                    f"no memory with id {memory.id} (raced with "
-                    f"concurrent tombstone or rename)"
-                )
-            # W2: optimistic-concurrency CAS. Re-load under the lock and
-            # confirm the on-disk `updated` matches the caller's snapshot.
-            # If a second agent landed an update between the caller's
-            # read and our lock, the on-disk timestamp will have moved
-            # forward and our write would silently drop that agent's
-            # change. Refuse with `ConcurrentUpdateError` so the caller
-            # rebases. `_load_path` performs the same `_as_dt` UTC
-            # coercion the caller's `load_one`/`load_all` path does, so
-            # the comparison is between two aware datetimes in the same
-            # tz; equality compares to the microsecond, which is the
-            # resolution `utcnow()` writes.
-            # Load the current on-disk record UNCONDITIONALLY. The CAS
-            # (not force) and the preserve_verification block below both
-            # need it, and so does the store-owned corroboration re-copy,
-            # which runs on every path including `force=True` — the force
-            # hatch opts out of the CAS, not out of the store's own
-            # lifecycle bookkeeping (it doesn't opt out of the `updated`
-            # stamp either).
-            current = self._load_path(existing_path)
-            if not force and current.updated != memory.updated:
-                raise ConcurrentUpdateError(memory.id, current.updated)
-            # Fields the store owns rather than the caller, re-copied from
-            # disk so this write can't revert them. `corroborations` /
-            # `last_corroborated` move only through `record_corroboration`,
-            # which — like `mark_verified` — deliberately leaves `updated`
-            # alone, so a bump landing between the caller's snapshot read
-            # and this lock passes the CAS above; writing the snapshot's
-            # pre-bump counter back would silently erase the recurrence
-            # signal. Monotonic counter, so taking the on-disk value is
-            # always the correct merge.
-            carried_over: dict[str, object] = {
-                "corroborations": current.corroborations,
-                "last_corroborated": current.last_corroborated,
-            }
-            if preserve_verification:
-                # Cross-axis race: `mark_verified` bumps `last_verified_at`
-                # (and the verified_* lists) but NOT `updated`, so a verify
-                # that lands between the caller's snapshot read and this lock
-                # passes the `updated` CAS above — yet the caller's
-                # `new_memory` still carries the STALE pre-verify
-                # verification and would silently clobber the attestation.
-                # Metadata-only updates pass preserve_verification=True to
-                # keep the freshest on-disk verification instead of the
-                # caller's snapshot.
-                carried_over.update(
-                    {
-                        "last_verified_at": current.last_verified_at,
-                        "verified_paths": list(current.verified_paths),
-                        "verified_commits": list(current.verified_commits),
-                        "verified_versions": list(current.verified_versions),
-                        "verified_absent_paths": list(current.verified_absent_paths),
-                        "claims": list(current.claims),
-                        "verified_head": current.verified_head,
-                    }
-                )
-            new_memory = new_memory.model_copy(update=carried_over)
-            content_sha = self._write_path(existing_path, new_memory)
-            # perf: index upsert under lock is intentional — see audit H1.
-            _index_upsert_quietly(
-                self.root,
-                new_memory,
-                filename=existing_path.name,
-                content_sha256=content_sha,
+        """Replace an active record with the caller's edit. The caller's
+        `memory.updated` is the snapshot it read; unless `force`, a stored
+        `updated` that differs raises ConcurrentUpdateError so the caller
+        re-reads and retries. `preserve_verification` keeps the stored
+        verification fields over the snapshot's (a metadata edit must not
+        undo a verify that landed in between); a content edit leaves it
+        False and resets them on purpose. The corroboration rollup is
+        store-owned and always carried over."""
+        current = self._active_or_raise(memory.id)
+        if not force and current.updated != memory.updated:
+            raise ConcurrentUpdateError(memory.id, current.updated)
+        carried: dict[str, object] = {
+            "updated": utcnow(),
+            "corroborations": current.corroborations,
+            "last_corroborated": current.last_corroborated,
+        }
+        if preserve_verification:
+            carried.update(
+                {
+                    "last_verified_at": current.last_verified_at,
+                    "verified_paths": list(current.verified_paths),
+                    "verified_commits": list(current.verified_commits),
+                    "verified_versions": list(current.verified_versions),
+                    "verified_absent_paths": list(current.verified_absent_paths),
+                    "claims": list(current.claims),
+                    "verified_head": current.verified_head,
+                }
             )
-        return new_memory
+        new_memory = memory.model_copy(update=carried)
+        Memory.model_validate(new_memory.model_dump())
+        return self.put_memory(new_memory, session=session)
 
     def mark_verified(
         self,
@@ -933,89 +2374,14 @@ class Store:
         expected_last_verified_at: datetime | None = None,
         expected_updated: datetime | None = None,
         check_expected: bool = False,
+        session: str | None = None,
     ) -> Memory:
-        """Bump `last_verified_at` to now without touching `updated`.
-
-        Verification is the orthogonal axis to content edits: a typo fix
-        bumps `updated` (the body changed) but not `last_verified_at`
-        (no claim to have spot-checked reality). A `memory_verify` call
-        bumps `last_verified_at` (a human/agent confirmed reality matched
-        the body) without bumping `updated` (the body itself didn't move).
-        Calling this on a memory that's already verified-now is a no-op
-        from the caller's perspective — the timestamp just slides forward.
-
-        `verified_paths` / `verified_commits` / `verified_versions` /
-        `verified_absent_paths` carry the structured claims the caller
-        attested (`verified_absent_paths` being the mirror axis: paths
-        confirmed *intentionally* absent on this machine, excluded from
-        path-drift's `missing`). Passing None preserves whatever was
-        previously stored (so a no-arg `mark_verified` keeps the prior
-        attestation list); passing an explicit `[]` clears it. Passing a
-        populated list replaces the prior list — verification is
-        per-event, not append-only, and the event log is the audit
-        trail for the history.
-
-        `verified_head` is the commit the origin checkout stood at when
-        the caller checked, or None when no checkout answered. Unlike
-        the lists it is written WHOLE on every stamp, never preserved
-        from the prior one: a stamp that carries no anchor is not
-        anchored at the previous stamp's commit either, and the
-        commit-drift leg falls back to the author-date count for it.
-        Must be a full commit hash — the read side hands it to git as
-        a revision — so anything else is refused here as a structural
-        limit, the way an over-long scope list is.
-
-        Optimistic concurrency (W8): when `check_expected=True`, the
-        caller's `expected_last_verified_at` is the snapshot value they
-        READ when they decided to attest (via `load_one(id).last_verified_at`),
-        and `expected_updated` (when supplied) is the same snapshot's
-        `updated`. Under the lock, after the C2 recheck, we compare the
-        on-disk values to the caller's snapshot. `last_verified_at`
-        alone cannot fingerprint a never-verified memory: an edit
-        CLEARS the field, so None == None passes vacuously and the
-        stamp would land on prose the verifier never read — `updated`
-        is the field that moves on the edit, and the pair detects both
-        the concurrent-verify and the concurrent-update race. On
-        mismatch we raise `ConcurrentUpdateError` so the caller can
-        re-fetch, reassess their attestation against the now-current
-        state, and retry — rather than silently clobbering whoever
-        attested (or edited) in the interim.
-        REPLACE semantics for `verified_*` lists makes this race especially
-        nasty: agent A attesting path #1 and agent B attesting path #2
-        simultaneously would otherwise lose one of the attestations, and
-        the contract is "reread + reattest," not "silent merge."
-
-        `check_expected=False` (the default) is the back-compat escape
-        hatch for callers that don't have a snapshot — the legacy
-        direct-store callers in tests and the no-arg
-        slide-the-timestamp-forward use case. Not exposed through
-        the MCP `memory_verify` handler boundary; that handler always
-        loads its snapshot first and opts in.
-
-        Raises:
-            MemoryNotFoundError: no active or tombstoned record with that
-              id, or the active file was tombstoned/renamed concurrently
-              between the find walk and the under-lock recheck.
-            TombstonedError: id resolves to an existing tombstone — the
-              caller should restore before attesting, or attest something
-              else.
-            ConcurrentUpdateError: only raised when `check_expected=True`;
-              fires when a parallel `mark_verified` landed between the
-              caller's snapshot read and our CAS, so the on-disk
-              `last_verified_at` no longer matches
-              `expected_last_verified_at`. The caller should re-fetch via
-              `memory_show`, reassess the attestation against the
-              now-current `verified_*` lists, and retry.
-            OSError: a genuine disk-level failure in the atomic write path
-              (`_write_path` → `_atomic_write_post`): EIO mid-write, ENOSPC
-              on the tmp write or rename, EACCES on the directory. The MCP
-              handler boundary translates this to a structured `ValueError`.
-            ValueError: `verified_head` is set but is not a full commit
-              hash.
-        """
-        # Provisioning is a precondition of writing, not of existing:
-        # `__post_init__` is pure, so every mutator states it here.
-        self.ensure()
+        """Stamp `last_verified_at` now and replace whichever attestation
+        lists the caller passed (None leaves a list as it is; `verified_head`
+        is always written). Writes the record and this host's verification
+        row in one transaction. With `check_expected`, a stored stamp or
+        `updated` that differs from the caller's snapshot raises
+        ConcurrentUpdateError."""
         if verified_head is not None:
             verified_head = verified_head.strip().lower()
             if not is_full_commit_sha(verified_head):
@@ -1023,639 +2389,171 @@ class Store:
                     "verified_head must be a full commit hash (40 or 64 hex "
                     f"characters), got {verified_head!r}"
                 )
-        existing_path = self._find_path_for_id(memory_id)
-        if existing_path is None:
-            # Tombstone scan must tolerate corrupt/racing entries — the
-            # same skip-don't-crash discipline as the `load_tombstones`
-            # bulk reader, with a narrower catch: that reader skips on
-            # the blanket `PARSE_SKIP_EXCEPTIONS`, while this raw
-            # `frontmatter.load` probe enumerates its catch tuple.
-            # See `load_one` for the rationale on the explicit
-            # `yaml.YAMLError` + `FileNotFoundError` in the catch tuple.
-            for tpath in self._iter_tombstone_paths():
-                try:
-                    post = frontmatter.load(tpath)
-                except (
-                    FileNotFoundError,
-                    ValueError,
-                    KeyError,
-                    OSError,
-                    yaml.YAMLError,
-                ):
-                    continue
-                if post.metadata.get("id") == memory_id:
-                    raise TombstonedError(
-                        f"memory {memory_id} was removed: "
-                        f"{post.metadata.get('removed_reason', '<no reason>')}"
-                    )
-            raise MemoryNotFoundError(f"no memory with id {memory_id}")
-
-        # Read-modify-write must happen under the same lock. Reading
-        # outside the lock and writing inside it leaves a window where
-        # a concurrent `update` / `tombstone` can land in between; our
-        # write would then overwrite that change with the stale body
-        # plus the new `last_verified_at`. Cheap to hold the lock during
-        # the read — the file is the same one we're about to write.
-        with _locked(existing_path):
-            # Same C2 recheck as `update`: `_find_path_for_id` walked
-            # unlocked, so a concurrent `tombstone()` may have moved
-            # the file away between the find and this lock. Without
-            # the recheck, our `_load_path` would raise
-            # FileNotFoundError (passing through as OSError) or, worse,
-            # the path could have been reused for a different memory
-            # via a same-slug write — in which case we'd corrupt that
-            # memory with a `last_verified_at` claim from a different
-            # id. Recheck before the load.
-            if not _id_still_at_path(existing_path, memory_id):
-                raise MemoryNotFoundError(
-                    f"no memory with id {memory_id} (raced with "
-                    f"concurrent tombstone or rename)"
-                )
-            existing = self._load_path(existing_path)
-            # W8: optimistic-concurrency CAS on the pair
-            # (`last_verified_at`, `updated`). A concurrent attestation
-            # moves `last_verified_at`; a concurrent EDIT clears it —
-            # which on a never-verified memory is None == None, a
-            # vacuous pass that would stamp the verify onto prose the
-            # verifier never read. `updated` is the field the edit
-            # moves, so the pair covers both races. Mirror of W2 in
-            # shape: compare the on-disk snapshot fingerprint to the
-            # caller's; on mismatch raise `ConcurrentUpdateError` with
-            # the on-disk `updated` so the caller's rebase action is
-            # identical to the W2 retry flow (re-fetch via
-            # `memory_show`, retry on top). `expected_updated` is
-            # optional for back-compat with direct callers that only
-            # snapshotted the verify half; the MCP handler always
-            # passes both.
-            if check_expected and (
-                existing.last_verified_at != expected_last_verified_at
-                or (
-                    expected_updated is not None
-                    and existing.updated != expected_updated
-                )
-            ):
-                raise ConcurrentUpdateError(memory_id, existing.updated)
-            # NOTE on where the attestation-existence check lives: NOT here.
-            # `mark_verified` is the low-level persistence primitive and
-            # performs no judgement, matching `Store.write`'s split (the
-            # store enforces structural limits; policy lives above it).
-            # Refusing an unstattable `verified_paths` entry is the
-            # `memory_verify` HANDLER's job — see `handlers/verify.py`.
-            # No production caller besides that handler passes
-            # attestations, so the chokepoint argument that justified
-            # `apply_write_gates` does not apply: there is no second
-            # attesting caller to bypass the handler.
-            verified_now = utcnow()
-            update: dict[str, object] = {"last_verified_at": verified_now}
-            if verified_paths is not None:
-                update["verified_paths"] = list(verified_paths)
-            if verified_commits is not None:
-                update["verified_commits"] = list(verified_commits)
-            if verified_versions is not None:
-                update["verified_versions"] = list(verified_versions)
-            if verified_absent_paths is not None:
-                update["verified_absent_paths"] = list(verified_absent_paths)
-            if claims is not None:
-                update["claims"] = list(claims)
-            # Whole on every stamp — see the docstring. A caller with no
-            # checkout to read clears whatever anchor the prior stamp had.
-            update["verified_head"] = verified_head
-            new_memory = existing.model_copy(update=update)
-            # Lifecycle re-dump of an already-admitted, already-readable record.
-            # `mark_verified` GROWS the record: the caller-controlled verified_*
-            # lists (handler-capped at 4 lists x 64 entries x 1024 chars) REPLACE
-            # the prior attestation. Re-dumping at the flat read cap would let a
-            # verify push a record that was admitted just under `_MAX_WRITE_BYTES`
-            # up into the reserved maintenance band `(_MAX_WRITE_BYTES,
-            # _MAX_FILE_BYTES]` — after which `update` (write cap) rejects it,
-            # `tombstone` with a normal reason can cross the read cap and leave it
-            # un-removable, and `restore` re-admission (write cap) refuses it once
-            # tombstoned, so `prune_tombstones` eventually hard-deletes it: silent
-            # data loss the verify introduced.
-            #
-            # Thread F1 by keying the cap on which band the record is ALREADY
-            # in — the shared `_lifecycle_redump_cap`: a sub-write-cap record
-            # caps at `_MAX_WRITE_BYTES` (a verify whose additions would push
-            # it up into the reserved band is rejected, preserving the
-            # tombstone/rename/restore headroom); a record already in the band
-            # (e.g. a pre-3.14.1 file) stays verifiable — including a FIRST
-            # verify, which must add ~40 bytes of `last_verified_at` — up to
-            # the band ceiling that reserves `_REMOVAL_META_BUDGET_BYTES`, so
-            # a verify can never eat the room the record's own tombstone
-            # needs. (The 3.15.0 flat-read-cap band arm let a legal
-            # verified_paths attestation grow a band record to within a few
-            # bytes of the read cap, after which `tombstone` failed: an
-            # un-removable record.)
-            try:
-                current_size = existing_path.stat().st_size
-            except OSError:
-                current_size = 0
-            verify_cap = _lifecycle_redump_cap(current_size)
-            # Frontmatter-YAML-axis mirror of the file-axis cap above: measure the
-            # record's CURRENT serialized frontmatter (via the same builder the
-            # re-dump uses) and reserve the removal-metadata budget below the YAML
-            # cap, so a dense `verified_*` attestation can't grow the frontmatter
-            # into the band where the record's own tombstone no longer fits (the
-            # un-removable-record class on the YAML axis).
-            current_yaml = _serialized_frontmatter_bytes(_memory_metadata(existing))
-            verify_yaml_cap = _lifecycle_redump_yaml_cap(current_yaml)
-            try:
-                content_sha = self._write_path(
-                    existing_path,
-                    new_memory,
-                    max_file_bytes=verify_cap,
-                    max_yaml_bytes=verify_yaml_cap,
-                )
-            except ValueError as exc:
-                raise ValueError(
-                    f"cannot verify memory {memory_id}: the attested "
-                    f"verified_paths / verified_commits / verified_versions / "
-                    f"verified_absent_paths would grow the record past its size "
-                    f"cap ({verify_cap}-byte file / {verify_yaml_cap}-byte "
-                    f"frontmatter). Shrink the attestation lists before verifying "
-                    f"so the record stays removable and restorable ({exc})."
-                ) from exc
-            # perf: index upsert under lock is intentional — see audit H1.
-            # The local-verification stamp (schema v8) rides this upsert:
-            # a stamp written by this host's own verify path is the one
-            # fact about `last_verified_at` the file cannot forge.
-            _index_upsert_quietly(
-                self.root,
-                new_memory,
-                filename=existing_path.name,
-                verified_locally_at=verified_now.isoformat(),
-                content_sha256=content_sha,
-            )
+        existing = self._active_or_raise(memory_id)
+        if check_expected and (
+            existing.last_verified_at != expected_last_verified_at
+            or (expected_updated is not None and existing.updated != expected_updated)
+        ):
+            raise ConcurrentUpdateError(memory_id, existing.updated)
+        verified_now = utcnow()
+        update: dict[str, object] = {"last_verified_at": verified_now}
+        if verified_paths is not None:
+            update["verified_paths"] = list(verified_paths)
+        if verified_commits is not None:
+            update["verified_commits"] = list(verified_commits)
+        if verified_versions is not None:
+            update["verified_versions"] = list(verified_versions)
+        if verified_absent_paths is not None:
+            update["verified_absent_paths"] = list(verified_absent_paths)
+        if claims is not None:
+            update["claims"] = list(claims)
+        update["verified_head"] = verified_head
+        new_memory = existing.model_copy(update=update)
+        Memory.model_validate(new_memory.model_dump())
+        row = self._conn.execute(
+            "SELECT provenance, filename FROM memories WHERE id = ?", (memory_id,)
+        ).fetchone()
+        payload = {
+            "memory": new_memory.model_dump(mode="json"),
+            "provenance": str(row["provenance"]),
+            "filename": row["filename"],
+        }
+        stamp = {
+            "memory_id": memory_id,
+            "machine_id": None,
+            "verified_at": _iso(verified_now),
+            "verified_head": verified_head,
+            "verified_paths": list(new_memory.verified_paths),
+            "verified_commits": list(new_memory.verified_commits),
+            "verified_versions": list(new_memory.verified_versions),
+            "verified_absent_paths": list(new_memory.verified_absent_paths),
+        }
+        with self._transaction() as tx:
+            self._mutate(tx, "memory_put", payload, session=session)
+            self._mutate(tx, "verification_put", stamp, session=session)
         return new_memory
 
-    def record_corroboration(self, memory_id: str) -> Memory:
-        """Bump the corroboration rollup without touching `updated`.
+    def record_corroboration(
+        self, memory_id: str, *, session: str | None = None
+    ) -> Memory:
+        """Bump the corroboration rollup without touching `updated`: a
+        dedup-rejected write is the stored claim recurring, evidence it
+        still holds, not a rewrite."""
+        existing = self._active_or_raise(memory_id)
+        bumped = existing.model_copy(
+            update={
+                "corroborations": existing.corroborations + 1,
+                "last_corroborated": utcnow(),
+            }
+        )
+        return self.put_memory(bumped, session=session)
 
-        A dedup-rejected `memory_write` against this memory is the stored
-        claim RECURRING — independent evidence it still holds and still
-        matters — not a content edit. So, like `mark_verified`, this
-        write moves its own fields only: `corroborations += 1`,
-        `last_corroborated = now`. `updated` stays put (recency ranking
-        and the outcome-demotion resolution rule both read `updated`; a
-        recurrence must not fake a rewrite) and verification state is
-        untouched (nothing was checked against reality).
+    def _active_or_raise(self, memory_id: str) -> Memory:
+        """The active record, or the v8 errors: TombstonedError for a
+        removed id, MemoryNotFoundError otherwise."""
+        if not is_valid_ulid(memory_id):
+            raise MemoryNotFoundError(f"invalid id: {memory_id!r}")
+        row = self._conn.execute(
+            "SELECT * FROM memories WHERE id = ?", (memory_id,)
+        ).fetchone()
+        if row is not None:
+            return _row_to_memory(row)
+        dead = self._conn.execute(
+            "SELECT removed_reason FROM tombstones WHERE id = ?", (memory_id,)
+        ).fetchone()
+        if dead is not None:
+            raise TombstonedError(
+                f"memory {memory_id} was removed: {dead['removed_reason']}"
+            )
+        raise MemoryNotFoundError(f"no memory with id {memory_id}")
 
-        No optimistic-concurrency CAS: the counter is monotonic, so two
-        racing bumps compose (n+2 is the correct total) rather than
-        clobber. The per-session dedup that keeps one conversation from
-        farming the counter lives at the handler layer
-        (`SessionState.corroborated_ids`).
+    def load_one(self, memory_id: str) -> Memory:
+        """One active memory by id; raises if missing or tombstoned."""
+        return self._active_or_raise(memory_id)
 
-        Size caps: the redump adds a bounded ~60 bytes once (then only
-        count digits), but the record may already sit in the reserved
-        maintenance band, so the same `_lifecycle_redump_cap` /
-        `_lifecycle_redump_yaml_cap` discipline as `mark_verified`
-        applies — a corroboration must never grow a record past the
-        point where its own tombstone no longer fits.
+    def show(self, memory_id: str) -> Memory:
+        return self._active_or_raise(memory_id)
 
-        Raises:
-            MemoryNotFoundError / TombstonedError: same find semantics as
-              `mark_verified` — callers treating this as best-effort
-              telemetry should catch and log rather than fail the
-              surrounding operation.
-        """
-        # Provisioning is a precondition of writing, not of existing:
-        # `__post_init__` is pure, so every mutator states it here.
-        self.ensure()
-        existing_path = self._find_path_for_id(memory_id)
-        if existing_path is None:
-            for tpath in self._iter_tombstone_paths():
-                try:
-                    post = frontmatter.load(tpath)
-                except (
-                    FileNotFoundError,
-                    ValueError,
-                    KeyError,
-                    OSError,
-                    yaml.YAMLError,
-                ):
-                    continue
-                if post.metadata.get("id") == memory_id:
-                    raise TombstonedError(
-                        f"memory {memory_id} was removed: "
-                        f"{post.metadata.get('removed_reason', '<no reason>')}"
-                    )
-            raise MemoryNotFoundError(f"no memory with id {memory_id}")
+    def load_many(self, memory_ids: list[str]) -> list[Memory]:
+        """The active records among `memory_ids`, in the order asked;
+        unknown and tombstoned ids are skipped."""
+        return self.get_many(memory_ids)
 
-        with _locked(existing_path):
-            # Same C2 recheck as `update` / `mark_verified`: the find walk
-            # above ran unlocked, so a concurrent tombstone/rename may
-            # have moved the file; without the recheck we could stamp a
-            # corroboration onto a DIFFERENT memory that reused the path.
-            if not _id_still_at_path(existing_path, memory_id):
-                raise MemoryNotFoundError(
-                    f"no memory with id {memory_id} (raced with "
-                    f"concurrent tombstone or rename)"
+    def load_all(self) -> list[Memory]:
+        """Every active memory in row order, which is insertion order."""
+        return list(self.iter_memories())
+
+    def iter_active(self) -> Iterator[Memory]:
+        return self.iter_memories()
+
+    def list_summaries(self, scopes: list[str] | None = None) -> list[MemorySummary]:
+        """Like `load_all` but body-stripped, filtered to memories carrying
+        at least one of `scopes` when given."""
+        out: list[MemorySummary] = []
+        wanted = set(scopes) if scopes else None
+        for memory in self.iter_memories():
+            if wanted is not None and not (set(memory.scopes) & wanted):
+                continue
+            out.append(
+                MemorySummary(
+                    id=memory.id,
+                    scopes=memory.scopes,
+                    confidence=memory.confidence,
+                    summary=first_summary_line(memory.body),
+                    created=memory.created,
+                    updated=memory.updated,
+                    last_verified_at=memory.last_verified_at,
+                    category=memory.category,
+                    actor=memory.actor,
                 )
-            existing = self._load_path(existing_path)
-            new_memory = existing.model_copy(
-                update={
-                    "corroborations": existing.corroborations + 1,
-                    "last_corroborated": utcnow(),
-                }
             )
-            try:
-                current_size = existing_path.stat().st_size
-            except OSError:
-                current_size = 0
-            current_yaml = _serialized_frontmatter_bytes(_memory_metadata(existing))
-            content_sha = self._write_path(
-                existing_path,
-                new_memory,
-                max_file_bytes=_lifecycle_redump_cap(current_size),
-                max_yaml_bytes=_lifecycle_redump_yaml_cap(current_yaml),
-            )
-            # perf: index upsert under lock is intentional — see audit H1.
-            _index_upsert_quietly(
-                self.root,
-                new_memory,
-                filename=existing_path.name,
-                content_sha256=content_sha,
-            )
-        return new_memory
-
-    def tombstone(
-        self,
-        memory_id: str,
-        reason: str,
-        *,
-        session_id: str | None = None,
-    ) -> Path:
-        """Move a memory to `.tombstones/`, adding removal frontmatter.
-
-        `session_id` is captured into the tombstone frontmatter so the
-        removal can be joined to the session that produced it without
-        consulting the event log. The event log is still the canonical
-        audit trail, but log archives can be pruned independently of
-        the tombstone files; recording the session id on the file
-        itself keeps the link durable across log rotation.
-
-        Tombstones written before this field shipped have no
-        `removed_session` and load with `None` in that slot — the
-        join is unavailable for legacy entries but the rest of the
-        record is intact.
-
-        Raises:
-            MemoryNotFoundError: no record (active or tombstoned) with
-              that id.
-            TombstonedError: id is already tombstoned — either the
-              pre-lock active find missed and the tombstone scan found
-              it, or a parallel `tombstone()` won the race and moved the
-              file to `.tombstones/` between the find walk and the
-              under-lock recheck.
-            OSError: a genuine disk-level failure in the tombstone write
-              (`_atomic_write_post`) or the source unlink — EIO mid-write,
-              ENOSPC on the rename, EACCES on the unlink. The benign
-              ENOENT-on-unlink race is swallowed; everything else
-              propagates. `memory_remove` catches this and translates it
-              to a structured `ValueError`.
-            ValueError: even the adaptively-trimmed removal metadata (empty
-              reason, no session) does not fit under one of the two caps
-              `_frontmatter.dumps` enforces. On the file-size axis this is only
-              reachable for a legacy file written within
-              `_REMOVED_TIMESTAMP_HEADROOM_BYTES` of the read cap — the
-              `_lifecycle_redump_cap` band discipline stops an active record
-              from being GROWN into that zone. The frontmatter-YAML axis now
-              mirrors that discipline on BOTH arms: `_lifecycle_redump_yaml_cap`
-              reserves `_REMOVAL_META_BUDGET_BYTES` below `_MAX_YAML_BYTES` on
-              every metadata-only re-dump (`mark_verified`,
-              `record_corroboration`, `rename_scope`), so a legal attestation
-              can no longer grow an active record's frontmatter into the fatal
-              zone, and `_yaml_admission_cap` reserves the same budget on
-              `write` / `update`, so a content-admitting write can no longer
-              land a record in it either. It stays reachable only for a record
-              whose frontmatter was ALREADY within
-              `_REMOVED_TIMESTAMP_HEADROOM_BYTES` of the YAML cap before the
-              discipline applied — a legacy or hand-written file, one arriving
-              over `sync pull`, or such a file re-admitted by `restore`, which
-              re-dumps at the flat caps rather than the admission ceiling so
-              that no loadable tombstone becomes a one-way door. The other route
-              this clause used to name — a pathological FIRST write — is exactly
-              what `_yaml_admission_cap` closed.
-              `memory_remove` translates it with a shrink-first remediation hint.
-        """
-        # Provisioning is a precondition of writing, not of existing:
-        # `__post_init__` is pure, so every mutator states it here.
-        self.ensure()
-        path = self._find_path_for_id(memory_id)
-        if path is None:
-            # Maybe it's already tombstoned — bubble up a clearer error.
-            # Tombstone scan must tolerate corrupt/racing entries — the
-            # same skip-don't-crash discipline as the `load_tombstones`
-            # bulk reader, with a narrower catch: that reader skips on
-            # the blanket `PARSE_SKIP_EXCEPTIONS`, while this raw
-            # `frontmatter.load` probe enumerates its catch tuple.
-            # See `load_one` for the rationale on the explicit
-            # `yaml.YAMLError` + `FileNotFoundError` in the catch tuple.
-            for tpath in self._iter_tombstone_paths():
-                try:
-                    post = frontmatter.load(tpath)
-                except (
-                    FileNotFoundError,
-                    ValueError,
-                    KeyError,
-                    OSError,
-                    yaml.YAMLError,
-                ):
-                    continue
-                if post.metadata.get("id") == memory_id:
-                    raise TombstonedError(
-                        f"memory {memory_id} is already tombstoned "
-                        f"(raced with concurrent tombstone)"
-                    )
-            raise MemoryNotFoundError(f"no memory with id {memory_id}")
-
-        # Unconditionally include the ULID in the tombstone filename so
-        # the name is unique by construction. Pre-2.6.4 the code picked
-        # the unsuffixed `{path.stem}.tombstone.md` when the file
-        # didn't yet exist and added the ULID only on collision — a
-        # TOCTOU: two concurrent `tombstone()` calls on different
-        # memories with the same `path.stem` (rare but possible when
-        # slugs collide) both saw `target.exists() == False` and both
-        # picked the unsuffixed name, with the second clobbering the
-        # first's tombstone via `tmp.replace`. Always-suffixed kills
-        # the race. Existing unsuffixed tombstones on disk continue to
-        # load — the reader keys off the `id` field, not the filename.
-        target = self.tombstone_dir / f"{path.stem}.{memory_id}.tombstone.md"
-
-        # Read + write under the same lock. Reading the body outside the
-        # lock and writing the tombstone inside it leaves a window where
-        # a concurrent `update` can land in between; we'd then write a
-        # tombstone containing the pre-update body, losing the in-flight
-        # edit silently.
-        with _locked(path):
-            # Same C2 recheck as `update` / `mark_verified`:
-            # `_find_path_for_id` above walked the directory unlocked, so
-            # a concurrent `tombstone()` may have moved the file into
-            # `.tombstones/` between the find and this lock. Without the
-            # recheck, `frontmatter.load(path)` raises a bare
-            # `FileNotFoundError` that escapes the handler layer as a
-            # 500-shaped MCP error for what is semantically just "another
-            # agent already tombstoned this id" — a clean, expected
-            # outcome under sub-agent concurrency. Surface
-            # `TombstonedError` with a message that mirrors the
-            # find-time pre-lock fallback above so the user-facing
-            # error is consistent regardless of which path detected
-            # the race.
-            if not _id_still_at_path(path, memory_id):
-                raise TombstonedError(
-                    f"memory {memory_id} is already tombstoned "
-                    f"(raced with concurrent tombstone)"
-                )
-            post = frontmatter.load(path)
-            # Measure the pristine frontmatter YAML size (before any removal
-            # keys) so the removal-metadata budget below can bound the re-dump
-            # on the YAML axis too — the mirror of `current_size` on the file
-            # axis. Block-style YAML is additive across keys, so this is exactly
-            # the pre-existing-key contribution to the final re-dump.
-            current_yaml_bytes = _serialized_frontmatter_bytes(post.metadata)
-            post.metadata["removed"] = utcnow()
-            # Bound the removal metadata so appending it can't push the
-            # tombstone re-dump past EITHER cap and make the record
-            # un-removable. The fixed per-field budgets (`_cap_removed_reason`
-            # / `_cap_removed_session`, both SERIALIZED-size bounds — item 7)
-            # cover every record the `_lifecycle_redump_cap` discipline
-            # admits; for a record sitting even closer to a cap the budgets
-            # ADAPT to the room the record actually has left: the session id is
-            # dropped first (it is an optional join key — the event log remains
-            # the canonical session join), then the reason is trimmed toward
-            # empty. Losing annotation bytes beats refusing the removal and
-            # stranding the record active forever.
-            try:
-                current_size = path.stat().st_size
-            except OSError:
-                current_size = 0
-            # Budget on BOTH axes and take the tighter, so the adaptive trim
-            # fires on whichever binds. `_frontmatter.dumps` enforces
-            # `_MAX_YAML_BYTES` on the serialized frontmatter region
-            # UNCONDITIONALLY, independent of total file size: a record whose
-            # YAML sits just under that cap (e.g. a legal `mark_verified` with
-            # dense `verified_paths`) has a huge file-axis budget yet almost no
-            # YAML-axis room. Budgeting on the file axis alone let the trim
-            # no-op and the re-dump then raised the YAML cap, leaving the record
-            # ACTIVE with no tombstone — the un-removable-record class, reopened
-            # with legal inputs on the YAML axis (item 5).
-            # `_REMOVED_TIMESTAMP_HEADROOM_BYTES` reserves room for the
-            # `removed:` timestamp line on each axis.
-            file_budget = (
-                frontmatter._MAX_FILE_BYTES
-                - current_size
-                - _REMOVED_TIMESTAMP_HEADROOM_BYTES
-            )
-            yaml_budget = (
-                frontmatter._MAX_YAML_BYTES
-                - current_yaml_bytes
-                - _REMOVED_TIMESTAMP_HEADROOM_BYTES
-            )
-            removal_budget = min(file_budget, yaml_budget)
-            reason_capped = _cap_removed_reason(reason)
-            session_capped = (
-                _cap_removed_session(session_id) if session_id is not None else None
-            )
-            if (
-                session_capped is not None
-                and _serialized_reason_bytes(reason_capped)
-                + _serialized_session_bytes(session_capped)
-                > removal_budget
-            ):
-                session_capped = None
-            if _serialized_reason_bytes(reason_capped) > removal_budget:
-                reason_capped = _cap_serialized_meta(
-                    reason_capped,
-                    key="removed_reason",
-                    max_bytes=max(0, removal_budget),
-                )
-            post.metadata["removed_reason"] = reason_capped
-            # Only emit `removed_session` when a session_id was passed AND it
-            # fits — keeps legacy tests and ad-hoc callers from getting an
-            # opaque `None` lying in frontmatter. The reader treats missing
-            # or None identically.
-            if session_capped is not None:
-                post.metadata["removed_session"] = session_capped
-
-            # Lifecycle re-dump: appends removal metadata to an already-valid
-            # record. Allow the full read cap (not the headroom-reserved write
-            # cap) so a record written right up to the write cap can always be
-            # tombstoned and stay readable as a tombstone.
-            _atomic_write_post(target, post, max_file_bytes=frontmatter._MAX_FILE_BYTES)
-            try:
-                path.unlink()
-            except OSError as exc:
-                if exc.errno != errno.ENOENT:
-                    raise
-            # fsync the source directory too: the unlink is a metadata
-            # change that needs to survive a crash, otherwise we could
-            # come back to BOTH the tombstone and the original active
-            # file existing (a soft form of double-bookkeeping).
-            fsync_dir(path.parent)
-            # perf: index remove under lock is intentional — see audit H1.
-            _index_remove_quietly(self.root, memory_id)
-        return target
-
-    # ---- tombstone read paths --------------------------------------------
+        return out
 
     def load_tombstones(self) -> list[TombstonedMemory]:
-        """All tombstoned memories, sorted by `removed` descending.
-
-        Skips malformed files defensively, the same way `load_all` does
-        for active memories — one corrupt removal record shouldn't blind
-        the curation tooling to all the others. Tombstones without a
-        `removed` timestamp (extremely unusual, but possible from a
-        hand-edited file) are skipped: every legitimate tombstone
-        produced by `Store.tombstone` carries the field.
-        """
-        out: list[TombstonedMemory] = []
-        for path in self._iter_tombstone_paths():
-            try:
-                tombstone = self._load_tombstone_path(path)
-            except PARSE_SKIP_EXCEPTIONS:
-                # Same race rationale as load_all: a concurrent
-                # `prune_tombstones` could delete a file between
-                # listdir and read.
-                continue
-            out.append(tombstone)
-        out.sort(key=lambda t: t.removed, reverse=True)
-        return out
+        """Every tombstone, most recently removed first."""
+        return [
+            _row_to_tombstone(row)
+            for row in self._conn.execute(
+                "SELECT * FROM tombstones ORDER BY removed DESC, rowid DESC"
+            )
+        ]
 
     def list_tombstones(
         self, scopes: list[str] | None = None
     ) -> list[TombstonedSummary]:
-        """Body-stripped tombstones for triage. Scope filter is
-        intersection like `list_summaries`."""
         out: list[TombstonedSummary] = []
-        for tombstone in self.load_tombstones():
-            if scopes and not _scope_intersect(tombstone.scopes, scopes):
+        wanted = set(scopes) if scopes else None
+        for dead in self.load_tombstones():
+            if wanted is not None and not (set(dead.scopes) & wanted):
                 continue
             out.append(
                 TombstonedSummary(
-                    id=tombstone.id,
-                    scopes=tombstone.scopes,
-                    confidence=tombstone.confidence,
-                    summary=first_summary_line(tombstone.body),
-                    created=tombstone.created,
-                    updated=tombstone.updated,
-                    last_verified_at=tombstone.last_verified_at,
-                    category=tombstone.category,
-                    removed=tombstone.removed,
-                    removed_reason=tombstone.removed_reason,
-                    removed_session=tombstone.removed_session,
+                    id=dead.id,
+                    scopes=dead.scopes,
+                    confidence=dead.confidence,
+                    summary=first_summary_line(dead.body),
+                    created=dead.created,
+                    updated=dead.updated,
+                    last_verified_at=dead.last_verified_at,
+                    category=dead.category,
+                    removed=dead.removed,
+                    removed_reason=dead.removed_reason,
+                    removed_session=dead.removed_session,
                 )
             )
         return out
 
     def load_tombstone(self, memory_id: str) -> TombstonedMemory:
-        """Load one tombstone by ID. Raises if missing."""
         if not is_valid_ulid(memory_id):
             raise MemoryNotFoundError(f"invalid id: {memory_id!r}")
+        row = self._conn.execute(
+            "SELECT * FROM tombstones WHERE id = ?", (memory_id,)
+        ).fetchone()
+        if row is None:
+            raise MemoryNotFoundError(f"no tombstone with id {memory_id}")
+        return _row_to_tombstone(row)
 
-        for path in self._iter_tombstone_paths():
-            try:
-                tombstone = self._load_tombstone_path(path)
-            except PARSE_SKIP_EXCEPTIONS:
-                continue
-            if tombstone.id == memory_id:
-                return tombstone
-
-        raise MemoryNotFoundError(f"no tombstone with id {memory_id}")
-
-    def _find_tombstone_path_for_id(self, memory_id: str) -> Path | None:
-        if not is_valid_ulid(memory_id):
-            return None
-        for path in self._iter_tombstone_paths():
-            try:
-                post = frontmatter.load(path)
-            except PARSE_SKIP_EXCEPTIONS:
-                continue
-            if post.metadata.get("id") == memory_id:
-                return path
-        return None
-
-    def _load_tombstone_path(self, path: Path) -> TombstonedMemory:
-        post = frontmatter.load(path)
-        meta = post.metadata
-        # Schema-version gate, mirroring `_load_path` for active
-        # memories. Tombstones share the on-disk format with active
-        # memories (they're the same files moved into .tombstones/
-        # with `removed` + `removed_reason` appended), so the same
-        # rule applies — refuse forward-version files rather than
-        # risk misinterpreting changed semantics.
-        on_disk_version = meta.get("schema_version", 1)
-        try:
-            on_disk_int = int(on_disk_version)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"{path}: schema_version is not an integer: {on_disk_version!r}"
-            ) from exc
-        if on_disk_int > SCHEMA_VERSION:
-            raise ValueError(
-                f"{path}: schema_version {on_disk_int} is newer than this "
-                f"reader supports (max {SCHEMA_VERSION}); upgrade bettermemory."
-            )
-        try:
-            origin_raw = meta.get("origin")
-            origin = (
-                Origin.model_validate(origin_raw)
-                if isinstance(origin_raw, dict)
-                else None
-            )
-            actor_raw = meta.get("actor")
-            actor = (
-                Actor.model_validate(actor_raw) if isinstance(actor_raw, dict) else None
-            )
-            verified_raw = meta.get("last_verified_at")
-            last_verified_at: datetime | None
-            if verified_raw is None:
-                last_verified_at = None
-            else:
-                try:
-                    last_verified_at = _as_dt(verified_raw)
-                except ValueError:
-                    last_verified_at = None
-            removed_session = meta.get("removed_session")
-            category_raw = meta.get("category")
-            category: Category | None
-            if category_raw is None:
-                category = None
-            else:
-                try:
-                    category = Category(str(category_raw))
-                except ValueError:
-                    category = None
-            return TombstonedMemory(
-                id=str(meta["id"]),
-                created=_as_dt(meta["created"]),
-                updated=_as_dt(meta["updated"]),
-                scopes=_coerce_scopes(meta["scopes"]),
-                confidence=Confidence(meta["confidence"]),
-                source=Source(meta["source"]),
-                body=post.content.strip() + "\n",
-                origin=origin,
-                actor=actor,
-                last_verified_at=last_verified_at,
-                category=category,
-                verified_paths=_load_str_list(meta.get("verified_paths")),
-                verified_commits=_load_str_list(meta.get("verified_commits")),
-                verified_versions=_load_str_list(meta.get("verified_versions")),
-                verified_absent_paths=_load_str_list(meta.get("verified_absent_paths")),
-                claims=_load_str_list(meta.get("claims")),
-                verified_head=_load_commit_sha(meta.get("verified_head")),
-                removed=_as_dt(meta["removed"]),
-                removed_reason=str(meta["removed_reason"]),
-                removed_session=(
-                    str(removed_session) if removed_session is not None else None
-                ),
-            )
-        except KeyError as exc:
-            raise ValueError(f"{path}: missing field {exc.args[0]}") from exc
-
-    # ---- restore ---------------------------------------------------------
-
-    def restore(
+    def restore_trimmed(
         self,
         memory_id: str,
         *,
@@ -1663,289 +2561,58 @@ class Store:
         drop_verified_paths: Iterable[str] = (),
         clear_verification: bool = False,
         drop_verified_head: bool = False,
+        session: str | None = None,
     ) -> Memory:
-        """Move a tombstone back to the active set, stripping removal
-        frontmatter — and, when the caller says so, the trust the record
-        could not re-prove: `drop_claims` and `drop_verified_paths` name
-        stored entries to leave behind, `clear_verification` drops
-        `last_verified_at`, and `drop_verified_head` drops the stamp's
-        commit anchor (a commit the origin tree no longer resolves; the
-        stamp itself survives and the commit-drift leg counts in
-        author-date space for it). Judging them is the handler's job
-        (`handlers.restore.trust_strip_for`); this primitive applies the
-        drops under the same lock as the write, so the record never
-        exists active with a field its restorer judged false.
-
-        The body and timestamps are preserved as-is — the
-        body didn't change while it was tombstoned, and bumping
-        `updated` on restore would let a freshly-restored ten-year-old
-        memory rank like a new write in the recency boost.
-
-        The event log is the audit trail for restore actions; we do
-        not stamp a `restored_at` field on the file itself, which
-        would accumulate over repeat tombstone/restore cycles.
-
-        Raises:
-            MemoryNotFoundError: no record (active or tombstoned) with
-              that id, or the tombstone was removed concurrently (by a
-              parallel restore, a prune, or any other tombstone-deleting
-              path) between the find walk and the under-lock recheck.
-            NotTombstonedError: id is active. The caller probably meant
-              `memory_update`; restore is only for tombstones. Also raised
-              if a parallel restore won the race and the id is now active
-              under the lock.
-            OSError: a genuine disk-level failure in the active-record write
-              (`_atomic_write_post`) or the tombstone unlink — EIO mid-write,
-              ENOSPC on the rename, EACCES on the unlink. The benign
-              ENOENT-on-unlink race is swallowed; everything else
-              propagates. `memory_restore` catches this and translates it
-              to a structured `ValueError`.
-            ValueError: the tombstone's `created` frontmatter is missing or
-              unparseable, so the restored active filename's date prefix
-              cannot be rebuilt. `memory_restore` re-raises this verbatim so
-              the caller learns which field is malformed.
-        """
-        # Provisioning is a precondition of writing, not of existing:
-        # `__post_init__` is pure, so every mutator states it here.
-        self.ensure()
+        """`restore`, minus the trust fields the caller found no longer
+        hold on this machine (the restore handler's trust strip). Raises
+        NotTombstonedError for an active id."""
         if not is_valid_ulid(memory_id):
             raise MemoryNotFoundError(f"invalid id: {memory_id!r}")
-
-        # If the id resolves to an active memory, surface a distinct
-        # error rather than silently returning it. "Restoring" something
-        # that isn't gone is the kind of mistake worth flagging.
-        if self._find_path_for_id(memory_id) is not None:
+        if self.has_memory(memory_id):
             raise NotTombstonedError(
                 f"memory {memory_id} is active; nothing to restore"
             )
-
-        tombstone_path = self._find_tombstone_path_for_id(memory_id)
-        if tombstone_path is None:
+        row = self._conn.execute(
+            "SELECT * FROM tombstones WHERE id = ?", (memory_id,)
+        ).fetchone()
+        if row is None:
             raise MemoryNotFoundError(f"no tombstone with id {memory_id}")
-
-        # Lock on the tombstone path for the whole read-write-unlink
-        # sequence. Two concurrent restores of the same id would both
-        # see the tombstone outside the lock, both read it, and both
-        # try to write — the second's `active_path.exists()` check
-        # would land on the first's just-written active file and pick
-        # a collision-suffixed name, resurrecting the memory twice. The
-        # tombstone lock serializes the sequence; the second restore
-        # then sees the tombstone is gone and raises clearly.
-        with _locked(tombstone_path):
-            # W7: under-lock recheck mirroring W1's `tombstone()` fix.
-            # `_find_tombstone_path_for_id` above walked the tombstone
-            # directory unlocked, so a concurrent `restore()` /
-            # `prune_tombstones()` (or any tombstone-deleting path)
-            # may have moved or unlinked the file between the find and
-            # this lock acquisition. Without the recheck, the
-            # `frontmatter.load(tombstone_path)` below raises a bare
-            # `FileNotFoundError` that the handler layer historically
-            # catches via the `except FileNotFoundError` arm below — but
-            # the recheck also covers the tombstone-stem-reuse edge
-            # (extremely unlikely with ULID-suffixed filenames, but
-            # symmetric with the W1 discipline) and gives a uniform
-            # "raced with concurrent restore/prune" message regardless
-            # of which mutator detected the race.
-            if not _id_still_at_path(tombstone_path, memory_id):
-                raise MemoryNotFoundError(
-                    f"no tombstone with id {memory_id} (raced with "
-                    f"concurrent restore or prune)"
-                )
-            # W7: also re-check active-record absence under the lock.
-            # The unlocked pre-lock check above can miss a concurrent
-            # restore that completed in the window between our active
-            # check and our tombstone-lock acquisition: a parallel
-            # restorer would create the active record AND unlink the
-            # tombstone before we got here. The tombstone-gone branch
-            # above usually catches this first — but if for any reason
-            # the tombstone is still present (e.g. a prune raced AGAINST
-            # the parallel restore's unlink and the tombstone got
-            # re-written elsewhere — extremely contrived), the active
-            # recheck keeps `_atomic_write_post(active_path, …)` below
-            # from silently clobbering the parallel restore's active
-            # file. Symmetric with W1's `_id_still_at_path`: cheap
-            # recheck under the lock that the pre-lock invariant still
-            # holds.
-            if self._find_path_for_id(memory_id) is not None:
-                raise NotTombstonedError(
-                    f"memory {memory_id} is active; nothing to restore "
-                    f"(raced with concurrent restore)"
-                )
-            try:
-                post = frontmatter.load(tombstone_path)
-            except FileNotFoundError:
-                # Defense in depth: the W7 recheck above is the primary
-                # guard, but keep this arm for the narrow case where the
-                # frontmatter.load fails mid-read on a file that vanished
-                # AFTER the recheck and BEFORE the parse completed.
-                raise MemoryNotFoundError(
-                    f"no tombstone with id {memory_id} (raced with "
-                    f"concurrent restore or prune)"
-                ) from None
-            post.metadata.pop("removed", None)
-            post.metadata.pop("removed_reason", None)
-            post.metadata.pop("removed_session", None)
-            if drop_claims:
-                gone = set(drop_claims)
-                post.metadata["claims"] = [
-                    c
-                    for c in _load_str_list(post.metadata.get("claims"))
-                    if c not in gone
-                ]
-            if drop_verified_paths:
-                gone = set(drop_verified_paths)
-                post.metadata["verified_paths"] = [
-                    v
-                    for v in _load_str_list(post.metadata.get("verified_paths"))
-                    if v not in gone
-                ]
-            if clear_verification:
-                post.metadata.pop("last_verified_at", None)
-            if drop_verified_head:
-                post.metadata.pop("verified_head", None)
-
-            # Mirror `_path_for`'s always-suffix discipline so the restore
-            # lands at the same shape a fresh `write()` would produce —
-            # date-prefixed slug + full-ULID suffix, no `.tombstone.md`.
-            # Pre-fix this used the legacy `bare.exists()` gate that
-            # `bc47593` killed in `_path_for`: two concurrent restores of
-            # differently-tombstoned memories whose bodies slugify
-            # identically each locked their own (distinct) tombstone
-            # path, both saw `active_path.exists() == False`, both wrote
-            # — second silently clobbered the first. The lock is on the
-            # tombstone, not on the destination, so it can't help here.
-            # Always-suffixing the active filename closes the window the
-            # same way it did for `write()`.
-            try:
-                created = _as_dt(post.metadata["created"])
-            except (KeyError, ValueError) as exc:
-                raise ValueError(
-                    f"{tombstone_path}: cannot restore — missing/invalid created"
-                ) from exc
-            slug = make_slug(post.content)
-            # Mirror `_path_for`: the suffix carries the FULL ULID, not
-            # `id[-6:]`. The 6-char tail was only 30 bits, so two
-            # differently-tombstoned memories whose bodies slugify to
-            # the same value (e.g. two non-ASCII bodies, both landing
-            # on the `memory` fallback) could restore to the same
-            # active path on the same day and silently clobber one.
-            active_path = self.root / build_filename(
-                created, f"{slug}-{memory_id.lower()}"
-            )
-
-            # F6: hold the ACTIVE-path lock across the active write, the
-            # tombstone unlink, the dir-fsync, the re-load AND the index
-            # upsert — not just the re-load+upsert as before. The active
-            # write below makes `memory_id` resolvable as an ACTIVE record;
-            # a concurrent `tombstone()` / `memory_remove` of the same id
-            # then acquires `_locked(active_path)` to move it away. Pre-fix
-            # that lock was uncontended in the write→upsert window, so the
-            # concurrent tombstone could read the just-written active file,
-            # write its tombstone at the SAME `<stem>.<id>.tombstone.md`
-            # path this restore is about to unlink, and unlink the active
-            # file — after which this restore unlinked that fresh tombstone,
-            # leaving BOTH files gone (the record vanished). Holding the
-            # active-path lock across the whole sequence serialises the
-            # concurrent tombstone entirely before or entirely after the
-            # restore, so it can never interleave into the write→unlink gap.
-            #
-            # Lock order (deadlock proof): restore is the ONLY multi-lock
-            # region in store.py, and it always takes tombstone-path THEN
-            # active-path. Every other mutator (write / update /
-            # mark_verified / tombstone / rename_scope / prune_tombstones)
-            # holds at most one per-file lock at a time and never nests, so
-            # nothing acquires active-then-tombstone. A concurrent
-            # `tombstone(id)` takes only `_locked(active_path)` (it never
-            # locks the tombstone target it writes), so it can wait on a
-            # lock this restore holds without itself holding anything restore
-            # needs — no cycle is possible. `flock_excl` is NOT re-entrant,
-            # but no callee under either lock re-acquires the same path lock
-            # (`_atomic_write_post`, `Path.unlink`, `fsync_dir`, `_load_path`,
-            # `_index_upsert_quietly` take no per-file flock).
-            with _locked(active_path):
-                # Item 1 / F1 (v2): restore RE-ADMITS the tombstone as an
-                # active record at the READ cap, not the write cap. The
-                # 3.15.0 write-cap refusal protected the store from minting
-                # band actives, but it turned every band tombstone into a
-                # one-way door: there is no tombstone-edit surface, so
-                # nothing could shrink a refused tombstone, and
-                # `prune_tombstones` eventually HARD-DELETED it — strictly
-                # worse than the un-maintainable-active class the refusal
-                # guarded against. Band actives are maintainable now:
-                # `_lifecycle_redump_cap` keeps them verifiable/renameable
-                # while reserving the removal-metadata budget, and
-                # `tombstone`'s adaptive trimming keeps them removable — so
-                # re-admitting at the read cap loses nothing, and every
-                # tombstone the store can load can round-trip back to
-                # active. (`dumps` at the read cap still rejects the only
-                # genuinely unreadable shapes — alias bombs, > read cap —
-                # with their own error, and the tombstone is still on disk
-                # if it does.)
-                content_sha = _atomic_write_post(
-                    active_path, post, max_file_bytes=frontmatter._MAX_FILE_BYTES
-                )
-                # Prove the record is re-admittable BEFORE destroying the
-                # tombstone. `_find_tombstone_path_for_id` accepts anything
-                # whose frontmatter parses and whose `id` matches, which is a
-                # strictly wider set than what `_parse_memory_file` will
-                # re-admit — a tombstone written by a NEWER bettermemory
-                # (`schema_version` above this reader's, the state a `sync
-                # pull` from a newer host or a downgrade produces) parses as
-                # frontmatter and then fails re-admission. With the unlink
-                # first, that record ended up in neither listing: invisible to
-                # `list_tombstones` (file gone) and to `load_all` (active file
-                # unparseable), with a retry raising `NotTombstonedError`.
-                #
-                # A failure here rolls the whole restore back rather than
-                # just declining to finish it: the unparseable active file
-                # has to go too, because `_find_path_for_id` finds it and
-                # every later `restore` would refuse with "is active;
-                # nothing to restore" — the same dead end by another route.
-                # Costs one parse of a file already in page cache.
-                try:
-                    restored = self._load_path(active_path)
-                except Exception:
-                    with contextlib.suppress(OSError):
-                        active_path.unlink()
-                    raise
-                try:
-                    tombstone_path.unlink()
-                except OSError as exc:
-                    if exc.errno != errno.ENOENT:
-                        # Active file already written; orphaning the tombstone
-                        # is recoverable but we still want to surface the IO
-                        # error so the caller doesn't think the move was clean.
-                        raise
-                # Symmetric to tombstone(): fsync the tombstone dir so the
-                # unlink is durable. Without this, a crash could resurrect
-                # the tombstone alongside the restored active file.
-                fsync_dir(tombstone_path.parent)
-
-                # Restored memories rejoin the searchable set — keep the FTS5
-                # index in step with the file system. The remove-on-tombstone
-                # call dropped this id; the restore is the symmetric upsert.
-                #
-                # H1 invariant: the index upsert runs UNDER THE ACTIVE-PATH
-                # LOCK, so a concurrent `update()` / `verify()` on the
-                # restored id (which holds `_locked(active_path)`) can't
-                # interleave its SQLite upsert with ours and leave the index
-                # pointing at the deleted body. `restored` was loaded above,
-                # before the unlink, as the re-admission proof.
-                #
-                # `local`: a restore is this host re-admitting a record it
-                # held, on a caller's explicit instruction. The label the
-                # tombstone's active life carried (whatever it was) does
-                # not survive the round trip; the re-admission does.
-                _index_upsert_quietly(
-                    self.root,
-                    restored,
-                    filename=active_path.name,
-                    provenance="local",
-                    content_sha256=content_sha,
-                )
-        return restored
-
-    # ---- scope rename ----------------------------------------------------
+        dead = _row_to_tombstone(row)
+        fields: dict[str, Any] = {
+            name: getattr(dead, name)
+            for name in Memory.model_fields
+            if name not in ("links", "corroborations", "last_corroborated")
+        }
+        gone_claims = set(drop_claims)
+        if gone_claims:
+            fields["claims"] = [c for c in dead.claims if c not in gone_claims]
+        gone_paths = set(drop_verified_paths)
+        if gone_paths:
+            fields["verified_paths"] = [
+                v for v in dead.verified_paths if v not in gone_paths
+            ]
+        if clear_verification:
+            fields["last_verified_at"] = None
+        if drop_verified_head:
+            fields["verified_head"] = None
+        memory = Memory(
+            **fields,
+            links=[
+                MemoryLink.model_validate(entry)
+                for entry in json.loads(row["links_json"])
+            ],
+            corroborations=int(row["corroborations"]),
+            last_corroborated=_dt_opt(row["last_corroborated"]),
+        )
+        payload = {
+            "memory": memory.model_dump(mode="json"),
+            "provenance": LOCAL,
+            "filename": row["filename"],
+        }
+        with self._transaction() as tx:
+            self._mutate(tx, "tombstone_delete", {"id": memory_id}, session=session)
+            self._mutate(tx, "memory_put", payload, session=session)
+        return memory
 
     def rename_scope(
         self,
@@ -1953,2115 +2620,606 @@ class Store:
         new: str,
         *,
         include_tombstones: bool = True,
+        session: str | None = None,
     ) -> dict[str, list[Any]]:
-        """Replace `old` with `new` across active memories' scope lists.
-
-        Renaming is the cheap fix for typo'd or deprecated scopes —
-        e.g. `projct:foo` → `projects:foo` after a misspell, or
-        `infra` → `infrastructure` after deciding the long form is the
-        canonical one. The body is unchanged, so `updated` is bumped
-        (the metadata moved) but `last_verified_at` is preserved
-        (the body's claims weren't touched).
-
-        Tombstones are renamed too by default so the curation view
-        (memory_list_tombstones, memory_health) stays consistent —
-        otherwise a renamed scope would re-appear in `rare_scopes`
-        every time a removed memory is the last carrier of the old
-        spelling. Pass `include_tombstones=False` to leave the
-        removal audit log unchanged.
-
-        Returns `{"active": [ids], "tombstoned": [ids]}`, plus a `"failed"`
-        key when — and only when — some record could not be renamed.
-        `active` / `tombstoned` are the lists of memory ids whose scope sets
-        actually changed. A memory that already had `new` and didn't have
-        `old` is not touched (and not listed). A memory whose only effect
-        would be de-duplication of the new scope IS counted, since the on-disk
-        list shrank.
-
-        `failed` (item 6) is the list of `{"id", "reason"}` records whose
-        per-record re-dump raised and were SKIPPED rather than aborting the
-        whole rename. Without the per-record guard, one record that overflows
-        the read cap on re-dump (e.g. the rename grows the scope list past
-        `_MAX_FILE_BYTES`) or hits a disk error would raise mid-loop, leaving
-        PARTIAL renames on disk with the FTS index diverged for the already-
-        renamed files. The failures are collected so the caller can report
-        exactly which records did not rename instead of silently claiming a
-        clean run. The key is omitted on a clean run so the common two-key
-        contract is preserved; callers normalise with `.get("failed", [])`.
-        """
-        # Provisioning is a precondition of writing, not of existing:
-        # `__post_init__` is pure, so every mutator states it here.
-        self.ensure()
+        """Replace scope `old` with `new` on every record carrying it, the
+        list deduplicated in place; active records get a fresh `updated`.
+        Returns the ids changed under `active` and `tombstoned`; `failed`
+        is present only when a record could not be rewritten."""
+        result: dict[str, list[Any]] = {"active": [], "tombstoned": []}
         if old == new:
-            return {"active": [], "tombstoned": []}
-
-        active_changed: list[str] = []
-        # Item 6: ids (with reasons) whose per-record re-dump raised and were
-        # skipped, shared across both the active and tombstone branches.
+            return result
         failed: list[dict[str, str]] = []
-        for path in self._iter_active_paths():
-            # Read-modify-write under the same lock per file. The prior
-            # shape loaded outside the lock, opening a window where a
-            # concurrent `update` or `tombstone` could land between our
-            # read and write — our write would then clobber that change
-            # with a stale body plus the renamed scope. The index update
-            # stays inside the lock too: the FTS5 `scopes_text` column
-            # is rebuilt from the new scope list, and without keeping
-            # it in step with disk, BM25 ranking on the renamed scope
-            # reads against stale indexed text until the next manual
-            # `bettermemory reindex`.
-            with _locked(path):
-                # C2 recheck symmetric to `update`/`mark_verified`:
-                # `_iter_active_paths` listed the directory unlocked,
-                # so a concurrent `tombstone()` may have moved the
-                # file between the iteration and this lock. Without
-                # the recheck we'd either crash on a missing file or
-                # (worst case on a legacy bare-name layout, where a
-                # different memory could land at the same path after
-                # the tombstone) silently rewrite the scopes of an
-                # unrelated memory. Skip on miss; the next
-                # `rename_scope` invocation will pick up any
-                # newly-written files. Unparseable files
-                # (`PARSE_SKIP_EXCEPTIONS`) are skipped on the same
-                # width — a memory no read surface can load can't have
-                # its scopes rewritten, and one bad neighbor must not
-                # kill the walk for the rest of the store.
-                try:
-                    memory = self._load_path(path)
-                except PARSE_SKIP_EXCEPTIONS:
+        with self.batch():
+            for memory in self.load_all():
+                renamed = _scopes_after_rename(memory.scopes, old, new)
+                if renamed is None:
                     continue
-                new_scopes = self._scopes_after_rename(memory.scopes, old, new)
-                if new_scopes is None:
-                    continue
-                # Bump `updated` because the metadata moved.
-                # `last_verified_at` is preserved — the body's claims
-                # are untouched, so the verification (if any) still
-                # applies.
                 refreshed = memory.model_copy(
-                    update={"scopes": new_scopes, "updated": utcnow()}
+                    update={"scopes": renamed, "updated": utcnow()}
                 )
-                # Lifecycle re-dump: relabels a scope on an already-admitted,
-                # already-readable record. Same shared cap discipline as
-                # `mark_verified` (`_lifecycle_redump_cap`): a sub-write-cap
-                # record caps at `_MAX_WRITE_BYTES` — a rename that would GROW
-                # it past the write cap by swapping in a longer `new` scope is
-                # rejected rather than minting a band record — and a record
-                # already in the band stays renameable up to the band ceiling
-                # that reserves the removal-metadata budget, so a rename can
-                # never leave a record its own tombstone no longer fits
-                # (the same silent-data-loss seam `mark_verified` closes).
-                #
-                # Item 6: per-record guard around the re-dump. A single record can
-                # still overflow its cap here — the swap to a longer `new` scope
-                # grows the serialized file past the cap (dumps raises ValueError),
-                # or the atomic write hits a disk error (OSError). Without this
-                # guard that raise aborts the loop mid-rename, stranding the
-                # records already renamed above with a diverged FTS index. Collect
-                # the failure, skip this record, and continue; the index upsert
-                # runs ONLY on a successful write.
                 try:
-                    current_size = path.stat().st_size
-                except OSError:
-                    current_size = 0
-                rename_cap = _lifecycle_redump_cap(current_size)
-                # YAML-axis mirror (see `mark_verified`): reserve the
-                # removal-metadata budget below the YAML cap so swapping in a
-                # longer `new` scope can't grow the frontmatter into the
-                # un-removable band.
-                current_yaml = _serialized_frontmatter_bytes(_memory_metadata(memory))
-                rename_yaml_cap = _lifecycle_redump_yaml_cap(current_yaml)
-                try:
-                    content_sha = self._write_path(
-                        path,
-                        refreshed,
-                        max_file_bytes=rename_cap,
-                        max_yaml_bytes=rename_yaml_cap,
-                    )
-                except ValueError as exc:
-                    failed.append(
-                        {
-                            "id": memory.id,
-                            "reason": (
-                                f"rename would grow the record past its size cap "
-                                f"({rename_cap}-byte file / {rename_yaml_cap}-byte "
-                                f"frontmatter); shrink its scopes / verified_paths "
-                                f"before renaming ({exc})"
-                            ),
-                        }
-                    )
-                    continue
-                except OSError as exc:
+                    self.put_memory(refreshed, session=session)
+                except (ValueError, ValidationError) as exc:
                     failed.append({"id": memory.id, "reason": str(exc)})
                     continue
-                # perf: index upsert under lock is intentional — see audit H1.
-                _index_upsert_quietly(
-                    self.root, refreshed, filename=path.name, content_sha256=content_sha
-                )
-                active_changed.append(refreshed.id)
-
-        tombstoned_changed: list[str] = []
-        if include_tombstones:
-            for tpath in self._iter_tombstone_paths():
-                # Read-modify-write under the same lock — the active-side
-                # branch above already does this; the tombstone branch
-                # needs the same discipline. A concurrent `restore` can
-                # land between an unlocked read and a locked write and
-                # have its in-flight rewrite clobbered.
-                with _locked(tpath):
-                    # C2 recheck: tombstones can vanish under our feet
-                    # via `restore()` or `prune_tombstones()`. The load
-                    # below already handles the missing-file case, but
-                    # we also need to make sure the file we lock still
-                    # has the same id we'd have computed pre-lock
-                    # (otherwise a `restore` + new tombstone of a
-                    # different memory could swap which id sits at this
-                    # path on legacy layouts). The frontmatter.load
-                    # under the lock IS that check — we trust whatever
-                    # id is in the file at lock time and act on it.
-                    try:
-                        post = frontmatter.load(tpath)
-                    except PARSE_SKIP_EXCEPTIONS:
+                result["active"].append(memory.id)
+            if include_tombstones:
+                for tomb_row in list(self.iter_tombstone_rows()):
+                    dead = tomb_row.tombstone
+                    renamed = _scopes_after_rename(dead.scopes, old, new)
+                    if renamed is None:
                         continue
-                    # F4 twin: resolve the scope shape with the same shared
-                    # `_coerce_scopes` the tombstone READERS use
-                    # (`_load_tombstone_path`), so a dict/set/scalar-shaped
-                    # `scopes:` that the curation views list under the old
-                    # name is actually renamed here instead of being
-                    # silently skipped (reader-vs-mutator divergence).
-                    raw_scopes = _coerce_scopes(post.metadata.get("scopes"))
-                    if not raw_scopes:
-                        continue
-                    new_scopes_or_none = self._scopes_after_rename(
-                        [str(s) for s in raw_scopes], old, new
-                    )
-                    if new_scopes_or_none is None:
-                        continue
-                    post.metadata["scopes"] = new_scopes_or_none
-                    tomb_id = str(post.metadata.get("id"))
-                    # Atomic in-place rewrite via tmp+rename. The previous
-                    # implementation used `write_bytes`, which truncates
-                    # and rewrites in place — a crash mid-write would leave
-                    # the tombstone partially written. The active-side
-                    # rename_scope path goes through `_write_path` which
-                    # already does this; mirror it here.
-                    # Lifecycle re-dump of an existing tombstone (relabel a
-                    # scope). Full read cap — the tombstone may already sit
-                    # near it, and a scope swap must not fail.
-                    #
-                    # Item 6: same per-record guard as the active branch. A
-                    # tombstone whose scope swap overflows `_MAX_FILE_BYTES`
-                    # (ValueError) or that hits a disk error (OSError) must not
-                    # abort the rename and strand the active-side renames plus a
-                    # diverged FTS index — collect the failure and skip it.
-                    try:
-                        _atomic_write_post(
-                            tpath, post, max_file_bytes=frontmatter._MAX_FILE_BYTES
-                        )
-                    except (OSError, ValueError) as exc:
-                        failed.append({"id": tomb_id, "reason": str(exc)})
-                        continue
-                    tombstoned_changed.append(tomb_id)
-
-        result: dict[str, list[Any]] = {
-            "active": active_changed,
-            "tombstoned": tombstoned_changed,
-        }
-        # Surface `failed` only when non-empty: the clean run keeps the
-        # established two-key contract, and a caller only ever sees the failure
-        # list when there is something to report.
+                    payload = {
+                        "tombstone": dead.model_copy(
+                            update={"scopes": renamed}
+                        ).model_dump(mode="json"),
+                        "provenance": tomb_row.provenance,
+                        "filename": tomb_row.filename,
+                        "links": tomb_row.links,
+                        "corroborations": tomb_row.corroborations,
+                        "last_corroborated": _iso_opt(tomb_row.last_corroborated),
+                    }
+                    with self._transaction() as tx:
+                        self._mutate(tx, "tombstone_put", payload, session=session)
+                    result["tombstoned"].append(dead.id)
         if failed:
             result["failed"] = failed
         return result
-
-    @staticmethod
-    def _scopes_after_rename(scopes: list[str], old: str, new: str) -> list[str] | None:
-        """Return the new scope list if `old` appears, else None.
-
-        Order of remaining scopes is preserved. If `new` is already
-        present, `old` is removed and `new` is not duplicated. If the
-        memory carried `old` only, the result is `[new]`.
-        """
-        if old not in scopes:
-            return None
-        out: list[str] = []
-        seen: set[str] = set()
-        for s in scopes:
-            if s == old:
-                if new not in seen:
-                    out.append(new)
-                    seen.add(new)
-                continue
-            if s in seen:
-                continue
-            out.append(s)
-            seen.add(s)
-        return out
-
-    # ---- prune -----------------------------------------------------------
 
     def prune_tombstones(
         self,
         older_than: timedelta,
         *,
         now: datetime | None = None,
+        session: str | None = None,
     ) -> list[str]:
-        """Delete tombstones whose `removed` timestamp is older than the
-        cutoff. Returns the list of pruned memory ids in chronological
-        (oldest-first) removal order so the caller can log them.
-
-        This is a hard delete — pruned tombstones are gone from disk
-        with no further audit trail beyond whatever the event log
-        already captured. The retention knob is per-user policy, not
-        per-memory; if you want to keep a specific tombstone forever,
-        either bump the retention window or restore it before pruning.
-        """
-        # Provisioning is a precondition of writing, not of existing:
-        # `__post_init__` is pure, so every mutator states it here.
-        self.ensure()
+        """Delete tombstones removed longer than `older_than` ago. Returns
+        the ids pruned, oldest removal first."""
         cutoff = (now or utcnow()) - older_than
-        pruned: list[tuple[datetime, str]] = []
-        # Sidecar `.lock` files to sweep AFTER their `_locked(path)` block
-        # has exited. `flock_excl` deliberately never unlinks the lockfile
-        # on release (per-inode identity; see `_fsutil.flock_excl`), so
-        # without a sweep the 0-byte `<name>.lock` accumulates one orphan
-        # per pruned tombstone, unbounded.
-        sidecars: list[Path] = []
-        for path in self._iter_tombstone_paths():
-            # Acquire the per-tombstone lock for read + delete. Without
-            # it, a concurrent `restore(id)` (which holds the same
-            # `_locked(path)`) can rewrite the active file out of the
-            # tombstone, and our subsequent `unlink` here removes a
-            # tombstone the restore intended to keep audited. Matching
-            # the 2.6.4 migrate.py fix — every mutator now goes through
-            # the per-file lock.
-            with _locked(path):
-                try:
-                    tombstone = self._load_tombstone_path(path)
-                except PARSE_SKIP_EXCEPTIONS:
-                    # Malformed tombstones are left alone — pruning them
-                    # would silently drop possibly-recoverable history.
-                    continue
-                if tombstone.removed >= cutoff:
-                    continue
-                try:
-                    path.unlink()
-                except OSError:
-                    # Best-effort: a tombstone we can't delete (perms,
-                    # mid-rotation race) will be retried on the next prune
-                    # call. Don't kill the loop.
-                    continue
-                sidecars.append(path.with_suffix(path.suffix + ".lock"))
-                pruned.append((tombstone.removed, tombstone.id))
+        doomed = [
+            (dead.removed, dead.id)
+            for dead in self.iter_tombstones()
+            if dead.removed < cutoff
+        ]
+        doomed.sort()
+        with self.batch():
+            for _, memory_id in doomed:
+                with self._transaction() as tx:
+                    self._mutate(
+                        tx, "tombstone_delete", {"id": memory_id}, session=session
+                    )
+        return [memory_id for _, memory_id in doomed]
 
-        # Unlink the sidecar lockfiles AFTER their `_locked` block closed
-        # the handle. POSIX could unlink while still inside the block (the
-        # held fd keeps the inode alive), but Windows refuses to delete a
-        # file with an open handle (`msvcrt.locking` keeps it open for the
-        # duration of the `with`), so an in-lock unlink raised and the
-        # sidecar leaked — caught by the Windows CI leg, invisible on macOS.
-        # Sweeping here, post-release, deletes the name on both platforms.
-        # Mirrors `episodes._cleanup_orphan_lockfiles`, which runs the same
-        # sweep after its prune loop for the same reason.
-        for sidecar in sidecars:
-            try:
-                sidecar.unlink(missing_ok=True)
-            except OSError:
-                # Best-effort: a sidecar we still can't unlink (perms, a
-                # racing holder) is swept on a later prune. The tombstone
-                # itself is already gone, so don't fail the prune over it.
-                pass
+    # -- the reads the index used to serve ----------------------------------------
 
-        pruned.sort(key=lambda item: item[0])
-        return [memory_id for _, memory_id in pruned]
-
-    # ---- internals --------------------------------------------------------
-
-    def _path_for(self, memory: Memory) -> Path:
-        slug = make_slug(memory.body)
-
-        # Unconditionally embed the FULL ULID in the filename so the
-        # name is unique by construction. Before `bc47593` (first
-        # shipped in 3.0.0) the code picked the bare `<date>-<slug>.md`
-        # when the file didn't yet exist and added a short id tail
-        # only on collision — a TOCTOU silent-data-loss
-        # bug: two concurrent `write()`s whose bodies slugify to the
-        # same value both observed `bare.exists() == False`, both
-        # picked the bare candidate, serialized on `_locked(<same
-        # path>)` — and the second writer's `_atomic_write_post`
-        # clobbered the first memory entirely. The on-disk file still
-        # parsed, but it carried writer B's id; writer A's memory was
-        # gone with no trace.
-        #
-        # The suffix must carry the ULID's FULL entropy, not a short
-        # tail. Pre-fix this used `id[-6:]` — only 30 bits. When two
-        # bodies slugify identically the suffix is the *sole* entropy
-        # in the name (same date prefix, same slug), and every
-        # non-ASCII body slugifies to the bare `memory` fallback
-        # (`make_slug` splits on `[^a-z0-9]+`, so CJK/etc. contribute
-        # none), so a 30-bit birthday collision among a single day's
-        # writes would silently clobber one memory — SEQUENTIALLY, not
-        # just under concurrency. Embedding all 26 Crockford chars (80
-        # bits of randomness) makes a same-path collision astronomically
-        # unlikely: two writers can never realistically pick the same
-        # path even if their bodies slugify identically. Matches the
-        # always-suffix discipline `tombstone()` adopted in 2.6.4 for
-        # its `.tombstone.md` target names, for the same reason.
-        #
-        # Existing short-suffixed / unsuffixed memories on disk
-        # continue to load — the reader keys off the `id` field, not
-        # the filename. The cost is a slightly longer filename (26
-        # chars + a hyphen) on every new write; the benefit is no
-        # silent overwrites.
-        suffix = memory.id.lower()
-        return self.root / build_filename(memory.created, f"{slug}-{suffix}")
-
-    def _find_path_for_id(self, memory_id: str) -> Path | None:
-        if not is_valid_ulid(memory_id):
-            return None
-        # Fast path: the index resolves id -> path in O(1). Returns a
-        # path only when it still carries the id, so a stale hint can't
-        # make us return the wrong file — it just yields None and we
-        # walk. Callers re-verify under the file lock regardless.
-        hit = _indexed_path_for_id(self.root, memory_id)
-        if hit is not None:
-            return hit
-        for path in self._iter_active_paths():
-            try:
-                post = frontmatter.load(path)
-            except PARSE_SKIP_EXCEPTIONS:
-                continue
-            if post.metadata.get("id") == memory_id:
-                return path
-        return None
-
-    def _write_path(
+    def document_frequencies(
         self,
-        path: Path,
-        memory: Memory,
+        terms: Sequence[str],
         *,
-        max_file_bytes: int = frontmatter._MAX_WRITE_BYTES,
-        max_yaml_bytes: int | None = None,
-    ) -> str:
-        # `max_file_bytes` defaults to the headroom-reserved write cap, which is
-        # correct for new-content admission (`write`, `update`): a freshly
-        # admitted active record must reserve headroom for its own worst-case
-        # lifecycle growth so it always stays tombstoneable/renameable. The
-        # metadata-only re-dump callers (`mark_verified`, `rename_scope`'s
-        # active branch) pass the full read cap instead — they re-serialise an
-        # already-admitted, already-readable record, so refusing a record whose
-        # serialized size merely sits in the reserved band (e.g. a pre-3.14.1
-        # record written before the total-file cap existed) would freeze it
-        # from ever being verified/renamed (F1). `max_yaml_bytes` is the
-        # frontmatter-YAML-axis mirror, and it reserves the same budget at
-        # admission (`_yaml_admission_cap`); those same re-dump callers pass a
-        # band ceiling (`_lifecycle_redump_yaml_cap`) so a legal attestation
-        # can't grow the frontmatter into the removal-metadata budget either.
-        #
-        # `None` rather than the constant as the default only because
-        # `_REMOVAL_META_BUDGET_BYTES` is defined below this class and a
-        # default argument is evaluated when the `def` executes.
-        if max_yaml_bytes is None:
-            max_yaml_bytes = _yaml_admission_cap()
-        _revalidate_before_persist(memory)
-        post = frontmatter.Post(memory.body.strip() + "\n")
-        post.metadata = _memory_metadata(memory)
-        return _atomic_write_post(
-            path, post, max_file_bytes=max_file_bytes, max_yaml_bytes=max_yaml_bytes
-        )
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _revalidate_before_persist(memory: Memory) -> None:
-    """Re-run every `Memory` field validator before the record hits disk.
-
-    `model_copy(update=...)` does not run field validators. Almost every
-    mutation in this codebase is a `model_copy` — `Store.update`'s
-    verification carry-over, `mark_verified`, `record_corroboration`,
-    `rename_scope`, `handlers/update.py`, `handlers/conflicts.py`,
-    `consolidate`'s dedup merge and its LLM-proposal appliers — so the
-    validators that bound `scopes`, `links` and the `verified_*` lists are
-    live on the *admission* path and dead on every *mutation* path.
-
-    The consequence is the project's worst failure mode, and it was
-    reachable from three separate surfaces: the over-cap record serialises
-    happily (64 entries is nowhere near the 64 KB YAML cap, so
-    `_frontmatter.dumps` sees nothing wrong), the write reports committed,
-    and then `_load_path` re-constructs through `Memory(...)`, the
-    validator raises, and `load_all` / `load_one` catch-and-skip it. The
-    record is gone from search, list, show and health while its file sits
-    on disk looking fine. Measured before this guard existed:
-    `memory_curate` merging two 33-scope duplicates destroyed BOTH records
-    and reported `failures: []`; `memory_conflicts` appending a 65th link
-    destroyed the source and reported `link_written: true`;
-    `memory_update` did the same whenever `max_scopes_per_write` was raised
-    above 64 or set to the documented "disable" value of 0.
-
-    Fixing those three call sites individually would have left the fourth.
-    This is the byte-axis lesson applied to the semantic axis:
-    `_frontmatter.dumps` is the one chokepoint every persist routes through
-    for size, and `_write_path` is the one chokepoint every persist routes
-    through for the model. Validate here and the class is closed for all
-    fields, present and future.
-
-    Cost is one pydantic round-trip per persisted record — tens of
-    microseconds against an fsync'd write, i.e. unmeasurable next to the
-    I/O it precedes.
-
-    Raises `ValueError` (pydantic's `ValidationError` is a subclass) so the
-    existing handler-boundary translations, which already catch `ValueError`
-    from the size caps on this same path, surface it as a clean structured
-    error instead of a committed-then-vanished record.
-    """
-    try:
-        Memory.model_validate(memory.model_dump())
-    except PydanticValidationError as exc:
-        raise ValueError(
-            f"refusing to persist memory {memory.id}: the record fails its own "
-            f"model validation and would be silently dropped on the next read "
-            f"({exc.error_count()} error(s)): {exc}"
-        ) from exc
-
-
-_INDEX_LOG = _logging.getLogger("bettermemory.store")
-_INDEX_REPAIR_HINT = "Run `bettermemory reindex` to repair."
-
-# S4: one-shot startup divergence check. Tracks which `(root,)` paths
-# have already emitted the FTS5-out-of-sync WARNING in this process so
-# multiple Store constructions on the same root (e.g. tests, the
-# `Store(memory_dir).write(...)` one-liner pattern) don't spam the log.
-# Set lives for the process lifetime; two distinct roots each get
-# their own warning. Module-level state (not weakref) because the keys
-# are `Path` instances, which are value-types rather than ownership
-# anchors — we want the warning suppressed across short-lived Store
-# objects on the same root, not just within one Store's lifetime.
-_DIVERGENCE_WARNED_ROOTS: set[Path] = set()
-
-
-# Backoff for the construction-time auto-rebuild: a deterministically
-# failing rebuild (read-only index dir, disk full, corruption even the
-# data-phase retry can't clear) must not re-run a full-store
-# re-tokenization on EVERY Store construction — one attempt per window
-# is plenty; search stays correct on the full-scan path meanwhile. Two
-# layers, because each covers the other's blind spot: the best-effort
-# `meta.last_rebuild_failure` marker survives across processes (every
-# CLI invocation constructs a fresh Store) but can't be written when
-# the index dir itself is unwritable; the in-process memo needs no
-# writable anything but dies with the process. `bettermemory reindex`
-# calls `index.rebuild` directly and always bypasses both.
-_REBUILD_FAILURE_BACKOFF_S = 3600.0
-_REBUILD_FAILURE_MEMO: dict[str, float] = {}
-_REBUILD_SKIP_WARNED: set[str] = set()
-
-
-@best_effort(
-    "index auto-rebuild after schema upgrade",
-    logger=_INDEX_LOG,
-    repair_hint=_INDEX_REPAIR_HINT,
-)
-def _rebuild_index_if_flagged(store: Store) -> None:
-    """Rebuild the FTS5 index from disk when a schema-version migration
-    flagged it rebuild-pending (`meta.needs_rebuild`, set by
-    `index._ensure_schema`'s older-version path).
-
-    The migration drops the data tables empty; the incremental Store
-    hooks repopulate only whatever gets touched afterwards. On a store
-    above the prefilter threshold that means `memory_search` would —
-    without the flag — re-engage the FTS prefilter once enough
-    post-upgrade upserts accumulate and silently lose every untouched
-    legacy memory. Rebuilding here, at the first Store construction
-    after the upgrade, closes that window at its earliest opportunity;
-    `index.rebuild` is transactional and clears the flag only when the
-    repopulation lands, and `_handlers.load_search_candidates` routes to
-    `load_all` while the flag is set, so search stays correct (just
-    linear-scan slow) before/without this rebuild.
-
-    Best-effort via the decorator: a rebuild failure warns (with the
-    reindex hint) and must not block construction — the flag stays set,
-    so search keeps bypassing the index and a LATER construction
-    retries. On success the log is INFO: this shape used to surface as
-    the S4 divergence WARNING below, but a self-healed index is a
-    resolution notice, not an operator action item.
-
-    Failure backoff: "the next construction retries" must not mean
-    "every construction re-runs a full-store re-tokenization against
-    the same broken disk". A failed attempt is recorded twice — in the
-    in-process `_REBUILD_FAILURE_MEMO` and via the best-effort
-    cross-process `meta.last_rebuild_failure` marker — and further
-    attempts are skipped (log-once per process) until
-    `_REBUILD_FAILURE_BACKOFF_S` elapses. A successful rebuild clears
-    both; manual `bettermemory reindex` bypasses the backoff entirely.
-    """
-    import time
-
-    from . import index as _index
-
-    st = _index.status(store.root)
-    if not st.get("needs_rebuild"):
-        return
-    key = str(store.root)
-    now = time.time()
-    recent_failures = [
-        ts
-        for ts in (_REBUILD_FAILURE_MEMO.get(key), st.get("last_rebuild_failure"))
-        if ts is not None and 0 <= now - ts < _REBUILD_FAILURE_BACKOFF_S
-    ]
-    if recent_failures:
-        if key not in _REBUILD_SKIP_WARNED:
-            _REBUILD_SKIP_WARNED.add(key)
-            _INDEX_LOG.warning(
-                "bettermemory: index rebuild is pending but the last "
-                "automatic attempt failed recently; skipping the retry "
-                "for now (search stays on the safe full-scan path). Run "
-                "`bettermemory reindex` to retry immediately."
+        admit: Callable[[list[str], Origin | None, Actor | None], bool],
+    ) -> tuple[int, dict[str, int], dict[str, int]] | None:
+        """Document frequencies for `terms` over the admitted collection,
+        the v8 index's `corpus_document_frequencies`: `(size, body_df,
+        scope_df)`, where `admit` is the search's own admission predicate
+        over `(scopes, origin, actor)` so the denominator is the ranked
+        set. None when no term or no admitted document."""
+        unique = sorted({t for t in terms if t})
+        if not unique:
+            return None
+        admitted: set[str] = set()
+        for row in self._conn.execute(
+            "SELECT id, scopes_json, origin_repo, origin_worktree, "
+            "actor_client, actor_model FROM memories"
+        ):
+            repo = row["origin_repo"]
+            worktree = row["origin_worktree"]
+            origin = (
+                Origin(repo=repo, worktree_root=worktree)
+                if (repo is not None or worktree is not None)
+                else None
             )
-        return
-    try:
-        count = _index.rebuild(store.root, store.iter_active())
-    except Exception:
-        _REBUILD_FAILURE_MEMO[key] = now
-        _REBUILD_SKIP_WARNED.discard(key)
-        _index.record_rebuild_failure(store.root)
-        raise
-    _REBUILD_FAILURE_MEMO.pop(key, None)
-    _REBUILD_SKIP_WARNED.discard(key)
-    _INDEX_LOG.info(
-        "bettermemory: index schema upgraded; rebuilt %d memories from "
-        "canonical disk state.",
-        count,
-    )
+            client = row["actor_client"]
+            model = row["actor_model"]
+            actor = (
+                Actor(client=client, model=model)
+                if (client is not None or model is not None)
+                else None
+            )
+            scopes = _load_json(row["scopes_json"], None)
+            if not isinstance(scopes, list):
+                continue
+            if admit(list(scopes), origin, actor):
+                admitted.add(str(row["id"]))
+        if not admitted:
+            return None
 
+        def ids_matching(match_expr: str) -> set[str]:
+            return {
+                str(r["id"])
+                for r in self._conn.execute(
+                    "SELECT m.id AS id FROM memories m "
+                    "JOIN memories_fts f ON f.rowid = m.rowid "
+                    "WHERE memories_fts MATCH ?",
+                    (match_expr,),
+                )
+            }
 
-def _parse_memory_file(path: Path) -> Memory:
-    """Parse one on-disk memory file into a `Memory`. The canonical
-    reader — `Store._load_path` delegates here, and
-    `count_unparseable_memory_files` reuses it so "unparseable" means
-    exactly "what `iter_active()` would skip"."""
-    post = frontmatter.load(path)
-    meta = post.metadata
-    # Schema-version gate. Memories without `schema_version` are
-    # implicitly version 1 (the format predates the field). Anything
-    # *higher* than what this reader supports is refused — the caller
-    # (`load_all`, etc.) catches ValueError and skips the file silently
-    # (the skip path emits no log; `bettermemory doctor` surfaces the
-    # count gap), so a user who downgrades bettermemory after writing
-    # memories under a newer minor sees them drop out of the retrieval
-    # surface rather than risk the reader misinterpreting fields whose
-    # semantics changed.
-    on_disk_version = meta.get("schema_version", 1)
-    try:
-        on_disk_int = int(on_disk_version)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"{path}: schema_version is not an integer: {on_disk_version!r}"
-        ) from exc
-    if on_disk_int > SCHEMA_VERSION:
-        raise ValueError(
-            f"{path}: schema_version {on_disk_int} is newer than this "
-            f"reader supports (max {SCHEMA_VERSION}); upgrade bettermemory "
-            f"or remove the file from the active set."
+        body_df: dict[str, int] = {}
+        scope_df: dict[str, int] = {}
+        for term in unique:
+            quoted = '"' + term.replace('"', '""') + '"'
+            body_hits = ids_matching(f"body_fts : {quoted}") & admitted
+            any_hits = ids_matching(quoted) & admitted
+            if body_hits:
+                body_df[term] = len(body_hits)
+            if any_hits:
+                scope_df[term] = len(any_hits)
+        return len(admitted), body_df, scope_df
+
+    def scope_counts(
+        self, *, admit: Callable[[list[str], Origin | None], bool]
+    ) -> tuple[int, dict[str, int]]:
+        """How many admitted memories there are and how many carry each
+        scope, without reading a body."""
+        total = 0
+        counts: dict[str, int] = {}
+        for row in self._conn.execute(
+            "SELECT scopes_json, origin_repo, origin_worktree FROM memories"
+        ):
+            repo = row["origin_repo"]
+            worktree = row["origin_worktree"]
+            origin = (
+                Origin(repo=repo, worktree_root=worktree)
+                if (repo is not None or worktree is not None)
+                else None
+            )
+            scopes = _load_json(row["scopes_json"], None)
+            if not isinstance(scopes, list):
+                continue
+            if not admit(list(scopes), origin):
+                continue
+            total += 1
+            for scope in scopes:
+                counts[scope] = counts.get(scope, 0) + 1
+        return total, counts
+
+    def category_rows(
+        self,
+        *,
+        category: str,
+        admit: Callable[[list[str], Origin | None], bool],
+    ) -> list[str]:
+        """The ids of admitted memories in `category`, in id order."""
+        out: list[str] = []
+        for row in self._conn.execute(
+            "SELECT id, scopes_json, origin_repo, origin_worktree "
+            "FROM memories WHERE category = ? ORDER BY id",
+            (category,),
+        ):
+            repo = row["origin_repo"]
+            worktree = row["origin_worktree"]
+            origin = (
+                Origin(repo=repo, worktree_root=worktree)
+                if (repo is not None or worktree is not None)
+                else None
+            )
+            scopes = _load_json(row["scopes_json"], None)
+            if not isinstance(scopes, list):
+                continue
+            if admit(list(scopes), origin):
+                out.append(str(row["id"]))
+        return out
+
+    def links_with_status(
+        self, memory_id: str
+    ) -> tuple[
+        list[tuple[str, str, str | None]],
+        list[tuple[str, str, str | None]],
+        TrustRow | None,
+    ]:
+        """One record's outbound and inbound links and its trust row
+        (None for an id the store does not hold, or when trust is
+        unavailable)."""
+        links = self.links_for_many([memory_id])[memory_id]
+        trust = self.trust_rows([memory_id])
+        return links[0], links[1], None if trust is None else trust.get(memory_id)
+
+    # -- the event reads --------------------------------------------------------
+
+    def events_since(self, since: datetime) -> Iterator[dict[str, Any]]:
+        """The telemetry rows stamped at or after `since`, in log order:
+        what a window read wants. The `ts` index serves the cut."""
+        cut = _iso(since.astimezone(timezone.utc)).replace("+00:00", "Z")
+        # Both spellings sort correctly against an ISO instant to the
+        # second; a `Z` sorts after `+`, so the cut compares on the prefix.
+        prefix = cut[:19]
+        for raw in self._conn.execute(
+            "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log "
+            "WHERE substr(ts, 1, 19) >= ? ORDER BY seq",
+            (prefix,),
+        ):
+            event = self._event_from_raw(raw)
+            if event is not None:
+                yield event
+
+    def iter_events_backward(self) -> Iterator[dict[str, Any]]:
+        """The telemetry rows newest first."""
+        for raw in self._conn.execute(
+            "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log "
+            "ORDER BY seq DESC"
+        ):
+            event = self._event_from_raw(raw)
+            if event is not None:
+                yield event
+
+    def _event_from_raw(self, raw: sqlite3.Row) -> dict[str, Any] | None:
+        kind = str(raw["kind"])
+        if kind in MUTATION_KINDS or kind in CONTROL_KINDS:
+            return None
+        try:
+            payload = json.loads(raw["payload"])
+        except ValueError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        event: dict[str, Any] = {"ts": str(raw["ts"])}
+        if raw["session"] is not None:
+            event["session"] = str(raw["session"])
+        event["kind"] = kind
+        for key, value in payload.items():
+            if key not in _ROW_COLUMNS:
+                event[key] = value
+        return event
+
+    # -- the journal ------------------------------------------------------------
+
+    def write_episode(
+        self,
+        *,
+        session_id: str,
+        body: str,
+        scopes: list[str] | None = None,
+        takeaway: str | None = None,
+        swarm_id: str | None = None,
+        origin: Origin | None = None,
+        now: datetime | None = None,
+    ) -> Episode:
+        """Append one journal entry for `session_id`."""
+        if not body or not body.strip():
+            raise ValueError("episode body must be a non-empty string")
+        episode = Episode(
+            id=generate_ulid(),
+            session_id=session_id,
+            created=now or utcnow(),
+            body=body.strip() + "\n",
+            scopes=list(scopes or []),
+            takeaway=takeaway.strip() if takeaway else None,
+            swarm_id=swarm_id,
+            origin=origin,
         )
-    try:
-        # `origin` is additive — memories written before this field
-        # existed have no entry, and that's intentionally fine: they're
-        # treated as "global" by the auto-scope filter.
-        origin_raw = meta.get("origin")
-        origin = (
-            Origin.model_validate(origin_raw) if isinstance(origin_raw, dict) else None
+        return self.put_episode(episode, session=session_id)
+
+    def write_floor(
+        self,
+        *,
+        session_id: str,
+        origin: Origin | None = None,
+        now: datetime | None = None,
+    ) -> Episode:
+        """The session-tag floor the handoff writes at its entry, so a
+        session that crashes before its first takeaway still marks its
+        worktree."""
+        episode = Episode(
+            id=generate_ulid(),
+            session_id=session_id,
+            created=now or utcnow(),
+            body="(session-tag floor, no takeaway recorded)\n",
+            scopes=[],
+            takeaway=None,
+            origin=origin,
+            is_floor=True,
         )
-        # `actor` is additive the same way: absent on every record written
-        # before 7.10.0 and on one whose writer declared nothing.
-        actor_raw = meta.get("actor")
-        actor = Actor.model_validate(actor_raw) if isinstance(actor_raw, dict) else None
-        # `last_verified_at` is also additive — older memories have no
-        # entry and read as "never verified". A malformed timestamp is
-        # treated the same as missing (rather than raising) so a typo
-        # in the file doesn't render the whole memory unloadable.
-        verified_raw = meta.get("last_verified_at")
-        last_verified_at: datetime | None
-        if verified_raw is None:
-            last_verified_at = None
-        else:
-            try:
-                last_verified_at = _as_dt(verified_raw)
-            except ValueError:
-                last_verified_at = None
-        # `category`, `verified_paths`, `verified_commits`,
-        # `verified_versions` are additive — legacy memories load
-        # with None / empty lists. Unknown category values fall back
-        # to None rather than raising; the runtime treats None as
-        # the legacy "fact" default, so a memory written by a newer
-        # bettermemory that introduces a new category still loads
-        # cleanly under an older reader (semantics revert to fact).
-        category_raw = meta.get("category")
-        category: Category | None
-        if category_raw is None:
-            category = None
-        else:
-            try:
-                category = Category(str(category_raw))
-            except ValueError:
-                category = None
-        # `links` is additive (T2.2). Legacy memories load with [].
-        # Each entry must be a dict with `type` and `target_id`;
-        # entries with unknown type or invalid target_id are
-        # silently dropped rather than raising, so a forward-compat
-        # downgrade (memory written under a newer reader that
-        # introduced a new link type) doesn't break the older
-        # reader for the whole file.
-        links_raw = meta.get("links")
-        links: list[MemoryLink] = []
-        if isinstance(links_raw, list):
-            for entry in links_raw:
-                if not isinstance(entry, dict):
+        return self.put_episode(episode, session=session_id)
+
+    def episodes_by_session(self, session_id: str) -> list[Episode]:
+        out = list(self.iter_episodes(session_id=session_id))
+        out.sort(key=lambda e: e.created)
+        return out
+
+    def episodes_by_swarm(self, swarm_id: str) -> list[Episode]:
+        out = [
+            _row_to_episode(row)
+            for row in self._conn.execute(
+                "SELECT * FROM episodes WHERE swarm_id = ? ORDER BY created, rowid",
+                (swarm_id,),
+            )
+        ]
+        return out
+
+    def episode_session_ids(self) -> list[str]:
+        """Every session with at least one episode, oldest first."""
+        return [
+            str(row["session_id"])
+            for row in self._conn.execute(
+                "SELECT session_id, MIN(rowid) AS first FROM episodes "
+                "GROUP BY session_id ORDER BY first"
+            )
+        ]
+
+    def prunable_episode_sessions(
+        self,
+        *,
+        ttl_days: int = DEFAULT_EPISODE_TTL_DAYS,
+        now: datetime | None = None,
+    ) -> list[str]:
+        """Sessions whose newest episode is older than the TTL."""
+        if ttl_days <= 0:
+            return []
+        cutoff = _iso((now or utcnow()) - timedelta(days=ttl_days))
+        return [
+            str(row["session_id"])
+            for row in self._conn.execute(
+                "SELECT session_id, MAX(created) AS newest FROM episodes "
+                "GROUP BY session_id HAVING newest < ? ORDER BY newest",
+                (cutoff,),
+            )
+        ]
+
+    def prune_episode_sessions(
+        self,
+        *,
+        ttl_days: int = DEFAULT_EPISODE_TTL_DAYS,
+        keep_session_id: str | None = None,
+        now: datetime | None = None,
+        session: str | None = None,
+    ) -> list[str]:
+        """Delete every episode of the sessions past the TTL, except the
+        session named by `keep_session_id`. Returns the pruned session
+        ids."""
+        pruned = [
+            sid
+            for sid in self.prunable_episode_sessions(ttl_days=ttl_days, now=now)
+            if sid != keep_session_id
+        ]
+        if not pruned:
+            return []
+        with self.batch():
+            for sid in pruned:
+                for episode in self.iter_episodes(session_id=sid):
+                    with self._transaction() as tx:
+                        self._mutate(
+                            tx, "episode_delete", {"id": episode.id}, session=session
+                        )
+        return pruned
+
+    def episode_provenance(self, episode_ids: Sequence[str]) -> dict[str, str]:
+        """``{id: label}`` for the episodes asked: ``local`` when the row's
+        pointer into the log verifies, ``unaccounted`` when it does not
+        (the planted shape), the row's label as stored when the key is not
+        on this machine. Unknown ids are omitted."""
+        ids = list(dict.fromkeys(episode_ids))
+        if not ids:
+            return {}
+        out: dict[str, str] = {}
+        for start in range(0, len(ids), _PROVENANCE_BATCH):
+            batch = ids[start : start + _PROVENANCE_BATCH]
+            placeholders = ",".join("?" * len(batch))
+            for row in self._conn.execute(
+                f"SELECT id, log_mac FROM episodes WHERE id IN ({placeholders})", batch
+            ):
+                episode_id = str(row["id"])
+                verified = self._pointer_verified(
+                    episode_id, "episode_put", row["log_mac"]
+                )
+                out[episode_id] = UNACCOUNTED if verified is False else LOCAL
+        return out
+
+    def episode_volume(
+        self,
+        *,
+        ttl_days: int = DEFAULT_EPISODE_TTL_DAYS,
+        now: datetime | None = None,
+    ) -> EpisodeVolume:
+        row = self._conn.execute(
+            "SELECT COUNT(DISTINCT session_id) AS sessions, COUNT(*) AS episodes, "
+            "COALESCE(SUM(LENGTH(CAST(body AS BLOB)) + "
+            "LENGTH(CAST(COALESCE(takeaway, '') AS BLOB))), 0) AS bytes "
+            "FROM episodes"
+        ).fetchone()
+        return EpisodeVolume(
+            sessions=int(row["sessions"]),
+            episodes=int(row["episodes"]),
+            bytes=int(row["bytes"]),
+            prunable_sessions=len(
+                self.prunable_episode_sessions(ttl_days=ttl_days, now=now)
+            ),
+            ttl_days=ttl_days,
+        )
+
+    # -- the log ------------------------------------------------------------
+
+    def log_rows(self, since_seq: int = 0) -> list[LogRow]:
+        return list(iter_rows(self._conn, since_seq))
+
+    def refold(self) -> dict[str, Any]:
+        """Replay every mutation row into a scratch database and compare
+        each folded table with the live one. ``unaccounted`` lists live
+        rows the replay does not produce (planted or edited), ``missing``
+        the replayed rows the live table lacks (deleted). A row whose
+        payload cannot be applied is reported as ``payload_invalid`` and
+        skipped."""
+        scratch = sqlite3.connect(":memory:", isolation_level=None)
+        scratch.row_factory = sqlite3.Row
+        problems: list[dict[str, Any]] = []
+        try:
+            scratch.executescript(SCHEMA)
+            scratch.execute("BEGIN")
+            for row in iter_rows(self._conn):
+                if row.kind not in MUTATION_KINDS:
                     continue
                 try:
-                    links.append(MemoryLink.model_validate(entry))
-                except (ValueError, KeyError):
-                    continue
-        # Corroboration rollup is additive — legacy memories load as
-        # 0 / None. Malformed values degrade to the defaults rather than
-        # raising, same tolerance as `last_verified_at`: a hand-edited
-        # counter must not render the whole memory unloadable.
-        corroborations_raw = meta.get("corroborations")
-        try:
-            corroborations = (
-                max(0, int(corroborations_raw)) if corroborations_raw is not None else 0
-            )
-        except (TypeError, ValueError):
-            corroborations = 0
-        corroborated_raw = meta.get("last_corroborated")
-        last_corroborated: datetime | None
-        if corroborated_raw is None:
-            last_corroborated = None
-        else:
-            try:
-                last_corroborated = _as_dt(corroborated_raw)
-            except ValueError:
-                last_corroborated = None
-        return Memory(
-            id=str(meta["id"]),
-            created=_as_dt(meta["created"]),
-            updated=_as_dt(meta["updated"]),
-            scopes=_coerce_scopes(meta["scopes"]),
-            confidence=Confidence(meta["confidence"]),
-            source=Source(meta["source"]),
-            body=post.content.strip() + "\n",
-            origin=origin,
-            actor=actor,
-            last_verified_at=last_verified_at,
-            category=category,
-            verified_paths=_load_str_list(meta.get("verified_paths")),
-            verified_commits=_load_str_list(meta.get("verified_commits")),
-            verified_versions=_load_str_list(meta.get("verified_versions")),
-            verified_absent_paths=_load_str_list(meta.get("verified_absent_paths")),
-            claims=_load_str_list(meta.get("claims")),
-            verified_head=_load_commit_sha(meta.get("verified_head")),
-            links=links,
-            corroborations=corroborations,
-            last_corroborated=last_corroborated,
-        )
-    except KeyError as exc:
-        raise ValueError(f"{path}: missing field {exc.args[0]}") from exc
+                    payload = json.loads(row.payload)
+                    if not isinstance(payload, dict):
+                        raise TypeError("payload is not an object")
+                    _apply_mutation(scratch, row.kind, payload, log_mac=row.mac)
+                except (ValueError, KeyError, TypeError, ValidationError) as exc:
+                    problems.append(
+                        {
+                            "seq": row.seq,
+                            "kind": row.kind,
+                            "problem": "payload_invalid",
+                            "detail": str(exc).splitlines()[0][:200],
+                        }
+                    )
+            scratch.execute("COMMIT")
+            tables: dict[str, Any] = {}
+            diverged = bool(problems)
+            for table in FOLDED_TABLES:
+                live = _table_rows(self._conn, table)
+                folded = _table_rows(scratch, table)
+                unaccounted = sorted(
+                    (
+                        _key_label(table, k)
+                        for k, v in live.items()
+                        if folded.get(k) != v
+                    ),
+                    key=str,
+                )
+                missing = sorted(
+                    (_key_label(table, k) for k in folded if k not in live), key=str
+                )
+                if unaccounted or missing:
+                    diverged = True
+                tables[table] = {
+                    "unaccounted": unaccounted,
+                    "missing": missing,
+                    "rows": len(live),
+                }
+            self._unaccounted_memory_ids = set(tables["memories"]["unaccounted"])
+            return {
+                "status": "diverged" if diverged else "ok",
+                "tables": tables,
+                "problems": problems,
+            }
+        finally:
+            scratch.close()
 
+    def log_verify(self) -> dict[str, Any]:
+        """The chain report merged with the fold: ``tampered`` when a row
+        fails its MAC, the chain breaks, the head names a row the log no
+        longer has, or a table differs from the fold; ``unverifiable``
+        when a segment's key or the head is absent; ``ok`` otherwise."""
+        chain = verify_chain(
+            self._conn, keyring=self._keyring, current_fingerprint=self.key_fingerprint
+        ).to_dict()
+        fold = self.refold()
+        problems = list(chain["problems"]) + list(fold["problems"])
+        problems.sort(key=lambda p: (int(p["seq"]), str(p["problem"])))
+        status = chain["status"]
+        if fold["status"] != "ok":
+            status = "tampered"
+        return {
+            "status": status,
+            "path": str(self._path),
+            "store_id": self._store_id,
+            "key_fingerprint": self.key_fingerprint,
+            "rows": chain["rows"],
+            "segments": chain["segments"],
+            "head": chain["head"],
+            "problems": problems,
+            "fold": {"status": fold["status"], "tables": fold["tables"]},
+            "unaccounted_ids": list(fold["tables"]["memories"]["unaccounted"]),
+        }
 
-def count_active_memory_files(root: Path) -> int:
-    """Count the active-memory ``.md`` files under `root` without
-    parsing them — the `_iter_active_paths()` filter (regular file, not
-    a symlink, `.md` suffix) as a bare count, for callers that have no
-    Store instance. Until 7.17.0 they MUST not have constructed one —
-    `Store.__post_init__` mkdir'd and auto-rebuilt, write side effects from
-    a read — and that is why this function exists. Construction is pure
-    now, so the constraint is historical and a caller may hold a Store;
-    these stay because they also skip the parse. Shared by the S4
-    divergence warning below and doctor's index-health check so the two
-    disk-vs-`indexed_count` comparisons cannot drift apart. Propagates
-    OSError from an unlistable directory; callers pick their own
-    degraded answer."""
-    return len(active_memory_filenames(root))
+    # -- status --------------------------------------------------------------
 
-
-def active_memory_filenames(root: Path) -> set[str]:
-    """The bare filenames of the active-memory ``.md`` files under
-    `root` — the same `_iter_active_paths()` filter as the count above,
-    without the parse.
-
-    The identity-level view a caller can afford on a hot path. A count
-    answers "how many files"; this answers "which files", and the two
-    are different claims: remove one memory and add another out of band
-    and the count is unchanged while the store is not the store the
-    index describes. `scan_active_memory_ids` answers the same question
-    more precisely (by memory id) but pays a full parse for it; a caller
-    that only needs to know whether the SET moved — the session-start
-    hint, which must not parse — compares these against the index's
-    `filename` column instead.
-
-    Filenames rather than paths because that is what the index stores
-    (`_upsert_memory` threads the caller's actual filename through), so
-    the two sides compare without either one re-deriving the other's
-    spelling. Propagates OSError from an unlistable directory."""
-    return {entry.name for entry in iter_active_memory_paths(root)}
-
-
-def iter_active_memory_paths(root: Path) -> Iterator[Path]:
-    """The active memory files under `root`: regular, non-symlink,
-    top-level `.md` files that are not quarantined. The single filter
-    every disk walk shares, Store-bound (`Store._iter_active_paths`) and
-    Store-free (`active_memory_filenames`, `scan_active_memory_ids`), so
-    "yielded here" and "counted there" cannot drift apart.
-
-    `is_file()` follows symlinks; symlinks are rejected explicitly. With
-    `sync pull` the memory directory is a worktree a remote can push to,
-    and a remote pushing `something.md` as a symlink to `/etc/passwd`
-    (or any other readable file) would otherwise have its target loaded
-    and parsed as frontmatter on the next `load_all`. The parse would
-    fail and `load_all` would swallow it, so this is not an exfiltration
-    primitive today, but the narrower contract, memories are regular
-    files in this directory and nothing else, is the one to enforce.
-
-    Quarantined names (`quarantine.quarantined_names`: the pulled files
-    the admission chain refused) are skipped for the same reason the
-    symlink is: the file is on disk, git tracks it, and it is not a
-    memory this host serves.
-
-    A root that DOES NOT EXIST yields nothing: a store that was never
-    provisioned is an empty store, and that is a measurement, not a
-    failure. Every OTHER `OSError` — `PermissionError` above all —
-    PROPAGATES, and callers pick their own degraded answer. The split
-    is the could-not-ask rule this project has now drained three times
-    (7.13.0 verdicts, 7.14.0 censuses, 7.15.0 selection): "absent" is
-    knowable and means zero, "cannot read" is the third value and must
-    never be folded into it. Before provisioning became explicit this
-    branch was unreachable, because constructing a `Store` created the
-    directory as a side effect."""
-    # Materialised rather than lazy because `Path.iterdir` is a
-    # generator function: it raises on first advance, not at the call, so
-    # a guard around the call alone would not catch the missing root. No
-    # consumer depends on the laziness — all three (`load_all`,
-    # `active_memory_filenames`, `scan_active_memory_ids`) build a full
-    # collection anyway, and each is far larger than this list of paths.
-    try:
-        entries = list(root.iterdir())
-    except FileNotFoundError:
-        return
-    excluded = quarantined_names(root)
-    for entry in entries:
-        # ORDER IS LOAD-BEARING, and so is `os.path.isfile`.
-        #
-        # `is_symlink()` reads the entry's own lstat, which succeeds
-        # whenever the directory listing did; `is_file()` FOLLOWS the
-        # link and stats the target, which may live anywhere. Asking
-        # `is_file()` first therefore reached out of this directory and,
-        # on Python 3.11-3.13, re-raised EACCES from wherever the link
-        # pointed. `load_all` calls `next()` on this generator OUTSIDE
-        # its own try, so `PARSE_SKIP_EXCEPTIONS` never saw it and one
-        # unstattable symlink hard-killed memory_search, memory_list and
-        # memory_health together. A `sync pull` landing
-        # `note.md -> /root/x` is enough. (Reproduced on 3.11.15 and
-        # 3.13.13; 3.14 swallows the errno instead and skips the entry,
-        # which is the answer we want but only by accident of version.)
-        #
-        # Testing the link first means a symlink is excluded — which
-        # this function already wanted — without ever following it. The
-        # remaining `os.path.isfile` covers the regular-file case: a
-        # plain `.md` this process cannot stat is not a memory we can
-        # serve, and "cannot tell" must not become an exception the
-        # callers do not catch.
-        if entry.is_symlink() or not os.path.isfile(entry):
-            continue
-        if entry.suffix == ".md":
-            if entry.name in excluded:
-                continue
-            yield entry
-
-
-def count_unparseable_memory_files(root: Path) -> int:
-    """Count the active-memory ``.md`` files under `root` that
-    `iter_active()` would skip (malformed frontmatter, missing required
-    fields, a schema_version newer than this reader). Those files can
-    never enter the FTS5 index — `index.rebuild` consumes
-    `iter_active()` — so a disk-vs-`indexed_count` comparison that
-    ignores them reports a divergence `bettermemory reindex` cannot
-    clear. Same Store-free contract as `count_active_memory_files`, and
-    the same shared role: the S4 warning below and doctor's index-health
-    check both subtract this count before calling the index stale.
-
-    Parses every file (unlike the bare count above), so callers reach
-    for it only after the cheap raw-count comparison has already
-    diverged. Per-file failures match the readers' shared skip set
-    (`PARSE_SKIP_EXCEPTIONS`) and count as unparseable; OSError from
-    the `iterdir` itself propagates.
-
-    Delegates to `scan_active_memory_ids` so there is exactly ONE
-    definition of "what a rebuild can parse" — the divergence check
-    needs the id set from that same walk, and two walks that could
-    disagree about a file is precisely the drift this helper exists to
-    prevent."""
-    return scan_active_memory_ids(root)[1]
-
-
-def scan_active_memory_ids(root: Path) -> tuple[dict[str, Path], int]:
-    """One walk of the active `.md` files returning
-    ``({parseable_id: path}, unparseable_count)``.
-
-    The identity-level view of the store root: which memory ids a
-    rebuild would actually feed the index (`index.rebuild` consumes
-    `iter_active()`), plus how many files it would skip. Same Store-free
-    contract, same filter, and the same `PARSE_SKIP_EXCEPTIONS` skip
-    width as `iter_active()` — "in the mapping here" == "yielded
-    there", "counted unparseable here" == "skipped there".
-
-    The PATH is carried alongside each id, not re-derived, because the
-    divergence check needs the file's actual name to take that memory's
-    per-file lock (`_has_confirmed_index_gap`) — and collision-suffixed
-    filenames make a re-derived name wrong exactly when it matters.
-
-    Duplicate ids across two files collapse into one entry (last file in
-    directory order wins), so `len(ids) + unparseable` can be less than
-    the raw file count. That is faithful: the index keys on `id`, so two
-    files carrying one id can only ever produce one row.
-
-    OSError from the `iterdir` propagates; callers pick their own
-    degraded answer."""
-    ids: dict[str, Path] = {}
-    unparseable = 0
-    for entry in iter_active_memory_paths(root):
-        try:
-            ids[_parse_memory_file(entry).id] = entry
-        except PARSE_SKIP_EXCEPTIONS:
-            # Any parse failure counts as unparseable — never a
-            # crash: this walk runs at every Store construction
-            # (via `_warn_on_index_divergence`), so a missed type
-            # would brick server boot on one weird file. The
-            # readers skip on the same width, keeping "counted
-            # here" == "skipped there".
-            unparseable += 1
-    return ids, unparseable
-
-
-def _has_confirmed_index_gap(root: Path, disk_paths: dict[str, Path]) -> bool:
-    """True when at least one memory is GENUINELY unindexed or at least
-    one index row is GENUINELY dangling — i.e. when `bettermemory
-    reindex` actually has something to repair.
-
-    A raw count gap is not evidence of that on a concurrently-used
-    store. Each Store mutator updates the two sides at two different
-    instants: `write` / `update` / `mark_verified` / `restore` /
-    `rename_scope` land the .md via `_write_path` (or
-    `_atomic_write_post`) and only then commit the index row
-    (`_index_upsert_quietly`); `tombstone` unlinks the active file and
-    only then drops the row (`_index_remove_quietly`). A reader that
-    samples disk and index in between sees `disk = index + k`
-    (in-flight writes) or `index = disk + k` (in-flight tombstones) for
-    a gap that closes on its own, and the fleet benchmark drives that
-    window constantly.
-
-    The load-bearing property this check leans on: at each of those six
-    call sites the file step and the index step sit inside the SAME
-    `_locked(<that memory's active .md path>)` block, and each of the
-    six pins that pairing with a comment citing audit H1 — most share
-    one stock phrasing, `tombstone` carries its `index remove` variant,
-    and `restore` spells the invariant out longhand. So the memory's
-    own file lock is a happens-after edge on the writer, and taking it
-    is a synchronization with the actual writer rather than a guess
-    about how long that writer will take:
-
-    - A candidate whose row is merely in flight is owned by a mutator
-      holding that lock; acquiring it BLOCKS until the mutator's second
-      step has committed, and the recheck then sees a consistent pair.
-    - A genuinely out-of-band file (external editor, `sync pull`, a
-      process bypassing `memory_write`) has no writer, so the lock is
-      free, the recheck is immediate, and the gap is confirmed on the
-      spot with no added latency.
-
-    That is deliberately NOT a bounded sleep. A timed re-poll only
-    suppresses windows shorter than its budget: the superseded version
-    of this check re-polled 4 times with a 50ms sleep between attempts
-    (~150ms), and measured on this repo's `bench/swarm.py` it still
-    emitted false warnings at 12 and 24 agents — on stores whose
-    post-run reconciliation was exact (158/158 and 272/272 parseable
-    disk ids vs index rows, zero unindexed, zero dangling). Correctness
-    that depends on a race finishing inside a millisecond budget is the
-    antipattern; a lock the writer already holds has no such envelope.
-
-    Returns as soon as ONE gap is confirmed — the caller only needs the
-    boolean, and stopping early bounds the lock acquisitions on a store
-    with a genuinely stale index (e.g. a fresh `sync pull` of hundreds
-    of files) to the transient candidates plus one.
-
-    Errors propagate: an index this cannot read is one whose gap this
-    cannot prove transient, and the caller's answer there is to warn,
-    not to swallow."""
-    from . import index as _index
-
-    indexed = _index.indexed_ids(root)
-    missing = set(disk_paths) - indexed
-    orphaned = indexed - set(disk_paths)
-
-    for mid in sorted(missing):
-        path = disk_paths[mid]
-        with _locked(path):
-            if not _id_still_at_path(path, mid):
-                # Tombstoned or renamed out from under our scan; the
-                # index row went with it. Not a hole in the index.
-                continue
-            if not _index.indexed_ids(root, [mid]):
-                return True
-
-    if not orphaned:
-        return False
-    # The orphan's lock lives at the path its own row names — that is
-    # the `_locked(path)` a concurrent `tombstone` holds while it
-    # unlinks the file and drops the row.
-    row_files = _index.filenames_for_ids(root, sorted(orphaned))
-    for oid in sorted(orphaned):
-        fname = row_files.get(oid)
-        if fname is None:
-            # Row already gone (the tombstone's removal landed between
-            # our two reads), or a pre-v2 row with no filename to lock
-            # on. `filenames_for_ids` drops the latter; a row whose
-            # filename we cannot resolve is not one we can prove
-            # transient, but it is also not one this check can name a
-            # lock for — leave it to `bettermemory doctor`.
-            continue
-        path = root / fname
-        if path.parent != root:
-            # A filename that escapes the store root is itself a broken
-            # row. Confirm it rather than creating a lock sidecar at a
-            # path the index — not this walk — chose.
-            return True
-        with _locked(path):
-            if not _index.indexed_ids(root, [oid]):
-                continue  # in-flight tombstone; its row is gone now
-            if _id_still_at_path(path, oid):
-                # A write/restore that landed after our disk scan. The
-                # row has a file; our snapshot just predated it.
-                continue
-            return True
-    return False
+    def status(self) -> dict[str, Any]:
+        size = 0
+        for sibling in (
+            self._path,
+            self._path.with_suffix(self._path.suffix + "-wal"),
+        ):
+            with contextlib.suppress(OSError):
+                size += sibling.stat().st_size
+        head = self._keyring.read_head()
+        meta = self.meta()
+        return {
+            "path": str(self._path),
+            "store_id": self._store_id,
+            "schema_version": int(meta.get("schema_version", "0")),
+            "engine_version": meta.get("engine_version"),
+            "memories": self.count_memories(),
+            "tombstones": self.count_tombstones(),
+            "episodes": self.count_episodes(),
+            "log_rows": int(
+                self._conn.execute("SELECT COUNT(*) FROM log").fetchone()[0]
+            ),
+            "size_bytes": size,
+            "key_fingerprint": meta.get("key_fingerprint"),
+            "key_present": self._key is not None,
+            "keys_dir": str(self._keyring.keys_dir),
+            "head_seq": None if head is None else head.seq,
+        }
 
 
 # ---------------------------------------------------------------------------
-# The per-request store seam
+# Per-request store resolution
 # ---------------------------------------------------------------------------
-#
-# Teams Phase 1 / D2. The tree already resolves IDENTITY per request
-# (`session.SessionSource.for_request`). It resolves the STORE once, from
-# process geometry, before any request exists — which is the difference
-# between a single-user process and a hosted one. These names are the
-# store half of that seam, and they are deliberately the whole of it: no
-# mount policy, no tenant key on disk, no migration.
-#
-# `ToolHandlers.for_request` (`_handlers.py`) is what calls into them.
-# Read `DefaultStoreSource`'s docstring for the exact limits of what this
-# buys.
 
 
 class StoreSource(Protocol):
-    """Resolves the store a request should be served from.
+    """Where a request's store comes from. `ToolHandlers.for_request` asks
+    this at every tool call; the shipped source returns one store for
+    every request. A hosted, multi-tenant deployment replaces the
+    policy behind this seam and nothing else."""
 
-    The store analogue of `session.SessionSource`, and for the same
-    reason: a consumer should be able to ask "which store is this
-    request for?" without knowing how the answer is produced. A
-    single-store caller satisfies it trivially by returning the same
-    store for every request, which is what `DefaultStoreSource` does.
-    """
-
-    def for_request(self, ctx: Any | None) -> MemoryStore: ...
-
-
-@dataclass
-class StoreRegistry:
-    """The stores one process has open, keyed by ROOT and capped.
-
-    Opens each root at most once and hands the same instance back for
-    every later request that resolves to it. `Store.open` is the
-    factory, not `Store`: it provisions and runs the startup pair
-    (flagged-index auto-heal, the S4 divergence check), which is right
-    for a root entering service and wrong per call — it can reach a
-    `git` subprocess.
-
-    `OrderedDict` + `threading.Lock` + LRU eviction, copying
-    `session.SessionRegistry`'s discipline rather than inventing a
-    second one: the touch-then-maybe-evict pass is non-atomic, and
-    HTTP/SSE transports can dispatch concurrent requests. The cap is
-    what keeps a map keyed by anything a request can vary from growing
-    for the process lifetime.
-
-    Keyed by root, not by principal: several principals can legitimately
-    share one root (that is the single-store case, and the default), so
-    the root is what identifies a store. Nothing here decides WHICH root
-    a principal gets — that is the `StoreSource` policy's job, and this
-    class serves whatever it is handed.
-    """
-
-    # Matches `SessionRegistry.DEFAULT_MAX_CLIENTS`; the reasoning is the
-    # same, and one number is easier to hold in the head than two.
-    DEFAULT_MAX_ROOTS = 256
-
-    opener: Callable[[Path], MemoryStore] = Store.open
-    max_roots: int = DEFAULT_MAX_ROOTS
-    _stores: OrderedDict[Path, MemoryStore] = field(
-        default_factory=OrderedDict, init=False, repr=False
-    )
-    _lock: threading.Lock = field(
-        default_factory=threading.Lock, init=False, repr=False
-    )
-
-    def get(self, root: Path) -> MemoryStore:
-        """The store for `root`, opening it on first use."""
-        key = Path(root)
-        with self._lock:
-            found = self._stores.get(key)
-            if found is not None:
-                self._stores.move_to_end(key)
-                return found
-        # Opened OUTSIDE the lock: `Store.open` shells out to git on the
-        # divergence check and rebuilds the index on a stale one, and
-        # holding a process-wide lock across that would serialize every
-        # other request behind one tenant's cold start. Two concurrent
-        # first requests for the same root may therefore both open, and
-        # the first insert wins — the same benign race
-        # `SessionRegistry` avoids only because its factory is cheap.
-        opened = self.opener(key)
-        with self._lock:
-            existing = self._stores.setdefault(key, opened)
-            self._stores.move_to_end(key)
-            while len(self._stores) > self.max_roots:
-                self._stores.popitem(last=False)
-            return existing
-
-    def __len__(self) -> int:
-        with self._lock:
-            return len(self._stores)
+    def for_request(self, ctx: Any | None) -> Store: ...
 
 
 class DefaultStoreSource:
-    """Every request resolves to the process store.
+    """The one-store policy: every request is served from the process
+    store. `principal_of` exposes the attested caller a later policy
+    would key on, resolved through `identity.bind`, the same binder the
+    session registry uses."""
 
-    **This is the whole of D2's behaviour, and it changes nothing.** The
-    rule being installed is the mechanism: a request can be asked for a
-    store, the answer flows through `ToolHandlers.for_request`, and
-    every read site downstream follows the bundle rather than reaching
-    for a process-wide attribute. The POLICY — which principal gets
-    which root, and whether two stores can be ranked into one result set
-    (they cannot today: the BM25 IDF denominator is per-root) — is not
-    decided here and is not decided by this unit. Until it is, a hosted
-    multi-tenant deployment is still not supported, and nothing in this
-    class pretends otherwise.
-
-    Keying, when the policy does land: on `actor.principal` ALONE, never
-    `identity.registry_key`. That key appends the transport session and
-    any header-declared client/model, which as a STORE key would shard
-    one person's memories across per-connection stores. A principal-less
-    request (stdio, the CLI, the hook) shares one bucket, which is what
-    makes the default path inert rather than special-cased.
-    """
-
-    def __init__(
-        self,
-        store: MemoryStore,
-        *,
-        registry: StoreRegistry | None = None,
-    ) -> None:
+    def __init__(self, store: Store) -> None:
         self._store = store
-        self._registry = registry if registry is not None else StoreRegistry()
 
-    def for_request(self, ctx: Any | None) -> MemoryStore:
-        root = self._root_for_request(ctx)
-        if root == self._store.root:
-            # The common case, and the only case today: hand back the
-            # constructed store rather than a registry copy, so the
-            # stdio path keeps object identity (and so
-            # `ToolHandlers.for_request` can return `self`).
-            return self._store
-        return self._registry.get(root)
-
-    def _root_for_request(self, ctx: Any | None) -> Path:
-        """The root a request should be served from.
-
-        Returns the process store's root for every request. A subclass or
-        a later unit replaces THIS method and nothing else. The
-        principal is available through `principal_of`, which goes
-        through `identity.bind` — the same binder the session registry
-        uses — rather than a competing one, because `bind` also
-        PUBLISHES the caller for the rest of the request, and two bind
-        sites would make each other order-dependent for no gain.
-        """
-        return self._store.root
+    def for_request(self, ctx: Any | None) -> Store:
+        return self._store
 
     def principal_of(self, ctx: Any | None) -> str | None:
-        """The attested principal for a request, or None.
-
-        Not on `StoreSource` itself: only the policy that consumes it
-        needs it, and putting it on the protocol would force a backend
-        that resolves stores some other way to implement a lookup it
-        never calls.
-
-        Resolved through `identity.bind`, the same call
-        `SessionRegistry._key_for_ctx` makes, rather than a second
-        binder: `bind` never raises (a context constructed outside a
-        request contributes nothing) and publishing the caller is what
-        makes the rest of the request see the same actor.
-        """
         from . import identity
 
         return identity.bind(ctx).actor.principal
 
 
-def _warn_on_index_divergence(root: Path) -> None:
-    """Compare the on-disk active memories to the FTS5 index and emit a
-    one-shot WARNING per root when they genuinely diverge. See
-    ``Store.open`` for the motivating audit note (S4:
-    out-of-band ``.md`` writes silently desync the FTS5 index).
-
-    Three divergence shapes are surfaced:
-
-    - Missing index file but on-disk memories present (typical when a
-      `sync pull` populated the worktree before any hook ran).
-    - Corrupt index file (a `status()["corrupt"]` flag); the indexed
-      count is unknowable and the surface to fix it is the same:
-      `bettermemory reindex`.
-    - A genuine identity gap on an otherwise healthy index: a
-      parseable on-disk memory with no index row, or an index row for
-      an id no longer on disk.
-
-    The raw count comparison is the cheap TRIGGER for the refine path,
-    and it is ALSO the gate: equal counts return here without looking at
-    identities at all. That asymmetry is deliberate and it has a cost.
-    The two counts are not even counts of the same population — index
-    ROWS against raw `.md` FILES, unparseable ones included, because
-    `count_active_memory_files` never parses — so any state whose row
-    count happens to equal its file count is certified in silence,
-    whatever the ids on the two sides are. Two families of out-of-band
-    edit reach that balance: an equal-sized swap that removes k
-    memories and adds k others, and an in-place edit that moves a file
-    from the parseable population to the unparseable one while its row
-    survives (frontmatter broken by an external editor, or a
-    `schema_version` this reader will not read). The second adds and
-    removes nothing at all: the file merely stops parsing, so every
-    reader skips it on the shared `PARSE_SKIP_EXCEPTIONS` width and the
-    memory drops out of `memory_search` while the index still carries
-    its row, both counts unmoved. Reconciling every construction would
-    put a full parse walk plus a lock dance on the server's boot path
-    and on every cheap `Store()`, which is the cost this gate exists to
-    avoid; the shapes it misses are `bettermemory doctor`'s to catch —
-    `_reconcile_index_against_disk` runs the identity leg with no count
-    gate in front of it, and `_check_index_health` reconciles ids and
-    content on every certification precisely because this one cannot
-    afford to. See
-    `docs/incidents/2026-07-31-index-health-certified-a-stale-index.md`.
-
-    Past the gate the count is not the verdict. Counts alone cannot
-    distinguish a desync from a concurrent write caught mid-flight (see
-    `_has_confirmed_index_gap` for the two-step window every mutator
-    has), and a store shared by a fleet of agents is mid-flight most of
-    the time — so a diverging count is re-resolved against the writers'
-    own file locks, and only a gap that survives that warns. A gap that
-    resolves is not a gap; it also must not burn the one-shot per-root
-    budget, or the first false positive would silence the real desync
-    that follows it.
-
-    Past the gate the check is also parse-aware: `index.rebuild`
-    consumes `iter_active()`, which skips unparseable files, so a
-    memory a rebuild could never parse is not a hole the index can
-    fill. When no genuine id gap remains, that shortfall gets a
-    fix-the-files warning instead — recommending reindex there would
-    send the user to a repair that can never clear the warning.
-
-    Degraded paths do not all get the same answer:
-
-    - An OSError from either directory walk (`count_active_memory_files`
-      up front, `scan_active_memory_ids` on the refine path) ends the
-      check SILENTLY. With the disk side unread there is nothing to
-      compare, and nothing to report but noise.
-    - A sqlite problem inside `status` never reaches those handlers at
-      all: `status` is contractually non-raising and returns the
-      degraded `corrupt=True` shape instead, which this function's
-      corrupt-index branch WARNS on. An index too broken to read is
-      reported, not swallowed.
-    - A failure to EVALUATE a gap whose inputs are already in hand
-      (`_has_confirmed_index_gap` raising) also warns — a gap we cannot
-      resolve is a gap we cannot call transient.
-
-    None of those three propagates: this runs at every Store
-    construction, so no branch may turn a diagnostic into a boot
-    failure.
-
-    Lazy import on `index` to keep the Store module loadable in the
-    pure-file-store scenarios (`tests/test_store.py` runs without
-    touching the SQLite extension; same rationale as
-    `_index_upsert_quietly`).
-    """
-    if root in _DIVERGENCE_WARNED_ROOTS:
-        return
-    try:
-        from . import index as _index
-
-        status = _index.status(root)
-        disk_count = count_active_memory_files(root)
-    except OSError:
-        # Best-effort. If we can't read the directory, the rest of
-        # the Store will surface a clearer error on its first real
-        # operation; don't compound it with a noisy startup warning.
-        return
-
-    if status.get("schema_skew"):
-        # NOT a divergence and NOT corruption: the index is intact and
-        # this process is running older code, which is every long-lived
-        # server's state between a schema bump and a client restart.
-        # Saying "corrupt" here was the loudest way this defect reached
-        # a user, because it fires at every Store construction.
-        _DIVERGENCE_WARNED_ROOTS.add(root)
-        _INDEX_LOG.warning(
-            "bettermemory: FTS5 index at %s is at schema %s; this process "
-            "supports %s (disk=%d memories). %s Search falls back to a "
-            "full scan until then.",
-            status.get("path", root / ".index.sqlite"),
-            status.get("schema_version"),
-            status.get("reader_schema_version"),
-            disk_count,
-            _index.SCHEMA_SKEW_REMEDY,
-        )
-        return
-
-    if status.get("corrupt"):
-        # An unreadable index is a divergence we should always flag —
-        # the indexed count is unknowable, so we report what we can:
-        # the disk count and the corruption signal.
-        _DIVERGENCE_WARNED_ROOTS.add(root)
-        _INDEX_LOG.warning(
-            "bettermemory: FTS5 index at %s is corrupt (disk=%d memories). "
-            "%s Search results may be incomplete or "
-            "include stale references until then.",
-            status.get("path", root / ".index.sqlite"),
-            disk_count,
-            _index.INDEX_CORRUPT_REMEDY,
-        )
-        return
-
-    # `exists=False` is the "no index file yet" path. Treat as
-    # `indexed_count=0` so a pre-populated directory with no index
-    # (typical after a fresh `sync pull` into a worktree that's
-    # never had the server started against it) trips the warning.
-    indexed_count = (
-        int(status.get("indexed_count", 0) or 0) if status.get("exists") else 0
-    )
-    if indexed_count == disk_count:
-        return
-
-    # Raw counts diverged — refine with the parse walk (paid only on
-    # this rare path; the aligned common case above stays a bare
-    # iterdir). `disk - unparseable` is the highest count a rebuild
-    # can reach.
-    try:
-        disk_paths, unparseable_count = scan_active_memory_ids(root)
-    except OSError:
-        return
-    indexable_count = disk_count - unparseable_count
-
-    # Counts diverging is not evidence. Resolve the gap down to whether
-    # any id is genuinely unindexed / dangling, synchronizing with the
-    # in-flight writers via their own file locks first.
-    try:
-        confirmed = _has_confirmed_index_gap(root, disk_paths)
-    except Exception:  # noqa: BLE001 — unprovable gap warns, never crashes boot
-        # An index we cannot read is a gap we cannot prove transient,
-        # and `status()` just reported this index healthy — a failure
-        # here is itself worth surfacing. Warn UNCONDITIONALLY rather
-        # than routing through the confirmed-gap branch below: the
-        # natural-looking `missing = set(disk_paths)` fallback is EMPTY
-        # on a store with no parseable `.md` files, which lands in the
-        # no-gap branch and returns without a word — the loudest
-        # divergence (every row dangling, nothing on disk) producing
-        # the least signal. Pinned by
-        # `test_unreadable_index_warns_even_with_an_empty_disk`.
-        _warn_index_out_of_sync(
-            root,
-            indexed_count=indexed_count,
-            disk_count=disk_count,
-            unparseable_count=unparseable_count,
-            indexable_count=indexable_count,
-        )
-        return
-
-    if not confirmed:
-        # Every parseable memory on disk has a row and every row has a
-        # file: the index is intact and `bettermemory reindex` has
-        # nothing to repair. Either the count gap was a concurrent
-        # write/tombstone sampled mid-flight — stay silent AND keep the
-        # one-shot budget for a real desync — or it is unparseable
-        # files, which is a fix-the-files problem, not an index one.
-        if unparseable_count:
-            _DIVERGENCE_WARNED_ROOTS.add(root)
-            _INDEX_LOG.warning(
-                "bettermemory: %d of %d memory file(s) at %s cannot be parsed "
-                "and are invisible to memory_search (the FTS5 index already "
-                "holds all %d parseable memories). `bettermemory reindex` will "
-                "not change this — run `bettermemory doctor` to identify the "
-                "files, then fix their frontmatter or remove them.",
-                unparseable_count,
-                disk_count,
-                root,
-                indexed_count,
-            )
-        return
-
-    # A confirmed identity gap: at least one parseable memory has no
-    # row, or at least one row has no file. Both are exactly what
-    # `bettermemory reindex` repairs, INCLUDING the shape the old
-    # count-only arithmetic misfiled as a fix-the-files problem (one
-    # unindexed memory plus one dangling row balances the counts while
-    # the identities stay wrong).
-    _warn_index_out_of_sync(
-        root,
-        indexed_count=indexed_count,
-        disk_count=disk_count,
-        unparseable_count=unparseable_count,
-        indexable_count=indexable_count,
-    )
-
-
-def _warn_index_out_of_sync(
-    root: Path,
-    *,
-    indexed_count: int,
-    disk_count: int,
-    unparseable_count: int,
-    indexable_count: int,
-) -> None:
-    """Emit the reindex-recommending divergence warning and consume the
-    one-shot per-root budget.
-
-    Extracted so the two callers that must warn — a confirmed identity
-    gap, and an index whose gap could not be evaluated at all — emit the
-    same text through the same budget accounting instead of one of them
-    quietly falling through a branch shaped for the other."""
-    _DIVERGENCE_WARNED_ROOTS.add(root)
-    unparseable_note = (
-        f" {unparseable_count} of the disk files cannot be parsed and will "
-        f"never index; a rebuild reaches index={indexable_count}, "
-        f"not {disk_count}."
-        if unparseable_count
-        else ""
-    )
-    _INDEX_LOG.warning(
-        "bettermemory: FTS5 index appears out-of-sync with disk "
-        "(index=%d memories, disk=%d). This usually means a memory "
-        "file was added/edited outside the Store API (external editor, "
-        "sync pull, or a process bypassing memory_write). "
-        "Run `bettermemory reindex` to rebuild the index from "
-        "canonical disk state. Search results may be incomplete or "
-        "include stale references until then.%s",
-        indexed_count,
-        disk_count,
-        unparseable_note,
-    )
-
-
-def _flag_index_stale(root: Path, *_args: object, **_kwargs: object) -> None:
-    """Mark the index stale after an upsert this module could not land.
-
-    Without this, a swallowed upsert is permanent: the on-disk `.md` is
-    the canonical record and still correct, but the index silently
-    disagrees with it and nothing re-drives the write. That is not
-    hypothetical — a single missed upsert on 2026-09-11 left the store's
-    index one row short of disk, which kept the record retrievable only
-    because the corpus sat under the FTS prefilter threshold, and
-    disabled the SessionStart hint for ~133 sessions on the way.
-
-    `flag_needs_rebuild` is the conservative lever: search falls back to
-    the full scan (slower, correct) and the next `Store.open()` rebuilds
-    and clears the flag with no user action. It is itself best-effort and
-    never raises.
-    """
-    from . import index as _index
-
-    _index.flag_needs_rebuild(root)
-
-
-@best_effort(
-    "index upsert",
-    logger=_INDEX_LOG,
-    repair_hint=_INDEX_REPAIR_HINT,
-    # `**_` is load-bearing: every call site passes `content_sha256`, and
-    # two also pass `verified_locally_at`. A getter that cannot accept
-    # them raises, the decorator contains that and degrades to an id-less
-    # warning — which is the exact regression `id_getter` was added to
-    # prevent, reintroduced by the keyword arguments that came later.
-    id_getter=lambda root, memory, **_: memory.id,
-    on_failure=_flag_index_stale,
-)
-def _index_upsert_quietly(
-    root: Path,
-    memory: Memory,
-    *,
-    filename: str,
-    provenance: str | None = None,
-    verified_locally_at: str | None = None,
-    content_sha256: str | None = None,
-) -> None:
-    """Update the FTS5 index for one memory. Best-effort: a failure
-    here (corrupt index, locked database, missing SQLite extension)
-    logs a warning and continues so the on-disk write — the canonical
-    record — still succeeds. The next ``bettermemory reindex`` will
-    repair any drift.
-
-    `filename` is the actual on-disk filename of the memory (the
-    caller just wrote to it, so it has the path). Threading it
-    through is what lets `filenames_for_ids` resolve
-    collision-suffixed names; re-deriving from the Memory fields
-    alone would silently point at the unsuffixed sibling.
-
-    `provenance` is the label this store can vouch for. Only the two
-    creation paths pass one (`write` and `restore` stamp `local`); the
-    update and verify paths pass nothing, and the index keeps the label
-    the row already carries, because editing or verifying a memory does
-    not change how it entered the store. Stamping at the upsert, not at
-    the event, is what keeps every in-process creation covered when
-    telemetry is off; the event log re-derives the same label at rebuild.
-
-    `verified_locally_at` (schema v8) is the same shape for the trust
-    column: only `mark_verified` passes one, stamping the instant this
-    host verified the memory at the upsert it already performs, so the
-    stamp exists with telemetry off; `sync pull` clears it for the files
-    it lands and the rebuild re-derives it from events.
-
-    Lazy import so this module loads cleanly even when callers don't
-    actually use the index (e.g. pure-Python tests against the file
-    store directly). The ``@best_effort`` wrapper supplies the
-    swallow-and-warn shape — the body below stays the bare
-    happy-path call."""
-    from . import index as _index
-
-    _index.upsert(
-        root,
-        memory,
-        filename=filename,
-        provenance=provenance,
-        verified_locally_at=verified_locally_at,
-        content_sha256=content_sha256,
-    )
-
-
-@best_effort(
-    "index content stamp",
-    logger=_INDEX_LOG,
-    repair_hint=_INDEX_REPAIR_HINT,
-    id_getter=lambda root, memory_id, sha: memory_id,
-    # A missed stamp is the shape behind doctor's `memory_content_evidence`
-    # accusing a healthy file: the recorded hash stays at the pre-write
-    # bytes and is CARRIED across rebuilds, so `reindex` cannot clear it.
-    on_failure=_flag_index_stale,
-)
-def _index_stamp_sha_quietly(root: Path, memory_id: str, sha: str) -> None:
-    """Record the bytes a writer that bypasses the upsert put on disk
-    (`migrate`), so a legitimate rewrite is not read as a change no
-    store path made. Same best-effort contract as the upsert."""
-    from . import index as _index
-
-    _index.stamp_content_sha256(root, memory_id, sha)
-
-
-@best_effort(
-    "index remove",
-    logger=_INDEX_LOG,
-    repair_hint=_INDEX_REPAIR_HINT,
-    id_getter=lambda root, memory_id: memory_id,
-    # A missed remove leaves a tombstoned memory indexed, which the read
-    # filters then have to catch one at a time. Marking the index stale
-    # routes to the authoritative walk until a rebuild.
-    on_failure=_flag_index_stale,
-)
-def _index_remove_quietly(root: Path, memory_id: str) -> None:
-    """Drop one memory from the FTS5 index. Same best-effort contract
-    as the upsert: never block the on-disk tombstone on an index
-    failure. The ``@best_effort`` wrapper supplies the swallow-and-warn
-    shape — the body below stays the bare happy-path call."""
-    from . import index as _index
-
-    _index.remove(root, memory_id)
-
-
-@best_effort(
-    "index-backed id lookup",
-    logger=_INDEX_LOG,
-    repair_hint=_INDEX_REPAIR_HINT,
-    id_getter=lambda root, memory_id: memory_id,
-)
-def _indexed_path_for_id(root: Path, memory_id: str) -> Path | None:
-    """Resolve one ACTIVE memory id to its on-disk path via the FTS5
-    index in O(1), instead of the O(corpus) directory walk that
-    ``_find_path_for_id`` / ``load_one`` fall back to — those reparse
-    every file's frontmatter to find one id. The Phase-0 fleet
-    benchmark measured that walk taking a single ``update`` from ~9 ms
-    at 50 memories to ~320 ms at 3200; on an accumulating multi-agent
-    store it dominates everything.
-
-    The index is a hint that can only make the lookup FASTER, never
-    wrong. A path is returned only when the named file *still* carries
-    the id (``_id_still_at_path``), so a stale row pointing at a
-    moved / renamed / tombstoned file yields ``None`` and the caller
-    falls back to the authoritative walk (which finds the true path).
-    ``None`` is likewise the answer on an index miss (a recent write
-    not yet indexed, or a tombstoned id whose row was removed) and —
-    via ``@best_effort`` — on any index error (absent, corrupt,
-    locked). Files stay canonical; ``bettermemory reindex`` repairs
-    drift. Lazy import so the module loads without the index for
-    pure-file-store callers.
-    """
-    from . import index as _index
-
-    fname = _index.filenames_for_ids(root, [memory_id]).get(memory_id)
-    if fname is None:
-        return None
-    # A quarantined file can still have a row until the next rebuild
-    # (a pull with `--no-reindex`): the hint must not resolve to a file
-    # the active walk refuses to yield.
-    if fname in quarantined_names(root):
-        return None
-    candidate = root / fname
-    return candidate if _id_still_at_path(candidate, memory_id) else None
-
-
-# Cap on a tombstone's removal reason, measured on its SERIALIZED (YAML-
-# escaped) size — NOT its raw byte length. `_frontmatter` reserves a fixed
-# maintenance headroom below the read cap so a record admitted at the write cap
-# can always be tombstoned and stay readable; the fixed removal keys (`removed`
-# timestamp, `removed_session` id) plus this bounded reason must fit inside that
-# headroom. A raw-length bound does NOT guarantee that: `yaml.dump` renders
-# control / non-printable characters as `\xNN` / `\uNNNN` escapes, so a 1 KiB
-# reason of control bytes serialises to ~4.3 KiB — on its own already past the
-# 4 KiB headroom, which would push a near-write-cap record's tombstone re-dump
-# over the read cap and make the record un-removable (the exact F1 class the
-# headroom exists to prevent). Bounding the SERIALIZED size makes the reason's
-# contribution provably fit regardless of content. A removal reason is an
-# annotation, not memory content, so 1 KiB is generous.
-_MAX_REMOVED_REASON_BYTES = 1024
-
-# Cap on a tombstone's `removed_session`, measured on its SERIALIZED (YAML-
-# escaped) size — same axis and rationale as `_MAX_REMOVED_REASON_BYTES`
-# (item 7). `removed_session` is joined onto the same maintenance headroom
-# reserved below the read cap, so it must be bounded too; a control-char /
-# pathologically long session id would otherwise escape-inflate under
-# `yaml.dump` and, on a near-write-cap record, push the tombstone re-dump past
-# `_MAX_FILE_BYTES` and make the record un-removable. A session id is an opaque
-# join key (a ULID/UUID-ish token in practice), so 512 serialized bytes is
-# already far more than any real value needs.
-_MAX_REMOVED_SESSION_BYTES = 512
-
-# Combined worst case (item 7): the tombstone re-dump appends, at most, the
-# fixed `removed:` timestamp line plus a bounded `removed_reason` and a bounded
-# `removed_session`. Their combined SERIALIZED size must fit inside the
-# maintenance headroom `_frontmatter` reserves below the read cap, so a record
-# admitted right at the write cap always stays tombstoneable — the F1 guarantee
-# the headroom exists to provide. `_REMOVED_TIMESTAMP_HEADROOM_BYTES` is a
-# generous fixed allowance for the `removed:` datetime line (its real width is
-# ~45 bytes) so the check stays honest against formatting drift. Enforced at
-# import so a future cap bump that would blow the budget fails loudly here
-# rather than silently reintroducing the un-removable-record class.
-_REMOVED_TIMESTAMP_HEADROOM_BYTES = 128
-
-# The removal metadata's combined worst-case SERIALIZED size. Every lifecycle
-# re-dump of an ACTIVE record must leave at least this much room below the
-# read cap, or the record can be grown (by a verify / scope rename / origin
-# backfill) to a size whose own tombstone re-dump no longer fits — the
-# un-removable-record class. `_lifecycle_redump_cap` reserves it.
-_REMOVAL_META_BUDGET_BYTES = (
-    _MAX_REMOVED_REASON_BYTES
-    + _MAX_REMOVED_SESSION_BYTES
-    + _REMOVED_TIMESTAMP_HEADROOM_BYTES
-)
-assert _REMOVAL_META_BUDGET_BYTES <= frontmatter._MAINTENANCE_HEADROOM_BYTES, (
-    "tombstone removal metadata worst case exceeds the maintenance headroom"
-)
-
-
-def _yaml_admission_cap() -> int:
-    """Frontmatter-YAML ceiling for a CONTENT-ADMITTING write.
-
-    The file axis has had an admission reservation since 3.14.1
-    (`_MAX_WRITE_BYTES` = read cap minus maintenance headroom): a record
-    the store newly ACCEPTS must leave room for its own removal metadata,
-    or it is minted un-removable. The YAML axis had only the lifecycle
-    band ceiling, on the reading that a first write cannot realistically
-    approach 64 KiB of frontmatter.
-
-    That reading missed `memory_update`, which admits content on the same
-    default and can grow the frontmatter without touching the body. A
-    single legal call — 64 links, each with a ~950-character `note`, both
-    within their caps — landed a 65,556-byte record whose frontmatter sat
-    79 bytes under `_MAX_YAML_BYTES`. `memory_remove` then failed forever
-    ("even trimmed removal metadata does not fit"), and so did both
-    escape hatches `handlers/remove.py` names: `memory_verify` is refused
-    by the freeze arm of `_lifecycle_redump_yaml_cap`, and shortening the
-    BODY does not help because the bloat is in the frontmatter. Only an
-    undocumented `memory_update(links=[])` unwedged it.
-
-    Reserving the budget at admission, exactly as the file axis does,
-    means the state cannot be minted. A record already above the ceiling
-    (legacy, or minted before this existed) is refused a content edit
-    rather than frozen — the same trade `_MAX_WRITE_BYTES` already makes,
-    and the lifecycle paths that must never freeze pass their own ceiling.
-    """
-    return frontmatter._MAX_YAML_BYTES - _REMOVAL_META_BUDGET_BYTES
-
-
-def _lifecycle_redump_cap(current_size: int) -> int:
-    """Size cap for a lifecycle re-dump (verify / scope rename / origin
-    backfill) of an already-admitted active record, keyed on which band the
-    record is ALREADY in. One shared choke point: every mutator that re-dumps
-    an active record routes its cap through here, so no caller can re-open
-    the grow-into-the-band seam on its own.
-
-    - A sub-write-cap record caps at `_MAX_WRITE_BYTES`: growth into the
-      reserved maintenance band is rejected outright, preserving the
-      tombstone / rename / restore headroom a fresh admission guarantees.
-    - A record already inside the band (a pre-3.14.1 file, or a restored
-      band tombstone) caps at the read cap MINUS `_REMOVAL_META_BUDGET_BYTES`
-      so it stays maintainable — verifiable (including a FIRST verify),
-      renameable — while always leaving room for its own tombstone's removal
-      metadata. The flat read-cap arm this replaces let a legal verify eat
-      that budget and mint an un-removable record.
-    - A record already ABOVE that ceiling (a legacy file written within the
-      removal budget of the read cap) freezes at its current size: a re-dump
-      may shrink or hold it, never grow it — every byte of growth comes
-      straight out of what remains of its removal headroom.
-    """
-    if current_size <= frontmatter._MAX_WRITE_BYTES:
-        return frontmatter._MAX_WRITE_BYTES
-    band_ceiling = max(
-        frontmatter._MAX_FILE_BYTES - _REMOVAL_META_BUDGET_BYTES,
-        frontmatter._MAX_WRITE_BYTES,
-    )
-    return min(max(band_ceiling, current_size), frontmatter._MAX_FILE_BYTES)
-
-
-def _lifecycle_redump_yaml_cap(current_yaml_size: int) -> int:
-    """Frontmatter-YAML-axis twin of `_lifecycle_redump_cap`, keyed on the
-    record's CURRENT serialized frontmatter size. `_frontmatter.dumps` enforces
-    `_MAX_YAML_BYTES` on the frontmatter region unconditionally, independent of
-    total file size, but — unlike the file axis — nothing reserved tombstone room
-    below it: a legal `mark_verified` / `rename_scope` could grow the frontmatter
-    to within `_REMOVED_TIMESTAMP_HEADROOM_BYTES` of the YAML cap, a band in which
-    even the dual-axis adaptive trim (`tombstone`) cannot fit the `removed:` line,
-    leaving the record un-removable. This caps the lifecycle re-dump so that band
-    is reserved, mirroring the file-axis band ceiling.
-
-    - A record whose frontmatter sits at or below the reserved ceiling
-      (`_MAX_YAML_BYTES - _REMOVAL_META_BUDGET_BYTES`) caps AT that ceiling:
-      growth is allowed up to it (a first attestation's `last_verified_at`, more
-      `verified_paths`) but never past it, so the removal-metadata budget always
-      survives.
-    - A record whose frontmatter is ALREADY above the reserved ceiling (a
-      legacy/hand-written file, or a record the pre-discipline code minted)
-      freezes at its current size: a re-dump may shrink or hold it, never grow
-      it — every byte of growth would come straight out of what remains of its
-      removal headroom.
-
-    The result is always `<= _MAX_YAML_BYTES`, so passing it to `dumps` can only
-    bind tighter than the flat cap, never relax it.
-
-    The YAML axis DOES have an admission reservation of its own — the
-    `_yaml_admission_cap` above, added once `memory_update` turned out to be
-    able to mint an un-removable record — and it is numerically this function's
-    `reserved_ceiling`. The two differ only in what they do with a record whose
-    frontmatter is ALREADY past that ceiling: admission REFUSES the content
-    edit, while this freezes the record at its current size so a legal verify /
-    rename still lands. There is still no third, sub-write-cap arm here, and
-    that is a property of the axis rather than an oversight: the file axis needs
-    one because it has two distinct ceilings — `_MAX_WRITE_BYTES` for admission,
-    `_MAX_FILE_BYTES` for reads — with a maintenance band between them, so a
-    sub-write-cap record has to be held out of that band; the YAML axis has a
-    single flat cap with one reserved ceiling below it, which the band arm above
-    already enforces.
-    """
-    reserved_ceiling = frontmatter._MAX_YAML_BYTES - _REMOVAL_META_BUDGET_BYTES
-    return min(max(reserved_ceiling, current_yaml_size), frontmatter._MAX_YAML_BYTES)
-
-
-def _serialized_meta_bytes(key: str, value: str) -> int:
-    """Serialized (YAML) byte size of the `<key>: <value>` line.
-
-    Mirrors how `_frontmatter.dumps` renders the value (`allow_unicode=True`,
-    block style), so the bounds in `_cap_removed_reason` / `_cap_removed_session`
-    reflect the value's real contribution to the tombstone file — escapes
-    included. `_NoAliasDumper` only overrides alias emission, which is
-    irrelevant for a single scalar, so plain `safe_dump` produces byte-identical
-    output here."""
-    return len(
-        yaml.safe_dump(
-            {key: value}, allow_unicode=True, default_flow_style=False
-        ).encode("utf-8")
-    )
-
-
-def _serialized_reason_bytes(reason: str) -> int:
-    """Serialized (YAML) byte size of the `removed_reason:` line for `reason`."""
-    return _serialized_meta_bytes("removed_reason", reason)
-
-
-def _serialized_session_bytes(session_id: str) -> int:
-    """Serialized (YAML) byte size of the `removed_session:` line."""
-    return _serialized_meta_bytes("removed_session", session_id)
-
-
-def _serialized_frontmatter_bytes(metadata: dict[str, Any]) -> int:
-    """Serialized (YAML) byte size of the whole frontmatter region, measured
-    exactly as `_frontmatter.dumps` renders it — the axis `dumps` checks against
-    `_MAX_YAML_BYTES`.
-
-    `tombstone` uses this to compute its removal-metadata budget on the YAML
-    axis, not just the file-size axis: `dumps` enforces the YAML cap on the
-    frontmatter region UNCONDITIONALLY, independent of total file size, so a
-    record whose frontmatter sits just under that cap (e.g. one grown by a legal
-    `mark_verified` with dense `verified_paths`) must have its removal metadata
-    trimmed on THAT axis or the tombstone re-dump raises the YAML cap and strands
-    the record active (item 5).
-
-    Mirrors `dumps`'s `yaml.dump(...).strip()` byte-for-byte — same
-    `_NoAliasDumper`, same flags — so the measured pre-existing-key contribution
-    matches what the re-dump will be bounded against (block-style YAML is
-    additive across keys, so appending the removal keys adds their lines without
-    changing the others'). Guards expansion first, exactly as `dumps` does, so a
-    hostile aliased active record (a hand-edit / `sync pull`) is rejected here
-    rather than materializing a multi-MB blob in the measurement dump."""
-    frontmatter._guard_dump_expansion(metadata)
-    return len(
-        yaml.dump(
-            metadata,
-            Dumper=frontmatter._NoAliasDumper,
-            default_flow_style=False,
-            allow_unicode=True,
-        )
-        .strip()
-        .encode("utf-8")
-    )
-
-
-def _cap_serialized_meta(value: str, *, key: str, max_bytes: int) -> str:
-    """Return the longest codepoint-prefix of `value` whose SERIALIZED
-    `<key>: <value>` line stays within `max_bytes`. Silently shortening an
-    over-long or escape-inflated value beats failing the removal."""
-    if _serialized_meta_bytes(key, value) <= max_bytes:
-        return value
-    # Binary-search the longest prefix (on codepoint boundaries) whose
-    # serialized form still fits. Serialized size is non-decreasing in prefix
-    # length, so the search is well-defined; the empty value always fits.
-    lo, hi = 0, len(value)
-    while lo < hi:
-        mid = (lo + hi + 1) // 2
-        if _serialized_meta_bytes(key, value[:mid]) <= max_bytes:
-            lo = mid
-        else:
-            hi = mid - 1
-    return value[:lo]
-
-
-def _cap_removed_reason(reason: str) -> str:
-    """Bound a removal reason so its SERIALIZED YAML contribution stays within
-    `_MAX_REMOVED_REASON_BYTES`, so a near-write-cap record is always
-    tombstoneable even when the reason is escape-heavy."""
-    return _cap_serialized_meta(
-        reason, key="removed_reason", max_bytes=_MAX_REMOVED_REASON_BYTES
-    )
-
-
-def _cap_removed_session(session_id: str) -> str:
-    """Bound a `removed_session` id so its SERIALIZED YAML contribution stays
-    within `_MAX_REMOVED_SESSION_BYTES` (item 7). Mirror of `_cap_removed_reason`
-    on the sibling headroom field — together they provably fit the maintenance
-    headroom so a near-write-cap record stays removable regardless of how
-    escape-heavy the session id is."""
-    return _cap_serialized_meta(
-        session_id, key="removed_session", max_bytes=_MAX_REMOVED_SESSION_BYTES
-    )
-
-
-def _memory_metadata(memory: Memory) -> dict[str, object]:
-    """Build the frontmatter mapping the store persists for `memory`.
-
-    Extracted from `Store._write_path` so the lifecycle re-dump callers
-    (`mark_verified`, `rename_scope`) can measure a record's CURRENT serialized
-    frontmatter size — via `_serialized_frontmatter_bytes(_memory_metadata(...))`
-    — with the exact same key set and ordering the re-dump will produce, without
-    a second read of the file. The block-style YAML `dumps` emits is additive
-    across keys, so this measurement is the faithful baseline for
-    `_lifecycle_redump_yaml_cap`'s freeze arm.
-    """
-    meta: dict[str, object] = {
-        # `schema_version` is the first key so it's visible at the top
-        # of the file and unambiguously associated with the format
-        # rather than the memory's content. Readers that don't know
-        # this field default it to 1; readers that don't *recognize*
-        # the value refuse to load the file.
-        "schema_version": SCHEMA_VERSION,
-        "id": memory.id,
-        "created": memory.created,
-        "updated": memory.updated,
-        "scopes": list(memory.scopes),
-        "confidence": memory.confidence.value,
-        "source": memory.source.value,
-    }
-    # Origin is optional and only written when populated. We emit a
-    # nested mapping with `exclude_none` so we never write
-    # `origin: {cwd: null, repo: null, branch: null}` — that's noise.
-    if memory.origin is not None:
-        origin_dict = memory.origin.model_dump(mode="json", exclude_none=True)
-        # The process-cwd `source` stays implicit on disk: it is the only
-        # channel that existed before the field, so leaving it off keeps
-        # a non-declaring client's file byte-identical to the pre-field
-        # shape. A declared channel (`header`, `env`, `roots`) is
-        # written, because that is the fact the field exists to keep.
-        if origin_dict.get("source") == SOURCE_PROCESS_CWD:
-            del origin_dict["source"]
-        if origin_dict:
-            meta["origin"] = origin_dict
-    # `actor` is emitted only when the writing request declared or
-    # attested something — the discipline the episode writer uses for
-    # `swarm_id` — so a memory from a client that said nothing serializes
-    # byte-identically to the 7.9.0 format.
-    if memory.actor is not None:
-        actor_dict = memory.actor.to_record()
-        if actor_dict:
-            meta["actor"] = actor_dict
-    # `last_verified_at` is omitted from frontmatter when None — keeps
-    # newly-written memories from carrying a `last_verified_at: null`
-    # placeholder, which would be visual noise on every file. Once the
-    # field is populated by `mark_verified`, the key is written.
-    if memory.last_verified_at is not None:
-        meta["last_verified_at"] = memory.last_verified_at
-    # `category` is omitted when None (the legacy default — runtime
-    # treats it as fact). Writing the key only when the caller
-    # explicitly chose a category keeps fact memories visually
-    # identical to legacy ones on disk.
-    if memory.category is not None:
-        meta["category"] = memory.category.value
-    # Corroboration rollup is omitted while zero/None — same noise-floor
-    # rationale as `last_verified_at`: a never-corroborated memory stays
-    # byte-identical to the pre-field on-disk shape.
-    if memory.corroborations:
-        meta["corroborations"] = memory.corroborations
-    if memory.last_corroborated is not None:
-        meta["last_corroborated"] = memory.last_corroborated
-    # Verified-claims lists are omitted when empty — same noise-floor
-    # rationale as `last_verified_at`. They populate as a unit on
-    # the `memory_verify` event that captured them.
-    if memory.verified_paths:
-        meta["verified_paths"] = list(memory.verified_paths)
-    if memory.verified_commits:
-        meta["verified_commits"] = list(memory.verified_commits)
-    if memory.verified_versions:
-        meta["verified_versions"] = list(memory.verified_versions)
-    if memory.verified_absent_paths:
-        meta["verified_absent_paths"] = list(memory.verified_absent_paths)
-    # Same unit: `claims` are declared at write or re-declared at verify,
-    # and an empty list stays off disk like the other four.
-    if memory.claims:
-        meta["claims"] = list(memory.claims)
-    # The stamp's anchor rides with the stamp: written when
-    # `mark_verified` had a checkout to read, absent otherwise, and
-    # cleared with `last_verified_at` on a body edit.
-    if memory.verified_head:
-        meta["verified_head"] = memory.verified_head
-    # `links` is omitted when empty — same noise-floor rationale as
-    # `verified_paths`. Each link is serialized as a plain dict
-    # (`type` is the enum value, not the Python name) so a hand-
-    # editing user can read and edit the frontmatter directly.
-    if memory.links:
-        meta["links"] = [
-            {
-                "type": link.type.value,
-                "target_id": link.target_id,
-                **({"note": link.note} if link.note is not None else {}),
-            }
-            for link in memory.links
-        ]
-    return meta
-
-
-def _atomic_write_post(
-    path: Path,
-    post: frontmatter.Post,
-    *,
-    max_file_bytes: int = frontmatter._MAX_WRITE_BYTES,
-    max_yaml_bytes: int = frontmatter._MAX_YAML_BYTES,
-) -> str:
-    """Atomic, durable, 0o600 write of a frontmatter Post to `path`.
-    Returns the SHA-256 of the bytes written, the content evidence the
-    index records beside the row (schema v9) so a later change to the
-    file that no store path made is detectable.
-
-    Serialises the Post to UTF-8 bytes and delegates to
-    `atomic_write_bytes(..., mode_before_rename=0o600)`, which owns the
-    tmp + fchmod-before-rename + fsync + rename + dir-fsync discipline and
-    the orphan-tmp cleanup. The fchmod-before-rename keeps the file 0o600
-    from the instant it appears at `path` — memory bodies are
-    privacy-critical, so they must never be world-readable at the visible
-    name even briefly (see `_fsutil.atomic_write_bytes` for the
-    closed-window rationale and the platform/filesystem caveats).
-
-    One definition of "durable private write" for every persistent write
-    in the store: new memories, tombstones, restores, and rename_scope
-    in-place edits all route through here.
-
-    `max_file_bytes` is forwarded to `dumps` (see it): content-admitting
-    writes use the default write cap (headroom reserved), while the
-    lifecycle re-dump paths (`tombstone` / `rename_scope`) pass the full
-    read cap so appending removal metadata to a near-cap record can't fail.
-
-    `max_yaml_bytes` is likewise forwarded to `dumps`, and the reduced ceiling
-    on that axis has TWO sources, not one. `_write_path` always passes one of
-    them: `_yaml_admission_cap()`, its own default, for the writes that ADMIT
-    content (`write` / `update` — which is why a FIRST write is subject to a
-    reduced ceiling too), or `_lifecycle_redump_yaml_cap(current_yaml)` when a
-    metadata-only re-dump caller (`mark_verified`, `record_corroboration`,
-    `rename_scope`'s active branch) supplies it; `migrate`'s origin
-    backfill/repair calls this helper directly with that same lifecycle
-    ceiling. Both hold the write at `_MAX_YAML_BYTES` minus
-    `_REMOVAL_META_BUDGET_BYTES` — the frontmatter-YAML mirror of the file
-    axis's admission reservation and band ceiling respectively — the lifecycle
-    one relaxing to the record's current frontmatter size when it already sits
-    above that ceiling, so a legal verify still lands. The flat default here is
-    therefore reached only by the callers that bypass `_write_path` and pass
-    nothing — `tombstone` (whose removal metadata is adaptively trimmed to fit
-    instead), `restore`, and `rename_scope`'s tombstone branch.
-    """
-    data = frontmatter.dumps(
-        post, max_file_bytes=max_file_bytes, max_yaml_bytes=max_yaml_bytes
-    ).encode("utf-8")
-    atomic_write_bytes(path, data, mode_before_rename=0o600)
-    return hashlib.sha256(data).hexdigest()
-
-
-def _as_dt(value: object) -> datetime:
-    """Coerce a frontmatter value to an aware datetime.
-
-    Three branches normalise to UTC-aware. The `datetime` branch covers
-    PyYAML's native timestamp parsing (unquoted ISO strings round-trip
-    as `datetime` objects, which may be naive when no offset was
-    written); the bare-`date` branch covers a YAML *date-only* scalar
-    (`created: 2025-01-01`), which PyYAML parses as a `datetime.date`
-    (NOT a `datetime`, NOT a `str`); the `str` branch covers any value
-    YAML preserved as a quoted string. Without coercion in the `str`
-    branch a hand-edited file with `last_verified_at: "2025-01-01T10:00:00"`
-    (quoted, no offset) loaded as a naive datetime, then crashed
-    downstream on the first comparison against an aware `now` — surfaced
-    by the audit on `health.compute_health`'s verification-debt partition.
-
-    The bare-`date` branch closes a silent-data-loss path: before it
-    existed, a date-only `created`/`updated` fell through to the
-    `ValueError` below, which `_load_path`'s caller (`load_all`,
-    `load_one`) catches and SKIPS — the whole memory vanished from
-    every read surface with no warning. `datetime` IS a subclass of
-    `date`, so the `datetime` check above must come first; this branch
-    only fires for a *pure* date (midnight UTC is the natural lift).
-    """
-    if isinstance(value, datetime):
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value
-    # `datetime` is a subclass of `date`, so this must come AFTER the
-    # `datetime` check — it catches only a bare YAML date scalar.
-    if isinstance(value, date):
-        return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
-    if isinstance(value, str):
-        # Allow trailing 'Z'.
-        s = value.replace("Z", "+00:00")
-        dt = datetime.fromisoformat(s)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt
-    raise ValueError(f"cannot parse datetime from {value!r}")
-
-
-def _scope_intersect(memory_scopes: list[str], filter_scopes: list[str]) -> bool:
-    """True if memory has at least one of the requested scopes."""
-    return bool(set(memory_scopes) & set(filter_scopes))
-
-
-def _id_still_at_path(path: Path, memory_id: str) -> bool:
-    """Re-verify under-lock that `path` still carries a memory with
-    `memory_id` in its frontmatter.
-
-    Cheap recheck callers use after acquiring `_locked(path)` to
-    detect a concurrent `tombstone()` (or `rename_scope`, or any
-    other mutator that moves the file) that landed between
-    `_find_path_for_id` and the lock acquisition. Returns False when
-    the file vanished, when the frontmatter can't be parsed, or when
-    the id no longer matches — any of which means the path no longer
-    represents the same logical memory and the in-flight write must
-    not proceed (it would resurrect a tombstoned memory by recreating
-    an active file at the original path, orphaning the tombstone).
-
-    Defensive against IO failures — a transient unreadable file is
-    treated the same as a vanished one. Callers raise
-    `MemoryNotFoundError` on False.
-    """
-    try:
-        post = frontmatter.load(path)
-    except (FileNotFoundError, ValueError, KeyError, OSError):
-        return False
-    return post.metadata.get("id") == memory_id
-
-
-def _load_commit_sha(value: object) -> str | None:
-    """A frontmatter `verified_head`, or None unless it is a full commit
-    hash. The read side hands the value to git as a revision, so a
-    branch name, an abbreviation or an option-shaped string is dropped
-    on read rather than passed through; the record then reads as
-    verified without an anchor, which the drift leg handles."""
-    if not isinstance(value, str):
-        return None
-    candidate = value.strip().lower()
-    return candidate if is_full_commit_sha(candidate) else None
-
-
-def _load_str_list(value: object) -> list[str]:
-    """Coerce a frontmatter value to a list[str].
-
-    Accepts None (legacy entry, no field) and missing keys via the
-    `meta.get(...)` callsite, returning the empty list. Any non-list
-    or non-string element is silently dropped — defensive against a
-    hand-edited file that put `~` or a YAML alias in there. The
-    write path emits well-formed lists; this is the symmetric "be
-    liberal in what we read" policy.
-    """
-    if not isinstance(value, list):
-        return []
-    return [str(item) for item in value if isinstance(item, (str, int, float))]
-
-
-def _coerce_scopes(value: object) -> list[str]:
-    """Coerce a frontmatter `scopes` value to a scope list the way the store
-    readers resolve it, so the migrator and the store agree on which scopes a
-    record carries.
-
-    Shapes, matching the previous `list(meta["scopes"])` resolution:
-
-    - **list** → passthrough (elements as-is; the model validator rejects any
-      non-string element, exactly as `list(meta["scopes"])` did).
-    - **dict / set** → its keys / elements. A hand-edited or torn `scopes:
-      {a: 1}` or a YAML `!!set` resolves under `list(...)` to the real scope
-      list, so we must too.
-    - **scalar string** → single-element list `[value]` (NOT `list("abc")`,
-      which the raw `list(...)` exploded into per-character scopes).
-    - **anything else** (int, float, None, …) → `[]` (unroutable; the model
-      rejects an empty `scopes`, so a memory-file parse still skips it).
-
-    Deliberately NOT `_load_str_list`, which returns `[]` for a dict or set:
-    that made the migrator see no scopes where the store (`list(meta["scopes"])`)
-    saw the real list, so a dict/set-shaped `scopes` never matched a
-    `scope_repo_map` entry and the file was silently stamped with the wrong repo
-    (F4). One shared coercion keeps "which scopes the store sees" identical to
-    "which scopes the migrator routes by"."""
-    if isinstance(value, list):
-        return list(value)
-    if isinstance(value, (dict, set, frozenset)):
-        return list(value)
-    if isinstance(value, str):
-        return [value]
-    return []
+__all__ = [
+    "Store",
+    "DEFAULT_EPISODE_TTL_DAYS",
+    "EpisodeVolume",
+    "TrustRow",
+    "FOLDED_TABLES",
+    "IMPORTED",
+    "IMPORTED_FROM_V8",
+    "LOCAL",
+    "MUTATION_KINDS",
+    "PROVENANCE_LABELS",
+    "SCHEMA",
+    "SCHEMA_VERSION",
+    "STORE_FILENAME",
+    "SYNCED",
+    "UNACCOUNTED",
+    "ConcurrentUpdateError",
+    "DefaultStoreSource",
+    "MemoryNotFoundError",
+    "MemoryRow",
+    "NotFoundError",
+    "NotTombstonedError",
+    "StoreSource",
+    "store_path",
+    "TombstoneRow",
+    "TombstonedError",
+    "event_import_payload",
+]

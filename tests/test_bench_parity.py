@@ -68,18 +68,23 @@ def test_deterministic_id_is_a_valid_ulid_that_orders_by_ordinal() -> None:
     assert runner.deterministic_id("alpha", 1) != first
 
 
-def test_build_store_is_byte_deterministic(tmp_path: Path) -> None:
+def test_build_store_is_record_deterministic(tmp_path: Path) -> None:
+    """Two builds of the same corpus hold the same records in the same
+    row order: ids, stamps, scopes and bodies all equal. The store file
+    itself carries a fresh store id and key, so the comparison is over
+    the records, which is everything a ranking reads."""
+    from bettermemory.store import STORE_FILENAME, Store
+
     corpus_path, _ = _subset(tmp_path)
     ids_a = runner.build_store(tmp_path / "a", corpus_path)
     ids_b = runner.build_store(tmp_path / "b", corpus_path)
     assert ids_a == ids_b
-    files_a = sorted(p.name for p in (tmp_path / "a").glob("*.md"))
-    files_b = sorted(p.name for p in (tmp_path / "b").glob("*.md"))
-    assert files_a == files_b and len(files_a) == 40
-    for name in files_a:
-        assert (tmp_path / "a" / name).read_bytes() == (
-            tmp_path / "b" / name
-        ).read_bytes()
+    assert (tmp_path / "a" / STORE_FILENAME).is_file()
+    with Store(tmp_path / "a") as a, Store(tmp_path / "b") as b:
+        rows_a = [m.model_dump(mode="json") for m in a.load_all()]
+        rows_b = [m.model_dump(mode="json") for m in b.load_all()]
+    assert rows_a == rows_b and len(rows_a) == 40
+    assert [r["id"] for r in rows_a] == list(ids_a.values())
 
 
 def test_public_rows_are_deterministic_and_the_prefilter_engages(

@@ -117,13 +117,7 @@ _SPELLING_HOMES: dict[str, dict[str, int]] = {
     # the atoms; an empty pin keeps the spelling extinct.
     "pip install 'bettermemory": {},
     "pipx install --force": {_CANONICAL: 1},
-    "--force-reinstall": {
-        _CANONICAL: 1,
-        # `doctor`'s distinfo-damage hint repairs arbitrary broken
-        # packages, not an extra — a different message that shares the
-        # flag (both spellings sit on one fix_hint, hence 2).
-        "src/bettermemory/doctor.py": 2,
-    },
+    "--force-reinstall": {_CANONICAL: 1},
     'install -e ".[': {_CANONICAL: 1},
 }
 

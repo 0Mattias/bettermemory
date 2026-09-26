@@ -236,10 +236,9 @@ def claims_repo_server(
         import bettermemory._handlers as handlers_module
         import bettermemory.server as server_module
 
-        rec = Recorder(root=memory_dir, session_id=state.session_id)
-        server = build_server(
-            config=cfg, store=Store(memory_dir), state=state, recorder=rec
-        )
+        store = Store(memory_dir)
+        rec = Recorder(store=store, session_id=state.session_id)
+        server = build_server(config=cfg, store=store, state=state, recorder=rec)
 
         def fake_capture(cwd: Path | None = None) -> Origin:
             return origin
@@ -266,7 +265,7 @@ async def _write_claims_only(server: Any) -> str:
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
 async def test_claims_only_memory_drift_agrees_across_surfaces(
-    claims_repo_server, tmp_path: Path
+    claims_repo_server, tmp_path: Path, memory_dir: Path
 ) -> None:
     """A post-verify commit touches the claimed binding. Every surface must
     report the same measurement: per-hit count 1 with the claim named and
@@ -300,12 +299,22 @@ async def test_claims_only_memory_drift_agrees_across_surfaces(
     assert shown["commit_drift"]["commits_since_verify"] == 1
     assert shown["staleness_verdict"] == "spot_check_recommended"
 
-    report = await _call(server, "memory_health")
+    report = await _call(server, "memory_admin", action="health")
     row = next(r for r in report["commit_drift_debt"]["rows"] if r["id"] == memory_id)
     assert row["commits_since_verify"] == 1
 
-    overview = await _call(server, "memory_scope_overview")
-    assert overview["curation_pending"]["drifted"] == 1
+    from bettermemory.health import curation_counts
+
+    store = Store.open(memory_dir)
+    counts = curation_counts(
+        store.load_all(),
+        store.iter_events(),
+        caller_origin=Origin(
+            cwd=str(repo), repo=_REMOTE, branch="main", worktree_root=str(repo)
+        ),
+        store=store,
+    )
+    assert counts["drifted"] == 1
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
@@ -340,60 +349,3 @@ async def test_claims_only_stale_memory_with_clean_claims_demotes_on_search(
     shown = await _call(server, "memory_show", id=memory_id)
     assert shown["commit_drift"]["status"] == "clean"
     assert shown["staleness_verdict"] == "fresh"
-
-
-# ---------------------------------------------------------------------------
-# Race-safety: load_all skips files that disappeared mid-iteration
-# ---------------------------------------------------------------------------
-
-
-def test_load_all_skips_disappeared_file(
-    store: Store, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A file listed by `_iter_active_paths` may have moved to
-    `.tombstones/` between listdir and read. The defensive catch
-    in `load_all` should yield the remaining memories rather than
-    crashing the whole call."""
-    a = store.write(content="alpha", scopes=["tools"])
-    b = store.write(content="beta", scopes=["tools"])
-
-    real_load = store._load_path
-    target_id = a.id
-    seen: dict[str, bool] = {}
-
-    def flaky_load(path: Path) -> Any:
-        # The first time we see `a`'s file, simulate a concurrent move.
-        memory = real_load(path)
-        if memory.id == target_id and not seen.get("done"):
-            seen["done"] = True
-            raise FileNotFoundError(path)
-        return memory
-
-    monkeypatch.setattr(store, "_load_path", flaky_load)
-    out = store.load_all()
-    ids = {m.id for m in out}
-    assert b.id in ids
-    assert a.id not in ids
-
-
-async def test_list_with_bodies_survives_tombstone_race(
-    server: Any,
-    memory_dir: Path,
-) -> None:
-    """memory_list(with_bodies=True) used to crash if a tombstone race
-    raised FileNotFoundError mid-iteration. With load_all defensively
-    catching OSError, the surviving memories come back cleanly."""
-    a = await _call(server, "memory_write", content="alpha", scopes=["tools"])
-    await _call(server, "memory_write", content="beta", scopes=["tools"])
-
-    store = Store(memory_dir)
-    # Tombstone `a` to simulate the file moving out from under any
-    # in-flight iteration; subsequent memory_list calls should see
-    # `b` only and not crash.
-    store.tombstone(a["id"], reason="race")
-
-    raw = await _call(server, "memory_list", with_bodies=True)
-    rows = raw.get("result", raw) if isinstance(raw, dict) else raw
-    bodies = " ".join(row.get("body", "") for row in rows)
-    assert "beta" in bodies
-    assert "alpha" not in bodies

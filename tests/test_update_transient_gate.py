@@ -23,7 +23,7 @@ from typing import Any
 import pytest
 
 from bettermemory.config import Config, StorageConfig
-from bettermemory.events import Recorder, iter_events
+from bettermemory.events import Recorder
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
@@ -35,17 +35,18 @@ _TRANSIENT = "The migration is currently blocked on the schema review."
 
 
 @pytest.fixture
-def server_with_events(memory_dir: Path) -> tuple[Any, Path]:
+def server_with_events(memory_dir: Path) -> tuple[Any, Store]:
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
     state = SessionState()
-    rec = Recorder(root=memory_dir, session_id=state.session_id)
+    store = Store(memory_dir)
+    rec = Recorder(store=store, session_id=state.session_id)
     server = build_server(
         config=cfg,
-        store=Store(memory_dir),
+        store=store,
         state=state,
         recorder=rec,
     )
-    return server, memory_dir
+    return server, store
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
@@ -59,12 +60,12 @@ async def _seed_fact(server: Any) -> str:
 
 
 async def test_write_refuses_and_update_used_to_launder(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """Both halves of the parity claim in one test: the write path
     refuses `_TRANSIENT`, and the update path now refuses the identical
     body instead of committing it into an existing record."""
-    server, root = server_with_events
+    server, store = server_with_events
     written = await _call(server, "memory_write", content=_TRANSIENT, scopes=["tools"])
     assert written["status"] == "transient_warning"
 
@@ -78,20 +79,20 @@ async def test_write_refuses_and_update_used_to_launder(
     assert "currently" not in shown["body"]
     events = [
         e
-        for e in iter_events(root)
+        for e in store.iter_events()
         if e["kind"] == "update" and e.get("status") == "transient_warning"
     ]
     assert events and events[-1]["markers"] == ["currently"]
 
 
 async def test_acknowledge_transient_commits_and_records_the_override(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The escape mirrors the write side, and the success event carries
     `markers_acknowledged` — the same field write.py records and
     health.py consumes, so one grep covers both surfaces' override
     rates."""
-    server, root = server_with_events
+    server, store = server_with_events
     mid = await _seed_fact(server)
     edited = await _call(
         server,
@@ -103,7 +104,7 @@ async def test_acknowledge_transient_commits_and_records_the_override(
     assert edited["status"] == "committed"
     commits = [
         e
-        for e in iter_events(root)
+        for e in store.iter_events()
         if e["kind"] == "update" and e.get("status") is None
     ]
     assert commits[-1]["markers_acknowledged"] == ["currently"]
@@ -118,14 +119,14 @@ async def test_acknowledge_transient_commits_and_records_the_override(
     assert clean["status"] == "committed"
     commits = [
         e
-        for e in iter_events(root)
+        for e in store.iter_events()
         if e["kind"] == "update" and e.get("status") is None
     ]
     assert commits[-1]["markers_acknowledged"] == []
 
 
 async def test_the_override_is_served_on_the_wire_defaulting_to_off(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """A handler-only parameter passes an `inspect.signature` check and
     still does nothing at call time — the served schema is built from

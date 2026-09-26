@@ -17,8 +17,9 @@ def add_subparser(
     help_text = (
         "Replace OLD with NEW across every memory's scope list — the cheap "
         "fix for a typo'd or deprecated scope (e.g. `infra` -> "
-        "`infrastructure`). The CLI counterpart of the memory_rename_scope "
-        "tool. Bumps `updated` but preserves `last_verified_at`; tombstones "
+        "`infrastructure`). The CLI counterpart of memory_admin's "
+        "rename_scope action. Bumps `updated` but preserves "
+        "`last_verified_at`; tombstones "
         "are renamed too unless --no-tombstones."
     )
     parser = sub.add_parser("rename-scope", help=help_text, description=help_text)

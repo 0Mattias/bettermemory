@@ -1,5 +1,5 @@
 """Corpus-level contradiction candidates: detection, queue lifecycle,
-and the memory_conflicts arbitration surface.
+and the memory_admin conflicts arbitration surface.
 
 Covers the numeric-divergence guard's dedup-side effect too — before
 3.28.0, "port 5432" vs "port 5433" was a DEDUP CANDIDATE and an
@@ -11,35 +11,50 @@ from __future__ import annotations
 from ._mcp import call_tool as _mcp_call
 
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 import pytest
 
+from bettermemory._handlers import ToolHandlers
+from bettermemory._response import ResponseBuilder
 from bettermemory.config import BehaviorConfig, Config, StorageConfig
 from bettermemory.conflicts import (
     ConflictCandidate,
     ConflictQueue,
+    _find_dedup_with_skips,
+    _numeric_divergence,
     conflicts_pending_count,
     find_conflict_candidates,
     scan_conflicts,
     split_judgeable,
 )
-from bettermemory.consolidate import (
-    _find_dedup_with_skips,
-    _numeric_divergence,
-    _numeric_token_set,
-)
-from bettermemory.events import Recorder, iter_events
+from bettermemory.events import Recorder
+from bettermemory.handlers.conflicts import memory_conflicts
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
+from bettermemory.supersession import _numeric_token_set
 
-# The verbatim adversarial bodies live with the fence that refuses them
-# (`consolidate._pick_keeper`); one copy, because the whole point is that
-# the text is exact.
-from .test_consolidate import _ADVERSARIAL_PAIRS
+# The verbatim adversarial bodies the fence (`conflicts._pick_keeper`)
+# refuses; one copy, because the whole point is that the text is exact.
+_ADVERSARIAL_PAIRS = (
+    (
+        "Deploy with the blue-green strategy; never do in-place.",
+        "Deploy with the in-place strategy; never do blue-green.",
+        "polarity",
+    ),
+    (
+        "Always squash-merge; do not rebase.",
+        "Never squash-merge; always rebase.",
+        "polarity",
+    ),
+    (
+        "The staging DB listens on port 5432.",
+        "The staging DB listens on port 5433.",
+        "numeric",
+    ),
+)
 
 _T = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
@@ -111,7 +126,7 @@ def test_polarity_pair_still_skips_with_polarity_detector() -> None:
 
 @pytest.mark.parametrize(("body_a", "body_b", "detector"), _ADVERSARIAL_PAIRS)
 def test_adversarial_pair_routes_to_the_queue_only(
-    tmp_path: Path, body_a: str, body_b: str, detector: str
+    store: Store, body_a: str, body_b: str, detector: str
 ) -> None:
     """Every adversarial pair lands in the arbitration queue and in
     NEITHER dedup candidate list — the queue is the only exit.
@@ -122,17 +137,15 @@ def test_adversarial_pair_routes_to_the_queue_only(
     means it is never merged, so the lower threshold only makes the
     routing observable — it cannot manufacture a safety property.
     """
-    root = tmp_path / "memories"
-    root.mkdir()
     a, b = _memory(body_a), _memory(body_b)
 
     candidates, skipped, _method = _find_dedup_with_skips([a, b], threshold=0.6)
     assert candidates == []
     assert [p.detector for p in skipped] == [detector]
 
-    counters = scan_conflicts(root, [a, b], threshold=0.6)
+    counters = scan_conflicts(store, [a, b], threshold=0.6)
     assert counters["added"] == 1
-    rows = ConflictQueue(root).pending()
+    rows = ConflictQueue(store).pending()
     assert [r.detector for r in rows] == [detector]
     assert {rows[0].a_id, rows[0].b_id} == {a.id, b.id}
     assert rows[0].status == "pending"
@@ -154,9 +167,7 @@ def test_find_conflict_candidates_lifts_skips() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_queue_upsert_resolve_and_resurrect(tmp_path: Path) -> None:
-    root = tmp_path / "memories"
-    root.mkdir()
+def test_queue_upsert_resolve_and_resurrect(store: Store) -> None:
     a = _memory(
         "the alpha api service binds listen port 8080 on the shared docker host"
     )
@@ -164,15 +175,15 @@ def test_queue_upsert_resolve_and_resurrect(tmp_path: Path) -> None:
         "the alpha api service binds listen port 8081 on the shared docker host"
     )
 
-    first = scan_conflicts(root, [a, b])
+    first = scan_conflicts(store, [a, b])
     assert first["added"] == 1 and first["pending_rows_on_disk"] == 1
 
     # Idempotent re-scan: refreshed, not duplicated.
-    second = scan_conflicts(root, [a, b])
+    second = scan_conflicts(store, [a, b])
     assert second["added"] == 0 and second["refreshed"] == 1
     assert second["pending_rows_on_disk"] == 1
 
-    queue = ConflictQueue(root)
+    queue = ConflictQueue(store)
     cand = queue.pending()[0]
     assert (
         queue.resolve(
@@ -183,14 +194,14 @@ def test_queue_upsert_resolve_and_resurrect(tmp_path: Path) -> None:
         )
         is not None
     )
-    assert conflicts_pending_count(root) == 0
+    assert conflicts_pending_count(store) == 0
 
     # Dismissal is sticky across scans while content is unchanged — even
     # though `updated` moved on both members in the meantime, which is
     # what a link edit from arbitrating a neighbouring pair looks like.
     later = datetime.now(timezone.utc)
     touched = [m.model_copy(update={"updated": later}) for m in (a, b)]
-    third = ConflictQueue(root).upsert_scan(
+    third = ConflictQueue(store).upsert_scan(
         find_conflict_candidates(touched), {m.id: m for m in touched}
     )
     assert third["resurrected"] == 0 and third["pending_rows_on_disk"] == 0
@@ -202,19 +213,19 @@ def test_queue_upsert_resolve_and_resurrect(tmp_path: Path) -> None:
             "updated": later,
         }
     )
-    fourth = ConflictQueue(root).upsert_scan(
+    fourth = ConflictQueue(store).upsert_scan(
         find_conflict_candidates([a2, b]), {a2.id: a2, b.id: b}
     )
     assert fourth["resurrected"] == 1
-    assert conflicts_pending_count(root) == 1
+    assert conflicts_pending_count(store) == 1
     # The stale fingerprints go with the verdict they belonged to.
-    revived = ConflictQueue(root).pending()[0]
+    revived = ConflictQueue(store).pending()[0]
     assert revived.verdict_ts is None
     assert revived.verdict_hash_a is None and revived.verdict_hash_b is None
 
 
 def test_dismissal_without_verdict_hashes_falls_back_to_updated(
-    tmp_path: Path,
+    store: Store,
 ) -> None:
     """Rows dismissed before verdict fingerprints existed keep the old
     rule, so an upgrade cannot strand them as permanently sticky.
@@ -222,38 +233,34 @@ def test_dismissal_without_verdict_hashes_falls_back_to_updated(
     They converge: this resurrection re-queues the pair, and the next
     dismissal records hashes.
     """
-    root = tmp_path / "memories"
-    root.mkdir()
     a = _memory("the gamma worker pool runs 4 processes on the shared docker host")
     b = _memory("the gamma worker pool runs 5 processes on the shared docker host")
-    scan_conflicts(root, [a, b])
-    cand = ConflictQueue(root).pending()[0]
+    scan_conflicts(store, [a, b])
+    cand = ConflictQueue(store).pending()[0]
     # No `member_bodies` — exactly the shape a pre-upgrade row has.
-    resolved = ConflictQueue(root).resolve(
+    resolved = ConflictQueue(store).resolve(
         cand.id, status="dismissed", note="two different pools"
     )
     assert resolved is not None
     assert resolved.verdict_hash_a is None and resolved.verdict_hash_b is None
 
     a2 = a.model_copy(update={"updated": datetime.now(timezone.utc)})
-    out = ConflictQueue(root).upsert_scan(
+    out = ConflictQueue(store).upsert_scan(
         find_conflict_candidates([a2, b]), {a2.id: a2, b.id: b}
     )
     assert out["resurrected"] == 1
 
 
-def test_queue_gc_drops_rows_with_dead_members(tmp_path: Path) -> None:
-    root = tmp_path / "memories"
-    root.mkdir()
+def test_queue_gc_drops_rows_with_dead_members(store: Store) -> None:
     a = _memory("the beta metrics exporter claims scrape port 9090 on the shared host")
     b = _memory("the beta metrics exporter claims scrape port 9091 on the shared host")
-    scan_conflicts(root, [a, b])
-    assert conflicts_pending_count(root) == 1
+    scan_conflicts(store, [a, b])
+    assert conflicts_pending_count(store) == 1
     # b vanishes (tombstoned/merged): the next full scan drops the row.
-    result = ConflictQueue(root).upsert_scan([], {a.id: a})
+    result = ConflictQueue(store).upsert_scan([], {a.id: a})
     assert result["dropped"] == 1
     assert result["gc_deferred"] == 0
-    assert conflicts_pending_count(root) == 0
+    assert conflicts_pending_count(store) == 0
 
 
 def test_split_judgeable_short_circuits_and_keeps_order() -> None:
@@ -298,23 +305,38 @@ def test_split_judgeable_short_circuits_and_keeps_order() -> None:
 
 
 # ---------------------------------------------------------------------------
-# End-to-end: the memory_conflicts tool
+# End-to-end: memory_admin(action="conflicts")
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def memory_dir(tmp_path: Path) -> Path:
-    return tmp_path / "memories"
-
-
-def _build(memory_dir: Path, **behavior: Any) -> Any:
-    cfg = Config(
-        storage=StorageConfig(directory=str(memory_dir)),
-        behavior=BehaviorConfig(full_tool_surface=True, **behavior),
+def _config(store: Store, **behavior: Any) -> Config:
+    return Config(
+        storage=StorageConfig(directory=str(store.path.parent)),
+        behavior=BehaviorConfig(**behavior),
     )
+
+
+def _build(store: Store, **behavior: Any) -> Any:
+    cfg = _config(store, **behavior)
     state = SessionState()
-    rec = Recorder(root=memory_dir, session_id=state.session_id, enabled=True)
-    return build_server(config=cfg, store=Store(memory_dir), state=state, recorder=rec)
+    rec = Recorder(store=store, session_id=state.session_id, enabled=True)
+    return build_server(config=cfg, store=store, state=state, recorder=rec)
+
+
+def _handlers(store: Store) -> ToolHandlers:
+    """The dependency bundle the served tool dispatches into, for the one
+    knob `memory_admin` does not forward: `max_results` on the listing."""
+    cfg = _config(store)
+    state = SessionState()
+    return ToolHandlers(
+        config=cfg,
+        store=store,
+        sessions=state,
+        recorder=Recorder(store=store, session_id=state.session_id, enabled=True),
+        responses=ResponseBuilder(
+            stale_after_days=cfg.behavior.verification_stale_days
+        ),
+    )
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
@@ -358,14 +380,14 @@ async def _seed_conflicting_pair(server: Any) -> tuple[str, str]:
     )
 
 
-async def test_e2e_scan_list_and_confirm_contradiction(memory_dir: Path) -> None:
-    server = _build(memory_dir)
+async def test_e2e_scan_list_and_confirm_contradiction(store: Store) -> None:
+    server = _build(store)
     a_id, b_id = await _seed_conflicting_pair(server)
 
     # The forced write filed the pair itself — write-time supersession
     # reads a cue-less numeric divergence as a conflict — so the scan
     # finds it queued and refreshes it rather than adding it.
-    res = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    res = _unwrap(await _call(server, "memory_admin", action="conflicts", scan=True))
     assert res["scan"]["added"] == 0
     assert res["scan"]["refreshed"] == 1
     assert res["pending_total"] == 1
@@ -377,8 +399,9 @@ async def test_e2e_scan_list_and_confirm_contradiction(memory_dir: Path) -> None
     verdictres = _unwrap(
         await _call(
             server,
-            "memory_conflicts",
-            resolve=row["id"],
+            "memory_admin",
+            action="conflicts",
+            id=row["id"],
             verdict="contradiction",
             note="one of these ports is stale",
         )
@@ -397,41 +420,49 @@ async def test_e2e_scan_list_and_confirm_contradiction(memory_dir: Path) -> None
 
     # Confirmed is terminal: a re-scan does not resurrect the pair even
     # though the link-write bumped `updated`.
-    rescan = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    rescan = _unwrap(await _call(server, "memory_admin", action="conflicts", scan=True))
     assert rescan["pending_total"] == 0
 
 
-async def test_e2e_compatible_dismissal_and_errors(memory_dir: Path) -> None:
-    server = _build(memory_dir)
+async def test_e2e_compatible_dismissal_and_errors(store: Store) -> None:
+    server = _build(store)
     await _seed_conflicting_pair(server)
-    res = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    res = _unwrap(await _call(server, "memory_admin", action="conflicts", scan=True))
     cid = res["pending"][0]["id"]
 
     out = _unwrap(
-        await _call(server, "memory_conflicts", resolve=cid, verdict="compatible")
+        await _call(
+            server, "memory_admin", action="conflicts", id=cid, verdict="compatible"
+        )
     )
     assert out["resolved"]["status"] == "dismissed"
     assert out["pending_total"] == 0
 
     with pytest.raises(Exception):
-        await _call(server, "memory_conflicts", resolve=cid, verdict="nonsense")
+        await _call(
+            server, "memory_admin", action="conflicts", id=cid, verdict="nonsense"
+        )
     with pytest.raises(Exception):
         await _call(
-            server, "memory_conflicts", resolve="cf-missing", verdict="compatible"
+            server,
+            "memory_admin",
+            action="conflicts",
+            id="cf-missing",
+            verdict="compatible",
         )
 
 
 async def test_e2e_contradiction_verdict_refuses_when_target_is_dead(
-    memory_dir: Path,
+    store: Store,
 ) -> None:
     """A contradiction verdict must check BOTH members, not just the
     link's source. A link whose target was tombstoned resolves to
     nothing at annotation time and the next scan GCs the queue row — the
     arbitration's only durable artifact would be invisible from the
     moment it was made."""
-    server = _build(memory_dir)
+    server = _build(store)
     await _seed_conflicting_pair(server)
-    res = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    res = _unwrap(await _call(server, "memory_admin", action="conflicts", scan=True))
     row = res["pending"][0]
 
     await _call(
@@ -444,8 +475,9 @@ async def test_e2e_contradiction_verdict_refuses_when_target_is_dead(
     with pytest.raises(Exception, match="no longer active"):
         await _call(
             server,
-            "memory_conflicts",
-            resolve=row["id"],
+            "memory_admin",
+            action="conflicts",
+            id=row["id"],
             verdict="contradiction",
             note="one of these ports is stale",
         )
@@ -454,14 +486,14 @@ async def test_e2e_contradiction_verdict_refuses_when_target_is_dead(
     # and the row stays pending until the named remedy runs.
     shown = _unwrap(await _call(server, "memory_show", id=row["a"]["id"]))
     assert not (shown.get("links") or [])
-    assert conflicts_pending_count(memory_dir) == 1
-    rescan = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    assert conflicts_pending_count(store) == 1
+    rescan = _unwrap(await _call(server, "memory_admin", action="conflicts", scan=True))
     assert rescan["pending_total"] == 0
-    assert conflicts_pending_count(memory_dir) == 0
+    assert conflicts_pending_count(store) == 0
 
 
 async def test_e2e_dead_member_row_is_not_counted_as_pending(
-    memory_dir: Path,
+    store: Store,
 ) -> None:
     """A row the listing path cannot render must not be counted either.
 
@@ -471,15 +503,17 @@ async def test_e2e_dead_member_row_is_not_counted_as_pending(
     the number the model reads to decide whether arbitration work
     exists, so it has to agree with the list beside it.
     """
-    server = _build(memory_dir)
+    server = _build(store)
     await _seed_conflicting_pair(server)
-    scanned = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    scanned = _unwrap(
+        await _call(server, "memory_admin", action="conflicts", scan=True)
+    )
     b_id = scanned["pending"][0]["b"]["id"]
     await _call(
         server, "memory_remove", id=b_id, reason="the 5433 claim was plain wrong"
     )
 
-    listed = _unwrap(await _call(server, "memory_conflicts"))
+    listed = _unwrap(await _call(server, "memory_admin", action="conflicts"))
     assert listed["pending"] == []
     assert listed["pending_total"] == len(listed["pending"]) == 0
     assert "no longer active" in listed["hint"]
@@ -493,128 +527,52 @@ async def test_e2e_dead_member_row_is_not_counted_as_pending(
     # a scan reports, `pending_rows_on_disk`, does include it; this
     # listing carries no such counter, and the scan that does carries the
     # gap in its own `hint` — see the deferred-GC test below.)
-    assert conflicts_pending_count(memory_dir) == 1
-    overview = _unwrap(await _call(server, "memory_scope_overview"))
-    assert overview["curation_pending"]["conflicts"] == 0
+    assert conflicts_pending_count(store) == 1
 
-    rescan = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    rescan = _unwrap(await _call(server, "memory_admin", action="conflicts", scan=True))
     assert rescan["pending_total"] == 0
-    assert conflicts_pending_count(memory_dir) == 0
-    settled = _unwrap(await _call(server, "memory_conflicts"))
+    assert conflicts_pending_count(store) == 0
+    settled = _unwrap(await _call(server, "memory_admin", action="conflicts"))
     assert settled["pending_total"] == 0
     assert settled["hint"].startswith("No pending conflict candidates")
 
 
-async def test_e2e_scope_overview_conflicts_agrees_with_memory_conflicts(
-    memory_dir: Path,
-) -> None:
-    """The session-start cue and the tool it points at must describe the
-    same store.
-
-    `curation_pending.conflicts` is what tells the model arbitration
-    work exists and sends it to memory_conflicts. Counting rows that
-    tool can neither list nor rule on made the two surfaces disagree
-    outright — conflicts=1 beside a memory_conflicts response listing
-    nothing — which teaches the model to stop following the cue.
-    """
-    server = _build(memory_dir)
-    await _seed_conflicting_pair(server)
-
-    # Positive control first: with both members alive the cue is
-    # non-zero and equal to the tool's own total, so the agreement
-    # asserted below is not a filter that always answers zero.
-    scanned = _unwrap(await _call(server, "memory_conflicts", scan=True))
-    overview = _unwrap(await _call(server, "memory_scope_overview"))
-    assert scanned["pending_total"] == 1
-    assert overview["curation_pending"]["conflicts"] == 1
-
-    await _call(
-        server,
-        "memory_remove",
-        id=scanned["pending"][0]["b"]["id"],
-        reason="the 5433 claim was plain wrong",
-    )
-
-    listed = _unwrap(await _call(server, "memory_conflicts"))
-    overview = _unwrap(await _call(server, "memory_scope_overview"))
-    assert listed["pending"] == []
-    assert overview["curation_pending"]["conflicts"] == listed["pending_total"] == 0
-    # Agreement by a shared filter, not by a GC either surface ran: the
-    # row is still pending on disk, waiting for a scan.
-    assert conflicts_pending_count(memory_dir) == 1
-
-
-async def test_scope_overview_conflicts_delta_excludes_dead_member_rows(
-    memory_dir: Path,
-) -> None:
-    """The delta arm counts the same judgeable rows as the absolute one.
-
-    A candidate detected after the prior-session boundary is new work; a
-    candidate nobody can rule on is not work at all. The delta view is
-    what the model branches on when deciding whether to *prompt* about
-    curation, so a phantom there costs a whole prompted pass that finds
-    nothing.
-    """
-    # Write-time supersession off in session A: with it on, the forced
-    # write files the pair itself and the candidate predates session B.
-    session_a = _build(memory_dir, write_supersession=False)
-    await _seed_conflicting_pair(session_a)
-
-    # Second session: detection runs now, so the candidate's `created`
-    # postdates every session-A event and the delta arm sees it as new.
-    session_b = _build(memory_dir)
-    scanned = _unwrap(await _call(session_b, "memory_conflicts", scan=True))
-    dead_id = scanned["pending"][0]["b"]["id"]
-    overview = _unwrap(await _call(session_b, "memory_scope_overview"))
-    delta = overview["curation_pending_new_since_last_session"]
-    assert delta is not None, "no prior-session boundary — delta arm untested"
-    assert overview["curation_pending"]["conflicts"] == delta["conflicts"] == 1
-
-    await _call(
-        session_b,
-        "memory_remove",
-        id=dead_id,
-        reason="the 5433 claim was plain wrong",
-    )
-
-    overview = _unwrap(await _call(session_b, "memory_scope_overview"))
-    delta = overview["curation_pending_new_since_last_session"]
-    assert delta is not None
-    assert overview["curation_pending"]["conflicts"] == 0
-    assert delta["conflicts"] == 0
-    assert conflicts_pending_count(memory_dir) == 1
-
-
 async def test_e2e_pending_total_counts_past_the_max_results_window(
-    memory_dir: Path,
+    store: Store,
 ) -> None:
     """Excluding unrenderable rows must not collapse the total into
     `len(pending)`: a caller whose list was truncated by `max_results`
-    would then have no way to learn more is queued."""
-    server = _build(memory_dir)
+    would then have no way to learn more is queued.
+
+    The window is the handler's `max_results`, which the served
+    `memory_admin` does not forward, so the windowed listing is driven
+    through the handler over the same store."""
+    server = _build(store)
     await _seed_conflicting_pair(server)
     await _seed_pair(
         server,
         "the alpha api service binds its listen port 8080 on the shared docker host",
         "the alpha api service binds its listen port 8081 on the shared docker host",
     )
-    scanned = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    scanned = _unwrap(
+        await _call(server, "memory_admin", action="conflicts", scan=True)
+    )
     assert scanned["pending_total"] == 2
 
-    windowed = _unwrap(await _call(server, "memory_conflicts", max_results=1))
+    windowed = await memory_conflicts(_handlers(store), max_results=1)
     assert len(windowed["pending"]) == 1
     assert windowed["pending_total"] == 2
     assert "hint" not in windowed
 
 
 async def test_e2e_compatible_clears_standing_contradicts_links(
-    memory_dir: Path,
+    store: Store,
 ) -> None:
     """The queue and the link layer are two authorities on one question.
     A `compatible` verdict that left a standing `contradicts` edge in
     place would leave them permanently disagreeing: the queue calls the
     pair settled while every retrieval keeps flagging it."""
-    server = _build(memory_dir)
+    server = _build(store)
     a_id, b_id = await _seed_conflicting_pair(server)
     # Both directions — the confirm path only ever writes a→b, but the
     # relation is symmetric and retrieval annotates from either side.
@@ -631,13 +589,14 @@ async def test_e2e_compatible_clears_standing_contradicts_links(
         links=[{"type": "contradicts", "target_id": a_id}],
     )
 
-    res = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    res = _unwrap(await _call(server, "memory_admin", action="conflicts", scan=True))
     cid = res["pending"][0]["id"]
     out = _unwrap(
         await _call(
             server,
-            "memory_conflicts",
-            resolve=cid,
+            "memory_admin",
+            action="conflicts",
+            id=cid,
             verdict="compatible",
             note="two different services, two different ports",
         )
@@ -653,94 +612,76 @@ async def test_e2e_compatible_clears_standing_contradicts_links(
 
     # The clear lands BEFORE the verdict stamp, so its `updated` bump
     # cannot resurrect the very row it just settled.
-    rescan = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    rescan = _unwrap(await _call(server, "memory_admin", action="conflicts", scan=True))
     assert rescan["pending_total"] == 0
-    assert conflicts_pending_count(memory_dir) == 0
+    assert conflicts_pending_count(store) == 0
 
 
-async def test_e2e_applying_pass_gcs_dead_rows_without_fresh_skips(
-    memory_dir: Path,
-) -> None:
-    """`upsert_scan` is the queue's only garbage collector, so the
-    applying pass has to call it even when the scan found nothing fresh.
-    Gated on fresh skips, a row whose member died stayed `pending` on
-    disk forever with nothing able to collect it — every later read
-    re-paying a liveness check to keep excluding it, and the queue file
-    growing rows no verdict can ever retire.
+def _snapshot_without(store: Store, memory_id: str) -> Any:
+    """A `load_all` that leaves `memory_id` out while the store still
+    counts it: the shape of a row a scan's snapshot did not cover (a
+    write landing between the snapshot and the count, a row that failed
+    to read), which `upsert_scan` must not mistake for a dead member."""
+    real_load_all = store.load_all
 
-    The on-disk count is the load-bearing assertion here: the reporting
-    surfaces filter dead rows out on their own now, so they would read
-    zero either way. Only the raw count can tell GC from filtering."""
-    server = _build(memory_dir)
-    _a_id, b_id = await _seed_conflicting_pair(server)
-    await _call(server, "memory_curate", dry_run=False)
-    assert conflicts_pending_count(memory_dir) == 1
+    def load_all() -> list[Memory]:
+        return [m for m in real_load_all() if m.id != memory_id]
 
-    await _call(
-        server, "memory_remove", id=b_id, reason="the 5433 claim was plain wrong"
-    )
-    # One member left: this pass detects ZERO conflict-shaped skips.
-    await _call(server, "memory_curate", dry_run=False)
-    assert conflicts_pending_count(memory_dir) == 0
-    overview = _unwrap(await _call(server, "memory_scope_overview"))
-    assert overview["curation_pending"]["conflicts"] == 0
+    return load_all
 
 
-def _member_file(memory_dir: Path, memory_id: str) -> Path:
-    return next(
-        p for p in memory_dir.glob("*.md") if memory_id in p.read_text(encoding="utf-8")
-    )
-
-
-async def test_e2e_unreadable_member_file_does_not_destroy_a_settled_verdict(
-    memory_dir: Path,
+async def test_e2e_a_member_missing_from_the_snapshot_keeps_a_settled_verdict(
+    store: Store, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """GC may not read "absent from the snapshot" as "the memory died".
 
-    `Store.load_all` skips a file on `PARSE_SKIP_EXCEPTIONS`, which is
-    `(Exception,)` — a truncated write, a bad `chmod`, a mid-tombstone
-    race all present as a missing member. Collecting on that evidence is
-    irreversible and destroys the row's status, `verdict_ts`, `note` and
-    body fingerprints, and re-detection can only ever re-file the pair as
-    `pending`: the arbitration is simply gone. So a snapshot holding
-    fewer memories than the root holds files collects nothing.
+    A member the scan's snapshot did not cover, while the store still
+    counts it, presents exactly as a missing member. Collecting on that
+    evidence is irreversible and destroys the row's status, `verdict_ts`,
+    `note` and body fingerprints, and re-detection can only ever re-file
+    the pair as `pending`: the arbitration is simply gone. So a snapshot
+    holding fewer memories than the store counts collects nothing.
     """
-    server = _build(memory_dir)
+    server = _build(store)
     _a_id, b_id = await _seed_conflicting_pair(server)
-    scanned = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    scanned = _unwrap(
+        await _call(server, "memory_admin", action="conflicts", scan=True)
+    )
     cid = scanned["pending"][0]["id"]
     await _call(
         server,
-        "memory_conflicts",
-        resolve=cid,
+        "memory_admin",
+        action="conflicts",
+        id=cid,
         verdict="compatible",
         note="two different services, two different ports",
     )
 
-    path = _member_file(memory_dir, b_id)
-    original = path.read_text(encoding="utf-8")
-    path.write_text("---\nid: [unterminated\n---\nbroken\n", encoding="utf-8")
-
-    degraded = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    monkeypatch.setattr(store, "load_all", _snapshot_without(store, b_id))
+    degraded = _unwrap(
+        await _call(server, "memory_admin", action="conflicts", scan=True)
+    )
     assert degraded["scan"]["gc_deferred"] == 1
     assert degraded["scan"]["dropped"] == 0
-    settled = ConflictQueue(memory_dir).load()
+    settled = ConflictQueue(store).load()
     assert [(c.id, c.status, c.note) for c in settled] == [
         (cid, "dismissed", "two different services, two different ports")
     ]
 
-    # The file was only transiently unreadable. Once it parses again the
+    # The gap was transient. Once the snapshot covers the store again the
     # verdict is still there, still sticky, and GC resumes.
-    path.write_text(original, encoding="utf-8")
-    healthy = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    monkeypatch.undo()
+    healthy = _unwrap(
+        await _call(server, "memory_admin", action="conflicts", scan=True)
+    )
     assert healthy["scan"]["gc_deferred"] == 0
     assert healthy["scan"]["resurrected"] == 0
     assert healthy["pending_total"] == 0
-    assert [c.status for c in ConflictQueue(memory_dir).load()] == ["dismissed"]
+    assert [c.status for c in ConflictQueue(store).load()] == ["dismissed"]
 
 
 async def test_e2e_deferred_gc_scan_payload_is_self_consistent(
-    memory_dir: Path,
+    store: Store, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A scan that DEFERS GC is the payload that reports a raw
     queue-file count and a judgeable count while the two disagree —
@@ -755,11 +696,11 @@ async def test_e2e_deferred_gc_scan_payload_is_self_consistent(
     exactly this reason: a count that disagrees with what the tool can
     act on erodes the count.
     """
-    server = _build(memory_dir)
+    server = _build(store)
     _a_id, b_id = await _seed_conflicting_pair(server)
-    # A third memory to break below: deferral needs the snapshot to
-    # under-count the root's `.md` files, and the pair's own two files
-    # have to keep parsing for the row to stay judgeable-shaped.
+    # A third memory to leave out of the snapshot below: deferral needs
+    # the snapshot to under-count the store, and the pair's own two rows
+    # have to stay covered for the row to stay judgeable-shaped.
     third = _unwrap(
         await _call(
             server,
@@ -768,7 +709,9 @@ async def test_e2e_deferred_gc_scan_payload_is_self_consistent(
             scopes=["infrastructure"],
         )
     )
-    scanned = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    scanned = _unwrap(
+        await _call(server, "memory_admin", action="conflicts", scan=True)
+    )
     # Healthy pass: the two counts answer the same way, which is why the
     # collision needed the deferred pass below to surface at all.
     assert scanned["scan"]["pending_rows_on_disk"] == scanned["pending_total"] == 1
@@ -778,15 +721,16 @@ async def test_e2e_deferred_gc_scan_payload_is_self_consistent(
     await _call(
         server, "memory_remove", id=b_id, reason="the 5433 claim was plain wrong"
     )
-    # ...and an unreadable third file makes the next scan defer
-    # collection, so the row survives the pass that normally collects it.
-    path = _member_file(memory_dir, third["id"])
-    original = path.read_text(encoding="utf-8")
-    path.write_text("---\nid: [unterminated\n---\nbroken\n", encoding="utf-8")
+    # ...and a snapshot that misses the third memory makes the next scan
+    # defer collection, so the row survives the pass that normally
+    # collects it.
+    monkeypatch.setattr(store, "load_all", _snapshot_without(store, third["id"]))
 
-    degraded = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    degraded = _unwrap(
+        await _call(server, "memory_admin", action="conflicts", scan=True)
+    )
     assert degraded["scan"]["gc_deferred"] == 1
-    assert conflicts_pending_count(memory_dir) == 1
+    assert conflicts_pending_count(store) == 1
 
     # Both numbers are reported, both are true, and each name says which
     # question it answers.
@@ -803,15 +747,17 @@ async def test_e2e_deferred_gc_scan_payload_is_self_consistent(
     assert "gc_deferred=1" in degraded["hint"]
     assert "no longer active" in degraded["hint"]
 
-    # Control: once the file parses again the pass collects, the counts
-    # re-converge, and there is no gap left to explain.
-    path.write_text(original, encoding="utf-8")
-    healthy = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    # Control: once the snapshot covers the store again the pass
+    # collects, the counts re-converge, and there is no gap left to explain.
+    monkeypatch.undo()
+    healthy = _unwrap(
+        await _call(server, "memory_admin", action="conflicts", scan=True)
+    )
     assert healthy["scan"]["gc_deferred"] == 0
     assert healthy["scan"]["dropped"] == 1
     assert healthy["scan"]["pending_rows_on_disk"] == healthy["pending_total"] == 0
     assert "hint" not in healthy
-    assert conflicts_pending_count(memory_dir) == 0
+    assert conflicts_pending_count(store) == 0
 
 
 async def _seed_triangle(server: Any) -> list[str]:
@@ -845,7 +791,7 @@ def _neighbour_of(rows: list[ConflictCandidate], row: ConflictCandidate) -> Any:
 
 
 async def test_e2e_confirming_one_pair_does_not_resurrect_a_neighbour(
-    memory_dir: Path,
+    store: Store,
 ) -> None:
     """A dismissal must only reopen for a change to ITS OWN pair.
 
@@ -857,18 +803,19 @@ async def test_e2e_confirming_one_pair_does_not_resurrect_a_neighbour(
     its own decision is the signal erosion that teaches it to ignore the
     cue.
     """
-    server = _build(memory_dir)
+    server = _build(store)
     await _seed_triangle(server)
-    await _call(server, "memory_conflicts", scan=True)
-    rows = ConflictQueue(memory_dir).load()
+    await _call(server, "memory_admin", action="conflicts", scan=True)
+    rows = ConflictQueue(store).load()
     assert len(rows) == 3
     victim, neighbour = rows[0], _neighbour_of(rows, rows[0])
 
     dismissed = _unwrap(
         await _call(
             server,
-            "memory_conflicts",
-            resolve=neighbour.id,
+            "memory_admin",
+            action="conflicts",
+            id=neighbour.id,
             verdict="compatible",
             note="three different services",
         )
@@ -878,31 +825,32 @@ async def test_e2e_confirming_one_pair_does_not_resurrect_a_neighbour(
     confirmed = _unwrap(
         await _call(
             server,
-            "memory_conflicts",
-            resolve=victim.id,
+            "memory_admin",
+            action="conflicts",
+            id=victim.id,
             verdict="contradiction",
             note="one of these ports is stale",
         )
     )
     assert confirmed["resolved"]["link_written"] is True
 
-    rescan = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    rescan = _unwrap(await _call(server, "memory_admin", action="conflicts", scan=True))
     assert rescan["scan"]["resurrected"] == 0
-    statuses = {c.id: c.status for c in ConflictQueue(memory_dir).load()}
+    statuses = {c.id: c.status for c in ConflictQueue(store).load()}
     assert statuses[neighbour.id] == "dismissed"
     assert statuses[victim.id] == "confirmed"
 
 
 async def test_e2e_dismissing_one_pair_does_not_resurrect_a_neighbour(
-    memory_dir: Path,
+    store: Store,
 ) -> None:
     """The dismiss path rewrites memories too — `_clear_contradicts_links`
     strips the standing edge — so it carried the same `updated`-keyed
     hazard as the confirm path, one pair over."""
-    server = _build(memory_dir)
+    server = _build(store)
     ids = await _seed_triangle(server)
-    await _call(server, "memory_conflicts", scan=True)
-    rows = ConflictQueue(memory_dir).load()
+    await _call(server, "memory_admin", action="conflicts", scan=True)
+    rows = ConflictQueue(store).load()
     victim, neighbour = rows[0], _neighbour_of(rows, rows[0])
 
     # Give the victim pair a standing edge, so dismissing it actually
@@ -917,16 +865,18 @@ async def test_e2e_dismissing_one_pair_does_not_resurrect_a_neighbour(
 
     await _call(
         server,
-        "memory_conflicts",
-        resolve=neighbour.id,
+        "memory_admin",
+        action="conflicts",
+        id=neighbour.id,
         verdict="compatible",
         note="three different services",
     )
     cleared = _unwrap(
         await _call(
             server,
-            "memory_conflicts",
-            resolve=victim.id,
+            "memory_admin",
+            action="conflicts",
+            id=victim.id,
             verdict="compatible",
             note="also three different services",
         )
@@ -935,27 +885,39 @@ async def test_e2e_dismissing_one_pair_does_not_resurrect_a_neighbour(
         {"source": victim.a_id, "target": victim.b_id}
     ]
 
-    rescan = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    rescan = _unwrap(await _call(server, "memory_admin", action="conflicts", scan=True))
     assert rescan["scan"]["resurrected"] == 0
-    statuses = {c.id: c.status for c in ConflictQueue(memory_dir).load()}
+    statuses = {c.id: c.status for c in ConflictQueue(store).load()}
     assert statuses[neighbour.id] == "dismissed"
     assert statuses[victim.id] == "dismissed"
 
 
 async def test_e2e_dismissal_still_resurrects_on_a_real_body_edit(
-    memory_dir: Path,
+    store: Store,
 ) -> None:
     """The positive control for the two tests above: making dismissals
     immune to unrelated bumps must not make them immune to the edit they
     exist to catch. Rewrite a judged body and the pair comes back."""
-    server = _build(memory_dir)
+    server = _build(store)
     a_id, _b_id = await _seed_conflicting_pair(server)
-    scanned = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    scanned = _unwrap(
+        await _call(server, "memory_admin", action="conflicts", scan=True)
+    )
     cid = scanned["pending"][0]["id"]
     await _call(
-        server, "memory_conflicts", resolve=cid, verdict="compatible", note="two hosts"
+        server,
+        "memory_admin",
+        action="conflicts",
+        id=cid,
+        verdict="compatible",
+        note="two hosts",
     )
-    assert _unwrap(await _call(server, "memory_conflicts"))["pending_total"] == 0
+    assert (
+        _unwrap(await _call(server, "memory_admin", action="conflicts"))[
+            "pending_total"
+        ]
+        == 0
+    )
 
     await _call(
         server,
@@ -966,20 +928,20 @@ async def test_e2e_dismissal_still_resurrects_on_a_real_body_edit(
             "listens on tcp port 5434"
         ),
     )
-    rescan = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    rescan = _unwrap(await _call(server, "memory_admin", action="conflicts", scan=True))
     assert rescan["scan"]["resurrected"] == 1
     assert rescan["pending_total"] == 1
-    assert [c.id for c in ConflictQueue(memory_dir).pending()] == [cid]
+    assert [c.id for c in ConflictQueue(store).pending()] == [cid]
 
 
 async def test_e2e_compatible_verdict_is_recorded_in_the_event_log(
-    memory_dir: Path,
+    store: Store,
 ) -> None:
     """A `compatible` verdict rewrites memories (it strips the standing
     `contradicts` edge) and retires a queue row. Only the contradiction
     branch reached `recorder.record`, so the one mutating operation with
     no audit-trail entry was the one that silently un-links memories."""
-    server = _build(memory_dir)
+    server = _build(store)
     a_id, b_id = await _seed_conflicting_pair(server)
     await _call(
         server,
@@ -987,19 +949,20 @@ async def test_e2e_compatible_verdict_is_recorded_in_the_event_log(
         id=a_id,
         links=[{"type": "contradicts", "target_id": b_id}],
     )
-    scanned = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    scanned = _unwrap(
+        await _call(server, "memory_admin", action="conflicts", scan=True)
+    )
     cid = scanned["pending"][0]["id"]
     await _call(
         server,
-        "memory_conflicts",
-        resolve=cid,
+        "memory_admin",
+        action="conflicts",
+        id=cid,
         verdict="compatible",
         note="two different services",
     )
 
-    verdicts = [
-        e for e in iter_events(memory_dir) if e.get("kind") == "conflict_verdict"
-    ]
+    verdicts = [e for e in store.iter_events() if e.get("kind") == "conflict_verdict"]
     assert len(verdicts) == 1
     assert verdicts[0]["verdict"] == "compatible"
     assert verdicts[0]["candidate"] == cid
@@ -1007,27 +970,11 @@ async def test_e2e_compatible_verdict_is_recorded_in_the_event_log(
     assert verdicts[0]["memories_rewritten"] == 1
 
 
-async def test_e2e_applying_curate_feeds_queue(memory_dir: Path) -> None:
-    """The Stop-hook / memory_curate apply path persists conflict-shaped
-    skips automatically; dry-run stays side-effect free. Write-time
-    supersession is off so the seed write does not file the pair first."""
-    server = _build(memory_dir, write_supersession=False)
-    await _seed_conflicting_pair(server)
-
-    await _call(server, "memory_curate", dry_run=True)
-    assert conflicts_pending_count(memory_dir) == 0, "dry-run must not write"
-
-    await _call(server, "memory_curate", dry_run=False)
-    assert conflicts_pending_count(memory_dir) == 1
-
-    overview = _unwrap(await _call(server, "memory_scope_overview"))
-    assert overview["curation_pending"]["conflicts"] == 1
-
-
 async def test_lost_verdict_race_mutates_nothing(
-    memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+    store: Store, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Two concurrent opposite verdicts serialise on the queue flock, and
+    """Two concurrent opposite verdicts serialise on the queue's write
+    transaction, and
     the loser must mutate NOTHING. Pre-fix, the loser's pending check ran
     on an unlocked read and its link mutation ran before the row claim,
     so a losing `compatible` verdict un-wrote the winning verdict's
@@ -1044,16 +991,18 @@ async def test_lost_verdict_race_mutates_nothing(
     """
     import copy
 
-    server = _build(memory_dir)
+    server = _build(store)
     await _seed_conflicting_pair(server)
-    res = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    res = _unwrap(await _call(server, "memory_admin", action="conflicts", scan=True))
     row = res["pending"][0]
     cid = row["id"]
     a_id, b_id = row["a"]["id"], row["b"]["id"]
 
     # Winner: contradiction — writes the link, stamps the row.
     won = _unwrap(
-        await _call(server, "memory_conflicts", resolve=cid, verdict="contradiction")
+        await _call(
+            server, "memory_admin", action="conflicts", id=cid, verdict="contradiction"
+        )
     )
     assert won["resolved"]["status"] == "confirmed"
     assert won["resolved"]["link_written"] is True
@@ -1073,7 +1022,9 @@ async def test_lost_verdict_race_mutates_nothing(
 
     monkeypatch.setattr(ConflictQueue, "pending", stale_pending)
     lost = _unwrap(
-        await _call(server, "memory_conflicts", resolve=cid, verdict="compatible")
+        await _call(
+            server, "memory_admin", action="conflicts", id=cid, verdict="compatible"
+        )
     )
     monkeypatch.undo()
 

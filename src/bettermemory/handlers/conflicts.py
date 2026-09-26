@@ -122,7 +122,7 @@ async def memory_conflicts(
     if max_results < 1:
         raise ValueError("max_results must be a positive integer")
 
-    queue = ConflictQueue(deps.store.root)
+    queue = ConflictQueue(deps.store)
     out: dict[str, Any] = {}
     counters: dict[str, int] | None = None
 
@@ -132,7 +132,7 @@ async def memory_conflicts(
         )
     elif scan:
         counters = scan_conflicts(
-            deps.store.root,
+            deps.store,
             deps.store.load_all(),
         )
         out["scan"] = counters
@@ -159,15 +159,14 @@ _UNJUDGEABLE_ROWS = (
     "{n} queued candidate(s) name a memory that is no longer active, so "
     "they are omitted from `pending` and `pending_total` — a one-sided pair "
     "cannot be judged. No count of arbitration work advertises them: "
-    "memory_scope_overview's curation_pending.conflicts runs the same rows "
-    "through the same filter. A scan's `pending_rows_on_disk` is the counter "
-    "that does include them, because it counts the queue FILE rather than "
-    "judgeable work."
+    "the health report runs the same rows through the same filter. A "
+    "scan's `pending_rows_on_disk` is the counter that does include them, "
+    "because it counts the queue rather than judgeable work."
 )
 _COLLECT_BY_SCANNING = (
     "The rows sit in the queue until a full scan collects them: "
-    "memory_conflicts(scan=True), or the automatic scan every applying "
-    "curation pass runs. A scan collects nothing and reports "
+    'memory_admin(action="conflicts", scan=True). A scan collects '
+    "nothing and reports "
     "`gc_deferred=1` instead whenever it cannot prove its snapshot "
     "accounted for every `.md` file under the store root — a file it could "
     "not read must not look like a dead conflict member and take a settled "
@@ -188,9 +187,8 @@ _GC_RAN_ANYWAY = (
     "lists them again, depending on which it was."
 )
 _NOTHING_PENDING = (
-    "No pending conflict candidates. Run memory_conflicts(scan=True) "
-    "after bulk writes, or rely on the automatic scan every applying "
-    "curation pass performs."
+    'No pending conflict candidates. Run memory_admin(action="conflicts", '
+    "scan=True) after bulk writes."
 )
 
 
@@ -332,7 +330,8 @@ def _load_active_member(deps: ToolHandlers, memory_id: str) -> Memory:
     except (MemoryNotFoundError, TombstonedError) as exc:
         raise ValueError(
             f"conflict member {memory_id} is no longer active ({exc}); "
-            "re-scan (memory_conflicts(scan=True)) to GC the candidate"
+            're-scan (memory_admin(action="conflicts", scan=True)) to GC '
+            "the candidate"
         ) from exc
 
 
@@ -422,7 +421,7 @@ def _resolve_verdict(
         raise ValueError(
             f"no pending conflict candidate with id {candidate_id!r} "
             "(already resolved, or GC'd because a member was removed — "
-            "call memory_conflicts() to list what's live)"
+            'call memory_admin(action="conflicts") to list what\'s live)'
         )
 
     if verdict == "compatible":
@@ -507,7 +506,7 @@ def _resolve_verdict(
         new_link = MemoryLink(
             type=LinkType.CONTRADICTS,
             target_id=candidate.b_id,
-            note=note or f"memory_conflicts verdict ({candidate.detector} detector)",
+            note=note or f"conflicts verdict ({candidate.detector} detector)",
         )
         try:
             deps.store.update(

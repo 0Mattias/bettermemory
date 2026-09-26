@@ -386,21 +386,31 @@ def test_the_prefiltered_arm_records_every_query_whose_pool_fell_back(
 def test_engagement_failure_stays_quiet_when_every_pool_engaged(
     tmp_path: Path,
 ) -> None:
+    from bettermemory.store import Store
+
     row = runner.ArmResult(arm="lexical", probe="asked", n=20, prefilter=True)
     row.engaged = 20
-    assert runner.engagement_failure(tmp_path, [row]) is None
+    assert runner.engagement_failure(Store(tmp_path), [row]) is None
 
 
 def test_engagement_failure_names_the_regime_and_the_query(tmp_path: Path) -> None:
     """A run that fell back has to say WHICH way it fell back, or the next
-    person re-runs it blind. The index census separates "corpus below the
-    threshold" from "the FTS match set was empty"."""
+    person re-runs it blind. The store census, its memory count beside
+    the threshold in force, separates "corpus below the threshold" from
+    "the FTS match set was empty"."""
+    from bettermemory import _handlers
+    from bettermemory.store import Store
+
+    store = Store(tmp_path)
+    for i in range(3):
+        store.write(content=f"row {i} about pooling", scopes=["ops"])
     row = runner.ArmResult(arm="lexical", probe="control", n=20, prefilter=True)
     row.engaged = 19
     row.unengaged = ["pooling app"]
-    report = runner.engagement_failure(tmp_path, [row])
+    report = runner.engagement_failure(store, [row])
     assert report is not None
-    assert "indexed_count" in report
+    assert "memories=3" in report
+    assert f"threshold in force: {_handlers.resolve_index_threshold()}" in report
     assert "lexical/control: 1/20" in report
     assert "'pooling app'" in report
 
@@ -413,9 +423,11 @@ def test_an_arm_that_asked_nothing_fails_instead_of_passing_vacuously(
     comes out 0.0 — byte-identical to the report a prefilter that cost
     nothing produces. A `--corpus` whose slugs miss `questions.jsonl` is all
     it takes, so the guard has to judge the absence of evidence too."""
+    from bettermemory.store import Store
+
     row = runner.ArmResult(arm="lexical", probe="asked", n=0, prefilter=True)
     assert row.unengaged == []
-    report = runner.engagement_failure(tmp_path, [row])
+    report = runner.engagement_failure(Store(tmp_path), [row])
     assert report is not None
     assert "no question matched the corpus" in report
 
@@ -426,9 +438,11 @@ def test_a_full_corpus_arm_is_never_mistaken_for_an_engaged_one(
     """`run_arm` leaves `engaged` at zero, and the guard only judges rows
     that claim to be prefiltered — otherwise every default run would fail
     the integrity check it is not making a claim about."""
+    from bettermemory.store import Store
+
     row = runner.ArmResult(arm="lexical", probe="asked", n=20, prefilter=False)
     assert row.engaged == 0
-    assert runner.engagement_failure(tmp_path, [row]) is None
+    assert runner.engagement_failure(Store(tmp_path), [row]) is None
 
 
 def test_main_refuses_to_emit_when_the_prefilter_did_not_engage(

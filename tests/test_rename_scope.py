@@ -1,4 +1,5 @@
-"""Tests for memory_rename_scope — the typo/deprecation fix-up tool."""
+"""Tests for `memory_admin(action="rename_scope")`, the typo and
+deprecation fix-up action."""
 
 from __future__ import annotations
 from ._mcp import call_tool as _mcp_call
@@ -123,79 +124,51 @@ def test_rename_scope_old_equals_new_returns_empty(store: Store) -> None:
     assert result == {"active": [], "tombstoned": []}
 
 
-def test_rename_scope_updates_fts5_index(store: Store) -> None:
-    """Regression: a rename must propagate to the FTS5 index. The
-    `scopes_text` column feeds BM25 ranking and the scope-LIKE
-    pre-filter; without an upsert here the index drifts from disk
-    until the next manual `bettermemory reindex`, and search-time
-    scope ranking reads against the old name."""
-    import sqlite3
+def _scopes_text(store: Store, memory_id: str) -> str | None:
+    """The row's `scopes_text` column, what BM25 ranking and the
+    scope-LIKE pre-filter read."""
+    row = store.conn.execute(
+        "SELECT scopes_text FROM memories WHERE id = ?", (memory_id,)
+    ).fetchone()
+    return None if row is None else str(row[0])
 
-    from bettermemory import index as _index
 
+def test_rename_scope_updates_the_fts_columns(store: Store) -> None:
+    """Regression: a rename must propagate to the row's search columns.
+    `scopes_text` feeds BM25 ranking and the scope-LIKE pre-filter;
+    without the rewrite here search-time scope ranking reads against
+    the old name."""
     memory = store.write(content="python tooling notes", scopes=["infra"])
-    # Force the index to populate (covers the case where the store's
-    # write path didn't upsert because the index file didn't yet exist
-    # — `_index_upsert_quietly` does upsert, but this also locks in
-    # the precondition explicitly).
-    path = next(p for p in store._iter_active_paths() if p.is_file())
-    _index.upsert(store.root, memory, filename=path.name)
 
     result = store.rename_scope("infra", "infrastructure")
     assert memory.id in result["active"]
 
-    db_path = _index.index_path(store.root)
-    conn = sqlite3.connect(str(db_path))
-    try:
-        row = conn.execute(
-            "SELECT scopes_text FROM memories WHERE id = ?",
-            (memory.id,),
-        ).fetchone()
-    finally:
-        conn.close()
-    assert row is not None, "renamed memory missing from index"
-    scopes_text = row[0]
-    assert " infrastructure " in scopes_text, (
-        f"new scope name not in index after rename: {scopes_text!r}"
-    )
-    assert " infra " not in scopes_text, (
-        f"old scope name still in index after rename: {scopes_text!r}"
-    )
+    row = _scopes_text(store, memory.id)
+    assert row is not None, "renamed memory missing from the memories table"
+    assert " infrastructure " in row, f"new scope name not on the row: {row!r}"
+    assert " infra " not in row, f"old scope name still on the row: {row!r}"
 
 
 def test_rename_scope_restored_memory_searchable_by_new_scope(
     store: Store,
 ) -> None:
-    """Regression chain: restore writes back to the active set; the
-    fix to `restore` also upserts the FTS5 index. Combined with the
-    rename-updates-index fix above, a tombstone→restore→rename
-    sequence ends with a fully-current index entry."""
-    import sqlite3
-
-    from bettermemory import index as _index
-
+    """Regression chain: restore writes back to the active set with its
+    search columns. Combined with the rename fix above, a tombstone,
+    restore, rename sequence ends with a fully current row."""
     memory = store.write(content="kept body", scopes=["alpha"])
     store.tombstone(memory.id, reason="oops")
     restored = store.restore(memory.id)
     assert restored.id == memory.id
 
-    db_path = _index.index_path(store.root)
-    conn = sqlite3.connect(str(db_path))
-    try:
-        row = conn.execute(
-            "SELECT scopes_text FROM memories WHERE id = ?",
-            (memory.id,),
-        ).fetchone()
-    finally:
-        conn.close()
+    row = _scopes_text(store, memory.id)
     assert row is not None, (
-        "restored memory not re-added to the FTS5 index — search would silently miss it"
+        "restored memory not back in the memories table; search would miss it"
     )
-    assert " alpha " in row[0]
+    assert " alpha " in row
 
 
 # ---------------------------------------------------------------------------
-# memory_rename_scope MCP tool
+# memory_admin(action="rename_scope")
 # ---------------------------------------------------------------------------
 
 
@@ -203,7 +176,8 @@ async def test_tool_renames_active(server: Any) -> None:
     a = await _call(server, "memory_write", content="x", scopes=["projct"])
     result = await _call(
         server,
-        "memory_rename_scope",
+        "memory_admin",
+        action="rename_scope",
         old_scope="projct",
         new_scope="projects",
     )
@@ -218,8 +192,9 @@ async def test_tool_validates_scopes(server: Any) -> None:
     with pytest.raises(Exception, match="invalid scope"):
         await _call(
             server,
-            "memory_rename_scope",
-            old_scope="Tools",  # uppercase invalid
+            "memory_admin",
+            action="rename_scope",
+            old_scope="Tools",
             new_scope="tooling",
         )
 
@@ -228,7 +203,8 @@ async def test_tool_rejects_old_equals_new(server: Any) -> None:
     with pytest.raises(Exception, match="must differ"):
         await _call(
             server,
-            "memory_rename_scope",
+            "memory_admin",
+            action="rename_scope",
             old_scope="tools",
             new_scope="tools",
         )
@@ -250,23 +226,23 @@ async def test_tool_rejects_new_outside_allowed_list(memory_dir: Path) -> None:
     with pytest.raises(Exception, match="not in the allowed list"):
         await _call(
             server,
-            "memory_rename_scope",
+            "memory_admin",
+            action="rename_scope",
             old_scope="tools",
             new_scope="career",
         )
 
 
 async def test_tool_records_event(server: Any, memory_dir: Path) -> None:
-    from bettermemory.events import iter_events
-
     await _call(server, "memory_write", content="x", scopes=["old"])
     await _call(
         server,
-        "memory_rename_scope",
+        "memory_admin",
+        action="rename_scope",
         old_scope="old",
         new_scope="new",
     )
-    events = list(iter_events(memory_dir))
+    events = list(Store.open(memory_dir).iter_events())
     rename_events = [e for e in events if e["kind"] == "rename_scope"]
     assert len(rename_events) == 1
     assert rename_events[0]["old"] == "old"
@@ -275,19 +251,16 @@ async def test_tool_records_event(server: Any, memory_dir: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# OSError regression — memory_rename_scope handler must catch a genuine
+# OSError regression: the rename_scope handler must catch a genuine
 # disk-level OSError from `store.rename_scope` and re-raise as a structured
 # ValueError, mirroring the OSError arms in remove/restore/update/verify.
 # ---------------------------------------------------------------------------
 #
-# Store.rename_scope swallows per-file (ValueError, KeyError,
-# FileNotFoundError) — race-losses and malformed files are skipped. A bare
-# OSError from a genuine disk failure (EIO mid-write, ENOSPC during the
-# atomic rename, EACCES on the unlink, …) inside `_write_path` still
-# propagates out, through the previously guard-less handler, and would
-# escape the MCP tool boundary as an unstructured error. The fix wraps the
-# call in `except OSError -> raise ValueError(... ) from exc` so the
-# boundary returns the same clean structured-error shape as every sibling
+# A bare OSError from a genuine disk failure (EIO mid-write, ENOSPC on the
+# commit) would escape a guard-less handler and leave the MCP tool
+# boundary as an unstructured error. The handler wraps the call in
+# `except OSError -> raise ValueError(...) from exc` so the boundary
+# returns the same clean structured-error shape as every sibling
 # lifecycle mutator.
 
 
@@ -327,7 +300,8 @@ async def test_tool_converts_oserror_to_value_error(
     with pytest.raises(Exception) as excinfo:
         await _call(
             server,
-            "memory_rename_scope",
+            "memory_admin",
+            action="rename_scope",
             old_scope="old",
             new_scope="new",
         )

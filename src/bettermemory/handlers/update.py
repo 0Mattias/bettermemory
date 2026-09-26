@@ -50,50 +50,10 @@ if TYPE_CHECKING:
     from .._handlers import ToolHandlers
 
 
-# Deliberately a type INDEX, not a manual. Picking the right edge type is
-# the only part a model cannot infer from the schema, so the four glosses
-# stay; the mechanics it used to restate (REPLACE semantics — already on
-# the `scopes` / `links` bullet above, verbatim — self-link rejection, and
-# how links surface at retrieval) moved to docs/api.md's "Inter-memory
-# links" section. That reclaimed 658 characters of the always-resident
-# description budget, which is what let the truncation gate below ship at
-# all. Re-measure `_DESC_BASELINE` before trimming further — this tail
-# is no longer the cheap reclamation it was.
-DESC_MEMORY_LINKS_TAIL = (
-    " Each `links` entry is `{type, target_id (a ULID), note?}`. The types: "
-    "`supersedes` (prefer this over the target), `contradicts` (both cannot "
-    "be true), `extends` (adds nuance to it), `depends_on` (only makes sense "
-    "in its context). docs/api.md carries the rest."
-)
-
-
 DESC_MEMORY_UPDATE = (
-    "Body edits clear `last_verified_at`; scope-only edits preserve "
-    "it. Bundling a scope rename with a body edit clears verification.\n\n"
-    "Refine an existing memory in place. Preferred over "
-    "memory_remove + memory_write when correcting a stored fact — "
-    "preserves `id`, `created`, and `source`; bumps `updated`.\n\n"
-    "Parameters (pass at least one):\n"
-    "- `id`: required.\n"
-    "- `content`: new body. Replacing the body clears "
-    "`last_verified_at`, the verified-* attestations, and `claims` "
-    "(the prior verification was for prose that no longer exists; "
-    "call memory_verify again after, re-declaring claims). A body that reads as a claim "
-    "ABOUT THE USER returns `user_claim_warning` unless the record "
-    "is already `user-inference`; pass `acknowledge_user_claim=True` "
-    "if the subject is someone else. A transient-state body returns "
-    "`transient_warning`; `acknowledge_transient=True` overrides. "
-    "An edit that SHRINKS the body and "
-    "leaves it ending mid-sentence returns `truncation_warning`; pass "
-    "`acknowledge_truncation=True` when the cut is deliberate.\n"
-    "- `scopes` / `links`: REPLACE semantics — pass the full new "
-    "list, or `[]` to clear.\n"
-    "- `confidence`: low / medium / high.\n"
-    "- `category`: accepts `fact` and `ambient`. "
-    "`user-inference` is REJECTED here — file a claim about the "
-    "user with memory_write.\n\n"
-    'Returns `status="stale"` when another agent updated the '
-    "memory first; the `hint` says to re-fetch and retry." + DESC_MEMORY_LINKS_TAIL
+    "Change a memory in place; id and created stay. Pass only what changes; "
+    "new `content` resets verification. `links` replaces the typed edges "
+    "(supersedes, contradicts, extends, depends_on). The write gates apply."
 )
 
 
@@ -614,4 +574,4 @@ async def memory_update(
     return deps.responses.committed(updated)
 
 
-__all__ = ["DESC_MEMORY_LINKS_TAIL", "DESC_MEMORY_UPDATE", "memory_update"]
+__all__ = ["DESC_MEMORY_UPDATE", "memory_update"]

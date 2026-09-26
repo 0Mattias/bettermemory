@@ -24,10 +24,9 @@ Run:
 (or, if you have `bettermemory` installed globally via `uv tool
 install`, any Python interpreter that can import `mcp`.)
 
-Output is a small narrated walk through write (fact) → write
-(user-inference, staged pending) → confirm → search → show → remove,
-showing one of each round trip and calling out the `staleness_verdict`
-field on the search hit.
+Output is a small narrated walk through write (fact), write
+(user-inference), search, show and remove, showing one of each round
+trip and calling out the `staleness_verdict` field on the search hit.
 
 Connecting to a different storage directory than the host's default:
 set `BETTERMEMORY_DIR` in `env=` below. We default to a fresh tmp dir
@@ -91,7 +90,13 @@ async def _walk_through_one_session(storage_dir: Path) -> None:
     params = StdioServerParameters(
         command=server_cmd[0],
         args=server_cmd[1:],
-        env={**os.environ, "BETTERMEMORY_DIR": str(storage_dir)},
+        env={
+            **os.environ,
+            "BETTERMEMORY_DIR": str(storage_dir),
+            # The store's key goes beside the throwaway store, not under
+            # the user's config directory.
+            "BETTERMEMORY_KEYS_DIR": str(storage_dir / "keys"),
+        },
     )
 
     async with stdio_client(params) as (read, write):
@@ -134,19 +139,19 @@ async def _walk_through_one_session(storage_dir: Path) -> None:
             fact_id = fact_written.get("id")
             assert fact_id, f"memory_write didn't return an id: {fact_written!r}"
 
-            # ---- Step 3: write a user-inference (staged pending) ----
-            # `category="user-inference"` ALWAYS routes through the
-            # staged-write tier — the server returns `status="pending"`
-            # plus a `pending_id` instead of committing. The user (or
-            # caller) confirms or cancels explicitly. This is the
-            # user's veto on claims about themselves.
-            print("# 3. memory_write (user-inference): stages pending")
-            staged_result = await session.call_tool(
+            # ---- Step 3: write a user-inference ---------------------
+            # `category="user-inference"` commits like a fact; the label
+            # is what keeps a stored claim about the user distinguishable
+            # from an established fact, and correctable. A body that reads
+            # as a claim about the user filed as `fact` is refused with
+            # `user_claim_warning` until it is relabelled.
+            print("# 3. memory_write (user-inference): commits, labelled")
+            inference_result = await session.call_tool(
                 "memory_write",
                 {
                     "content": (
                         "User prefers code-driven walkthroughs over GUI "
-                        "tours — when asked for a tutorial, lead with "
+                        "tours: when asked for a tutorial, lead with "
                         "runnable snippets, not screenshots."
                     ),
                     "scopes": ["learning-style"],
@@ -154,32 +159,17 @@ async def _walk_through_one_session(storage_dir: Path) -> None:
                     "category": "user-inference",
                 },
             )
-            print(_pretty(staged_result))
+            print(_pretty(inference_result))
             print()
 
-            staged = json.loads(staged_result.content[0].text)
-            assert staged.get("status") == "pending", (
-                f"expected status='pending' for user-inference write, got {staged!r}"
+            inference = json.loads(inference_result.content[0].text)
+            assert inference.get("status") == "committed", (
+                f"expected status='committed' for the user-inference write, "
+                f"got {inference!r}"
             )
-            pending_id = staged["pending_id"]
+            inference_id = inference["id"]
 
-            # ---- Step 4: confirm the pending write ------------------
-            # In a real session the host surfaces the proposal to the
-            # user and only calls _confirm after they assent. Here we
-            # confirm immediately so the demo finishes in one pass.
-            print(f"# 4. memory_write_confirm: commit pending {pending_id}")
-            confirm_result = await session.call_tool(
-                "memory_write_confirm",
-                {"pending_id": pending_id},
-            )
-            print(_pretty(confirm_result))
-            print()
-
-            confirmed = json.loads(confirm_result.content[0].text)
-            inference_id = confirmed.get("id")
-            assert inference_id, f"confirm didn't return an id: {confirmed!r}"
-
-            # ---- Step 5: search ------------------------------------
+            # ---- Step 4: search ------------------------------------
             # Each hit carries a `staleness_verdict` field — fresh /
             # spot_check_recommended / spot_check_required — derived
             # from calendar age, drift against `verified_paths`, and
@@ -190,7 +180,7 @@ async def _walk_through_one_session(storage_dir: Path) -> None:
             # [...])` call drops the verdict to `fresh`. This is the
             # signal the model uses to decide whether to spot-check
             # before relying on the hit.
-            print("# 5. memory_search: hits carry staleness_verdict")
+            print("# 4. memory_search: hits carry staleness_verdict")
             search_result = await session.call_tool(
                 "memory_search",
                 {"query": "pnpm workspace install", "max_results": 3},
@@ -212,13 +202,13 @@ async def _walk_through_one_session(storage_dir: Path) -> None:
             print(_pretty(search_result))
             print()
 
-            # ---- Step 6: fetch the fact's full body -----------------
+            # ---- Step 5: fetch the fact's full body -----------------
             # API surface note: the MCP tool is `memory_show`. If you're
             # driving the store *without* going through MCP (i.e. `from
             # bettermemory.store import Store` and calling methods directly),
             # the read-one method is `Store.load_one(id)`; `Store.show(id)` is
             # a public alias for it, so either name works.
-            print(f"# 6. memory_show: fetch the full body for {fact_id}")
+            print(f"# 5. memory_show: fetch the full body for {fact_id}")
             show_result = await session.call_tool(
                 "memory_show",
                 {"id": fact_id},
@@ -226,8 +216,8 @@ async def _walk_through_one_session(storage_dir: Path) -> None:
             print(_pretty(show_result))
             print()
 
-            # ---- Step 7: tombstone both -----------------------------
-            print("# 7. memory_remove: tidy up after the demo")
+            # ---- Step 6: tombstone both -----------------------------
+            print("# 6. memory_remove: tidy up after the demo")
             for victim_id in (fact_id, inference_id):
                 remove_result = await session.call_tool(
                     "memory_remove",

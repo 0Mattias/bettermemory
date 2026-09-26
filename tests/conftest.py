@@ -23,6 +23,8 @@ import pytest
 
 from bettermemory.config import BehaviorConfig, Config, ScopesConfig, StorageConfig
 from bettermemory.session import SessionState
+from bettermemory import config as _config
+from bettermemory import log as _log
 from bettermemory.store import Store
 
 from ._event_helpers import EventLog
@@ -105,14 +107,22 @@ def memory_dir(tmp_path: Path) -> Path:
     return d
 
 
+@pytest.fixture(autouse=True)
+def keys_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Every store a test opens keeps its key under the test's own
+    directory, never under the user's config directory."""
+    keys = tmp_path / "keys"
+    monkeypatch.setattr(_log, "default_keys_dir", lambda: keys)
+    # A server or CLI the test spawns resolves the same directory through
+    # the environment, so a subprocess leaves no key under the user's
+    # config directory either.
+    monkeypatch.setenv(_config.KEYS_DIR_ENV, str(keys))
+    return keys
+
+
 @pytest.fixture
 def store(memory_dir: Path) -> Store:
-    # `Store.open`, not `Store(...)`: since 7.17.0 construction is pure and
-    # provisioning is `ensure()`, which the mutators call. A test that only
-    # WRITES would be fine either way, but one that stats `tombstone_dir` or
-    # reads modes before writing needs the directories to exist — and a
-    # shared fixture is the right place to say so once.
-    return Store.open(memory_dir)
+    return Store(memory_dir)
 
 
 @pytest.fixture
@@ -130,12 +140,6 @@ def session() -> SessionState:
 
 
 @pytest.fixture
-def event_log(tmp_path: Path) -> EventLog:
-    """Real ``Recorder``-backed event log for event-consumer tests.
-
-    Replaces hand-built event dict literals. The 2.6.2 and 2.6.3
-    field-name bugs both shipped because tests used a dict shape that
-    didn't match what production emits — see
-    ``tests/_event_helpers.py`` for the full rationale.
-    """
-    return EventLog(root=tmp_path)
+def event_log(store: Store) -> EventLog:
+    """A real recorder over the test's store for event-consumer tests."""
+    return EventLog(store=store)

@@ -20,7 +20,7 @@ What this module owns:
 * verifying the chain, its segments and the head (``verify_chain``).
 
 What it does not own: the meaning of a row. The store
-(``bettermemory.sqlite_store``) decides which kinds are mutations, folds
+(``bettermemory.store``) decides which kinds are mutations, folds
 them back into tables, and merges that fold with the chain report.
 
 Segments. A store opened without its key keeps working: the store
@@ -131,7 +131,8 @@ def compute_mac(
 
 def default_keys_dir() -> Path:
     """Where keys and heads live: the user's config directory, never the
-    store. Patched by tests; the CLI takes the default."""
+    store. Patched by tests; the store honours ``BETTERMEMORY_KEYS_DIR``
+    ahead of it (`store.resolve_keys_dir`), and the CLI takes that."""
     return Path(platformdirs.user_config_dir("bettermemory")) / "keys"
 
 

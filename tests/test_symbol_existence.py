@@ -512,14 +512,13 @@ async def test_a_miss_lands_in_the_event_log_and_nothing_else_does(
     from, and the reason it is conditional: a field written on every
     verify would make "the check fired" indistinguishable from "the
     check ran", and the count that matters is the first one."""
-    from bettermemory.events import iter_events
-
     quiet = _plant(memory_dir, "prefer cost checkpoints on long runs", tree)
     loud = _plant(memory_dir, "`vanished_helper` in `pkg/mod.py` does the work.", tree)
     await _call(server, "memory_verify", id=quiet)
     await _call(server, "memory_verify", id=loud, verified_paths=["pkg/mod.py"])
 
-    events = {e["id"]: e for e in iter_events(memory_dir) if e["kind"] == "verify"}
+    log = Store.open(memory_dir).iter_events()
+    events = {e["id"]: e for e in log if e["kind"] == "verify"}
     assert "symbol_drift_missing" not in events[quiet]
     assert events[loud]["symbol_drift_missing"] == 1
 

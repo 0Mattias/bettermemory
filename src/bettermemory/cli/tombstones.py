@@ -44,9 +44,8 @@ def add_subparser(
 
     trestore_help = (
         "Bring a tombstoned memory back to the active set by id. Strips "
-        "removal frontmatter and preserves original timestamps. The CLI "
-        "counterpart of the memory_restore tool, for the lean default "
-        "surface where that tool isn't registered."
+        "removal metadata and preserves original timestamps. The CLI "
+        "counterpart of memory_admin's restore action."
     )
     trestore_parser = tombstones_sub.add_parser(
         "restore", help=trestore_help, description=trestore_help

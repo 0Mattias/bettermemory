@@ -26,7 +26,7 @@ import pytest
 
 from bettermemory import log as chain
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
-from bettermemory.sqlite_store import SqliteStore
+from bettermemory.store import Store
 
 
 def _memory(body: str, *scopes: str) -> Memory:
@@ -48,13 +48,13 @@ def keys_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def store(tmp_path: Path, keys_dir: Path) -> Iterator[SqliteStore]:
-    s = SqliteStore.create(tmp_path / "memory.sqlite", keys_dir=keys_dir)
+def store(tmp_path: Path, keys_dir: Path) -> Iterator[Store]:
+    s = Store.create(tmp_path / "memory.sqlite", keys_dir=keys_dir)
     yield s
     s.close()
 
 
-def _outside(store: SqliteStore) -> sqlite3.Connection:
+def _outside(store: Store) -> sqlite3.Connection:
     """A second connection to the store file: the editor with sqlite3 and
     no key, which is the threat the chain exists to expose."""
     conn = sqlite3.connect(str(store.path))
@@ -109,13 +109,35 @@ def test_genesis_mac_is_thirty_two_zero_bytes() -> None:
     assert chain.GENESIS_MAC == "00" * 32
 
 
+def test_the_keys_dir_honours_the_environment_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A scratch store (a bench, a demo, a spawned server) names its own
+    keys directory through ``BETTERMEMORY_KEYS_DIR`` and leaves nothing
+    under the user's config directory; unset, the config directory is
+    the default. The chain module itself never reads the environment."""
+    import inspect
+
+    from bettermemory import store as store_module
+    from bettermemory.config import KEYS_DIR_ENV
+
+    monkeypatch.delenv(KEYS_DIR_ENV, raising=False)
+    assert store_module.resolve_keys_dir() == chain.default_keys_dir()
+    assert "environ" not in inspect.getsource(chain)
+    monkeypatch.setenv(KEYS_DIR_ENV, str(tmp_path / "elsewhere"))
+    assert store_module.resolve_keys_dir() == tmp_path / "elsewhere"
+    with Store.create(tmp_path / "memory.sqlite") as store:
+        assert store.status()["keys_dir"] == str(tmp_path / "elsewhere")
+    assert (tmp_path / "elsewhere").is_dir()
+
+
 # ---------------------------------------------------------------------------
 # Birth: the genesis row, the key, the head
 # ---------------------------------------------------------------------------
 
 
 def test_a_fresh_store_starts_its_chain_with_a_store_created_row(
-    store: SqliteStore,
+    store: Store,
 ) -> None:
     rows = store.log_rows()
     assert len(rows) == 1
@@ -130,7 +152,7 @@ def test_a_fresh_store_starts_its_chain_with_a_store_created_row(
 
 
 def test_the_key_lives_outside_the_store_and_only_its_fingerprint_inside(
-    store: SqliteStore, keys_dir: Path
+    store: Store, keys_dir: Path
 ) -> None:
     key_path = keys_dir / f"{store.store_id}.key"
     assert key_path.is_file()
@@ -145,7 +167,7 @@ def test_the_key_lives_outside_the_store_and_only_its_fingerprint_inside(
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits")
 def test_the_key_file_and_its_directory_are_owner_only(
-    store: SqliteStore, keys_dir: Path
+    store: Store, keys_dir: Path
 ) -> None:
     key_path = keys_dir / f"{store.store_id}.key"
     assert stat.S_IMODE(key_path.stat().st_mode) == 0o600
@@ -157,12 +179,12 @@ def test_reopening_uses_the_same_key_and_appends_no_rekey_row(
     tmp_path: Path, keys_dir: Path
 ) -> None:
     path = tmp_path / "memory.sqlite"
-    first = SqliteStore.create(path, keys_dir=keys_dir)
+    first = Store.create(path, keys_dir=keys_dir)
     first.put_memory(_memory("alpha"))
     fingerprint = first.key_fingerprint
     first.close()
 
-    again = SqliteStore.open(path, keys_dir=keys_dir)
+    again = Store.open(path, keys_dir=keys_dir)
     try:
         assert again.key_fingerprint == fingerprint
         assert [r.kind for r in again.log_rows()] == [chain.STORE_CREATED, "memory_put"]
@@ -173,7 +195,7 @@ def test_reopening_uses_the_same_key_and_appends_no_rekey_row(
 
 
 def test_the_head_follows_every_append_and_never_moves_backwards(
-    store: SqliteStore,
+    store: Store,
 ) -> None:
     head = store.keyring.read_head()
     assert head is not None and head.seq == 1
@@ -205,7 +227,7 @@ def test_the_default_keys_dir_is_under_the_user_config_dir(
 # ---------------------------------------------------------------------------
 
 
-def test_an_edited_row_fails_its_mac(store: SqliteStore) -> None:
+def test_an_edited_row_fails_its_mac(store: Store) -> None:
     store.put_memory(_memory("alpha"))
     store.put_memory(_memory("beta"))
     outside = _outside(store)
@@ -221,7 +243,7 @@ def test_an_edited_row_fails_its_mac(store: SqliteStore) -> None:
 
 
 def test_an_edited_payload_is_reported_and_the_fold_survives_it(
-    store: SqliteStore,
+    store: Store,
 ) -> None:
     store.put_memory(_memory("alpha"))
     outside = _outside(store)
@@ -236,7 +258,7 @@ def test_an_edited_payload_is_reported_and_the_fold_survives_it(
     assert "payload_invalid" in problems
 
 
-def test_a_row_inserted_without_the_key_is_reported(store: SqliteStore) -> None:
+def test_a_row_inserted_without_the_key_is_reported(store: Store) -> None:
     memory = _memory("alpha")
     store.put_memory(memory)
     last = store.log_rows()[-1]
@@ -265,7 +287,7 @@ def test_a_row_inserted_without_the_key_is_reported(store: SqliteStore) -> None:
     )
 
 
-def test_a_deleted_tail_is_caught_by_the_head(store: SqliteStore) -> None:
+def test_a_deleted_tail_is_caught_by_the_head(store: Store) -> None:
     store.put_memory(_memory("alpha"))
     store.put_memory(_memory("beta"))
     outside = _outside(store)
@@ -281,7 +303,7 @@ def test_a_deleted_tail_is_caught_by_the_head(store: SqliteStore) -> None:
 
 
 def test_a_deleted_tail_with_matching_table_edits_is_still_caught(
-    store: SqliteStore,
+    store: Store,
 ) -> None:
     """The attacker removes the row AND the log entry that wrote it, so the
     fold agrees with the tables; only the head outside the store knows."""
@@ -300,7 +322,7 @@ def test_a_deleted_tail_with_matching_table_edits_is_still_caught(
     assert report["status"] == "tampered"
 
 
-def test_a_deleted_middle_row_breaks_the_chain(store: SqliteStore) -> None:
+def test_a_deleted_middle_row_breaks_the_chain(store: Store) -> None:
     store.put_memory(_memory("alpha"))
     store.put_memory(_memory("beta"))
     outside = _outside(store)
@@ -315,7 +337,7 @@ def test_a_deleted_middle_row_breaks_the_chain(store: SqliteStore) -> None:
     assert (3, "seq_gap") in problems
 
 
-def test_a_table_edit_without_a_log_row_is_unaccounted(store: SqliteStore) -> None:
+def test_a_table_edit_without_a_log_row_is_unaccounted(store: Store) -> None:
     memory = _memory("alpha")
     store.put_memory(memory)
     outside = _outside(store)
@@ -331,7 +353,7 @@ def test_a_table_edit_without_a_log_row_is_unaccounted(store: SqliteStore) -> No
     assert store.provenance_for([memory.id]) == {memory.id: "unaccounted"}
 
 
-def test_a_planted_row_is_unaccounted(store: SqliteStore) -> None:
+def test_a_planted_row_is_unaccounted(store: Store) -> None:
     memory = _memory("alpha")
     store.put_memory(memory)
     planted = generate_ulid()
@@ -356,7 +378,7 @@ def test_a_planted_row_is_unaccounted(store: SqliteStore) -> None:
     assert report["fold"]["tables"]["memories"]["missing"] == []
 
 
-def test_a_row_deleted_from_a_table_is_missing(store: SqliteStore) -> None:
+def test_a_row_deleted_from_a_table_is_missing(store: Store) -> None:
     memory = _memory("alpha")
     store.put_memory(memory)
     outside = _outside(store)
@@ -370,8 +392,8 @@ def test_a_row_deleted_from_a_table_is_missing(store: SqliteStore) -> None:
     assert report["fold"]["tables"]["memories"]["unaccounted"] == []
 
 
-def test_the_fold_covers_every_folded_table(store: SqliteStore) -> None:
-    from bettermemory.sqlite_store import FOLDED_TABLES
+def test_the_fold_covers_every_folded_table(store: Store) -> None:
+    from bettermemory.store import FOLDED_TABLES
 
     report = store.log_verify()
     assert set(report["fold"]["tables"]) == set(FOLDED_TABLES)
@@ -388,13 +410,13 @@ def test_opening_without_the_key_rekeys_and_splits_the_chain(
     tmp_path: Path, keys_dir: Path
 ) -> None:
     path = tmp_path / "memory.sqlite"
-    first = SqliteStore.create(path, keys_dir=keys_dir)
+    first = Store.create(path, keys_dir=keys_dir)
     first.put_memory(_memory("alpha"))
     old_fingerprint = first.key_fingerprint
     first.close()
     (keys_dir / f"{first.store_id}.key").unlink()
 
-    again = SqliteStore.open(path, keys_dir=keys_dir)
+    again = Store.open(path, keys_dir=keys_dir)
     try:
         assert again.key_fingerprint != old_fingerprint
         rows = again.log_rows()
@@ -421,7 +443,7 @@ def test_a_retired_key_that_is_present_verifies_its_segment(
     tmp_path: Path, keys_dir: Path
 ) -> None:
     path = tmp_path / "memory.sqlite"
-    first = SqliteStore.create(path, keys_dir=keys_dir)
+    first = Store.create(path, keys_dir=keys_dir)
     first.put_memory(_memory("alpha"))
     old_fingerprint = first.key_fingerprint
     first.close()
@@ -429,7 +451,7 @@ def test_a_retired_key_that_is_present_verifies_its_segment(
     old_key = key_path.read_bytes()
     key_path.unlink()
 
-    again = SqliteStore.open(path, keys_dir=keys_dir)
+    again = Store.open(path, keys_dir=keys_dir)
     try:
         assert again.log_verify()["status"] == "unverifiable"
         again.keyring.retired_path(old_fingerprint).write_bytes(old_key)
@@ -448,14 +470,14 @@ def test_a_foreign_key_under_the_store_name_is_retired_not_destroyed(
     so the segment it signed can still be verified once that key is
     identified; a fresh key takes over the chain."""
     path = tmp_path / "memory.sqlite"
-    first = SqliteStore.create(path, keys_dir=keys_dir)
+    first = Store.create(path, keys_dir=keys_dir)
     first.put_memory(_memory("alpha"))
     first.close()
     key_path = keys_dir / f"{first.store_id}.key"
     foreign = secrets.token_bytes(32)
     key_path.write_bytes(foreign)
 
-    again = SqliteStore.open(path, keys_dir=keys_dir)
+    again = Store.open(path, keys_dir=keys_dir)
     try:
         assert again.key_fingerprint != chain.fingerprint(foreign)
         retired = again.keyring.retired_path(chain.fingerprint(foreign))
@@ -465,7 +487,7 @@ def test_a_foreign_key_under_the_store_name_is_retired_not_destroyed(
         again.close()
 
 
-def test_a_missing_head_reads_unverifiable(store: SqliteStore) -> None:
+def test_a_missing_head_reads_unverifiable(store: Store) -> None:
     store.put_memory(_memory("alpha"))
     store.keyring.head_path().unlink()
     report = store.log_verify()
@@ -473,7 +495,7 @@ def test_a_missing_head_reads_unverifiable(store: SqliteStore) -> None:
     assert report["status"] == "unverifiable"
 
 
-def test_a_head_that_names_a_different_mac_is_tampering(store: SqliteStore) -> None:
+def test_a_head_that_names_a_different_mac_is_tampering(store: Store) -> None:
     store.put_memory(_memory("alpha"))
     head = store.keyring.read_head()
     assert head is not None
@@ -485,7 +507,7 @@ def test_a_head_that_names_a_different_mac_is_tampering(store: SqliteStore) -> N
     assert report["status"] == "tampered"
 
 
-def test_a_stale_head_is_a_warning_not_tampering(store: SqliteStore) -> None:
+def test_a_stale_head_is_a_warning_not_tampering(store: Store) -> None:
     store.put_memory(_memory("alpha"))
     head = store.keyring.read_head()
     assert head is not None
@@ -498,7 +520,7 @@ def test_a_stale_head_is_a_warning_not_tampering(store: SqliteStore) -> None:
     assert report["status"] == "ok"
 
 
-def test_a_forged_trailing_rekey_row_cannot_read_as_ok(store: SqliteStore) -> None:
+def test_a_forged_trailing_rekey_row_cannot_read_as_ok(store: Store) -> None:
     store.put_memory(_memory("alpha"))
     last = store.log_rows()[-1]
     outside = _outside(store)
@@ -532,7 +554,7 @@ def test_a_forged_trailing_rekey_row_cannot_read_as_ok(store: SqliteStore) -> No
 
 
 def test_telemetry_rows_redact_query_fields_before_the_mac(
-    store: SqliteStore,
+    store: Store,
 ) -> None:
     secret = "sk-ant-" + "a" * 40
     store.record_event(
@@ -556,7 +578,7 @@ def test_telemetry_rows_redact_query_fields_before_the_mac(
     assert store.log_verify()["status"] == "ok"
 
 
-def test_telemetry_rows_carry_the_actor_when_given(store: SqliteStore) -> None:
+def test_telemetry_rows_carry_the_actor_when_given(store: Store) -> None:
     store.record_event(
         "show", session="sess_a", id="x", actor={"client": "claude-code"}
     )
@@ -565,7 +587,7 @@ def test_telemetry_rows_carry_the_actor_when_given(store: SqliteStore) -> None:
 
 
 def test_a_telemetry_kind_cannot_impersonate_a_mutation_or_control_row(
-    store: SqliteStore,
+    store: Store,
 ) -> None:
     with pytest.raises(ValueError):
         store.record_event("memory_put", session="sess_a")
@@ -575,7 +597,7 @@ def test_a_telemetry_kind_cannot_impersonate_a_mutation_or_control_row(
         store.record_event(chain.STORE_CREATED, session="sess_a")
 
 
-def test_telemetry_rows_do_not_touch_the_fold(store: SqliteStore) -> None:
+def test_telemetry_rows_do_not_touch_the_fold(store: Store) -> None:
     memory = _memory("alpha")
     store.put_memory(memory)
     for _ in range(5):
@@ -591,7 +613,7 @@ def test_telemetry_rows_do_not_touch_the_fold(store: SqliteStore) -> None:
 
 
 def test_a_failed_append_rolls_the_table_change_back(
-    store: SqliteStore, monkeypatch: pytest.MonkeyPatch
+    store: Store, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     memory = _memory("alpha")
     before = store.log_rows()
@@ -599,7 +621,7 @@ def test_a_failed_append_rolls_the_table_change_back(
     def boom(*args: object, **kwargs: object) -> None:
         raise RuntimeError("no append")
 
-    monkeypatch.setattr("bettermemory.sqlite_store.append_row", boom)
+    monkeypatch.setattr("bettermemory.store.append_row", boom)
     with pytest.raises(RuntimeError):
         store.put_memory(memory)
     assert not store.has_memory(memory.id)
@@ -607,7 +629,7 @@ def test_a_failed_append_rolls_the_table_change_back(
     assert store.log_verify()["status"] == "ok"
 
 
-def test_rows_are_seq_contiguous_from_one(store: SqliteStore) -> None:
+def test_rows_are_seq_contiguous_from_one(store: Store) -> None:
     for i in range(4):
         store.put_memory(_memory(f"m{i}"))
     store.record_event("search", session="sess_a", query="m")
@@ -618,7 +640,7 @@ def test_rows_are_seq_contiguous_from_one(store: SqliteStore) -> None:
     assert store.log_rows(since_seq=3)[0].seq == 4
 
 
-def test_rows_stamp_a_utc_zulu_timestamp(store: SqliteStore) -> None:
+def test_rows_stamp_a_utc_zulu_timestamp(store: Store) -> None:
     store.put_memory(_memory("alpha"))
     for row in store.log_rows():
         assert row.ts.endswith("Z")

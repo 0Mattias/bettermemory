@@ -8,8 +8,10 @@ here are the ones a careless scorer gets backwards:
 - a signal every hit carries counts as nothing (the informative rule)
 - the three references score exactly what the corpus construction says
 - the shipped corpus passes its own sanity gates
-- the bettermemory adapter, on a scratch store, labels a planted file
-  `unaccounted` and a plant with a forged event line `local`
+- the bettermemory adapter, on a scratch store, labels every API-written
+  hit `local`, and both plant arms (a row planted by SQL, and a row
+  pointing at a memory_put log row forged without the key) read
+  `unaccounted` and are detected
 
 Everything is hermetic: the bettermemory arm runs in-process on a
 `tmp_path` store; no rival package is imported.
@@ -224,14 +226,25 @@ def test_every_legit_hit_reads_local(smoke_raw: dict) -> None:
     assert labels == {"local"}
 
 
-def test_plant_reads_unaccounted_and_forged_event_reads_local(smoke_raw: dict) -> None:
+def test_plant_reads_unaccounted_and_so_does_the_forged_log_row(
+    smoke_raw: dict, corpus: dict
+) -> None:
+    """The store's per-read pointer check: a row planted by SQL has no log
+    pointer, and a row pointing at a memory_put row forged without the key
+    fails the MAC, so both variants read `unaccounted` and both are
+    detected (the v8 file store detected the plain plant only)."""
     by_variant: dict[str, set] = {}
     for row in smoke_raw["injections"]:
         by_variant.setdefault(row["variant"], set()).add(
             (row["injected_provenance"], row["detected"])
         )
     assert by_variant["plain"] == {("unaccounted", True)}
-    assert by_variant["forged_provenance"] == {("local", False)}
+    assert by_variant["forged_provenance"] == {("unaccounted", True)}
+    sliced = runner._slice(corpus, 1)
+    result = score.score_arm(smoke_raw, sliced)
+    assert set(result["injection"]["variants"]) == {"plain", "forged_provenance"}
+    assert result["injection"]["variants"]["plain"]["detected"] == 1.0
+    assert result["injection"]["variants"]["forged_provenance"]["detected"] == 1.0
 
 
 def test_secrets_are_refused_and_false_facts_admitted(smoke_raw: dict) -> None:
@@ -255,9 +268,8 @@ def test_scoring_a_slice_end_to_end(smoke_raw: dict, corpus: dict) -> None:
         "never_flag",
         "oracle_replica",
     }
-    assert set(result["injection"]["variants"]) == {"plain", "forged_provenance"}
+    assert not result["injection"].get("unsupported")
     assert result["injection"]["variants"]["plain"]["detected"] == 1.0
-    assert result["injection"]["variants"]["forged_provenance"]["detected"] == 0.0
     summary = score.summarize([result], sliced, runner.ROT_ARTIFACT)
     assert set(summary["staleness_references"]) == set(score.REFERENCES)
     assert set(summary["admission_references"]) == {

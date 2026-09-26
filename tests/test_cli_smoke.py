@@ -25,18 +25,17 @@ import json
 import subprocess
 import sys
 import tempfile
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 import yaml
 
 from bettermemory.config import Config, load_config
-from bettermemory.events import iter_events
+from bettermemory.models import utcnow
 from bettermemory.origin import Origin
-from bettermemory.proposals import Proposal, ProposalQueue
-from bettermemory.provenance import creation_id
 from bettermemory.server import main as cli_main
-from bettermemory.store import Store
+from bettermemory.store import STORE_FILENAME, Store
 
 from .conftest import shielded_child_env
 
@@ -72,12 +71,10 @@ def test_help_lists_all_subcommands(
     out = capsys.readouterr().out
     for sub in (
         "health",
-        "doctor",
         "init",
         "migrate",
         "export",
         "tombstones",
-        "proposals",
         "rename-scope",
     ):
         assert sub in out, f"subcommand {sub!r} missing from --help output"
@@ -105,11 +102,10 @@ def test_version_flag_exits_zero_and_prints_program_name(
 
 
 # ---------------------------------------------------------------------------
-# Curation subcommands that mutate the store: `tombstones restore`,
-# `rename-scope`, `proposals` (list/accept/dismiss). These are the CLI
-# escape hatches for the six tools gated out of the lean default surface —
-# the README/CHANGELOG "every gated tool stays reachable via the CLI"
-# contract. Seed via a Store resolved the SAME way the CLI resolves it.
+# Curation subcommands that mutate the store: `tombstones restore` and
+# `rename-scope`. These are the CLI escape hatches for the tools gated
+# out of the lean default surface. Seed via a Store resolved the SAME way
+# the CLI resolves it.
 # ---------------------------------------------------------------------------
 
 
@@ -147,10 +143,11 @@ def test_tombstones_restore_brings_back_a_removed_memory(
     """`tombstones restore <id>` un-tombstones a memory — the CLI path for
     memory_restore, which isn't registered on the lean default surface.
     It records the same creation-side `restore` event the MCP tool does,
-    the shape the provenance join reads as a local re-admission."""
+    and the restored row reads as a local re-admission to the store's
+    provenance check."""
     store = _seeded_store(tmp_path, monkeypatch)
     memory = store.write(content="restore me", scopes=["tools"])
-    store.tombstone(memory.id, reason="oops", session_id="sess_t")
+    store.tombstone(memory.id, reason="oops", session="sess_t")
     assert memory.id not in {m.id for m in store.load_all()}
     _default_config(monkeypatch)
 
@@ -161,11 +158,11 @@ def test_tombstones_restore_brings_back_a_removed_memory(
     assert "Restored" in out
     assert memory.id in out
     assert memory.id in {m.id for m in store.load_all()}
-    restores = [e for e in iter_events(store.root) if e.get("kind") == "restore"]
+    restores = [e for e in store.iter_events() if e.get("kind") == "restore"]
     assert [(e["id"], e["scopes"], e["attribution"]) for e in restores] == [
         (memory.id, ["tools"], "cli_tombstones_restore")
     ]
-    assert creation_id(restores[0]) == memory.id
+    assert store.provenance_for([memory.id]) == {memory.id: "local"}
 
 
 def test_tombstones_restore_unknown_id_errors_cleanly(
@@ -204,7 +201,7 @@ def test_rename_scope_renames_across_memories(
     reloaded = {m.id: m for m in store.load_all()}
     assert "infrastructure" in reloaded[memory.id].scopes
     assert "infra" not in reloaded[memory.id].scopes
-    renames = [e for e in iter_events(store.root) if e.get("kind") == "rename_scope"]
+    renames = [e for e in store.iter_events() if e.get("kind") == "rename_scope"]
     assert [
         (
             e["old"],
@@ -225,133 +222,6 @@ def test_rename_scope_rejects_identical_old_and_new(
     with pytest.raises(SystemExit) as exc:
         _run_main(
             ["rename-scope", "tools", "tools"],
-            monkeypatch=monkeypatch,
-            storage=tmp_path,
-        )
-    assert exc.value.code == 2
-
-
-def test_proposals_list_then_dismiss(
-    capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """`proposals list` shows the queue; `proposals dismiss <id>` drops one
-    without writing it — the CLI path for memory_proposals."""
-    store = _seeded_store(tmp_path, monkeypatch)
-    ProposalQueue(store.root).append(
-        [
-            Proposal(
-                id=_FAKE_ULID,
-                body="I prefer terse code-driven answers",
-                source_excerpt="I prefer terse code-driven answers",
-                suggested_category="user-inference",
-                created="2026-01-01T00:00:00+00:00",
-            )
-        ]
-    )
-
-    _run_main(["proposals", "list"], monkeypatch=monkeypatch, storage=tmp_path)
-    out = capsys.readouterr().out
-    assert "Proposals (1)" in out
-    assert _FAKE_ULID in out
-
-    _run_main(
-        ["proposals", "dismiss", _FAKE_ULID], monkeypatch=monkeypatch, storage=tmp_path
-    )
-    assert "Dismissed" in capsys.readouterr().out
-    assert ProposalQueue(store.root).load() == []
-
-
-def test_proposals_accept_writes_memory_and_clears_queue(
-    capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """`proposals accept <id> --scope X` writes the proposal as a real memory
-    and removes it from the queue — sharing the handler's accept core."""
-    store = _seeded_store(tmp_path, monkeypatch)
-    ProposalQueue(store.root).append(
-        [
-            Proposal(
-                id=_FAKE_ULID,
-                body="We deploy to fly.io for production",
-                source_excerpt="We deploy to fly.io for production",
-                suggested_category="fact",
-                created="2026-01-01T00:00:00+00:00",
-            )
-        ]
-    )
-
-    _run_main(
-        ["proposals", "accept", _FAKE_ULID, "--scope", "infrastructure"],
-        monkeypatch=monkeypatch,
-        storage=tmp_path,
-    )
-    assert "Accepted" in capsys.readouterr().out
-    assert ProposalQueue(store.root).load() == []
-    actives = store.load_all()
-    assert any("fly.io" in m.body and "infrastructure" in m.scopes for m in actives)
-
-
-def test_proposals_accept_requires_scope(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """Accept without --scope is rejected (exit 2) and leaves the proposal
-    queued so the caller can retry with a scope."""
-    store = _seeded_store(tmp_path, monkeypatch)
-    ProposalQueue(store.root).append(
-        [
-            Proposal(
-                id=_FAKE_ULID,
-                body="We deploy to fly.io for production",
-                source_excerpt="We deploy to fly.io for production",
-                suggested_category="fact",
-                created="2026-01-01T00:00:00+00:00",
-            )
-        ]
-    )
-
-    with pytest.raises(SystemExit) as exc:
-        _run_main(
-            ["proposals", "accept", _FAKE_ULID],
-            monkeypatch=monkeypatch,
-            storage=tmp_path,
-        )
-    assert exc.value.code == 2
-    assert len(ProposalQueue(store.root).load()) == 1
-
-
-def test_proposals_accept_disk_error_exits_cleanly(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """A disk-level failure in the durable write surfaces as a clean
-    `parser.error` (exit 2), not a path-leaking traceback — matching the
-    sibling `tombstones restore` / `rename-scope` commands rather than
-    regressing below them."""
-    store = _seeded_store(tmp_path, monkeypatch)
-    ProposalQueue(store.root).append(
-        [
-            Proposal(
-                id=_FAKE_ULID,
-                body="We deploy to fly.io for production",
-                source_excerpt="We deploy to fly.io for production",
-                suggested_category="fact",
-                created="2026-01-01T00:00:00+00:00",
-            )
-        ]
-    )
-
-    def _boom(*_args: object, **_kwargs: object) -> None:
-        raise OSError("ENOSPC: no space left on device")
-
-    monkeypatch.setattr("bettermemory.store.Store.write", _boom)
-
-    with pytest.raises(SystemExit) as exc:
-        _run_main(
-            ["proposals", "accept", _FAKE_ULID, "--scope", "infrastructure"],
             monkeypatch=monkeypatch,
             storage=tmp_path,
         )
@@ -403,7 +273,7 @@ def _seed_weakly_endorsed_memory(store: Store) -> str:
     from bettermemory.events import Recorder
 
     memory = store.write(content="deploy with uv, never pip", scopes=["tools"])
-    rec = Recorder(root=store.root, session_id="sess-cold-endorse")
+    rec = Recorder(store=store, session_id="sess-cold-endorse")
     for _ in range(30):
         rec.record("search", returned=[memory.id], relevance=["high"])
     rec.record("use", ids=[memory.id], outcome="applied", auto=False)
@@ -447,7 +317,7 @@ def test_health_honours_configured_cold_endorsement_ratio_threshold(
     from the MCP tool whenever the knob was set.
 
     Both renderers are pinned because both are user-facing surfaces
-    fed by the single `report_for_directory` call.
+    fed by the single `report_for_store` call.
     """
     storage = tmp_path / "store"
     storage.mkdir()
@@ -486,25 +356,6 @@ def test_health_default_ratio_threshold_keeps_strict_bucket(
     assert payload["cold_endorsement_memories"]["total"] == 0
 
 
-def test_doctor_subcommand_runs_against_empty_store(
-    capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """`bettermemory doctor` should run end-to-end against a brand-new
-    storage dir — the storage_directory check creates it on demand and
-    the rest of the checks pass on an empty store. Doctor exits 0/1/2
-    for ok/warn/fail; we accept 0 or 1 (a warning about absent extras is
-    expected on a default install)."""
-    with pytest.raises(SystemExit) as exc:
-        _run_main(["doctor"], monkeypatch=monkeypatch, storage=tmp_path)
-    assert exc.value.code in (0, 1)
-    out = capsys.readouterr().out
-    assert "bettermemory doctor" in out
-    assert "python_version" in out
-    assert "storage_directory" in out
-
-
 def test_try_subcommand_reproduces_path_drift_offline(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
@@ -520,8 +371,9 @@ def test_try_subcommand_reproduces_path_drift_offline(
     out = capsys.readouterr().out
     assert "spot_check_recommended" in out
     assert "path_drift.missing" in out
-    # The demo store is isolated — the BETTERMEMORY_DIR storage stays empty.
-    assert not list(tmp_path.glob("*.md"))
+    # The demo store is isolated: no store file appears under
+    # BETTERMEMORY_DIR.
+    assert not (tmp_path / STORE_FILENAME).exists()
 
     # Narrated paths are rendered RELATIVE to the throwaway root. This is the
     # readability half of the demo: a raw
@@ -552,23 +404,6 @@ def test_try_json_emits_the_raw_hit(
     assert row["staleness_verdict"] == "spot_check_recommended"
     assert row["verification"]["status"] == "fresh"
     assert row["path_drift"]["missing"]
-
-
-def test_doctor_json_emits_structured_checks(
-    capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    with pytest.raises(SystemExit):
-        _run_main(["doctor", "--json"], monkeypatch=monkeypatch, storage=tmp_path)
-    payload = json.loads(capsys.readouterr().out)
-    assert "checks" in payload
-    assert isinstance(payload["checks"], list)
-    assert len(payload["checks"]) > 0
-    # Every check has a name and status — pin the schema for tooling.
-    for check in payload["checks"]:
-        assert "name" in check
-        assert "status" in check
 
 
 def test_init_show_and_tell_prints_snippet(
@@ -729,43 +564,6 @@ def _flat_help(
     return " ".join(capsys.readouterr().out.split())
 
 
-def test_doctor_help_describes_the_check_suite(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """`bettermemory doctor --help` must carry doctor's category summary
-    (install wiring / store integrity / sync-repo leak surfaces) — not
-    just usage + options. Doctor is the surface users probe first when
-    chasing the sync-secret leak, so the summary the top-level listing
-    shows has to be visible here too."""
-    out = _flat_help(
-        ["doctor"], monkeypatch=monkeypatch, capsys=capsys, storage=tmp_path
-    )
-    assert "Diagnose install state." in out
-    assert "install wiring" in out
-    assert "store integrity" in out
-    assert "sync-repo leak surfaces" in out
-
-
-def test_sync_help_describes_the_command_repo_wide_pattern(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """The description= fix is repo-wide, not doctor-special: `sync
-    --help` states what sync does, and the NESTED `sync init --help`
-    states what init does (nested registrations share the same
-    help=/description= convention)."""
-    out = _flat_help(["sync"], monkeypatch=monkeypatch, capsys=capsys, storage=tmp_path)
-    assert "Sync the memory directory across hosts via git." in out
-
-    out = _flat_help(
-        ["sync", "init"], monkeypatch=monkeypatch, capsys=capsys, storage=tmp_path
-    )
-    assert "Initialise the memory dir as a git repo." in out
-
-
 # ---------------------------------------------------------------------------
 # In-process coverage for CLI dispatch branches that the subprocess tests
 # previously protected but didn't reach when the local checkout has no
@@ -773,97 +571,6 @@ def test_sync_help_describes_the_command_repo_wide_pattern(
 # live in `server.py` and were 41% covered before — these tests close the
 # gap on the dispatch arms that don't need real network / git state.
 # ---------------------------------------------------------------------------
-
-
-def test_consolidate_subcommand_runs_dry(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """`bettermemory consolidate` (no --apply) prints a report for an
-    empty store. Dry-run is the safe default; we pin it here so a
-    refactor that flips the default can't slip in silently."""
-    _run_main(["consolidate"], monkeypatch=monkeypatch, storage=tmp_path)
-    out = capsys.readouterr().out
-    assert "Consolidate report" in out
-    assert "dry-run" in out
-
-
-def test_consolidate_json_subcommand_emits_payload(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """The `--json` flag emits parseable JSON with the expected top-
-    level keys. Matches the surface the subprocess test pins but runs
-    in-process so it counts toward server.py coverage."""
-    _run_main(["consolidate", "--json"], monkeypatch=monkeypatch, storage=tmp_path)
-    payload = json.loads(capsys.readouterr().out)
-    for key in (
-        "applied",
-        "dedup_method",
-        "dedup_candidates",
-        "demotion_candidates",
-        "cold_scope_suggestions",
-        "scope_typo_pairs",
-        "actions_taken",
-        "failures",
-    ):
-        assert key in payload, f"key {key!r} missing from consolidate JSON"
-
-
-def test_consolidate_apply_records_its_rewrites(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """`consolidate --apply` records through the CLI recorder: the keeper
-    whose scopes the dedup merged is named in a `consolidate_update`
-    event in the store's own log."""
-    store = _seeded_store(tmp_path, monkeypatch)
-    store.write(
-        content="Run pnpm install then pnpm dev; node 20 required.",
-        scopes=["projects:alpha"],
-    )
-    newer = store.write(
-        content="Run pnpm install then pnpm dev; node 20 required.",
-        scopes=["projects:beta"],
-    )
-    newer = store.update(newer)
-    _default_config(monkeypatch)
-
-    _run_main(["consolidate", "--apply"], monkeypatch=monkeypatch, storage=tmp_path)
-    assert "Consolidate report" in capsys.readouterr().out
-    updates = [
-        e for e in iter_events(store.root) if e.get("kind") == "consolidate_update"
-    ]
-    assert [(e["id"], e["action"], e["attribution"]) for e in updates] == [
-        (newer.id, "dedup_scope_merge", "cli_consolidate")
-    ]
-
-
-def test_migrate_origin_records_the_backfilled_ids(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """`migrate origin --repo` rewrites records outside every Store
-    mutator, so the one `migrate` event it records is the only audit
-    trail of the rewrite; it names every id."""
-    store = _seeded_store(tmp_path, monkeypatch)
-    legacy = store.write(content="written before origins existed", scopes=["tools"])
-    _default_config(monkeypatch)
-
-    _run_main(
-        ["migrate", "origin", "--repo", "https://example.invalid/legacy.git"],
-        monkeypatch=monkeypatch,
-        storage=tmp_path,
-    )
-    assert "Results:" in capsys.readouterr().out
-    migrations = [e for e in iter_events(store.root) if e.get("kind") == "migrate"]
-    assert [
-        (e["action"], e["ids"], e["updated"], e["attribution"]) for e in migrations
-    ] == [("origin", [legacy.id], 1, "cli_migrate_origin")]
 
 
 def test_every_cli_recorder_attribution_carries_the_admin_prefix() -> None:
@@ -908,14 +615,7 @@ def test_every_cli_recorder_attribution_carries_the_admin_prefix() -> None:
         if not value.startswith(ADMIN_RECORDED_ATTRIBUTION_PREFIX)
     ]
     assert not bad, f"CLI attributions without the admin prefix: {bad}"
-    assert {name for name, _ in found} >= {
-        "consolidate.py",
-        "ingest.py",
-        "migrate.py",
-        "rename_scope.py",
-        "sync.py",
-        "tombstones.py",
-    }
+    assert {name for name, _ in found} >= {"rename_scope.py", "tombstones.py"}
 
 
 def test_tombstones_list_subcommand_runs_on_empty_store(
@@ -979,7 +679,7 @@ def test_episodes_list_subcommand_runs_on_empty_store(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """`episodes list` on an empty store reports zero entries
-    cleanly. CLI is a thin wrapper over `EpisodeStore.list_by_session`."""
+    cleanly. CLI is a thin wrapper over `Store.episodes_by_session`."""
     _run_main(["episodes", "list"], monkeypatch=monkeypatch, storage=tmp_path)
     out = capsys.readouterr().out
     assert "no episodes" in out.lower()
@@ -1017,23 +717,20 @@ def test_episodes_prune_dry_run_on_empty_store(
     assert "ttl_days" in payload
 
 
-def _seed_backdated_episode(storage: Path, *, days_old: int = 40) -> Path:
-    """Write one episode under `storage` and backdate its file mtime past
-    a 30-day TTL so a normal prune would consider it stale. Returns the
-    session_dir path so callers can assert it survives / is removed."""
-    import os as _os
-    import time as _time
-
-    from bettermemory.episodes import EpisodeStore
-
-    store = EpisodeStore(storage)
-    store.write(session_id="sess_smoke01", body="ancient takeaway")
-    session_dir = store.episodes_dir / "sess_smoke01"
-    past = _time.time() - (days_old * 24 * 60 * 60)
-    for f in session_dir.iterdir():
-        if f.is_file():
-            _os.utime(f, (past, past))
-    return session_dir
+def _seed_backdated_episode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, days_old: int = 40
+) -> Store:
+    """Write one episode into the store the CLI will resolve, dated
+    `days_old` days ago so a normal 30-day prune would consider its
+    session stale. Returns the store so callers can assert the session
+    survives or is removed."""
+    store = _seeded_store(tmp_path, monkeypatch)
+    store.write_episode(
+        session_id="sess_smoke01",
+        body="ancient takeaway",
+        now=utcnow() - timedelta(days=days_old),
+    )
+    return store
 
 
 def test_episodes_prune_dry_run_ttl_zero_matches_real_prune(
@@ -1041,14 +738,14 @@ def test_episodes_prune_dry_run_ttl_zero_matches_real_prune(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Regression: `EpisodeStore.prune_old_sessions` early-returns [] for
+    """Regression: `Store.prunable_episode_sessions` early-returns [] for
     ttl_days <= 0 (a non-positive TTL is a no-op). The CLI dry-run must
     use the SAME predicate — otherwise it lists every session as "would
     delete" while a real prune deletes nothing, i.e. the dry-run lies.
     Even with a 40-day-old session present, ttl_days=0 dry-run must report
     an empty would_delete set, and a real ttl=0 prune must delete nothing."""
-    session_dir = _seed_backdated_episode(tmp_path, days_old=40)
-    assert session_dir.exists()
+    store = _seed_backdated_episode(tmp_path, monkeypatch, days_old=40)
+    assert store.episodes_by_session("sess_smoke01")
 
     _run_main(
         ["episodes", "prune", "--dry-run", "--ttl-days", "0", "--json"],
@@ -1058,7 +755,7 @@ def test_episodes_prune_dry_run_ttl_zero_matches_real_prune(
     dry_payload = json.loads(capsys.readouterr().out)
     assert dry_payload["would_delete"] == []
     assert dry_payload["ttl_days"] == 0
-    assert session_dir.exists()
+    assert store.episodes_by_session("sess_smoke01")
 
     _run_main(
         ["episodes", "prune", "--ttl-days", "0", "--json"],
@@ -1067,7 +764,7 @@ def test_episodes_prune_dry_run_ttl_zero_matches_real_prune(
     )
     real_payload = json.loads(capsys.readouterr().out)
     assert real_payload["deleted"] == []
-    assert session_dir.exists()
+    assert store.episodes_by_session("sess_smoke01")
 
 
 def test_episodes_prune_dry_run_ttl_zero_text_mode(
@@ -1077,8 +774,8 @@ def test_episodes_prune_dry_run_ttl_zero_text_mode(
 ) -> None:
     """Same ttl<=0 guard, text mode: must print the "No episode sessions
     older than 0 days." line rather than a "Would delete …" list."""
-    session_dir = _seed_backdated_episode(tmp_path, days_old=40)
-    assert session_dir.exists()
+    store = _seed_backdated_episode(tmp_path, monkeypatch, days_old=40)
+    assert store.episodes_by_session("sess_smoke01")
 
     _run_main(
         ["episodes", "prune", "--dry-run", "--ttl-days", "0"],
@@ -1088,7 +785,7 @@ def test_episodes_prune_dry_run_ttl_zero_text_mode(
     out = capsys.readouterr().out
     assert "No episode sessions older than 0 days." in out
     assert "Would delete" not in out
-    assert session_dir.exists()
+    assert store.episodes_by_session("sess_smoke01")
 
 
 def test_export_subcommand_emits_json(
@@ -1118,41 +815,6 @@ def test_export_subcommand_emits_json(
     assert "archive me" in bodies, (
         f"export payload missing the written body; got keys: {sorted(payload.keys())}"
     )
-
-
-def test_reindex_subcommand_builds_index(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """`reindex` drops and rebuilds the FTS5 index. Run against a
-    one-memory store and assert the index file exists with a positive
-    indexed_count after the call."""
-    from bettermemory import index as _index
-    from bettermemory.store import Store
-
-    Store(tmp_path).write(content="reindex me", scopes=["tools"])
-    _run_main(["reindex"], monkeypatch=monkeypatch, storage=tmp_path)
-    out = capsys.readouterr().out
-    assert "reindex" in out.lower() or "indexed" in out.lower()
-    status = _index.status(tmp_path)
-    assert status["exists"], "index file missing after reindex"
-    assert status["indexed_count"] >= 1
-
-
-def test_migrate_origin_subcommand_runs(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """`migrate origin` is a no-op on a store with no pre-1.x memories.
-    Run it against an empty store to exercise the dispatch arm; the
-    test asserts a coherent report rather than a crash."""
-    _run_main(["migrate", "origin"], monkeypatch=monkeypatch, storage=tmp_path)
-    out = capsys.readouterr().out
-    # The output may contain "0 memories" or "no migrations needed" or
-    # similar — we only check that the command ran without raising.
-    assert out.strip() or True  # tolerate empty output
 
 
 # ---------------------------------------------------------------------------
@@ -1316,56 +978,6 @@ def test_subparser_registry_matches_main_dispatch() -> None:
     )
 
 
-def test_migrate_origin_repair_requires_scope_repo(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """`--repair` with no map has nothing to check an existing origin
-    against — fail loudly rather than silently scanning and doing
-    nothing."""
-    with pytest.raises(SystemExit):
-        _run_main(
-            ["migrate", "origin", "--repair"], monkeypatch=monkeypatch, storage=tmp_path
-        )
-
-
-def test_migrate_origin_keep_global_requires_repair(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """`--keep-global` only guards the repair anchor rule; accepting it
-    without `--repair` would imply a protection that never runs."""
-    with pytest.raises(SystemExit):
-        _run_main(
-            ["migrate", "origin", "--keep-global", "tools"],
-            monkeypatch=monkeypatch,
-            storage=tmp_path,
-        )
-
-
-def test_migrate_origin_repair_reports_breakdown(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """Repair mode prints the anchor/demote split, so a dry run is
-    reviewable before it is applied."""
-    _run_main(
-        [
-            "migrate",
-            "origin",
-            "--repair",
-            "--dry-run",
-            "--scope-repo",
-            "projects:alpha=https://github.com/me/alpha.git",
-        ],
-        monkeypatch=monkeypatch,
-        storage=tmp_path,
-    )
-    out = capsys.readouterr().out
-    assert "Repair: ON" in out
-    assert "Would anchor" in out
-    assert "Would demote" in out
-
-
 # ---------------------------------------------------------------------------
 # `bettermemory session-start` — the SessionStart-hook context block.
 #
@@ -1391,18 +1003,14 @@ def test_migrate_origin_repair_reports_breakdown(
 # ---------------------------------------------------------------------------
 
 
-def _event_log_snapshot(root: Path) -> dict[str, bytes]:
-    """Every event-log file under `root`, by name, with contents.
+def _log_snapshot(store: Store) -> list[object]:
+    """Every row of the store's hash-chained log, in order.
 
-    Byte-level rather than "parse and count rows": the assertion is that
-    the command is inert on this store, and a rewritten-but-equivalent
-    log would be a behaviour change worth failing on.
+    Row-level rather than "parse the events and count them": the
+    assertion is that the command is inert on this store, and every
+    write, an event and a mutation alike, appends a row here.
     """
-    return {
-        p.name: p.read_bytes()
-        for p in sorted(root.iterdir())
-        if p.name.startswith(".events")
-    }
+    return list(store.log_rows())
 
 
 def _run_session_start(
@@ -1426,10 +1034,10 @@ def test_session_start_records_nothing(
     """THE regression guard for the negative mandate.
 
     A store with a pre-existing event log must come out of a
-    `session-start` run byte-identical — no appended row, no new shard,
-    no new archive. That is the assertion that catches a would-be author
-    who reaches for the "just stamp it `cli_*` like consolidate does"
-    workaround: it fixes doctor's census and does NOT fix anchor hijack,
+    `session-start` run row-identical: no appended event, no mutation.
+    That is the assertion that catches a would-be author
+    who reaches for the "just stamp it `cli_*` like the admin commands do"
+    workaround: it fixes the census and does NOT fix anchor hijack,
     because `hook.py`'s walk reads `triggered_from` and never
     `attribution`.
 
@@ -1447,17 +1055,17 @@ def test_session_start_records_nothing(
     store.write(content="alpha one", scopes=["tools"])
     # A real recorder, so the baseline log is production-shaped rather
     # than a hand-rolled literal.
-    Recorder(root=store.root, session_id="a-prior-session").record(
+    Recorder(store=store, session_id="a-prior-session").record(
         "search", query="anything", returned=[]
     )
-    before = _event_log_snapshot(store.root)
+    before = _log_snapshot(store)
     assert before, "fixture must leave an event log to compare against"
 
     _run_session_start(monkeypatch, tmp_path)
 
     # It did its job (otherwise "records nothing" is trivially true).
     assert capsys.readouterr().out.strip()
-    assert _event_log_snapshot(store.root) == before, (
+    assert _log_snapshot(store) == before, (
         "session-start wrote to the event log — see the negative mandate "
         "at the top of cli/session_start_cmd.py"
     )
@@ -1478,7 +1086,7 @@ def test_session_start_records_nothing(
         f"the block went missing once Recorder construction became fatal, "
         f"which means something constructed one: {captured.err!r}"
     )
-    assert _event_log_snapshot(store.root) == before
+    assert _log_snapshot(store) == before
 
 
 def test_session_start_source_never_reaches_for_the_recorder(tmp_path: Path) -> None:
@@ -1487,7 +1095,7 @@ def test_session_start_source_never_reaches_for_the_recorder(tmp_path: Path) -> 
     The runtime guard above only fires on the code path a given fixture
     happens to take. This one reads the module's own source: no `Recorder`
     name, no `.record(...)` call, anywhere in it — including the branches
-    a test store never reaches (a corrupt index, an OSError degrade).
+    a test store never reaches (an unreadable store, an OSError degrade).
     """
     import ast
     import inspect
@@ -1516,12 +1124,11 @@ def test_session_start_on_an_empty_store_prints_nothing(
     """An empty store has nothing to say, and saying "0 memories" into
     every session's opening context would be pure overhead.
 
-    Stderr must be clean too, and that half is the load-bearing one: an
-    empty store has no index file, so a run that reached the index-trust
-    gate would ALSO print nothing on stdout — passing this test while
-    having lost the cheap `count_active_memory_files == 0` bail. A silent
-    stderr is what proves the emptiness gate fired first, and that a
-    brand-new install is not being told its index is broken."""
+    Stderr must be clean too, and that half is the load-bearing one: a
+    run that reached a degrade arm would ALSO print nothing on stdout,
+    so a silent stderr is what proves the cheap `count_memories() == 0`
+    bail fired first, and that a brand-new install is not being told
+    its store is broken."""
     _seeded_store(tmp_path, monkeypatch)
 
     _run_session_start(monkeypatch, tmp_path)
@@ -1573,11 +1180,10 @@ def _load_all_spy(monkeypatch: pytest.MonkeyPatch) -> list[object]:
     — the guard would look green while the expensive path ran. Counting
     is immune to that.
 
-    The whole point of the index path is that the hook never pays the
-    per-file open + YAML parse. A degrade arm that quietly fell back to
-    `load_all` would still print correct counts, and would still be a
-    regression, because it would pay that bill on the session-open
-    critical path.
+    The whole point of the columnar read is that the hook never decodes
+    a body. A degrade arm that quietly fell back to `load_all` would
+    still print correct counts, and would still be a regression, because
+    it would pay that bill on the session-open critical path.
     """
     calls: list[object] = []
     real = Store.load_all
@@ -1590,299 +1196,27 @@ def _load_all_spy(monkeypatch: pytest.MonkeyPatch) -> list[object]:
     return calls
 
 
-def test_session_start_stays_silent_when_the_index_is_corrupt(
+def test_session_start_stays_silent_when_the_store_is_unreadable(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """An unreadable index degrades to empty stdout and exit 0 — never a
+    """An unreadable store degrades to empty stdout and exit 0, never a
     traceback, never a `load_all` fallback."""
-    from bettermemory import index
-
     store = _seeded_store(tmp_path, monkeypatch)
     store.write(content="alpha one", scopes=["tools"])
-    index.index_path(store.root).write_bytes(b"not a sqlite database" * 40)
+    store.close()
+    store.path.write_bytes(b"not a sqlite database" * 40)
     load_all_calls = _load_all_spy(monkeypatch)
 
     _run_session_start(monkeypatch, tmp_path)
 
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert "index unusable" in captured.err
+    assert "session-start skipped:" in captured.err
     assert load_all_calls == [], (
-        "the corrupt-index arm fell back to Store.load_all instead of "
+        "the unreadable-store arm fell back to Store.load_all instead of "
         "degrading to silence"
-    )
-
-
-def test_session_start_stays_silent_when_the_index_count_disagrees_with_disk(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """This surface publishes a COUNT, so "close enough" isn't available:
-    a number `memory_search` then contradicts is worse than no number.
-
-    The extra `.md` dropped in by hand is the shape a bulk migration or a
-    hand-copied file produces — on disk, never indexed."""
-    store = _seeded_store(tmp_path, monkeypatch)
-    store.write(content="alpha one", scopes=["tools"])
-    (store.root / "hand-copied.md").write_text(
-        "---\nid: 01JHANDCOPIEDHANDCOPIEDXX\n---\nbody\n", encoding="utf-8"
-    )
-    load_all_calls = _load_all_spy(monkeypatch)
-
-    _run_session_start(monkeypatch, tmp_path)
-
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert "skipping the hint" in captured.err
-    assert load_all_calls == [], (
-        "the count-mismatch arm fell back to Store.load_all instead of "
-        "degrading to silence"
-    )
-
-
-# ---------------------------------------------------------------------------
-# The filename-SET gate. Equal counts are a weaker claim than the surface
-# needs: the store's one-file-per-memory design invites removing one memory
-# and adding another out of band, and both sides still read N while the
-# index describes a store that is gone. These four pin the gate that closes
-# that blind spot — the decline, the two DIFFERENT declines it can issue,
-# and the publish, because a gate that declined everything would satisfy
-# every negative assertion here on its own.
-# ---------------------------------------------------------------------------
-
-
-def _blank_one_indexed_filename(root: Path) -> str:
-    """Empty the `filename` column of one index row; return its id.
-
-    The shape a pre-v2 row has: the column arrived in schema v2, so rows
-    written before it carry `''` and `filenames_for_ids` drops them. A
-    real store reaches this state by upgrading without reindexing, which
-    no fixture can produce forward in time — writing the column back to
-    its pre-v2 value is the same row a v1 index would hand back.
-    """
-    import sqlite3
-
-    from bettermemory import index
-
-    conn = sqlite3.connect(index.index_path(root))
-    try:
-        row = conn.execute("SELECT id FROM memories LIMIT 1").fetchone()
-        assert row is not None, "fixture wrote no index rows to blank"
-        conn.execute("UPDATE memories SET filename = '' WHERE id = ?", (row[0],))
-        conn.commit()
-    finally:
-        conn.close()
-    return str(row[0])
-
-
-def test_session_start_declines_when_the_index_names_other_files_than_disk(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """The equal-count identity swap — the case the count gate cannot see.
-
-    One memory removed and one added out of band (a `git mv`, a restore
-    from a backup, a hand-copied file) leaves both sides reading 2 while
-    the index's rows describe a file that is no longer there. Publishing
-    then means a scope table computed from the departed memory's scopes:
-    the model opens the session believing in a memory `memory_search`
-    will never return.
-
-    The swapped-in file is deliberately NOT indexed and the removed one
-    deliberately IS, because that is the only configuration where the
-    counts agree and the sets do not.
-    """
-    store = _seeded_store(tmp_path, monkeypatch)
-    store.write(content="alpha one", scopes=["tools"])
-    store.write(content="beta two", scopes=["tools"])
-    departed = sorted(store.root.glob("*.md"))[0]
-    departed.unlink()
-    (store.root / "arrived-out-of-band.md").write_text(
-        "---\nid: 01JARRIVEDOUTOFBANDXXXXXX\n---\nbody\n", encoding="utf-8"
-    )
-    load_all_calls = _load_all_spy(monkeypatch)
-
-    _run_session_start(monkeypatch, tmp_path)
-
-    captured = capsys.readouterr()
-    assert captured.out == "", (
-        f"a scope table built from a departed memory reached the model's "
-        f"opening context; got {captured.out!r}"
-    )
-    assert "name a different set of files" in captured.err, (
-        f"the counts agreed, so only the SET gate can have declined here; "
-        f"got {captured.err!r}"
-    )
-    assert load_all_calls == [], (
-        "the set-mismatch arm fell back to Store.load_all instead of "
-        "degrading to silence"
-    )
-
-
-def test_session_start_publishes_when_the_index_names_exactly_the_disk_files(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """The positive control, without which every decline above is cheap.
-
-    A gate wired to `return None` unconditionally passes all of them. So
-    this asserts both halves: the block IS published on a store whose
-    index names exactly the files on disk, and the comparison RAN to let
-    it through — the spy proves the set was actually computed and equal
-    to the directory listing, rather than the gate being skipped by an
-    earlier `return` or short-circuited into never being reached.
-    """
-    from bettermemory.cli import session_start_cmd
-    from bettermemory.store import active_memory_filenames
-
-    store = _seeded_store(tmp_path, monkeypatch)
-    store.write(content="alpha one", scopes=["tools"])
-    store.write(content="beta two", scopes=["tools", "learning-style"])
-
-    real = session_start_cmd._indexed_filenames
-    answers: list[set[str] | None] = []
-
-    def _spy(directory: Path) -> set[str] | None:
-        answers.append(real(directory))
-        return answers[-1]
-
-    monkeypatch.setattr(session_start_cmd, "_indexed_filenames", _spy)
-
-    _run_session_start(monkeypatch, tmp_path)
-
-    captured = capsys.readouterr()
-    assert answers == [active_memory_filenames(store.root)], (
-        f"the filename comparison did not run against the real listing; "
-        f"the gate saw {answers!r}"
-    )
-    lines = captured.out.splitlines()
-    assert lines[0] == "bettermemory: 2 memories are in scope for this repository."
-    assert lines[1] == "Top scopes: tools (2), learning-style (1)."
-
-
-def test_session_start_declines_without_claiming_a_comparison_it_could_not_run(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """An unresolvable row declines, and says only what it observed.
-
-    `_indexed_filenames` returns None when a row does not record which
-    file it came from, so NOTHING was compared — no set was built. The
-    decline is right; a message saying the index "names a different set
-    of files than the N on disk" would be this project's signature
-    defect pointed at its own user: an assertion whose evidence was
-    never gathered. The negative assertion is therefore the load-bearing
-    one here.
-    """
-    store = _seeded_store(tmp_path, monkeypatch)
-    store.write(content="alpha one", scopes=["tools"])
-    store.write(content="beta two", scopes=["tools"])
-    _blank_one_indexed_filename(store.root)
-    load_all_calls = _load_all_spy(monkeypatch)
-
-    _run_session_start(monkeypatch, tmp_path)
-
-    captured = capsys.readouterr()
-    assert captured.out == "", (
-        f"an uncheckable index published a scope table anyway; got {captured.out!r}"
-    )
-    assert "does not record which file it came from" in captured.err, (
-        f"expected the could-not-compare decline; got {captured.err!r}"
-    )
-    assert "name a different set of files" not in captured.err, (
-        "the unresolvable-row decline claimed a set comparison that never "
-        f"ran — no set was built to compare; got {captured.err!r}"
-    )
-    assert load_all_calls == []
-
-
-def test_session_start_reads_filenames_under_sqlites_variable_ceiling(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """The gate must survive a store bigger than one SQL statement.
-
-    `index.filenames_for_ids` binds every id it is handed as a
-    parameter, and SQLite raises `OperationalError: too many SQL
-    variables` past SQLITE_LIMIT_VARIABLE_NUMBER. `run` swallows that
-    into a stderr note, so an unbatched read would not crash — it would
-    make the hint quietly stop appearing for the largest stores, which
-    is the failure mode hardest to notice and worst to have.
-
-    The ceiling is simulated at 2 rather than seeded for real: this
-    machine's build reports 32766 (older builds compile in 999), and
-    writing 32767 memories to prove one `IN` clause is not a unit test.
-    What is under test is that the read is CHUNKED to whatever
-    `_ID_BATCH` says, so the fake enforces the patched constant as the
-    real sqlite enforces its own.
-    """
-    import sqlite3
-
-    from bettermemory import index
-    from bettermemory.cli import session_start_cmd
-
-    store = _seeded_store(tmp_path, monkeypatch)
-    for n in range(5):
-        store.write(content=f"memory number {n}", scopes=["tools"])
-
-    monkeypatch.setattr(session_start_cmd, "_ID_BATCH", 2)
-    real = index.filenames_for_ids
-    batches: list[int] = []
-
-    def _bounded(root: Path, ids: list[str]) -> dict[str, str]:
-        if len(ids) > 2:
-            raise sqlite3.OperationalError("too many SQL variables")
-        batches.append(len(ids))
-        return real(root, ids)
-
-    monkeypatch.setattr(index, "filenames_for_ids", _bounded)
-
-    _run_session_start(monkeypatch, tmp_path)
-
-    captured = capsys.readouterr()
-    assert captured.out.startswith("bettermemory: 5 memories are in scope"), (
-        f"the hint went missing on a store past the parameter ceiling; "
-        f"stderr was {captured.err!r}"
-    )
-    assert batches == [2, 2, 1], (
-        f"expected the 5 ids read in batches of the patched _ID_BATCH; got {batches!r}"
-    )
-
-
-def test_id_batch_stays_under_the_lowest_sqlite_variable_ceiling() -> None:
-    """`_ID_BATCH` is only a fix while it is below every build's cap.
-
-    SQLite's compiled-in SQLITE_LIMIT_VARIABLE_NUMBER is 999 on anything
-    built before 3.32 and 32766 after — and a 3.11 interpreter on an
-    older distro can still link the former, so the constant has to clear
-    the LOW one, not the one this machine happens to report. Both are
-    asserted: the portable floor, and the running build's actual limit,
-    which is the number that would bite here.
-    """
-    import sqlite3
-
-    from bettermemory.cli.session_start_cmd import _ID_BATCH
-
-    conn = sqlite3.connect(":memory:")
-    try:
-        here = conn.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER)
-    finally:
-        conn.close()
-
-    assert _ID_BATCH <= 999, (
-        f"_ID_BATCH is {_ID_BATCH}; SQLite builds older than 3.32 cap a "
-        "statement at 999 parameters and `filenames_for_ids` binds one "
-        "per id, so the session-start gate would raise there"
-    )
-    assert _ID_BATCH <= here, (
-        f"_ID_BATCH is {_ID_BATCH} but this build caps a statement at {here} parameters"
     )
 
 
@@ -2055,14 +1389,12 @@ def test_session_start_counts_only_what_is_in_scope_for_this_repository(
     """The published number is a SCOPED number, and that is the whole point.
 
     The block says "in scope for this repository", and the model is
-    expected to reconcile it with what `memory_search` and
-    `memory_scope_overview` later report — both of which auto-scope. A
-    command that bound the predicate to nothing would still print a
-    perfectly plausible total: on the dogfood store, 235 instead of 188.
-    Nothing else in the suite notices, because
-    `test_index.py::test_scope_counts_agree_with_the_load_all_answer`
-    builds its own `_admit` closure and so is structurally blind to how
-    the CLI binds one.
+    expected to reconcile it with what `memory_search` later reports,
+    which auto-scopes. A command that bound the predicate to nothing
+    would still print a perfectly plausible total: on the dogfood store,
+    235 instead of 188. Nothing else in the suite notices, because the
+    store tests build their own `_admit` closure and so are structurally
+    blind to how the CLI binds one.
 
     The null-origin row is the counter-assertion: scoping must not turn
     into "only rows stamped with my repo", or every legacy and every
@@ -2103,10 +1435,10 @@ def test_session_start_stays_silent_when_nothing_is_in_scope(
     """A populated store with nothing for THIS repository says nothing.
 
     The second emptiness gate, and the one the store-is-empty test cannot
-    reach: here the store has memories, the index agrees with disk, and
-    the count is zero only after admission. "0 memories are in scope"
-    would be true and useless — opt-in retrieval is already the model's
-    default, so the line would buy nothing and cost every session.
+    reach: here the store has memories and the count is zero only after
+    admission. "0 memories are in scope" would be true and useless — opt-in
+    retrieval is already the model's default, so the line would buy
+    nothing and cost every session.
 
     Silent stderr as well, for the same reason the empty-store test
     demands it: this is a normal state, not a degraded one, and a
@@ -2170,7 +1502,7 @@ def test_session_start_exits_0_when_the_reader_hung_up(tmp_path: Path) -> None:
         text=True,
         env=env,
     )
-    # Hang up on the child immediately. It has a config load, an index
+    # Hang up on the child immediately. It has a config load, a store
     # open and a scan to do first, so the close wins by several orders
     # of magnitude — but the stderr assertion below is what proves the
     # failure path was actually taken rather than assumed.
@@ -2190,584 +1522,3 @@ def test_session_start_exits_0_when_the_reader_hung_up(tmp_path: Path) -> None:
         "the write unexpectedly succeeded, so this run proved nothing "
         f"about the salvage; stderr was {err!r}"
     )
-
-
-# ---------------------------------------------------------------------------
-# The standing tier (`[behavior] standing_tier`) — fresh-verified ambient
-# bodies appended to the hint. Spec as settled: cohort is
-# the `ambient` category; a computed-fresh staleness verdict is the
-# admission ticket; hard byte budget with whole-memory truncation only;
-# default OFF; the negative mandate untouched.
-# ---------------------------------------------------------------------------
-
-
-def _standing_tier_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: str
-) -> None:
-    """Point `default_config_path` at a temp config whose `standing_tier`
-    is `value`. Real file, real `load_config()` — the CLI reaches the
-    knob the way a user's install does (same pattern as
-    `_config_with_ratio_threshold`), and the assert pins the key's
-    presence in DEFAULT_CONFIG so a template rename cannot silently turn
-    every test here into a default-off run."""
-    from bettermemory.config import DEFAULT_CONFIG
-
-    cfg_dir = tmp_path / "bm-config"
-    cfg_dir.mkdir(exist_ok=True)
-    cfg_path = cfg_dir / "config.toml"
-    original = "standing_tier = false"
-    assert original in DEFAULT_CONFIG, "DEFAULT_CONFIG key drifted"
-    cfg_path.write_text(
-        DEFAULT_CONFIG.replace(original, f"standing_tier = {value}"),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr("bettermemory.config.default_config_path", lambda: cfg_path)
-
-
-def test_standing_tier_off_keeps_block_byte_identical(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """Flag off, the tier does not exist — not even as changed wording.
-
-    A store holding a fresh-verified ambient memory (the exact cohort
-    the tier would deliver) must produce the SAME three-line block this
-    surface printed before the tier shipped, closing disclaimer
-    included. This is the pin `_render_block`'s docstring names: the
-    default-off path is not "standing with zero entries", it is the
-    pre-tier surface, verbatim.
-    """
-    from bettermemory.models import Category
-
-    _standing_tier_config(tmp_path, monkeypatch, "false")
-    store = _seeded_store(tmp_path, monkeypatch)
-    memory = store.write(
-        content="User prefers code-driven tutorials.",
-        scopes=["learning-style"],
-        category=Category.AMBIENT,
-    )
-    store.mark_verified(memory.id)
-
-    _run_session_start(monkeypatch, tmp_path)
-
-    out = capsys.readouterr().out
-    lines = out.splitlines()
-    assert len(lines) == 3, f"expected the pre-tier 3-line block, got {lines!r}"
-    assert "Standing" not in out
-    assert "code-driven" not in out, "flag-off run delivered a body"
-    assert lines[2] == (
-        "Per-scope counts only — no bodies, no ids. This is the cheap half "
-        "of memory_scope_overview; call that tool when you also need the "
-        "curation / proposals rollups. Retrieval stays opt-in: reach for "
-        "memory_search when a request leans on shared context or is "
-        "ambiguous, not for self-contained questions."
-    )
-
-
-def test_standing_tier_delivers_fresh_verified_ambient_bodies(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """The tier's positive contract, all three gates in one store.
-
-    Fresh-verified ambient: delivered, body and id. Never-verified
-    ambient: NOT delivered (the verdict ladder pins `never` to
-    `spot_check_required`), aggregated into the stale line instead.
-    Fresh-verified FACT: not delivered — category is the cohort, and a
-    verified fact is exactly the bait that catches a delivery keyed on
-    verification alone. And the closing disclaimer must swap to the
-    carve-out wording: the block cannot claim "no bodies" under a body.
-    """
-    from bettermemory.models import Category
-
-    _standing_tier_config(tmp_path, monkeypatch, "true")
-    store = _seeded_store(tmp_path, monkeypatch)
-    fresh_ambient = store.write(
-        content="User prefers code-driven tutorials over prose.",
-        scopes=["learning-style"],
-        category=Category.AMBIENT,
-    )
-    store.mark_verified(fresh_ambient.id)
-    store.write(
-        content="Timezone is Europe/Stockholm.",
-        scopes=["personal-context"],
-        category=Category.AMBIENT,
-    )
-    fact = store.write(content="Deploy script is tools/deploy.sh.", scopes=["tools"])
-    store.mark_verified(fact.id)
-
-    _run_session_start(monkeypatch, tmp_path)
-
-    out = capsys.readouterr().out
-    assert "Standing memories (ambient, local, verified fresh" in out
-    assert f"- {fresh_ambient.id} (learning-style): " in out
-    assert "User prefers code-driven tutorials over prose." in out
-    assert "Europe/Stockholm" not in out, "never-verified ambient was delivered"
-    assert "deploy.sh" not in out, "a fact crossed the category gate"
-    assert "1 standing memory is stale — verify to restore delivery" in out
-    assert "Beyond the standing section above, per-scope counts only" in out
-    assert "no bodies, no ids" not in out, (
-        "the pre-tier disclaimer survived under a delivered body — the "
-        "block now contradicts itself about what is in context"
-    )
-
-
-def test_standing_tier_stale_only_still_prints_the_pressure_line(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """Nothing deliverable ≠ nothing to say.
-
-    The stale aggregate is the tier's verification-pressure mechanism —
-    with every admitted ambient memory unverified, the section is
-    exactly that one line: no header, no bodies, but the debt named.
-    A cheaper implementation that only rendered the section when
-    something was delivered would pass every other test here and
-    silently remove the pressure the spec put at the tier's center.
-    """
-    from bettermemory.models import Category
-
-    _standing_tier_config(tmp_path, monkeypatch, "true")
-    store = _seeded_store(tmp_path, monkeypatch)
-    store.write(
-        content="Ambient alpha.", scopes=["personal-context"], category=Category.AMBIENT
-    )
-    store.write(
-        content="Ambient beta.", scopes=["personal-context"], category=Category.AMBIENT
-    )
-
-    _run_session_start(monkeypatch, tmp_path)
-
-    out = capsys.readouterr().out
-    assert "2 standing memories are stale — verify to restore delivery" in out
-    assert "Standing memories (ambient" not in out, (
-        "an empty delivery grew a header with nothing under it"
-    )
-    assert "Ambient alpha." not in out and "Ambient beta." not in out
-
-
-def test_standing_tier_budget_truncates_at_whole_memory_boundaries(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """The ~1 KB budget: newest-verified first, whole entries only.
-
-    Six same-size fresh entries at ~216 bytes each: four fit (864),
-    the fifth would cross 1024, so delivery stops at four and the
-    overflow line counts the remaining two. Assertions pin all of it:
-    every delivered body appears IN FULL (whole-memory truncation — a
-    prefix match with a missing tail is the "different fact" the spec
-    forbids), the delivered set is the four newest-verified, the
-    en-bloc byte total stays under budget, and the overflow count is
-    exact rather than merely present.
-    """
-    import time
-
-    from bettermemory.models import Category
-
-    _standing_tier_config(tmp_path, monkeypatch, "true")
-    store = _seeded_store(tmp_path, monkeypatch)
-    bodies = [f"Standing body number {i} " + "y" * 150 for i in range(6)]
-    written = []
-    for body in bodies:
-        memory = store.write(content=body, scopes=["x"], category=Category.AMBIENT)
-        store.mark_verified(memory.id)
-        written.append(memory)
-        # Distinct `last_verified_at` stamps so newest-verified-first is
-        # a total order the assertion below can rely on.
-        time.sleep(0.01)
-
-    _run_session_start(monkeypatch, tmp_path)
-
-    out = capsys.readouterr().out
-    entries = [line for line in out.splitlines() if line.startswith("- 01")]
-    assert len(entries) == 4, f"expected 4 delivered entries, got {len(entries)}"
-    assert sum(len(e.encode("utf-8")) for e in entries) <= 1024
-    # Newest-verified first: the last four written, newest leading.
-    expected_order = [m.id for m in reversed(written[-4:])]
-    assert [e.split()[1] for e in entries] == expected_order
-    for body in bodies[2:]:
-        assert body in out, "a delivered body was split mid-way"
-    for body in bodies[:2]:
-        assert body not in out, "an over-budget body was delivered anyway"
-    assert (
-        "…and 2 more fresh standing memories over the delivery budget "
-        "(memory_list)." in out
-    )
-
-
-def test_standing_tier_oversize_body_is_skipped_not_trimmed(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """A body larger than the whole budget can never be delivered — so
-    it must be passed over, whole, without blocking the queue behind it.
-
-    The oversize memory is verified LAST, putting it at the head of the
-    newest-verified order: a walk that stopped at the first non-fit
-    would deliver nothing, and a walk that trimmed would deliver a
-    prefix. The assertions demand the third behaviour — the older,
-    smaller body arrives intact, no fragment of the giant appears, and
-    the giant is accounted for in the overflow count rather than
-    vanishing.
-    """
-    import time
-
-    from bettermemory.models import Category
-
-    _standing_tier_config(tmp_path, monkeypatch, "true")
-    store = _seeded_store(tmp_path, monkeypatch)
-    small = store.write(
-        content="Small standing body that fits.",
-        scopes=["x"],
-        category=Category.AMBIENT,
-    )
-    store.mark_verified(small.id)
-    time.sleep(0.01)
-    giant = store.write(content="G" * 1500, scopes=["x"], category=Category.AMBIENT)
-    store.mark_verified(giant.id)
-
-    _run_session_start(monkeypatch, tmp_path)
-
-    out = capsys.readouterr().out
-    assert "Small standing body that fits." in out
-    assert "G" * 32 not in out, "a fragment of the oversize body was delivered"
-    assert giant.id not in out
-    assert (
-        "…and 1 more fresh standing memory over the delivery budget "
-        "(memory_list)." in out
-    )
-
-
-def test_standing_tier_records_nothing(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """The negative mandate survives the tier — measured, not assumed.
-
-    `test_session_start_records_nothing` holds the mandate for the
-    default path; this holds it for the flag-on path with a real
-    delivery, which is the run a would-be `standing_delivered` event
-    would land in. No such event exists by decision (both
-    instrumentation shapes considered would re-corrupt the cadence
-    census); this test is what makes that decision enforceable rather
-    than archival.
-    """
-    from bettermemory.events import Recorder
-    from bettermemory.models import Category
-
-    _standing_tier_config(tmp_path, monkeypatch, "true")
-    store = _seeded_store(tmp_path, monkeypatch)
-    memory = store.write(
-        content="Delivered standing body.", scopes=["x"], category=Category.AMBIENT
-    )
-    store.mark_verified(memory.id)
-    Recorder(root=store.root, session_id="a-prior-session").record(
-        "search", query="anything", returned=[]
-    )
-    before = _event_log_snapshot(store.root)
-    assert before
-
-    _run_session_start(monkeypatch, tmp_path)
-
-    out = capsys.readouterr().out
-    assert "Delivered standing body." in out, "the tier did not fire; proves nothing"
-    assert _event_log_snapshot(store.root) == before, (
-        "a standing delivery wrote to the event log — see the negative "
-        "mandate at the top of cli/session_start_cmd.py"
-    )
-
-
-def test_standing_tier_admission_is_the_same_verdict_a_show_would_compute(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """ "Verification is the admission ticket" means the full ladder,
-    not the calendar leg alone.
-
-    An ambient memory verified minutes ago is calendar-fresh; when its
-    ATTESTED path then vanishes, the claim-anchored drift leg raises
-    the verdict to `spot_check_recommended` and `memory_show` would say
-    so. A tier that admitted on `last_verified_at` age would deliver
-    it anyway — this pins that it lands in the stale aggregate instead,
-    i.e. the admission check runs the same chain the read path runs.
-    """
-    from bettermemory.models import Category
-
-    _standing_tier_config(tmp_path, monkeypatch, "true")
-    store = _seeded_store(tmp_path, monkeypatch)
-    attested = tmp_path / "attested-artifact.txt"
-    attested.write_text("present", encoding="utf-8")
-    memory = store.write(
-        content=f"Ambient context citing {attested} as its anchor.",
-        scopes=["x"],
-        category=Category.AMBIENT,
-    )
-    store.mark_verified(memory.id, verified_paths=[str(attested)])
-    attested.unlink()
-
-    _run_session_start(monkeypatch, tmp_path)
-
-    out = capsys.readouterr().out
-    assert "Ambient context citing" not in out, (
-        "a calendar-fresh memory with claim-anchored drift was delivered — "
-        "the admission check is not running the full verdict ladder"
-    )
-    assert "1 standing memory is stale — verify to restore delivery" in out
-
-
-def test_standing_tier_failure_degrades_to_the_base_block(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """The proven half of the surface never rides on the new half.
-
-    Whatever breaks inside the standing computation — here, the whole
-    helper raising — the scope-counts block must still print, in its
-    pre-tier wording (a failed section is NOT an empty section), with
-    the failure named on stderr and exit 0 held.
-    """
-    from bettermemory.cli import session_start_cmd
-    from bettermemory.models import Category
-
-    _standing_tier_config(tmp_path, monkeypatch, "true")
-    store = _seeded_store(tmp_path, monkeypatch)
-    memory = store.write(
-        content="Would-be standing body.", scopes=["x"], category=Category.AMBIENT
-    )
-    store.mark_verified(memory.id)
-
-    def _boom(*args: object, **kwargs: object) -> str | None:
-        raise RuntimeError("synthetic standing failure")
-
-    monkeypatch.setattr(session_start_cmd, "_standing_section", _boom)
-
-    _run_session_start(monkeypatch, tmp_path)
-
-    captured = capsys.readouterr()
-    lines = captured.out.splitlines()
-    assert len(lines) == 3, (
-        f"expected the base 3-line block after a standing failure, got {lines!r}"
-    )
-    assert "Would-be standing body." not in captured.out
-    assert "no bodies, no ids" in lines[2], (
-        "a failed standing section left the carve-out disclaimer behind"
-    )
-    assert "standing tier skipped: RuntimeError" in captured.err
-
-
-def _plant_ambient(
-    tmp_path: Path, target_root: Path, body: str, *, tag: str
-) -> tuple[str, str]:
-    """A fresh-verified ambient memory written by a throwaway Store and
-    copied into `target_root` by hand: a valid file with a forged-looking
-    fresh stamp that the target index never saw a local upsert for. The
-    donor lives beside the store, not under it. Returns `(id, filename)`."""
-    import shutil
-
-    from bettermemory.models import Category
-
-    donor_root = tmp_path.parent / f"{tmp_path.name}-donor-{tag}"
-    donor = Store(donor_root)
-    memory = donor.write(content=body, scopes=["x"], category=Category.AMBIENT)
-    donor.mark_verified(memory.id)
-    source = next(p for p in donor_root.glob("*.md"))
-    shutil.copy2(source, target_root / source.name)
-    return memory.id, source.name
-
-
-def _rebuild_index(store: Store) -> None:
-    from bettermemory import index
-
-    index.rebuild(store.root, store.iter_active())
-
-
-def test_standing_tier_planted_file_renders_a_pointer_and_no_body(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """Provenance is the first gate (7.0.0).
-
-    A hand-planted ambient file carries a fresh stamp that the verdict
-    chain would pass; after a rebuild the index labels it `unaccounted`,
-    and the tier renders a pointer (id, scopes, label) and never the
-    body. The local fresh memory beside it still delivers, the pointer
-    is not counted as stale, and the closing disclaimer names the
-    pointers as not in context.
-    """
-    from bettermemory.events import Recorder
-    from bettermemory.models import Category
-
-    _standing_tier_config(tmp_path, monkeypatch, "true")
-    store = _seeded_store(tmp_path, monkeypatch)
-    local = store.write(
-        content="Local standing body.", scopes=["x"], category=Category.AMBIENT
-    )
-    store.mark_verified(local.id)
-    # One in-process event, so the log covers the plant's creation window
-    # and the plant reads `unaccounted` rather than `untracked`.
-    Recorder(root=store.root, session_id="a-prior-session").record(
-        "search", query="anything", returned=[]
-    )
-    planted_id, _ = _plant_ambient(
-        tmp_path, store.root, "Planted standing body under a forged stamp.", tag="p"
-    )
-    _rebuild_index(store)
-    # The commit-drift leg (the one git subprocess in the chain) runs for
-    # local candidates only: a pointer never reaches the verdict, so it
-    # adds no git process to session open.
-    from bettermemory import verify as _verify
-
-    drift_calls: list[object] = []
-    real_commit_drift = _verify.compute_commit_drift
-
-    def _counting_commit_drift(*args: object, **kwargs: object) -> object:
-        drift_calls.append(kwargs.get("body"))
-        return real_commit_drift(*args, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(_verify, "compute_commit_drift", _counting_commit_drift)
-
-    _run_session_start(monkeypatch, tmp_path)
-
-    out = capsys.readouterr().out
-    assert drift_calls == ["Local standing body.\n"], (
-        f"the verdict chain ran for a pointer candidate: {drift_calls!r}"
-    )
-    assert "Local standing body." in out
-    assert "Planted standing body" not in out, "a non-local body was delivered"
-    assert "Standing pointers (ambient, provenance not local" in out
-    assert f"- {planted_id} (x) [provenance: unaccounted]" in out
-    assert "The standing pointers name memories whose bodies are not in context" in out
-    assert "stale" not in out, "a pointer was counted as stale"
-
-
-def test_standing_tier_synced_row_renders_a_pointer(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """A file a `sync pull` brought down reads `synced`; its stamp is the
-    other host's, so the tier points at it instead of delivering it."""
-    from bettermemory.events import Recorder
-
-    _standing_tier_config(tmp_path, monkeypatch, "true")
-    store = _seeded_store(tmp_path, monkeypatch)
-    Recorder(root=store.root, session_id="a-prior-session").record(
-        "search", query="anything", returned=[]
-    )
-    synced_id, name = _plant_ambient(
-        tmp_path, store.root, "Synced standing body from another host.", tag="s"
-    )
-    Recorder(root=store.root, session_id="cli-pull").record(
-        "sync_pull", remote="origin", files=[name], count=1
-    )
-    _rebuild_index(store)
-
-    _run_session_start(monkeypatch, tmp_path)
-
-    out = capsys.readouterr().out
-    assert "Synced standing body" not in out
-    assert f"- {synced_id} (x) [provenance: synced]" in out
-    assert "Standing memories (ambient, local" not in out, (
-        "a header for delivered bodies appeared with nothing delivered"
-    )
-
-
-def test_standing_tier_unclassified_row_renders_a_pointer(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """A row the index has not classified (no label yet) is not local by
-    evidence, so it is a pointer too, labelled `unclassified`."""
-    from bettermemory import index
-    from bettermemory.store import _parse_memory_file
-
-    _standing_tier_config(tmp_path, monkeypatch, "true")
-    store = _seeded_store(tmp_path, monkeypatch)
-    planted_id, name = _plant_ambient(
-        tmp_path, store.root, "Unclassified standing body.", tag="u"
-    )
-    # An upsert without a label leaves `provenance` NULL: the row exists,
-    # the counts agree, and `trust_for` does not return it.
-    index.upsert(store.root, _parse_memory_file(store.root / name), filename=name)
-
-    _run_session_start(monkeypatch, tmp_path)
-
-    out = capsys.readouterr().out
-    assert "Unclassified standing body." not in out
-    assert f"- {planted_id} (x) [provenance: unclassified]" in out
-
-
-def test_standing_tier_pointers_share_the_delivery_budget(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """Pointer lines spend the same ~1 KB the bodies do, whole lines
-    only. Twenty uniform 58-byte pointers: seventeen fit under 1024, the
-    other three are counted in the overflow line."""
-    from bettermemory.events import Recorder
-
-    _standing_tier_config(tmp_path, monkeypatch, "true")
-    store = _seeded_store(tmp_path, monkeypatch)
-    Recorder(root=store.root, session_id="a-prior-session").record(
-        "search", query="anything", returned=[]
-    )
-    for n in range(20):
-        _plant_ambient(tmp_path, store.root, f"Planted body {n}.", tag=f"b{n}")
-    _rebuild_index(store)
-
-    _run_session_start(monkeypatch, tmp_path)
-
-    out = capsys.readouterr().out
-    pointer_lines = [line for line in out.splitlines() if "[provenance: " in line]
-    assert len(pointer_lines) == 17, pointer_lines
-    assert sum(len(line.encode("utf-8")) for line in pointer_lines) <= 1024
-    assert (
-        "…and 3 more standing pointers over the delivery budget (memory_list)." in out
-    )
-    assert "Planted body" not in out
-
-
-def test_standing_tier_unreadable_index_renders_pointers_not_bodies(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """`index.trust_for` is None when the index could not be read
-    (7.9.0). The standing tier delivers a body only for a row known to
-    be `local`, and with no row knowable every candidate is a pointer
-    under a label that says why — "unknown" is not "unclassified", the
-    benign not-yet-rebuilt state. Before the split this consumer called
-    `.get` on the None and the whole session-start hint degraded to the
-    base block through `_standing_section`'s failure arm."""
-    from bettermemory import index as _index
-    from bettermemory.models import Category
-
-    _standing_tier_config(tmp_path, monkeypatch, "true")
-    store = _seeded_store(tmp_path, monkeypatch)
-    local = store.write(
-        content="Local standing body.", scopes=["x"], category=Category.AMBIENT
-    )
-    store.mark_verified(local.id)
-    _rebuild_index(store)
-
-    monkeypatch.setattr(_index, "trust_for", lambda root, ids: None)
-    _run_session_start(monkeypatch, tmp_path)
-
-    out = capsys.readouterr().out
-    assert "Local standing body." not in out, (
-        "a body was delivered under an unread label"
-    )
-    assert f"- {local.id} (x) [provenance: unknown, index unreadable]" in out
-    assert "Standing pointers (ambient, provenance not local" in out

@@ -46,11 +46,11 @@ def run(args: argparse.Namespace) -> None:
     from .._response import ResponseBuilder
     from ..models import Category, utcnow
     from ..search import search as run_search
-    from ..store import Store
+    from ..store import STORE_FILENAME, Store
 
     with tempfile.TemporaryDirectory(prefix="bettermemory-try-") as tmp:
         root = Path(tmp)
-        store = Store.open(root / "store")
+        store = Store.create(root / "store" / STORE_FILENAME, keys_dir=root / "keys")
 
         # A file the memory will cite. Multi-segment with an extension so the
         # path-drift extractor treats it as a real path (single-segment,

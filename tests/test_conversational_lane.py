@@ -326,16 +326,14 @@ def test_default_is_on_and_false_reproduces_the_pre_lane_ranking() -> None:
 
 
 def test_ranking_surfaces_carry_the_conversational_flag() -> None:
-    """The same parity contract `rescue_expansion` carries: a flag the
-    silent-miss probe cannot see makes the probe rank differently from
-    production, and the miss verdict reads only rank 1."""
+    """A flag the silent-miss probe cannot see makes the probe rank
+    differently from production, and the miss verdict reads only rank
+    1: the probe takes the flag, and the config carries it."""
     import inspect
 
     from bettermemory.audit import probe_for_miss
     from bettermemory.config import BehaviorConfig
-    from bettermemory.handlers.search import RankingInputs
 
-    assert "conversational" in RankingInputs._fields
     assert "conversational" in inspect.signature(probe_for_miss).parameters
     assert BehaviorConfig().conversational is True
     assert BehaviorConfig(conversational=False).conversational is False

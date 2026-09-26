@@ -52,7 +52,7 @@ def run(
 
 def _cli_log_verify(*, json_out: bool, parser: argparse.ArgumentParser) -> None:
     from ..config import load_config
-    from ..sqlite_store import STORE_FILENAME, SqliteStore
+    from ..store import STORE_FILENAME, Store
 
     directory = load_config().resolved_directory()
     path = directory / STORE_FILENAME
@@ -60,7 +60,7 @@ def _cli_log_verify(*, json_out: bool, parser: argparse.ArgumentParser) -> None:
         parser.error(f"no bettermemory 9 store at {path}")
     # `allow_rekey=False`: a verification must not write a rekey row into
     # the log it is verifying. A missing key is then reported, not fixed.
-    store = SqliteStore.open(path, allow_rekey=False)
+    store = Store.open(path, allow_rekey=False)
     try:
         report = store.log_verify()
     finally:

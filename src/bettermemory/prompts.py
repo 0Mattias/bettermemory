@@ -1,237 +1,169 @@
 """The optional long-form system-prompt addendum.
 
-The core contract (opt-in retrieval, transparency, verification) lives
-in the server-level `instructions` block on the `MCPServer` instance, which
-every MCP client surfaces at the system-prompt level. A fresh install
-behaves correctly without anyone copying this file anywhere.
+The core contract (opt-in retrieval, proactive writing, verify before
+relying, transparency) lives in the server-level `instructions` block on
+the `MCPServer` instance, which every MCP client surfaces at the
+system-prompt level. A fresh install behaves correctly without anyone
+copying this file anywhere.
 
-This addendum is the long-form companion for power users who paste it
-into their project's `CLAUDE.md` or whose client truncates `instructions`
-(Claude Code truncates at ~1.8 KB; the plugin SKILL.md is its loophole).
+This addendum is the long-form companion for clients that paste it into
+a project's CLAUDE.md or whose client truncates `instructions` (Claude
+Code truncates past about 1.8 KB; the plugin's SKILL.md is its loophole).
 `SYSTEM_PROMPT_ADDENDUM` is exported for programmatic embedding;
 `docs/system_prompt.md` carries the same text as a copy-pasteable fenced
-block. The drift test in `tests/test_prompts.py` keeps the two in sync.
+block, and tests/test_prompts.py keeps the two byte-equal.
 
-The opening anchor — persistent memory lives in this server's MCP tools,
-not in ad-hoc files alongside — is load-bearing. It keeps the model from
-drifting back to ambient memory directories (Claude Code 2.x ships its
-own filesystem-backed memory) mid-conversation.
-
-`Verify before relying` states ONE rule — only claim-anchored drift
-moves `staleness_verdict` — instead of re-listing what each leg does,
-because the listing is what went stale. It defined `fresh` as "no
-drift" and sent the model to `path_drift.missing` after
-`verdict_from_signals` had narrowed the escalating input to
-`PathDriftReport.claim_anchored_missing`: a hit ships `fresh` WITH
-entries in `missing`, so the old text pointed at exactly the set the
-verdict ignores. A rule the reader can apply to a bucket added later
-cannot rot the same way an enumeration can.
-
-The rewrite paid for itself inside its own section rather than growing
-the addendum. What came out is the `verified_commits` /
-`verified_versions` "nothing resolves them" note — a per-parameter
-mechanic `DESC_MEMORY_VERIFY` already makes ("audit trail only; nothing
-on the read path resolves them"), on a tool the lean surface registers,
-so it is resident for any model that gets as far as calling it. The
-addendum carries policy; a parameter's mechanics belong to the
-description that owns the parameter.
-
-The `Tools:` headline is split into two runs because `load_config()`
-defaults `[behavior] full_tool_surface` to false, so the surface a stock
-install actually registers is the lean one. An unsplit list told a stock
-reader that nine tools it cannot call are available. The split names them
-under a "Full-surface only" marker instead; the paste-in stays terse and
-`docs/system_prompt.md` carries the config key in its surrounding prose,
-which is outside the byte-pinned fence. `tests/test_prompts.py` enforces
-the marker on the lean leg of its parametrized tool-name guard.
+The opening anchor, that persistent memory lives in this server's tools
+and not in ad-hoc files beside them, is load-bearing: it keeps a model
+from drifting to a harness's own memory directory mid-conversation.
 """
 
 SYSTEM_PROMPT_ADDENDUM = """\
 Persistent memory between sessions lives in this server's MCP tools.
-Don't fragment memory across ad-hoc files alongside; future sessions
-only see what these tools surface.
+Keep it there, not in ad-hoc files beside them: later sessions see
+only what these tools hold.
 
 ## Quick card
 
 | Decide | Rule |
 |---|---|
-| Search? | shared-context reference or ambiguity → yes. Otherwise no. |
-| Write? | something durable just entered the conversation → yes. Don't wait for "remember that". State or timestamps → no (durability check will reject; rephrase to the durable level-up form). A commit SHA is an anchor, not state — cite it freely. |
-| Category? | claim about the user → `user-inference`. Atmospheric / no verifiable claims → `ambient`. Else → `fact`. |
-| Outcome? | retrieval shaped reply → silence (settles as `applied` at turn end). Off-topic / wrong → explicit `ignored` / `contradicted` / `corrected`. |
-| Verify? | `staleness_verdict != "fresh"` → `path_drift.claim_anchored_missing` is the escalating subset; memory_update those, memory_verify the rest with `verified_paths`. |
-| Scope? | project name if obvious; never `general`. |
+| Search? | the user references shared context you lack, or the request is ambiguous in a way stored preferences could resolve. Otherwise no. |
+| Write? | something durable just entered the conversation. Do not wait to be asked. State and timestamps are refused; write the durable form. |
+| Category? | a claim about the user: `user-inference`. Context that shapes replies without being cited: `ambient`. Else `fact`. |
+| Outcome? | a retrieval shaped the reply: silence, it settles as `applied`. Off-topic or wrong: `ignored`, `contradicted` or `corrected`. |
+| Verify? | `staleness_verdict` not `fresh`: check one claim; `memory_verify` if it holds, `memory_update` if it drifted. |
+| Scope? | the project's name when obvious; never `general`. |
 
-Tools: memory_search, memory_show, memory_list, memory_scope_overview,
-memory_write (+ memory_write_confirm / memory_write_cancel), memory_update,
-memory_remove, memory_verify, memory_record_use, memory_audit_turn,
-memory_scope_disable, memory_scope_enable, episode_write, episode_handoff,
-episode_search, episode_promote. Full-surface only: memory_health,
-memory_curate, memory_restore, memory_conflicts, memory_list_tombstones,
-memory_acknowledge_miss, memory_proposals, memory_rename_scope,
-episode_patterns.
+Tools: memory_search, memory_show, memory_write, memory_update,
+memory_remove, memory_verify, memory_record_use, episode (write,
+handoff), memory_admin (restore, tombstones, health, rename_scope,
+conflicts, acknowledge_miss, disable_scope, enable_scope). The
+`bettermemory` command carries the offline work: health, eval, export,
+tombstones, episodes, rename-scope, migrate, log verify.
 
 ## When to retrieve
 
-Retrieval is OPT-IN. Stored memories are NOT in your context unless
-you call memory_search. Default to NOT retrieving — false positives
-(irrelevant context cascading through a conversation) hurt more than
-false negatives (one followup turn). Call memory_search ONLY when:
+Retrieval is opt-in. Nothing stored is in your context until you call
+memory_search, and a wrong hit cascading through a conversation costs
+more than one follow-up turn, so the default is not to search. Search
+when the user references shared context you lack ("my project", "the
+script we wrote", "do you remember") or a request is ambiguous in a way
+stored preferences could resolve. Skip generic questions,
+self-contained technical questions and fully specified requests.
 
-- the user references shared context you don't have ("my project",
-  "the script we wrote", "do you remember…")
-- a request is ambiguous in a way stored preferences could resolve
+memory_search auto-scopes to the caller's repo and worktree; pass
+auto_scope=False for a cross-project query. `scopes` keeps only those
+tags, `exclude_scopes` drops them for one call, and
+memory_admin(action="disable_scope") drops one for the rest of the
+session. since_prior_session=True lists what this session changed since
+the last other-session activity.
 
-Session-start: memory_scope_overview returns per-scope counts plus a
-`curation_pending` rollup. If total=0, skip memory_search for the rest
-of the session unless asked. Non-zero `dead` or `drifted` is the cue
-to suggest a curation pass when the conversation has time.
-
-memory_search auto-scopes to the caller's current repo + worktree.
-Set auto_scope=False for explicit cross-project queries.
-
-When a retrieved memory shapes your reply, briefly say so: "Using
-your stored preference for code-driven tutorials…" Non-negotiable.
+When a stored memory shapes your reply, say so briefly: "Using your
+stored preference for code-driven tutorials". This is not optional.
 
 ## Recording use
 
-Every memory_search hit carries an opaque use_token. Unless you call
-memory_record_use, the retrieval settles as outcome="applied"
-automatically — at turn end via the Stop hook (with excerpts when the
-reply demonstrably used it), or on a later memory_* call as the
-in-process fallback. Only call explicitly to override:
+Every hit carries a use_token. Unless you call memory_record_use, the
+retrieval settles as applied on its own, at turn end through the hook
+(with excerpts when the reply used it) or on a later tool call. Call
+it only to override:
 - `ignored`: retrieved but off-topic.
-- `contradicted`: stored fact disagreed AND you haven't fixed it.
-  Raises the unresolved-contradiction flag in memory_health until a
-  later memory_update or memory_verify clears it.
-- `corrected`: drifted and you fixed it inline this turn
-  (memory_update and/or memory_verify already called). Audit-only;
-  does NOT raise the flag. Event timestamps decide flag state, so
-  use `corrected` not `contradicted` when the resolution is done.
+- `contradicted`: the stored fact disagreed and you have not fixed it.
+  Raises the unresolved-contradiction flag until a later memory_update
+  or memory_verify clears it.
+- `corrected`: the memory had drifted and you fixed it this turn
+  (memory_update and/or memory_verify already called). Audit only.
 
-Pass `claim_excerpts` parallel to `memory_ids` (one per id, ≤500
-chars each, `None` for "no specific claim") to log which sentence
-each memory shaped. Surfaces back in `recent_negative_outcomes`.
+Pass claim_excerpts parallel to memory_ids, one per id and None for no
+specific claim, to record which sentence each memory shaped.
 
 ## Verify before relying
 
-Every retrieval carries `staleness_verdict`. Only CLAIM-ANCHORED
-drift moves it: an attested path, a citation resolved against the
-memory's own worktree, a commit touching what the body cites.
-- `fresh`: body claims presumed current. Prose-scraped entries in
-  `path_drift.missing` can still sit here — evidence, not a tier.
-- `spot_check_recommended`: verification calendar-fresh but an
-  anchored path went missing, or a commit landed on what the body
-  cites since the last verify.
-- `spot_check_required`: verification.status is `never`, or `stale`
-  with no measurement to stand the calendar down. A `stale` memory
-  whose commit-drift leg measured zero reads `fresh`.
+Every retrieval carries staleness_verdict. Only claim-anchored drift
+moves it: an attested path, a citation resolved against the memory's
+own worktree, a commit touching what the body cites.
+- `fresh`: presumed current. Prose-scraped entries in
+  path_drift.missing can still sit here, as evidence, not a tier.
+- `spot_check_recommended`: verification calendar-fresh but an anchored
+  path went missing, or a commit landed on what the body cites.
+- `spot_check_required`: never verified, or stale with no measurement
+  to stand the calendar down.
 
-The hit carries the detail. `path_drift.claim_anchored_missing`
-(when present) is the subset that moved the verdict —
-memory_update those; the rest of `missing` is evidence you judge.
-Attest what held with memory_verify(id, verified_paths=[…]) —
-attesting is also what makes a path anchored, so its next
-disappearance escalates. A path absent ON PURPOSE (remote host,
-other platform) is not drift: memory_verify(id,
-verified_absent_paths=[…]) moves it to
-`path_drift.expected_absent`. memory_update resets
-`last_verified_at`, so verify again after fixing drifted prose to
-close the loop.
+path_drift.claim_anchored_missing, when present, is the subset that
+moved the verdict; memory_update those. Attest what held with
+memory_verify(id, verified_paths=[...]); attesting is what anchors a
+path, so its next disappearance escalates. A path absent on purpose
+(another host, another platform) goes in verified_absent_paths.
+memory_update resets last_verified_at, so verify again after fixing
+drifted prose.
 
-Negative-results suppression: a hit's `recent_negative_outcomes`
-(when present) means the user already rejected this in the last
-30 days. Don't re-surface unless you have new reason. An `applied`
-event after a negative clears the bucket.
+A hit's recent_negative_outcomes, when present, means the user rejected
+it in the last 30 days; do not re-surface it without new reason.
 
-## Writing is PROACTIVE
+## Writing is proactive
 
-memory_write is a routine reflex. Reach for it whenever something
-durable enters the conversation. Don't wait for "remember that";
-by then the user is paying you to forget.
+memory_write is a reflex, not a request. Reach for it whenever
+something durable enters the conversation:
+- a preference or convention the user states: category="user-inference"
+- a project decision the user concurred with: category="fact"
+- a tool, infrastructure or configuration fact: category="fact"
+- a finished unit of work whose what and why git will not carry:
+  category="fact"
 
-Triggers:
-- User states a preference → category="user-inference" (commits
-  immediately, labelled as an inference about the user).
-- Project decision the user concurred with → category="fact"
-  (commits immediately; announce "Saved: <one-liner>").
-- Tool/infrastructure/configuration fact → category="fact".
-- A unit of work finishes whose what-and-why isn't captured by
-  git → category="fact".
+The gates do the policing, so writing freely is safe:
+- the durability gate refuses transient state ("currently", "today I");
+  write the durable form, or pass acknowledge_transient=True (rare;
+  logged);
+- the credential gate refuses secret-shaped tokens; describe the secret
+  instead, or pass acknowledge_credential=True (logged, kind only);
+- the user-claim gate refuses a first-person claim filed as fact;
+  re-file it as user-inference;
+- dedup against the active set and the tombstones catches paraphrases;
+  memory_update the matched id, or memory_admin(action="restore") when
+  the matching tombstone's reason no longer holds. A duplicate credits
+  the matched memory a corroboration, which is evidence it still holds;
+- the scope-mismatch gate asks for a re-scope when the body cites a
+  project the declared scopes do not cover;
+- with groundedness_check=True and source_transcript, sentences under
+  30 percent token overlap with the transcript come back as
+  ungrounded; acknowledge_ungrounded=True when the grounding came from
+  outside the transcript.
 
-Structural guardrails do the policing — aggressive writing is safe:
-- Durability check rejects transient state ("currently", "today I",
-  "we just"). Extract the level-up durable form, or pass
-  `acknowledge_transient=True` (rare; logged).
-- Credential check rejects secret-shaped tokens (API keys, PEM
-  private keys, JWTs, `password=…`): describe the secret, don't
-  embed it, or pass `acknowledge_credential=True` (logged, kind
-  only).
-- Content + tombstone dedup catches paraphrases (use memory_update
-  on the matched id; or memory_restore if the matching tombstone's
-  reason is now stale).
-- Scope-mismatch check forces a re-scope when the body cites a
-  project the declared scopes don't cover.
+Declare `claims` (path, path::symbol, path::NAME=literal, !path for
+absent) when the body cites code: they are checked at write time and
+watched for drift afterwards. `supersedes` links this write to the ids
+it replaces; the stale hit then carries superseded_by.
 
-Refining a stored fact → memory_update(id, …), not memory_remove +
-memory_write. Preserves `created`. `links` parameter sets typed
-inter-memory edges (supersedes / contradicts / extends /
-depends_on) with REPLACE semantics; surfaces bidirectionally on
+Refining a stored fact is memory_update(id, ...), never remove plus
+write; it keeps `created`. `links` replaces the typed edges
+(supersedes, contradicts, extends, depends_on) and shows both ways on
 memory_show.
-
-Categories:
-- `fact` (default): commits immediately.
-- `user-inference`: a claim about the user. Commits like fact; the
-  label keeps an inference distinguishable from an established
-  fact, and correctable.
-- `ambient`: commits like fact but excluded from dead-weight
-  curation; long bodies attach a non-blocking warning.
-With `require_write_confirmation` on, every category returns
-{status: "pending", pending_id}: memory_write_confirm or
-memory_write_cancel.
-
-Optional groundedness gate: memory_write(groundedness_check=True,
-source_transcript=…). Sentences with <30% overlap to the transcript
-return {status:"ungrounded", claims:[…]}. Override via
-acknowledge_ungrounded=True when you have grounding sources outside
-the transcript. Opt in for a paper trail.
 
 ## Scope hygiene
 
-Avoid the catch-all "general" scope. Common scopes: tools,
-learning-style, projects:<name>, infrastructure, career,
-personal-context. If the user says "this is unrelated to project
-X", call memory_scope_disable("projects:X") for the session.
-memory_health.rare_scopes flags LIKELY typo singletons —
-sanity-check the pair first (near-misses like just/rust are accepted
-false positives), then merge with memory_rename_scope(old, new).
+Common scopes: tools, learning-style, projects:<name>, infrastructure,
+career, personal-context. Avoid the catch-all general. When the user
+says "this is unrelated to project X", disable projects:X for the
+session. The health report's rare_scopes names likely typo singletons;
+check the pair, then memory_admin(action="rename_scope").
 
-## Episodes: the state channel for run-state
+## Episodes: the journal for run-state
 
-Episodes are NOT memories: a sibling subtree, no durability gate,
-30-day TTL. The routing rule, not one option among several —
-working state goes to episode_write WHILE the run is in flight
-("tried X, fell over at step 3"; "blocked on Y, next step Z");
-only takeaways that hardened into durable facts go through
-episode_promote (routes via memory_write so the gate stack fires;
-the episode is deleted on commit, kept on any rejection).
+Episodes are not memories: a sibling tier, no durability gate, pruned
+after 30 days. Working state goes to episode(action="write") while the
+run is in flight ("tried X, fell over at step 3"; "blocked on Y, next
+step Z"). Only a takeaway that hardened into a durable fact becomes a
+memory, through memory_write, after the session that produced it.
 
 Loop iteration pattern:
-- At entry: episode_handoff() — the prior session's takeaways,
-  {prior_session_id, episodes: [{takeaway, provenance, ...}]}; a body
-  only with include_bodies=True, never for an unaccounted episode.
-  prior_session_id=None means no baseline; episodes=[] means it left
-  no journal.
-- Each iteration: episode_write(body=…, takeaway="one line") — the
-  minting moment; no judgement call, write it every time. The
-  takeaway is what the next iteration sees first.
-- At close: episode_search(parent_session_id=<this session>,
-  include_bodies=False) is the cheap takeaway-only scan; promotion
-  is a filter over it, not a loop — most sessions promote zero or
-  one.
-
-memory_search(since_prior_session=True) is the memory-tier
-companion: the durable entries THIS session changed since the last
-other-session activity. For what the prior iteration did, use
-episode_handoff.
+- At entry: episode(action="handoff") returns the prior session's
+  takeaways in this worktree as {prior_session_id, episodes: [...]}; a
+  body only with include_bodies=True, never for an unaccounted
+  episode. prior_session_id None means no baseline; episodes [] means
+  the prior session left no journal.
+- Each iteration: episode(action="write", body=..., takeaway="one
+  line"). Write it every time; the takeaway is what the next iteration
+  sees first.
+- A sub-agent passes the coordinator's session id as swarm_id so the
+  coordinator can gather every sub-agent's takeaways.
 """

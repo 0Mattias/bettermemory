@@ -357,6 +357,7 @@ mem0-infer row the local models could not produce.
 
 | arm | plain: detected | plain: J | plain: median rank shift | provenance forged: detected |
 |---|---|---|---|---|
+| bettermemory 9.0 (the store; `integrity-v0-bettermemory-2026-09-26.json`) | 1.00 | 1.000 | -1 | 1.00 |
 | bettermemory 7.2.0 and 7.1.0 | 1.00 | 1.000 | -1 | 0.00 |
 | mem0-raw | 0.00 | 0.000 | -1 | 0.00 |
 | graphiti (qwen2.5:7b) | 1.00 | 1.000 | 1 | 0.00 |
@@ -555,6 +556,12 @@ Reading the tables:
   twin in bettermemory and mem0-raw, one slot below it in Graphiti
   (where only six of the ten twins were served at all) and not at all
   in Letta: rank is content, and the forged fields buy a tie-break.
+  The 9.0 store closes the forged-binding gap on the bettermemory arm:
+  every record points at the signed log row that produced it and the
+  pointer is verified on every read, so a row planted by SQL and a row
+  pointing at a `memory_put` log row forged without the key both read
+  `unaccounted` (10 of 10 each, `integrity-v0-bettermemory-2026-09-26.json`;
+  every other block of that artifact equals the 2026-09-25 run).
 - **mem0's extraction arm is additive, and it ran on 2026-09-05.**
   mem0ai 2.0.x's add path extracts memories with an ADD-only prompt
   that links a new memory to related existing ones at the entity level;

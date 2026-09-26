@@ -119,34 +119,13 @@ them out of the takeaway summary surface.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
+from ..store import UNACCOUNTED
 from ._shared import Context, _advance_turn
-from ..provenance import UNACCOUNTED, EpisodeEvidence, gather_episode_evidence
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from .._handlers import ToolHandlers
-
-
-# Three-valued verdict from `_episode_promoted_out_of_session`. A plain
-# bool collapsed the last two: "provably NOT promoted" and "cannot be
-# proven either way" both read as False, and the handoff then emitted the
-# same "journaled no takeaway" note for a real (but unprovable) promotion
-# as for a genuine non-handoff tick.
-#   - "promoted": the event log PROVES a takeaway this session wrote went
-#     through the promotion delete path (committed promote, or a
-#     write_confirm carrying its episode id).
-#   - "staged-unresolved": a bare `pending` promote of one of this
-#     session's episodes exists, but the log carries NO commit proof AND
-#     NO cancel proof — the outcome is genuinely unprovable (an old log
-#     written before the confirm/cancel carried the episode id, or a
-#     still-open/expired pending). The note HEDGES rather than asserting
-#     either a promotion or that nothing was journaled.
-#   - "none": no pending/committed promote trace for this session's
-#     episodes at all — a genuine crash / clean-tick / non-handoff shape.
-_PromotionTrace = Literal["promoted", "staged-unresolved", "none"]
 
 
 DESC_EPISODE_HANDOFF = (
@@ -357,15 +336,9 @@ async def episode_handoff(
     # Drives the promotion-trace lookup below: a floor-only / zero-episode
     # shape can also mean "its takeaway was promoted out" (episode_promote
     # deletes the journal source on commit), and the event log can tell.
-    note_subject_sid: str | None = None
 
-    # The provenance evidence: filled by the auto-resolution walk from the
-    # event pass it already pays, gathered on demand on the explicit
-    # `prior_session_id` path once there are rows to label.
-    evidence: EpisodeEvidence | None = None
     resolved_session_id: str | None = prior_session_id
     if resolved_session_id is None:
-        from ..events import iter_all_events
         from ..hook import _OUT_OF_PROCESS_TRIGGERS
 
         # Reuse the origin captured at handler entry above (used to
@@ -393,8 +366,7 @@ async def episode_handoff(
         # keeps the conservative pre-queue-#28 behavior.
         latest_ts_by_session: dict[str, str] = {}
         worktree_by_session: dict[str, str] = {}
-        evidence = EpisodeEvidence()
-        for ev in iter_all_events(deps.store.root):
+        for ev in deps.store.iter_events():
             if ev.get("triggered_from") in _OUT_OF_PROCESS_TRIGGERS:
                 # Client-side hook events (Stop audit, prompt recall)
                 # record under Claude Code's transcript session id, not
@@ -409,7 +381,6 @@ async def episode_handoff(
             # The provenance join rides this pass: every in-process
             # event, the current session's included, before the
             # candidate bookkeeping below narrows to other sessions.
-            evidence.observe(ev)
             sid = ev.get("session") or ev.get("session_id")
             if not isinstance(sid, str) or sid == deps.recorder.session_id:
                 continue
@@ -464,7 +435,7 @@ async def episode_handoff(
         scope_hidden_fallback_sid: str | None = None
         for sid, _ts in ordered:
             try:
-                candidate_eps = deps.episode_store.list_by_session(sid)
+                candidate_eps = deps.store.episodes_by_session(sid)
             except ValueError:
                 # Hostile session_id surfaced in the event log;
                 # `list_by_session` validates the on-disk path shape.
@@ -505,7 +476,6 @@ async def episode_handoff(
                     if not seen_worktree_match:
                         note_zero_episode = True
                         floor_only_fallback_sid = sid
-                        note_subject_sid = sid
                     seen_worktree_match = True
                     continue
                 # Worktree mismatch (or unknown while caller is in a
@@ -574,7 +544,6 @@ async def episode_handoff(
                 if not has_real_episode:
                     note_floor_only = True
                     floor_only_fallback_sid = sid
-                    note_subject_sid = sid
                 else:
                     scope_hidden_fallback_sid = sid
             seen_worktree_match = True
@@ -618,7 +587,7 @@ async def episode_handoff(
         # this is not a traversal — just a loud-vs-quiet failure-mode
         # choice, and quiet is what every other episode read does.
         try:
-            all_eps = deps.episode_store.list_by_session(resolved_session_id)
+            all_eps = deps.store.episodes_by_session(resolved_session_id)
         except ValueError:
             all_eps = []
         # Explicit-`prior_session_id` path only: the walk never ran, so
@@ -632,7 +601,6 @@ async def episode_handoff(
             any_real_takeaway = any(not ep.is_floor for ep in all_eps)
             if all_eps and not any_real_takeaway:
                 note_floor_only = True
-                note_subject_sid = resolved_session_id
         # Filter floors from the emit stream — they carry no takeaway
         # and the marker body is a placeholder, not content the model
         # should reason over as "what the prior session concluded".
@@ -651,11 +619,9 @@ async def episode_handoff(
         # the way a reader expects "the prior session's recent
         # takeaways" — chronological within the surfaced window.
         recent = all_eps[-max_episodes:]
-        if recent and evidence is None:
-            evidence = gather_episode_evidence(deps.store.root)
+        labels = deps.store.episode_provenance([ep.id for ep in recent])
         for ep in recent:
-            assert evidence is not None  # gathered above when rows exist
-            label = evidence.label(ep)
+            label = labels.get(ep.id, UNACCOUNTED)
             # `body` is present only on request and never for an
             # unaccounted episode: the takeaway and the scopes travel
             # with the label beside them, the body stays on disk for the
@@ -672,28 +638,6 @@ async def episode_handoff(
                     "provenance": label,
                 }
             )
-
-    # Promotion trace: the floor-only / zero-episode shapes have a third
-    # cause besides crash / clean-tick — `episode_promote` DELETES the
-    # source episode when the durable write commits (immediately, or via
-    # `memory_write_confirm` on the deferred pending path), so a healthy
-    # handoff → episode_write → episode_promote session ends floor-only on
-    # disk and a write → promote session with no handoff ends zero-episode.
-    # The event log can tell those apart: `episode_write` events carry the
-    # episode id + writer session, and a COMMITTED `episode_promote` (or a
-    # `write_confirm` event carrying an `episode_id`, stamped by the
-    # deferred confirm path) proves the delete ran — a bare pending promote
-    # does not. But "not proven promoted" splits two ways: PROVABLY not
-    # (a `write_cancel` stamped with the kept episode id) versus UNPROVABLE
-    # (an old log, or a still-open/expired pending) — the verdict carries
-    # that distinction so the note can hedge instead of falsely claiming
-    # nothing was journaled. Only consulted when a note is about to fire
-    # (the uncommon path), so the common no-note handoff pays nothing.
-    promotion_trace: _PromotionTrace = "none"
-    if (note_floor_only or note_zero_episode) and note_subject_sid is not None:
-        promotion_trace = _episode_promoted_out_of_session(
-            deps.store.root, note_subject_sid
-        )
 
     deps.recorder.record(
         "episode_handoff",
@@ -714,119 +658,37 @@ async def episode_handoff(
     # flags that the most recent session left nothing. The empty shapes get
     # distinct text because their on-disk cause differs.
     if note_floor_only:
-        if promotion_trace == "promoted":
-            # Not ambiguous after all: the event log shows this session's
-            # episode_write followed by a matching episode_promote, and
-            # promotion deletes the journal source on commit — that is why
-            # only the floor remains. Say so instead of hedging
-            # crash-or-empty, both of which would be false here.
-            result["note"] = (
-                "The immediately-preceding session recorded a takeaway, "
-                "but it was promoted into a durable memory and the "
-                "journal source deleted on commit (episode_promote) — "
-                "only the session-tag floor remains on disk. The event "
-                "log shows the session's episode_write followed by a "
-                "matching episode_promote, so this is a promotion, not a "
-                "crash or an empty tick; memory_search can surface the "
-                "promoted content. Any takeaways above (if present) come "
-                "from an older session in this worktree that the handoff "
-                "rewound to."
-            )
-        elif promotion_trace == "staged-unresolved":
-            # A takeaway WAS journaled and staged for promotion (so the
-            # crash / clean-read-only-tick hedge below would be a lie — it
-            # falsely implies no episode_write ran), but the event log
-            # cannot confirm the promotion's outcome: a bare `pending`
-            # promote with no committed/confirmed proof and no cancel
-            # proof. Hedge honestly on the outcome rather than asserting a
-            # promotion (it may never have committed) OR asserting nothing
-            # was journaled (a takeaway demonstrably was).
-            result["note"] = (
-                "The immediately-preceding session called episode_handoff "
-                "(which wrote the session-tag floor that anchored the "
-                "worktree match) and staged a takeaway for promotion into "
-                "a durable memory, but this event log cannot confirm the "
-                "outcome: the promotion may have committed (for example, a "
-                "log written before the confirm event recorded the "
-                "source-episode id) or it may have been cancelled or "
-                "expired. If it committed, memory_search can surface the "
-                "promoted content; if not, no durable memory was written. "
-                "Only the session-tag floor remains on disk. Any takeaways "
-                "above (if present) come from an older session in this "
-                "worktree that the handoff rewound to."
-            )
-        else:
-            # Floor-only: a real `is_floor` marker exists on disk (the session
-            # called episode_handoff, which writes the entry floor). Genuinely
-            # ambiguous between (a) a crash after entry but before
-            # episode_write and (b) a clean read-only tick that ran
-            # episode_handoff with no takeaway — the on-disk shape is
-            # identical, so surface both readings rather than the misleading
-            # bare "crashed" claim.
-            result["note"] = (
-                "The immediately-preceding session recorded no takeaway "
-                "before it ended: it called episode_handoff (which wrote "
-                "the session-tag floor that anchored the worktree match) "
-                "but no episode_write followed — either it crashed before "
-                "the takeaway, or it was a clean read-only tick with "
-                "nothing to record. Any takeaways above (if present) come "
-                "from an older session in this worktree that the handoff "
-                "rewound to."
-            )
+        # Floor-only: a real `is_floor` marker exists on disk (the session
+        # called episode_handoff, which writes the entry floor). Genuinely
+        # ambiguous between (a) a crash after entry but before
+        # episode_write and (b) a clean read-only tick that ran
+        # episode_handoff with no takeaway — the on-disk shape is
+        # identical, so surface both readings rather than the misleading
+        # bare "crashed" claim.
+        result["note"] = (
+            "The immediately-preceding session recorded no takeaway "
+            "before it ended: it called episode_handoff (which wrote "
+            "the session-tag floor that anchored the worktree match) "
+            "but no episode_write followed — either it crashed before "
+            "the takeaway, or it was a clean read-only tick with "
+            "nothing to record. Any takeaways above (if present) come "
+            "from an older session in this worktree that the handoff "
+            "rewound to."
+        )
     elif note_zero_episode:
-        if promotion_trace == "promoted":
-            # Same promotion cause, zero-episode flavor: the session wrote a
-            # takeaway WITHOUT ever calling episode_handoff (so no floor),
-            # and the promotion deleted the journal source — nothing remains
-            # on disk even though the session demonstrably journaled.
-            result["note"] = (
-                "The immediately-preceding session in this worktree "
-                "journaled a takeaway, but it was promoted into a durable "
-                "memory and the journal source deleted on commit "
-                "(episode_promote); the session left no handoff floor, so "
-                "nothing remains on disk. The event log shows its "
-                "episode_write followed by a matching episode_promote — a "
-                "promotion, not a crash or a journal-less tick; "
-                "memory_search can surface the promoted content. Any "
-                "takeaways above (if present) come from an older session "
-                "in this worktree that the handoff rewound to."
-            )
-        elif promotion_trace == "staged-unresolved":
-            # Zero-episode flavor of the unprovable-promotion hedge: a
-            # takeaway was journaled and staged for promotion (so the
-            # "journaled no takeaway / non-handoff tick" text below would be
-            # an actively false claim), but the event log cannot confirm the
-            # promotion's outcome — a bare `pending` promote with no
-            # committed/confirmed proof and no cancel proof. State what is
-            # known (a promotion was staged) and hedge the outcome; never
-            # assert nothing was journaled. Still true, and kept: no floor
-            # exists (the session never called episode_handoff).
-            result["note"] = (
-                "The immediately-preceding session in this worktree staged "
-                "a takeaway for promotion into a durable memory (and left "
-                "no handoff floor), but this event log cannot confirm the "
-                "outcome: the promotion may have committed (for example, a "
-                "log written before the confirm event recorded the "
-                "source-episode id) or it may have been cancelled or "
-                "expired. If it committed, memory_search can surface the "
-                "promoted content; if not, no durable memory was written. "
-                "Any takeaways above (if present) come from an older "
-                "session in this worktree that the handoff rewound to."
-            )
-        else:
-            # Zero-episode: NO floor on disk — the worktree match came from an
-            # event's `worktree_root`, not a floor. So do NOT claim a floor
-            # was written or that episode_handoff was called (it wasn't): the
-            # session recorded activity (e.g. a search-only tick) but
-            # journaled nothing, or crashed before its entry floor landed.
-            result["note"] = (
-                "The immediately-preceding session in this worktree recorded "
-                "activity but journaled no takeaway (and left no handoff "
-                "floor) — it may have been a non-handoff tick, or crashed "
-                "before journaling. Any takeaways above (if present) come "
-                "from an older session in this worktree that the handoff "
-                "rewound to."
-            )
+        # Zero-episode: NO floor on disk — the worktree match came from an
+        # event's `worktree_root`, not a floor. So do NOT claim a floor
+        # was written or that episode_handoff was called (it wasn't): the
+        # session recorded activity (e.g. a search-only tick) but
+        # journaled nothing, or crashed before its entry floor landed.
+        result["note"] = (
+            "The immediately-preceding session in this worktree recorded "
+            "activity but journaled no takeaway (and left no handoff "
+            "floor) — it may have been a non-handoff tick, or crashed "
+            "before journaling. Any takeaways above (if present) come "
+            "from an older session in this worktree that the handoff "
+            "rewound to."
+        )
     elif note_all_hidden:
         # Scope-hidden terminal shape: the immediately-prior worktree session
         # HAS real takeaways, but every one of them is in a scope this
@@ -839,10 +701,10 @@ async def episode_handoff(
         result["note"] = (
             "The immediately-preceding session in this worktree recorded "
             "takeaways, but every one of them is in a scope this session "
-            "has disabled (memory_scope_disable), so none can be shown. "
+            "has disabled (memory_admin disable_scope), so none can be shown. "
             "The prior session was not empty and this is not the first "
-            "handoff in this worktree — re-enable the relevant scope via "
-            "memory_scope_enable to surface its takeaways."
+            "handoff in this worktree; re-enable the scope with "
+            "memory_admin(action='enable_scope') to surface its takeaways."
         )
     return result
 
@@ -879,7 +741,7 @@ def _maybe_write_session_floor(
     # Cheap existence check. `list_by_session` returns oldest-first
     # episodes; we only need to know whether any exists.
     try:
-        existing = deps.episode_store.list_by_session(session_id)
+        existing = deps.store.episodes_by_session(session_id)
     except ValueError:
         # Hostile session_id (shouldn't happen — the recorder's
         # session_id is generated by us and validated at construction).
@@ -898,146 +760,10 @@ def _maybe_write_session_floor(
         #     writing journal entries before calling handoff has
         #     no need for a floor anchor).
         return
-    deps.episode_store.write_floor(
+    deps.store.write_floor(
         session_id=session_id,
         origin=handoff_origin,
     )
-
-
-def _episode_promoted_out_of_session(root: Path, session_id: str) -> _PromotionTrace:
-    """Classify what the event log can prove about an episode WRITTEN BY
-    `session_id` that is no longer on disk. Returns one of:
-
-      - "promoted": the log PROVES a takeaway this session wrote went
-        through the promotion delete path.
-      - "staged-unresolved": a bare `pending` promote of one of this
-        session's episodes exists, but the log carries no commit proof
-        AND no cancel proof — the outcome is genuinely unprovable.
-      - "none": no pending/committed promote trace for this session's
-        episodes at all — a genuine crash / clean-tick / non-handoff shape.
-
-    `episode_promote` deletes the source episode when the durable write
-    commits — synchronously on `status="committed"`, or via
-    `memory_write_confirm` when the write staged as `status="pending"`
-    (the `require_write_confirmation` flow). Either way the session that
-    wrote the episode ends up floor-only (if it had called
-    episode_handoff) or zero-episode (if it hadn't) on disk,
-    byte-identical to the crash / clean-tick shapes the handoff notes
-    hedge about. The event log disambiguates:
-
-      - `episode_write` events carry the episode's ULID (`id`) and the
-        writer's session — collect the ids `session_id` wrote.
-      - a SYNCHRONOUS `episode_promote` (`write_status="committed"`)
-        deletes the source episode inline — POSITIVE proof; collect its
-        `episode_id`. The promoter session is deliberately NOT filtered:
-        a later session promoting an older session's takeaway (the
-        documented /loop pattern) still deletes the OLDER session's entry.
-      - a `write_confirm` event that carries an `episode_id` is the
-        deferred confirm path's POSITIVE proof: `memory_write_confirm`
-        stamps the deleted source-episode id onto that event only when
-        the confirmed write was a promotion — collect those too.
-      - a `write_cancel` event that carries an `episode_id` is the
-        NEGATIVE-proof counterpart: `memory_write_cancel` stamps the KEPT
-        source-episode id onto that event when a staged promotion is
-        dropped, so the episode was demonstrably NOT promoted. A later
-        prune can still rmtree the whole session dir, producing the same
-        zero-episode absence a real promotion would — this stamp is what
-        tells the two apart.
-
-    Verdict logic (all sets are episode ids):
-      - `written & promoted` non-empty → "promoted".
-      - else a bare `pending` promote of a written episode that is
-        neither in `promoted` nor in `cancelled` → "staged-unresolved".
-      - else → "none".
-
-    Why a bare `pending` promote is NOT read as proof on its own: it is
-    recorded at STAGING time, before the outcome is known. The deferred
-    delete happens later inside `memory_write_confirm` (stamping the
-    confirm event); a cancel drops it (stamping the cancel event); an
-    unconfirmed pending simply TTL-expires with no further event. A
-    cancelled/expired pending leaves the episode ON disk, and
-    `prune_old_sessions` then rmtrees the whole session directory 30 days
-    on — producing the exact zero-episode absence a real promotion would.
-    So on-disk absence + a bare pending cannot, by itself, prove a
-    promotion; the committed/confirmed stamp proves it did, the cancel
-    stamp proves it did not, and a pending with NEITHER is unprovable and
-    hedged (never collapsed into the false "nothing was journaled" note).
-
-    UNRECOVERABLE OLD LOGS: an event log written before these id stamps
-    existed carries neither on its `write_confirm`/`write_cancel` — and
-    the bare `episode_promote(pending)` never carried a linking key to
-    the confirm/cancel either. So for a genuinely-committed pre-stamp
-    promotion NO code change here can recover proof; it lands in
-    "staged-unresolved" and honestly hedges. (A symmetric FORWARD
-    hardening — a `pending_id` on the `episode_promote` event, joinable to
-    the confirm/cancel's `pending_id` — would let a future promoter that
-    somehow lost the episode-id stamp still be joined; it is recorded on
-    the promote event, owned elsewhere, and would not help these old logs
-    regardless, so it is intentionally out of scope here.)
-
-    Cost: one pass over `iter_all_events` (active log + gz archives).
-    Only invoked when a floor-only / zero-episode note is about to
-    fire, which is the uncommon handoff outcome; the healthy adopt-a-
-    takeaway path never pays it.
-    """
-    from ..events import iter_all_events
-
-    written: set[str] = set()
-    promoted: set[str] = set()
-    cancelled: set[str] = set()
-    staged_pending: set[str] = set()
-    for ev in iter_all_events(root):
-        kind = ev.get("kind")
-        if kind == "episode_write":
-            # Same session-field fallback discipline as the resolution
-            # walk: current events stamp `session`, tolerate legacy
-            # `session_id`.
-            sid = ev.get("session") or ev.get("session_id")
-            eid = ev.get("id")
-            if sid == session_id and isinstance(eid, str):
-                written.add(eid)
-        elif kind == "episode_promote":
-            eid = ev.get("episode_id")
-            if not isinstance(eid, str):
-                continue
-            status = ev.get("write_status")
-            if status == "committed":
-                # Synchronous commit deleted the source episode inline —
-                # positive proof.
-                promoted.add(eid)
-            elif status == "pending":
-                # Staged, outcome not yet known at record time. Held aside;
-                # only a later commit/confirm proof (→ promoted) or cancel
-                # proof (→ cancelled) resolves it. A pending left in neither
-                # is the unprovable case.
-                staged_pending.add(eid)
-        elif kind == "write_confirm":
-            # A `write_confirm` carrying an `episode_id` is the durable,
-            # confirm-TIME proof that a DEFERRED promotion's delete ran:
-            # `memory_write_confirm` stamps the deleted source-episode id
-            # onto this event only on the promotion path (a normal confirm
-            # records episode_id=None, filtered out by the isinstance check).
-            eid = ev.get("episode_id")
-            if isinstance(eid, str):
-                promoted.add(eid)
-        elif kind == "write_cancel":
-            # A `write_cancel` carrying an `episode_id` is the confirm-time
-            # NEGATIVE proof: `memory_write_cancel` stamps the KEPT
-            # source-episode id when a staged promotion is dropped, so this
-            # episode was demonstrably not promoted. Separates a
-            # provably-cancelled pending (→ honest "no takeaway" note) from
-            # an unprovable one (→ hedged note). A normal cancel records
-            # episode_id=None, filtered out by the isinstance check.
-            eid = ev.get("episode_id")
-            if isinstance(eid, str):
-                cancelled.add(eid)
-    if written & promoted:
-        return "promoted"
-    # A bare pending promote of one of THIS session's episodes, with no
-    # positive commit proof and no negative cancel proof: unprovable.
-    if (written & staged_pending) - promoted - cancelled:
-        return "staged-unresolved"
-    return "none"
 
 
 def _worktrees_equal_strict(

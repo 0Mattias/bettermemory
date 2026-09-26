@@ -1,12 +1,13 @@
-"""The `client` / `model` filters on memory_search and memory_list.
+"""The `client` / `model` filters on memory_search.
 
-7.10.0 recorded who wrote a memory; these are the surfaces that select on
+7.10.0 recorded who wrote a memory; this is the surface that selects on
 it. What the tests here pin, in the order the design leans on it:
 
 * the rule itself lives in ONE place (`identity.actor_matches`), is exact
   and case-sensitive, and drops a record whose writer declared nothing;
-* the SQL `WHERE` in `index.query` and that Python predicate return the
-  SAME set, which is the property that lets the filter be spelled twice;
+* the SQL `WHERE` in `Store.query_candidates` and that Python predicate
+  return the SAME set, which is the property that lets the filter be
+  spelled twice;
 * the `WHERE` earns its place by spending the FTS candidate cap on rows
   that pass, rather than filtering a slice that already excluded them;
 * the BM25 corpus-IDF denominator binds the filter too, so it stays the
@@ -20,7 +21,6 @@ from typing import Any
 
 import pytest
 
-from bettermemory import index
 from bettermemory.config import Config, StorageConfig
 from bettermemory.identity import Actor, actor_matches
 from bettermemory.search import candidate_admitted
@@ -107,25 +107,20 @@ def test_candidate_admitted_reads_the_same_rule() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The index column and its WHERE
+# The row's actor columns and their WHERE
 # ---------------------------------------------------------------------------
 
 
-def test_the_row_carries_the_declared_actor(store: Store, memory_dir: Path) -> None:
+def test_the_row_carries_the_declared_actor(store: Store) -> None:
     written = store.write(content="alpha one", scopes=["tools"], actor=HERMES)
     store.write(content="alpha two", scopes=["tools"])
 
-    import sqlite3
-
-    conn = sqlite3.connect(str(index.index_path(memory_dir)))
-    try:
-        conn.row_factory = sqlite3.Row
-        rows = {
-            r["id"]: (r["actor_client"], r["actor_model"])
-            for r in conn.execute("SELECT id, actor_client, actor_model FROM memories")
-        }
-    finally:
-        conn.close()
+    rows = {
+        r["id"]: (r["actor_client"], r["actor_model"])
+        for r in store.conn.execute(
+            "SELECT id, actor_client, actor_model FROM memories"
+        )
+    }
 
     assert rows[written.id] == ("hermes", "sonnet")
     # The undeclared write stores NULL, never an empty string: "declared
@@ -134,13 +129,13 @@ def test_the_row_carries_the_declared_actor(store: Store, memory_dir: Path) -> N
     assert other == [(None, None)]
 
 
-def test_query_selects_on_the_declared_client(store: Store, memory_dir: Path) -> None:
+def test_query_selects_on_the_declared_client(store: Store) -> None:
     a = store.write(content="alpha one", scopes=["tools"], actor=HERMES)
     b = store.write(content="alpha two", scopes=["tools"], actor=CODE)
     c = store.write(content="alpha three", scopes=["tools"])
 
     def ids(**kwargs: Any) -> set[str]:
-        return {mid for mid, _ in index.query(memory_dir, "alpha", **kwargs)}
+        return {mid for mid, _ in store.query_candidates("alpha", **kwargs)}
 
     assert ids() == {a.id, b.id, c.id}
     assert ids(client="hermes") == {a.id}
@@ -151,14 +146,12 @@ def test_query_selects_on_the_declared_client(store: Store, memory_dir: Path) ->
     assert c.id not in ids(client="hermes") | ids(client="claude-code")
 
 
-def test_query_client_filter_is_case_sensitive(store: Store, memory_dir: Path) -> None:
+def test_query_client_filter_is_case_sensitive(store: Store) -> None:
     store.write(content="alpha one", scopes=["tools"], actor=HERMES)
-    assert index.query(memory_dir, "alpha", client="Hermes") == []
+    assert store.query_candidates("alpha", client="Hermes") == []
 
 
-def test_corpus_document_frequencies_binds_the_actor_filter(
-    store: Store, memory_dir: Path
-) -> None:
+def test_document_frequencies_bind_the_actor_filter(store: Store) -> None:
     """The IDF denominator must be the collection about to be ranked. A
     filter the ranked set applies and this scan doesn't would price term
     rarity against memories the caller cannot retrieve."""
@@ -178,7 +171,7 @@ def test_corpus_document_frequencies_binds_the_actor_filter(
             client_filter="hermes",
         )
 
-    resolved = index.corpus_document_frequencies(memory_dir, ["alpha"], admit=_admit)
+    resolved = store.document_frequencies(["alpha"], admit=_admit)
     assert resolved is not None
     size, body_df, _scope_df = resolved
     assert size == 1, "the denominator counts only what the filter admits"
@@ -214,7 +207,7 @@ async def test_the_where_and_the_predicate_are_one_set(
 
 
 async def test_the_prefilter_cap_is_spent_on_eligible_rows(
-    server: Any, store: Store, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+    server: Any, store: Store, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """G4, and the whole reason the filter is also a SQL `WHERE`.
 
@@ -222,8 +215,9 @@ async def test_the_prefilter_cap_is_spent_on_eligible_rows(
     term, so the 50-row candidate cap fills with that writer's memories
     on relevance alone. A post-cap filter would be handed 50 rows none of
     which are the rare writer's and return nothing, with the match
-    sitting on disk. Reverting the `WHERE` in `index.query` turns this
-    red, which is what makes it a test of the design and not of pytest.
+    sitting in the store. Reverting the `WHERE` in `query_candidates`
+    turns this red, which is what makes it a test of the design and not
+    of pytest.
 
     `auto_scope=False` is load-bearing here and not incidental. With it
     on, a repo filter is active, which arms `resolve_search_pool`'s
@@ -251,7 +245,7 @@ async def test_the_prefilter_cap_is_spent_on_eligible_rows(
 
     # The premise the gate rests on, asserted rather than assumed: without
     # the filter this row is NOT in the candidate slice.
-    unfiltered = {mid for mid, _ in index.query(memory_dir, "alpha", max_results=50)}
+    unfiltered = {mid for mid, _ in store.query_candidates("alpha", max_results=50)}
     assert rare.id not in unfiltered, "the cap must actually exclude it"
 
     hits = await _call(
@@ -276,42 +270,3 @@ async def test_search_undeclared_rows_match_no_client(
     store.write(content="alpha one", scopes=["tools"])
     hits = await _call(server, "memory_search", query="alpha", client="hermes")
     assert hits == []
-
-
-# ---------------------------------------------------------------------------
-# memory_list
-# ---------------------------------------------------------------------------
-
-
-async def test_list_filters_by_client_on_both_branches(
-    server: Any, store: Store
-) -> None:
-    a = store.write(content="alpha one", scopes=["tools"], actor=HERMES)
-    store.write(content="alpha two", scopes=["tools"], actor=CODE)
-    store.write(content="alpha three", scopes=["tools"])
-
-    summaries = await _call(server, "memory_list", client="hermes")
-    assert [row["id"] for row in summaries] == [a.id]
-
-    bodies = await _call(server, "memory_list", client="hermes", with_bodies=True)
-    assert [row["id"] for row in bodies] == [a.id]
-
-
-async def test_list_row_carries_the_spellings_the_filter_matches(
-    server: Any, store: Store
-) -> None:
-    """D8. An exact-match filter whose values cannot be discovered is a
-    guessing game, so the cheap-triage row names the writer — and stays
-    the shape it always was for a record that declared nobody."""
-    store.write(content="alpha one", scopes=["tools"], actor=HERMES)
-    store.write(content="alpha two", scopes=["tools"])
-
-    rows = {row["summary"]: row for row in await _call(server, "memory_list")}
-    assert rows["alpha one"]["actor"] == {"client": "hermes", "model": "sonnet"}
-    assert "actor" not in rows["alpha two"]
-
-
-async def test_list_undeclared_rows_match_no_client(server: Any, store: Store) -> None:
-    store.write(content="alpha one", scopes=["tools"])
-    assert await _call(server, "memory_list", client="hermes") == []
-    assert await _call(server, "memory_list", model="opus") == []

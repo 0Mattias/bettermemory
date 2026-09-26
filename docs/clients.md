@@ -31,7 +31,7 @@ Project-scope wins when both are present — usually what you want for a project
 
 The manual path doesn't include the system-prompt skill the plugin ships. For the long-form policy with a manual install, paste [`system_prompt.md`](system_prompt.md) into your `CLAUDE.md`, or `bettermemory init --with-addendum` to print it.
 
-The manual path also skips the plugin's **hooks**, and those carry real behavior on Claude Code: the Stop hook (`bettermemory audit-turn`) settles retrievals at turn end and runs the silent-miss audit, the UserPromptSubmit hook (`bettermemory prompt-recall`) delivers score-gated proactive recall, the SessionStart hook prints the per-scope hint, and the SessionEnd hook (`bettermemory session-end`) starts session capture when `[capture] enabled` is on. Capture needs all three of Stop, SessionStart and SessionEnd: Stop registers each session and checkpoints long ones, SessionEnd captures a session as it closes, and SessionStart catches the ones that never closed cleanly. Without the Stop hook the usage telemetry is one-sided — `memory_health` suppresses its dead-weight and cold-endorsement verdicts rather than misreading the silence (the honesty gate), and `bettermemory doctor` reports the store as MCP-audited rather than hook-wired. Wire them from the plugin's `hooks/hooks.json` shapes if you want the full loop on a manual install; on other hosts there is no hook surface, and the in-process settlement plus the honesty gate are the designed degradation.
+The manual path also skips the plugin's **hooks**, and those carry real behavior on Claude Code: the Stop hook (`bettermemory audit-turn`) settles retrievals at turn end and runs the silent-miss audit, the UserPromptSubmit hook (`bettermemory prompt-recall`) delivers score-gated proactive recall, and the SessionStart hook (`bettermemory session-start`) prints the per-scope counts. Without the Stop hook the usage telemetry is one-sided: the health report suppresses its dead-weight and cold-endorsement verdicts rather than misreading the silence (the honesty gate). Wire them from the plugin's `hooks/hooks.json` shapes if you want the full loop on a manual install; on other hosts there is no hook surface, and the in-process settlement plus the honesty gate are the designed degradation.
 
 ## Claude Desktop
 
@@ -124,11 +124,11 @@ mcp_servers:
 
 The patch is a splice, not a rewrite. Only the `bettermemory` entry is inserted or replaced; every other line of the file — your key order, your comments, the commented-out sections Hermes's installer leaves for you — stays exactly as it was. Keys you add to the entry (`idle_timeout_seconds`, `enabled`, a `tools` filter) survive a re-run, and a `BETTERMEMORY_CLIENT` you set yourself is kept. `bettermemory init --client hermes --print-only` prints the YAML entry without writing anything.
 
-Two things follow from Hermes's shape. One gateway process serves every chat platform from one directory and passes no `cwd` to a stdio server, so a memory written from Hermes records the gateway's own directory with `origin.source: process-cwd` — a labeled fallback, not a project. If your Hermes work is one project, add `BETTERMEMORY_WORKSPACE: /path/to/project` to the `env` block and writes record that project, its git remote and branch instead. And Hermes recycles idle stdio servers, so per-process session state (a pending `memory_write` confirmation, a scope disabled for the session) does not outlive a quiet gap between tool calls; the store itself is unaffected.
+Two things follow from Hermes's shape. One gateway process serves every chat platform from one directory and passes no `cwd` to a stdio server, so a memory written from Hermes records the gateway's own directory with `origin.source: process-cwd`, a labeled fallback, not a project. If your Hermes work is one project, add `BETTERMEMORY_WORKSPACE: /path/to/project` to the `env` block and writes record that project, its git remote and branch instead. And Hermes recycles idle stdio servers, so per-process session state (a scope disabled for the session, an unsettled use token) does not outlive a quiet gap between tool calls; the store itself is unaffected.
 
 A running interactive Hermes session reloads its MCP connections when the file changes; a gateway started before the patch reads the block at its next start.
 
-Once two clients write to one store — Claude Code declaring itself through `clientInfo`, Hermes through the `env` block above — the listing and the search can be narrowed to one of them: `memory_list(client="hermes")`, `memory_search(query=…, client="claude-code")`. The match is exact and case-sensitive on whatever the client declared, and every `memory_list` row shows the `client` / `model` it was written with, so the spellings are there to read rather than guess. Records written before 7.10.0 carry no actor and match no value — a filtered listing shows what is labelled, not a census of who wrote what. And since the value is declared by the client itself, the filter is for attribution and cleanup, never a boundary between clients: any client can call itself anything.
+Once two clients write to one store (Claude Code declaring itself through `clientInfo`, Hermes through the `env` block above) the search can be narrowed to one of them: `memory_search(query=…, client="claude-code")`. The match is exact and case-sensitive on whatever the client declared; `memory_show` renders the `client` / `model` a record was written with, and the health report's `actor_slices` lists every spelling in the store, so they are there to read rather than guess. Records written before 7.10.0 carry no actor and match no value: a filtered search shows what is labelled, not a census of who wrote what. And since the value is declared by the client itself, the filter is for attribution and cleanup, never a boundary between clients: any client can call itself anything.
 
 ## Other clients
 
@@ -137,14 +137,14 @@ For anything not listed, run `bettermemory init` (no flags) to print the canonic
 ## Verifying setup
 
 ```sh
-bettermemory doctor
+bettermemory try
 ```
 
-The `mcp_client_configs` check scans every known client's config and cross-checks the registered binary path against what `find_binary()` resolves to now. A mismatch (typically: reinstalled bettermemory into a different venv) is flagged with a one-line fix hint.
+The offline demo writes a memory citing a file into a throwaway store, deletes the file, and shows the next search flagging it; it needs no client and touches no real store.
 
-In the host itself, ask the model *"what memory tools do you have?"*. If the tools aren't listed, the server failed to start — `bettermemory doctor` will tell you why.
+In the host itself, ask the model *"what memory tools do you have?"*. If the nine tools are not listed, the server failed to start: run `bettermemory` by hand from a terminal and read its startup log, which names the store directory and any config problem.
 
-After a few sessions, `doctor`'s `audit_turn_cadence` check says which kind of store you're running: hook-wired (Stop-hook audits landing), MCP-audited (the model calls `memory_audit_turn` in-process — real telemetry, but the automatic end-of-turn lane is missing), or silent (nothing audits; the warn carries the wiring hint).
+After a few sessions, the health report (`bettermemory health`, or `memory_admin(action="health")`) says whether the Stop hook is wired: `telemetry_coverage.covered` is true when Stop-hook settlement telemetry is landing, and the dead-weight and cold-endorsement verdicts are suppressed, with the reason, when it is not.
 
 ## Snippet shape
 
@@ -163,7 +163,7 @@ The MCP wire protocol is the same across hosts. Only the config file shape and l
 }
 ```
 
-The `bettermemory` server key is the default; override it with `--name` only if you have a strong reason (Claude Code prefixes its tool names with this key). When you run `bettermemory init`, the `command` is written as the *absolute* path that `find_binary()` resolves on your PATH — not the bare `bettermemory` shown here — so a later reinstall into a different venv is detectable (that's what `bettermemory doctor`'s `mcp_client_configs` check compares against). The bare-name form above also works if the binary stays on PATH; the plugin's `.mcp.json` instead uses `"command": "uvx"` with `"args": ["bettermemory"]`.
+The `bettermemory` server key is the default; override it with `--name` only if you have a strong reason (Claude Code prefixes its tool names with this key). When you run `bettermemory init`, the `command` is written as the *absolute* path that `find_binary()` resolves on your PATH, not the bare `bettermemory` shown here, so a later reinstall into a different venv is visible in the config file. The bare-name form above also works if the binary stays on PATH; the plugin's `.mcp.json` instead uses `"command": "uvx"` with `"args": ["bettermemory"]`.
 
 If you find a client whose snippet shape isn't this, please file an issue.
 

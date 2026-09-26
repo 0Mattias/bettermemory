@@ -1,10 +1,10 @@
 """Write-time credential-shaped-string check for memory_write.
 
-The store is plain-text markdown that `bettermemory sync` pushes across
-hosts via git. A memory body that captures a live secret — "remember my
-OpenAI key is sk-…", a pasted `AKIA…` line, a private-key PEM block — is a
-real footgun: the secret lands unencrypted on disk, in `.events.jsonl`'s
-audit trail, and in every clone of the sync repo, and it rots there. The
+The store is plain text on disk, and its JSON export travels. A memory
+body that captures a live secret — "remember my OpenAI key is sk-…", a
+pasted `AKIA…` line, a private-key PEM block — is a real footgun: the
+secret lands unencrypted on disk, in the log's
+audit trail and in every export, and it rots there. The
 project's pitch is an *auditable, safe* memory layer; silently persisting a
 credential is the opposite of that.
 

@@ -1,0 +1,94 @@
+{
+  "bettermemory_version": "8.0.0",
+  "conflicts": [
+    "pair1"
+  ],
+  "dropped": {
+    "pending_writes": 2,
+    "proposals": 1
+  },
+  "episodes": [
+    {
+      "id": "01M3DKQTZ8T42SSJJ2Y2SGB6RD",
+      "is_floor": false,
+      "session_id": "sess_a"
+    },
+    {
+      "id": "01M3DKQVYGP7XVCAXJ7PP0QRGV",
+      "is_floor": false,
+      "session_id": "sess_b"
+    },
+    {
+      "id": "01M3DKQWXRG9060CKA2CBYZDKG",
+      "is_floor": true,
+      "session_id": "sess_b"
+    }
+  ],
+  "event_kinds": {
+    "list": 1,
+    "migrate": 1,
+    "search": 1,
+    "show": 1,
+    "turn_audited": 1,
+    "use": 1,
+    "verify": 1,
+    "write": 1
+  },
+  "events_redacted": 2,
+  "events_total": 8,
+  "imports": {
+    "/w/notes/src1.md": {
+      "content_hash": "sha256:abc",
+      "memory_id": "01M3DKQK58CTHCC16KV6S5W7AE"
+    },
+    "/w/notes/src2.md": {
+      "content_hash": "sha256:def",
+      "memory_id": "01M3DKR4QRPEQV1KX33E46TDD9"
+    }
+  },
+  "index_schema_version": 11,
+  "left": {
+    "captures": 1,
+    "episode_patterns": 1,
+    "index": 1,
+    "quarantine": 1
+  },
+  "memories": {
+    "full": {
+      "filename": "2026-09-26-the-whole-record-every-field-set-01m3dkqq2858ctp6xv72wccecm.md",
+      "id": "01M3DKQQ2858CTP6XV72WCCECM"
+    },
+    "plain": {
+      "filename": "2026-09-26-a-plain-memory-about-kubernetes-networking-01m3dkqk58cthcc16kv6s5w7ae.md",
+      "id": "01M3DKQK58CTHCC16KV6S5W7AE"
+    },
+    "verified": {
+      "filename": "2026-09-26-the-release-process-runs-from-the-01m3dkqn3rya4gxxp2k49wahwz.md",
+      "id": "01M3DKQN3RYA4GXXP2K49WAHWZ"
+    }
+  },
+  "now": "2026-09-26T01:02:03.456000+00:00",
+  "probe_query": "what about the cluster",
+  "query": "kubernetes networking secrets and the cluster",
+  "tombstones": {
+    "legacy": {
+      "active_filename": "2026-09-26-a-record-removed-long-ago-01m3dkqs0r0gppb3m7b5ksvnyw.md",
+      "filename": "2026-09-26-a-record-removed-long-ago-01m3dkqs0r0gppb3m7b5ksvnyw.tombstone.md",
+      "id": "01M3DKQS0R0GPPB3M7B5KSVNYW",
+      "legacy_name": true,
+      "reason": "legacy removal",
+      "session": null
+    },
+    "tombstoned": {
+      "active_filename": "2026-09-23-a-record-that-was-later-removed-01m35whd6073hhf6qdqvvxwwe5.md",
+      "filename": "2026-09-23-a-record-that-was-later-removed-01m35whd6073hhf6qdqvvxwwe5.01M35WHD6073HHF6QDQVVXWWE5.tombstone.md",
+      "id": "01M35WHD6073HHF6QDQVVXWWE5",
+      "legacy_name": false,
+      "reason": "no longer true",
+      "session": "sess_x"
+    }
+  },
+  "unknown": [
+    ".stray.json"
+  ]
+}

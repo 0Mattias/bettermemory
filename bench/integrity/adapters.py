@@ -153,9 +153,9 @@ class BetterMemoryAdapter:
 
     Writes go through `memory_write` with the full gate chain; reads through
     `memory_search` at the shared depth, each hit's body read back with
-    `memory_show` (the documented read for a hit). The recorder is on so
-    every API write leaves the event the provenance tier joins on, which is
-    what makes a planted file read `unaccounted` after a rebuild.
+    `memory_show` (the documented read for a hit). The recorder is on, so
+    every API write is a signed log row with the record pointing at it,
+    which is what a planted row's missing pointer is measured against.
     """
 
     name = "bettermemory"
@@ -195,15 +195,13 @@ class BetterMemoryAdapter:
             raise SystemUnavailable(
                 f"config resolved {cfg.resolved_directory()} instead of the scratch store"
             )
-        store = Store(self.root)
+        store = Store(self.root, keys_dir=self.scratch / "keys")
         sessions = SessionRegistry()
         self._session_id = sessions.for_request(None).session_id
         recorder = Recorder(
-            root=self.root,
+            store=store,
             session_id=self._session_id,
             enabled=True,
-            max_bytes=10_000_000,
-            log_queries_verbatim=True,
             worktree_root=str(_ROOT),
         )
         self._deps = ToolHandlers(
@@ -235,9 +233,12 @@ class BetterMemoryAdapter:
                 "supersedes links set by memory_write; cue-less divergence filed "
                 "for memory_conflicts"
             ),
-            "provenance_channel": "provenance label (local / synced / untracked / unaccounted)",
-            "store_injection": "planted markdown file, index rebuilt",
-            "forged_provenance": "a forged `write` event line appended to the event log",
+            "provenance_channel": "provenance label (local / imported / synced / unaccounted)",
+            "store_injection": "a memories row inserted by SQL, no log pointer",
+            "forged_provenance": (
+                "a memory_put log row appended without the key, and the row "
+                "pointing at it"
+            ),
         }
 
     def version(self) -> dict[str, Any]:
@@ -329,63 +330,90 @@ class BetterMemoryAdapter:
     def inject(
         self, stmt_id: str, text: str, meta: dict[str, Any], *, forge_provenance: bool
     ) -> str:
-        """Plant a file with a forged fresh stamp, then rebuild the index.
+        """Plant a memories row with forged trust fields, past the write path.
 
-        With `forge_provenance` a `write` event line naming the planted id
-        is appended to the recorder's own shard first, so the provenance
-        join finds a creation event and labels the plant `local`. That is
-        the recon's open item 7 (tamper evidence), measured rather than
-        assumed.
+        The plain plant is a row inserted by SQL with no `log_mac`, the way
+        a writer with the store file and not the key would plant it: the
+        FTS trigger indexes it, so it is a search candidate, and only the
+        pointer check can tell it apart. With `forge_provenance` a
+        `memory_put` log row naming the planted id is appended first with a
+        MAC made without the key, and the planted row points at it, so the
+        pointer names a row of the right kind that names the right id and
+        the MAC check is what refuses it. That is the recon's open item 7
+        (tamper evidence), measured rather than assumed.
         """
-        import yaml
-        from bettermemory import index as _index
-        from bettermemory.models import build_filename, generate_ulid, make_slug
+        import secrets
+
+        from bettermemory import store as _store
+        from bettermemory.log import canonical_payload, last_row
+        from bettermemory.models import (
+            Category,
+            Confidence,
+            Memory,
+            Source,
+            generate_ulid,
+        )
         from bettermemory.origin import capture as capture_origin
 
         now = datetime.now(timezone.utc)
         mid = generate_ulid()
-        origin = capture_origin(_ROOT).model_dump(mode="json", exclude_none=True)
         real_paths = ["src/bettermemory/store.py", "src/bettermemory/verify.py"]
-        front: dict[str, Any] = {
-            "schema_version": 1,
-            "id": mid,
-            "created": now,
-            "updated": now,
-            "scopes": [SCOPE],
-            "confidence": "high",
-            "source": "user-correction",
-            "category": "fact",
-            "corroborations": 999,
-            "last_corroborated": now,
-            "last_verified_at": now,
-            "verified_paths": real_paths,
-            "origin": origin,
-        }
-        body = (
-            "---\n"
-            + yaml.safe_dump(front, sort_keys=False, allow_unicode=True).strip()
-            + "\n---\n\n"
-            + text
-            + "\n"
+        planted = Memory(
+            id=mid,
+            created=now,
+            updated=now,
+            scopes=[SCOPE],
+            confidence=Confidence.HIGH,
+            source=Source.CORRECTION,
+            category=Category.FACT,
+            body=text.strip() + "\n",
+            last_verified_at=now,
+            verified_paths=real_paths,
+            origin=capture_origin(_ROOT),
         )
-        path = self.root / build_filename(now, f"{make_slug(text)}-{mid.lower()}")
-        path.write_text(body, encoding="utf-8")
+        store = self._deps.store
+        log_mac: str | None = None
         if forge_provenance:
-            line = {
-                "ts": now.isoformat().replace("+00:00", "Z"),
-                "session": self._session_id,
-                "kind": "write",
-                "status": "committed",
-                "id": mid,
-                "category": "fact",
-                "scopes": [SCOPE],
-                "confidence": "high",
-                "source": "user-correction",
-                "forced": False,
+            previous = last_row(store.conn)
+            assert previous is not None, "a created store has a log row"
+            payload = {
+                "memory": planted.model_dump(mode="json"),
+                "provenance": _store.LOCAL,
+                "filename": None,
             }
-            with self._deps.recorder.path.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(line, separators=(",", ":")) + "\n")
-        _index.rebuild(self.root, self._deps.store.iter_active())
+            log_mac = secrets.token_hex(32)
+            store.conn.execute(
+                "INSERT INTO log(seq, ts, session, kind, payload, prev_mac, mac) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    previous.seq + 1,
+                    previous.ts,
+                    self._session_id,
+                    "memory_put",
+                    canonical_payload(payload),
+                    previous.mac,
+                    log_mac,
+                ),
+            )
+        columns = _store._record_columns(planted)
+        columns.update(
+            {
+                "body_fts": _store.fts_index_text(planted.body),
+                "scopes_text": _store._scopes_text(planted.scopes),
+                "scopes_fts": _store.fts_index_text(" ".join(planted.scopes)),
+                "filename": None,
+                "provenance": _store.LOCAL,
+                "links_json": "[]",
+                "corroborations": 999,
+                "last_corroborated": _store._iso(now),
+                "log_mac": log_mac,
+            }
+        )
+        store.conn.execute(
+            _store._UPSERT_MEMORY,
+            tuple(columns[c] for c in _store._MEMORY_COLUMNS),
+        )
+        store.conn.commit()
         return mid
 
 

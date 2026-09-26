@@ -2,7 +2,7 @@
  "kind": "migrate-v8/parity",
  "provenance": {
   "bettermemory_version": "8.0.0",
-  "commit": "7cc4e72",
+  "commit": "d6918f4",
   "tree_dirty": true,
   "date": "2026-09-26",
   "machine": {
@@ -12,49 +12,49 @@
   }
  },
  "source": {
-  "root": "/private/var/folders/vn/d8j177l96glfn87569fzlz8m0000gn/T/tmpqn07yw31/v8",
-  "bytes": 6985008
+  "root": "tests/fixtures/v8/store",
+  "bytes": 66497
  },
  "migrate": {
-  "source": "/private/var/folders/vn/d8j177l96glfn87569fzlz8m0000gn/T/tmpqn07yw31/v8",
-  "store": "/var/folders/vn/d8j177l96glfn87569fzlz8m0000gn/T/tmpqn07yw31/run/v9/memory.sqlite",
+  "source": "/Users/mattias/Documents/projects/bettermemory/.claude/worktrees/agent-afe1a3011257b9d17/tests/fixtures/v8/store",
+  "store": "/var/folders/vn/d8j177l96glfn87569fzlz8m0000gn/T/tmp1_dvjayj/run/v9/memory.sqlite",
   "dry_run": false,
   "memories": {
-   "found": 1075,
-   "imported": 1075,
+   "found": 3,
+   "imported": 3,
    "present": 0,
    "unparseable": 0
   },
   "tombstones": {
-   "found": 5,
-   "imported": 5,
+   "found": 2,
+   "imported": 2,
    "present": 0,
    "unparseable": 0,
    "legacy_names": 1
   },
   "episodes": {
    "sessions": 2,
-   "found": 4,
-   "imported": 4,
+   "found": 3,
+   "imported": 3,
    "present": 0
   },
   "events": {
-   "found": 43,
-   "imported": 43,
+   "found": 8,
+   "imported": 8,
    "present": 0,
-   "redacted": 9,
+   "redacted": 2,
    "unstamped": 0,
    "malformed": 0
   },
   "event_kinds": {
    "list": 1,
    "migrate": 1,
-   "search": 8,
-   "show": 8,
+   "search": 1,
+   "show": 1,
    "turn_audited": 1,
-   "use": 8,
-   "verify": 8,
-   "write": 8
+   "use": 1,
+   "verify": 1,
+   "write": 1
   },
   "conflicts": {
    "found": 1,
@@ -62,25 +62,27 @@
    "present": 0
   },
   "imports": {
-   "found": 1,
-   "imported": 1,
+   "found": 2,
+   "imported": 2,
    "present": 0
   },
   "dropped": {
-   "pending_writes": 0,
-   "proposals": 0
+   "pending_writes": 2,
+   "proposals": 1
   },
   "left": {
-   "quarantine": 0,
-   "episode_patterns": 0,
-   "captures": 0,
+   "quarantine": 1,
+   "episode_patterns": 1,
+   "captures": 1,
    "index": 1,
    "lock_files": 8
   },
-  "unknown": [],
-  "seconds": 0.666,
-  "log_rows": 1130,
-  "size_bytes": 6545408
+  "unknown": [
+   ".stray.json"
+  ],
+  "seconds": 0.012,
+  "log_rows": 20,
+  "size_bytes": 270336
  },
  "second_run": {
   "memories": 0,
@@ -92,57 +94,57 @@
   "log_rows": 0
  },
  "mirror": {
-  "target": "/private/var/folders/vn/d8j177l96glfn87569fzlz8m0000gn/T/tmpqn07yw31/run/mirror",
-  "active": 1075,
-  "tombstones": 5,
-  "episodes": 4,
-  "written": 1084,
+  "target": "/private/var/folders/vn/d8j177l96glfn87569fzlz8m0000gn/T/tmp1_dvjayj/run/mirror",
+  "active": 3,
+  "tombstones": 2,
+  "episodes": 3,
+  "written": 8,
   "unchanged": 0,
   "removed": 0,
-  "seconds": 0.498,
+  "seconds": 0.006,
   "compare": {
    "active": {
-    "files": 1075,
-    "identical": 1075,
+    "files": 3,
+    "identical": 3,
     "differing": []
    },
    "tombstones": {
-    "files": 5,
-    "identical": 5,
+    "files": 2,
+    "identical": 2,
     "differing": [],
     "renamed": [
-     "2026-01-01-a-cache-miss-is-never-an-01kdve7d38xmpt0m20dn62c163.tombstone.md -> 2026-01-01-a-cache-miss-is-never-an-01kdve7d38xmpt0m20dn62c163.01KDVE7D38XMPT0M20DN62C163.tombstone.md"
+     "2026-09-26-a-record-removed-long-ago-01m3dkqs0r0gppb3m7b5ksvnyw.tombstone.md -> 2026-09-26-a-record-removed-long-ago-01m3dkqs0r0gppb3m7b5ksvnyw.01M3DKQS0R0GPPB3M7B5KSVNYW.tombstone.md"
     ]
    },
    "episodes": {
-    "files": 4,
-    "identical": 4,
+    "files": 3,
+    "identical": 3,
     "differing": []
    },
-   "mirror_files": 1084,
-   "source_files": 1084
+   "mirror_files": 8,
+   "source_files": 8
   }
  },
  "events": {
   "v8_kinds": {
    "list": 1,
    "migrate": 1,
-   "search": 8,
-   "show": 8,
+   "search": 1,
+   "show": 1,
    "turn_audited": 1,
-   "use": 8,
-   "verify": 8,
-   "write": 8
+   "use": 1,
+   "verify": 1,
+   "write": 1
   },
   "v9_kinds": {
    "list": 1,
    "migrate": 1,
-   "search": 8,
-   "show": 8,
+   "search": 1,
+   "show": 1,
    "turn_audited": 1,
-   "use": 8,
-   "verify": 8,
-   "write": 8
+   "use": 1,
+   "verify": 1,
+   "write": 1
   },
   "equal": true
  },
@@ -152,25 +154,25 @@
   "window_equal": true,
   "differing_lines": 0,
   "total_events": [
-   43,
-   43
+   8,
+   8
   ]
  },
  "order": {
   "index_present": true,
   "equal": true,
-  "rows": 1075
+  "same_set": true,
+  "rows": 3
  },
- "candidates": null,
  "verify": {
   "status": "ok",
-  "rows": 1131,
-  "seconds": 0.325
+  "rows": 21,
+  "seconds": 0.002
  },
  "size": {
-  "sqlite_bytes": 6545408,
+  "sqlite_bytes": 270336,
   "page_size": 8192,
-  "log_rows": 1131,
-  "ratio_to_source_bytes": 0.937
+  "log_rows": 21,
+  "ratio_to_source_bytes": 4.065
  }
 }

@@ -50,15 +50,9 @@ Description-edit history:
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from datetime import datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, NamedTuple, cast
 
-from ..events import _event_id_list
 from ..models import utcnow, validate_scope
-from .._response import NEGATIVE_OUTCOME_WINDOW_DAYS
-from ..time_utils import parse_event_ts
 from ..search import (
     CorpusStats,
     SearchMode,
@@ -68,7 +62,7 @@ from ..search import (
     search as run_search,
     top_hit_leads_runner_up,
 )
-from ..store import MemoryNotFoundError, MemoryStore, TombstonedError
+from ..store import MemoryNotFoundError, Store, TombstonedError
 from ..verify import (
     compute_commit_drift,
     compute_staleness_verdict,
@@ -83,365 +77,13 @@ if TYPE_CHECKING:
 
 
 DESC_MEMORY_SEARCH = (
-    "Search stored memories. Default: do NOT call — reach for it only "
-    "when the user references shared context you lack "
-    '("my project", "the script we wrote") or a request is ambiguous '
-    "in a way stored preferences could resolve. When a hit shapes your "
-    'reply, announce it ("Using your stored preference for…") — '
-    "non-negotiable. (Full policy: the server `instructions` block.)\n\n"
-    "Returns ranked hits with snippets. Per-hit fields the model "
-    "should branch on:\n"
-    "- `relevance` (high/medium/low) — how much of your query wording "
-    "the hit literally contains, not how good it is. Weak hits: "
-    "re-query with different nouns.\n"
-    "- `staleness_verdict` (fresh / spot_check_recommended / "
-    "spot_check_required) — rolled-up signal; != fresh, act on "
-    "`path_drift` below.\n"
-    "- `match_terms` — which query words actually hit.\n"
-    "- `path_drift_missing` (int) + `path_drift` ({checked, "
-    "missing, verified} when drift detected) — body-cited paths "
-    "gone. `claim_anchored_missing` (added when non-empty) is the "
-    "escalating subset: memory_update those, memory_verify the "
-    "rest. Prose-scraped `missing` rides `fresh` — evidence, not "
-    "a tier.\n"
-    "- `commit_drift_count` (int, when applicable) — commits since "
-    "last_verified_at on the memory's origin repo. Non-zero means "
-    "the project moved even if calendar-fresh.\n"
-    "- `depends_on_resolved` (when present) — bounded auto-pull of "
-    "`depends_on` link targets (max 3 per hit, max 10 per call). "
-    "Each entry: `{id, scopes, summary, link_note}`. Surfaces "
-    "context the query wouldn't on its own; saves a memory_show "
-    "round-trip. OMITTED when the hit has no `depends_on` links.\n"
-    "- `recent_negative_outcomes` (when present) — list of recent "
-    "ignored/contradicted events for this memory (max two, one "
-    "per outcome). The user already rejected this; don't re-surface "
-    "unless you have new reason. OMITTED when none.\n\n"
-    "Parameters:\n"
-    "- `query`: nouns a memory would contain (tool, file, error names) — "
-    "vocabulary is the lever, not question phrasing. Weak hits: "
-    "re-query, different nouns.\n"
-    "- `scopes` (optional): filter to scope union.\n"
-    "- `client` / `model`: writer's DECLARED actor, exact; "
-    "undeclared matches neither.\n"
-    "- `max_results` (default 5, cap 50).\n"
-    "- `expand_top=True`: inline the full body of the top hit when it "
-    "has high `relevance` or a decisive score lead over the runner-up "
-    "— saves a memory_show round trip and surfaces the full "
-    "path_drift + commit_drift detail.\n"
-    "- `auto_scope=True` (default): filter to current repo+worktree; "
-    "memories with no recorded origin always pass as global. Set "
-    "False for explicit cross-project queries.\n"
-    "- `since_prior_session=False` (default): when True, filter "
-    "to memories whose `updated` is strictly after the prior "
-    "session boundary (latest event from a different session_id "
-    "in the log). The semantic is 'what has "
-    "changed in the current session, since the last activity by "
-    "other sessions' — i.e. this session's intra-session diff. A "
-    "/loop iteration uses this to track what IT has "
-    "written/updated; for what the prior iteration did, call "
-    "episode_handoff instead. Returns empty when there's no prior "
-    "session in the log; distinguish 'nothing new' (results=[]) "
-    "from 'no baseline' by also calling memory_scope_overview and "
-    "checking `curation_pending_new_since_last_session is None`.\n"
-    "- `mode` (optional, default from config; package default "
-    "`hybrid`): `keyword`, `bm25`, or `hybrid` (RRF fusion of both). "
-    "Every mode is deterministic lexical ranking, so vocabulary is "
-    "the lever — see `query`.\n\n"
-    "Outcome is recorded automatically via the use_token within ~2 "
-    "turns; only call memory_record_use to override "
-    "(ignored / contradicted / corrected)."
+    "Rank stored memories for `query`; hits carry a snippet, relevance, "
+    "use_token and staleness_verdict. Auto-scoped to the caller's repo and "
+    "worktree (auto_scope=False: cross-project). `scopes` keeps tags, "
+    "`exclude_scopes` drops them; `since_prior_session`: this session's "
+    "changes; `expand_top`: the top hit's body and drift; `client`, "
+    "`model`: one writer."
 )
-
-
-def _explicit_applied_counts(
-    events: list[dict[str, Any]],
-    candidate_ids: set[str],
-    *,
-    now: datetime,
-    lookback_seconds: int,
-) -> dict[str, int]:
-    """Tally explicit `memory_record_use(applied)` events per candidate id.
-
-    Only DELIBERATE applies count: events with `auto is True` (the ~2-turn
-    auto-fallback) are excluded, mirroring the auto/explicit split health.py
-    and eval.py already use — auto-applies would otherwise inflate every
-    retrieved memory and defeat the point. Restricted to `candidate_ids` so
-    the tally is bounded by the result set, not the whole store.
-
-    The attribution cutoff is MANDATORY and enforced HERE, not delegated to
-    the caller. Every consumer must supply `now` + `lookback_seconds`; an
-    event whose `ts` is older than `now - lookback_seconds` (or that carries
-    no parseable `ts` at all — an unprovable event can't be shown in-window)
-    is dropped internally. The old contract applied no cutoff of its own and
-    trusted each caller to pre-window the event list; that mismatch let a
-    caller feeding a wider coverage read (the dedup-widened 3600s `recent`
-    the audit producers walk) silently over-count applies from up to an hour
-    ago that production's 600s ranker never saw, nudging a near-tie top-1 and
-    flipping a false `search_miss`. Making the window a required argument the
-    function enforces closes that whole class of caller misuse: every site
-    now passes the same 600s attribution horizon
-    (`ATTRIBUTION_LOOKBACK_SECONDS`) and the tally can no longer be silently
-    widened."""
-    cutoff_ts = now.timestamp() - lookback_seconds
-    counts: dict[str, int] = {}
-    for ev in events:
-        if ev.get("kind") != "use" or ev.get("outcome") != "applied":
-            continue
-        if ev.get("auto") is True:
-            continue
-        ts = parse_event_ts(ev.get("ts"))
-        if ts is None or ts.timestamp() < cutoff_ts:
-            continue
-        # Never iterate the raw id field: the event log is plaintext and
-        # hand-editable, and a scalar / nested-list `ids` here failed EVERY
-        # memory_search and memory_audit_turn call (TypeError / unhashable)
-        # under endorsement_boost — the exact poison shapes health.py was
-        # hardened against while this walk still read raw. One shared
-        # normalizer (`events._event_id_list`) for all consumers.
-        for mid in _event_id_list(ev.get("ids") or ev.get("memory_ids")):
-            if mid in candidate_ids:
-                counts[mid] = counts.get(mid, 0) + 1
-    return counts
-
-
-def _active_negative_counts(
-    events: list[dict[str, Any]],
-    candidate_ids: set[str],
-    *,
-    now: datetime,
-    window_days: int,
-    resolution_ts_by_id: dict[str, datetime],
-) -> dict[str, tuple[int, int]]:
-    """Tally ACTIVE negative use outcomes (ignored, contradicted) per
-    candidate id, for the `[behavior] outcome_demotion` ranking factor.
-
-    "Active" reuses the exact liveness rules the
-    `recent_negative_outcomes` annotation applies, plus the resolution
-    clearing `health._has_unresolved_contradiction` established — the
-    ranker must never demote on evidence the other surfaces would call
-    settled:
-
-    - windowed: events older than `window_days` are dropped. The cutoff
-      is enforced HERE, not delegated to the caller — same mandatory-
-      window contract as `_explicit_applied_counts`, so a caller feeding
-      a wider event read cannot silently widen the tally.
-    - superseded: a later NON-AUTO `applied` clears every earlier
-      negative (the model re-validated the memory). An auto-fallback
-      apply carries no judgment and clears nothing — mirroring
-      `attach_recent_negative_outcomes`.
-    - resolved: a negative at or before the memory's resolution
-      timestamp — `max(updated, last_verified_at)`, supplied via
-      `resolution_ts_by_id` — judged a body that has since been
-      rewritten or re-attested, so it no longer testifies. This is
-      `health._has_unresolved_contradiction`'s rule applied per-event.
-    - `corrected` is audit-only and `applied` is the positive case:
-      neither counts negative.
-
-    Returns a SPARSE dict — ids with no active negatives are absent — so
-    the scorer's `.get(id, (0, 0))` default stays the common path."""
-    cutoff_ts = now.timestamp() - window_days * 86400
-    timelines: dict[str, list[tuple[datetime, str, bool]]] = {}
-    for ev in events:
-        if ev.get("kind") != "use":
-            continue
-        outcome = ev.get("outcome")
-        if outcome not in ("ignored", "contradicted", "applied"):
-            continue
-        ts = parse_event_ts(ev.get("ts"))
-        if ts is None or ts.timestamp() < cutoff_ts:
-            continue
-        auto = ev.get("auto") is True
-        for mid in _event_id_list(ev.get("ids") or ev.get("memory_ids")):
-            if mid in candidate_ids:
-                timelines.setdefault(mid, []).append((ts, str(outcome), auto))
-
-    counts: dict[str, tuple[int, int]] = {}
-    for mid, timeline in timelines.items():
-        timeline.sort(key=lambda entry: entry[0])
-        resolution_ts = resolution_ts_by_id.get(mid)
-        ignored = 0
-        contradicted = 0
-        for ts, outcome, auto in timeline:
-            if outcome == "applied":
-                if not auto:
-                    ignored = 0
-                    contradicted = 0
-                continue
-            if resolution_ts is not None and ts <= resolution_ts:
-                continue
-            if outcome == "ignored":
-                ignored += 1
-            else:
-                contradicted += 1
-        if ignored or contradicted:
-            counts[mid] = (ignored, contradicted)
-    return counts
-
-
-class RankingInputs(NamedTuple):
-    """Every `[behavior]`-driven input `search.search` takes beyond the
-    query and the candidate list.
-
-    One shape so the surfaces that rank memories cannot drift apart on
-    THESE inputs: a knob lands in `resolve_ranking_inputs` once and every
-    caller threads it. Two consume it — this handler and (through both
-    audit producers) the silent-miss probe. The helper earned its keep
-    when a third surface existed: the pre-5.0 web UI ran the same ranker
-    with the config inputs dropped, so `endorsement_boost` /
-    `outcome_demotion` / a tuned `recency_boost_half_life_days`
-    reordered results for the model and did nothing for the human
-    reading the curation page. The shape stays
-    so the next ranking surface starts threaded instead of drifted.
-
-    `rescue_expansion` (5.1) is here because it did drift: the flag
-    shipped read directly off `deps.config.behavior` at this handler's
-    own call site, which left `probe_for_miss` — the surface whose whole
-    job is to rank the way production ranked — unable to see it. On a
-    store with the lane enabled the probe scored a two-leg fusion
-    against production's three, and the miss verdict reads only the
-    rank-1 hit, so the disagreement produced both masked and phantom
-    misses exactly as a dropped usage-aware factor does.
-
-    Scope note: this covers the `[behavior]` knobs only, NOT the
-    candidate pool or its BM25 corpus statistics — those are a separate
-    decision with a separate helper (`resolve_search_pool`) and a
-    smaller reach.
-
-    `events` is the raw windowed event read the two tallies shared —
-    `None` when neither tally ran. Exposed so a caller that needs the
-    same window for a downstream annotation
-    (`ResponseBuilder.attach_recent_negative_outcomes`) can reuse it
-    instead of paying a second read.
-    """
-
-    applied_by_id: dict[str, int] | None
-    negative_by_id: dict[str, tuple[int, int]] | None
-    half_life_days: float
-    rescue_expansion: bool
-    conversational: bool
-    events: list[dict[str, Any]] | None
-
-
-def ranking_events_window_seconds(behavior: BehaviorConfig) -> int | None:
-    """How wide an event read `resolve_ranking_inputs` needs under
-    `behavior` — or None when neither usage tally is enabled and no read
-    is needed at all.
-
-    The base is the attribution horizon `_explicit_applied_counts`
-    enforces (`audit.ATTRIBUTION_LOOKBACK_SECONDS`). With
-    `outcome_demotion` on it widens to the full negative window
-    `_active_negative_counts` tallies over (`NEGATIVE_OUTCOME_WINDOW_DAYS`):
-    a 600s request would only rotation-proof 600s of coverage, so older
-    negatives would survive only by luck of the active log's size.
-
-    Widening the READ can never widen a tally — both count-functions
-    enforce their own cutoffs internally, which is exactly why their
-    window arguments are mandatory.
-
-    Split out of `resolve_ranking_inputs` so a caller that must issue the
-    read itself can ask for the width the helper would have used instead
-    of hardcoding one that drifts. Both audit producers do:
-    `hook.run_audit` and `handlers.audit_turn.memory_audit_turn` each keep
-    a module-local `iter_events_window` call — which is also the seam the
-    suite's window-width spies patch — and hand the result back via
-    `resolve_ranking_inputs(events=...)`."""
-    if not (behavior.endorsement_boost or behavior.outcome_demotion):
-        return None
-    from ..audit import ATTRIBUTION_LOOKBACK_SECONDS
-
-    window = ATTRIBUTION_LOOKBACK_SECONDS
-    if behavior.outcome_demotion:
-        window = max(window, NEGATIVE_OUTCOME_WINDOW_DAYS * 86400)
-    return window
-
-
-def resolve_ranking_inputs(
-    root: Path,
-    memories: Sequence[Any],
-    behavior: BehaviorConfig,
-    *,
-    now: datetime | None = None,
-    events: list[dict[str, Any]] | None = None,
-) -> RankingInputs:
-    """Build the `RankingInputs` for one search over `memories`.
-
-    Usage-aware ranking, both directions (each opt-in via `[behavior]`):
-    `endorsement_boost` tallies how many times the model EXPLICITLY
-    applied each candidate (bounded nudge up); `outcome_demotion`
-    tallies still-active ignored/contradicted outcomes (bounded slide
-    down — see `_active_negative_counts` for what "active" excludes).
-    Both stay `None` (ranker neutral) when their flag is off, so the
-    shipped default ranking is unchanged.
-
-    Window-aware read (round 88): both audit producers
-    (`hook.run_audit`, `memory_audit_turn`) tally over
-    `iter_events_window`, so this reads the same substrate — reading the
-    active log only meant the tally silently reset to `{}` the moment a
-    rotation cut the applied events into an archive while the probes
-    still saw the history, and a near-tie top-1 could rank differently
-    in the audit than in the model's actual retrieval.
-
-    One event read serves up to three consumers (endorsement tally,
-    demotion tally, and the caller's `recent_negative_outcomes`
-    annotation). `ranking_events_window_seconds` decides its width —
-    with demotion on it widens from the 600s attribution horizon to the
-    full negative window, which also upgrades the annotation's 30-day
-    contract from best-effort to guaranteed.
-
-    `events` lets a caller supply that read instead of having this helper
-    issue it, for callers whose event access has to stay module-local
-    (both audit producers — see `ranking_events_window_seconds`). Supply
-    it at that function's width; a wider feed cannot widen either tally,
-    since both count-functions re-derive their own cutoffs from `now`. It
-    is ignored — and the returned `events` stays None — whenever no tally
-    runs, so the field keeps meaning "the read the tallies shared".
-    """
-    applied_by_id: dict[str, int] | None = None
-    negative_by_id: dict[str, tuple[int, int]] | None = None
-    tally_events: list[dict[str, Any]] | None = None
-    demotion_on = behavior.outcome_demotion
-    window_seconds = ranking_events_window_seconds(behavior)
-    if window_seconds is not None and memories:
-        from ..audit import ATTRIBUTION_LOOKBACK_SECONDS
-        from ..events import iter_events_window
-
-        tally_events = (
-            events
-            if events is not None
-            else list(iter_events_window(root, window_seconds))
-        )
-        tally_now = now if now is not None else utcnow()
-        candidate_ids = {m.id for m in memories}
-        if behavior.endorsement_boost:
-            applied_by_id = _explicit_applied_counts(
-                tally_events,
-                candidate_ids,
-                now=tally_now,
-                lookback_seconds=ATTRIBUTION_LOOKBACK_SECONDS,
-            )
-        if demotion_on:
-            negative_by_id = _active_negative_counts(
-                tally_events,
-                candidate_ids,
-                now=tally_now,
-                window_days=NEGATIVE_OUTCOME_WINDOW_DAYS,
-                resolution_ts_by_id={
-                    m.id: (
-                        max(m.updated, m.last_verified_at)
-                        if m.last_verified_at is not None
-                        else m.updated
-                    )
-                    for m in memories
-                },
-            )
-    return RankingInputs(
-        applied_by_id=applied_by_id,
-        negative_by_id=negative_by_id,
-        half_life_days=behavior.recency_boost_half_life_days,
-        rescue_expansion=behavior.rescue_expansion,
-        conversational=behavior.conversational,
-        events=tally_events,
-    )
 
 
 class SearchPool(NamedTuple):
@@ -523,7 +165,7 @@ def default_search_width(behavior: BehaviorConfig) -> int:
 
 
 def resolve_search_pool(
-    store: MemoryStore,
+    store: Store,
     query: str,
     *,
     scopes: list[str] | None = None,
@@ -663,8 +305,6 @@ def resolve_search_pool(
             prefiltered = False
 
     def _corpus_stats(terms: list[str]) -> CorpusStats | None:
-        from .. import index as _index
-
         def _admit(memory_scopes: list[str], origin: Any, actor: Any) -> bool:
             return candidate_admitted(
                 memory_scopes,
@@ -678,7 +318,7 @@ def resolve_search_pool(
                 model_filter=model_filter,
             )
 
-        resolved = _index.corpus_document_frequencies(store.root, terms, admit=_admit)
+        resolved = store.document_frequencies(terms, admit=_admit)
         if resolved is None:
             return None
         size, body_df, scope_df = resolved
@@ -694,6 +334,7 @@ async def memory_search(
     deps: ToolHandlers,
     query: str,
     scopes: list[str] | None = None,
+    exclude_scopes: list[str] | None = None,
     max_results: int | None = None,
     expand_top: bool = False,
     auto_scope: bool = True,
@@ -733,6 +374,13 @@ async def memory_search(
         )
     if scopes:
         scopes = [validate_scope(s) for s in scopes]
+    if exclude_scopes:
+        exclude_scopes = [validate_scope(s) for s in exclude_scopes]
+    # The scopes this search must not see: the session's disabled set
+    # (`memory_scope_disable`) plus the caller's own `exclude_scopes`.
+    # One set for every consumer below, so a memory the caller excluded
+    # cannot come back through the pool, the ranking, or a link edge.
+    excluded = set(state.disabled_scopes) | set(exclude_scopes or ())
 
     # Capture caller origin once: it serves both the auto-scope filter
     # (drop memories from a different repo) and the commit_drift signal
@@ -771,11 +419,10 @@ async def memory_search(
     # cheap regardless of store size).
     prior_boundary = None
     if since_prior_session:
-        from ..events import iter_all_events
         from ..health import find_prior_session_boundary
 
         prior_boundary = find_prior_session_boundary(
-            iter_all_events(deps.store.root),
+            deps.store.iter_events(),
             deps.recorder.session_id,
         )
 
@@ -831,7 +478,7 @@ async def memory_search(
             deps.store,
             query,
             scopes=scopes,
-            excluded_scopes=set(state.disabled_scopes),
+            excluded_scopes=excluded,
             repo_filter=repo_filter,
             worktree_filter=worktree_filter,
             client_filter=client,
@@ -841,17 +488,6 @@ async def memory_search(
         memories = pool.memories
         corpus_stats_provider = pool.corpus_stats_provider
 
-    # Config-driven ranking inputs (usage tallies + the boost/half-life
-    # knobs), resolved through the shared helper the audit producers
-    # call too — see `resolve_ranking_inputs` for what each one
-    # does and why the event read is windowed. The event list it returns
-    # is reused below for `recent_negative_outcomes`, so enabling either
-    # tally adds no extra I/O on a hit-producing search.
-    ranking = resolve_ranking_inputs(deps.store.root, memories, deps.config.behavior)
-    recent_events: list[dict[str, Any]] | None = ranking.events
-    applied_by_id = ranking.applied_by_id
-    negative_by_id = ranking.negative_by_id
-
     # Filled by `run_search` with `{memory_id: lexical|expansion}` for
     # the returned hits — see `search.search`'s `matched_leg_out` note for
     # why the leg travels as an out-parameter rather than a `MemoryHit`
@@ -860,16 +496,14 @@ async def memory_search(
     hits = run_search(
         memories,
         query,
-        applied_by_id=applied_by_id,
-        negative_by_id=negative_by_id,
         scopes=scopes,
-        excluded_scopes=set(state.disabled_scopes),
+        excluded_scopes=excluded,
         repo_filter=repo_filter,
         worktree_filter=worktree_filter,
         client_filter=client,
         model_filter=model,
         max_results=max_results,
-        half_life_days=ranking.half_life_days,
+        half_life_days=deps.config.behavior.recency_boost_half_life_days,
         mode=cast(SearchMode, resolved_mode),
         # Browse mode for the natural "what's new since last session"
         # usage: when the caller narrowed to the post-boundary slice
@@ -879,8 +513,9 @@ async def memory_search(
         allow_empty_query=since_prior_session,
         corpus_stats_provider=corpus_stats_provider,
         matched_leg_out=matched_leg,
-        rescue_expansion=ranking.rescue_expansion,
-        conversational=ranking.conversational,
+        # The expansion leg is a bench instrument, not a shipped knob.
+        rescue_expansion=False,
+        conversational=deps.config.behavior.conversational,
     )
     # Pin one `now` for the whole response so the verification verdict
     # is consistent across hits — the alternative (let each helper
@@ -923,7 +558,7 @@ async def memory_search(
     # Per-hit `provenance` (schema v7): how the record entered the store,
     # read from the index in one batched query. Omitted while the index
     # has not classified the row; never read from the file.
-    deps.responses.attach_provenance(out, root=deps.store.root)
+    deps.responses.attach_provenance(out, store=deps.store)
 
     # Per-hit `recent_negative_outcomes` (T2.3): walk the event log
     # once for the recent window and annotate any hit that was
@@ -934,17 +569,20 @@ async def memory_search(
     # same junk; cheap to compute, high signal-to-noise. Skip when
     # the hit list is empty (nothing to annotate). Loading events
     # lazily here rather than at handler construction time keeps
-    # the cost off searches that produce no hits. Same window-aware
-    # substrate as the endorsement tally above, so the annotation
-    # doesn't lose a just-archived negative outcome to a rotation.
+    # the cost off searches that produce no hits. Window-aware read
+    # (`iter_events_window`), so the annotation doesn't lose a
+    # just-archived negative outcome to a rotation. This is the one
+    # event read a search pays.
     if out:
-        if recent_events is None:
-            from ..audit import ATTRIBUTION_LOOKBACK_SECONDS
-            from ..events import iter_events_window
+        from datetime import timedelta
 
-            recent_events = list(
-                iter_events_window(deps.store.root, ATTRIBUTION_LOOKBACK_SECONDS)
+        from ..audit import ATTRIBUTION_LOOKBACK_SECONDS
+
+        recent_events = list(
+            deps.store.events_since(
+                now - timedelta(seconds=ATTRIBUTION_LOOKBACK_SECONDS)
             )
+        )
         deps.responses.attach_recent_negative_outcomes(
             out, hits, recent_events, now=now
         )
@@ -972,7 +610,7 @@ async def memory_search(
             hits,
             memories,
             caller_origin=current_origin if auto_scope else None,
-            excluded_scopes=set(state.disabled_scopes),
+            excluded_scopes=excluded,
             # Pass the store so the helper can targeted-load
             # `depends_on` targets unrelated to the query. The
             # `memories` list is the FTS prefilter set (cap 50, ranked
@@ -1002,7 +640,7 @@ async def memory_search(
             memories,
             store=deps.store,
             caller_origin=current_origin if auto_scope else None,
-            excluded_scopes=set(state.disabled_scopes),
+            excluded_scopes=excluded,
         )
 
     # Optional auto-expansion of the top hit. Conservative: only fires
@@ -1160,6 +798,12 @@ async def memory_search(
     # layer fix for "the threshold sweep can narrow but never widen".
     # `query_unique` is per-search (every hit shares the denominator).
     _query_unique = hits[0].query_unique if hits else 0
+    # The caller's own exclusions ride the event only when it passed any
+    # (the recorder writes every field it is given, `None` included);
+    # the session's disabled scopes are recorded by their own events.
+    search_extra: dict[str, Any] = {}
+    if exclude_scopes:
+        search_extra["exclude_scopes"] = list(exclude_scopes)
     deps.recorder.record(
         "search",
         query=query,
@@ -1195,6 +839,7 @@ async def memory_search(
         repo_filter=repo_filter,
         since_prior_session=since_prior_session,
         prior_session_boundary=isoformat_optional(prior_boundary),
+        **search_extra,
     )
     return out
 
@@ -1202,12 +847,9 @@ async def memory_search(
 __all__ = [
     "DESC_MEMORY_SEARCH",
     "MAX_SEARCH_RESULTS",
-    "RankingInputs",
     "SearchPool",
     "clamp_search_width",
     "default_search_width",
     "memory_search",
-    "ranking_events_window_seconds",
-    "resolve_ranking_inputs",
     "resolve_search_pool",
 ]

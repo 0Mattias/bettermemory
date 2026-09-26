@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ..health import report_for_directory
+from ..health import report_for_store
 from ._shared import Context, _advance_turn
 
 if TYPE_CHECKING:
@@ -151,8 +151,8 @@ async def memory_health(
         if min_applied is not None
         else deps.config.behavior.heavily_used_min_applied
     )
-    report = report_for_directory(
-        deps.store.root,
+    report = report_for_store(
+        deps.store,
         window_days=int(window_days),
         heavily_used_top_k=int(heavily_used_top_k),
         heavily_used_min_applied=threshold,

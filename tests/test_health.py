@@ -13,8 +13,10 @@ from typing import Any, Generator
 import pytest
 
 
+from bettermemory import store as _store
 from bettermemory.durability import SHA_MARKER
 from bettermemory.eval import compute_eval, compute_report
+from bettermemory.events import Recorder
 from bettermemory.health import (
     MarkerStats,
     _edit_distance_within,
@@ -23,7 +25,7 @@ from bettermemory.health import (
     find_prior_session_boundary,
     render_json,
     render_text,
-    report_for_directory,
+    report_for_store,
 )
 from bettermemory.models import (
     Category,
@@ -32,6 +34,7 @@ from bettermemory.models import (
     Source,
     generate_ulid,
 )
+from bettermemory.store import LOCAL, Store
 
 
 def _utc(year: int, month: int, day: int) -> datetime:
@@ -326,90 +329,6 @@ def test_curation_counts_matches_compute_health_buckets() -> None:
     # The gated rows must not be counted dead on either path.
     assert [s.id for s in report.dead_weight] == [dead.id]
     assert counts["dead"] == 1
-
-
-def test_dead_weight_parity_across_health_counts_and_demotion() -> None:
-    """Regression (round 85): `find_demotion_candidates` gained the
-    freshest-touch, unresolved-contradiction, and endorsement-grace
-    gates in round 84 while `compute_health`'s dead_weight and
-    `curation_counts`' dead still keyed on `created` alone — a fixture
-    tripping all three gates reported dead_weight=3 / dead=3 against
-    demotion candidates=0, so scope_overview kept advertising dead rot
-    the unattended pass refused to drain. All three consumers now read
-    the shared `_is_dead_weight` predicate: each gated memory appears
-    in NONE of them, the control appears in ALL of them."""
-    from bettermemory.consolidate import find_demotion_candidates
-
-    now = _utc(2026, 6, 1)
-    old = now - timedelta(days=90)
-    maintained = _memory(created=old, updated=now - timedelta(days=1))
-    contradicted = _memory(created=old)
-    graced = _memory(created=old)
-    control = _memory(created=old)
-    events = [
-        _event("search", ts=now - timedelta(days=20), returned=[maintained.id]),
-        _event("search", ts=now - timedelta(days=20), returned=[contradicted.id]),
-        _event(
-            "use",
-            ts=now - timedelta(days=5),
-            ids=[contradicted.id],
-            outcome="contradicted",
-        ),
-        # Only retrieval is six hours old — inside the endorsement grace.
-        _event("search", ts=now - timedelta(hours=6), returned=[graced.id]),
-        _event("search", ts=now - timedelta(days=20), returned=[control.id]),
-    ]
-    mems = [maintained, contradicted, graced, control]
-    report = compute_health(mems, events, window_days=30, now=now)
-    counts = curation_counts(mems, events, window_days=30, now=now)
-    demotions = find_demotion_candidates(mems, events, window_days=30, now=now)
-    assert [s.id for s in report.dead_weight] == [control.id]
-    assert counts["dead"] == 1
-    assert [d.memory_id for d in demotions] == [control.id]
-
-
-def test_three_dead_weight_surfaces_agree_under_the_telemetry_gate() -> None:
-    """The three-surface numerical contract, extended to the gate.
-
-    `compute_health`'s bucket, `curation_counts`' `dead` and
-    `find_demotion_candidates`' action list must agree about the same
-    store — and "agree at zero because none of them gates" is not
-    agreement, so the hookful control runs the same fixture with one
-    Stop-hook row and pins all three at one."""
-    from bettermemory.consolidate import find_demotion_candidates
-
-    now = _utc(2026, 6, 1)
-    control = _memory(created=now - timedelta(days=90))
-    base = [_event("search", ts=now - timedelta(days=20), returned=[control.id])]
-    hook_row = _event(
-        "turn_audited", ts=now - timedelta(days=19), triggered_from="stop_hook"
-    )
-
-    for events, expected in ((base, 0), (base + [hook_row], 1)):
-        report = compute_health(
-            [control],
-            events,
-            window_days=30,
-            now=now,
-            hook_telemetry_events=0,
-        )
-        counts = curation_counts(
-            [control],
-            events,
-            window_days=30,
-            now=now,
-            hook_telemetry_events=0,
-        )
-        demotions = find_demotion_candidates(
-            [control],
-            events,
-            window_days=30,
-            now=now,
-            hook_telemetry_events=0,
-        )
-        assert len(report.dead_weight) == expected
-        assert counts["dead"] == expected
-        assert len(demotions) == expected
 
 
 def test_curation_counts_excludes_ambient_from_dead_and_cold() -> None:
@@ -1920,19 +1839,18 @@ def test_distinct_sessions_counted() -> None:
 
 def test_distinct_sessions_exclude_admin_recorded_events() -> None:
     """Admin/CLI writers record under a fresh throwaway SessionState id
-    (`consolidate --acknowledge-debt`'s use rows and `silent_miss_cutoff`
-    marker, `doctor --fix`), so counting those ids publishes one phantom
-    session per admin run, forever. `eval.compute_report` and doctor's
-    cadence census already drop them via `eval.is_admin_recorded_event`;
-    the health rollup must call the same predicate — both its axes — or
-    `memory_health` and `eval --report` report different Sessions
-    figures over the same log. In-session side-effect kinds carry the
-    client's own id and must keep counting (over-excluding would
-    under-report the store shape just as badly)."""
+    (the CLI's `restore` and `rename_scope` rows, the `silent_miss_cutoff`
+    marker), so counting those ids publishes one phantom session per
+    admin run, forever. `eval.compute_report` already drops them via
+    `eval.is_admin_recorded_event`; the health rollup must call the same
+    predicate, both its axes, or the health report and `eval --report`
+    report different Sessions figures over the same log. In-session
+    side-effect kinds carry the client's own id and must keep counting
+    (over-excluding would under-report the store shape just as badly)."""
     events = [
         _event("show", session="sess_real", id="x"),
-        # Attribution axis: acknowledge-debt rides `use`, a kind real
-        # sessions also emit — only the `cli_*` stamp separates it.
+        # Attribution axis: a CLI writer rides `use`, a kind real
+        # sessions also emit; only the `cli_*` stamp separates it.
         _event(
             "use",
             session="sess_cli_ack_debt",
@@ -1940,8 +1858,7 @@ def test_distinct_sessions_exclude_admin_recorded_events() -> None:
             outcome="applied",
             attribution="cli_acknowledge_debt",
         ),
-        # Kind axis: kinds only admin surfaces ever emit.
-        _event("doctor_fix", session="sess_cli_doctor"),
+        # Kind axis: a kind only admin surfaces ever emit.
         _event("silent_miss_cutoff", session="sess_cli_ack_misses"),
         # In-session side-effect kind, recorded under the client's id.
         _event("search_miss", session="sess_hook"),
@@ -2446,7 +2363,7 @@ def test_is_hook_telemetry_event_truth_table() -> None:
 
 
 # ---------------------------------------------------------------------------
-# report_for_directory — end-to-end against a real Store + event log
+# report_for_store: end-to-end against a real Store and its log
 # ---------------------------------------------------------------------------
 #
 # The telemetry-coverage gate is deliberately OFF by default on
@@ -2457,15 +2374,15 @@ def test_is_hook_telemetry_event_truth_table() -> None:
 # invisible: the pure function would gate correctly, every unit test
 # would pass, and the shipped tool would never gate at all.
 #
-# So the gate's tests drive `report_for_directory` — the function BOTH
-# production surfaces (the `memory_health` MCP tool and `bettermemory
-# health`) actually call — against a real store on disk, and each comes
+# So the gate's tests drive `report_for_store`, the function BOTH
+# production surfaces (`memory_admin(action="health")` and `bettermemory
+# health`) actually call, against a real store on disk, and each comes
 # with its hookful positive control so the gate cannot pass by being
 # always-on.
 
 
 def _seed_dead_weight_store(
-    root: Path, *, coverage: str | None
+    store: Store, *, coverage: str | None
 ) -> tuple[list[str], datetime]:
     """Retrieved-but-never-applied memories in a real store on disk.
 
@@ -2494,22 +2411,19 @@ def _seed_dead_weight_store(
       against a FOURTH memory so the three under test keep
       `applied_count == 0`. Deliberately carries `attribution="hook"`
       and NO `triggered_from`, so it exercises that disjunct alone.
-    - `"turn_audited_mcp_tool"` — an in-process `memory_audit_turn` row
-      (`handlers/audit_turn.py` stamps `triggered_from="mcp_tool"`).
-      Shaped like coverage and must not count as it: the model calling
-      the audit tool is not evidence the Stop hook is wired.
+    - `"turn_audited_mcp_tool"`: a `turn_audited` row stamped
+      `triggered_from="mcp_tool"`, the in-process audit's stamp (a label
+      `audit.py` still names, and one a v8 import can carry). Shaped
+      like coverage and must not count as it: an audit the model ran in
+      process is not evidence the Stop hook is wired.
     """
-    from bettermemory.events import Recorder
-    from bettermemory.store import Store
-
-    store = Store(root)
     mems = [
         store.write(
             content=f"a durable fact nobody ever applied ({i})", scopes=["tools"]
         )
         for i in range(3)
     ]
-    rec = Recorder(root=root, session_id="sess_disk", enabled=True)
+    rec = Recorder(store=store, session_id="sess_disk", enabled=True)
     rec.record("search", returned=[m.id for m in mems])
     if coverage == "turn_audited":
         rec.record("turn_audited", triggered_from="stop_hook", verdict="ok")
@@ -2525,18 +2439,17 @@ def _seed_dead_weight_store(
     return [m.id for m in mems], mems[0].created + timedelta(days=60)
 
 
-def test_hookless_store_suppresses_dead_weight_through_report_for_directory(
-    tmp_path: Path,
+def test_hookless_store_suppresses_dead_weight_through_report_for_store(
+    store: Store,
 ) -> None:
     """The AC, through the production entry point: with no Stop-hook
     settlement telemetry in the log, `applied_count == 0` says nothing
     about the memory, so the bucket is emptied — and the report says
     WHY, because an empty bucket that means "not measured" and one that
     means "clean store" are otherwise the same output."""
-    root = tmp_path / "memories"
-    _mids, now = _seed_dead_weight_store(root, coverage=None)
+    _mids, now = _seed_dead_weight_store(store, coverage=None)
 
-    report = report_for_directory(root, window_days=30, now=now)
+    report = report_for_store(store, window_days=30, now=now)
 
     assert report.dead_weight == []
     coverage = report.telemetry_coverage
@@ -2554,17 +2467,16 @@ def test_hookless_store_suppresses_dead_weight_through_report_for_directory(
     assert all(r.kind != "remove_dead_weight" for r in report.recommendations)
 
 
-def test_hookful_store_still_reports_dead_weight_through_report_for_directory(
-    tmp_path: Path,
+def test_hookful_store_still_reports_dead_weight_through_report_for_store(
+    store: Store,
 ) -> None:
     """Positive control for the test above — the same fixture plus one
     Stop-hook row. Without this the suppression test would pass just as
     happily against a gate that is unconditionally on, or against a
     fixture that was never dead-weight-shaped to begin with."""
-    root = tmp_path / "memories"
-    mids, now = _seed_dead_weight_store(root, coverage="turn_audited")
+    mids, now = _seed_dead_weight_store(store, coverage="turn_audited")
 
-    report = report_for_directory(root, window_days=30, now=now)
+    report = report_for_store(store, window_days=30, now=now)
 
     assert {s.id for s in report.dead_weight} == set(mids)
     coverage = report.telemetry_coverage
@@ -2579,8 +2491,8 @@ def test_hookful_store_still_reports_dead_weight_through_report_for_directory(
     assert "remove_dead_weight" in {r.kind for r in report.recommendations}
 
 
-def test_hook_attributed_use_is_coverage_through_report_for_directory(
-    tmp_path: Path,
+def test_hook_attributed_use_is_coverage_through_report_for_store(
+    store: Store,
 ) -> None:
     """The predicate's `use` arm, end to end.
 
@@ -2590,10 +2502,9 @@ def test_hook_attributed_use_is_coverage_through_report_for_directory(
     signal the AC names, since the containment matcher (not the audit
     probe) is what a settled retrieval actually looks like.
     """
-    root = tmp_path / "memories"
-    mids, now = _seed_dead_weight_store(root, coverage="use_hook")
+    mids, now = _seed_dead_weight_store(store, coverage="use_hook")
 
-    report = report_for_directory(root, window_days=30, now=now)
+    report = report_for_store(store, window_days=30, now=now)
 
     assert {s.id for s in report.dead_weight} == set(mids)
     coverage = report.telemetry_coverage
@@ -2603,21 +2514,19 @@ def test_hook_attributed_use_is_coverage_through_report_for_directory(
     assert coverage.hook_telemetry_events == 1
 
 
-def test_in_process_audit_turn_is_not_coverage_through_report_for_directory(
-    tmp_path: Path,
+def test_in_process_audit_turn_is_not_coverage_through_report_for_store(
+    store: Store,
 ) -> None:
     """The near-miss the gate exists to reject, end to end.
 
-    `memory_audit_turn` called in-process by the model writes
-    `turn_audited` — the same kind the Stop hook's probe writes, minus
-    the `stop_hook` stamp. Reading it as coverage would let a store the
-    model audits by hand report dead weight (and, on the unattended
-    consolidate path, retag it) with no settlement telemetry at all.
+    An audit run in process writes `turn_audited`, the same kind the
+    Stop hook's probe writes, minus the `stop_hook` stamp. Reading it as
+    coverage would let a store the model audits by hand report dead
+    weight with no settlement telemetry at all.
     """
-    root = tmp_path / "memories"
-    _mids, now = _seed_dead_weight_store(root, coverage="turn_audited_mcp_tool")
+    _mids, now = _seed_dead_weight_store(store, coverage="turn_audited_mcp_tool")
 
-    report = report_for_directory(root, window_days=30, now=now)
+    report = report_for_store(store, window_days=30, now=now)
 
     assert report.dead_weight == []
     coverage = report.telemetry_coverage
@@ -2745,61 +2654,54 @@ def test_memory_stats_last_verified_at_none_serialised_as_null() -> None:
     assert report.heavily_used[0].to_dict()["last_verified_at"] is None
 
 
-def test_report_for_directory_loads_store_and_events(
-    memory_dir: Path,
-) -> None:
-    """Plumb compute_health through a real on-disk store and event log."""
-    from bettermemory.events import Recorder
-    from bettermemory.store import Store
-
-    store = Store(memory_dir)
-    rec = Recorder(root=memory_dir, session_id="sess_test")
+def test_report_for_store_loads_store_and_events(store: Store) -> None:
+    """Plumb compute_health through a real on-disk store and its log."""
+    rec = Recorder(store=store, session_id="sess_test")
     m = store.write(content="durable fact", scopes=["tools"])
     rec.record("search", query="anything", returned=[m.id], relevance=["high"])
     rec.record("use", ids=[m.id], outcome="applied")
 
     # Min applied at 1 so a single applied event still surfaces — this
     # test is about plumbing, not the threshold tuning.
-    report = report_for_directory(memory_dir, heavily_used_min_applied=1)
+    report = report_for_store(store, heavily_used_min_applied=1)
     assert report.total_active_memories == 1
     assert len(report.heavily_used) == 1
     assert report.heavily_used[0].id == m.id
     assert report.heavily_used[0].applied_count == 1
 
 
-def test_report_for_directory_survives_valid_json_non_object_line(
-    memory_dir: Path,
+def test_report_for_store_survives_valid_json_non_object_row(
+    store: Store,
 ) -> None:
-    """A corrupt event-log line that parses as VALID JSON but not an
-    object (`[1, 2, 3]` — a hand-edit of the plain-text, git-syncable
-    log) must not crash the health rollup. Regression: json.loads
-    succeeded, so the reader's JSONDecodeError guard never fired and
-    the list flowed through iter_all_events into handle_event, whose
-    first `ev.get(...)` raised AttributeError — taking memory_health /
-    memory_scope_overview / report_for_directory down with it (the
-    eval surfaces' own isinstance guards skipped the same row). The
-    reader now drops the line for every consumer, so the corrupted
-    log must produce the SAME report as the uncorrupted one.
+    """A log row whose payload parses as VALID JSON but not an object
+    (`[1, 2, 3]`, planted past the store's write path the way a hand
+    edit of the file would land) must not crash the health rollup.
+    Regression from the v8 log: json.loads succeeded, so the reader's
+    JSONDecodeError guard never fired and the list flowed into
+    handle_event, whose first `ev.get(...)` raised AttributeError and
+    took every health surface down with it. The store's event reader
+    drops such a row for every consumer, so the corrupted log must
+    produce the SAME report as the uncorrupted one.
     """
-    from bettermemory.events import EVENT_LOG_FILENAME, Recorder
-    from bettermemory.store import Store
-
-    store = Store(memory_dir)
-    rec = Recorder(root=memory_dir, session_id="sess_test")
+    rec = Recorder(store=store, session_id="sess_test")
     m = store.write(content="durable fact", scopes=["tools"])
     rec.record("search", query="anything", returned=[m.id], relevance=["high"])
     rec.record("use", ids=[m.id], outcome="applied")
     # Fixed `now` so both reports derive every age/window from
     # identical inputs and the comparison below is exact.
     now = _utc(2026, 5, 1)
-    baseline = report_for_directory(memory_dir, heavily_used_min_applied=1, now=now)
+    baseline = report_for_store(store, heavily_used_min_applied=1, now=now)
 
-    with (memory_dir / EVENT_LOG_FILENAME).open("a", encoding="utf-8") as f:
-        f.write("[1, 2, 3]\n")
+    store.conn.execute(
+        "INSERT INTO log(ts, session, kind, payload, prev_mac, mac) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("2026-04-01T00:00:00Z", "sess_test", "search", "[1, 2, 3]", "x", "y"),
+    )
+    store.conn.commit()
 
-    # Must not raise — and the skipped line contributes nothing, not
+    # Must not raise, and the skipped row contributes nothing, not
     # even to total_events (it never reaches handle_event).
-    report = report_for_directory(memory_dir, heavily_used_min_applied=1, now=now)
+    report = report_for_store(store, heavily_used_min_applied=1, now=now)
     assert report.to_dict() == baseline.to_dict()
 
 
@@ -3690,41 +3592,51 @@ def test_recommendation_kinds_constant_matches_compute_output() -> None:
     assert set(RECOMMENDATION_KINDS) == expected
 
 
-def _plant_beside(tmp_path: Path, root: Path, body: str, scopes: list[str]) -> Any:
-    """A valid memory file written by a throwaway Store and copied into
-    `root` by hand: no hook upsert, no event. Returns the Memory."""
-    import shutil
+def _plant(store: Store, body: str, scopes: list[str]) -> Memory:
+    """Insert a memories row directly, past the store's write path, the
+    way an attacker with the file would: no log row points at it, so the
+    pointer check reads it `unaccounted`. Returns the Memory."""
+    planted = _memory(body=body, scopes=scopes)
+    columns = _store._record_columns(planted)
+    columns.update(
+        {
+            "body_fts": _store.fts_index_text(planted.body),
+            "scopes_text": _store._scopes_text(planted.scopes),
+            "scopes_fts": _store.fts_index_text(" ".join(planted.scopes)),
+            "filename": None,
+            "provenance": LOCAL,
+            "links_json": "[]",
+            "corroborations": 0,
+            "last_corroborated": None,
+            "log_mac": None,
+        }
+    )
+    store.conn.execute(
+        _store._UPSERT_MEMORY,
+        tuple(columns[c] for c in _store._MEMORY_COLUMNS),
+    )
+    store.conn.commit()
+    return planted
 
-    from bettermemory.store import Store
 
-    scratch = tmp_path / f"scratch-{generate_ulid().lower()}"
-    memory = Store(scratch).write(content=body, scopes=scopes)
-    source = next(p for p in scratch.glob("*.md"))
-    shutil.copy2(source, root / source.name)
-    return memory
+def _keyless(store: Store, tmp_path: Path) -> Store:
+    """The same store opened without its key: no pointer can be verified,
+    so provenance is the leg the store cannot measure."""
+    return Store.open(store.path, keys_dir=tmp_path / "elsewhere", allow_rekey=False)
 
 
-def test_report_for_directory_carries_the_provenance_bucket(tmp_path: Path) -> None:
-    """A hand-planted file reads `unaccounted` in the bucket with its
-    scopes and summary, the counts cover every label, and the
+def test_report_for_store_carries_the_provenance_bucket(
+    tmp_path: Path, store: Store
+) -> None:
+    """A planted row reads `unaccounted` in the bucket with its scopes
+    and summary, the counts cover every label, and the
     `review_unaccounted` recommendation fires on a single row. The
-    bucket is the index's, so it is null when there is no index."""
-    from bettermemory import index as _index
-    from bettermemory.events import Recorder
-    from bettermemory.store import Store
+    bucket is the pointer check's, so it is null when the store has no
+    key to check with."""
+    store.write(content="written through the store", scopes=["tools"])
+    planted = _plant(store, "placed by hand into the store", ["infrastructure"])
 
-    root = tmp_path / "store"
-    store = Store(root)
-    local = store.write(content="written through the store", scopes=["tools"])
-    Recorder(root=root, session_id="s").record(
-        "write", status="committed", id=local.id, scopes=["tools"]
-    )
-    planted = _plant_beside(
-        tmp_path, root, "placed by hand into the store", ["infrastructure"]
-    )
-    _index.rebuild(root, store.iter_active())
-
-    report = report_for_directory(root)
+    report = report_for_store(store)
     assert report.provenance is not None
     assert report.provenance.counts == {"local": 1, "unaccounted": 1}
     assert report.provenance.unaccounted_total == 1
@@ -3736,50 +3648,39 @@ def test_report_for_directory_carries_the_provenance_bucket(tmp_path: Path) -> N
     )
     review = [r for r in report.recommendations if r.kind == "review_unaccounted"]
     assert [(r.count, r.memory_ids) for r in review] == [(1, [planted.id])]
-    assert "memory_restore" in review[0].action
+    assert 'memory_admin(action="restore"' in review[0].action
     assert report.to_dict()["provenance"]["unaccounted"][0]["id"] == planted.id
 
-    empty = tmp_path / "never-indexed"
-    empty.mkdir()
-    assert report_for_directory(empty).provenance is None
+    assert report_for_store(_keyless(store, tmp_path)).provenance is None
 
 
-def test_curation_counts_unaccounted_reads_the_index_and_honors_since(
-    tmp_path: Path,
+def test_curation_counts_unaccounted_reads_the_store_and_honors_since(
+    store: Store,
 ) -> None:
-    from bettermemory import index as _index
-    from bettermemory.events import Recorder, iter_all_events
-    from bettermemory.store import Store
-
-    root = tmp_path / "store"
-    store = Store(root)
-    Recorder(root=root, session_id="s").record("search", returned=[], relevance=[])
-    planted = _plant_beside(tmp_path, root, "placed by hand", ["tools"])
-    _index.rebuild(root, store.iter_active())
+    Recorder(store=store, session_id="s").record("search", returned=[], relevance=[])
+    planted = _plant(store, "placed by hand", ["tools"])
     memories = store.load_all()
-    events = list(iter_all_events(root))
+    events = list(store.iter_events())
 
     assert curation_counts(memories, events, window_days=30)["unaccounted"] == 0, (
-        "no index root, no claim"
+        "no store, no claim"
     )
     assert (
-        curation_counts(memories, events, window_days=30, index_root=root)[
-            "unaccounted"
-        ]
+        curation_counts(memories, events, window_days=30, store=store)["unaccounted"]
         == 1
     )
     after = planted.created + timedelta(seconds=1)
     assert (
-        curation_counts(memories, events, window_days=30, index_root=root, since=after)[
+        curation_counts(memories, events, window_days=30, store=store, since=after)[
             "unaccounted"
         ]
         == 0
     ), "delta mode counts only unaccounted memories created after the boundary"
     before = planted.created - timedelta(seconds=1)
     assert (
-        curation_counts(
-            memories, events, window_days=30, index_root=root, since=before
-        )["unaccounted"]
+        curation_counts(memories, events, window_days=30, store=store, since=before)[
+            "unaccounted"
+        ]
         == 1
     )
 
@@ -4268,11 +4169,10 @@ def test_every_production_dead_weight_call_arms_the_telemetry_gate() -> None:
     agrees, and so does "covered everywhere"), and the shipped tool
     never gates. Phase 2 shipped two features inert exactly this way.
 
-    So: every call to one of the three gated functions anywhere in
-    `src/` must pass `hook_telemetry_events` explicitly. AST-based, so
-    prose mentioning the parameter is not a false positive, and a new
-    call site added later fails here rather than shipping silently
-    ungated.
+    So: every call to one of the gated functions anywhere in `src/`
+    must pass `hook_telemetry_events` explicitly. AST-based, so prose
+    mentioning the parameter is not a false positive, and a new call
+    site added later fails here rather than shipping silently ungated.
     """
     import ast
 
@@ -4280,7 +4180,6 @@ def test_every_production_dead_weight_call_arms_the_telemetry_gate() -> None:
         "compute_health",
         "curation_counts",
         "curation_counts_with_coverage",
-        "find_demotion_candidates",
     }
     repo_root = Path(__file__).resolve().parents[1]
     src_root = repo_root / "src"
@@ -4305,10 +4204,10 @@ def test_every_production_dead_weight_call_arms_the_telemetry_gate() -> None:
                 ungated.append(
                     f"{py_file.relative_to(repo_root)}:{node.lineno} {name}()"
                 )
-    assert scanned_calls >= 4, (
-        "the scan found almost no call sites — the walk is broken, not "
-        "the tree (expected report_for_directory, consolidate, and both "
-        "scope_overview arms at minimum)"
+    assert scanned_calls >= 2, (
+        "the scan found almost no call sites: the walk is broken, not "
+        "the tree (expected report_for_store's compute_health call and "
+        "the curation_counts wrapper at minimum)"
     )
     assert not ungated, (
         f"call site(s) in src/ do not arm the dead-weight telemetry "
@@ -4972,38 +4871,33 @@ def test_curation_counts_names_the_drifted_leg_it_could_not_measure(
 
 
 def test_curation_counts_names_the_unaccounted_leg_it_could_not_measure(
-    memory_dir: Path,
+    tmp_path: Path, store: Store
 ) -> None:
-    """`index.provenance_rows` returns None for "could not look" and `[]`
-    for "looked, found none" — deliberately, its sibling says, "so a
-    caller can tell". The rollup's bare truthiness test collapsed them
-    and published `unaccounted: 0` off an index nobody could open."""
-    from bettermemory import index
+    """`provenance_debt` returns None for "could not look" (a store opened
+    without its key: no pointer verifies) and a bucket for "looked, found
+    none", so a caller can tell. The rollup collapsed the two and
+    published `unaccounted: 0` off a store that could label nothing."""
     from bettermemory.health import curation_counts_with_coverage
-    from bettermemory.store import Store
 
-    store = Store(memory_dir)
     memory = store.write(content="the auth service listens on port 8443", scopes=["t"])
-    index.rebuild(memory_dir, store.iter_active())
     mems = [memory]
 
     counts, unmeasured = curation_counts_with_coverage(
-        mems, [], index_root=memory_dir, now=_utc(2026, 5, 1)
+        mems, [], store=store, now=_utc(2026, 5, 1)
     )
     assert counts["unaccounted"] == 0
-    assert unmeasured == [], "a readable index that labels nothing unaccounted"
+    assert unmeasured == [], "a store with its key that labels nothing unaccounted"
 
-    index_file = index.index_path(memory_dir)
-    index_file.write_bytes(index_file.read_bytes()[:100])
+    keyless = _keyless(store, tmp_path)
     counts, unmeasured = curation_counts_with_coverage(
-        mems, [], index_root=memory_dir, now=_utc(2026, 5, 1)
+        mems, [], store=keyless, now=_utc(2026, 5, 1)
     )
     assert counts["unaccounted"] == 0
     assert unmeasured == ["unaccounted"]
 
     counts, unmeasured = curation_counts_with_coverage(
-        [], [], index_root=memory_dir, now=_utc(2026, 5, 1)
+        [], [], store=keyless, now=_utc(2026, 5, 1)
     )
     assert unmeasured == [], (
-        "no memories in scope: nothing the index could have labelled"
+        "no memories in scope: nothing the store could have labelled"
     )

@@ -1,94 +1,36 @@
-"""Test helpers that emit events via the real ``Recorder``.
+"""The event log a test reads back, over a real store.
 
-The 2.6.2 and 2.6.3 releases each shipped a production bug because a
-consumer (``consolidate.find_demotion_candidates``,
-``llm._collect_contradiction_targets``) read event fields under a
-field-name shape that didn't match what the canonical ``Recorder``
-emits. Tests passed because the test fixtures hand-built event dicts
-that *also* used the wrong shape, so the production-versus-test
-divergence never surfaced under CI.
-
-This module is the structural answer. ``EventLog`` wraps a real
-``Recorder`` writing into a real ``tmp_path``-rooted directory. Tests
-call ``log.emit(kind, **fields)`` instead of hand-rolling
-``{"kind": ..., ...}`` literals. The event that lands in
-``log.events`` matches production's shape *byte-for-byte* because it
-goes through the same code path the in-process MCP handler and the
-Stop hook use.
-
-Discipline:
-
-- New tests for event consumers SHOULD use ``EventLog`` instead of
-  hand-built event dicts.
-- Existing tests that hand-build can keep working through consumer-
-  side legacy-name fallback (see ``consolidate.py:398``,
-  ``llm.py:896-906``), but each surface that gains a new field is
-  one ``EventLog`` migration away from being immune to the
-  fixture-divergence class.
-
-Usage::
-
-    def test_demote_dead_weight(event_log):
-        a = _make_memory("foo")
-        event_log.emit("write", id=a.id, status="committed")
-        event_log.emit("search", returned=[a.id], relevance=["high"])
-        candidates = find_demotion_candidates(events=event_log.events)
-        ...
+Emits through the canonical `Recorder` and reads back through the
+store's `iter_events`, so the shape always matches what production
+writes: a test that asserts a consumer's behaviour fails at suite time
+if the producer's field names drift.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
-from bettermemory.events import Recorder, iter_events
+from bettermemory.events import Recorder
 
 
 class EventLog:
-    """Real ``Recorder``-backed event log for tests.
-
-    Emits via the canonical ``Recorder``; reads back via
-    ``iter_events``. The shape always matches what production writes,
-    so a test that asserts a consumer's behaviour will fail at
-    suite time if the producer's field names ever drift.
-
-    Construct directly with a path, or use the ``event_log`` pytest
-    fixture (defined in ``conftest.py``).
-    """
-
-    def __init__(self, root: Path, session_id: str = "sess-test") -> None:
-        self.root = root
+    def __init__(self, store: Any, session_id: str = "sess-test") -> None:
+        self.store = store
         self.session_id = session_id
-        self.recorder = Recorder(root=root, session_id=session_id)
+        self.recorder = Recorder(store=store, session_id=session_id)
 
     def emit(self, kind: str, **fields: Any) -> dict[str, Any]:
-        """Append one event of ``kind`` with ``fields`` merged in.
-
-        Returns the decoded event as it landed in the log — the same
-        shape any consumer would see via ``iter_events``. Useful for
-        ``assert event == log.emit(...)``-style tests that pin the
-        canonical shape explicitly.
-        """
+        """Append one event and return it as it landed in the log."""
         self.recorder.record(kind, **fields)
         return self.last_event
 
     @property
     def events(self) -> list[dict[str, Any]]:
-        """All events from the active log, in append order."""
-        return list(iter_events(self.root))
+        return list(self.store.iter_events())
 
     @property
     def last_event(self) -> dict[str, Any]:
-        """Most-recent event across the sharded active log.
-
-        Goes through ``iter_events`` (which merges the per-shard files
-        chronologically) rather than tailing a single file — the active
-        log is sharded, so "the last line of one file" is no longer the
-        most-recent event. On a fresh empty log raises ``IndexError``
-        rather than silently returning ``None`` so a caller expecting an
-        event fails loudly when the recorder is disabled or misrouted.
-        """
-        events = list(iter_events(self.root))
+        events = self.events
         if not events:
             raise IndexError("event log is empty")
         return events[-1]

@@ -19,6 +19,7 @@ import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import platformdirs
 
@@ -29,6 +30,10 @@ CONFIG_FILENAME = "config.toml"
 PROJECT_DIR_NAME = ".claude-memory"
 GLOBAL_DIR_NAME = ".claude-memory"
 ENV_DIR_OVERRIDE = "BETTERMEMORY_DIR"
+# Where the store's key and head checkpoint live, ahead of the user config
+# directory. A scratch store (a bench, a demo, a test that spawns the
+# server) sets it so it leaves no key behind.
+KEYS_DIR_ENV = "BETTERMEMORY_KEYS_DIR"
 
 DEFAULT_CONFIG = """\
 # bettermemory config
@@ -43,10 +48,6 @@ DEFAULT_CONFIG = """\
 # directory = "~/.claude-memory"
 
 [behavior]
-# If true, memory_write returns a "pending" result and the consumer must
-# call memory_write_confirm to commit. MVP defaults to false for solo use.
-require_write_confirmation = false
-
 # Default cap on memory_search results. Clamped to 1..50 where it is read
 # (the same range an explicit max_results is clamped to), not rejected
 # here: a value outside the range is a harmless typo, and erroring at load
@@ -67,21 +68,6 @@ recency_boost_half_life_days = 30
 #       overrides this per-call.
 search_mode = "hybrid"
 
-# Hybrid-mode query repairs from the retrieval campaign (5.1): listed
-# discourse-filler words get a document-frequency floor in the BM25 legs
-# (so corpus-rare filler like "supposed"/"remember" can't outprice real
-# content terms), and when the base ranking is not confident about its
-# top hit, one extra down-weighted BM25 leg over synthesized vocabulary
-# (inflection variants, clipping full-forms, synonym mates — see
-# src/bettermemory/expansion.py) joins the fusion. OFF BY DEFAULT: the
-# lane's preregistered held-out check killed default-on (worth +15/+30
-# recall@1/@5 as-asked on the technical-prose gold set; cost 1.65
-# macro@5 points on conversational stores — bench/retrieval and
-# bench/longmemeval carry the artifacts and the scoring). Set true if
-# your store is technical prose queried casually — that is the shape
-# the gains were measured on.
-rescue_expansion = false
-
 # The Lane L conversational repairs (6.1.0): when a query has a temporal
 # reading ("how many weeks ago did I…", "what did I do in March?"), its
 # temporal-scaffold words (day/week/ago/last/many and kin) are priced as
@@ -93,32 +79,6 @@ rescue_expansion = false
 # (the L1 record). Queries with no temporal reading are untouched
 # byte for byte. Set false to reproduce the pre-6.1.0 ranking exactly.
 conversational = true
-
-# Usage-aware ranking. When true, a bounded "endorsement" factor (the same
-# shape as the recency boost — capped at +10%, so it only breaks near-ties,
-# never overrides relevance) nudges memories the model has DELIBERATELY
-# applied (an explicit memory_record_use(applied), not the auto-
-# fallback) up the results — so a fact that keeps proving load-bearing wins
-# a tie over a never-endorsed peer. Off by default: it reorders results and
-# costs one event-log read per search. Counts are recent (active-log window),
-# so the signal tracks current usefulness rather than lifetime popularity.
-endorsement_boost = false
-
-# The negative half of usage-aware ranking. When true, memories the model
-# recently REJECTED slide down: `memory_record_use(ignored)` mildly
-# (~-4% once), `contradicted` at double weight (~-7% once), both on a
-# saturating curve floored at -15% — so like endorsement it can only
-# break near-ties, never bury a strongly-relevant hit. A negative stops
-# counting when (a) it ages out of the 30-day window, (b) a later
-# NON-AUTO applied re-validates the memory, or (c) memory_update /
-# memory_verify postdates it (the judged claim was fixed or re-attested).
-# `corrected` never demotes — the fix already landed. Off by default: it
-# reorders results and widens the per-search event read from the ~10-min
-# attribution window to the full 30-day negative window (which also
-# feeds `recent_negative_outcomes` annotations a complete window instead
-# of a best-effort one). Enable together with endorsement_boost to close
-# the usage loop in both directions.
-outcome_demotion = false
 
 # Write-time supersession. When a claim-sized memory_write carries a
 # change cue (moved, switched, renamed, raised, no longer, the previous,
@@ -162,24 +122,6 @@ prompt_recall = true
 # Set false to restore the strict fires-only-where-the-audit-would-flag
 # coupling.
 recall_in_project = true
-
-# Standing tier at session start. When true, the plugin's SessionStart
-# hook appends the `ambient` memories the index labels local and the
-# verdict reads fresh, bodies, not pointers, to the scope-counts hint it
-# already prints, newest-verified first under a ~1 KB budget that
-# truncates only at whole-memory boundaries, and points at the other
-# ambient memories (id, scopes, provenance label, never the body) under
-# the same budget. This is the one surface that delivers without being
-# asked: ambient context whose trigger condition is not knowing you need
-# it. Provenance and verification are the admission ticket (a body needs
-# a local label and a computed-fresh staleness verdict; stale local
-# ambient memories collapse to one aggregate verify-to-restore line), so
-# the tier cannot ship a planted, pulled or unverified body into every
-# session. Default OFF: the recall hook's default-on was
-# earned by a measured ~2% firing bar, and no equivalent measurement
-# exists for a tier that fires on every session open.
-standing_tier = false
-
 
 # Floor on `applied_count` for inclusion in `memory_health.heavily_used`.
 # Default 3 — at 1 the bucket is dominated by one-off acknowledgements
@@ -261,49 +203,21 @@ max_scopes_per_write = 64
 # at 4.0.
 min_content_tokens = 0
 
-# Passive in-conversation curation surface. When the sum of dead_weight
-# + drifted + cold_endorsement_memories counts (the `curation_pending`
-# rollup you'd otherwise have to call `memory_scope_overview` to see)
-# crosses this threshold, the FIRST successful `memory_write` of each
-# session inlines a one-line `curation_hint` block on its response so
-# a model that never asks for the overview still gets the nudge.
-# One-shot per session — subsequent writes stay quiet. Pull-based
-# discovery via `memory_health` / `memory_scope_overview` remains the
-# primary path; this is a non-detour notification. Set to 0 to disable
-# numerically, or set `curation_hint_enabled = false` to disable
-# structurally.
-curation_hint_threshold = 5
-curation_hint_enabled = true
-
-# Tool-surface breadth. Lean by default: the curation / power-user tools
-# — the ones serving a deliberate curation pass rather than a
-# conversational turn — are NOT registered on the MCP server, keeping the
-# per-turn tool-description context lean for the common case. The set
-# grows as curation-tier tools are added, so it isn't listed here:
-# `docs/api.md` (in the repo linked at the top of this file) names which
-# tools the gate covers and maps each to its `bettermemory` CLI
-# counterpart — not all have one. Set true for the full surface — the
-# curate-loop skill needs it.
-# (memory_proposals also surfaces when [proposals] auto_propose is on.)
-full_tool_surface = false
-
 [scopes]
 # If non-empty, writes with caller-supplied scopes outside this list fail.
-# Empty = anything. Two narrow exemptions, and neither is a property of
-# the scopes themselves. One is ingest's: the scopes it stamps on a row
-# (its provenance scope + the type tag) are exempt there — you never typed
-# them, so an allowlist that doesn't name them can't silently refuse a
-# whole import. And `memory_update`, whose `scopes` argument REPLACES the
-# stored list: keeping a scope means resubmitting it, so the check runs
-# over what an edit ADDS. A scope already on the record passes because it
-# was already accepted; one that is not is still checked by name, so
-# neither exemption can be borrowed to plant an unallowed scope.
+# Empty = anything. One narrow exemption, and it is not a property of
+# the scopes themselves: `memory_update`, whose `scopes` argument REPLACES
+# the stored list. Keeping a scope means resubmitting it, so the check
+# runs over what an edit ADDS. A scope already on the record passes
+# because it was already accepted; one that is not is still checked by
+# name, so the exemption cannot be borrowed to plant an unallowed scope.
 allowed = []
 
 # Singleton scopes the `fix_typo_scopes` health check must stop flagging.
 # That check looks for a one-memory scope that resembles a more common one
 # ("projct:foo" against "projects:foo") and recommends folding it with
-# memory_rename_scope. When two projects legitimately share a name stem it
+# memory_admin's rename_scope action. When two projects legitimately share
+# a name stem it
 # is a FALSE POSITIVE, and it had no off switch: the recommendation
 # re-fired on every curation pass, so every pass had to re-adjudicate the
 # same question, and the cost of getting it wrong is asymmetric. On
@@ -322,87 +236,6 @@ typo_exceptions = []
 # marker list against real traffic. Lives next to the memories — same trust
 # boundary, no new permissions story. Set `enabled = false` to opt out.
 enabled = true
-
-# Rotate (gzip) the active log when it crosses this many bytes. Archives are
-# kept indefinitely — prune by hand if disk pressure matters.
-max_bytes = 10000000
-
-# Search query privacy. When false (the default since 2.6.8), `memory_search`
-# `query` and `memory_audit_turn` `probe_query` fields are redacted to
-# `{"hash": "<sha256-prefix>", "preview": "<first 32 chars>", "len": N}`
-# before landing in the event log. Correlation across events still works (a
-# repeated query has the same hash) and the first ~32 characters survive for
-# triage, but a secret pasted into a query no longer lives on disk verbatim.
-# Set true to restore the legacy verbatim shape — useful for debugging your
-# own ranker, less so for shared boxes.
-log_queries_verbatim = false
-
-[consolidate]
-# Opt-in unattended consolidation — the self-improving loop. OFF by
-# default. When enabled (and [telemetry] is on — the event log is both
-# the debounce clock and the audit trail), the Stop hook runs the
-# STRUCTURALLY-SAFE consolidation subset at turn end: conservative
-# near-duplicate dedup (a reversible tombstone) and demote-never-applied
-# (a non-destructive fact->ambient retag). No LLM passes, no contradiction
-# resolution — nothing that needs judgement. Every action lands as a
-# reviewable, reversible tombstone/event (memory_list_tombstones + the
-# event log) — the deliberate opposite of invisible "Dreaming"
-# consolidation. Turn this on to let the store quietly improve itself.
-auto_apply = false
-
-# Minimum hours between unattended runs. The Stop hook fires every turn;
-# this debounces so the O(N^2) dedup runs at most once per window.
-auto_apply_interval_hours = 24.0
-
-# Skip the unattended pass when the active set exceeds this many memories
-# — the pairwise dedup is O(N^2) and the turn-end hook must stay
-# responsive. Larger stores should run `bettermemory consolidate --apply`
-# by hand (or raise this once you've measured the cost on your store).
-auto_apply_max_memories = 500
-
-[proposals]
-# Opt-in write-reflex closure — the capture half of the self-improving
-# loop. OFF by default. When enabled, the Stop hook scans each turn's
-# USER message for durable-looking statements you made but the model
-# didn't save (explicit "remember…" requests, first-person
-# preferences/setup facts) and queues them as INERT proposals. Nothing
-# is ever written to memory automatically: review the queue with the
-# `memory_proposals` tool and accept (a normal memory write) or dismiss.
-# Closes the gap where durable content slips by during head-down work
-# without breaking the "writes are confirmed, never silent" contract.
-auto_propose = false
-
-# Cap on the pending-proposal queue. Once it holds this many, extraction
-# stops until you accept or dismiss some — bounds growth and avoids
-# nagging.
-max_pending = 20
-
-[capture]
-# Session capture from the Claude Code hooks. OFF by default. When
-# enabled, a model distils dated memories from each session's transcript
-# and writes them through the same gates as memory_write, tagged
-# `session-capture` (`bettermemory capture` has the details). It runs in
-# a background process, never in the hook itself, at three moments: when
-# a session ends; when a session that is still open has piled up about
-# `checkpoint_tokens` of conversation nobody has captured yet; and when a
-# new session starts, for sessions that went quiet without ending
-# cleanly (a crash, a closed laptop). Every capture is undoable with
-# `bettermemory rollback --by-actor bettermemory-capture`. While it is
-# on, [proposals] auto_propose stands down: both read the same messages.
-# The memories are written by the model the session was talking to, on
-# Claude Code's own login: there is no API key and no model to choose.
-enabled = false
-
-
-# Capture an open session once this much uncaptured conversation has
-# built up (tokens, estimated at four characters each). The newest
-# stretch is held back for the next capture, so each model call sees a
-# whole segment.
-checkpoint_tokens = 40000
-
-# A session whose transcript has not changed for this long, and still
-# has something uncaptured, is picked up when the next session starts.
-idle_minutes = 30
 """
 
 
@@ -413,25 +246,12 @@ class StorageConfig:
 
 @dataclass
 class BehaviorConfig:
-    require_write_confirmation: bool = False
     # Coerced to an int at load and NOT range-checked. Every consumer
     # narrows it through `handlers.search.clamp_search_width` instead —
     # one clamp for the request width and the audit probe's guard width,
     # so an out-of-range knob cannot move one without the other.
     default_max_results: int = 5
     recency_boost_half_life_days: float = 30.0
-    # Hybrid-mode query repairs from the retrieval campaign: the
-    # discourse-filler df-floor plus the coverage-gated rescue-expansion
-    # leg (see `search.search`'s `rescue_expansion` parameter and
-    # `expansion.py` for the committed tables). DEFAULT OFF — its own
-    # preregistered held-out check killed default-on: +15/+30
-    # recall@1/@5 as-asked on the technical-prose gold set
-    # (bench/retrieval, 2026-08-09), −1.65 macro@5 on LongMemEval's
-    # conversational stores (kill line was −0.35; the scoring lives in
-    # bench/longmemeval/). True is supported and documented for stores
-    # shaped like the gold set; the DEFAULT flips only via a fresh
-    # preregistration on both instruments.
-    rescue_expansion: bool = False
     # The Lane L conversational repairs: the temporal-scaffold df-floor
     # plus boost-only date-anchor windows (see `search.search`'s
     # `conversational` parameter; unit contract the L1 declaration,
@@ -450,15 +270,6 @@ class BehaviorConfig:
     # underperform, and hybrid is a strict improvement). The MCP
     # `mode` parameter on memory_search overrides this per-call.
     search_mode: str = "hybrid"
-    # Usage-aware ranking. When true, a bounded endorsement factor (mirrors
-    # the recency boost, capped at +10%) nudges memories the model has
-    # EXPLICITLY applied up the results, so a load-bearing fact wins a
-    # near-tie. Opt-in (default off): it reorders results and costs one
-    # event-log read per search; see DEFAULT_CONFIG for prose.
-    endorsement_boost: bool = False
-    # Negative mirror of endorsement_boost: recently ignored/contradicted
-    # memories slide down (bounded ≥0.85x). Opt-in — see DEFAULT_CONFIG.
-    outcome_demotion: bool = False
     # Write-time supersession (`supersession.detect_supersession`): a
     # claim-sized write that carries a change cue and diverges on a value
     # from a stored claim about the same subject gets a `supersedes` link
@@ -489,12 +300,6 @@ class BehaviorConfig:
     # anti-spam bound all still gate the injection. Set false to restore
     # the strict fires-only-where-the-audit-would-flag coupling.
     recall_in_project: bool = True
-    # Standing tier at session start (`cli/session_start_cmd.py`):
-    # fresh-verified ambient bodies appended to the SessionStart hint
-    # under a whole-memory-truncation byte budget. Default OFF at
-    # introduction — unlike prompt_recall there is no measured firing
-    # bar yet; see DEFAULT_CONFIG for prose.
-    standing_tier: bool = False
     # Floor on `applied_count` for inclusion in the heavily_used report.
     # Default is 3 — at 1 the bucket is mostly noise (one acknowledgement
     # is not a usage pattern). Raising it sharpens the signal at the cost
@@ -561,64 +366,6 @@ class BehaviorConfig:
     # replacement body without routing through that validator. See
     # DEFAULT_CONFIG for the recommendation and the 4.0 revisit.
     min_content_tokens: int = 0
-    # One-shot per-session passive curation hint. When the sum of
-    # dead_weight + drifted + cold_endorsement_memories counts (the
-    # `curation_pending` rollup the model would otherwise have to
-    # call `memory_scope_overview` to see) exceeds this threshold,
-    # the first successful `memory_write` of the session inlines a
-    # one-line nudge on the response. Default 5. 0 disables the
-    # nudge entirely; setting it large effectively disables. Pull-
-    # based remains the primary discovery path — this just closes
-    # the in-conversation surfacing loop the audit identified.
-    curation_hint_threshold: int = 5
-    curation_hint_enabled: bool = True
-    # Tool-surface breadth. When False, the curation / power-user MCP tools
-    # are NOT registered, keeping their (long) descriptions out of the context
-    # every client pays on every turn. `builder._register_tools` holds the gate
-    # and states the membership rule that decides what belongs in it;
-    # `tests/test_tool_surface.py::_GATED` pins the set; docs/api.md maps each
-    # gated tool to its `bettermemory` CLI counterpart, and names the ones that
-    # have none. memory_proposals also auto-registers whenever [proposals]
-    # auto_propose is on.
-    #
-    # Deliberate default asymmetry (see `load_config` and the round-trip test
-    # in tests/test_config.py): this dataclass default is True, so an
-    # explicitly-constructed Config — tests, programmatic embedders importing
-    # bettermemory — gets the full capability set. The SHIPPED default that
-    # `load_config()` applies when the user has no config.toml is False (lean).
-    # Leanness is a deployment policy for the typical MCP client, not a
-    # property of the config object; the loader is the policy layer (and these
-    # objects are frozen, so policy can't be applied post-construction). The
-    # curate-loop skill drives memory_health / memory_acknowledge_miss /
-    # memory_restore as MCP tools, so it needs full_tool_surface = true.
-    #
-    # The ORIGINAL cut was measured in the dogfood event log: 43% of sessions
-    # never called any memory tool, and the six tools gated at that time —
-    # memory_health, memory_acknowledge_miss, memory_rename_scope,
-    # memory_restore, memory_list_tombstones, memory_proposals — had 0-8
-    # organic calls each across 190 sessions. That census is a historical
-    # record of why the gate exists, NOT the current gated set: tools gated
-    # since qualify under the membership rule instead, and the measurement
-    # predates them.
-    #
-    # This knob stays a BOOL: a third "core" tier below the lean surface was
-    # evaluated 2026-07-31 and closed. Priced per tool against what the
-    # shipped guidance actually instructs, every candidate is spoken for —
-    # memory_show is the rebase step both stale hints hand back,
-    # memory_remove is the only action memory_health's two largest
-    # recommendations offer and the one tool with no CLI counterpart to
-    # fall back on, memory_scope_disable is instructed verbatim by the
-    # system-prompt addendum and the plugin skill (memory_scope_enable is
-    # its undo), and memory_list is in that addendum's tool headline and in
-    # DESC_MEMORY_AUDIT_TURN's retrieval-event set. So the flow-complete
-    # core is the lean surface itself and saves zero; dropping all five
-    # regardless is 9% of the resident tool surface. A schema-deferring
-    # client already pays under 1% by fetching schemas on demand, which is
-    # why the server instructions name the four tools to load first rather
-    # than offering a preset. The per-tool figures are re-derived on
-    # every run by tests/test_resident_footprint.py, which is where the
-    # full measurement lives.
-    full_tool_surface: bool = True
 
 
 @dataclass
@@ -634,71 +381,6 @@ class TelemetryConfig:
     """Event-log toggles. See DEFAULT_CONFIG for prose."""
 
     enabled: bool = True
-    max_bytes: int = 10_000_000
-    # When false (the default since 2.6.8), `memory_search` query text and
-    # `memory_audit_turn` `probe_query` are redacted in the event log —
-    # replaced with `{"hash": "<sha256-prefix>", "preview": "<32 chars>",
-    # "len": <int>}`. Correlation across events still works (same query
-    # has the same hash), and the first ~32 characters survive for triage,
-    # but a secret pasted into a search no longer lands on disk verbatim.
-    # Set true to restore the legacy verbatim shape. The event-log file is
-    # also chmod'd 0o600 on first write, so this is defense-in-depth rather
-    # than a permissions story.
-    log_queries_verbatim: bool = False
-
-
-@dataclass
-class ConsolidateConfig:
-    """Opt-in unattended consolidation. See DEFAULT_CONFIG for prose.
-
-    Default OFF. When `auto_apply` is true AND telemetry is enabled (the
-    event log is both the debounce clock and the audit trail), the Stop
-    hook runs the *structurally-safe* consolidation subset — conservative
-    near-duplicate dedup (reversible tombstone) and demote-never-applied
-    (non-destructive fact→ambient retag) — at most once per
-    `auto_apply_interval_hours`, and only when the active set is at or
-    below `auto_apply_max_memories` (the pairwise dedup is O(N²); the cap
-    keeps the turn-end hook responsive). Every action lands as a
-    reviewable, reversible tombstone/event — the deliberate opposite of
-    invisible "Dreaming" consolidation.
-    """
-
-    auto_apply: bool = False
-    auto_apply_interval_hours: float = 24.0
-    auto_apply_max_memories: int = 500
-
-
-@dataclass
-class ProposalsConfig:
-    """Opt-in write-reflex closure. See DEFAULT_CONFIG for prose.
-
-    Default OFF. When `auto_propose` is true, the Stop hook scans each
-    turn's user message for durable-looking statements the model didn't
-    write and queues them — inert and review-gated — for the
-    `memory_proposals` tool. `max_pending` caps the queue so it can't
-    grow without bound or nag: once full, extraction stops until
-    proposals are accepted or dismissed.
-    """
-
-    auto_propose: bool = False
-    max_pending: int = 20
-
-
-@dataclass
-class CaptureConfig:
-    """Session capture from the Claude Code hooks. See DEFAULT_CONFIG for
-    prose; `capture_hook` reads it.
-
-    Default OFF. There is no model setting: capture uses the model the
-    captured session was talking to (`capture.resolve_model`). `checkpoint_tokens`
-    is the uncaptured backlog that triggers a capture of an open session,
-    and `idle_minutes` how long a transcript must sit unchanged before a
-    new session's start picks it up.
-    """
-
-    enabled: bool = False
-    checkpoint_tokens: int = 40_000
-    idle_minutes: int = 30
 
 
 @dataclass
@@ -707,9 +389,6 @@ class Config:
     behavior: BehaviorConfig = field(default_factory=BehaviorConfig)
     scopes: ScopesConfig = field(default_factory=ScopesConfig)
     telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
-    consolidate: ConsolidateConfig = field(default_factory=ConsolidateConfig)
-    proposals: ProposalsConfig = field(default_factory=ProposalsConfig)
-    capture: CaptureConfig = field(default_factory=CaptureConfig)
     config_path: Path | None = None
 
     # ---- methods ----------------------------------------------------------
@@ -839,7 +518,7 @@ def _coerce_bool(value: object, default: bool) -> bool:
       "false"/"0"/"no"/"off"/"" -> False). An UNRECOGNISED string falls
       back to ``default`` — never to ``bool(non_empty_str) == True``,
       which is the bug this helper exists to prevent (a quoted
-      ``log_queries_verbatim = "false"`` must stay False).
+      ``conversational = "false"`` must stay False).
     - Anything else (int, None, list, ...) falls back to ``default``.
     """
     if isinstance(value, bool):
@@ -852,35 +531,6 @@ def _coerce_bool(value: object, default: bool) -> bool:
             return False
         return default
     return default
-
-
-def _coerce_positive_int(value: object, default: int) -> int:
-    """Coerce to ``int`` and clamp a non-positive result to ``default``.
-
-    A 0 or negative byte cap would otherwise reach the rotation guard in
-    ``events._rotate_if_needed`` and make ``size < max_bytes`` never hold,
-    triggering a gzip rotation on every append (a rotation storm). Treat
-    ``<= 0`` as "use the default" at load time; ``events`` separately
-    treats ``<= 0`` as "never rotate" for an explicitly-constructed
-    Recorder. A non-int / unparseable value also falls back to ``default``.
-    """
-    # Narrow before calling int() so mypy strict (no int(object) overload) and
-    # warn_return_any stay happy. bool is an int subclass — accept it directly.
-    coerced: int
-    if isinstance(value, bool):
-        coerced = int(value)
-    elif isinstance(value, int):
-        coerced = value
-    elif isinstance(value, str):
-        try:
-            coerced = int(value)
-        except ValueError:
-            return default
-    else:
-        return default
-    if coerced <= 0:
-        return default
-    return coerced
 
 
 def _malformed_config_msg(
@@ -953,9 +603,8 @@ def _coerce_search_mode(value: object, *, config_path: Path | None) -> str:
     Scope, stated so it is not mistaken for a whole-system invariant:
     this runs in `load_config`, so it covers config FILES. A programmatic
     embedder building `BehaviorConfig(search_mode=...)` directly still
-    reaches the consumers unnormalised. That is deliberate and matches
-    how `full_tool_surface` already works — these are value types and
-    the loader is the policy layer — and it is why
+    reaches the consumers unnormalised. That is deliberate — these are
+    value types and the loader is the policy layer — and it is why
     downstream consumers keep their own guards rather than trusting
     every constructor path was normalised.
     """
@@ -1082,53 +731,169 @@ _REMOVED_BEHAVIOR_KEYS: dict[str, tuple[str, str]] = {
         "ranking (deprecated in 7.6.0). The rollup itself stays and "
         "still keeps corroborated memories out of dead-weight curation",
     ),
+    "require_write_confirmation": (
+        "9.0.0",
+        "the staged-write flow left with the nine-tool surface",
+    ),
+    "rescue_expansion": (
+        "9.0.0",
+        "the expansion leg is measured by the retrieval bench and no "
+        "longer a shipped knob",
+    ),
+    "endorsement_boost": (
+        "9.0.0",
+        "measured a wash on the owner's labelled replay and ruled out of 9.0",
+    ),
+    "outcome_demotion": (
+        "9.0.0",
+        "measured a wash on the owner's labelled replay and ruled out of 9.0",
+    ),
+    "standing_tier": (
+        "9.0.0",
+        "the standing section left with the session-start rewrite",
+    ),
+    "full_tool_surface": (
+        "9.0.0",
+        "the surface is nine tools, always",
+    ),
+    "curation_hint_threshold": (
+        "9.0.0",
+        "the one-shot curation hint on memory_write left with the nine-tool "
+        "surface; `bettermemory health` carries the counts",
+    ),
+    "curation_hint_enabled": (
+        "9.0.0",
+        "the one-shot curation hint on memory_write left with the nine-tool "
+        "surface; `bettermemory health` carries the counts",
+    ),
+}
+
+# `[telemetry]` keys removed the same way. `enabled` is the section's one
+# remaining setting: the log no longer rotates, and queries are always
+# redacted before they land in it.
+_REMOVED_TELEMETRY_KEYS: dict[str, tuple[str, str]] = {
+    "log_queries_verbatim": (
+        "9.0.0",
+        "queries are always redacted in the event log; there is no verbatim "
+        "shape to restore",
+    ),
+    "max_bytes": (
+        "9.0.0",
+        "the event log no longer rotates",
+    ),
+}
+
+# Whole sections a major removed: section -> (the release, why). Every key
+# the section still carries is dropped with its own notice, so an operator
+# who set three of them learns about all three in one load.
+_REMOVED_SECTIONS: dict[str, tuple[str, str]] = {
+    "consolidate": (
+        "9.0.0",
+        "unattended consolidation left with the nine-tool surface; "
+        "`bettermemory health` carries the counts it acted on",
+    ),
+    "proposals": (
+        "9.0.0",
+        "the write-reflex proposal queue left with the nine-tool surface",
+    ),
+    "capture": (
+        "9.0.0",
+        "session capture from the hooks left with the nine-tool surface",
+    ),
 }
 
 
-def _drop_removed_behavior_keys(
-    behavior_raw: dict[str, object], config_path: Path
+def _resolved_for_guard(config_path: Path) -> Path:
+    """The path the one-shot warning guards key on: resolved so two
+    `load_config` calls naming the same file via different paths share
+    one warning, or the path as given when it cannot be resolved (deleted
+    out from under us between the `open()` and here)."""
+    try:
+        return config_path.resolve()
+    except OSError:
+        return config_path
+
+
+def _warn_removed_key(
+    *, section: str, key: str, removed_in: str, why: str, resolved: Path
 ) -> None:
-    """Drop every removed `[behavior]` key, warning once per (config, key).
+    """One notice per (config, section, key), on the log lane.
+
+    Removed keys use the log lane, like the deprecation notices that
+    preceded them — the operator who set the line reads server logs,
+    not Python's warnings channel — with the same one-shot `(resolved
+    path, key)` guard as `_apply_legacy_endorsement_debt_alias`, so a
+    long-lived server that rereads config on signal does not repeat
+    itself. The `[behavior]` guard key keeps its historical shape
+    (`<key>+removed`); the other sections carry their name in it.
+    """
+    guard_key = (
+        resolved,
+        f"{key}+removed" if section == "behavior" else f"{section}.{key}+removed",
+    )
+    if guard_key in _DEPRECATED_KEY_WARNED_PATHS:
+        return
+    _DEPRECATED_KEY_WARNED_PATHS.add(guard_key)
+    import logging
+
+    logging.getLogger("bettermemory.config").warning(
+        "bettermemory: TOML config at %s sets [%s] `%s`, which "
+        "was removed in bettermemory %s — %s. The line is ignored; "
+        "delete it to silence this warning.",
+        resolved,
+        section,
+        key,
+        removed_in,
+        why,
+    )
+
+
+def _drop_removed_keys(
+    section_raw: dict[str, object],
+    *,
+    section: str,
+    registry: dict[str, tuple[str, str]],
+    config_path: Path,
+) -> None:
+    """Drop every removed key of one section, warning once per (config, key).
 
     Whatever value the line holds is discarded unread, so no spelling
     of it (`true`, `false`, a quoted string) can fail the load: the
-    setting it named no longer exists to receive one. Removed keys use
-    the log lane, like the deprecation notices that preceded them — the
-    operator who set the line reads server logs, not Python's warnings
-    channel — with the same one-shot `(resolved path, key)` guard as
-    `_apply_legacy_endorsement_debt_alias`, so a long-lived server that
-    rereads config on signal does not repeat itself.
+    setting it named no longer exists to receive one.
     """
-    present = [k for k in _REMOVED_BEHAVIOR_KEYS if k in behavior_raw]
+    present = [k for k in registry if k in section_raw]
     if not present:
         return
-
-    try:
-        resolved = config_path.resolve()
-    except OSError:
-        resolved = config_path
-
-    import logging
-
-    log = logging.getLogger("bettermemory.config")
+    resolved = _resolved_for_guard(config_path)
     for key in present:
         # Popped, as the legacy alias pops its stale key, so the dict the
         # loader reads below holds only settings that still exist.
-        behavior_raw.pop(key)
-        removed_in, why = _REMOVED_BEHAVIOR_KEYS[key]
-        guard_key = (resolved, f"{key}+removed")
-        if guard_key in _DEPRECATED_KEY_WARNED_PATHS:
-            continue
-        _DEPRECATED_KEY_WARNED_PATHS.add(guard_key)
-        log.warning(
-            "bettermemory: TOML config at %s sets [behavior] `%s`, which "
-            "was removed in bettermemory %s — %s. The line is ignored; "
-            "delete it to silence this warning.",
-            resolved,
-            key,
-            removed_in,
-            why,
+        section_raw.pop(key)
+        removed_in, why = registry[key]
+        _warn_removed_key(
+            section=section, key=key, removed_in=removed_in, why=why, resolved=resolved
         )
+
+
+def _drop_removed_sections(data: dict[str, Any], config_path: Path) -> None:
+    """Warn once per key of every removed section a config still carries.
+
+    A removed section is never an error: the loader reads nothing from
+    it, so every key it holds is ignored, and each one gets its own
+    notice so the operator learns about all of them in one load.
+    """
+    present = [name for name in _REMOVED_SECTIONS if name in data]
+    if not present:
+        return
+    resolved = _resolved_for_guard(config_path)
+    for name in present:
+        removed_in, why = _REMOVED_SECTIONS[name]
+        section_raw = data.pop(name)
+        keys = list(section_raw) if isinstance(section_raw, dict) else [""]
+        for key in keys:
+            _warn_removed_key(
+                section=name, key=key, removed_in=removed_in, why=why, resolved=resolved
+            )
 
 
 def _apply_legacy_endorsement_debt_alias(
@@ -1235,18 +1000,27 @@ def load_config(path: Path | None = None) -> Config:
     behavior_raw = data.get("behavior", {})
     scopes_raw = data.get("scopes", {})
     telemetry_raw = data.get("telemetry", {})
-    consolidate_raw = data.get("consolidate", {})
-    proposals_raw = data.get("proposals", {})
-    capture_raw = data.get("capture", {})
 
     # T9: back-compat for the 3.1.x -> 3.2.0 TOML key rename. Mutates
     # `behavior_raw` so the downstream `behavior_raw.get(...)` lookups
     # below pick up the legacy value under the new key.
     _apply_legacy_endorsement_debt_alias(behavior_raw, config_path)
 
-    # Keys a major removed: ignored with a one-time notice, so a config
-    # written for the previous line still loads.
-    _drop_removed_behavior_keys(behavior_raw, config_path)
+    # Keys and sections a major removed: ignored with a one-time notice
+    # per key, so a config written for the previous line still loads.
+    _drop_removed_keys(
+        behavior_raw,
+        section="behavior",
+        registry=_REMOVED_BEHAVIOR_KEYS,
+        config_path=config_path,
+    )
+    _drop_removed_keys(
+        telemetry_raw,
+        section="telemetry",
+        registry=_REMOVED_TELEMETRY_KEYS,
+        config_path=config_path,
+    )
+    _drop_removed_sections(data, config_path)
 
     return Config(
         storage=StorageConfig(
@@ -1257,9 +1031,6 @@ def load_config(path: Path | None = None) -> Config:
             )
         ),
         behavior=BehaviorConfig(
-            require_write_confirmation=_coerce_bool(
-                behavior_raw.get("require_write_confirmation"), False
-            ),
             default_max_results=_coerce_int(
                 behavior_raw.get("default_max_results"),
                 5,
@@ -1269,7 +1040,6 @@ def load_config(path: Path | None = None) -> Config:
             search_mode=_coerce_search_mode(
                 behavior_raw.get("search_mode"), config_path=config_path
             ),
-            rescue_expansion=_coerce_bool(behavior_raw.get("rescue_expansion"), False),
             conversational=_coerce_bool(behavior_raw.get("conversational"), True),
             recency_boost_half_life_days=_coerce_float(
                 behavior_raw.get("recency_boost_half_life_days"),
@@ -1277,16 +1047,11 @@ def load_config(path: Path | None = None) -> Config:
                 label="[behavior] recency_boost_half_life_days",
                 config_path=config_path,
             ),
-            endorsement_boost=_coerce_bool(
-                behavior_raw.get("endorsement_boost"), False
-            ),
-            outcome_demotion=_coerce_bool(behavior_raw.get("outcome_demotion"), False),
             write_supersession=_coerce_bool(
                 behavior_raw.get("write_supersession"), True
             ),
             prompt_recall=_coerce_bool(behavior_raw.get("prompt_recall"), True),
             recall_in_project=_coerce_bool(behavior_raw.get("recall_in_project"), True),
-            standing_tier=_coerce_bool(behavior_raw.get("standing_tier"), False),
             heavily_used_min_applied=_coerce_int(
                 behavior_raw.get("heavily_used_min_applied"),
                 3,
@@ -1335,24 +1100,6 @@ def load_config(path: Path | None = None) -> Config:
                 label="[behavior] min_content_tokens",
                 config_path=config_path,
             ),
-            curation_hint_threshold=_coerce_int(
-                behavior_raw.get("curation_hint_threshold"),
-                5,
-                label="[behavior] curation_hint_threshold",
-                config_path=config_path,
-            ),
-            curation_hint_enabled=_coerce_bool(
-                behavior_raw.get("curation_hint_enabled"), True
-            ),
-            # Shipped default is LEAN: when the user hasn't set this key, the
-            # server hides the curation/power-user tools. This intentionally
-            # diverges from the BehaviorConfig dataclass default (True) — the
-            # loader is the deployment-policy layer. See that field's comment
-            # and the round-trip test's documented exception. Set
-            # `full_tool_surface = true` under [behavior] for the full surface.
-            full_tool_surface=_coerce_bool(
-                behavior_raw.get("full_tool_surface"), False
-            ),
         ),
         scopes=ScopesConfig(
             allowed=_coerce_str_list(
@@ -1368,62 +1115,6 @@ def load_config(path: Path | None = None) -> Config:
         ),
         telemetry=TelemetryConfig(
             enabled=_coerce_bool(telemetry_raw.get("enabled"), True),
-            # Clamp a 0/negative configured cap to the default — a non-positive
-            # value reaching events._rotate_if_needed makes the size guard never
-            # hold and gzip-rotates on every append (rotation storm).
-            max_bytes=_coerce_positive_int(telemetry_raw.get("max_bytes"), 10_000_000),
-            log_queries_verbatim=_coerce_bool(
-                telemetry_raw.get("log_queries_verbatim"), False
-            ),
         ),
-        consolidate=ConsolidateConfig(
-            auto_apply=_coerce_bool(consolidate_raw.get("auto_apply"), False),
-            auto_apply_interval_hours=_coerce_float(
-                consolidate_raw.get("auto_apply_interval_hours"),
-                24.0,
-                label="[consolidate] auto_apply_interval_hours",
-                config_path=config_path,
-            ),
-            auto_apply_max_memories=_coerce_int(
-                consolidate_raw.get("auto_apply_max_memories"),
-                500,
-                label="[consolidate] auto_apply_max_memories",
-                config_path=config_path,
-            ),
-        ),
-        proposals=ProposalsConfig(
-            auto_propose=_coerce_bool(proposals_raw.get("auto_propose"), False),
-            max_pending=_coerce_int(
-                proposals_raw.get("max_pending"),
-                20,
-                label="[proposals] max_pending",
-                config_path=config_path,
-            ),
-        ),
-        capture=_load_capture(capture_raw, config_path),
         config_path=config_path,
-    )
-
-
-def _load_capture(raw: dict[str, object], config_path: Path | None) -> CaptureConfig:
-    return CaptureConfig(
-        enabled=_coerce_bool(raw.get("enabled"), False),
-        checkpoint_tokens=max(
-            _coerce_int(
-                raw.get("checkpoint_tokens"),
-                40_000,
-                label="[capture] checkpoint_tokens",
-                config_path=config_path,
-            ),
-            1,
-        ),
-        idle_minutes=max(
-            _coerce_int(
-                raw.get("idle_minutes"),
-                30,
-                label="[capture] idle_minutes",
-                config_path=config_path,
-            ),
-            0,
-        ),
     )

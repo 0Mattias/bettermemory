@@ -1,0 +1,29 @@
+{
+  "protocol": "2025-06-18",
+  "results": [
+    {
+      "label": "bettermemory (shipped default)",
+      "tool_count": 9,
+      "full_bytes": 8387,
+      "full_chars": 8387,
+      "name_description_bytes": 3023,
+      "name_description_chars": 3023,
+      "input_schema_bytes": 4601,
+      "instructions_bytes": 1000,
+      "instructions_chars": 1000,
+      "session_bytes": 9387,
+      "bytes_per_tool": 932,
+      "tools": [
+        "episode",
+        "memory_admin",
+        "memory_record_use",
+        "memory_remove",
+        "memory_search",
+        "memory_show",
+        "memory_update",
+        "memory_verify",
+        "memory_write"
+      ]
+    }
+  ]
+}

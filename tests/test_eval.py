@@ -608,15 +608,15 @@ class TestSilentMissRate:
 
 class TestSilentMissInvalidation:
     """`compute_eval` honors the same two escape hatches health.py's
-    rollups honor — the bulk `silent_miss_cutoff` (written by
-    `bettermemory consolidate --acknowledge-misses-before`) and the
-    per-event `miss_ack` (written by `memory_acknowledge_miss`).
-    Before this suite existed, the eval CLI counted every in-window
-    event, so after either hatch ran, `bettermemory eval`'s
-    silent_miss_rate silently disagreed with `memory_health` /
-    `memory_scope_overview` over the same event stream — and the eval
-    CLI is the surface docs/eval.md tells people to compute the
-    publishable trio from."""
+    rollups honor: the bulk `silent_miss_cutoff` (written by
+    `memory_admin(action="acknowledge_miss", before=...)`) and the
+    per-event `miss_ack` (written by
+    `memory_admin(action="acknowledge_miss", id=...)`). Before this
+    suite existed, the eval CLI counted every in-window event, so after
+    either hatch ran, `bettermemory eval`'s silent_miss_rate silently
+    disagreed with `memory_admin(action="health")` over the same event
+    stream, and the eval CLI is the surface docs/eval.md tells people
+    to compute the publishable trio from."""
 
     @staticmethod
     def _utc(year: int, month: int, day: int) -> datetime:
@@ -624,7 +624,7 @@ class TestSilentMissInvalidation:
 
     @classmethod
     def _z(cls, year: int, month: int, day: int) -> str:
-        """Canonical `Z`-suffixed cutoff_ts shape the consolidate CLI writes."""
+        """Canonical `Z`-suffixed cutoff_ts shape `canonical_cutoff` writes."""
         return cls._utc(year, month, day).isoformat().replace("+00:00", "Z")
 
     def test_cutoff_drops_pre_cutoff_events_from_both_sides(self) -> None:
@@ -1172,28 +1172,25 @@ class TestColdEndorsementMemories:
 
         assert DEFAULT_ENDORSEMENT_MIN_RETRIEVALS == _COLD_ENDORSEMENT_MIN_RETRIEVALS
 
-    def test_list_and_show_do_not_count_toward_floor(self) -> None:
+    def test_show_does_not_count_toward_floor(self) -> None:
         """The floor basis is SEARCH deliveries only, matching health's
-        `_handle_search`-only `retrieval_count` (no `list` handler;
-        `show` feeds a separate `show_count`). Before the basis was
-        pinned, one `memory_list` over an N-memory store bumped every
-        memory's floor count at once while health saw nothing — the
-        recalibrated floor is derived per search delivery, so a wider
-        basis mis-calibrates it. The rate denominator keeps the wider
-        basis: all three kinds still count in `retrieval_occurrences`."""
+        `_handle_search`-only `retrieval_count` (`show` feeds a separate
+        `show_count`). The recalibrated floor is derived per search
+        delivery, so a wider basis mis-calibrates it. The rate
+        denominator keeps the wider basis: `show` still counts in
+        `retrieval_occurrences`."""
         mem = _mem()
         events: list[dict[str, Any]] = [
             _ev("turn_audited", verdict="ok", triggered_from="stop_hook"),
             _ev("use", ids=[mem.id], outcome="applied", auto=True),
         ]
-        # 4 search deliveries + 1 list + 1 show = floor count 4 (< 5).
+        # 4 search deliveries + 1 show = floor count 4 (< 5).
         events += [_ev("search", returned=[mem.id]) for _ in range(4)]
-        events.append(_ev("list", returned=[mem.id]))
         events.append(_ev("show", id=mem.id))
         report = compute_eval(
             memories=[mem], events=events, endorsement_min_retrievals=5
         )
-        assert report.retrieval_occurrences == 6
+        assert report.retrieval_occurrences == 5
         assert report.cold_endorsement_memories_total == 0
         # A fifth SEARCH delivery crosses the floor.
         report = compute_eval(
@@ -1451,10 +1448,10 @@ class TestCLI:
         # Schema sanity: rows is a list, every entry has a tool name.
         assert isinstance(parsed["rows"], list)
         assert all("tool" in r and "count" in r for r in parsed["rows"])
-        # The 18-tool surface lands in JSON too.
+        # The nine-tool surface lands in JSON too.
         tool_names = {r["tool"] for r in parsed["rows"]}
         assert "memory_search" in tool_names
-        assert "memory_health" in tool_names
+        assert "memory_admin" in tool_names
 
     def test_eval_threshold_sweep_subcommand_text(
         self, tmp_path: Path, capsys: Any
@@ -1551,12 +1548,10 @@ class TestCLI:
 
     def test_eval_against_recorded_events(self, tmp_path: Path) -> None:
         """End-to-end: record real events via Recorder, write a memory
-        via Store, run compute_eval over iter_all_events output."""
-        from bettermemory.events import iter_all_events
-
+        via Store, run compute_eval over the store's event log."""
         memdir = tmp_path / "memdir"
         store = Store(memdir)
-        recorder = Recorder(root=memdir, session_id="sess-test")
+        recorder = Recorder(store=store, session_id="sess-test")
 
         # Store.write builds and persists the Memory in one call.
         mem = store.write(
@@ -1576,7 +1571,7 @@ class TestCLI:
 
         report = compute_eval(
             memories=store.load_all(),
-            events=iter_all_events(memdir),
+            events=store.iter_events(),
         )
         assert report.retrieval_occurrences == 1
         assert report.applied_total == 1
@@ -1588,16 +1583,17 @@ class TestCLI:
         self, tmp_path: Path, capsys: Any
     ) -> None:
         """The CLI wrapper enumerates the store's real tombstone set
-        (`store.load_tombstones()`, same as `health.report_for_directory`)
-        and passes it into compute_eval — after a miss's top-hit memory
-        is tombstoned, `bettermemory eval` must agree with `memory_health`
-        (numerator and triage list drop, audited denominator keeps its
-        turn) rather than keep counting the unactionable miss."""
+        (`store.load_tombstones()`, same as `health.report_for_store`)
+        and passes it into compute_eval: after a miss's top-hit memory
+        is tombstoned, `bettermemory eval` must agree with
+        `memory_admin(action="health")` (numerator and triage list drop,
+        audited denominator keeps its turn) rather than keep counting
+        the unactionable miss."""
         from bettermemory.server import main as server_main
 
         memdir = tmp_path / "memdir"
         store = Store(memdir)
-        recorder = Recorder(root=memdir, session_id="sess-test")
+        recorder = Recorder(store=store, session_id="sess-test")
         mem = store.write(
             content="The auth middleware lives in src/auth/middleware.py.",
             scopes=["tools"],
@@ -1640,19 +1636,17 @@ class TestComputeToolUsage:
     def test_empty_events_returns_zero_rows_for_every_tool(self) -> None:
         """An empty event log still surfaces one row per known tool
         (all zero counts) so a consumer can branch on "tool never called"
-        without a missing-key guard. Untelemetered tools surface too."""
+        without a missing-key guard."""
         report = compute_tool_usage([])
         tool_names = {row.tool for row in report.rows}
-        # The full 27 — explicit-mapped 26 (memory_* + memory_curate +
-        # memory_proposals + memory_conflicts + episode_write +
-        # episode_handoff + episode_search + episode_promote +
-        # episode_patterns + memory_acknowledge_miss) plus the one in
-        # TOOLS_WITHOUT_TELEMETRY (memory_health).
-        assert len(report.rows) == 27
+        # The full nine: the seven memory_* record tools plus the two
+        # action-fanning tools, `episode` and `memory_admin`, each of
+        # which several event kinds map onto.
+        assert len(report.rows) == 9
         assert "memory_search" in tool_names
-        assert "memory_health" in tool_names
-        assert "episode_write" in tool_names
-        assert "episode_handoff" in tool_names
+        assert "memory_record_use" in tool_names
+        assert "episode" in tool_names
+        assert "memory_admin" in tool_names
         for row in report.rows:
             assert row.count == 0
             assert row.share is None  # zero denominator
@@ -1683,22 +1677,23 @@ class TestComputeToolUsage:
         assert [r.tool for r in nonzero] == ["memory_search", "memory_verify"]
 
     def test_side_effect_event_kinds_are_not_counted_as_tool_calls(self) -> None:
-        """`search_miss`, `pending_expired`, `silent_miss_cutoff` and
-        `use_token_expired` are side-effects of other tools (or CLI
-        admin ops), not standalone tool calls. They must not inflate
-        any tool's count and must not surface as unmapped either — a
-        regression that moved any of these into
-        `_TOOL_EVENT_KIND_TO_TOOL` would attribute admin operations to
-        the wrong parent.
+        """`turn_audited`, `search_miss`, `prompt_recall`,
+        `silent_miss_cutoff` and `use_token_expired` are side-effects of
+        other tools, hook records or admin markers, not standalone tool
+        calls. They must not inflate any tool's count and must not
+        surface as unmapped either; a regression that moved any of these
+        into `_TOOL_EVENT_KIND_TO_TOOL` would invent a tool or attribute
+        a hook's record to the wrong parent.
 
         `use_token_expired` carries an `ids` list, the same field name
         `use` and `search` use, which is exactly why it is worth
         pinning here: a reader that keys on the payload shape rather
         than the kind would count it as a retrieval settlement."""
         events = [
+            _ev("turn_audited", verdict="clean"),
             _ev("search_miss"),
             _ev("search_miss"),
-            _ev("pending_expired", pending_id="pending_x"),
+            _ev("prompt_recall"),
             _ev("silent_miss_cutoff", cutoff_ts="2026-04-10T00:00:00Z"),
             _ev("use_token_expired", ids=["m1"], reason="wall_clock_ttl"),
         ]
@@ -1740,15 +1735,6 @@ class TestComputeToolUsage:
             else:
                 assert row.share == pytest.approx(0.0)
 
-    def test_untelemetered_tool_marked(self) -> None:
-        """memory_health doesn't emit a dedicated event, so the row exists
-        with count=0 but flagged so the renderer can show "no telemetry"
-        rather than "never called" — the two cases are different."""
-        report = compute_tool_usage([])
-        health_row = next(r for r in report.rows if r.tool == "memory_health")
-        assert health_row.has_telemetry is False
-        assert "memory_health" in TOOLS_WITHOUT_TELEMETRY
-
     def test_to_dict_is_self_describing(self) -> None:
         events = [_ev("search")]
         payload = compute_tool_usage(events).to_dict()
@@ -1762,14 +1748,15 @@ class TestComputeToolUsage:
 # ---------------------------------------------------------------------------
 
 
-# The canonical tool count surfaced in prose ("27 MCP tools" — 22
-# `memory_*` + 5 `episode_*` — in api.md / internals.md / CONTRIBUTING /
-# marketplace / plugin README). Pinned here as the single source of
-# truth so a regression in either the runtime registrations or the
-# eval-side enumeration trips one assertion instead of leaving the
-# prose silently out of sync. The prose surfaces themselves are scanned
-# by test_tool_count_prose_tracks_expected_count below.
-_EXPECTED_TOOL_COUNT = 27
+# The canonical tool count surfaced in prose ("9 MCP tools": the seven
+# memory_* record tools plus `episode` and `memory_admin`, in api.md /
+# internals.md / CONTRIBUTING / marketplace / plugin README). Pinned
+# here as the single source of truth so a regression in either the
+# runtime registrations or the eval-side enumeration trips one
+# assertion instead of leaving the prose silently out of sync. The
+# prose surfaces themselves are scanned by
+# test_tool_count_prose_tracks_expected_count below.
+_EXPECTED_TOOL_COUNT = 9
 
 
 async def test_tool_count_matches_registered_count(tmp_path: Path) -> None:
@@ -1880,13 +1867,6 @@ class TestRenderToolUsageText:
         assert "memory_search" in text
         assert "memory_show" in text
 
-    def test_text_marks_untelemetered_tools_distinctly(self) -> None:
-        text = render_tool_usage_text(compute_tool_usage([]))
-        # memory_health row carries the "no telemetry" caveat so the
-        # zero count isn't misread as "never called".
-        assert "memory_health" in text
-        assert "no telemetry" in text
-
     def test_text_lists_unmapped_kinds_with_caveat(self) -> None:
         events = [_ev("freshly_added_kind")]
         text = render_tool_usage_text(compute_tool_usage(events))
@@ -1922,11 +1902,7 @@ class TestRenderToolUsageText:
         positional or ``kind=`` keyword form, so the assumption holds.
         If a future refactor switches to one of the patterns above,
         broaden the extractor here rather than letting drift sneak back
-        in via the ``unmapped_event_kinds`` footer. One broadening has
-        landed: ``consolidate._emit(recorder, "<kind>", ...)`` is the
-        recorder-optional shape the consolidation passes record through,
-        and its second positional is read here so the helper cannot
-        become the pattern this scan misses.
+        in via the ``unmapped_event_kinds`` footer.
         """
         import ast
 
@@ -1938,14 +1914,6 @@ class TestRenderToolUsageText:
                 if not isinstance(node, ast.Call):
                     continue
                 func = node.func
-                if isinstance(func, ast.Name) and func.id == "_emit":
-                    if (
-                        len(node.args) >= 2
-                        and isinstance(node.args[1], ast.Constant)
-                        and isinstance(node.args[1].value, str)
-                    ):
-                        discovered.add(node.args[1].value)
-                    continue
                 if not (isinstance(func, ast.Attribute) and func.attr == "record"):
                     continue
                 if (
@@ -2288,23 +2256,6 @@ class TestComputeThresholdSweep:
         assert v2.would_flag == 0
 
 
-class TestComputeEvalListKind:
-    def test_list_event_counts_as_retrieval(self) -> None:
-        """`memory_list` is bundled with `memory_search` in audit.py's
-        retrieval set; compute_eval must count it too so the eval
-        denominator (`retrieval_occurrences`) stays aligned with the
-        audit cadence. Without this, a workflow that leans on
-        memory_list (browse-then-show) would distort the
-        memory_helped_rate downward by underreporting the denominator."""
-        events = [
-            _ev("list", returned=["mem-A", "mem-B"]),
-            _ev("use", ids=["mem-A"], outcome="applied", claim_excerpts=["x"]),
-        ]
-        report = compute_eval(memories=[], events=events)
-        # Two ids returned by the list call = two retrieval occurrences.
-        assert report.retrieval_occurrences == 2
-
-
 class TestParseTsTzAware:
     def test_naive_iso_returns_utc(self) -> None:
         """A naive ISO timestamp (no `Z`, no `+00:00`) must be stamped
@@ -2406,7 +2357,7 @@ class TestComputeReport:
         assert doc.window_seconds is None
 
     def test_one_shot_iterator_feeds_all_four_computations(self) -> None:
-        """``iter_all_events`` is a one-shot iterator; compute_report
+        """``store.iter_events()`` is a one-shot iterator; compute_report
         must materialise it once — if any of the four sub-computations
         saw an exhausted stream, its counts would silently read zero."""
         events = iter(
@@ -2439,16 +2390,15 @@ class TestComputeReport:
         doc = compute_report([], events, version="0-test")
         assert doc.distinct_session_count == 2
 
-    def test_admin_cli_events_do_not_invent_distinct_sessions(self) -> None:
-        """Admin/CLI event kinds are recorded outside any client session
-        under a fresh throwaway session id (see
-        ``ADMIN_RECORDED_EVENT_KINDS``). Counting their ids publishes a
-        "Store shape: N distinct sessions" figure inflated by sessions
-        that never existed — one `doctor --fix` run would manufacture a
-        second "session" on a single-session store."""
+    def test_admin_recorded_kinds_do_not_invent_distinct_sessions(self) -> None:
+        """Admin-recorded event kinds (see ``ADMIN_RECORDED_EVENT_KINDS``)
+        never publish a session on their own. Counting their ids would
+        inflate the "Store shape: N distinct sessions" figure with
+        sessions that never existed: one cutoff marker under a
+        throwaway id would manufacture a second "session" on a
+        single-session store."""
         events = [
             _ev("search", session="s-real"),
-            _ev("doctor_fix", session="cli-doctor-run"),
             _ev("silent_miss_cutoff", session="cli-ack-run"),
         ]
         doc = compute_report([], events, version="0-test")
@@ -2476,7 +2426,6 @@ class TestComputeReport:
             f"silently leaves a real admin kind counted as a session."
         )
         assert not (ADMIN_RECORDED_EVENT_KINDS & _IN_SESSION_SIDE_EFFECT_KINDS)
-        assert "doctor_fix" in ADMIN_RECORDED_EVENT_KINDS
         assert "silent_miss_cutoff" in ADMIN_RECORDED_EVENT_KINDS
 
     def test_version_defaults_to_installed_package_metadata(self) -> None:
@@ -2649,25 +2598,6 @@ class TestRenderReportMarkdown:
         assert "0/30 = **0.00**" in md  # helped rate over 30 retrievals
         assert "1/1 = **1.00**" in md  # silent-miss rate 1/1
 
-    def test_untelemetered_tool_row_is_marked_not_published_as_zero(self) -> None:
-        """A tool in ``TOOLS_WITHOUT_TELEMETRY`` emits no dedicated event,
-        so its rollup count is structurally 0. Published as a bare
-        ``| memory_health | 0 | 0.0% |`` row it is indistinguishable from
-        a tool nobody ever called — the artifact then implies nobody uses
-        memory_health. Mirror the text renderer's "(no telemetry)"
-        treatment instead."""
-        events = [_ev("search"), _ev("show")]
-        doc = compute_report([], events, version="0-test")
-        # Non-vacuity, inverted since the 3.28.0 tool-count growth: a
-        # structurally-zero row can no longer crack a top-10-by-count
-        # slice (11 tools sort ahead of memory_health in this fixture),
-        # so the assertion below only passes because the renderer PINS
-        # untelemetered rows into the published table past the slice.
-        assert "memory_health" not in [r.tool for r in doc.tool_usage.rows[:10]]
-        md = render_report_markdown(doc)
-        assert "| `memory_health` (no telemetry) | — | — |" in md
-        assert "| `memory_health` | 0 |" not in md
-
 
 class TestReportCLI:
     def test_report_canary_never_leaks_store_content(
@@ -2675,21 +2605,18 @@ class TestReportCLI:
     ) -> None:
         """THE safety property, end to end: seed a real store + event
         log whose memory bodies, summaries, scope names, logged queries
-        (verbatim mode — maximally adversarial), probe queries, session
-        ids, snippets, a threshold_rule string, AND the store directory
-        name all carry a distinctive canary token; run the real CLI;
-        assert the token appears NOWHERE in the report while the seeded
-        counts still show up as non-trivial numbers."""
+        (the recorder keeps a 32-character preview of each, which holds
+        the token), probe queries, session ids, snippets, a
+        threshold_rule string, AND the store directory name all carry a
+        distinctive canary token; run the real CLI; assert the token
+        appears NOWHERE in the report while the seeded counts still show
+        up as non-trivial numbers."""
         # Lowercase because the token doubles as a scope-name component
         # (scopes validate lowercase-alphanumeric with hyphens/colons).
         canary = "kanary7q3zx"
         memdir = tmp_path / f"store-{canary}"
         store = Store(memdir)
-        recorder = Recorder(
-            root=memdir,
-            session_id=f"sess-{canary}-1",
-            log_queries_verbatim=True,
-        )
+        recorder = Recorder(store=store, session_id=f"sess-{canary}-1")
         mem_a = store.write(
             content=f"The {canary} deploy script lives in scripts/{canary}.sh.",
             scopes=[f"projects:{canary}-proj"],
@@ -2708,6 +2635,11 @@ class TestReportCLI:
                 query=f"where is the {canary} deploy script",
                 returned=[mem_a.id, mem_b.id],
             )
+        # The redaction keeps a preview of the query, so the logged
+        # query surface still carries the token the report must drop.
+        logged = [e for e in store.iter_events() if e.get("kind") == "search"]
+        assert len(logged) == 5
+        assert all(canary in str(e.get("query")) for e in logged)
         for _ in range(2):
             recorder.record(
                 "use",
@@ -2773,7 +2705,7 @@ class TestReportCLI:
         assert "1/3 = **0.33**" in out  # silent_miss_rate
         assert "| claude-test-model | 3 | 1 | 1 |" in out  # by-model slice
         assert "| `v1_top1_high` | 1 | — | 100.0% |" in out  # sweep row
-        assert "| `memory_search` | 5 | 41.7% |" in out  # tool-usage row
+        assert "| `memory_search` | 5 | 62.5% |" in out  # tool-usage row
 
         # And the whole skeleton rendered.
         for anchor in TestRenderReportMarkdown.SECTION_ANCHORS:
@@ -3303,11 +3235,13 @@ class TestAdminRecordedParity:
     def test_fork_detector_catches_a_drifted_copy(self) -> None:
         """Pin the pin. The scan below is only worth anything if its
         extractor actually fires; run it over a synthetic module that
-        forks the roster and drops a kind, and confirm it is reported.
-        Without this the real-tree scan could pass vacuously the day the
-        last literal copy disappears."""
-        drifted = sorted(ADMIN_RECORDED_EVENT_KINDS)[:1]
-        synthetic = f"_MY_ADMIN_KINDS = frozenset({{{drifted[0]!r}}})\n"
+        forks the roster and keeps a kind the roster has since dropped
+        (`doctor_fix` left with v8's doctor), and confirm it is
+        reported. Without this the real-tree scan could pass vacuously
+        the day the last literal copy disappears."""
+        drifted = sorted(ADMIN_RECORDED_EVENT_KINDS) + ["doctor_fix"]
+        members = ", ".join(repr(kind) for kind in drifted)
+        synthetic = f"_MY_ADMIN_KINDS = frozenset({{{members}}})\n"
         forks = _admin_roster_forks(synthetic, "<synthetic>")
         assert [(name, members) for _, name, members in forks] == [
             ("_MY_ADMIN_KINDS", frozenset(drifted))
@@ -3391,19 +3325,19 @@ class TestAdminRecordedParity:
 
         The classification has two axes, and a consumer that reaches
         for one constant has by construction implemented half of it.
-        That is not hypothetical: doctor's cadence census excluded
-        admin events by kind alone, so a `consolidate
-        --acknowledge-debt` run published a phantom session there while
-        eval's own tally had already stopped counting it — the two
+        That is not hypothetical: v8's doctor cadence census excluded
+        admin events by kind alone, so a CLI run that recorded under a
+        `cli_` attribution published a phantom session there while
+        eval's own tally had already stopped counting it, the two
         surfaces disagreeing about which sessions ever existed, which
         is precisely what the shared constant was introduced to
         prevent.
 
         So: no module in `src/` other than eval.py may name either axis
         constant or re-spell the prefix. Callers use the predicate.
-        AST-based, so the prose in doctor.py explaining WHY it calls
-        the predicate — which mentions the constant by name — is not a
-        false positive.
+        AST-based, so prose that explains WHY a caller uses the
+        predicate, and mentions the constant by name, is not a false
+        positive.
         """
         repo_root = Path(__file__).resolve().parents[1]
         eval_py = repo_root / "src" / "bettermemory" / "eval.py"
@@ -3437,24 +3371,22 @@ class TestAdminRecordedParity:
 
 
 class TestAdminRecordedAttribution:
-    def test_acknowledge_debt_row_does_not_invent_a_session(self) -> None:
-        """`bettermemory consolidate --acknowledge-debt` records
-        ``kind="use"`` — a kind real client sessions also emit — under a
-        fresh throwaway ``SessionState()`` id. Kind-based exclusion
+    def test_cli_restore_row_does_not_invent_a_session(self) -> None:
+        """`bettermemory tombstones restore` records ``kind="restore"``,
+        a kind `memory_admin` also emits in a real client session, under
+        a fresh throwaway ``SessionState()`` id. Kind-based exclusion
         structurally cannot catch it without blinding the tally to every
         genuine session, so the exclusion runs off ``attribution``. Left
-        unexcluded, one acknowledge-debt run publishes a phantom session
-        in the report's store-shape line."""
+        unexcluded, one CLI restore publishes a phantom session in the
+        report's store-shape line."""
         events = [
             _ev("search", session="s-real"),
             _ev(
-                "use",
+                "restore",
                 session="01JCLI0000000000000000000A",
-                ids=["mem-1"],
-                outcome="applied",
-                auto=False,
-                attribution="cli_acknowledge_debt",
-                note="bettermemory consolidate --acknowledge-debt",
+                id="mem-1",
+                scopes=["tools"],
+                attribution="cli_tombstones_restore",
             ),
         ]
         doc = compute_report([], events, version="0-test")
@@ -3473,32 +3405,10 @@ class TestAdminRecordedAttribution:
         doc = compute_report([], events, version="0-test")
         assert doc.distinct_session_count == 4
 
-    def test_exclusion_is_scoped_to_the_session_tally(self) -> None:
-        """acknowledge-debt rows ARE genuine endorsements — recording
-        them is the entire point of the subcommand — so they must keep
-        counting toward the applied/endorsement denominators. Only the
-        session tally rejects them."""
-        mem = _mem()
-        events = [
-            _ev(
-                "use",
-                session="01JCLI0000000000000000000A",
-                ids=[mem.id],
-                outcome="applied",
-                auto=False,
-                attribution="cli_acknowledge_debt",
-            )
-        ]
-        doc = compute_report([mem], events, version="0-test")
-        assert doc.distinct_session_count == 0
-        assert doc.alltime_eval.applied_total == 1
-        assert doc.alltime_eval.applied_explicit == 1
-
     def test_predicate_reads_both_axes(self) -> None:
         events_and_expected: list[tuple[dict[str, Any], bool]] = [
-            ({"kind": "doctor_fix"}, True),
             ({"kind": "silent_miss_cutoff"}, True),
-            ({"kind": "use", "attribution": "cli_acknowledge_debt"}, True),
+            ({"kind": "restore", "attribution": "cli_tombstones_restore"}, True),
             (
                 {"kind": "silent_miss_cutoff", "attribution": "cli_acknowledge_misses"},
                 True,
@@ -3517,26 +3427,24 @@ class TestAdminRecordedAttribution:
         self, tmp_path: Path
     ) -> None:
         """The exclusion is built on a field that must survive the real
-        write path — `Recorder.record` merges arbitrary kwargs but also
-        runs a redaction pass, and a redacted-away `attribution` would
-        make the whole mechanism a no-op on production logs. Round-trip
-        the acknowledge-debt shape through the real recorder."""
-        from bettermemory.events import iter_all_events
-
-        recorder = Recorder(root=tmp_path, session_id="01JCLI0000000000000000000A")
-        recorder.record(
-            "use",
-            ids=["mem-1"],
-            outcome="applied",
-            auto=False,
-            attribution="cli_acknowledge_debt",
-            note="bettermemory consolidate --acknowledge-debt",
+        write path: `Recorder.record` stamps the recorder's attribution,
+        merges arbitrary kwargs and runs a redaction pass, and a
+        redacted-away `attribution` would make the whole mechanism a
+        no-op on production logs. Round-trip the CLI restore shape
+        through the real recorder, stamped the way `cli_recorder`
+        stamps it."""
+        store = Store(tmp_path)
+        recorder = Recorder(
+            store=store,
+            session_id="01JCLI0000000000000000000A",
+            attribution="cli_tombstones_restore",
         )
-        written = [e for e in iter_all_events(tmp_path) if e.get("kind") == "use"]
+        recorder.record("restore", id="mem-1", scopes=["tools"])
+        written = [e for e in store.iter_events() if e.get("kind") == "restore"]
         assert len(written) == 1
-        assert written[0]["attribution"] == "cli_acknowledge_debt"
+        assert written[0]["attribution"] == "cli_tombstones_restore"
         assert is_admin_recorded_event(written[0]) is True
-        # And end to end: the real on-disk shape publishes no session.
+        # And end to end: the real stored shape publishes no session.
         doc = compute_report([], written, version="0-test")
         assert doc.distinct_session_count == 0
 
@@ -3562,7 +3470,8 @@ class TestAdminRecordedAttribution:
                     ):
                         discovered.add(kw.value.value)
         # Non-vacuity: the CLI writers this mechanism targets are present.
-        assert "cli_acknowledge_debt" in discovered
+        assert "cli_tombstones_restore" in discovered
+        assert "cli_rename_scope" in discovered
         stray = {
             value
             for value in discovered

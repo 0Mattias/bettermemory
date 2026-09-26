@@ -132,7 +132,7 @@ async def test_write_blocks_when_high_tombstone_match(server: Any) -> None:
     assert duplicate["removed_matches"][0]["id"] == written["id"]
     assert duplicate["removed_matches"][0]["removed_reason"] == "bad fact"
     assert "hint" in duplicate
-    assert "memory_restore" in duplicate["hint"]
+    assert 'memory_admin(action="restore"' in duplicate["hint"]
 
 
 async def test_write_succeeds_when_only_medium_tombstone_match(
@@ -202,7 +202,7 @@ async def test_write_after_restore_uses_active_dedup(server: Any) -> None:
     body = "vendored python-frontmatter to drop the deprecated codecs.open call"
     written = await _call(server, "memory_write", content=body, scopes=["tools"])
     await _call(server, "memory_remove", id=written["id"], reason="r")
-    await _call(server, "memory_restore", id=written["id"])
+    await _call(server, "memory_admin", action="restore", id=written["id"])
 
     duplicate = await _call(server, "memory_write", content=body, scopes=["tools"])
     assert duplicate["status"] == "duplicate"

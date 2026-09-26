@@ -1,0 +1,4 @@
+{"ts":"2026-09-26T01:02:19.456000Z","session":"sess_a","kind":"verify","id":"01M3DKQN3RYA4GXXP2K49WAHWZ","note":"checked"}
+{"ts":"2026-09-26T01:02:20.456000Z","session":"sess_a","kind":"migrate","action":"origin","ids":["01M3DKQN3RYA4GXXP2K49WAHWZ"],"updated":1}
+{"ts":"2026-09-26T01:02:21.456000Z","session":"sess_a","kind":"write","id":"01M3DKQQ2858CTP6XV72WCCECM","status":"committed"}
+{"ts":"2026-09-26T01:02:22.456000Z","session":"sess_a","kind":"turn_audited","verdict":"ok","probe_query":"what about the cluster","session_id":"sess_a"}

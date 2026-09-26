@@ -12,8 +12,8 @@ WHAT IS READ. Every `memory_search` tool call in the local Claude Code
 transcripts (top-level session files and the nested subagent files under
 each session directory), with the working directory the call was made
 from. Nothing is written to the transcripts. The store is a COPY of the
-live store after a fresh reindex (bettermemory reindex), so the index rows
-are in the order a migration reproduces; the live store is never opened.
+live store's `memory.sqlite`, opened read-only (no rekey, so the copy is
+never mutated either); the live store is never opened.
 
 WHAT IS REPLAYED. The handler's own steps, with the two things a replay
 must pin held fixed: the clock (PINNED_NOW, so recency and the verification
@@ -25,12 +25,10 @@ which is what the handler would see too). Each call then goes through
 `memory_search` passes. `since_prior_session` calls are skipped, because
 their pool is a slice of the event log by session boundary, not a ranking.
 
-TWO ARMS. `default` ranks with the shipped configuration. `owner` ranks
-with the owner's two opt-in flags, endorsement_boost and outcome_demotion,
-whose tallies come from the copied event log at the pinned clock.
-bettermemory 9 drops both flags, so `default` is the gate arm, and the
-difference between the arms is the cost of the drop on this store,
-measured rather than assumed.
+ONE ARM. `default` ranks with the shipped configuration. bettermemory 9
+dropped the two usage flags (endorsement_boost, outcome_demotion) an
+`owner` arm once measured against it; the cost of the drop on this store
+is recorded in bench/parity/results/usage-labels-8.0.0-2026-09-25.json.
 
 Usage:
 
@@ -41,7 +39,6 @@ from __future__ import annotations
 
 import argparse
 import collections
-import dataclasses
 import glob
 import hashlib
 import json
@@ -58,7 +55,6 @@ _ROOT = _HERE.parents[1]
 if str(_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(_ROOT / "src"))
 
-from bettermemory import index as _index  # noqa: E402
 from bettermemory import origin as _origin  # noqa: E402
 from bettermemory._handlers import (  # noqa: E402
     _INDEX_THRESHOLD_DEFAULT,
@@ -67,8 +63,6 @@ from bettermemory._handlers import (  # noqa: E402
 from bettermemory.config import BehaviorConfig  # noqa: E402
 from bettermemory.handlers.search import (  # noqa: E402
     clamp_search_width,
-    ranking_events_window_seconds,
-    resolve_ranking_inputs,
     resolve_search_pool,
 )
 from bettermemory.models import validate_scope  # noqa: E402
@@ -80,12 +74,7 @@ TRANSCRIPTS = Path.home() / ".claude" / "projects"
 CACHE = Path.home() / ".cache" / "bettermemory-v9"
 DEFAULT_STORE = CACHE / "live-copy"
 PINNED_NOW = datetime(2026, 9, 25, tzinfo=timezone.utc)
-ARMS = {
-    "default": BehaviorConfig(),
-    "owner": dataclasses.replace(
-        BehaviorConfig(), endorsement_boost=True, outcome_demotion=True
-    ),
-}
+ARMS = {"default": BehaviorConfig()}
 
 
 # ---------------------------------------------------------------------------
@@ -237,21 +226,10 @@ def unique_specs(
 # ---------------------------------------------------------------------------
 
 
-def _events_for(root: Path, behavior: BehaviorConfig) -> list[dict[str, Any]] | None:
-    """The one event read the tallies share, at the pinned clock."""
-    window = ranking_events_window_seconds(behavior)
-    if window is None:
-        return None
-    from bettermemory.events import iter_events_window
-
-    return list(iter_events_window(root, window))
-
-
 def replay(
     store: Store,
     spec: dict[str, Any],
     behavior: BehaviorConfig,
-    events: list[dict[str, Any]] | None,
 ) -> dict[str, Any]:
     """`memory_search`'s pool and rank steps, with the clock pinned."""
     width = clamp_search_width(
@@ -274,14 +252,9 @@ def replay(
         model_filter=spec["model"],
         min_survivors=width,
     )
-    ranking = resolve_ranking_inputs(
-        store.root, pool.memories, behavior, now=PINNED_NOW, events=events
-    )
     hits = run_search(
         pool.memories,
         spec["query"],
-        applied_by_id=ranking.applied_by_id,
-        negative_by_id=ranking.negative_by_id,
         scopes=scopes,
         excluded_scopes=set(),
         repo_filter=repo_filter,
@@ -289,12 +262,12 @@ def replay(
         client_filter=spec["client"],
         model_filter=spec["model"],
         max_results=width,
-        half_life_days=ranking.half_life_days,
+        half_life_days=behavior.recency_boost_half_life_days,
         mode=mode,
         allow_empty_query=False,
         corpus_stats_provider=pool.corpus_stats_provider,
-        rescue_expansion=ranking.rescue_expansion,
-        conversational=ranking.conversational,
+        rescue_expansion=False,
+        conversational=behavior.conversational,
         now=PINNED_NOW,
     )
     return {
@@ -343,42 +316,43 @@ def _provenance() -> dict[str, Any]:
 
 
 def run_private(store_root: Path, transcripts: Path = TRANSCRIPTS) -> dict[str, Any]:
-    store = Store(store_root)
-    status = _index.status(store_root)
-    if not status.get("exists") or status.get("needs_rebuild"):
-        raise SystemExit(f"store at {store_root} has no ready index; run reindex first")
+    try:
+        store = Store.open(store_root, allow_rekey=False)
+    except FileNotFoundError:
+        raise SystemExit(
+            f"no store at {store_root}; copy memory.sqlite there"
+        ) from None
+    status = store.status()
     calls = extract_calls(transcripts)
     specs, skipped = unique_specs(calls)
-    events = {arm: _events_for(store_root, behavior) for arm, behavior in ARMS.items()}
     rows: list[dict[str, Any]] = []
     for spec in specs:
         row = dict(spec)
         for arm, behavior in ARMS.items():
-            row[arm] = replay(store, spec, behavior, events[arm])
+            row[arm] = replay(store, spec, behavior)
         rows.append(row)
-    active = sum(1 for _ in store.iter_active())
     return {
         "kind": "rank-parity/private",
         "provenance": _provenance(),
         "engine": {
             "tokenizer_fingerprint": tokenizer_fingerprint(),
-            "index_schema_version": status.get("schema_version"),
-            "indexed_count": status.get("indexed_count"),
+            "schema_version": status["schema_version"],
             "prefilter_cap": _PREFILTER_CAP,
             "index_threshold": _INDEX_THRESHOLD_DEFAULT,
         },
-        "store": {"root": str(store_root), "active": active},
+        "store": {
+            "root": str(store_root),
+            "path": str(store.path),
+            "active": store.count_memories(),
+        },
         "params": {
             "pinned_now": PINNED_NOW.isoformat(),
             "arms": {
                 arm: {
-                    "endorsement_boost": b.endorsement_boost,
-                    "outcome_demotion": b.outcome_demotion,
                     "half_life_days": b.recency_boost_half_life_days,
                     "search_mode": b.search_mode,
-                    "rescue_expansion": b.rescue_expansion,
+                    "rescue_expansion": False,
                     "conversational": b.conversational,
-                    "events_read": None if events[arm] is None else len(events[arm]),
                 }
                 for arm, b in ARMS.items()
             },
@@ -396,15 +370,11 @@ def summarize(artifact: dict[str, Any]) -> str:
     rows = artifact["rows"]
     engaged = sum(1 for r in rows if r["default"]["engaged"])
     empty = sum(1 for r in rows if not r["default"]["ids"])
-    differ = sum(1 for r in rows if r["default"]["ids"] != r["owner"]["ids"])
-    top1 = sum(1 for r in rows if r["default"]["ids"][:1] != r["owner"]["ids"][:1])
     return (
         f"{artifact['calls']} calls in {artifact['transcripts']} transcripts -> "
         f"{artifact['specs']} unique specs (skipped {artifact['skipped']}); "
         f"prefilter engaged {engaged}/{len(rows)}; empty result {empty}; "
-        f"owner arm reorders {differ}/{len(rows)} (top-1 differs {top1}); "
-        f"digest default {artifact['digests']['default'][:16]} owner "
-        f"{artifact['digests']['owner'][:16]}"
+        f"digest default {artifact['digests']['default'][:16]}"
     )
 
 

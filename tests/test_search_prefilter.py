@@ -9,11 +9,11 @@ prefilter path even though matching memories exist — the cap-starvation
 failure mode the `load_search_candidates` docstring itself names. The
 guard dry-runs the authoritative filter on a cap-saturated slice and
 reloads the full corpus when fewer than the caller's `min_survivors`
-candidates survive — `max_results` for a `memory_search` request,
-`default_search_width(behavior)` for the silent-miss audit producers,
-which describe a search that never happened and so carry no request
-width. The two widths differ on purpose; their RANGE does not, because
-all of them go through `clamp_search_width`.
+candidates survive: `max_results` for a `memory_search` request,
+`default_search_width(behavior)` for the silent-miss audit producer (the
+Stop hook), which describes a search that never happened and so carries
+no request width. The two widths differ on purpose; their RANGE does not,
+because both go through `clamp_search_width`.
 
 Lives in its own file (not test_search*.py — those belong to another
 batch this round) and exercises the guard through the MCP tool surface,
@@ -29,7 +29,6 @@ from typing import Any
 
 import pytest
 
-from bettermemory import index
 from bettermemory.audit import probe_for_miss
 from bettermemory.config import BehaviorConfig, Config, StorageConfig
 from bettermemory.handlers.search import resolve_search_pool
@@ -105,10 +104,10 @@ def _write_weak(store: Store, n: int, *, scopes: list[str], origin: Origin | Non
     return ids
 
 
-def _assert_starved_precondition(memory_dir: Path, weak_ids: list[str]) -> None:
+def _assert_starved_precondition(store: Store, weak_ids: list[str]) -> None:
     """Self-validating ranking precondition: the weak matches must rank
     past the 50-row FTS cap, or the test isn't exercising starvation."""
-    top50 = {cid for cid, _ in index.query(memory_dir, "alpha", max_results=50)}
+    top50 = {cid for cid, _ in store.query_candidates("alpha", max_results=50)}
     assert len(top50) == 50
     assert not (set(weak_ids) & top50), (
         "precondition drift: weak matches landed inside the FTS top-50, "
@@ -128,8 +127,7 @@ async def test_repo_filter_starvation_reloads_full_corpus(
     monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
     _write_dense(store, 60, scopes=["tools"], origin=Origin(repo=REPO_B))
     a_ids = _write_weak(store, 3, scopes=["tools"], origin=Origin(repo=REPO_A))
-    index.rebuild(memory_dir, store.iter_active())
-    _assert_starved_precondition(memory_dir, a_ids)
+    _assert_starved_precondition(store, a_ids)
 
     server = _build_server(memory_dir)
     _pin_caller_origin(monkeypatch, Origin(cwd="/projects/a", repo=REPO_A))
@@ -152,12 +150,11 @@ async def test_disabled_scope_starvation_reloads_full_corpus(
     monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
     _write_dense(store, 60, scopes=["noise"], origin=None)
     tool_ids = _write_weak(store, 3, scopes=["tools"], origin=None)
-    index.rebuild(memory_dir, store.iter_active())
-    _assert_starved_precondition(memory_dir, tool_ids)
+    _assert_starved_precondition(store, tool_ids)
 
     server = _build_server(memory_dir)
     _pin_caller_origin(monkeypatch, Origin(cwd="/tmp/elsewhere"))
-    await _call(server, "memory_scope_disable", scope="noise")
+    await _call(server, "memory_admin", action="disable_scope", scope="noise")
 
     hits = _unwrap(await _call(server, "memory_search", query="alpha"))
     assert {h["id"] for h in hits} == set(tool_ids)
@@ -172,7 +169,6 @@ async def test_prefilter_path_still_serves_when_filters_leave_survivors(
     load_all reload. Spied via a counting wrapper on Store.load_all."""
     monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
     _write_dense(store, 60, scopes=["tools"], origin=Origin(repo=REPO_A))
-    index.rebuild(memory_dir, store.iter_active())
 
     server = _build_server(memory_dir)
     _pin_caller_origin(monkeypatch, Origin(cwd="/projects/a", repo=REPO_A))
@@ -197,27 +193,28 @@ async def test_prefilter_path_still_serves_when_filters_leave_survivors(
 async def test_masked_saturation_still_triggers_reload(
     memory_dir: Path, store: Store, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A cap-saturated INDEX slice can arrive at the guard with fewer
-    than 50 loaded candidates: the per-candidate skips in
-    `load_search_candidates` (filename-lookup misses, id/body drift —
-    here a backing file deleted after the index was built) shrink the
-    loaded list below the cap. The old `len(memories) == 50` check
-    never fired on such a slice, so the post-cap repo filter starved
-    the search to zero hits while in-repo matches existed past the
-    cap. The guard must key on the loader's index-level saturation
-    signal, not the post-drop list length."""
+    """A cap-saturated FTS slice can arrive at the guard with fewer
+    than 50 loaded candidates: `load_many` skips an id it cannot serve
+    (a row tombstoned by another process between the candidate query
+    and the load), so the loaded list shrinks below the cap. The old
+    `len(memories) == 50` check never fired on such a slice, so the
+    post-cap repo filter starved the search to zero hits while in-repo
+    matches existed past the cap. The guard must key on the loader's
+    candidate-level saturation signal, not the post-drop list length."""
     monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
     _write_dense(store, 60, scopes=["tools"], origin=Origin(repo=REPO_B))
     a_ids = _write_weak(store, 3, scopes=["tools"], origin=Origin(repo=REPO_A))
-    index.rebuild(memory_dir, store.iter_active())
-    _assert_starved_precondition(memory_dir, a_ids)
+    _assert_starved_precondition(store, a_ids)
 
-    # Drop one in-slice candidate's backing file WITHOUT reindexing:
-    # the index still serves a full 50-row slice, but the loader skips
-    # the stale filename, so the guard sees only 49 loaded candidates.
-    victim = next(cid for cid, _ in index.query(memory_dir, "alpha", max_results=50))
-    victim_file = index.filenames_for_ids(memory_dir, [victim])[victim]
-    (memory_dir / victim_file).unlink()
+    # Drop one in-slice candidate at the load: the candidate query still
+    # serves a full 50-row slice, but the loader skips the first id, so
+    # the guard sees only 49 loaded candidates.
+    real_load_many = Store.load_many
+
+    def dropping_load_many(self: Store, memory_ids: list[str]) -> Any:
+        return real_load_many(self, list(memory_ids)[1:])
+
+    monkeypatch.setattr(Store, "load_many", dropping_load_many)
 
     server = _build_server(memory_dir)
     _pin_caller_origin(monkeypatch, Origin(cwd="/projects/a", repo=REPO_A))
@@ -356,15 +353,13 @@ async def test_corpus_stats_are_not_consulted_below_the_prefilter_threshold(
         store.write(content=f"alpha filler-{i}", scopes=["tools"])
 
     calls: list[list[str]] = []
-    import bettermemory.index as index_module
+    real = Store.document_frequencies
 
-    real = index_module.corpus_document_frequencies
-
-    def spy(root: Path, terms: Any, **kwargs: Any) -> Any:
+    def spy(self: Store, terms: Any, **kwargs: Any) -> Any:
         calls.append(list(terms))
-        return real(root, terms, **kwargs)
+        return real(self, terms, **kwargs)
 
-    monkeypatch.setattr(index_module, "corpus_document_frequencies", spy)
+    monkeypatch.setattr(Store, "document_frequencies", spy)
 
     server = _build_server(tmp_path)
     await _call(server, "memory_search", query="alpha", max_results=5)
@@ -417,7 +412,6 @@ def _build_width_divergence_store(root: Path) -> tuple[Store, list[str], list[st
         ).id
         for i in range(8)
     ]
-    index.rebuild(root, store.iter_active())
     return store, partial_ids, full_ids
 
 
@@ -440,7 +434,7 @@ def test_min_survivors_width_can_flip_the_probe_verdict(
     store, partial_ids, full_ids = _build_width_divergence_store(tmp_path)
     caller = Origin(cwd="/projects/a", repo=REPO_A, worktree_root="/projects/a")
 
-    top50 = [cid for cid, _ in index.query(tmp_path, "alpha beta", max_results=50)]
+    top50 = [cid for cid, _ in store.query_candidates("alpha beta", max_results=50)]
     assert len(top50) == 50, "precondition: the FTS slice must be cap-saturated"
     assert not (set(full_ids) & set(top50)), (
         "precondition drift: the both-terms matches landed inside the FTS "
@@ -512,39 +506,38 @@ def test_min_survivors_width_can_flip_the_probe_verdict(
         (0, 1),
     ],
 )
-async def test_all_three_search_widths_come_from_one_clamp(
+async def test_both_search_widths_come_from_one_clamp(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     configured: int,
     expected: int,
 ) -> None:
     """Every `min_survivors` that reaches `resolve_search_pool` is the
-    config knob narrowed by ONE expression — `clamp_search_width`, via
-    `default_search_width` on the two silent-miss producers and via the
-    request clamp on a `memory_search` that carries no `max_results`.
+    config knob narrowed by ONE expression, `clamp_search_width`: via
+    `default_search_width` on the silent-miss producer (the Stop hook)
+    and via the request clamp on a `memory_search` that carries no
+    `max_results`.
 
-    The three used to disagree outside `[1, 50]`: `memory_search` clamped
-    its request, the producers passed the raw knob to the identical
+    The two used to disagree outside `[1, 50]`: `memory_search` clamped
+    its request, the producer passed the raw knob to the identical
     parameter, and nothing validated the knob at load. So the audit's
-    starvation guard could sit at a width production can never reach —
-    measured at `default_max_results=100` as widths `[100, 100, 50]` and
-    at `0` as `[0, 0, 1]`, with the latter flipping a probe verdict
+    starvation guard could sit at a width production can never reach,
+    measured at `default_max_results=100` as widths `[100, 50]` and at
+    `0` as `[0, 1]`, with the latter flipping a probe verdict
     (`no_signal` where production's width 1 reports `miss`). The previous
     test shows how far a width difference travels; this one pins that the
-    three cannot differ by RANGE at all.
+    two cannot differ by RANGE at all.
     """
     monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
     store = Store(tmp_path)
     for i in range(3):
         store.write(content=f"alpha beta filler-{i}", scopes=["tools"])
-    index.rebuild(tmp_path, store.iter_active())
 
     cfg = Config(
         storage=StorageConfig(directory=str(tmp_path)),
         behavior=BehaviorConfig(default_max_results=configured),
     )
 
-    import bettermemory.handlers.audit_turn as audit_turn_mod
     import bettermemory.handlers.search as search_mod
 
     widths: list[int] = []
@@ -555,7 +548,6 @@ async def test_all_three_search_widths_come_from_one_clamp(
         return real(*args, **kwargs)
 
     monkeypatch.setattr(search_mod, "resolve_search_pool", spy)
-    monkeypatch.setattr(audit_turn_mod, "resolve_search_pool", spy)
 
     run_audit(
         user_message="alpha beta",
@@ -564,14 +556,13 @@ async def test_all_three_search_widths_come_from_one_clamp(
         config=cfg,
     )
     server = build_server(config=cfg, store=Store(tmp_path), state=SessionState())
-    await _call(server, "memory_audit_turn", user_message="alpha beta")
-    # Production's own default-width search — the thing the two probes
-    # claim to describe. Omitting `max_results` is what makes it the
-    # comparable width.
+    # Production's own default-width search, the thing the probe claims
+    # to describe. Omitting `max_results` is what makes it the comparable
+    # width.
     await _call(server, "memory_search", query="alpha beta")
 
-    assert widths == [expected, expected, expected], (
-        "the Stop hook, the MCP audit tool and a default-width "
-        f"memory_search must all size the starvation guard at {expected} "
-        f"for default_max_results={configured}, got {widths}"
+    assert widths == [expected, expected], (
+        "the Stop hook and a default-width memory_search must both size "
+        f"the starvation guard at {expected} for "
+        f"default_max_results={configured}, got {widths}"
     )

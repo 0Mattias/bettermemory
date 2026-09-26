@@ -6,9 +6,10 @@ them. It gained on LongMemEval-S and lost on LoCoMo-Refined, and the
 reader ceiling (bench/aml/oracle.py) showed better ranking of raw rounds
 cannot reach the board's leader. The leaders have a model turn each
 conversation into dated facts at write time. This module does that with
-the prompt bettermemory ships (src/bettermemory/session_capture.py), so
-the number measured here is the product's number, not a bench-only
-prompt's.
+the prompt bettermemory 8.x shipped (bench/aml/session_capture.py, the
+module as it stood at 8.0.0; 9.0 removed session capture from the
+package), so the number measured here is that prompt's number, not a
+bench-only prompt's.
 
 HOW IT RUNS. Extraction is a network call and MemoryService.add is
 synchronous, so it happens in two passes. `warm` fetches every chunk's
@@ -31,7 +32,7 @@ from typing import Any
 
 from llm import Client
 
-from bettermemory import session_capture as sc
+from aml import session_capture as sc
 
 MODEL = "anthropic/claude-haiku-4.5"
 MAX_TOKENS = 2500

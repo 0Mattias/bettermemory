@@ -99,7 +99,6 @@ if str(_BENCH) not in sys.path:
 
 
 from interval import min_n_for, read_delta, wilson  # noqa: E402
-from bettermemory import index as _index  # noqa: E402
 from bettermemory._handlers import (  # noqa: E402
     _PREFILTER_CAP,
     resolve_index_threshold,
@@ -486,10 +485,9 @@ def run_arm_prefiltered(
         )
         # An exact IFF, not a heuristic: `resolve_search_pool` attaches a
         # corpus-statistics provider if and only if the FTS path served
-        # the pool. All seven fallbacks (empty query, index absent /
-        # corrupt / needing rebuild, count below threshold, index read
-        # raising, empty FTS match set, every candidate unloadable, and
-        # the starvation reload) return the full corpus with the flag
+        # the pool. Every fallback (empty query, store count below the
+        # threshold, empty FTS match set, every candidate unloadable, and
+        # the starvation reload) returns the full corpus with the flag
         # clear, and every one of them looks like a successful cheap
         # search from here.
         if pool.corpus_stats_provider is None:
@@ -568,12 +566,13 @@ def paired_deltas(rows: list[ArmResult]) -> list[Delta]:
     return deltas
 
 
-def engagement_failure(root: Path, rows: list[ArmResult]) -> str | None:
+def engagement_failure(store: Store, rows: list[ArmResult]) -> str | None:
     """Diagnose an on-arm that never reached the prefilter.
 
     Returns None when every prefiltered arm asked questions and every one
     of those questions engaged, otherwise a report naming the regime the
-    store was actually in. This is the only
+    store was actually in: its memory count against the threshold in
+    force, which is the census the loader reads. This is the only
     thing standing between an honest measurement and a set of numbers
     that look like one: every fallback in the loader returns the full
     corpus quietly, so a run that fell back scores like an ordinary
@@ -587,14 +586,10 @@ def engagement_failure(root: Path, rows: list[ArmResult]) -> str | None:
     failed = [r for r in rows if r.prefilter and (r.unengaged or not r.n)]
     if not failed:
         return None
-    status = _index.status(root)
     lines = [
         "PREFILTER NEVER ENGAGED — this run measured the full corpus "
         "while reporting it as prefiltered. Refusing to emit.",
-        f"  index: exists={status.get('exists')} "
-        f"corrupt={status.get('corrupt')} "
-        f"needs_rebuild={status.get('needs_rebuild')} "
-        f"indexed_count={status.get('indexed_count')} "
+        f"  store: memories={store.count_memories()} "
         f"(threshold in force: {resolve_index_threshold()})",
     ]
     for r in failed:
@@ -609,7 +604,7 @@ def engagement_failure(root: Path, rows: list[ArmResult]) -> str | None:
             f"first: {r.unengaged[0]!r}"
         )
     lines.append(
-        "  If indexed_count is below the threshold, pass --pad-to 600 or "
+        "  If memories is below the threshold, pass --pad-to 600 or "
         "--index-threshold N. If it is above, the FTS match set was empty "
         "for those queries or the candidates would not load."
     )
@@ -1069,9 +1064,9 @@ def main() -> int:
                             probe=probe,
                         )
                     )
-        # Inside the `try`, because the diagnostic reads the index that
+        # Inside the `try`, because the diagnostic reads the store that
         # the `finally` is about to delete.
-        failure = engagement_failure(root, rows)
+        failure = engagement_failure(store, rows)
         if failure is not None:
             print(failure, file=sys.stderr)
             return 1

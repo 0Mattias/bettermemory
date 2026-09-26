@@ -74,7 +74,7 @@ from .health import _HOOKLESS_REASON  # one sentence, shared — see its comment
 from .health import applied_tier as _applied_tier
 from .health import is_hook_telemetry_event
 from .models import Memory, first_summary_line
-from .time_utils import isoformat_utc, parse_event_ts
+from .time_utils import parse_event_ts
 
 
 # ---------------------------------------------------------------------------
@@ -2086,8 +2086,8 @@ def render_widening_preview_text(report: WideningPreviewReport) -> str:
 #
 # Evidence per turn is exactly what the `turn_audited` event already
 # carries — no new logging: the redacted `probe_query`
-# ({hash, preview, len} by default; the verbatim string only when
-# `log_queries_verbatim` is on), the top hit's raw coverage pair, both
+# ({hash, preview, len}; a log written before 9.0.0 can carry the
+# verbatim string), the top hit's raw coverage pair, both
 # relevance labels, and the hit's memory id joined against the active
 # store + tombstone log for a summary. Rendering never widens
 # exposure beyond what the log already holds.
@@ -2099,10 +2099,10 @@ def _probe_query_display(
     """Normalise the two on-disk `probe_query` shapes for display.
 
     Returns ``(preview, length, hash_prefix)``. The redacted shape
-    (default since 2.6.8) is ``{hash, preview, len}``; the verbatim
-    shape (opt-in `log_queries_verbatim`) is a plain string, whose
-    "preview" is the string itself — the log already holds it, so the
-    report reveals nothing new.
+    (the only one written since 9.0.0, the default since 2.6.8) is
+    ``{hash, preview, len}``; the verbatim shape an older log can carry
+    is a plain string, whose "preview" is the string itself — the log
+    already holds it, so the report reveals nothing new.
     """
     if isinstance(value, str):
         return value, len(value), None
@@ -2517,848 +2517,127 @@ def render_widening_detail_text(report: WideningDetailReport) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Usage replay — the usage-signal flip bars' measurement surface
-# ---------------------------------------------------------------------------
-#
-# The usage-aware ranking flags (`search.USAGE_FLAG_NAMES`) ship default-
-# off with declared flip bars the maintainer holds. The bars' replay
-# clause reads exact per-turn toggle captures: `probe_for_miss`
-# computes, inside the production ranker, what each flag-enabled
-# probe's top-1 would have been with that one flag toggled off, and
-# the capture lands additively on `turn_audited` / `prompt_recall`
-# events (`usage_active` + `usage_toggles`). This section AGGREGATES
-# those captures over a window and judges each changed top-1 under a
-# pinned rule. It measures; it never decides — the bars are
-# maintainer-held and read by a human (or a session acting for one),
-# and an unread bar is a hold.
-#
-# Why aggregation-only, and why no reconstruction lane for pre-capture
-# history: the factors multiply per-LEG scores before RRF rank fusion,
-# so no arithmetic on a logged fused score can reproduce the toggle —
-# an "approximate" lane would put a number the mechanism can't back in
-# front of a flip decision. Turns logged before the capture shipped are
-# counted and labeled not-replayable instead.
-#
-# One turn, one row — the delivered-recall companion dedup: a delivery
-# writes `prompt_recall` at prompt time, and the Stop hook still audits
-# the SAME message at turn end (`is_duplicate_audit` matches prior
-# `turn_audited` events only, so the companion lands with
-# `repeat=False`, verdict "ok", `suppressed_by="retrieval"`) carrying
-# the same usage capture — `prompt_recall_fields`' docstring names this
-# companion. Both clear the per-event filters, so counting both would
-# double every recall-cohort turn and its toggle change, letting the
-# bars' "n >= 10 changed turns" hold be crossed with 5 real turns. The
-# walk therefore skips a `turn_audited` row whose (session,
-# `probe_query` hash-or-text) pair matches a kept `prompt_recall` row
-# within `audit.REAUDIT_DEDUP_WINDOW_SECONDS` before it — the same key
-# and window the producers' own re-audit dedup reads, and the same
-# never-match bias for events without `probe_query` — keeping the
-# recall row because it records what the model was actually shown.
-#
-# Invalidation markers: the bulk `silent_miss_cutoff` (written by
-# `bettermemory consolidate --acknowledge-misses-before`) IS honored,
-# with `compute_eval`'s global latest-wins semantics — a marker whose
-# own ts falls outside `--since` still applies, and audit/recall rows
-# earlier than the latest `cutoff_ts` drop as if never logged. Unlike
-# the widening replay, whose cutoff exemption is time-bound ("no event
-# that predates the feature payload can enter"), usage captures ship
-# 6.4.0+ alongside the cutoff machinery, so a cutoff written to
-# retract a post-capture bad batch overlaps this lane's input and must
-# not be ignored. Per-event `miss_ack` markers are structurally
-# unjoinable here and deliberately NOT applied: a `miss_ack` retracts
-# one `search_miss` by `event_id`, and the schema carries no link from
-# that id to the same turn's `turn_audited` / `prompt_recall` row —
-# nor does any surface retract the logged verdict `miss_labeled`
-# reads. The bulk cutoff is this lane's only retraction path.
-
-# Pinned judgment rule for a changed top-1, versioned like the
-# threshold rules so a future rule can be swept against the same log.
-# v1: compare the shadow relevance labels (`relevance_v2`) of the
-# production top-1 (flag ON) and the counterfactual top-1 (flag OFF)
-# by tier; on a tier tie, more matched query tokens wins; still tied
-# is "neutral". "improving" always means THE FLAG's pick is better.
-USAGE_IMPROVEMENT_RULE = "v1_relevance_v2_tier_then_matched_unique"
-
-# Pinned operationalization of the outcome_demotion bar's invariant
-# ("zero demoted memories that were a later turn's explicitly-applied
-# top-1"): a violation is a changed-turn's suppressed memory (the
-# toggle-off winner the demotion kept out of the top slot) that shows
-# up as a LATER replayable turn's production top-1 with an explicit
-# non-auto `applied` use event for it within the attribution horizon
-# (`audit.ATTRIBUTION_LOOKBACK_SECONDS`) either side of that later
-# turn.
-USAGE_DEMOTION_INVARIANT_RULE = "v1_later_top1_explicit_apply_within_600s"
-
-_USAGE_V2_TIER = {"low": 0, "medium": 1, "high": 2}
-
-
-def _capture_int(value: Any) -> int:
-    """Read a log-sourced capture feature (``matched_unique`` /
-    ``query_unique``) as an int, degrading anything else to 0.
-
-    Same element discipline as the sweep and widening walks' hit
-    guards: the event log is plaintext + git-synced + hand-editable,
-    so one torn or hand-mangled entry (``matched_unique: "3x"``, a
-    list, a merge-conflict fragment) must degrade the one row a bare
-    ``int(...)`` would have crashed the whole CLI run on. ``bool`` ⊂
-    ``int`` — same caveat as ``_silent_miss_from_event``: a stray
-    ``True`` would otherwise count as 1.
-    """
-    return value if isinstance(value, int) and not isinstance(value, bool) else 0
-
-
-def _replay_probe_key(ev: dict[str, Any]) -> tuple[str, str, str] | None:
-    """Dedup key joining a ``prompt_recall`` row to its same-turn
-    ``turn_audited`` companion: (session, probe-query shape, value).
-
-    Reads ``probe_query`` in BOTH shapes the Recorder produces —
-    mirroring ``audit.is_duplicate_audit``: the redacted ``{hash,
-    preview, len}`` dict keys on its ``hash``; the verbatim string
-    (``log_queries_verbatim = true``) keys on itself. Both events of a
-    pair pass through the same redaction, so like compares with like;
-    the shape tag keeps a verbatim string from ever colliding with a
-    hash. Events without a usable session or ``probe_query`` return
-    ``None`` and never match — the same bias toward the pre-existing
-    behavior (count the row) the producer-side dedup documents.
-    """
-    session = ev.get("session_id") or ev.get("session")
-    if not isinstance(session, str) or not session:
-        return None
-    pq = ev.get("probe_query")
-    if isinstance(pq, dict):
-        digest = pq.get("hash")
-        if isinstance(digest, str) and digest:
-            return (session, "hash", digest)
-        return None
-    if isinstance(pq, str) and pq:
-        return (session, "text", pq)
-    return None
-
-
-def _judge_usage_change(
-    on_v2: str,
-    on_matched: int,
-    off_v2: str,
-    off_matched: int,
-) -> str:
-    """Apply `USAGE_IMPROVEMENT_RULE` to one changed top-1."""
-    tier_delta = _USAGE_V2_TIER.get(on_v2, 0) - _USAGE_V2_TIER.get(off_v2, 0)
-    if tier_delta > 0:
-        return "improving"
-    if tier_delta < 0:
-        return "worsening"
-    if on_matched > off_matched:
-        return "improving"
-    if on_matched < off_matched:
-        return "worsening"
-    return "neutral"
-
-
-@dataclass
-class UsageToggleChange:
-    """One turn where a single-flag toggle changed the probe's top-1."""
-
-    ts: str
-    event_kind: str  # "turn_audited" | "prompt_recall"
-    miss_labeled: bool
-    on_top1_id: str
-    on_relevance_v2: str
-    on_matched_unique: int
-    off_top1_id: str
-    off_relevance_v2: str
-    off_matched_unique: int
-    query_unique: int
-    judgment: str  # improving | worsening | neutral
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "ts": self.ts,
-            "event_kind": self.event_kind,
-            "miss_labeled": self.miss_labeled,
-            "on_top1_id": self.on_top1_id,
-            "on_relevance_v2": self.on_relevance_v2,
-            "on_matched_unique": self.on_matched_unique,
-            "off_top1_id": self.off_top1_id,
-            "off_relevance_v2": self.off_relevance_v2,
-            "off_matched_unique": self.off_matched_unique,
-            "query_unique": self.query_unique,
-            "judgment": self.judgment,
-        }
-
-
-@dataclass
-class UsageFlagReplay:
-    """Replay rollup for one usage flag over the window."""
-
-    flag: str
-    active_turns: int
-    changed_turns: int
-    improving: int
-    worsening: int
-    neutral: int
-    miss_labeled_worsening: int
-    changes: list[UsageToggleChange] = field(default_factory=list)
-    # outcome_demotion only; None on the other flags.
-    invariant_rule: str | None = None
-    invariant_violations: list[dict[str, str]] = field(default_factory=list)
-
-    def to_dict(self) -> dict[str, Any]:
-        out: dict[str, Any] = {
-            "flag": self.flag,
-            "active_turns": self.active_turns,
-            "changed_turns": self.changed_turns,
-            "improving": self.improving,
-            "worsening": self.worsening,
-            "neutral": self.neutral,
-            "miss_labeled_worsening": self.miss_labeled_worsening,
-            "changes": [c.to_dict() for c in self.changes],
-        }
-        if self.invariant_rule is not None:
-            out["invariant_rule"] = self.invariant_rule
-            out["invariant_violations"] = list(self.invariant_violations)
-        return out
-
-
-@dataclass
-class UsageReplayReport:
-    """Everything the usage-signal flip-bar read consumes, in one shape.
-
-    Measurements only — the declared thresholds are maintainer-held
-    and are deliberately NOT duplicated here, so the read compares one
-    measured report against one declared entry and nothing in between
-    can drift. `turns_without_capture` folds together pre-capture
-    producers and no-live-signal turns (the event shape cannot split
-    them — absence is absence); `first_capture_ts` bounds the ambiguity
-    by naming when captures started appearing in this window.
-    """
-
-    generated_at: datetime
-    window_seconds: int | None
-    events_in_window: int
-    replayable_turns: int
-    turn_audited_turns: int
-    prompt_recall_turns: int
-    repeat_audits_skipped: int
-    # Stop-hook audits of a message whose delivered recall is already a
-    # row — the same-turn companion pair the section comment describes.
-    # Skipped so a recall-cohort turn counts once, and tallied here
-    # (mirroring `repeat_audits_skipped`) so the dedup's reach stays
-    # observable.
-    recall_companion_audits_skipped: int
-    turns_without_capture: int
-    first_capture_ts: str | None
-    endorsed_distinct_in_window: int
-    negative_distinct_in_window: int
-    corroborated_memories: int
-    corroborated_twice_memories: int
-    improvement_rule: str = USAGE_IMPROVEMENT_RULE
-    flags: list[UsageFlagReplay] = field(default_factory=list)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "generated_at": self.generated_at.isoformat(),
-            "window_seconds": self.window_seconds,
-            "events_in_window": self.events_in_window,
-            "replayable_turns": self.replayable_turns,
-            "turn_audited_turns": self.turn_audited_turns,
-            "prompt_recall_turns": self.prompt_recall_turns,
-            "repeat_audits_skipped": self.repeat_audits_skipped,
-            "recall_companion_audits_skipped": self.recall_companion_audits_skipped,
-            "turns_without_capture": self.turns_without_capture,
-            "first_capture_ts": self.first_capture_ts,
-            "endorsed_distinct_in_window": self.endorsed_distinct_in_window,
-            "negative_distinct_in_window": self.negative_distinct_in_window,
-            "corroborated_memories": self.corroborated_memories,
-            "corroborated_twice_memories": self.corroborated_twice_memories,
-            "improvement_rule": self.improvement_rule,
-            "flags": [f.to_dict() for f in self.flags],
-        }
-
-
-def compute_usage_replay(
-    events: Iterable[dict[str, Any]],
-    *,
-    memories: Iterable[Memory] = (),
-    since: timedelta | None = None,
-    now: datetime | None = None,
-) -> UsageReplayReport:
-    """Aggregate the usage-toggle captures over the window.
-
-    Walks non-repeat, miss-capable `turn_audited` events and
-    `prompt_recall` events (a delivery IS a miss verdict, computed
-    before the turn) that carry a well-formed `top_hits` payload —
-    the same guards `_collect_replayable_audits` applies, extended to
-    the delivery lane — minus a delivered recall's same-turn Stop-hook
-    companion audit, which is skipped so each turn lands in exactly
-    one row (see the section comment; the recall row is the one kept).
-    The same pass tallies the density preconditions the bars declare:
-    distinct memories with explicit non-auto `applied` use events, and
-    distinct memories with negative (`ignored` / `contradicted`) use
-    events, both inside the window. `memories` feeds the
-    corroboration-liveness counts, read off the persisted rollup
-    because the event log has nothing to say about it. No flag has
-    ranked on that rollup since 8.0.0 removed `corroboration_boost`;
-    the counts stay because this is the one aggregate read of it.
-
-    Audit/recall rows honor the bulk `silent_miss_cutoff` marker with
-    `compute_eval`'s global latest-wins semantics — buffered during
-    the walk and resolved after it, so a cutoff later in the log (or
-    outside the `--since` window) still retracts the batch every rate
-    surface has already invalidated. Per-event `miss_ack` markers are
-    structurally unjoinable to these rows and are not applied — the
-    section comment carries the full position. `use` events are
-    settlement telemetry, not miss telemetry, and stay outside the
-    cutoff, matching `compute_eval`.
-    """
-    from .audit import ATTRIBUTION_LOOKBACK_SECONDS, REAUDIT_DEDUP_WINDOW_SECONDS
-    from .events import _event_id_list
-    from .search import USAGE_FLAG_NAMES
-
-    now = now or datetime.now(timezone.utc)
-    cutoff: datetime | None = (now - since) if since is not None else None
-
-    events_in_window = 0
-    turn_audited_turns = 0
-    prompt_recall_turns = 0
-    repeats_skipped = 0
-    recall_companions_skipped = 0
-    turns_without_capture = 0
-    first_capture_ts: str | None = None
-    latest_miss_cutoff: datetime | None = None
-
-    # In-window audit/recall candidates buffered as (ts, event) for
-    # post-pass resolution against the invalidation cutoff — counting
-    # them inline would let a `silent_miss_cutoff` later in the log
-    # arrive too late to retract an already-counted turn. Same
-    # buffer-then-resolve shape as `compute_eval` /
-    # `compute_threshold_sweep`; with no cutoff in the stream the
-    # resolution pass is the identity walk (order preserved), so the
-    # counting matches the pre-buffer inline loop exactly.
-    buffered_turns: list[tuple[datetime, dict[str, Any]]] = []
-    # One row per replayable turn, in stream order:
-    # (ts, kind, miss_labeled, top1_dict, usage_active, usage_toggles)
-    rows: list[
-        tuple[datetime, str, bool, dict[str, Any], list[str], dict[str, Any]]
-    ] = []
-    # Explicit non-auto applied use events, for the invariant check and
-    # the endorsement density: (ts, ids).
-    explicit_applies: list[tuple[datetime, list[str]]] = []
-    negative_ids: set[str] = set()
-    endorsed_ids: set[str] = set()
-
-    for ev in events:
-        if not isinstance(ev, dict):
-            continue
-        ts = _parse_ts(ev.get("ts"))
-        in_window = cutoff is None or (ts is not None and ts >= cutoff)
-        if in_window:
-            events_in_window += 1
-        kind = ev.get("kind")
-        # Global invalidation marker — resolved BEFORE the window skip,
-        # mirroring `compute_eval` / `compute_threshold_sweep`: a
-        # cutoff whose own ts falls outside `--since` still applies.
-        # Latest `cutoff_ts` wins; a malformed value parses to None and
-        # is ignored. `miss_ack` events fall through unhandled on
-        # purpose — see the docstring.
-        if kind == "silent_miss_cutoff":
-            parsed_cutoff = _parse_ts(ev.get("cutoff_ts"))
-            if parsed_cutoff is not None and (
-                latest_miss_cutoff is None or parsed_cutoff > latest_miss_cutoff
-            ):
-                latest_miss_cutoff = parsed_cutoff
-            continue
-        if not in_window or ts is None:
-            continue
-        if kind == "use":
-            outcome = ev.get("outcome")
-            ids = _event_id_list(ev.get("ids") or ev.get("memory_ids"))
-            if outcome == "applied" and ev.get("auto") is not True:
-                explicit_applies.append((ts, ids))
-                endorsed_ids.update(ids)
-            elif outcome in ("ignored", "contradicted"):
-                negative_ids.update(ids)
-            continue
-        if kind not in ("turn_audited", "prompt_recall"):
-            continue
-        buffered_turns.append((ts, ev))
-
-    # Resolve the buffered turns. A row invalidated by the latest
-    # cutoff (ts strictly before `cutoff_ts`) is dropped from
-    # EVERYTHING — both kind counters, the repeat/companion skip
-    # tallies, the capture split, and the replay rows — as if never
-    # logged, matching `compute_eval`'s resolution. Rows with an
-    # unparseable ts never reach this loop (dropped above even with no
-    # cutoff), so health's conservative unparseable-ts read is moot
-    # here.
-    #
-    # `recall_seen` drives the companion dedup: a kept `prompt_recall`
-    # row registers its (session, probe) key — latest delivery wins —
-    # and a later `turn_audited` matching that key within the producer
-    # dedup window is the same turn's second measurement, skipped. A
-    # cutoff-retracted recall deliberately does NOT register: with the
-    # delivery erased, the surviving audit is the turn's only
-    # measurement and counting it once is correct.
-    recall_seen: dict[tuple[str, str, str], datetime] = {}
-    for ts, ev in buffered_turns:
-        if latest_miss_cutoff is not None and ts < latest_miss_cutoff:
-            continue
-        kind_s = str(ev.get("kind"))
-        if kind_s == "turn_audited":
-            if ev.get("repeat"):
-                repeats_skipped += 1
-                continue
-            if ev.get("verdict") == "no_signal":
-                continue
-        top_hits = ev.get("top_hits")
-        if (
-            not isinstance(top_hits, list)
-            or not top_hits
-            or not isinstance(top_hits[0], dict)
-        ):
-            continue
-        if kind_s == "turn_audited":
-            key = _replay_probe_key(ev)
-            if key is not None:
-                recall_ts = recall_seen.get(key)
-                if (
-                    recall_ts is not None
-                    and 0
-                    <= (ts - recall_ts).total_seconds()
-                    <= REAUDIT_DEDUP_WINDOW_SECONDS
-                ):
-                    recall_companions_skipped += 1
-                    continue
-            turn_audited_turns += 1
-            miss_labeled = ev.get("verdict") == "miss"
-        else:
-            prompt_recall_turns += 1
-            miss_labeled = True
-            key = _replay_probe_key(ev)
-            if key is not None:
-                recall_seen[key] = ts
-        usage_active_raw = ev.get("usage_active")
-        usage_active = (
-            [f for f in usage_active_raw if isinstance(f, str)]
-            if isinstance(usage_active_raw, list)
-            else []
-        )
-        usage_toggles_raw = ev.get("usage_toggles")
-        usage_toggles = usage_toggles_raw if isinstance(usage_toggles_raw, dict) else {}
-        if usage_active or usage_toggles:
-            ts_str = str(ev.get("ts"))
-            if first_capture_ts is None or ts_str < first_capture_ts:
-                first_capture_ts = ts_str
-        else:
-            turns_without_capture += 1
-        rows.append(
-            (ts, kind_s, miss_labeled, top_hits[0], usage_active, usage_toggles)
-        )
-
-    flags: list[UsageFlagReplay] = []
-    for flag in USAGE_FLAG_NAMES:
-        active_turns = 0
-        changes: list[UsageToggleChange] = []
-        suppressed: list[tuple[datetime, str]] = []
-        for ts, kind, miss_labeled, top1, usage_active, usage_toggles in rows:
-            if flag in usage_active:
-                active_turns += 1
-            toggle = usage_toggles.get(flag)
-            if not isinstance(toggle, dict):
-                continue
-            off = toggle.get("top1")
-            if not isinstance(off, dict):
-                continue
-            # `_capture_int`, not bare `int(...)`: a hand-mangled
-            # feature value must degrade this one row to 0, not crash
-            # the run — the same threat model the sweep / widening hit
-            # guards document.
-            on_v2 = str(top1.get("relevance_v2") or "low")
-            on_matched = _capture_int(top1.get("matched_unique"))
-            off_v2 = str(off.get("relevance_v2") or "low")
-            off_matched = _capture_int(off.get("matched_unique"))
-            judgment = _judge_usage_change(on_v2, on_matched, off_v2, off_matched)
-            changes.append(
-                UsageToggleChange(
-                    ts=isoformat_utc(ts),
-                    event_kind=kind,
-                    miss_labeled=miss_labeled,
-                    on_top1_id=str(top1.get("id") or ""),
-                    on_relevance_v2=on_v2,
-                    on_matched_unique=on_matched,
-                    off_top1_id=str(off.get("id") or ""),
-                    off_relevance_v2=off_v2,
-                    off_matched_unique=off_matched,
-                    # Guarded per side so a malformed `off` value falls
-                    # through to the production hit's copy (both sides
-                    # describe the same probe query) instead of raising.
-                    query_unique=(
-                        _capture_int(off.get("query_unique"))
-                        or _capture_int(top1.get("query_unique"))
-                    ),
-                    judgment=judgment,
-                )
-            )
-            if flag == "outcome_demotion":
-                off_id = str(off.get("id") or "")
-                if off_id:
-                    suppressed.append((ts, off_id))
-
-        invariant_rule: str | None = None
-        violations: list[dict[str, str]] = []
-        if flag == "outcome_demotion":
-            invariant_rule = USAGE_DEMOTION_INVARIANT_RULE
-            horizon = float(ATTRIBUTION_LOOKBACK_SECONDS)
-            for supp_ts, supp_id in suppressed:
-                for ts, _kind, _miss, top1, _active, _toggles in rows:
-                    if ts <= supp_ts or str(top1.get("id") or "") != supp_id:
-                        continue
-                    applied_nearby = any(
-                        supp_id in ids
-                        and abs((apply_ts - ts).total_seconds()) <= horizon
-                        for apply_ts, ids in explicit_applies
-                    )
-                    if applied_nearby:
-                        violations.append(
-                            {
-                                "memory_id": supp_id,
-                                "suppressed_at": isoformat_utc(supp_ts),
-                                "applied_top1_at": isoformat_utc(ts),
-                            }
-                        )
-                        break
-
-        improving = sum(1 for c in changes if c.judgment == "improving")
-        worsening = sum(1 for c in changes if c.judgment == "worsening")
-        neutral = sum(1 for c in changes if c.judgment == "neutral")
-        flags.append(
-            UsageFlagReplay(
-                flag=flag,
-                active_turns=active_turns,
-                changed_turns=len(changes),
-                improving=improving,
-                worsening=worsening,
-                neutral=neutral,
-                miss_labeled_worsening=sum(
-                    1 for c in changes if c.judgment == "worsening" and c.miss_labeled
-                ),
-                changes=changes,
-                invariant_rule=invariant_rule,
-                invariant_violations=violations,
-            )
-        )
-
-    corroborated = 0
-    corroborated_twice = 0
-    for memory in memories:
-        count = getattr(memory, "corroborations", 0) or 0
-        if count >= 1:
-            corroborated += 1
-        if count >= 2:
-            corroborated_twice += 1
-
-    return UsageReplayReport(
-        generated_at=now,
-        window_seconds=int(since.total_seconds()) if since is not None else None,
-        events_in_window=events_in_window,
-        replayable_turns=len(rows),
-        turn_audited_turns=turn_audited_turns,
-        prompt_recall_turns=prompt_recall_turns,
-        repeat_audits_skipped=repeats_skipped,
-        recall_companion_audits_skipped=recall_companions_skipped,
-        turns_without_capture=turns_without_capture,
-        first_capture_ts=first_capture_ts,
-        endorsed_distinct_in_window=len(endorsed_ids),
-        negative_distinct_in_window=len(negative_ids),
-        corroborated_memories=corroborated,
-        corroborated_twice_memories=corroborated_twice,
-        flags=flags,
-    )
-
-
-def render_usage_replay_text(report: UsageReplayReport) -> str:
-    """Plain-text rendering, mirroring the widening surfaces' shape."""
-    lines: list[str] = []
-    window = (
-        "all time"
-        if report.window_seconds is None
-        else _humanize_seconds(report.window_seconds)
-    )
-    lines.append(f"bettermemory eval --usage-replay — last {window}")
-    lines.append("─" * 60)
-    lines.append(f"Events scanned              {report.events_in_window:>5d}")
-    lines.append(f"Replayable turns            {report.replayable_turns:>5d}")
-    lines.append(
-        f"  ({report.turn_audited_turns} audited, "
-        f"{report.prompt_recall_turns} delivered recalls)"
-    )
-    if report.repeat_audits_skipped:
-        lines.append(
-            f"  (skipped {report.repeat_audits_skipped} repeat audits — "
-            "multi-stop re-probes of the same message)"
-        )
-    if report.recall_companion_audits_skipped:
-        lines.append(
-            f"  (skipped {report.recall_companion_audits_skipped} "
-            "recall-companion audits — the Stop hook re-auditing a "
-            "message whose delivered recall is already counted)"
-        )
-    if report.turns_without_capture:
-        lines.append(
-            f"  ({report.turns_without_capture} turns carry no usage capture — "
-            "pre-capture producer or no live signal)"
-        )
-    if report.first_capture_ts:
-        lines.append(f"  (first capture in window: {report.first_capture_ts})")
-    lines.append("")
-    lines.append("Density preconditions (this window)")
-    lines.append(
-        f"  explicit-endorsed distinct memories   "
-        f"{report.endorsed_distinct_in_window:>5d}"
-    )
-    lines.append(
-        f"  negative-outcome distinct memories    "
-        f"{report.negative_distinct_in_window:>5d}"
-    )
-    lines.append(
-        f"  corroborated memories (≥1 / ≥2)       "
-        f"{report.corroborated_memories:>5d} / {report.corroborated_twice_memories}"
-    )
-    lines.append("")
-    lines.append(f"Judgment rule: {report.improvement_rule}")
-    for row in report.flags:
-        lines.append("")
-        lines.append(f"{row.flag}")
-        lines.append(f"  turns with live signal      {row.active_turns:>5d}")
-        lines.append(f"  changed top-1s              {row.changed_turns:>5d}")
-        if row.changed_turns:
-            lines.append(
-                f"    improving / worsening / neutral   "
-                f"{row.improving} / {row.worsening} / {row.neutral}"
-            )
-            lines.append(
-                f"    miss-labeled worsening            {row.miss_labeled_worsening}"
-            )
-            for change in row.changes[-10:]:
-                lines.append(
-                    f"    {change.ts}  {change.judgment:<9s} "
-                    f"on={change.on_top1_id[:10]}…({change.on_relevance_v2}) "
-                    f"off={change.off_top1_id[:10]}…({change.off_relevance_v2})"
-                )
-            if len(row.changes) > 10:
-                lines.append(f"    … and {len(row.changes) - 10} earlier changes")
-        if row.invariant_rule is not None:
-            lines.append(f"  invariant ({row.invariant_rule})")
-            if row.invariant_violations:
-                lines.append(f"    VIOLATIONS: {len(row.invariant_violations)}")
-                for v in row.invariant_violations:
-                    lines.append(
-                        f"      {v['memory_id'][:10]}… suppressed "
-                        f"{v['suppressed_at']} → applied top-1 "
-                        f"{v['applied_top1_at']}"
-                    )
-            else:
-                lines.append("    violations: 0")
-    lines.append("")
-    lines.append(
-        "Read these numbers against the usage-signal flip bars, which are "
-        "maintainer-held and not published in this repository."
-    )
-    lines.append("This surface measures; it never flips.")
-    return "\n".join(lines) + "\n"
-
-
-# ---------------------------------------------------------------------------
 # Tool-usage rollup — per-MCP-tool call counts from the event log
 # ---------------------------------------------------------------------------
 
 # Map from event `kind` to the MCP tool that emits it. Used by
 # `compute_tool_usage` so the rollup uses tool names rather than the
 # wire-format event kinds the recorder writes. The exact set is the
-# 22-tool memory_* + 5-tool episode_* surface listed in `server.py`'s
-# module docstring, minus the ones without a dedicated event of their
-# own, which appear in `TOOLS_WITHOUT_TELEMETRY` instead.
+# nine-tool surface `builder._register_tools` registers: the seven
+# memory_* record tools, `episode` and `memory_admin`. The last two
+# fan out over actions, so several kinds map to one tool.
 #
 # Why an explicit map rather than counting raw `kind` values: some
-# event kinds (`search_miss`, `pending_expired`) are side-effects of
-# other tools, not tool calls in their own right. Counting raw kinds
-# would double-count `memory_audit_turn` invocations that happen to
-# detect a miss and under-count `memory_write` invocations that
-# stage a pending confirmation (the `write` event has
-# `status="pending"` but it's still one tool call). The map collapses
+# event kinds (`search_miss`, `use_token_expired`) are side-effects of
+# other tools, not tool calls in their own right, and `turn_audited`
+# is the Stop hook's audit record with no tool call behind it.
+# Counting raw kinds would invent tools for them. The map collapses
 # both axes correctly.
 _TOOL_EVENT_KIND_TO_TOOL: dict[str, str] = {
     "search": "memory_search",
     "show": "memory_show",
-    "list": "memory_list",
-    "scope_overview": "memory_scope_overview",
     "write": "memory_write",
-    "write_confirm": "memory_write_confirm",
-    "write_cancel": "memory_write_cancel",
     "update": "memory_update",
     "remove": "memory_remove",
-    "restore": "memory_restore",
-    "list_tombstones": "memory_list_tombstones",
     "verify": "memory_verify",
     "use": "memory_record_use",
-    "rename_scope": "memory_rename_scope",
-    "scope_disable": "memory_scope_disable",
-    "scope_enable": "memory_scope_enable",
-    "turn_audited": "memory_audit_turn",
-    "miss_ack": "memory_acknowledge_miss",
-    "curate": "memory_curate",
-    "memory_proposals": "memory_proposals",
-    "episode_write": "episode_write",
-    "episode_handoff": "episode_handoff",
-    "episode_search": "episode_search",
-    "episode_promote": "episode_promote",
-    # Corpus-inference pair (3.28.0). Both tools record only their
-    # ACTING modes (scan / verdict / promote / dismiss) — a pure listing
-    # call leaves no event, so their rows undercount reads. Same class
-    # as `curate`, which records only on apply: the mapped kinds count
-    # the calls that changed something, which is the half curation
-    # telemetry cares about.
-    "conflict_scan": "memory_conflicts",
-    "conflict_verdict": "memory_conflicts",
-    "episode_pattern": "episode_patterns",
+    "episode_write": "episode",
+    "episode_handoff": "episode",
+    # `memory_admin` records its acting modes and the tombstones
+    # listing; `health` and a pure conflicts listing leave no event, so
+    # its row undercounts reads.
+    "restore": "memory_admin",
+    "list_tombstones": "memory_admin",
+    "rename_scope": "memory_admin",
+    "scope_disable": "memory_admin",
+    "scope_enable": "memory_admin",
+    "miss_ack": "memory_admin",
+    "conflict_scan": "memory_admin",
+    "conflict_verdict": "memory_admin",
 }
 
 # Tools that don't emit a dedicated event of their own; the rollup
 # surfaces them with a 0 count and a note rather than silently dropping
 # them, so a reader inspecting the report can tell "this tool is not
-# counted" apart from "this tool was never called."
-TOOLS_WITHOUT_TELEMETRY: tuple[str, ...] = ("memory_health",)
+# counted" apart from "this tool was never called." Empty on the
+# nine-tool surface: every tool records at least one of its modes.
+TOOLS_WITHOUT_TELEMETRY: tuple[str, ...] = ()
 
-# Event kinds the recorder emits as side-effects of other tools, NOT as
-# tool calls in their own right. ``search_miss`` is a sub-event of
-# ``turn_audited`` (the audit detected a high-relevance hit the model
-# would have missed); ``pending_expired`` fires when the TTL on a
-# ``memory_write`` pending token elapses; ``silent_miss_cutoff`` is an
-# additive admin event written by ``bettermemory consolidate
-# --acknowledge-misses-before`` to invalidate a batch of pre-fix miss
-# telemetry. None of these belong in the tool-usage rollup — they
-# would inflate the parent tool's count (or, for the CLI event, count
-# an admin operation as a tool invocation).
+# Event kinds the recorder emits as side-effects of other tools or
+# from the hooks, NOT as tool calls in their own right. ``turn_audited``
+# is the Stop hook's audit record (`hook.run_audit`), written under the
+# client's transcript session id with no tool call behind it, and
+# ``search_miss`` is its sub-event (the audit detected a high-relevance
+# hit the model would have missed). ``silent_miss_cutoff`` is the
+# additive marker the bulk acknowledge
+# (``memory_admin(action="acknowledge_miss", before=...)``) writes to
+# invalidate a batch of pre-fix miss telemetry. None of these belong in
+# the tool-usage rollup, where they would inflate a parent tool's count
+# or invent a tool.
 #
 # The parity test in ``tests/test_eval.py`` asserts that every kind
 # recorded anywhere in ``src/`` appears in either
 # ``_TOOL_EVENT_KIND_TO_TOOL`` or this set, and that the two are
 # mutually exclusive. Adding a new event kind without updating one of
-# them is the bug class this guards against.
+# them is the bug class this guards against. A log carried over from
+# v8 can still hold kinds no v9 writer emits (``pending_expired``,
+# ``doctor_fix``, ``consolidate_write`` and the like); the rollup
+# tallies an unmapped kind rather than dropping it.
 #
-# ``proposals_enqueued`` is the Stop hook's write-reflex capture event —
-# a side-effect of turn-end, not a tool call (the model never invokes it;
-# accepting/dismissing the resulting proposals goes through the
-# ``memory_proposals`` tool, which IS mapped above). The hook's
-# ``auto_consolidate`` event is recorded via a module constant, not a
-# string literal, so the AST parity scan never sees it — it is
-# deliberately omitted here rather than tripping the "stale entry" half
-# of the parity assertion.
-#
-# ``doctor_fix`` is `bettermemory doctor --fix`'s per-applied-fix audit
-# record — an admin CLI operation like ``silent_miss_cutoff``, never a
-# tool invocation, so counting it in the rollup would invent a tool.
-#
-# ``use_token_expired`` is the use-token counterpart of
-# ``pending_expired``: one batched event per set of retrieval tokens
-# that hit the 30-minute wall-clock eviction with nothing having
+# ``use_token_expired`` is one batched event per set of retrieval
+# tokens that hit the 30-minute wall-clock eviction with nothing having
 # settled them (no Stop-hook attribution, no explicit
 # ``memory_record_use``, no in-process auto-commit). It is a
 # consequence of ``memory_search`` / ``memory_show`` going unsettled,
-# not a call — counting it would inflate whichever tool it was
-# attributed to, and it has no tool of its own to be attributed to.
+# not a call, and it has no tool of its own to be attributed to.
 #
 # ``prompt_recall`` is the UserPromptSubmit hook's delivery record
 # (`hook.run_prompt_recall`): the probe's miss verdict computed before
 # the turn and injected as context instead of flagged after it. Not a
-# tool invocation — no model call happened — so it stays off the usage
-# rollup; it is the delivery lane's OWN counter, read beside
-# ``search_miss`` when tracing what the recall path did.
-#
-# ``sync_pull`` and ``migrate`` are CLI-only admin records: the memory
-# files a ``bettermemory sync pull`` brought down, and the ids a
-# ``migrate origin`` rewrote. Written so the provenance derivation at
-# ``index.rebuild`` can account for records no tool call created or
-# touched; never a tool invocation, so admin by kind. ``sync_admit`` is
-# the same shape: a quarantined pulled file admitted into the store, by
-# a later pull that found it fixed or by ``sync quarantine --release``.
-#
-# ``consolidate_write`` / ``consolidate_update`` name the memory an
-# applied consolidation pass created or rewrote, for the same
-# derivation. They are recorded on TWO surfaces: the Stop hook's
-# auto-consolidate, under the live client's session id, and
-# ``bettermemory consolidate --apply``, under a throwaway id that
-# carries the ``cli_`` attribution the second axis reads. So the kind is
-# in-session (below) and the CLI rows are admin by attribution. They are
-# emitted through ``consolidate._emit`` rather than a bare
-# ``recorder.record``; the parity scan in ``tests/test_eval.py`` reads
-# that helper's second positional for exactly this reason.
-#
-# ``capture_write`` names each memory ``bettermemory capture`` committed
-# (the provenance join, like ``consolidate_write``), and
-# ``capture_run`` is that command's one summary per run. Capture
-# writes under its own kind rather than ``write`` so the model's
-# ``memory_write`` count, and the write telemetry ``health`` reads off
-# ``write`` events, stay the model's. Both are recorded by a process
-# outside any server session, under the captured transcript's id with
-# the ``cli_capture`` attribution, so they are admin by kind: a
-# transcript id seen only through them was never a server session.
+# tool invocation, so it stays off the usage rollup; it is the
+# delivery lane's OWN counter, read beside ``search_miss`` when tracing
+# what the recall path did.
 _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
     {
+        "turn_audited",
         "search_miss",
-        "pending_expired",
         "silent_miss_cutoff",
-        "proposals_enqueued",
-        "doctor_fix",
         "use_token_expired",
         "prompt_recall",
-        "sync_pull",
-        "sync_admit",
-        "migrate",
-        "consolidate_write",
-        "consolidate_update",
-        "capture_write",
-        "capture_run",
     }
 )
 
 # The subset of the roster above recorded INSIDE a live client session,
 # under that client's own session id. Verified at the call sites:
-# ``search_miss`` / ``proposals_enqueued`` come off the Stop hook's
-# recorder (hook.py) — the same recorder that writes that session's
-# ``turn_audited`` rows — ``prompt_recall`` comes off the
-# UserPromptSubmit hook's recorder (hook.py), stamped with the SAME
-# Claude Code transcript session id the Stop hook's rows for that
-# conversation carry — and ``pending_expired`` and
-# ``use_token_expired`` are both drained handler-side through the live
-# session's recorder (handlers/_shared.py), at the entry of the very
-# tool call that noticed the eviction.
+# ``turn_audited`` and ``search_miss`` come off the Stop hook's
+# recorder (hook.py), ``prompt_recall`` comes off the UserPromptSubmit
+# hook's recorder (hook.py), stamped with the SAME Claude Code
+# transcript session id the Stop hook's rows for that conversation
+# carry, and ``use_token_expired`` is drained handler-side through the
+# live session's recorder (handlers/_shared.py), at the entry of the
+# very tool call that noticed the eviction. ``silent_miss_cutoff`` stays
+# admin by kind, the classification its v8 CLI writer had: a cutoff on
+# its own must never publish a session, and the session that issued
+# one through ``memory_admin`` is counted through its other rows.
 #
 # MEMBERSHIP HERE IS NOT OPTIONAL AND NOT MECHANICALLY CHECKED. The
 # roster below is DERIVED as ``_KNOWN − _IN_SESSION``, which makes
 # ``ADMIN | IN_SESSION == KNOWN`` a tautology: a kind added to
 # ``_KNOWN_SIDE_EFFECT_KINDS`` alone lands in the admin roster, and
 # every partition assertion in the suite still passes. The visible
-# damage is downstream — ``is_admin_recorded_event`` starts returning
-# True, ``doctor._check_audit_turn_cadence`` drops the event AND its
-# whole session from the census, and eval's tally treats a real client
-# session as never having existed. The only guard is a hand-written,
-# per-kind one — see
-# ``tests/test_doctor.py::test_use_token_expired_is_classified_in_session``
-# for the shape (membership assertion plus a behavioural census half).
-# Write one alongside every new entry here.
+# damage is downstream: ``is_admin_recorded_event`` starts returning
+# True, health's session census drops the event AND its whole session,
+# and eval's tally treats a real client session as never having
+# existed. The only guard is a hand-written, per-kind one: a membership
+# assertion plus a behavioural census half, in the shape of
+# ``tests/test_eval.py``'s in-session census tests. Write one alongside
+# every new entry here.
 _IN_SESSION_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
     {
+        "turn_audited",
         "search_miss",
-        "pending_expired",
-        "proposals_enqueued",
         "use_token_expired",
         "prompt_recall",
-        # The Stop hook's auto-consolidate records these under the live
-        # client's own session id (`run_auto_consolidate` takes the hook's
-        # recorder); the CLI's copies of the same kinds carry the `cli_`
-        # attribution and are caught on that axis instead.
-        "consolidate_write",
-        "consolidate_update",
     }
 )
 
@@ -3392,26 +2671,23 @@ ADMIN_RECORDED_EVENT_KINDS: frozenset[str] = (
 # structurally cannot cover: an admin CLI operation that records under
 # a kind which is ALSO a legitimate in-session kind.
 #
-# ``bettermemory consolidate --acknowledge-debt`` is the live instance.
-# It writes ``kind="use", outcome="applied", auto=False`` rows — the
-# exact shape a model's ``memory_record_use`` call produces — under a
+# ``bettermemory tombstones restore`` and ``bettermemory rename-scope``
+# are the live instances. They write ``restore`` and ``rename_scope``
+# rows, the exact shapes ``memory_admin`` produces in session, under a
 # fresh throwaway ``SessionState()`` id, so excluding by kind would
-# have to exclude ``use`` wholesale and blind the tally to every real
-# client session. What separates the two is ATTRIBUTION: every admin
-# CLI writer stamps ``attribution="cli_<operation>"``
-# (``cli_acknowledge_debt`` on the use rows,
-# ``cli_acknowledge_misses`` on the cutoff marker), while every
-# in-session producer stamps ``"model"``, ``"hook"``, or ``"auto"``
-# (see the module docstring's attribution tier). A prefix rule rather
-# than a hand-listed roster, deliberately: a new admin CLI operation
-# lands on the correct side by construction instead of quietly
-# inflating the count until someone notices.
+# have to exclude those kinds wholesale and blind the tally to every
+# real client session that used them. What separates the two is
+# ATTRIBUTION: every admin CLI writer stamps
+# ``attribution="cli_<operation>"`` (``cli_tombstones_restore``,
+# ``cli_rename_scope``), while every in-session producer stamps
+# ``"model"``, ``"hook"``, or ``"auto"`` (see the module docstring's
+# attribution tier). A prefix rule rather than a hand-listed roster,
+# deliberately: a new admin CLI operation lands on the correct side by
+# construction instead of quietly inflating the count until someone
+# notices.
 #
-# Scope of the exclusion is the SESSION TALLY ONLY. The acknowledge-debt
-# rows are genuine endorsements — that is the whole point of the
-# subcommand — so they keep counting toward ``applied_total`` and the
-# endorsement rate. What they must not do is publish a session that
-# never had a client attached to it.
+# Scope of the exclusion is the SESSION TALLY ONLY. What the rows must
+# not do is publish a session that never had a client attached to it.
 ADMIN_RECORDED_ATTRIBUTION_PREFIX = "cli_"
 
 
@@ -3748,8 +3024,8 @@ def compute_report(
             continue
         if is_admin_recorded_event(ev):
             # Recorded outside any client session under a throwaway
-            # session id — by kind (doctor --fix, the cutoff marker) or
-            # by `cli_*` attribution (acknowledge-debt's `use` rows,
+            # session id, by kind (the cutoff marker) or by `cli_*`
+            # attribution (the CLI's `restore` and `rename_scope` rows,
             # which wear a kind real sessions also use). Counting one
             # would publish a session that never existed.
             continue
@@ -4034,9 +3310,9 @@ def render_report_markdown(doc: ReportDocument) -> str:
     lines.append("|---|---|---|")
     # The slice is top-10 by count, PLUS every untelemetered row pinned
     # in regardless of rank: those rows exist to say "not counted" (see
-    # TOOLS_WITHOUT_TELEMETRY), and at 27 tools a structurally-zero row
-    # can never crack a top-10 on count — sliced out, the note the row
-    # carries would silently vanish from the published artifact.
+    # TOOLS_WITHOUT_TELEMETRY), and past ten tools a structurally-zero
+    # row can never crack a top-10 on count; sliced out, the note the
+    # row carries would silently vanish from the published artifact.
     published = list(doc.tool_usage.rows[:10])
     published.extend(row for row in doc.tool_usage.rows[10:] if not row.has_telemetry)
     for usage_row in published:

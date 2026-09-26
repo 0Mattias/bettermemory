@@ -20,12 +20,6 @@ What these tests pin, beyond "the gate fires":
 - The per-sentence, apostrophe-normalized application. Matching the raw
   body instead silently kills the `^(?:my|our)` branch and every curly-quote
   contraction — both fail open, with no test noticing.
-- The blast radius. The gate is deliberately OUT of `CONTENT_GATES`:
-  `ingest` is a bulk import of the user's own prior auto-memory files and
-  `accept_proposal` is a human review decision on a queue whose extractor
-  stamps explicit captures ("remember that I prefer X") as `fact` — both
-  carry preference prose by construction and neither has a human in the
-  loop to flip an acknowledge flag.
 """
 
 from __future__ import annotations
@@ -36,15 +30,9 @@ from typing import Any
 
 import pytest
 
-from bettermemory.config import BehaviorConfig, Config, StorageConfig
-from bettermemory.events import Recorder, iter_events
-from bettermemory.handlers.write import (
-    CONTENT_GATES,
-    GateContext,
-    PendingGate,
-    UserClaimGate,
-    _find_user_claims,
-)
+from bettermemory.config import Config, StorageConfig
+from bettermemory.events import Recorder
+from bettermemory.handlers.write import GateContext, _find_user_claims
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
@@ -52,17 +40,18 @@ from ._mcp import input_schema as _input_schema
 
 
 @pytest.fixture
-def server_with_events(memory_dir: Path) -> tuple[Any, Path]:
+def server_with_events(memory_dir: Path) -> tuple[Any, Store]:
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
     state = SessionState()
-    rec = Recorder(root=memory_dir, session_id=state.session_id)
+    store = Store(memory_dir)
+    rec = Recorder(store=store, session_id=state.session_id)
     server = build_server(
         config=cfg,
-        store=Store(memory_dir),
+        store=store,
         state=state,
         recorder=rec,
     )
-    return server, memory_dir
+    return server, store
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
@@ -74,8 +63,8 @@ async def _call(server: Any, name: str, **kwargs: Any) -> Any:
     return await _mcp_call(server, name, kwargs)
 
 
-def _write_events(memory_dir: Path) -> list[dict[str, Any]]:
-    return [e for e in iter_events(memory_dir) if e["kind"] == "write"]
+def _write_events(store: Store) -> list[dict[str, Any]]:
+    return [e for e in store.iter_events() if e["kind"] == "write"]
 
 
 # ---------------------------------------------------------------------------
@@ -84,11 +73,11 @@ def _write_events(memory_dir: Path) -> list[dict[str, Any]]:
 
 
 async def test_third_person_user_claim_as_fact_warns(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The shape a MODEL writes. `_PREFERENCE_RE` does not match it —
     a gate that reused that pattern unchanged would commit this."""
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     res = await _call(
         server,
         "memory_write",
@@ -101,15 +90,15 @@ async def test_third_person_user_claim_as_fact_warns(
     assert "user-inference" in res["hint"]
     assert "acknowledge_user_claim" in res["hint"]
     # Decisive: nothing reached the durable store.
-    assert Store(memory_dir).load_all() == []
+    assert store.load_all() == []
 
 
 async def test_first_person_user_claim_as_fact_warns(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The shape the Stop hook already detected — and that memory_write
     committed anyway, because the detector was never wired here."""
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     res = await _call(
         server,
         "memory_write",
@@ -118,11 +107,11 @@ async def test_first_person_user_claim_as_fact_warns(
     )
     assert res["status"] == "user_claim_warning"
     assert res["markers"][0]["phrase"] == "I prefer"
-    assert Store(memory_dir).load_all() == []
+    assert store.load_all() == []
 
 
 async def test_the_user_subject_as_fact_warns(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     server, _ = server_with_events
     res = await _call(
@@ -135,7 +124,7 @@ async def test_the_user_subject_as_fact_warns(
 
 
 async def test_ambient_category_is_gated_too(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """`ambient` reads back as unlabelled context exactly like `fact`
     reads back as established, so filing a user claim there is the same
@@ -152,7 +141,7 @@ async def test_ambient_category_is_gated_too(
 
 
 async def test_ordinary_project_fact_is_untouched(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """Without this every assertion above would also pass if the gate
     refused unconditionally. The subject-noun shapes that dominate
@@ -176,9 +165,9 @@ async def test_ordinary_project_fact_is_untouched(
 
 
 async def test_acknowledged_user_claim_commits(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     res = await _call(
         server,
         "memory_write",
@@ -187,18 +176,18 @@ async def test_acknowledged_user_claim_commits(
         acknowledge_user_claim=True,
     )
     assert res["status"] == "committed"
-    assert len(Store(memory_dir).load_all()) == 1
+    assert len(store.load_all()) == 1
 
 
 async def test_acknowledged_claim_records_the_overridden_phrase(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """A gate's phrase list is only ever revisited on override-rate
     evidence (the sha-marker retirement at 45/47 is the precedent), so
     the override has to be legible in the event log — the same axis
     `markers_acknowledged` and `credentials_acknowledged` already
     carry."""
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     await _call(
         server,
         "memory_write",
@@ -206,37 +195,37 @@ async def test_acknowledged_claim_records_the_overridden_phrase(
         scopes=["learning-style"],
         acknowledge_user_claim=True,
     )
-    event = _write_events(memory_dir)[-1]
+    event = _write_events(store)[-1]
     assert event["status"] == "committed"
     assert event["user_claims_acknowledged"] == ["Mattias prefers"]
 
 
 async def test_clean_body_records_empty_user_claims_acknowledged(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     await _call(
         server,
         "memory_write",
         content="The release runbook lives in docs/release.md.",
         scopes=["infrastructure"],
     )
-    assert _write_events(memory_dir)[-1]["user_claims_acknowledged"] == []
+    assert _write_events(store)[-1]["user_claims_acknowledged"] == []
 
 
 async def test_refusal_event_carries_the_matched_phrase_not_the_body(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The audit trail names the cause without copying the claim — the
     same discipline the credential gate applies to its `kind`s."""
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     await _call(
         server,
         "memory_write",
         content="Mattias prefers tabs over spaces.",
         scopes=["learning-style"],
     )
-    events = _write_events(memory_dir)
+    events = _write_events(store)
     assert len(events) == 1
     assert events[0]["status"] == "user_claim_warning"
     assert events[0]["claim_phrases"] == ["Mattias prefers"]
@@ -249,14 +238,14 @@ async def test_refusal_event_carries_the_matched_phrase_not_the_body(
 
 
 async def test_the_relabelled_reissue_commits(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The re-categorize hint has to work, and in one call: an exemption
     that skipped the gate by rejecting early would strand the caller in a
     loop (warned as `fact`, warned again as `user-inference`), and a
     re-issue that staged would put the confirmation round trip back in
     front of the user. The claim lands, with its label, on the re-issue."""
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     res = await _call(
         server,
         "memory_write",
@@ -266,53 +255,16 @@ async def test_the_relabelled_reissue_commits(
     )
     assert res["status"] == "committed"
     assert res["category"] == "user-inference"
-    [stored] = Store(memory_dir).load_all()
+    [stored] = store.load_all()
     assert stored.category is not None
     assert stored.category.value == "user-inference"
-    event = _write_events(memory_dir)[-1]
+    event = _write_events(store)[-1]
     assert event["status"] == "committed"
     assert event["category"] == "user-inference"
 
 
-async def test_global_confirmation_treats_user_inference_like_any_category(
-    memory_dir: Path,
-) -> None:
-    """`require_write_confirmation` is the one staging path, and it has
-    one reason and one hint. `user-inference` used to carry its own
-    reason, whose hint scripted a question for the model to put to the
-    user; under the flag it now stages exactly as `fact` does, and the
-    event log attributes it to the flag."""
-    cfg = Config(
-        storage=StorageConfig(directory=str(memory_dir)),
-        behavior=BehaviorConfig(require_write_confirmation=True),
-    )
-    state = SessionState()
-    rec = Recorder(root=memory_dir, session_id=state.session_id)
-    server = build_server(
-        config=cfg,
-        store=Store(memory_dir),
-        state=state,
-        recorder=rec,
-    )
-    res = await _call(
-        server,
-        "memory_write",
-        content="Mattias prefers tabs over spaces.",
-        scopes=["learning-style"],
-        category="user-inference",
-    )
-    assert res["status"] == "pending"
-    assert res["pending_reason"] == "config"
-    assert "memory_write_confirm" in res["hint"]
-    assert "memory_write_cancel" in res["hint"]
-    # The event log carries the same attribution the response does.
-    event = _write_events(memory_dir)[-1]
-    assert event["pending_reason"] == "config"
-    assert event["category"] == "user-inference"
-
-
 async def test_user_claim_beats_duplicate_on_a_mis_filed_parent(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """Position-before-dedup, stated as the failure it prevents.
 
@@ -322,8 +274,8 @@ async def test_user_claim_beats_duplicate_on_a_mis_filed_parent(
     them to memory_update ON THAT PARENT — the claim is edited into the
     wrong category forever, and memory_update cannot relabel it. The
     user-claim verdict has to win."""
-    server, memory_dir = server_with_events
-    Store(memory_dir).write(
+    server, store = server_with_events
+    store.write(
         content="Mattias prefers tabs over spaces in every editor.",
         scopes=["learning-style"],
     )
@@ -337,7 +289,7 @@ async def test_user_claim_beats_duplicate_on_a_mis_filed_parent(
 
 
 async def test_transient_marker_still_reported_first(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The gate slots in AFTER TransientGate: a body that is both
     transient and user-shaped is unsalvageable as written, and the
@@ -358,7 +310,7 @@ async def test_transient_marker_still_reported_first(
 
 
 async def test_possessive_claim_matches_only_per_sentence(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """`_PREFERENCE_RE`'s `^(?:my|our)` branch anchors to the START of
     whatever string it is handed. Hand it the whole body and this
@@ -378,7 +330,7 @@ async def test_possessive_claim_matches_only_per_sentence(
 
 
 async def test_curly_apostrophe_body_still_matches(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """macOS and iOS substitute smart quotes by default and every
     contraction branch of the shared pattern is written against the
@@ -405,28 +357,14 @@ def test_short_claim_clears_the_extractor_length_floor() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Blast radius: the gate is NOT a content gate
+# Blast radius: the flag is an escape hatch on the context, off by default
 # ---------------------------------------------------------------------------
 
 
-def test_user_claim_gate_is_excluded_from_content_gates() -> None:
-    """`CONTENT_GATES` is derived by EXCLUSION, so a gate added to the
-    chain joins it automatically — and the two batch callers that use it
-    (`apply_ingest_plan`, and `accept_proposal` once it converts) carry
-    preference prose by construction with every acknowledge flag False.
-    Inheriting this gate turns both into hard refusals with no override
-    reachable."""
-    kinds = [type(g).__name__ for g in CONTENT_GATES]
-    assert "UserClaimGate" not in kinds
-    assert "PendingGate" not in kinds
-    assert not any(isinstance(g, (UserClaimGate, PendingGate)) for g in CONTENT_GATES)
-
-
 def test_gate_context_user_claim_flag_defaults_false() -> None:
-    """`ingest._gate_context` passes every field by keyword with no
-    `**kwargs` slack, so a field added without a default breaks that
-    caller at construction. Built here exactly as ingest builds it —
-    with no user-claim argument at all."""
+    """A caller that passes every field by keyword with no `**kwargs`
+    slack breaks at construction the moment a field is added without a
+    default. Built here with no user-claim argument at all."""
     gc = GateContext(
         payload={"content": "x", "scopes": ["tools"]},
         force=False,
@@ -441,112 +379,13 @@ def test_gate_context_user_claim_flag_defaults_false() -> None:
     assert gc.user_claim_hits == []
 
 
-def test_ingest_still_imports_a_first_person_preference_file(
-    tmp_path: Path,
-) -> None:
-    """End-to-end proof for the exclusion above: auto-memory files ARE
-    the user's own words, so first-person preference prose is the norm
-    there, not a model asserting a fresh claim. This row must land."""
-    from bettermemory.ingest import apply_ingest_plan, compute_ingest_plan
-
-    source_root = tmp_path / "source"
-    source_root.mkdir()
-    (source_root / "style.md").write_text(
-        "\n".join(
-            [
-                "---",
-                "name: style",
-                "description: editor preferences",
-                "---",
-                "",
-                "I prefer tabs over spaces in every editor I use.",
-                "",
-            ]
-        )
-    )
-    store = Store(tmp_path / "store")
-    plan = compute_ingest_plan(
-        source_root,
-        existing_memories=store.load_all(),
-        existing_tombstones=store.load_tombstones(),
-    )
-    apply_ingest_plan(plan, store)
-    [row] = plan.rows
-    assert row.action == "write", row.reason
-    assert row.written_id is not None
-    assert len(store.load_all()) == 1
-
-
-async def test_accepting_a_preference_proposal_still_writes(
-    server_with_events: tuple[Any, Path],
-) -> None:
-    """The proposals extractor stamps explicit captures ("remember that
-    I prefer X") as `fact` BY DESIGN, and accepting one is a human
-    review decision — the acceptance must not be refused for having the
-    shape the queue exists to carry. Guards the F7 conversion too: it
-    swaps the hand-rolled scan for `CONTENT_GATES`, which is exactly the
-    tuple this gate stays out of."""
-    from bettermemory.proposals import Proposal, ProposalQueue
-
-    server, memory_dir = server_with_events
-    ProposalQueue(memory_dir).append(
-        [
-            Proposal(
-                id="p1",
-                body="I prefer terse code-driven explanations over long prose.",
-                source_excerpt="I prefer terse code-driven explanations over prose.",
-                suggested_category="fact",
-                created="2026-01-01T00:00:00Z",
-            )
-        ]
-    )
-    res = await _call(
-        server,
-        "memory_proposals",
-        action="accept",
-        proposal_id="p1",
-        scopes=["learning-style"],
-    )
-    assert res["status"] == "accepted"
-    assert len(Store(memory_dir).load_all()) == 1
-
-
-async def test_episode_promotion_of_a_user_claim_is_refused_for_free(
-    server_with_events: tuple[Any, Path],
-) -> None:
-    """`episode_promote` routes through `memory_write` with every
-    acknowledge flag at its default, which is the whole point of the
-    escape hatches living on `GateContext` rather than inside the gates:
-    an unattended caller inherits the refusal without carrying its own
-    copy of the check. The source episode survives, so the caller can
-    re-promote as `user-inference`."""
-    server, _ = server_with_events
-    ep = await _call(
-        server,
-        "episode_write",
-        body="Reviewed the formatter config with Mattias this afternoon.",
-        takeaway="Mattias prefers tabs over spaces.",
-    )
-    res = await _call(
-        server,
-        "episode_promote",
-        episode_id=ep["id"],
-        scopes=["learning-style"],
-    )
-    assert res["status"] == "user_claim_warning"
-    assert res["promoted_from_episode_id"] == ep["id"]
-    listed = await _call(server, "episode_search")
-    listed = listed.get("result", listed) if isinstance(listed, dict) else listed
-    assert any(e["id"] == ep["id"] for e in listed)
-
-
 # ---------------------------------------------------------------------------
 # The wire surface
 # ---------------------------------------------------------------------------
 
 
 async def test_acknowledge_user_claim_is_exposed_on_the_mcp_schema(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The `_handlers.py` facade signature IS the served schema. Add the
     parameter to the handler only and the escape hatch exists in Python
@@ -557,18 +396,6 @@ async def test_acknowledge_user_claim_is_exposed_on_the_mcp_schema(
     props = _input_schema(tools["memory_write"])["properties"]
     assert "acknowledge_user_claim" in props
     assert props["acknowledge_user_claim"].get("default") is False
-
-
-async def test_status_vocabulary_is_documented(
-    server_with_events: tuple[Any, Path],
-) -> None:
-    """A refusal status the model has never read about is a dead end:
-    the DESC is where it learns the re-categorize move exists."""
-    server, _ = server_with_events
-    tools = {t.name: t for t in await server.list_tools()}
-    desc = tools["memory_write"].description or ""
-    assert "user_claim_warning" in desc
-    assert "acknowledge_user_claim" in desc
 
 
 # ---------------------------------------------------------------------------

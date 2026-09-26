@@ -5,9 +5,8 @@ before this file. The declaration's thresholds are encoded here verbatim
 and graded mechanically into the artifact's `predictions` block; the sha
 ordering (declaration, implementation, run) is the enforcement record.
 
-READ-ONLY by contract: memory files and event shards are opened for
-reading only, no locks are taken, no events are written, nothing is
-mutated. Every verdict-shaped quantity is computed by the SHIPPED
+READ-ONLY by contract: the store is opened without rekeying, no events
+are written, nothing is mutated. Every verdict-shaped quantity is computed by the SHIPPED
 machinery — `claims.load_claims` / `claims.check_claim`, and the same
 `detect_path_drift` / `compute_verification_status` /
 `compute_commit_drift` / `compute_staleness_verdict` composition the
@@ -34,6 +33,10 @@ strings, no scope names beyond the coarse families
 repository's own.
 
     .venv/bin/python bench/rot/live_census.py --out bench/rot/results/live-store-2026-08-14.json
+
+`--store` names the store directory (or its `memory.sqlite`); the
+default is the resolved live store. A store whose key this machine does
+not hold still opens for reading.
 """
 
 from __future__ import annotations
@@ -55,13 +58,12 @@ for _p in (str(_SRC), str(_REPO)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from bettermemory import _frontmatter  # noqa: E402
 from bettermemory.claims import check_claim, load_claims  # noqa: E402
 from bettermemory.config import load_config  # noqa: E402
 from bettermemory.eval import compute_eval  # noqa: E402
-from bettermemory.events import iter_all_events  # noqa: E402
+from bettermemory.log import last_row  # noqa: E402
 from bettermemory.origin import Origin  # noqa: E402
-from bettermemory.store import TOMBSTONE_DIR  # noqa: E402
+from bettermemory.store import Store, store_path  # noqa: E402
 from bettermemory.verify import (  # noqa: E402
     compute_commit_drift,
     compute_staleness_verdict,
@@ -129,66 +131,54 @@ def _scope_family(origin: dict[str, Any] | None, this_repo: str) -> str:
     return "this-repo" if repo == this_repo else "other-repo"
 
 
-def _load_memories(store: Path) -> list[dict[str, Any]]:
+def _load_memories(store: Store) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for path in sorted(store.glob("*.md")):
-        post = _frontmatter.load(path)
-        meta = dict(post.metadata)
+    for memory in sorted(store.load_all(), key=lambda m: m.id):
+        meta = memory.model_dump(mode="json", exclude={"body"})
         rows.append(
             {
                 "meta": meta,
-                "body": post.content,
-                "id": str(meta.get("id") or path.stem),
-                "origin": meta.get("origin")
-                if isinstance(meta.get("origin"), dict)
+                "body": memory.body,
+                "id": memory.id,
+                "origin": memory.origin.model_dump(mode="json", exclude_none=True)
+                if memory.origin is not None
                 else None,
-                "claims_raw": list(meta.get("claims") or []),
-                "verified_paths": list(meta.get("verified_paths") or []),
-                "absent_paths": list(meta.get("verified_absent_paths") or []),
-                "created": _parse_ts(meta.get("created")),
-                "last_verified_at": _parse_ts(meta.get("last_verified_at")),
+                "claims_raw": list(memory.claims),
+                "verified_paths": list(memory.verified_paths),
+                "absent_paths": list(memory.verified_absent_paths),
+                "created": _parse_ts(memory.created),
+                "last_verified_at": _parse_ts(memory.last_verified_at),
             }
         )
     return rows
 
 
-def _store_manifest_sha(store: Path) -> str:
+def _store_manifest_sha(rows: list[dict[str, Any]]) -> str:
+    """A pin over the active records: id, `updated` and the body's hash,
+    in id order, so a re-run on the same rows reproduces it."""
     acc = hashlib.sha256()
-    for path in sorted(store.glob("*.md")):
-        acc.update(path.name.encode())
-        acc.update(hashlib.sha256(path.read_bytes()).hexdigest().encode())
+    for row in rows:
+        acc.update(row["id"].encode())
+        acc.update(str(row["meta"].get("updated")).encode())
+        acc.update(hashlib.sha256(row["body"].encode("utf-8")).hexdigest().encode())
     return acc.hexdigest()
 
 
-def _shard_stats(store: Path) -> list[dict[str, Any]]:
-    stats = []
-    for shard in sorted(store.glob(".events.*.jsonl")):
-        data = shard.read_bytes()
-        stats.append(
-            {
-                "shard": shard.name,
-                "bytes": len(data),
-                "lines": data.count(b"\n"),
-                "sha256": hashlib.sha256(data).hexdigest(),
-            }
-        )
-    return stats
+def _log_stats(store: Store) -> dict[str, Any]:
+    """The log's extent at read time: the last row's seq and MAC pin the
+    chain the census read, the way the shard hashes pinned the v8 files."""
+    last = last_row(store.conn)
+    status = store.status()
+    return {
+        "log_rows": status["log_rows"],
+        "head_seq": None if last is None else last.seq,
+        "head_mac": None if last is None else last.mac,
+        "key_present": status["key_present"],
+    }
 
 
-def _tombstoned_ids(store: Path) -> set[str]:
-    ids: set[str] = set()
-    tdir = store / TOMBSTONE_DIR
-    if not tdir.is_dir():
-        return ids
-    for path in sorted(tdir.glob("*.md")):
-        try:
-            post = _frontmatter.load(path)
-        except Exception:
-            continue
-        mid = post.metadata.get("id")
-        if isinstance(mid, str):
-            ids.add(mid)
-    return ids
+def _tombstoned_ids(store: Store) -> set[str]:
+    return {summary.id for summary in store.list_tombstones()}
 
 
 # ─── Census A: population ───
@@ -626,22 +616,30 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="The T1 live-store census — the shipped verdict graded on declared claims."
     )
-    parser.add_argument("--store", default=str(Path.home() / ".claude-memory"))
+    parser.add_argument(
+        "--store",
+        default=None,
+        help="the store directory or its memory.sqlite; default: the resolved store",
+    )
     parser.add_argument("--out", default=None)
     args = parser.parse_args()
-    store = Path(args.store).expanduser()
-    if not store.is_dir():
-        print(f"store not found: {store}", file=sys.stderr)
+    config = load_config()
+    store_file = store_path(
+        Path(args.store).expanduser() if args.store else config.resolved_directory()
+    )
+    if not store_file.is_file():
+        print(f"store not found: {store_file}", file=sys.stderr)
         return 2
 
     now = _utcnow()
     this_repo = _this_repo_url(_REPO)
-    config = load_config()
     stale_days = config.behavior.verification_stale_days
 
-    rows = _load_memories(store)
-    events = list(iter_all_events(store))
-    tombstoned = _tombstoned_ids(store)
+    with Store.open(store_file, allow_rekey=False) as store:
+        rows = _load_memories(store)
+        events = list(store.iter_events())
+        tombstoned = _tombstoned_ids(store)
+        log_stats = _log_stats(store)
 
     a = census_population(rows, this_repo)
     b = census_claim_truth(rows, this_repo, stale_days, now)
@@ -666,8 +664,9 @@ def main() -> int:
             "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             "repo_head": head,
             "verification_stale_days": stale_days,
-            "store_manifest_sha256": _store_manifest_sha(store),
-            "event_shards": _shard_stats(store),
+            "store": str(store_file),
+            "store_manifest_sha256": _store_manifest_sha(rows),
+            "log": log_stats,
             "tombstone_count": len(tombstoned),
         },
         "a_population": a,

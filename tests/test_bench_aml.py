@@ -724,8 +724,6 @@ def test_the_public_endpoint_serves_no_sheet(tmp_path: Path) -> None:
 
 # ---------------------------------------------------------------- claude units (E3)
 
-extract_claude = _load("aml.extract_claude", _BENCH / "aml" / "extract_claude.py")
-
 _LAKE = _msgs(
     ("We finally went to that place by the water on Friday.", "Sounds lovely!"),
     ("My dog is a beagle.", "Beagles are great."),
@@ -824,46 +822,6 @@ def test_the_extractor_sees_the_request_as_sent_even_when_a_tail_is_joined(
     joined = next(h["content"] for h in served if "Douro" in h["content"])
     # the second request's message 0 is the reply that completes the tail's round
     assert "- Unit from message 0." in joined
-
-
-def test_extract_claude_reads_units_from_the_cache_and_refuses_a_missing_one(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The Client extract_claude imported: an earlier test re-executes
-    # bench/llm.py, so sys.modules["llm"] may be a different copy.
-    client = extract_claude.Client
-    monkeypatch.setitem(client._cache_path.__globals__, "CACHE_DIR", tmp_path)
-    msgs = _LAKE
-    with pytest.raises(extract_claude.MissingExtraction):
-        extract_claude.units_from_cache(msgs)
-    payload = extract_claude.payload(msgs)
-    assert payload == extract_claude.payload(list(msgs))  # same chunk, same request
-    reply = json.dumps(
-        {
-            "memories": [
-                {
-                    "kind": "event",
-                    "body": "2023-05-19: The user visited a place by the water.",
-                    "happened_at": "2023-05-19",
-                    "turns": [0],
-                    "quote": "We finally went to that place by the water",
-                },
-                {
-                    "kind": "fact",
-                    "body": "The user owns a parrot.",
-                    "turns": [2],
-                    "quote": "my parrot says hello",
-                },
-            ]
-        }
-    )
-    path = client._cache_path(client.cache_key(payload))
-    path.parent.mkdir(parents=True)
-    path.write_text(json.dumps({"text": reply}), encoding="utf-8")
-    assert extract_claude.units_from_cache(msgs) == [
-        ("event", "2023-05-19: The user visited a place by the water.", 0)
-    ]
-    assert extract_claude.units_from_cache([]) == []
 
 
 def test_a_units_store_refuses_another_source_or_a_build_without_units(

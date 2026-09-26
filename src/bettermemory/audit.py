@@ -152,10 +152,9 @@ _TOP_HITS_RETAINED = 3
 # search from earlier in the session doesn't paper over a fresh miss.
 DEFAULT_LOOKBACK_SECONDS = 60
 
-# Wall-clock window the Stop hook attributes against (and, since round
-# 88, the window the production search handler's endorsement tally
-# reads with — `handlers/search.py` imports this constant so the
-# probe's tally and the model's actual retrieval tally share one
+# Wall-clock window the Stop hook attributes against (and the window
+# the production search handler reads recent negative outcomes over —
+# `handlers/search.py` imports this constant so the two share one
 # substrate). A retrieval older than this is considered settled —
 # the Stop hook settles each turn's retrievals at turn end, and the
 # in-process fallback (`session.consume_old_tokens`) holds behind a
@@ -433,17 +432,6 @@ class MissReport:
     probe_query: str | None = None
     no_signal_reason: str | None = None
     suppressed_by: str | None = None
-    # Usage-toggle capture (additive, empty/None when the probe ranked
-    # with no live usage-aware inputs — every default-config store).
-    # `usage_active` lists which of `search.USAGE_FLAG_NAMES` carried
-    # live signal on this probe's ranking; `usage_toggles` maps the
-    # subset whose single-flag toggle CHANGES the top-1 memory to the
-    # counterfactual winner's raw coverage features (see
-    # `search._compute_usage_toggles`). Recorded so the usage-signal
-    # flip bars (maintainer-held) are readable from the event log
-    # alone — `eval.compute_usage_replay` is the consumer.
-    usage_active: tuple[str, ...] = ()
-    usage_toggles: dict[str, Any] | None = None
 
     @property
     def is_miss(self) -> bool:
@@ -461,8 +449,6 @@ class MissReport:
             "probe_query": self.probe_query,
             "no_signal_reason": self.no_signal_reason,
             "suppressed_by": self.suppressed_by,
-            "usage_active": list(self.usage_active),
-            "usage_toggles": self.usage_toggles,
         }
 
 
@@ -501,9 +487,8 @@ def turn_audited_fields(
     Additive calibration fields (each omitted when absent, so events
     from older producers keep their exact prior shape):
 
-    - ``probe_query`` — the probed user message; the Recorder redacts
-      it to ``{hash, preview, len}`` unless ``log_queries_verbatim``.
-      Carrying it on EVERY audited turn (not just flagged misses) is
+    - ``probe_query`` — the probed user message, which the Recorder
+      redacts to ``{hash, preview, len}`` before it lands. Carrying it on EVERY audited turn (not just flagged misses) is
       what makes the re-audit dedup possible and gives the widening
       calibration its denominator.
     - ``top_hits`` — compact per-hit calibration features
@@ -547,18 +532,6 @@ def turn_audited_fields(
         fields["repeat"] = True
     if client_model is not None:
         fields["client_model"] = client_model
-    # Usage-toggle capture (additive, omitted when absent — every
-    # default-config turn keeps its exact prior shape). `usage_active`
-    # is the per-flag denominator ("the flag had live signal on this
-    # turn"); `usage_toggles` carries only the flags whose toggle
-    # changed the top-1, with the counterfactual winner's raw features.
-    # Together they make the usage-signal flip bars — maintainer-held,
-    # not published here — readable from the log alone via
-    # `eval.compute_usage_replay`.
-    if report.usage_active:
-        fields["usage_active"] = list(report.usage_active)
-    if report.usage_toggles:
-        fields["usage_toggles"] = report.usage_toggles
     return fields
 
 
@@ -668,15 +641,6 @@ def prompt_recall_fields(
         "triggered_from": triggered_from,
         "delivered_reason": delivered_reason,
     }
-    # Same additive usage-toggle capture `turn_audited_fields` carries,
-    # and higher-stakes here: a delivery's top-1 IS what got injected,
-    # so a changed toggle on a `prompt_recall` event records that the
-    # flag changed WHAT THE MODEL WAS SHOWN — the exact evidence the
-    # flip bars' "no miss-labeled turn worsening" clause reads.
-    if report.usage_active:
-        fields["usage_active"] = list(report.usage_active)
-    if report.usage_toggles:
-        fields["usage_toggles"] = report.usage_toggles
     return fields
 
 
@@ -704,8 +668,8 @@ def is_duplicate_audit(
     now carries, in BOTH shapes the Recorder can produce: the redacted
     ``{hash, preview, len}`` dict (compared via `probe_query_hash` — the
     producer computes it with `events.redact_query` so the comparison
-    uses the exact production hash) and the verbatim string
-    (`log_queries_verbatim = true`, compared via `probe_query_text`).
+    uses the exact production hash) and the verbatim string a log
+    written before 9.0.0 can carry (compared via `probe_query_text`).
     Events without `probe_query` (older producers) never match — the
     dedup only engages on data written after this field shipped, which
     biases toward the pre-existing behavior (re-flag) rather than
@@ -752,9 +716,6 @@ def probe_for_miss(
     excluded_scopes: set[str] | None = None,
     mode: str = "hybrid",
     half_life_days: float = 30.0,
-    applied_by_id: dict[str, int] | None = None,
-    negative_by_id: dict[str, tuple[int, int]] | None = None,
-    rescue_expansion: bool = False,
     conversational: bool = True,
     corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None = None,
 ) -> MissReport:
@@ -790,28 +751,20 @@ def probe_for_miss(
     those signals matter for *consuming* a hit, not for deciding
     whether a search should have happened.
 
-    `half_life_days`, `applied_by_id`, `negative_by_id`,
-    `rescue_expansion`, and `conversational` are forwarded verbatim
-    to `search` so the probe ranks with the same scorer configuration
+    `half_life_days` and `conversational` are forwarded verbatim to
+    `search` so the probe ranks with the same scorer configuration
     production retrieval uses — the same probe-matches-the-ranker rule
-    the `mode` parameter exists for. They travel as a SET, matching the
-    `RankingInputs` shape `handlers.search.resolve_ranking_inputs` hands
-    the production ranker: `applied_by_id` (under `endorsement_boost`)
-    nudges up, `negative_by_id` (under `outcome_demotion`) slides down,
-    `rescue_expansion` adds the coverage-gated expansion leg to the
-    fusion, and `conversational` runs the Lane L temporal repairs
-    (default ON since 6.1.0, `[behavior] conversational` opting out).
-    Threading a subset would leave the probe ranking with different
-    inputs than production, and since the verdict reads only the rank-1
-    hit the disagreement runs both ways: a memory production demoted out
-    of the top slot can still hold rank 1 in the probe (masked miss),
-    and the hit a demotion promoted in production is never the one the
-    probe judged (phantom miss). `rescue_expansion` is the sharpest case
-    of that shape, because the leg it adds can surface a hit no base leg
-    ranked at all. Production callers thread
-    `config.behavior.recency_boost_half_life_days` plus the rest of the
-    `RankingInputs` the search handler computes; offline callers can
-    leave the defaults, which match the package-default ranker.
+    the `mode` parameter exists for. Production callers thread
+    `config.behavior.recency_boost_half_life_days` and
+    `config.behavior.conversational` (the Lane L temporal repairs,
+    default ON since 6.1.0); offline callers can leave the defaults,
+    which match the package-default ranker. The verdict reads only the
+    rank-1 hit, so a probe ranking with different inputs than
+    production disagrees with it in both directions (a masked miss
+    where production's rank 1 was another memory, a phantom miss where
+    the probe's is). The rescue-expansion leg is never engaged here:
+    it is a bench instrument, not a shipped knob, so production never
+    ranks with it either.
 
     `corpus_stats_provider` is forwarded for the same reason and belongs
     with the CANDIDATE POOL the caller built: `memories` must be
@@ -987,14 +940,6 @@ def probe_for_miss(
         raise ValueError(
             f"unknown audit probe mode {mode!r}; must be one of: keyword, bm25, hybrid"
         )
-    # Usage-toggle capture rides every probe unconditionally: it costs
-    # nothing when no usage-aware input is live (the common default-
-    # config case leaves the dict empty), and when one IS live the
-    # counterfactual is computed by the production ranker itself at the
-    # only moment it is exactly computable — offline reconstruction
-    # from the fused RRF scores cannot reproduce a per-leg factor
-    # toggle. See `search._compute_usage_toggles`.
-    usage_capture: dict[str, Any] = {}
     hits: list[MemoryHit] = run_search(
         memories,
         user_message,
@@ -1005,15 +950,12 @@ def probe_for_miss(
         now=now,
         half_life_days=half_life_days,
         mode=cast(SearchMode, mode),
-        applied_by_id=applied_by_id,
-        negative_by_id=negative_by_id,
         corpus_stats_provider=corpus_stats_provider,
-        rescue_expansion=rescue_expansion,
+        # The expansion leg is a bench instrument, not a shipped knob:
+        # production ranks without it, so the probe does too.
+        rescue_expansion=False,
         conversational=conversational,
-        usage_toggles_out=usage_capture,
     )
-    usage_active = tuple(usage_capture.get("active") or ())
-    usage_toggles = usage_capture.get("toggles") or None
     if not hits:
         return MissReport(
             verdict="no_signal",
@@ -1114,8 +1056,6 @@ def probe_for_miss(
         top_hits=top_hits,
         probe_query=user_message,
         suppressed_by=suppressed_by,
-        usage_active=usage_active,
-        usage_toggles=usage_toggles,
     )
 
 

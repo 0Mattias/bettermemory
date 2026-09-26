@@ -22,7 +22,7 @@ from typing import Any
 import pytest
 
 from bettermemory.config import Config, StorageConfig
-from bettermemory.events import Recorder, iter_events
+from bettermemory.events import Recorder
 from bettermemory.origin import Origin
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
@@ -30,10 +30,15 @@ from bettermemory.store import Store
 
 
 @pytest.fixture
-def server_factory(memory_dir: Path):
-    """Build a server with a configurable `capture_origin` mock."""
+def server_factory(memory_dir: Path, monkeypatch: pytest.MonkeyPatch):
+    """Build a server with a configurable `capture_origin` mock.
+
+    The patch goes through `monkeypatch` so it is restored at teardown:
+    a bare `setattr` leaks the fake into every later test in the run
+    that relies on the real `capture_origin`."""
     state = SessionState()
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    store = Store(memory_dir)
 
     def make(origin: Origin):
         # `capture_origin` is imported into `_handlers` where the tool
@@ -48,18 +53,18 @@ def server_factory(memory_dir: Path):
         def fake_capture(cwd: Path | None = None) -> Origin:
             return captured["value"]
 
-        rec = Recorder(root=memory_dir, session_id=state.session_id)
+        rec = Recorder(store=store, session_id=state.session_id)
         server = build_server(
             config=cfg,
-            store=Store(memory_dir),
+            store=store,
             state=state,
             recorder=rec,
         )
-        # Override the imported references so the handlers see our fake.
-        # setattr keeps mypy happy without a per-line ignore — capture_origin
-        # is a module-level binding the handlers re-resolve at call time.
-        setattr(handlers_module, "capture_origin", fake_capture)
-        setattr(server_module, "capture_origin", fake_capture)
+        # Override the imported references so the handlers see our fake:
+        # capture_origin is a module-level binding the handlers re-resolve
+        # at call time.
+        monkeypatch.setattr(handlers_module, "capture_origin", fake_capture)
+        monkeypatch.setattr(server_module, "capture_origin", fake_capture)
         return server, captured
 
     return make
@@ -259,29 +264,20 @@ async def test_search_caller_outside_repo_does_not_filter(
 async def test_legacy_memory_without_origin_passes_filter(
     server_factory, memory_dir: Path
 ) -> None:
-    """An existing on-disk memory that was written before the auto-scope
-    feature shipped (no `origin` frontmatter) is global by definition."""
+    """A memory that carries no `origin` at all (the shape every record
+    had before the auto-scope feature shipped) is global by definition."""
     server, _ = server_factory(Origin(repo="git@github.com:example/foo.git"))
 
-    # Hand-craft a memory file without an `origin` block — the format we
-    # had before this phase.
-    legacy = memory_dir / "2025-01-01-legacy-fact.md"
-    legacy.write_text(
-        "---\n"
-        "id: 01HXYZKEGACYJDKEGACY00000Z\n"
-        "created: 2025-01-01T00:00:00+00:00\n"
-        "updated: 2025-01-01T00:00:00+00:00\n"
-        "scopes:\n"
-        "- tools\n"
-        "confidence: medium\n"
-        "source: explicit-statement\n"
-        "---\n"
-        "kubernetes networking notes from before the feature shipped\n",
-        encoding="utf-8",
+    # Seed straight through the store with no origin block, the way a
+    # record from before this phase reads.
+    legacy = Store.open(memory_dir).write(
+        content="kubernetes networking notes from before the feature shipped",
+        scopes=["tools"],
+        origin=None,
     )
 
     hits = _unwrap(await _call(server, "memory_search", query="kubernetes networking"))
-    assert any(h["id"] == "01HXYZKEGACYJDKEGACY00000Z" for h in hits)
+    assert any(h["id"] == legacy.id for h in hits)
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +291,8 @@ async def test_search_records_auto_scope_and_repo_filter(
     server, _ = server_factory(Origin(repo="git@github.com:example/foo.git"))
     await _call(server, "memory_search", query="anything")
 
-    search_events = [e for e in iter_events(memory_dir) if e["kind"] == "search"]
+    events = Store.open(memory_dir).iter_events()
+    search_events = [e for e in events if e["kind"] == "search"]
     assert search_events
     e = search_events[-1]
     assert e["auto_scope"] is True
@@ -307,7 +304,8 @@ async def test_search_with_auto_scope_false_records_null_filter(
 ) -> None:
     server, _ = server_factory(Origin(repo="git@github.com:example/foo.git"))
     await _call(server, "memory_search", query="anything", auto_scope=False)
-    search_events = [e for e in iter_events(memory_dir) if e["kind"] == "search"]
+    events = Store.open(memory_dir).iter_events()
+    search_events = [e for e in events if e["kind"] == "search"]
     e = search_events[-1]
     assert e["auto_scope"] is False
     assert e["repo_filter"] is None
@@ -320,9 +318,9 @@ async def test_search_with_auto_scope_false_records_null_filter(
 #
 # `tests/test_origin.py` pins the same rule at the `worktrees_match` unit
 # level. These are the surface-level twins: the assertion is about what
-# `memory_search` / `memory_scope_overview` actually return, because the
-# failure this guards is a SILENT one — an empty result set carries no
-# signal that a filter dropped everything.
+# `memory_search` actually returns, because the failure this guards is a
+# SILENT one: an empty result set carries no signal that a filter dropped
+# everything.
 # ---------------------------------------------------------------------------
 
 _GIT_AVAILABLE = shutil.which("git") is not None
@@ -387,8 +385,6 @@ async def test_project_memories_survive_a_checkout_move(
 
     after = _unwrap(await _call(server, "memory_search", query="bcrypt"))
     assert [h["id"] for h in after] == [written["id"]]
-    overview = _unwrap(await _call(server, "memory_scope_overview"))
-    assert overview["total"] == 1
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
@@ -426,8 +422,6 @@ async def test_synced_memory_from_another_machine_surfaces_locally(
 
     hits = _unwrap(await _call(server, "memory_search", query="bcrypt"))
     assert [h["id"] for h in hits] == [written["id"]]
-    overview = _unwrap(await _call(server, "memory_scope_overview"))
-    assert overview["total"] == 1
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
@@ -467,54 +461,3 @@ async def test_second_live_checkout_of_one_repo_stays_isolated(
     assert first.exists()
 
     assert _unwrap(await _call(server, "memory_search", query="bcrypt")) == []
-
-
-@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
-async def test_tombstone_count_survives_a_checkout_move(
-    server_factory, tmp_path: Path
-) -> None:
-    """`recently_removed_in_worktree` survives the same directory move
-    the active-memory surfaces do.
-
-    The retrieval-path twin of
-    `test_project_memories_survive_a_checkout_move`. The tombstone count
-    is worktree-keyed like every other auto-scoped surface, but it was
-    the one that compared roots with a raw `!=` instead of routing
-    through the shared rule, so it never got the degrade: after an
-    ordinary `mv` of the checkout the searches kept working and this
-    count silently dropped to 0 — reporting "nothing was trimmed here"
-    about a workspace that had just trimmed something.
-
-    The negative control lives in `tests/test_server.py`'s
-    `test_scope_overview_recently_removed_filtered_by_worktree`: two
-    checkouts that are both LIVE on disk still do not see each other's
-    removals.
-    """
-    from bettermemory.origin import _primary_root_of, capture
-
-    old = tmp_path / "projects" / "myapp"
-    new = tmp_path / "Documents" / "projects" / "myapp"
-    _init_checkout(old)
-
-    _primary_root_of.cache_clear()
-    server, captured = server_factory(capture(cwd=old))
-    written = await _call(
-        server,
-        "memory_write",
-        content="myapp hashes passwords with bcrypt at cost factor 12",
-        scopes=["projects:myapp"],
-    )
-    await _call(server, "memory_remove", id=written["id"], reason="superseded")
-    before = _unwrap(await _call(server, "memory_scope_overview"))
-    assert before["recently_removed_in_worktree"] == 1
-
-    new.parent.mkdir(parents=True)
-    shutil.move(str(old), str(new))
-    assert not old.exists()
-    _primary_root_of.cache_clear()
-    captured["value"] = capture(cwd=new)
-    assert captured["value"].repo == _REMOTE
-    assert captured["value"].worktree_root == str(new.resolve())
-
-    after = _unwrap(await _call(server, "memory_scope_overview"))
-    assert after["recently_removed_in_worktree"] == 1

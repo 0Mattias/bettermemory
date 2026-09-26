@@ -93,13 +93,13 @@ git config core.hooksPath .githooks
 
 ## Versioning and the compatibility contract
 
-The project uses semver with the conventions below. The headline: **within a major line, the surface defined in [`docs/api.md`](docs/api.md) and the on-disk format defined by `models.SCHEMA_VERSION` are stable.** Strangers who pin `bettermemory==8.x` get a contract they can rely on. The current major is 8; the same shape held for 1.x through 7.x and will hold for any future major line.
+The project uses semver with the conventions below. The headline: **within a major line, the surface defined in [`docs/api.md`](docs/api.md) and the on-disk format defined by `models.SCHEMA_VERSION` are stable.** Strangers who pin `bettermemory==9.x` get a contract they can rely on. The current major is 9; the same shape held for 1.x through 8.x and will hold for any future major line.
 
-The 2.0 bump itself was a scope-only bump — nine 1.6-plan features shipped in one release. SCHEMA_VERSION stayed at 1, every new wire field was opt-in or absence-as-signal, and no 1.x surface was renamed or removed. The 3.0 bump was the same shape: a soft API break trimming defensive `bettermemory.server` re-exports after verifying zero in-tree consumers, packaged with the post-2.7.3 audit-loop. 4.0 and 5.0 were the first hard breaks: 4.0 removed the embedding lane whole (the `semantic` module, both embedding extras, the `[behavior] semantic_provider` and `semantic_dedup` knobs, and the `"semantic"` search mode), and 5.0 removed the web UI whole (the `web` module, the `bettermemory ui` subcommand, the `[ui]` extra). 6.0 was the same kind of break: it re-removed the embedding lane whole after its 5.5.0 opt-in reentry was revoked by owner doctrine (`CHANGELOG.md`, 6.0.0). 7.0 was the 3.0 shape again, one narrow surface change as the only break: `episode_handoff` rows carry `body` only when `include_bodies=True` is passed, because the reflexive handoff had delivered whole bodies with no provenance check (`CHANGELOG.md`, 7.0.0). SCHEMA_VERSION stayed at 1 across all six transitions; treat the rules below as continuous across every boundary — they describe the project's stance on stability, not a one-off cleanup.
+The 2.0 bump itself was a scope-only bump — nine 1.6-plan features shipped in one release. SCHEMA_VERSION stayed at 1, every new wire field was opt-in or absence-as-signal, and no 1.x surface was renamed or removed. The 3.0 bump was the same shape: a soft API break trimming defensive `bettermemory.server` re-exports after verifying zero in-tree consumers, packaged with the post-2.7.3 audit-loop. 4.0 and 5.0 were the first hard breaks: 4.0 removed the embedding lane whole (the `semantic` module, both embedding extras, the `[behavior] semantic_provider` and `semantic_dedup` knobs, and the `"semantic"` search mode), and 5.0 removed the web UI whole (the `web` module, the `bettermemory ui` subcommand, the `[ui]` extra). 6.0 was the same kind of break: it re-removed the embedding lane whole after its 5.5.0 opt-in reentry was revoked by owner doctrine (`CHANGELOG.md`, 6.0.0). 7.0 was the 3.0 shape again, one narrow surface change as the only break: `episode_handoff` rows carry `body` only when `include_bodies=True` is passed, because the reflexive handoff had delivered whole bodies with no provenance check (`CHANGELOG.md`, 7.0.0). 8.0 made a `user-inference` write commit on the first call and removed one deprecated flag. 9.0 was the first break to reach the store: one SQLite file with a signed log replaced the markdown directory, the twenty-seven tools became nine, and ten off-by-default flags left with their code (`CHANGELOG.md`, 9.0.0). `models.SCHEMA_VERSION` stayed at 1 across every transition, since the frozen v8 readers still read those files; treat the rules below as continuous across every boundary. They describe the project's stance on stability, not a one-off cleanup.
 
-### Surface (the 27 MCP tools)
+### Surface (the nine MCP tools)
 
-Stable within the current major (8.x):
+Stable within the current major (9.x):
 
 - Tool names. `memory_search` will not be renamed to `mem_search`.
 - Required parameter names and positions. `memory_remove(id, reason)` will not flip to `(reason, id)`.
@@ -124,11 +124,11 @@ Forbidden within a major:
 - Changing the default value of an optional parameter.
 - Changing the meaning of an enum value (for example, redefining what `"applied"` means in `memory_record_use`).
 
-### On-disk format (`models.SCHEMA_VERSION`)
+### On-disk format (`store.SCHEMA_VERSION`)
 
-`SCHEMA_VERSION = 1` is the constant in `src/bettermemory/models.py`. Every memory and tombstone written by 1.x through 7.x carries `schema_version: 1` in its frontmatter. Readers default to `1` when the field is missing (the implicit version of memories written before the constant existed). 2.0 added several optional frontmatter fields (the typed `links` list, the parallel `verified_paths` / `verified_commits` / `verified_versions` attestation lists, `origin.worktree_root`) but every one is purely additive: legacy memories load unchanged, and the constant stays at 1. 3.0, 4.0, 5.0, 6.0 and 7.0 made no on-disk-format changes — every break was a surface change, which is why a six-major span still reads one schema version. 7.4.0 added `verified_head`, the commit a stamp was checked at, on the same additive rule.
+`SCHEMA_VERSION = 1` is the constant in `src/bettermemory/store.py`, recorded in the store's `meta` table beside the tokenizer and engine fingerprints. The 9.0 store is one SQLite file whose tables are the fold of a hash-chained log; `models.SCHEMA_VERSION`, the frontmatter version every 1.x through 8.x memory file carried, stays at 1 for the frozen v8 readers and the mirror, which still read and write those files.
 
-Within a major, all changes to the on-disk format are **additive only**: new optional frontmatter fields, never renamed, never removed, never re-defined. A reader from a later minor will load files written by an earlier minor without any migration step. A reader from an earlier minor will load files written by a later minor as long as the later minor only added fields the earlier reader does not recognize (and tolerates), which is the rule above.
+Within a major, all changes to the store schema are **additive only**: new nullable columns, new tables, new log kinds, never a renamed or removed column, never a re-defined one. A reader from a later minor opens a store written by an earlier minor without a migration step, and a reader from an earlier minor opens one written by a later minor as long as the later minor only added what the earlier reader ignores. A log kind added in a later minor is folded by an earlier reader as a telemetry row, which is the rule that keeps the chain verifiable across minors.
 
 ### Deprecation cycle
 
@@ -153,17 +153,17 @@ Patches and bug fixes do not count as "uses" of the deprecated surface for the w
 A major bump is reserved for genuinely breaking changes:
 
 - Any of the "forbidden within a major" list above.
-- A non-additive on-disk format change (renamed or removed frontmatter fields, changed serialization for an existing field, change in the `.tombstones/` layout, a `SCHEMA_VERSION` bump).
+- A non-additive store schema change (a renamed or removed column or table, a changed fold for an existing log kind, a `SCHEMA_VERSION` bump).
 - A change in the relationship between tools (for example, requiring `memory_write` to be paired with a `memory_record_use` call that is currently optional).
 
 The 2.0 and 3.0 releases are the examples of what does *not* require a hard-break major bump under this policy: 2.0 shipped nine additive features with no renames, and 3.0 trimmed defensive `bettermemory.server` re-exports after verifying zero in-tree consumers — a soft API break narrow enough to be the *only* break in the release. Each bump was a scope signal to consumers ("the surface meaningfully grew" / "an import path you may have relied on is gone") rather than a wholesale compatibility break.
 
-4.0 and 5.0 are the examples of what *does*. Both removed whole surfaces the "forbidden within a major" list protects — 4.0 the embedding lane (a search-mode enum value, two config knobs, two packaging extras), 5.0 the web UI (a CLI subcommand, a module, an extra) — and both were owner scope decisions rather than compatibility accidents. SCHEMA_VERSION stayed at 1 across all four bumps, which is the point of separating the surface contract from the on-disk one: a hard surface break need not touch the user's data.
+4.0, 5.0 and 9.0 are the examples of what *does*. The first two removed whole surfaces the "forbidden within a major" list protects (4.0 the embedding lane, 5.0 the web UI), and 9.0 replaced the store: one SQLite file with a signed log in place of a markdown directory with a derived index, twenty-seven tools reduced to nine, and ten off-by-default flags removed with their code. The 8.x directory is imported once by `bettermemory migrate v8` and never written again.
 
 Every major bump ships with:
 
 - A `Migration` section in the release's `CHANGELOG.md` entry (or its own `docs/migrations/<from>-to-<to>.md` if substantial) walking the user through the upgrade; 4.0.0, 5.0.0, 6.0.0 and 7.0.0 are the examples.
-- A `bettermemory migrate <subcommand>` for any breaking on-disk-format change. The migration is idempotent (re-running is safe) and atomic per file (`.tmp` plus rename). See `bettermemory migrate origin` (a 0.x to 0.x migration that shipped before this policy was written) for the existing pattern.
+- A `bettermemory migrate <subcommand>` for any breaking store change. The migration is idempotent (re-running imports only what is new) and atomic (one transaction; a failure part way leaves the store as it was). `bettermemory migrate v8` is the pattern.
 
 ## High-leverage contributions
 
@@ -180,11 +180,11 @@ Every major bump ships with:
 
 These are not rules so much as the trade-offs the project makes consistently. Use them to judge whether a change is in or out of scope:
 
-- **Memory is opt-in retrieval, guarded where it is not.** Indiscriminate auto-injection is the failure mode this project exists to fix. Where the product does deliver context unasked — the score-gated prompt-recall pointer, the session-start standing tier — the license is a measured high bar (top-rank high relevance plus shields, firing on a small fraction of turns) with an off switch, not an open door. Default-to-not-retrieve over default-to-include.
+- **Memory is opt-in retrieval, guarded where it is not.** Indiscriminate auto-injection is the failure mode this project exists to fix. Where the product does deliver context unasked (the score-gated prompt-recall pointer) the license is a measured high bar (top-rank high relevance plus shields, firing on a small fraction of turns) with an off switch, not an open door. Default-to-not-retrieve over default-to-include.
 - **False negatives beat false positives.** Missed context the user supplies in one followup turn is much cheaper than irrelevant context cascading through a conversation.
-- **The on-disk format is the user's data.** It is plain markdown with YAML frontmatter so the user can `grep`, `git log`, and hand-edit it. Code that obfuscates the format (binary encoding, opaque hashing of the bodies, anything that requires the running server to interpret) is out.
+- **The store is the user's data, and it keeps receipts.** One SQLite file the user can open with `sqlite3`, export as JSON or as the 8.x markdown directory, and audit with `bettermemory log verify`. Code that obfuscates the records (encoding bodies, hashing them, anything that requires the running server to read them back) is out; the log's MACs sign the rows, they do not hide them.
 - **Disclosure beats caveats.** The "Limitations" section of [`docs/internals.md`](docs/internals.md) lists what the project does not do. New limitations land there explicitly when discovered, rather than being papered over in a footnote elsewhere.
-- **Static surfaces beat configuration.** Each new config-toml-knob is friction and documentation debt; default behavior should be sensible without ever editing the file. When a knob really is needed (`rescue_expansion`, `verification_stale_days`), it lives in `[behavior]` with prose explaining when to flip it.
+- **Static surfaces beat configuration.** Each new config-toml-knob is friction and documentation debt; default behavior should be sensible without ever editing the file. When a knob really is needed (`verification_stale_days`, `conversational`), it lives in `[behavior]` with prose explaining when to flip it. 9.0 removed ten off-by-default flags with their code because none had earned its keep on a measurement.
 
 ## Releasing
 

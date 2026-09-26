@@ -37,33 +37,15 @@ import logging
 from mcp.server.mcpserver import MCPServer
 
 from ._handlers import (
-    DESC_EPISODE_HANDOFF,
-    DESC_EPISODE_PATTERNS,
-    DESC_EPISODE_PROMOTE,
-    DESC_EPISODE_SEARCH,
-    DESC_EPISODE_WRITE,
-    DESC_MEMORY_ACKNOWLEDGE_MISS,
-    DESC_MEMORY_AUDIT_TURN,
-    DESC_MEMORY_CONFLICTS,
-    DESC_MEMORY_CURATE,
-    DESC_MEMORY_HEALTH,
-    DESC_MEMORY_LIST,
-    DESC_MEMORY_LIST_TOMBSTONES,
-    DESC_MEMORY_PROPOSALS,
+    DESC_EPISODE,
+    DESC_MEMORY_ADMIN,
     DESC_MEMORY_RECORD_USE,
     DESC_MEMORY_REMOVE,
-    DESC_MEMORY_RENAME_SCOPE,
-    DESC_MEMORY_RESTORE,
-    DESC_MEMORY_SCOPE_DISABLE,
-    DESC_MEMORY_SCOPE_ENABLE,
-    DESC_MEMORY_SCOPE_OVERVIEW,
     DESC_MEMORY_SEARCH,
     DESC_MEMORY_SHOW,
     DESC_MEMORY_UPDATE,
     DESC_MEMORY_VERIFY,
     DESC_MEMORY_WRITE,
-    DESC_MEMORY_WRITE_CANCEL,
-    DESC_MEMORY_WRITE_CONFIRM,
     ToolHandlers,
 )
 from . import identity
@@ -75,28 +57,42 @@ from .session import (
     SessionState,
     get_default_registry,
 )
-from .store import MemoryStore, Store, StoreSource
+from .store import STORE_FILENAME, Store, StoreSource
 
 
 log = logging.getLogger("bettermemory")
 
 
+# The server-level instructions block. Every MCP client surfaces it at
+# the system-prompt level; Claude Code truncates it past about 1.8 KB,
+# so it carries the contract and nothing else. The nine tool
+# descriptions say what each tool does; the addendum in `prompts.py`
+# carries the long-form policy for clients that paste it in.
+INSTRUCTIONS = (
+    "Persistent memory between sessions lives in this server's tools; "
+    "keep it there, not in ad-hoc files beside them, since later sessions "
+    "see only what these tools hold.\n\n"
+    "Retrieval is opt-in: nothing stored is in your context until you "
+    "call memory_search. Search when the user references shared context "
+    "you lack or a request is ambiguous in a way stored preferences could "
+    "resolve; skip generic and self-contained questions.\n\n"
+    "Writing is proactive: call memory_write whenever something durable "
+    "enters the conversation (a preference, a decision, a tool or config "
+    "fact, finished work with its why); do not wait to be asked. A "
+    "refusal is cheap: rephrase, or pass the acknowledge flag it names.\n\n"
+    "Verify before relying: when a hit's staleness_verdict is not fresh, "
+    "check one claim, then memory_verify if it holds or memory_update if "
+    "it drifted.\n\n"
+    "When a stored memory shapes your reply, say so briefly. Retrievals "
+    "settle as applied on their own. At a loop iteration's entry, call "
+    "episode(action='handoff') first."
+)
+
+
 def build_server(
     *,
     config: Config | None = None,
-    # `MemoryStore`, the protocol, because the seam it names is now
-    # exercised rather than merely declared. What used to block this was
-    # `_handlers.py` reaching `store._load_path` on the hot search path —
-    # a private no protocol can expose. That reach is `Store.load_many`
-    # now, so the annotation is a real conformance check: this parameter
-    # is the assignment mypy checks the protocol against, and a member
-    # added to `MemoryStore` that `Store` lacks fails here rather than
-    # only in the one-directional name-set test.
-    #
-    # The narrower thing a type cannot see: `MemoryStore` still carries
-    # `root`, so a hosted backend must still present a local directory.
-    # That is stated on the protocol itself and is unchanged by D2.
-    store: MemoryStore | None = None,
+    store: Store | None = None,
     state: SessionState | SessionSource | None = None,
     recorder: Recorder | None = None,
     # The per-request store seam. `None` means "every request is served
@@ -137,10 +133,7 @@ def build_server(
     tenancy policy that would use it is a later unit.
     """
     config = config or load_config()
-    # `Store.open`: this is a process entry point, so it provisions and
-    # runs the startup checks (flagged-index auto-heal, S4 divergence).
-    # A diagnostic constructing a Store must NOT — see `Store.open`.
-    store = store or Store.open(config.resolved_directory())
+    store = store or Store.open_or_create(config.resolved_directory() / STORE_FILENAME)
     sessions: SessionSource = state if state is not None else get_default_registry()
     if recorder is None:
         # The recorder needs a stable session_id at construction time;
@@ -158,11 +151,9 @@ def build_server(
         from . import _handlers as _h
 
         recorder = Recorder(
-            root=config.resolved_directory(),
+            store=store,
             session_id=recorder_session_id,
             enabled=config.telemetry.enabled,
-            max_bytes=config.telemetry.max_bytes,
-            log_queries_verbatim=config.telemetry.log_queries_verbatim,
             worktree_root=_h.capture_origin().worktree_root,
         )
 
@@ -201,41 +192,7 @@ def build_server(
         # for clients that want it pasted into a project CLAUDE.md.
         # The instructions-length regression test in tests/test_server.py
         # guards the budget.
-        instructions=(
-            "Persistent memory between sessions lives in this server's "
-            "MCP tools (listed below). Don't fragment memory across "
-            "ad-hoc files alongside; future sessions only see what "
-            "these tools surface.\n\n"
-            "Memory is OPT-IN retrieval. Stored memories are NOT in "
-            "your context unless you call memory_search. Default to "
-            "NOT retrieving — false positives hurt more than false "
-            "negatives. Call only when the user references shared "
-            'context ("my project") or a request is ambiguous in a '
-            "way stored preferences could resolve. Skip generic "
-            "factual or self-contained questions.\n\n"
-            "Writing is the OPPOSITE axis: PROACTIVE. memory_write is "
-            "a routine reflex — reach for it whenever something "
-            "durable enters the conversation: a stated preference (→ "
-            "category='user-inference'), a project "
-            "decision (→ category='fact'), a tool/infra/config fact, "
-            "a finished unit of work with a why git won't capture. "
-            'Don\'t wait for "remember that" — your job is to '
-            "capture. Rejects are cheap — re-issue with the fix or "
-            "pass `acknowledge_*`.\n\n"
-            "Schema-deferred harness? Load the core set in ONE "
-            "ToolSearch call: memory_scope_overview, memory_search, "
-            "memory_write, memory_record_use.\n\n"
-            "Session-start: memory_scope_overview returns counts plus "
-            "curation_pending. If total=0, skip memory_search unless "
-            "asked. memory_search auto-scopes to caller's repo + "
-            "worktree.\n\n"
-            "When a retrieved memory shapes your reply, say so briefly "
-            '("Using your stored preference for…"). memory_record_use '
-            "settles as `applied` at turn end; call to override.\n\n"
-            "Verify before relying. When staleness_verdict isn't fresh, "
-            "spot-check; memory_verify if it holds, memory_update if "
-            "drifted."
-        ),
+        instructions=INSTRUCTIONS,
     )
 
     # Wire-path identity (`identity.middleware`): before a `tools/call`
@@ -260,7 +217,7 @@ def _register_tools(
     mcp: MCPServer,
     *,
     config: Config,
-    store: MemoryStore,
+    store: Store,
     sessions: SessionSource,
     recorder: Recorder,
     store_source: StoreSource | None = None,
@@ -287,158 +244,39 @@ def _register_tools(
         store_source=store_source,
     )
 
-    # Order matches `server.py`'s module docstring's tool list so a reader
-    # can scan top-to-bottom. The DEFAULT surface is lean: the curation /
-    # power-user tools at the bottom are gated behind `[behavior]
-    # full_tool_surface` so the typical client doesn't pay their (long)
-    # descriptions in context on every turn. See BehaviorConfig.
-    # full_tool_surface for the rationale and the dogfood measurement.
     mcp.tool(name="memory_search", description=DESC_MEMORY_SEARCH)(
         handlers.memory_search
     )
     mcp.tool(name="memory_show", description=DESC_MEMORY_SHOW)(handlers.memory_show)
-    mcp.tool(name="memory_list", description=DESC_MEMORY_LIST)(handlers.memory_list)
-    mcp.tool(name="memory_scope_overview", description=DESC_MEMORY_SCOPE_OVERVIEW)(
-        handlers.memory_scope_overview
-    )
-
     mcp.tool(name="memory_write", description=DESC_MEMORY_WRITE)(handlers.memory_write)
-    mcp.tool(name="memory_write_confirm", description=DESC_MEMORY_WRITE_CONFIRM)(
-        handlers.memory_write_confirm
-    )
-    mcp.tool(name="memory_write_cancel", description=DESC_MEMORY_WRITE_CANCEL)(
-        handlers.memory_write_cancel
-    )
     mcp.tool(name="memory_update", description=DESC_MEMORY_UPDATE)(
         handlers.memory_update
     )
-
     mcp.tool(name="memory_remove", description=DESC_MEMORY_REMOVE)(
         handlers.memory_remove
     )
-
     mcp.tool(name="memory_verify", description=DESC_MEMORY_VERIFY)(
         handlers.memory_verify
     )
-
     mcp.tool(name="memory_record_use", description=DESC_MEMORY_RECORD_USE)(
         handlers.memory_record_use
     )
-    mcp.tool(name="memory_audit_turn", description=DESC_MEMORY_AUDIT_TURN)(
-        handlers.memory_audit_turn
-    )
-
-    mcp.tool(name="memory_scope_disable", description=DESC_MEMORY_SCOPE_DISABLE)(
-        handlers.memory_scope_disable
-    )
-    mcp.tool(name="memory_scope_enable", description=DESC_MEMORY_SCOPE_ENABLE)(
-        handlers.memory_scope_enable
-    )
-
-    # Episode-tier tools — sibling to memory, journal-shaped writes for
-    # run-state and iteration takeaways the durability gate rejects. Always
-    # registered: /loop, audit-loop and curate-loop drive episode_handoff /
-    # episode_write directly, and the server instructions reference them.
-    #
-    # Gating the low-use pair (episode_search / episode_promote) out of the
-    # lean surface was evaluated 2026-07-30 and is not available, despite
-    # low recorded call volume: the shipped plugin skill instructs
-    # episode_promote, docs/system_prompt.md (always loaded) names it, the
-    # audit-loop / curate-loop commands drive both, and
-    # episode_search(swarm_id=…) is the multi-agent fan-in primitive with
-    # no substitute. Call volume measures how often the owner ran a swarm,
-    # not whether anything depends on the tool. The per-turn cost was
-    # addressed by trimming DESC_EPISODE_SEARCH instead — description
-    # prose is not part of the compatibility contract.
-    mcp.tool(name="episode_write", description=DESC_EPISODE_WRITE)(
-        handlers.episode_write
-    )
-    mcp.tool(name="episode_handoff", description=DESC_EPISODE_HANDOFF)(
-        handlers.episode_handoff
-    )
-    mcp.tool(name="episode_search", description=DESC_EPISODE_SEARCH)(
-        handlers.episode_search
-    )
-    mcp.tool(name="episode_promote", description=DESC_EPISODE_PROMOTE)(
-        handlers.episode_promote
-    )
-
-    # `memory_proposals` is the UI for the opt-in [proposals] write-reflex
-    # queue, so it surfaces whenever that feature is on — even under the lean
-    # surface — and otherwise only under the full surface.
-    if config.behavior.full_tool_surface or config.proposals.auto_propose:
-        mcp.tool(name="memory_proposals", description=DESC_MEMORY_PROPOSALS)(
-            handlers.memory_proposals
-        )
-
-    # Curation / power-user tools — gated out of the lean default surface.
-    # Membership rule, stated so additions don't have to re-derive it: the
-    # tool serves a deliberate curation pass rather than a conversational
-    # turn, so the typical client shouldn't pay its (long) description in
-    # context every turn. BehaviorConfig.full_tool_surface records the
-    # dogfood call-volume measurement behind the original cut and names the
-    # tools that census covered; anything gated since — memory_curate, and
-    # the 3.28.0 pair below — qualifies under the rule, not under that
-    # measurement, which predates them.
-    #
-    # A `bettermemory` CLI counterpart is the usual escape hatch for a
-    # client left on the lean surface, but it is neither uniform across
-    # this block nor a condition of membership: memory_acknowledge_miss
-    # exposes a bulk cutoff there rather than a per-event equivalent, and
-    # the 3.28.0 pair has no CLI counterpart at all. docs/api.md carries
-    # the per-tool mapping.
-    #
-    # The curate-loop skill drives memory_health / memory_acknowledge_miss
-    # / memory_restore as MCP tools, so it requires
-    # `full_tool_surface = true`.
-    if config.behavior.full_tool_surface:
-        mcp.tool(name="memory_restore", description=DESC_MEMORY_RESTORE)(
-            handlers.memory_restore
-        )
-        mcp.tool(
-            name="memory_list_tombstones", description=DESC_MEMORY_LIST_TOMBSTONES
-        )(handlers.memory_list_tombstones)
-        mcp.tool(name="memory_health", description=DESC_MEMORY_HEALTH)(
-            handlers.memory_health
-        )
-        mcp.tool(name="memory_curate", description=DESC_MEMORY_CURATE)(
-            handlers.memory_curate
-        )
-        mcp.tool(
-            name="memory_acknowledge_miss", description=DESC_MEMORY_ACKNOWLEDGE_MISS
-        )(handlers.memory_acknowledge_miss)
-        mcp.tool(name="memory_rename_scope", description=DESC_MEMORY_RENAME_SCOPE)(
-            handlers.memory_rename_scope
-        )
-        # Corpus-inference pair (3.28.0): the server detects
-        # memory-vs-memory contradiction candidates and cross-session
-        # episode patterns mechanically; these tools are where the model
-        # arbitrates. Curation-tier by nature — same gate as
-        # memory_curate, and the curate-loop skill is their main driver.
-        # Both are MCP-only — arbitration and pattern promotion need the
-        # model in the loop, so neither has a `bettermemory` subcommand.
-        # The conflict *scan* that fills the queue is the exception: it
-        # runs on every applying memory_curate / auto-consolidate pass,
-        # so `bettermemory consolidate --apply` keeps the queue current
-        # even though only memory_conflicts can rule on a pair.
-        mcp.tool(name="memory_conflicts", description=DESC_MEMORY_CONFLICTS)(
-            handlers.memory_conflicts
-        )
-        mcp.tool(name="episode_patterns", description=DESC_EPISODE_PATTERNS)(
-            handlers.episode_patterns
-        )
+    mcp.tool(name="episode", description=DESC_EPISODE)(handlers.episode)
+    mcp.tool(name="memory_admin", description=DESC_MEMORY_ADMIN)(handlers.memory_admin)
 
     _strip_schema_titles(mcp)
 
 
 def _strip_titles(node: object) -> None:
-    """Delete pydantic's auto-generated `title` annotations, in place.
+    """Delete pydantic's auto-generated `title` annotations and the
+    information-free `default: null` entries, in place.
 
     `title` in JSON Schema is a display annotation: nothing validates
     against it, and no client behaviour depends on it. Pydantic emits one
     per property (`content` -> `"title": "Content"`) plus one per schema
     (`"title": "memory_writeArguments"`), and every byte of that ships to
-    every client on every turn.
+    every client on every turn. `default: null` is the same kind of byte
+    on every optional parameter.
 
     Structure-aware on purpose. Values under `properties` / `$defs` /
     `definitions` are keyed by CALLER-CHOSEN names, so a parameter
@@ -451,6 +289,12 @@ def _strip_titles(node: object) -> None:
     """
     if isinstance(node, dict):
         node.pop("title", None)
+        # `default: null` on an optional parameter says nothing the
+        # schema does not already say (absent from `required`, `null`
+        # admitted), so it goes the same way; a default that carries a
+        # value, such as `false` or `30`, stays.
+        if "default" in node and node["default"] is None:
+            del node["default"]
         for key, value in node.items():
             if key in ("properties", "$defs", "definitions") and isinstance(
                 value, dict

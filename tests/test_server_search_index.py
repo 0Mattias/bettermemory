@@ -1,21 +1,16 @@
-"""Tests for the FTS5 candidate pre-filter on memory_search (T3.1 phase B).
+"""Tests for the FTS5 candidate pre-filter on memory_search.
 
 The integration: when the store size exceeds BETTERMEMORY_INDEX_THRESHOLD
-(default 500), memory_search queries the index for up to 50 candidate
-ids and only loads those memories instead of walking the full active
-set. Falls back to load_all when:
+(default 500), memory_search asks the store's FTS table for up to 50
+candidate ids and only loads those memories instead of walking the full
+active set. Falls back to load_all when:
 
 - the query is empty
-- the index file doesn't exist
-- the index is corrupt
-- the index reads raise mid-search (data/FTS page corruption the
-  status() pre-gate can't see)
-- the index is flagged `needs_rebuild` by a schema-version migration
-- the indexed_count is below the threshold
-- the index returns zero candidates (stale index suspected)
+- the store's row count is below the threshold
+- the FTS query returns zero candidates
 
 The fallback contract is load-bearing: result quality on small stores
-must match the pre-phase-B behaviour exactly.
+must match the pre-prefilter behaviour exactly.
 """
 
 from __future__ import annotations
@@ -64,9 +59,9 @@ async def test_search_uses_load_all_on_small_store(
     server: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Default threshold (500) is far above typical test corpus size,
-    so the index pre-filter shouldn't activate. Pin the byte-stable
+    so the FTS pre-filter shouldn't activate. Pin the byte-stable
     behaviour: search results match what load_all + the rankers
-    would have produced pre-T3.1."""
+    would have produced before the prefilter existed."""
     monkeypatch.delenv("BETTERMEMORY_INDEX_THRESHOLD", raising=False)
     await _call(
         server, "memory_write", content="python list comprehension", scopes=["tools"]
@@ -82,8 +77,8 @@ async def test_search_uses_index_when_threshold_crossed(
     server: Any, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Lowering the threshold via env var puts the search through the
-    index path. Result must still surface the matching memory — the
-    index is a candidate filter, not a different ranker."""
+    FTS candidate path. Result must still surface the matching memory:
+    the prefilter is a candidate filter, not a different ranker."""
     monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
     await _call(
         server, "memory_write", content="python list comprehension", scopes=["tools"]
@@ -100,369 +95,17 @@ async def test_search_uses_index_when_threshold_crossed(
 async def test_search_falls_back_when_index_empty_match(
     server: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A query that returns zero index candidates triggers the
-    load_all fallback so we don't silently miss recent writes that
-    aren't reflected in a stale index. Test: query for a token that
-    doesn't appear in any body — the index returns []; load_all
-    returns [] too; the search returns []. The fallback's
-    invocation isn't directly observable, but the result equivalence
-    is."""
+    """A query that returns zero FTS candidates triggers the load_all
+    fallback: a query the FTS table cannot answer is ranked over
+    everything rather than over nothing. Test: query for a token that
+    doesn't appear in any body; the FTS query returns [], load_all
+    returns [] too, the search returns []. The fallback's invocation
+    isn't directly observable, but the result equivalence is."""
     monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
     await _call(server, "memory_write", content="python notes", scopes=["tools"])
 
     hits = _unwrap(await _call(server, "memory_search", query="unrelated-token-xyz"))
     assert hits == []
-
-
-async def test_search_falls_back_when_index_missing(
-    server: Any, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Deleting the index file mid-process should not break searches.
-    The handler detects exists=False via index.status and routes to
-    load_all. The store's incremental hooks will recreate the index
-    on the next write — but for read-only sessions the fallback
-    keeps things working."""
-    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
-    await _call(
-        server, "memory_write", content="python list comprehension", scopes=["tools"]
-    )
-
-    # Now delete the index file. The next search must still find the
-    # memory via the load_all fallback.
-    from bettermemory import index as _index
-
-    _index.index_path(memory_dir).unlink()
-
-    hits = _unwrap(await _call(server, "memory_search", query="python"))
-    assert hits
-    assert any("python" in h["match_terms"] for h in hits)
-
-
-async def test_search_falls_back_when_index_corrupt(
-    server: Any, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Overwriting the index with garbage simulates a corrupt SQLite
-    file (mid-write crash, partial restore). The status check
-    surfaces corrupt=True; the handler falls back to load_all."""
-    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
-    await _call(
-        server, "memory_write", content="python list comprehension", scopes=["tools"]
-    )
-
-    from bettermemory import index as _index
-
-    _index.index_path(memory_dir).write_bytes(b"not a sqlite database")
-
-    hits = _unwrap(await _call(server, "memory_search", query="python"))
-    assert hits
-
-
-async def test_search_falls_back_when_index_data_pages_corrupt(
-    server: Any,
-    memory_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """PAGE-level corruption — the header and meta pages are intact but
-    a data b-tree page is garbage (torn WAL recovery, disk fault).
-    Unlike the whole-file garbage above, `index.status()` reads only
-    the meta/sqlite_master pages, so the pre-gate in
-    `_handlers.load_search_candidates` passes and the `sqlite3.DatabaseError`
-    first surfaces from `_index.query()` mid-search. Pre-fix it escaped
-    to the MCP tool boundary and EVERY memory_search failed until
-    reindex; the guard must instead warn once (with the reindex hint)
-    and degrade to the load_all scan.
-
-    The zap targets the `memories` table's root page, looked up from
-    `sqlite_master` — the meta table lives on its own page, so the
-    status() gate keeps reporting a healthy index (asserted below: the
-    premise, pinned)."""
-    import logging
-    import sqlite3
-
-    from bettermemory import index as _index
-
-    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
-    await _call(
-        server, "memory_write", content="python list comprehension", scopes=["tools"]
-    )
-    await _call(server, "memory_write", content="rust borrow checker", scopes=["tools"])
-
-    db_path = _index.index_path(memory_dir)
-    conn = sqlite3.connect(str(db_path))
-    try:
-        # Fold the WAL into the main file first so the page zap below
-        # can't be shadowed by intact WAL frames on the next read.
-        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        page_size = conn.execute("PRAGMA page_size").fetchone()[0]
-        rootpage = conn.execute(
-            "SELECT rootpage FROM sqlite_master WHERE name = 'memories'"
-        ).fetchone()[0]
-    finally:
-        conn.close()
-    with open(db_path, "r+b") as fh:
-        fh.seek((rootpage - 1) * page_size)
-        fh.write(b"\xde\xad" * (page_size // 2))
-
-    # The premise, pinned: the status() pre-gate does NOT see this
-    # corruption — exists, no corrupt flag, no rebuild flag, count
-    # above the (lowered) threshold. If a future SQLite starts
-    # detecting it here, this test stops exercising the guard and
-    # must zap a page status() can't reach.
-    status = _index.status(memory_dir)
-    assert status.get("exists") is True
-    assert not status.get("corrupt")
-    assert not status.get("needs_rebuild")
-    assert int(status.get("indexed_count", 0)) >= 1
-
-    with caplog.at_level(logging.WARNING, logger="bettermemory._handlers"):
-        hits = _unwrap(await _call(server, "memory_search", query="python"))
-    assert hits, "memory_search must degrade to the load_all scan, not crash"
-    assert any("python" in h["match_terms"] for h in hits)
-    warnings = [
-        r
-        for r in caplog.records
-        if "index candidate pre-filter failed" in r.getMessage()
-    ]
-    assert len(warnings) == 1, "exactly one warning per degraded search"
-    assert "bettermemory reindex" in warnings[0].getMessage()
-
-
-async def test_search_bypasses_index_flagged_by_schema_migration(
-    server: Any, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The schema-migration recall hole: a SCHEMA_VERSION bump drops the
-    index tables empty, and the incremental hooks repopulate only the
-    memories that get touched afterwards — so `indexed_count` crosses
-    the threshold while every untouched legacy memory is missing from
-    the index. Pre-fix the prefilter re-engaged on the count alone and
-    the legacy memory silently vanished from results (the zero-candidate
-    fallback never fired: the query DOES match an indexed row). The
-    `needs_rebuild` flag must route the search to load_all until a real
-    rebuild restores coverage.
-
-    Deliberately avoids constructing a Store after the migration so the
-    flag-gate in `_handlers.load_search_candidates` is exercised on its
-    own, not rescued by the construction-time auto-rebuild."""
-    import sqlite3
-
-    from bettermemory import index as _index
-
-    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
-    # Constructed BEFORE the migration — reused for both writes below.
-    store = Store(memory_dir)
-    legacy = store.write(content="alpha legacy landmark", scopes=["tools"])
-
-    # Back-date the on-disk index version; the next index open migrates
-    # (drop empty + flag rebuild-pending).
-    conn = sqlite3.connect(str(_index.index_path(memory_dir)))
-    try:
-        conn.execute("UPDATE meta SET value = '3' WHERE key = 'schema_version'")
-        conn.commit()
-    finally:
-        conn.close()
-
-    # One post-upgrade write repopulates a single row via the
-    # incremental hook: indexed_count (1) meets the lowered threshold,
-    # but the legacy memory has no index row.
-    fresh = store.write(content="alpha fresh note", scopes=["tools"])
-    status = _index.status(memory_dir)
-    assert status["needs_rebuild"] is True
-    assert status["indexed_count"] >= 1
-
-    hits = _unwrap(await _call(server, "memory_search", query="alpha"))
-    ids = {h["id"] for h in hits}
-    assert {legacy.id, fresh.id} <= ids, (
-        "a rebuild-pending index must not serve the prefilter: the "
-        "untouched legacy memory has no index row and would silently "
-        "vanish from results"
-    )
-
-
-async def test_link_annotations_survive_rebuild_pending_partial_index(
-    server: Any, memory_dir: Path
-) -> None:
-    """The rebuild-pending window on the search-hit annotation surface —
-    the third surface with the `needs_rebuild` hole class (after the FTS
-    prefilter and memory_show's reverse_links). A SCHEMA_VERSION
-    migration drops `memory_links` empty and sets `meta.needs_rebuild`;
-    the incremental hooks then refill only touched memories, so the
-    inbound `supersedes` edge of an untouched superseder is missing from
-    the index while its target still ranks in search results. Pre-fix
-    `attach_link_annotations` trusted `links_for_many`'s partial answer
-    and the superseded hit surfaced WITHOUT its `superseded_by` warning
-    — quietly defeating the retrieval-side suppression signal the link
-    system exists to provide. The flag now routes the annotation to a
-    scan of the already-loaded candidates — the same window in which
-    `_handlers.load_search_candidates` routes to `load_all`, so the scan
-    sees the full active corpus.
-
-    Deliberately avoids constructing a Store after the migration so the
-    flag-handling in `attach_link_annotations` is exercised on its own,
-    not rescued by the construction-time auto-rebuild."""
-    import sqlite3
-
-    from bettermemory import index as _index
-
-    a = _unwrap(
-        await _call(
-            server,
-            "memory_write",
-            content="the auth subsystem validates JWT session tokens",
-            scopes=["tools"],
-        )
-    )
-    b = _unwrap(
-        await _call(
-            server,
-            "memory_write",
-            content="replacement auth note with unrelated wording xyzzy",
-            scopes=["tools"],
-        )
-    )
-    await _call(
-        server,
-        "memory_update",
-        id=b["id"],
-        links=[{"type": "supersedes", "target_id": a["id"]}],
-    )
-
-    async def _hit_a() -> dict[str, Any]:
-        hits = _unwrap(
-            await _call(
-                server,
-                "memory_search",
-                query="auth JWT session tokens",
-                auto_scope=False,
-            )
-        )
-        return next(h for h in hits if h["id"] == a["id"])
-
-    # Sanity: the healthy index serves the annotation before the bump,
-    # so the post-migration assertion proves the fallback (not a
-    # coincidentally-annotated hit).
-    assert "superseded_by" in await _hit_a()
-
-    # Back-date the on-disk index version; the next index op migrates
-    # (drop empty + flag rebuild-pending).
-    conn = sqlite3.connect(str(_index.index_path(memory_dir)))
-    try:
-        conn.execute(
-            "UPDATE meta SET value = ? WHERE key = 'schema_version'",
-            (str(_index.SCHEMA_VERSION - 1),),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    # A post-upgrade write triggers the migration AND refills one row
-    # via the incremental hook: `indexed_count` is back above zero, the
-    # flag is still set, and B's `supersedes` row is still missing.
-    await _call(
-        server,
-        "memory_write",
-        content="unrelated post-upgrade note about container networking",
-        scopes=["tools"],
-    )
-    status = _index.status(memory_dir)
-    assert status["needs_rebuild"] is True
-    assert status["indexed_count"] >= 1
-
-    hit_a = await _hit_a()
-    assert "superseded_by" in hit_a, (
-        "superseded_by dropped during the rebuild-pending window "
-        "(needs_rebuild set, memory_links partially refilled) — the "
-        "suppression signal must survive via the candidate-scan fallback"
-    )
-    assert [e["id"] for e in hit_a["superseded_by"]] == [b["id"]]
-
-
-@pytest.mark.parametrize("corruption", ["garbage", "version_newer"])
-async def test_show_falls_back_when_index_corrupt(
-    server: Any,
-    memory_dir: Path,
-    corruption: str,
-) -> None:
-    """memory_show must NOT hard-crash when the FTS5 index is unusable.
-
-    Parallels `test_search_falls_back_when_index_corrupt`: a torn /
-    version-newer `.index.sqlite` is an anticipated operational state
-    (the Store S4 divergence warning calls it out) and the index is a
-    regenerable best-effort cache — the canonical `.md` bodies are
-    intact, so the canonical single-id read path must degrade
-    gracefully instead of raising a protocol error for EVERY id until
-    reindex.
-
-    `_links_payload` calls `index.links_for_with_status`, whose
-    `_ensure_schema` raises `sqlite3.DatabaseError` on a
-    truncated/garbage file and `index.IndexVersionError` when the
-    on-disk `schema_version` is newer than this reader. Both are now
-    caught and routed to the same zero-row reverse-scan fallback that
-    serves the absent/empty-index case — which reads the `.md` files,
-    so the B->A `supersedes` reverse link STILL surfaces on A even
-    though the index can't answer.
-
-    Both corruption modes are covered via parametrize:
-    - `garbage`: overwrite the file with non-SQLite bytes
-      (mid-write crash / partial restore) -> `sqlite3.DatabaseError`.
-    - `version_newer`: stamp a `schema_version` higher than the code
-      supports (a downgrade / forward-incompatible index) ->
-      `index.IndexVersionError`.
-    """
-    import contextlib
-    import sqlite3
-
-    from bettermemory import index as _index
-
-    # B supersedes A; the reverse link lives in B's .md frontmatter.
-    a = _unwrap(
-        await _call(server, "memory_write", content="old fact", scopes=["tools"])
-    )
-    b = _unwrap(
-        await _call(server, "memory_write", content="new fact", scopes=["tools"])
-    )
-    await _call(
-        server,
-        "memory_update",
-        id=b["id"],
-        links=[{"type": "supersedes", "target_id": a["id"]}],
-    )
-
-    # Sanity: the healthy index serves the reverse link before we
-    # corrupt it, so the post-corruption assertion proves the fallback
-    # (not a coincidentally-empty link set).
-    shown_before = _unwrap(await _call(server, "memory_show", id=a["id"]))
-    assert shown_before.get("reverse_links")
-
-    index_file = _index.index_path(memory_dir)
-    if corruption == "garbage":
-        # Truncated / torn SQLite file -> sqlite3.DatabaseError out of
-        # links_for_with_status.
-        index_file.write_bytes(b"not a sqlite database")
-    else:
-        # On-disk schema newer than this reader -> IndexVersionError out
-        # of _ensure_schema. Stamp directly into the existing meta row.
-        # Transaction-with only; closing() releases the handle too
-        # (GC-timed ResourceWarnings, Windows unlink sensitivity).
-        with contextlib.closing(sqlite3.connect(str(index_file))) as conn, conn:
-            conn.execute(
-                "UPDATE meta SET value = ? WHERE key = 'schema_version'",
-                (str(_index.SCHEMA_VERSION + 1),),
-            )
-            conn.commit()
-
-    # memory_show must not raise, and the reverse-scan fallback must
-    # still recover the reverse link from the intact .md files.
-    shown = _unwrap(await _call(server, "memory_show", id=a["id"]))
-    assert shown["id"] == a["id"]
-    assert "reverse_links" in shown, (
-        "reverse_links dropped when the index was corrupt; the "
-        "reverse-scan fallback should have recovered it from the .md files"
-    )
-    assert len(shown["reverse_links"]) == 1
-    rev = shown["reverse_links"][0]
-    assert rev["type"] == "supersedes"
-    assert rev["source_id"] == b["id"]
 
 
 async def test_index_threshold_env_var_resets_per_call(
@@ -482,126 +125,13 @@ async def test_index_threshold_env_var_resets_per_call(
     hits_default = _unwrap(await _call(server, "memory_search", query="python"))
     assert hits_default
 
-    # Lowered threshold: index path.
+    # Lowered threshold: FTS candidate path.
     monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
     hits_indexed = _unwrap(await _call(server, "memory_search", query="python"))
     assert hits_indexed
 
     # Same memory surfaces both ways — quality byte-stable.
     assert hits_default[0]["id"] == hits_indexed[0]["id"]
-
-
-async def test_search_skips_candidate_when_index_filename_drifts(
-    server: Any, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Regression for the H4 review finding. `sync pull` (and any
-    out-of-band rewrite of the memory directory) can leave the
-    index's `filename` column pointing at a file whose body now
-    belongs to a different memory id. Without an id-equality
-    check the handler would score the candidate's FTS hit against
-    the wrong body. The fix verifies `memory.id == candidate_id`
-    after loading; mismatched files are silently dropped."""
-    import contextlib
-    import sqlite3
-
-    from bettermemory import index as _index
-
-    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
-    a = _unwrap(
-        await _call(
-            server,
-            "memory_write",
-            content="python list comprehension",
-            scopes=["tools"],
-        )
-    )
-    b = _unwrap(
-        await _call(
-            server,
-            "memory_write",
-            content="kubernetes networking notes",
-            scopes=["infra"],
-        )
-    )
-
-    # Drift: rewrite the index so a.id's row points at b's filename.
-    # This simulates the post-sync-pull state where files moved
-    # behind the index's back. A search for "python" still finds a
-    # via FTS (the body column is correct), but the filename lookup
-    # delivers b's file. Without the defense, the handler returns
-    # b's body scored against a's query and surfaces it as a hit
-    # for "python".
-    db_path = _index.index_path(memory_dir)
-    # Transaction-with only; closing() releases the handle too.
-    with contextlib.closing(sqlite3.connect(str(db_path))) as conn, conn:
-        b_filename = conn.execute(
-            "SELECT filename FROM memories WHERE id = ?", (b["id"],)
-        ).fetchone()[0]
-        conn.execute(
-            "UPDATE memories SET filename = ? WHERE id = ?",
-            (b_filename, a["id"]),
-        )
-
-    hits = _unwrap(await _call(server, "memory_search", query="python"))
-    # The mis-pointed candidate is silently dropped; the search
-    # falls back through the rest of the pipeline. b is not in
-    # `hits` masquerading as a "python" match.
-    for h in hits:
-        if h["id"] == a["id"]:
-            # If the drift defense fired correctly, a may be missing
-            # entirely from the hit list (because its filename lookup
-            # returned b's body and the id check rejected it) — that's
-            # acceptable, the post-pull reindex restores it.
-            continue
-        assert h["id"] != b["id"] or "python" in (h.get("body") or ""), (
-            f"index drift produced a wrong hit: id={h['id']} surfaced "
-            f"for query 'python' but body is not python-related"
-        )
-
-
-async def test_search_falls_back_to_load_all_when_all_filenames_drift(
-    server: Any, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Regression for the audit finding that pairs with the H4 fix.
-
-    When `_index.query` returns candidate ids but the filename lookup
-    fails for *every* candidate (pre-v2 schema rows, the id-drift
-    defense above rejecting every load, etc.), the previous shape
-    returned an empty list — search silently missed results that
-    would have surfaced under `load_all`. The fallback now catches
-    this: empty `loaded` after a non-empty `candidate_pairs` routes
-    through `load_all` so the FTS hit isn't lost.
-    """
-    import contextlib
-    import sqlite3
-
-    from bettermemory import index as _index
-
-    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
-    await _call(
-        server,
-        "memory_write",
-        content="python list comprehension",
-        scopes=["tools"],
-    )
-
-    # Drift every filename: blank the column for every row. FTS still
-    # matches on body, but `filenames_for_ids` returns empty (the
-    # function skips rows with empty filenames). Pre-fix, the handler
-    # returned [] — the test would see zero hits despite the body
-    # matching.
-    db_path = _index.index_path(memory_dir)
-    # Transaction-with only; closing() releases the handle too.
-    with contextlib.closing(sqlite3.connect(str(db_path))) as conn, conn:
-        conn.execute("UPDATE memories SET filename = ''")
-
-    hits = _unwrap(await _call(server, "memory_search", query="python"))
-    # Fallback to load_all must surface the matching memory.
-    assert hits, (
-        "search returned empty when every index filename was stale; "
-        "the load_all fallback should have caught this"
-    )
-    assert any("python" in h["match_terms"] for h in hits)
 
 
 async def test_expand_top_survives_oserror_reading_body(
@@ -614,10 +144,10 @@ async def test_expand_top_survives_oserror_reading_body(
     were caught, so a flaky read of one body (vanished file, EIO on a
     network mount) raised straight out of memory_search.
 
-    `Store.load_one` is reached only on the expand_top body-load path —
-    the small-store candidate pool comes from `load_all`, which uses
-    `_load_path`, not `load_one` — so patching `load_one` to raise
-    isolates exactly the enrichment step under test.
+    `Store.load_one` is reached only on the expand_top body-load path
+    (the small-store candidate pool comes from `load_all`, not
+    `load_one`), so patching `load_one` to raise isolates exactly the
+    enrichment step under test.
     """
     await _call(
         server,
@@ -673,17 +203,17 @@ async def test_depends_on_targeted_load_survives_oserror(
     patch to raise. `expand_top` is left off so the only `load_one`
     call under test is the depends-on one.
 
-    Forces the FTS index pre-filter (`BETTERMEMORY_INDEX_THRESHOLD=1`).
+    Forces the FTS pre-filter (`BETTERMEMORY_INDEX_THRESHOLD=1`).
     That's REQUIRED, not incidental: on the default (load_all) path the
     candidate set is the whole store, so A is always present in the
     side-map and the targeted-load branch never fires `load_one`. The
-    index pre-filter narrows candidates to query-relevant rows (just B),
-    so A is genuinely absent and the `store.load_one(A)` fallback — the
-    line under test — actually runs.
+    FTS pre-filter narrows candidates to query-relevant rows (just B),
+    so A is genuinely absent and the `store.load_one(A)` fallback, the
+    line under test, actually runs.
     """
-    # Route the search through the index candidate pre-filter so the
+    # Route the search through the FTS candidate pre-filter so the
     # candidate pool excludes A (non-matching body) and the targeted
-    # load fires. The index loads candidates via `_load_path`, not
+    # load fires. The prefilter loads candidates via `load_many`, not
     # `load_one`, so the patched `load_one` below only intercepts the
     # depends-on targeted load.
     monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")

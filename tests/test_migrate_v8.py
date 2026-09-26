@@ -1,34 +1,34 @@
 """`bettermemory migrate v8` and the mirror round trip (unit U3).
 
-A synthetic v8 store is built with the v8 code itself: memories through
-`Store.write`, `Store.update`, `Store.mark_verified` and the store's own
-file writer, tombstones through `Store.tombstone` (one renamed to the
-pre-2.6.4 name), episodes through `EpisodeStore`, events through the
-`Recorder` across a rotated archive, a shard and the legacy file, and
-every sidecar the migration reads, drops or leaves. The tests then pin
-what the migration reports, what it writes, what it never touches, that
-a second run imports nothing, and that the mirror of the migrated store
-is byte-identical to the source.
+The v8 directory the tests read is the golden fixture under
+`tests/fixtures/v8/store`, written once at 8.0.0 by the v8 code itself
+(`tests/fixtures/v8/generate.py`): memories through `Store.write`,
+`Store.update`, `Store.mark_verified` and the store's own file writer,
+tombstones through `Store.tombstone` (one renamed to the pre-2.6.4 name),
+episodes through `EpisodeStore`, events through the `Recorder` across a
+rotated archive, a shard and the legacy file, and every sidecar the
+migration reads, drops or leaves. `manifest.json` beside it names the ids
+and counts the generator recorded. The tests copy the fixture to a temp
+directory, then pin what the migration reports, what it writes, what it
+never touches, that a second run imports nothing, and that the mirror of
+the migrated store is byte-identical to the fixture.
 """
 
 from __future__ import annotations
 
 import json
+import shutil
+import sqlite3
 import sys
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from bettermemory.conflicts import CONFLICTS_FILENAME, ConflictCandidate
-from bettermemory.episodes import EPISODES_DIR, EpisodeStore
 from bettermemory.eval import compute_report, render_report_markdown
-from bettermemory.events import EVENT_LOG_FILENAME, Recorder, iter_all_events
-from bettermemory.identity import Actor
-from bettermemory.ingest import INGEST_WATERMARK_FILENAME
 from bettermemory.log import MIGRATE_V8, STORE_CREATED
 from bettermemory.migrate_v8 import MigrationReport, inventory, migrate
 from bettermemory.mirror import (
@@ -36,31 +36,28 @@ from bettermemory.mirror import (
     tombstone_filename,
     write_mirror,
 )
-from bettermemory.models import (
-    Category,
-    Confidence,
-    Episode,
-    LinkType,
-    Memory,
-    MemoryLink,
-    Source,
-    generate_ulid,
+from bettermemory.models import Episode, Memory
+from bettermemory.store import IMPORTED, STORE_FILENAME, Store
+from bettermemory.v8 import (
+    EPISODES_DIR,
+    EVENT_LOG_FILENAME,
+    INDEX_FILENAME,
+    TOMBSTONE_DIR,
+    iter_active,
+    iter_all_events,
+    iter_session_ids,
+    iter_tombstones,
+    list_by_session,
+    memory_filename,
+    parse_memory_file,
 )
-from bettermemory.origin import Origin
-from bettermemory.patterns import PATTERNS_FILENAME
-from bettermemory.proposals import PROPOSALS_FILENAME
-from bettermemory.quarantine import (
-    REASON_UNPARSEABLE,
-    QuarantineEntry,
-    save_quarantine,
-)
-from bettermemory.session import PENDING_WRITES_FILENAME
-from bettermemory.sqlite_store import IMPORTED, STORE_FILENAME, SqliteStore
-from bettermemory.store import TOMBSTONE_DIR, Store
 
-_NOW = datetime(2026, 9, 26, 1, 2, 3, 456000, tzinfo=timezone.utc)
-_HEAD = "b" * 40
-_QUERY = "kubernetes networking secrets and the cluster"
+FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "v8"
+MANIFEST: dict[str, Any] = json.loads(
+    (FIXTURE_DIR / "manifest.json").read_text(encoding="utf-8")
+)
+_NOW = datetime.fromisoformat(MANIFEST["now"])
+_QUERY: str = MANIFEST["query"]
 
 
 @dataclass
@@ -69,8 +66,9 @@ class V8Fixture:
     full: Memory
     plain: Memory
     verified: Memory
-    tombstoned: Memory
-    legacy: Memory
+    tombstoned_id: str
+    tombstoned_path: Path
+    legacy_id: str
     legacy_tombstone_path: Path
     episodes: list[Episode]
     event_kinds: Counter[str]
@@ -84,221 +82,35 @@ def _snapshot(root: Path) -> dict[str, tuple[bytes, int]]:
     }
 
 
-def _write_lines(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.write_text(
-        "".join(json.dumps(row, separators=(",", ":")) + "\n" for row in rows),
-        encoding="utf-8",
-    )
+def _append_event(root: Path, event: dict[str, Any]) -> None:
+    """One more line in the legacy event file, written by hand the way
+    the v8 recorder serialised a line."""
+    with (root / EVENT_LOG_FILENAME).open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, separators=(",", ":")) + "\n")
 
 
 @pytest.fixture
 def v8(tmp_path: Path) -> V8Fixture:
     root = tmp_path / "v8"
-    worktree = tmp_path / "w"
-    worktree.mkdir()
-    store = Store(root)
-    store.ensure()
-    origin = Origin(
-        cwd=str(worktree),
-        repo="https://example.com/foo.git",
-        branch="main",
-        worktree_root=str(worktree),
-        source="roots",
-    )
-
-    plain = store.write(
-        content="a plain memory about kubernetes networking\n", scopes=["tools"]
-    )
-    plain = store.update(
-        plain.model_copy(
-            update={"body": "a plain memory about kubernetes networking, edited\n"}
-        )
-    )
-    verified = store.write(
-        content="the release process runs from the tag\n",
-        scopes=["projects:foo"],
-        origin=origin,
-        category=Category.FACT,
-    )
-    verified = store.mark_verified(
-        verified.id,
-        verified_paths=["docs/release.md"],
-        verified_commits=["abc1234"],
-        verified_versions=["8.0.0"],
-        verified_head=_HEAD,
-    )
-    full = Memory(
-        id=generate_ulid(),
-        created=_NOW,
-        updated=_NOW + timedelta(minutes=1),
-        scopes=["projects:foo", "tools"],
-        confidence=Confidence.HIGH,
-        source=Source.INFERRED,
-        body="the whole record, every field set\n",
-        origin=origin,
-        actor=Actor(
-            client="claude-code",
-            client_version="2.1.281",
-            model="claude-fable-5-1",
-            sources={"client": "client-info", "model": "header"},
-        ),
-        last_verified_at=_NOW + timedelta(hours=1),
-        category=Category.USER_INFERENCE,
-        verified_paths=["src/a.py", "src/b.py"],
-        verified_commits=["abc1234"],
-        verified_versions=["8.0.0"],
-        verified_absent_paths=["tools/gone.py"],
-        claims=["src/a.py::main", "!tools/gone.py"],
-        verified_head=_HEAD,
-        links=[
-            MemoryLink(type=LinkType.SUPERSEDES, target_id=plain.id, note="newer"),
-            MemoryLink(type=LinkType.EXTENDS, target_id=verified.id),
-        ],
-        corroborations=2,
-        last_corroborated=_NOW + timedelta(days=1),
-    )
-    store._write_path(store._path_for(full), full)
-
-    tombstoned = Memory(
-        id=generate_ulid(),
-        created=_NOW - timedelta(days=3),
-        updated=_NOW - timedelta(days=3),
-        scopes=["projects:foo"],
-        confidence=Confidence.MEDIUM,
-        source=Source.EXPLICIT,
-        body="a record that was later removed\n",
-        links=[MemoryLink(type=LinkType.EXTENDS, target_id=plain.id)],
-        corroborations=1,
-        last_corroborated=_NOW - timedelta(days=2),
-    )
-    store._write_path(store._path_for(tombstoned), tombstoned)
-    store.tombstone(tombstoned.id, "no longer true", session_id="sess_x")
-    legacy = store.write(content="a record removed long ago\n", scopes=["tools"])
-    modern_path = store.tombstone(legacy.id, "legacy removal")
-    legacy_path = modern_path.with_name(
-        modern_path.name.replace(f".{legacy.id}.tombstone.md", ".tombstone.md")
-    )
-    modern_path.rename(legacy_path)
-
-    episodes = EpisodeStore(root)
-    written = [
-        episodes.write(
-            session_id="sess_a",
-            body="tried the thing\n\nit worked",
-            scopes=["projects:foo"],
-            takeaway="it worked",
-            origin=origin,
-            now=_NOW,
-        ),
-        episodes.write(
-            session_id="sess_b",
-            body="the second session",
-            swarm_id="sess_coordinator",
-            now=_NOW + timedelta(seconds=1),
-        ),
-        episodes.write_floor(
-            session_id="sess_b", origin=origin, now=_NOW + timedelta(seconds=2)
-        ),
+    shutil.copytree(FIXTURE_DIR / "store", root, symlinks=True)
+    memories = MANIFEST["memories"]
+    tombstones = MANIFEST["tombstones"]
+    episodes = [
+        episode
+        for session_id in sorted(iter_session_ids(root))
+        for episode in list_by_session(root, session_id)
     ]
-
-    recorder = Recorder(
-        root=root, session_id="sess_a", log_queries_verbatim=True, max_bytes=400
-    )
-    recorder.record("search", query=_QUERY, returned=[plain.id], relevance=["high"])
-    recorder.record("show", id=plain.id)
-    recorder.record("use", ids=[plain.id], outcome="applied")
-    recorder.record("verify", id=verified.id, note="checked")
-    recorder.record("migrate", action="origin", ids=[verified.id], updated=1)
-    recorder.record("write", id=full.id, status="committed")
-    recorder.record(
-        "turn_audited",
-        verdict="ok",
-        probe_query="what about the cluster",
-        session_id="sess_a",
-    )
-    _write_lines(
-        root / EVENT_LOG_FILENAME,
-        [
-            {
-                "ts": "2026-01-01T00:00:00.000000Z",
-                "session": "sess_legacy",
-                "kind": "list",
-                "scopes": None,
-            }
-        ],
-    )
-
-    _write_lines(
-        root / CONFLICTS_FILENAME,
-        [
-            ConflictCandidate(
-                id="pair1",
-                a_id=plain.id,
-                b_id=verified.id,
-                summary_a="a",
-                summary_b="b",
-                similarity=0.9,
-                method="jaccard",
-                detector="polarity",
-                created="2026-09-01T00:00:00Z",
-            ).to_dict()
-        ],
-    )
-    (root / INGEST_WATERMARK_FILENAME).write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "sources": {
-                    str(tmp_path / "src1.md"): {
-                        "content_hash": "sha256:abc",
-                        "memory_id": plain.id,
-                    },
-                    str(tmp_path / "src2.md"): {
-                        "content_hash": "sha256:def",
-                        "memory_id": generate_ulid(),
-                    },
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    _write_lines(
-        root / PENDING_WRITES_FILENAME,
-        [{"pending_id": "p1", "client": "c"}, {"pending_id": "p2", "client": "c"}],
-    )
-    _write_lines(root / PROPOSALS_FILENAME, [{"id": "prop1", "body": "x"}])
-    _write_lines(root / PATTERNS_FILENAME, [{"key": "k", "dismissed": True}])
-    save_quarantine(
-        root,
-        {
-            "bad.md": QuarantineEntry(
-                filename="bad.md",
-                reason=REASON_UNPARSEABLE,
-                detail="x",
-                remote="origin",
-                pulled_at="2026-01-01T00:00:00Z",
-                size=3,
-                sha256=None,
-            )
-        },
-    )
-    (root / ".stray.json").write_text("{}", encoding="utf-8")
-    (root / "left-behind.md.lock").write_text("", encoding="utf-8")
-    captures = root / "captures" / "sess_a"
-    captures.mkdir(parents=True)
-    (captures / "segment-1.md").write_text("captured\n", encoding="utf-8")
-
-    kinds = Counter(ev["kind"] for ev in iter_all_events(root))
     return V8Fixture(
         root=root,
-        full=full,
-        plain=plain,
-        verified=verified,
-        tombstoned=tombstoned,
-        legacy=legacy,
-        legacy_tombstone_path=legacy_path,
-        episodes=written,
-        event_kinds=kinds,
+        full=parse_memory_file(root / memories["full"]["filename"]),
+        plain=parse_memory_file(root / memories["plain"]["filename"]),
+        verified=parse_memory_file(root / memories["verified"]["filename"]),
+        tombstoned_id=tombstones["tombstoned"]["id"],
+        tombstoned_path=root / TOMBSTONE_DIR / tombstones["tombstoned"]["filename"],
+        legacy_id=tombstones["legacy"]["id"],
+        legacy_tombstone_path=root / TOMBSTONE_DIR / tombstones["legacy"]["filename"],
+        episodes=episodes,
+        event_kinds=Counter(ev["kind"] for ev in iter_all_events(root)),
     )
 
 
@@ -324,6 +136,64 @@ def _counts(report: MigrationReport) -> dict[str, dict[str, int]]:
 
 
 # ---------------------------------------------------------------------------
+# The fixture
+# ---------------------------------------------------------------------------
+
+
+def test_the_golden_fixture_covers_what_the_migration_reads(v8: V8Fixture) -> None:
+    """The fixture is the subject every test below reads, so its shape is
+    pinned once: the cases the v8 writers were asked to produce are there,
+    and the manifest describes the files on disk."""
+    assert {m.id for _, m in iter_active(v8.root)} == {
+        v8.full.id,
+        v8.plain.id,
+        v8.verified.id,
+    }
+    # An update: the body edit moved `updated` past `created`.
+    assert v8.plain.updated > v8.plain.created
+    assert v8.plain.body.endswith(", edited\n")
+    # A verify stamp with its anchor.
+    assert v8.verified.last_verified_at is not None
+    assert v8.verified.verified_paths == ["docs/release.md"]
+    assert v8.verified.verified_head is not None
+    assert v8.verified.origin is not None and v8.verified.category is not None
+    # Every optional field at once.
+    assert v8.full.actor is not None and v8.full.origin is not None
+    assert [link.target_id for link in v8.full.links] == [v8.plain.id, v8.verified.id]
+    assert v8.full.claims and v8.full.verified_absent_paths
+    assert v8.full.corroborations == 2 and v8.full.last_corroborated is not None
+    # Two tombstones, one renamed to the pre-2.6.4 name.
+    assert {t.id for _, t in iter_tombstones(v8.root)} == {
+        v8.tombstoned_id,
+        v8.legacy_id,
+    }
+    assert v8.legacy_tombstone_path.name.endswith(".tombstone.md")
+    assert v8.legacy_id not in v8.legacy_tombstone_path.name
+    # Three episodes in two sessions, one a floor.
+    assert len(v8.episodes) == 3
+    assert {e.session_id for e in v8.episodes} == {"sess_a", "sess_b"}
+    assert sum(e.is_floor for e in v8.episodes) == 1
+    # Events across a rotated archive, a shard and the legacy file.
+    names = {p.name for p in v8.root.iterdir()}
+    assert any(n.startswith(".events-") and n.endswith(".jsonl.gz") for n in names)
+    assert any(n.startswith(".events.") and n.endswith(".jsonl") for n in names)
+    assert EVENT_LOG_FILENAME in names
+    assert dict(v8.event_kinds) == MANIFEST["event_kinds"]
+    assert sum(v8.event_kinds.values()) == MANIFEST["events_total"]
+    search = next(ev for ev in iter_all_events(v8.root) if ev["kind"] == "search")
+    assert search["query"] == _QUERY
+    # The derived index, at the schema the v8 code last shipped.
+    conn = sqlite3.connect(f"file:{v8.root / INDEX_FILENAME}?mode=ro", uri=True)
+    try:
+        row = conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert int(row[0]) == MANIFEST["index_schema_version"] == 11
+
+
+# ---------------------------------------------------------------------------
 # The inventory and the dry run
 # ---------------------------------------------------------------------------
 
@@ -332,14 +202,14 @@ def test_the_inventory_reads_every_source_with_the_v8_readers(v8: V8Fixture) -> 
     inv = inventory(v8.root)
     assert {m.id for _, m in inv.memories} == {v8.full.id, v8.plain.id, v8.verified.id}
     assert inv.unparseable_memories == 0
-    assert {t.dead.id for t in inv.tombstones} == {v8.tombstoned.id, v8.legacy.id}
-    legacy = next(t for t in inv.tombstones if t.dead.id == v8.legacy.id)
+    assert {t.dead.id for t in inv.tombstones} == {v8.tombstoned_id, v8.legacy_id}
+    legacy = next(t for t in inv.tombstones if t.dead.id == v8.legacy_id)
     assert legacy.legacy_name is True
     assert legacy.filename == active_filename_for_tombstone(
         v8.legacy_tombstone_path.name
     )
     assert legacy.filename.endswith(".md") and ".tombstone" not in legacy.filename
-    removed = next(t for t in inv.tombstones if t.dead.id == v8.tombstoned.id)
+    removed = next(t for t in inv.tombstones if t.dead.id == v8.tombstoned_id)
     assert removed.legacy_name is False
     assert [link["target_id"] for link in removed.links] == [v8.plain.id]
     assert removed.corroborations == 1
@@ -425,35 +295,41 @@ def test_the_migration_imports_everything_and_reports_it(
     assert report.size_bytes is not None and report.size_bytes > 0
     assert report.seconds >= 0
 
-    with SqliteStore.open(store_path, keys_dir=keys_dir, allow_rekey=False) as store:
+    with Store.open(store_path, keys_dir=keys_dir, allow_rekey=False) as store:
         assert store.count_memories() == 3
         assert store.count_tombstones() == 2
         assert store.count_episodes() == 3
         ids = [v8.full.id, v8.plain.id, v8.verified.id]
         assert store.provenance_for(ids) == {i: IMPORTED for i in ids}
-        assert store.memory_ids() == [m.id for _, m in Store(v8.root).iter_active()]
-        assert store.filename_for(v8.full.id) == Store(v8.root)._path_for(v8.full).name
+        assert store.memory_ids() == [m.id for _, m in iter_active(v8.root)]
+        assert store.filename_for(v8.full.id) == memory_filename(v8.full)
+        assert (
+            store.filename_for(v8.full.id) == MANIFEST["memories"]["full"]["filename"]
+        )
         assert store.get_memory(v8.full.id) == v8.full
         assert store.get_memory(v8.plain.id) == v8.plain
         assert store.get_memory(v8.verified.id) == v8.verified
 
-        dead = store.get_tombstone(v8.tombstoned.id)
+        dead = store.get_tombstone(v8.tombstoned_id)
         assert dead.removed_session == "sess_x"
         assert dead.removed_reason == "no longer true"
         row = store.conn.execute(
             "SELECT filename, provenance, links_json, corroborations, "
             "last_corroborated FROM tombstones WHERE id = ?",
-            (v8.tombstoned.id,),
+            (v8.tombstoned_id,),
         ).fetchone()
         assert row["provenance"] == IMPORTED
-        assert row["filename"] == Store(v8.root)._path_for(v8.tombstoned).name
+        assert (
+            row["filename"] == MANIFEST["tombstones"]["tombstoned"]["active_filename"]
+        )
+        assert row["filename"] == memory_filename(parse_memory_file(v8.tombstoned_path))
         assert [link["target_id"] for link in json.loads(row["links_json"])] == [
             v8.plain.id
         ]
         assert row["corroborations"] == 1
         assert row["last_corroborated"] == (_NOW - timedelta(days=2)).isoformat()
         legacy_row = store.conn.execute(
-            "SELECT filename FROM tombstones WHERE id = ?", (v8.legacy.id,)
+            "SELECT filename FROM tombstones WHERE id = ?", (v8.legacy_id,)
         ).fetchone()
         assert legacy_row["filename"] == active_filename_for_tombstone(
             v8.legacy_tombstone_path.name
@@ -464,8 +340,8 @@ def test_the_migration_imports_everything_and_reports_it(
         assert {e.id for e in store.iter_episodes()} == {e.id for e in v8.episodes}
         # The store carries what the v8 reader hands back, which is the
         # file's body without the trailing newline the writer added.
-        as_read = EpisodeStore(v8.root).list_by_session("sess_a")[0]
-        assert store.get_episode(v8.episodes[0].id) == as_read
+        as_read = list_by_session(v8.root, "sess_a")[0]
+        assert store.get_episode(as_read.id) == as_read
 
         assert Counter(ev["kind"] for ev in store.iter_events()) == v8.event_kinds
         assert [c["id"] for c in store.list_conflicts()] == ["pair1"]
@@ -503,14 +379,14 @@ def test_a_second_run_imports_nothing_and_appends_no_row(
     v8: V8Fixture, store_path: Path, keys_dir: Path
 ) -> None:
     first = migrate(v8.root, store_path, keys_dir=keys_dir)
-    with SqliteStore.open(store_path, keys_dir=keys_dir, allow_rekey=False) as store:
+    with Store.open(store_path, keys_dir=keys_dir, allow_rekey=False) as store:
         rows_before = len(store.log_rows())
     second = migrate(v8.root, store_path, keys_dir=keys_dir)
     for name, counts in _counts(second).items():
         assert counts["imported"] == 0, name
         assert counts["present"] == _counts(first)[name]["imported"], name
     assert second.log_rows == 0
-    with SqliteStore.open(store_path, keys_dir=keys_dir, allow_rekey=False) as store:
+    with Store.open(store_path, keys_dir=keys_dir, allow_rekey=False) as store:
         assert len(store.log_rows()) == rows_before
         assert store.log_verify()["status"] == "ok"
 
@@ -519,9 +395,9 @@ def test_a_record_removed_or_restored_in_the_new_store_is_left_alone(
     v8: V8Fixture, store_path: Path, keys_dir: Path
 ) -> None:
     migrate(v8.root, store_path, keys_dir=keys_dir)
-    with SqliteStore.open(store_path, keys_dir=keys_dir) as store:
+    with Store.open(store_path, keys_dir=keys_dir) as store:
         store.tombstone(v8.plain.id, "removed after the migration")
-        store.restore(v8.tombstoned.id)
+        store.restore(v8.tombstoned_id)
     report = migrate(v8.root, store_path, keys_dir=keys_dir)
     assert report.memories == {
         "found": 3,
@@ -530,8 +406,8 @@ def test_a_record_removed_or_restored_in_the_new_store_is_left_alone(
         "unparseable": 0,
     }
     assert report.tombstones["imported"] == 0 and report.tombstones["present"] == 2
-    with SqliteStore.open(store_path, keys_dir=keys_dir, allow_rekey=False) as store:
-        assert store.has_memory(v8.tombstoned.id)
+    with Store.open(store_path, keys_dir=keys_dir, allow_rekey=False) as store:
+        assert store.has_memory(v8.tombstoned_id)
         assert not store.has_memory(v8.plain.id)
         assert store.get_tombstone(v8.plain.id).removed_reason == (
             "removed after the migration"
@@ -543,7 +419,15 @@ def test_new_v8_events_are_imported_by_a_later_run(
     v8: V8Fixture, store_path: Path, keys_dir: Path
 ) -> None:
     migrate(v8.root, store_path, keys_dir=keys_dir)
-    Recorder(root=v8.root, session_id="sess_c").record("show", id=v8.plain.id)
+    _append_event(
+        v8.root,
+        {
+            "ts": "2026-09-27T00:00:00.000000Z",
+            "session": "sess_c",
+            "kind": "show",
+            "id": v8.plain.id,
+        },
+    )
     report = migrate(v8.root, store_path, keys_dir=keys_dir)
     total = sum(v8.event_kinds.values())
     assert report.events["found"] == total + 1
@@ -556,14 +440,14 @@ def test_verbatim_query_text_is_redacted_on_import(
 ) -> None:
     report = migrate(v8.root, store_path, keys_dir=keys_dir)
     assert report.events["redacted"] == 2
-    with SqliteStore.open(store_path, keys_dir=keys_dir, allow_rekey=False) as store:
+    with Store.open(store_path, keys_dir=keys_dir, allow_rekey=False) as store:
         search = next(ev for ev in store.iter_events() if ev["kind"] == "search")
         assert set(search["query"]) == {"hash", "preview", "len"}
         assert search["query"]["preview"] == _QUERY[:32]
         assert search["query"]["len"] == len(_QUERY)
         assert search["imported_from"] == "v8"
         audited = next(ev for ev in store.iter_events() if ev["kind"] == "turn_audited")
-        assert audited["probe_query"]["preview"] == "what about the cluster"
+        assert audited["probe_query"]["preview"] == MANIFEST["probe_query"]
         for row in store.log_rows():
             assert _QUERY not in row.payload
 
@@ -572,7 +456,7 @@ def test_the_v8_migrate_event_is_telemetry_and_the_control_row_is_migrate_v8(
     v8: V8Fixture, store_path: Path, keys_dir: Path
 ) -> None:
     migrate(v8.root, store_path, keys_dir=keys_dir)
-    with SqliteStore.open(store_path, keys_dir=keys_dir, allow_rekey=False) as store:
+    with Store.open(store_path, keys_dir=keys_dir, allow_rekey=False) as store:
         rows = store.log_rows()
         control = [r for r in rows if r.kind == MIGRATE_V8]
         telemetry = [r for r in rows if r.kind == "migrate"]
@@ -599,7 +483,7 @@ def test_the_mirror_of_the_migrated_store_is_byte_identical_to_the_source(
 ) -> None:
     migrate(v8.root, store_path, keys_dir=keys_dir)
     target = tmp_path / "mirror"
-    with SqliteStore.open(store_path, keys_dir=keys_dir, allow_rekey=False) as store:
+    with Store.open(store_path, keys_dir=keys_dir, allow_rekey=False) as store:
         report = write_mirror(store, target)
     assert report.active == 3 and report.tombstones == 2 and report.episodes == 3
     assert report.written == 8 and report.unchanged == 0 and report.removed == 0
@@ -612,7 +496,7 @@ def test_the_mirror_of_the_migrated_store_is_byte_identical_to_the_source(
         if source.suffix != ".md":
             continue
         memory_id = (
-            v8.legacy.id if source == v8.legacy_tombstone_path else (v8.tombstoned.id)
+            v8.legacy_id if source == v8.legacy_tombstone_path else v8.tombstoned_id
         )
         expected = tombstone_filename(
             active_filename_for_tombstone(source.name), memory_id
@@ -638,16 +522,17 @@ def test_the_eval_report_reads_the_same_on_both_sides(
 ) -> None:
     migrate(v8.root, store_path, keys_dir=keys_dir)
     now = _NOW + timedelta(days=2)
-    v8_store = Store(v8.root)
     before = compute_report(
-        memories=v8_store.load_all(),
+        memories=sorted(
+            (m for _, m in iter_active(v8.root)), key=lambda m: m.created, reverse=True
+        ),
         events=iter_all_events(v8.root),
         now=now,
         since=timedelta(days=30),
-        tombstoned_ids={t.id for t in v8_store.load_tombstones()},
+        tombstoned_ids={t.id for _, t in iter_tombstones(v8.root)},
         version="test",
     )
-    with SqliteStore.open(store_path, keys_dir=keys_dir, allow_rekey=False) as store:
+    with Store.open(store_path, keys_dir=keys_dir, allow_rekey=False) as store:
         after = compute_report(
             memories=sorted(
                 store.iter_memories(), key=lambda m: m.created, reverse=True
@@ -715,7 +600,7 @@ def test_migrate_v8_command_defaults_to_the_resolved_directory(
     assert _run_cli(["migrate", "v8"], monkeypatch) == 0
     capsys.readouterr()
     assert (v8.root / STORE_FILENAME).is_file()
-    with SqliteStore.open(
+    with Store.open(
         v8.root / STORE_FILENAME, keys_dir=keys_dir, allow_rekey=False
     ) as store:
         assert store.count_memories() == 3

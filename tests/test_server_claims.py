@@ -122,10 +122,9 @@ def server_in_repo(memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyP
     import bettermemory._handlers as handlers_module
     import bettermemory.server as server_module
 
-    rec = Recorder(root=memory_dir, session_id=state.session_id)
-    server = build_server(
-        config=cfg, store=Store(memory_dir), state=state, recorder=rec
-    )
+    store = Store(memory_dir)
+    rec = Recorder(store=store, session_id=state.session_id)
+    server = build_server(config=cfg, store=store, state=state, recorder=rec)
 
     def fake_capture(cwd: Path | None = None) -> Origin:
         return origin
@@ -197,11 +196,12 @@ async def test_write_refuses_claims_without_worktree(
     import bettermemory._handlers as handlers_module
     import bettermemory.server as server_module
 
+    store = Store(memory_dir)
     server = build_server(
         config=cfg,
-        store=Store(memory_dir),
+        store=store,
         state=state,
-        recorder=Recorder(root=memory_dir, session_id=state.session_id),
+        recorder=Recorder(store=store, session_id=state.session_id),
     )
 
     def fake_capture(cwd: Path | None = None) -> Origin:
@@ -236,11 +236,12 @@ async def test_verify_claims_fallback_for_legacy_origin_without_worktree(
     import bettermemory._handlers as handlers_module
     import bettermemory.server as server_module
 
+    store = Store(memory_dir)
     server = build_server(
         config=cfg,
-        store=Store(memory_dir),
+        store=store,
         state=state,
-        recorder=Recorder(root=memory_dir, session_id=state.session_id),
+        recorder=Recorder(store=store, session_id=state.session_id),
     )
 
     legacy = Origin(cwd=str(repo), repo=_REMOTE, branch="main", worktree_root=None)
@@ -577,11 +578,12 @@ async def test_verify_with_claims_refuses_cleanly_on_an_unreadable_worktree(
     import bettermemory._handlers as handlers_module
     import bettermemory.server as server_module
 
+    store = Store(memory_dir)
     server = build_server(
         config=cfg,
-        store=Store(memory_dir),
+        store=store,
         state=state,
-        recorder=Recorder(root=memory_dir, session_id=state.session_id),
+        recorder=Recorder(store=store, session_id=state.session_id),
     )
     origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main", worktree_root=str(repo))
 
@@ -636,11 +638,12 @@ async def test_verify_without_claims_skips_an_unreadable_worktree(
     import bettermemory._handlers as handlers_module
     import bettermemory.server as server_module
 
+    store = Store(memory_dir)
     server = build_server(
         config=cfg,
-        store=Store(memory_dir),
+        store=store,
         state=state,
-        recorder=Recorder(root=memory_dir, session_id=state.session_id),
+        recorder=Recorder(store=store, session_id=state.session_id),
     )
     origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main", worktree_root=str(repo))
 
@@ -757,11 +760,12 @@ async def test_verify_names_a_stored_claim_it_could_not_check_without_accusing_i
     import bettermemory._handlers as handlers_module
     import bettermemory.server as server_module
 
+    store = Store(memory_dir)
     server = build_server(
         config=cfg,
-        store=Store(memory_dir),
+        store=store,
         state=state,
-        recorder=Recorder(root=memory_dir, session_id=state.session_id),
+        recorder=Recorder(store=store, session_id=state.session_id),
     )
     origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main", worktree_root=str(repo))
 
@@ -819,11 +823,12 @@ async def test_a_relative_attestation_under_a_dead_root_is_could_not_ask(
     import bettermemory._handlers as handlers_module
     import bettermemory.server as server_module
 
+    store = Store(memory_dir)
     server = build_server(
         config=cfg,
-        store=Store(memory_dir),
+        store=store,
         state=state,
-        recorder=Recorder(root=memory_dir, session_id=state.session_id),
+        recorder=Recorder(store=store, session_id=state.session_id),
     )
     dead = tmp_path / "never-here"
     origin = Origin(cwd=str(dead), repo=_REMOTE, branch="main", worktree_root=str(dead))

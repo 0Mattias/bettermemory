@@ -106,22 +106,6 @@ def add_subparser(
         ),
     )
     parser.add_argument(
-        "--usage-replay",
-        action="store_true",
-        help=(
-            "Switch to the usage-signal flip-bar measurement surface: "
-            "aggregate the per-turn usage-toggle captures "
-            "(turn_audited/prompt_recall events carrying usage_active/"
-            "usage_toggles) over the window, judge each changed top-1 "
-            "under the pinned improvement rule, check the "
-            "outcome_demotion invariant, and print the density "
-            "preconditions. Measurements only — read the output against "
-            "the declared bars, which are maintainer-held and not "
-            "published in this repository. Honours `--since` "
-            "and `--json`; ignores the rate-mode knobs."
-        ),
-    )
-    parser.add_argument(
         "--detail",
         action="store_true",
         help=(
@@ -189,7 +173,6 @@ def run(
         threshold_sweep=args.threshold_sweep,
         widening_preview=args.widening_preview,
         widening_detail=args.detail,
-        usage_replay=args.usage_replay,
         report=args.report,
         output=args.output,
         parser=sub_parser,
@@ -207,7 +190,6 @@ def _cli_eval(
     threshold_sweep: bool,
     widening_preview: bool,
     widening_detail: bool = False,
-    usage_replay: bool = False,
     report: bool = False,
     output: str | None = None,
     parser: Any,
@@ -215,7 +197,7 @@ def _cli_eval(
     """`bettermemory eval` — compute and render the effectiveness report.
 
     Default mode reports the three effectiveness rates
-    (memory_helped_rate, endorsement_rate, silent_miss_rate). Five
+    (memory_helped_rate, endorsement_rate, silent_miss_rate). Four
     alternative modes:
 
     - ``--tool-usage``: per-MCP-tool call-count rollup. Answers
@@ -226,9 +208,6 @@ def _cli_eval(
     - ``--widening-preview``: replay of candidate LOOSER rules over
       the `turn_audited` stream (needs 3.14+ per-turn top_hits).
       Answers "what would a widened rule flag that v1 misses?".
-    - ``--usage-replay``: aggregate the per-turn usage-toggle captures
-      for the usage-signal flip bars (maintainer-held). Answers "when
-      a usage flag changed a top-1, was the flag's pick better?".
     - ``--report``: one publishable markdown document composing the
       rate trio (window vs all-time), per-model telemetry, the
       threshold sweep, and the tool-usage top 10. Aggregates only —
@@ -250,7 +229,6 @@ def _cli_eval(
         compute_report,
         compute_threshold_sweep,
         compute_tool_usage,
-        compute_usage_replay,
         compute_widening_detail,
         compute_widening_preview,
         parse_since,
@@ -258,18 +236,12 @@ def _cli_eval(
         render_text,
         render_threshold_sweep_text,
         render_tool_usage_text,
-        render_usage_replay_text,
         render_widening_detail_text,
         render_widening_preview_text,
     )
-    from ..events import iter_all_events
 
     if report and (
-        tool_usage
-        or threshold_sweep
-        or widening_preview
-        or widening_detail
-        or usage_replay
+        tool_usage or threshold_sweep or widening_preview or widening_detail
     ):
         # Same clean-exit style as the --detail guard below: message +
         # SystemExit(2) via parser.error. The report already composes
@@ -278,7 +250,7 @@ def _cli_eval(
         # not a refinement.
         parser.error(
             "--report cannot be combined with --tool-usage, "
-            "--threshold-sweep, --widening-preview, --usage-replay, or "
+            "--threshold-sweep, --widening-preview, or "
             "--detail (the report already composes the relevant rollups)"
         )
         return  # pragma: no cover — parser.error raises SystemExit
@@ -293,10 +265,10 @@ def _cli_eval(
         parser.error("--output only applies to --report")
         return  # pragma: no cover — parser.error raises SystemExit
 
-    if sum((tool_usage, threshold_sweep, widening_preview, usage_replay)) > 1:
+    if sum((tool_usage, threshold_sweep, widening_preview)) > 1:
         parser.error(
-            "--tool-usage, --threshold-sweep, --widening-preview, and "
-            "--usage-replay are mutually exclusive"
+            "--tool-usage, --threshold-sweep, and --widening-preview are "
+            "mutually exclusive"
         )
         return  # pragma: no cover — parser.error raises SystemExit
 
@@ -315,7 +287,6 @@ def _cli_eval(
         return  # pragma: no cover — parser.error raises SystemExit
 
     ctx = cli_context()
-    directory = ctx.directory
 
     if report:
         # Report mode ignores the rate-mode knobs (`--scope`,
@@ -328,7 +299,7 @@ def _cli_eval(
         report_store = ctx.store
         doc = compute_report(
             memories=report_store.load_all(),
-            events=iter_all_events(directory),
+            events=ctx.store.iter_events(),
             since=since,
             # Same tombstone enumeration rate-mode uses, so the report's
             # silent-miss numbers agree with `bettermemory eval` and
@@ -353,7 +324,7 @@ def _cli_eval(
         # into both modes (a reasonable shell loop) doesn't have to
         # strip the rate-mode flags before each invocation.
         usage_report = compute_tool_usage(
-            events=iter_all_events(directory),
+            events=ctx.store.iter_events(),
             since=since,
         )
         if json_out:
@@ -364,29 +335,13 @@ def _cli_eval(
 
     if threshold_sweep:
         sweep_report = compute_threshold_sweep(
-            events=iter_all_events(directory),
+            events=ctx.store.iter_events(),
             since=since,
         )
         if json_out:
             sys.stdout.write(_json.dumps(sweep_report.to_dict(), indent=2) + "\n")
         else:
             sys.stdout.write(render_threshold_sweep_text(sweep_report))
-        return
-
-    if usage_replay:
-        # Same knob policy as the sibling modes: the rate-mode knobs are
-        # ignored, not rejected. The store join feeds only the
-        # corroboration-liveness counts.
-        replay_store = ctx.store
-        replay_report = compute_usage_replay(
-            events=iter_all_events(directory),
-            memories=replay_store.load_all(),
-            since=since,
-        )
-        if json_out:
-            sys.stdout.write(_json.dumps(replay_report.to_dict(), indent=2) + "\n")
-        else:
-            sys.stdout.write(render_usage_replay_text(replay_report))
         return
 
     if widening_preview:
@@ -397,7 +352,7 @@ def _cli_eval(
             # removed reads "tombstoned" rather than resurfacing.
             detail_store = ctx.store
             detail_report = compute_widening_detail(
-                events=iter_all_events(directory),
+                events=ctx.store.iter_events(),
                 since=since,
                 memories=detail_store.load_all(),
                 tombstoned_ids={t.id for t in detail_store.load_tombstones()},
@@ -408,7 +363,7 @@ def _cli_eval(
                 sys.stdout.write(render_widening_detail_text(detail_report))
             return
         preview_report = compute_widening_preview(
-            events=iter_all_events(directory),
+            events=ctx.store.iter_events(),
             since=since,
         )
         if json_out:
@@ -429,7 +384,7 @@ def _cli_eval(
     # mode flag in this scope since the report mode landed.
     rate_report = compute_eval(
         memories=store.load_all(),
-        events=iter_all_events(directory),
+        events=ctx.store.iter_events(),
         since=since,
         scope=scope,
         endorsement_min_retrievals=floor,

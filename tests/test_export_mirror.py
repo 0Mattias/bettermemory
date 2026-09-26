@@ -1,26 +1,28 @@
 """The export mirror (unit U3): the v8 file format written from the
 bettermemory 9 store.
 
-The renderers are pinned against the v8 writers themselves: a memory,
-a tombstone and an episode written by `Store` and `EpisodeStore` must
-come out of `render_memory`, `render_tombstone` and `render_episode`
-byte for byte. `write_mirror` is pinned on naming, on leaving unchanged
-files alone, on removing what the store no longer holds, and on
-refusing a directory it did not make.
+The renderers are pinned against the golden v8 fixture under
+`tests/fixtures/v8/store`, written once at 8.0.0 by the v8 writers
+themselves (`Store` and `EpisodeStore`; see `tests/fixtures/v8/generate.py`):
+every memory, tombstone and episode file there must come out of
+`render_memory`, `render_tombstone` and `render_episode` byte for byte
+when rendered from what the frozen readers (`bettermemory.v8`) parse.
+`write_mirror` is pinned on naming, on leaving unchanged files alone, on
+removing what the store no longer holds, and on refusing a directory it
+did not make.
 """
 
 from __future__ import annotations
 
 import json
 from collections.abc import Iterator
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from bettermemory.episodes import EPISODES_DIR, EpisodeStore
-from bettermemory.identity import Actor
+from bettermemory import _frontmatter as frontmatter
 from bettermemory.mirror import (
     MIRROR_MARKER,
     MirrorRefused,
@@ -34,21 +36,30 @@ from bettermemory.mirror import (
     write_mirror,
 )
 from bettermemory.models import (
-    Category,
     Confidence,
     Episode,
-    LinkType,
     Memory,
-    MemoryLink,
     Source,
     generate_ulid,
 )
-from bettermemory.origin import Origin
-from bettermemory.sqlite_store import STORE_FILENAME, SqliteStore
-from bettermemory.store import TOMBSTONE_DIR, Store, _parse_memory_file
+from bettermemory.store import STORE_FILENAME, Store
+from bettermemory.v8 import (
+    EPISODE_METADATA_KEYS,
+    EPISODES_DIR,
+    MEMORY_METADATA_KEYS,
+    TOMBSTONE_DIR,
+    TOMBSTONE_METADATA_KEYS,
+    iter_active_memory_paths,
+    iter_session_ids,
+    iter_tombstone_paths,
+    list_by_session,
+    parse_episode_file,
+    parse_memory_file,
+    parse_tombstone_file,
+)
 
+FIXTURE = Path(__file__).resolve().parent / "fixtures" / "v8" / "store"
 _NOW = datetime(2026, 9, 26, 1, 2, 3, 456000, tzinfo=timezone.utc)
-_HEAD = "c" * 40
 
 
 def _memory(body: str, *scopes: str, **overrides: Any) -> Memory:
@@ -65,51 +76,14 @@ def _memory(body: str, *scopes: str, **overrides: Any) -> Memory:
     return Memory(**fields)
 
 
-def _full_memory(target: str) -> Memory:
-    return _memory(
-        "the whole record, every field set",
-        "projects:foo",
-        "tools",
-        confidence=Confidence.HIGH,
-        source=Source.INFERRED,
-        origin=Origin(
-            cwd="/w/foo",
-            repo="https://example.com/foo.git",
-            branch="main",
-            worktree_root="/w/foo",
-            source="roots",
-        ),
-        actor=Actor(
-            client="claude-code",
-            client_version="2.1.281",
-            model="claude-fable-5-1",
-            sources={"client": "client-info", "model": "header"},
-        ),
-        last_verified_at=_NOW + timedelta(hours=1),
-        category=Category.USER_INFERENCE,
-        verified_paths=["src/a.py", "src/b.py"],
-        verified_commits=["abc1234"],
-        verified_versions=["8.0.0"],
-        verified_absent_paths=["tools/gone.py"],
-        claims=["src/a.py::main", "!tools/gone.py"],
-        verified_head=_HEAD,
-        links=[
-            MemoryLink(type=LinkType.SUPERSEDES, target_id=target, note="newer"),
-            MemoryLink(type=LinkType.EXTENDS, target_id=target),
-        ],
-        corroborations=2,
-        last_corroborated=_NOW + timedelta(days=1),
-    )
-
-
 @pytest.fixture
 def keys_dir(tmp_path: Path) -> Path:
     return tmp_path / "keys"
 
 
 @pytest.fixture
-def store(tmp_path: Path, keys_dir: Path) -> Iterator[SqliteStore]:
-    s = SqliteStore.create(tmp_path / "v9" / STORE_FILENAME, keys_dir=keys_dir)
+def store(tmp_path: Path, keys_dir: Path) -> Iterator[Store]:
+    s = Store.create(tmp_path / "v9" / STORE_FILENAME, keys_dir=keys_dir)
     try:
         yield s
     finally:
@@ -152,73 +126,75 @@ def test_the_names_follow_the_v8_rules() -> None:
     )
 
 
+def test_the_fixture_names_are_the_ones_the_writers_gave() -> None:
+    for path in iter_active_memory_paths(FIXTURE):
+        assert memory_filename(parse_memory_file(path)) == path.name
+    for path in iter_tombstone_paths(FIXTURE):
+        dead = parse_tombstone_file(path)
+        active = active_filename_for_tombstone(path.name)
+        assert active == memory_filename(parse_memory_file(path))
+        if not is_legacy_tombstone_name(path.name):
+            assert tombstone_filename(active, dead.id) == path.name
+
+
 # ---------------------------------------------------------------------------
-# The renderers against the v8 writers
+# The renderers against the files the v8 writers wrote
 # ---------------------------------------------------------------------------
 
 
-def test_render_memory_reproduces_the_v8_file(tmp_path: Path) -> None:
-    v8 = Store(tmp_path / "v8")
-    v8.ensure()
-    plain = _memory("a plain record with nothing optional set")
-    full = _full_memory(plain.id)
-    for memory in (plain, full):
-        path = v8._path_for(memory)
-        v8._write_path(path, memory)
-        assert render_memory(memory) == path.read_bytes()
-        assert render_memory(_parse_memory_file(path)) == path.read_bytes()
-    written = v8.write(
-        content="a record written through the gate\n",
-        scopes=["tools"],
-        origin=Origin(cwd=str(tmp_path)),
-    )
-    path = next(p for p, m in v8.iter_active() if m.id == written.id)
-    assert render_memory(written) == path.read_bytes()
+def test_render_memory_reproduces_the_v8_files() -> None:
+    paths = sorted(iter_active_memory_paths(FIXTURE))
+    assert len(paths) == 3
+    keys: set[str] = set()
+    for path in paths:
+        assert render_memory(parse_memory_file(path)) == path.read_bytes(), path.name
+        keys |= set(frontmatter.load(path).metadata)
+    # Between them the three files carry every key the writer could emit,
+    # so a renderer that dropped or renamed one would be caught here.
+    assert keys == set(MEMORY_METADATA_KEYS)
 
 
-def test_render_tombstone_reproduces_the_v8_file(tmp_path: Path) -> None:
-    v8 = Store(tmp_path / "v8")
-    v8.ensure()
-    plain = _memory("a plain record")
-    full = _full_memory(plain.id)
-    for memory in (plain, full):
-        v8._write_path(v8._path_for(memory), memory)
-    plain_tombstone = v8.tombstone(plain.id, "gone", session_id="sess_x")
-    full_tombstone = v8.tombstone(full.id, "gone too")
-    for memory, path in ((plain, plain_tombstone), (full, full_tombstone)):
-        dead = v8._load_tombstone_path(path)
+def test_render_tombstone_reproduces_the_v8_files() -> None:
+    paths = sorted(iter_tombstone_paths(FIXTURE))
+    assert len(paths) == 2
+    sessions: set[str | None] = set()
+    with_links = 0
+    for path in paths:
+        dead = parse_tombstone_file(path)
+        kept = parse_memory_file(path)
         rendered = render_tombstone(
             dead,
             links=[
-                link.model_dump(mode="json", exclude_none=True) for link in memory.links
+                link.model_dump(mode="json", exclude_none=True) for link in kept.links
             ],
-            corroborations=memory.corroborations,
-            last_corroborated=memory.last_corroborated,
+            corroborations=kept.corroborations,
+            last_corroborated=kept.last_corroborated,
         )
         assert rendered == path.read_bytes(), path.name
+        sessions.add(dead.removed_session)
+        with_links += bool(kept.links and kept.corroborations)
+        removal_keys = set(frontmatter.load(path).metadata) & set(
+            TOMBSTONE_METADATA_KEYS
+        )
+        assert {"removed", "removed_reason"} <= removal_keys
+    assert sessions == {"sess_x", None}
+    assert with_links == 1
 
 
-def test_render_episode_reproduces_the_v8_file(tmp_path: Path) -> None:
-    episodes = EpisodeStore(tmp_path / "v8")
-    origin = Origin(cwd=str(tmp_path), worktree_root=str(tmp_path), source="roots")
-    written = [
-        episodes.write(
-            session_id="sess_a",
-            body="tried the thing\n\nit worked  ",
-            scopes=["projects:foo"],
-            takeaway="it worked",
-            origin=origin,
-            swarm_id="sess_coordinator",
-            now=_NOW,
-        ),
-        episodes.write(session_id="sess_b", body="bare", now=_NOW),
-        episodes.write_floor(session_id="sess_b", origin=origin, now=_NOW),
-    ]
-    for episode in written:
-        path = tmp_path / "v8" / EPISODES_DIR / episode.session_id / f"{episode.id}.md"
-        assert render_episode(episode) == path.read_bytes(), path.name
-        loaded = episodes._load_path(path)
-        assert render_episode(loaded) == path.read_bytes(), path.name
+def test_render_episode_reproduces_the_v8_files() -> None:
+    keys: set[str] = set()
+    floors = 0
+    count = 0
+    for session_id in iter_session_ids(FIXTURE):
+        for episode in list_by_session(FIXTURE, session_id):
+            path = FIXTURE / EPISODES_DIR / session_id / f"{episode.id}.md"
+            assert render_episode(episode) == path.read_bytes(), path.name
+            assert render_episode(parse_episode_file(path)) == path.read_bytes()
+            keys |= set(frontmatter.load(path).metadata)
+            floors += episode.is_floor
+            count += 1
+    assert count == 3 and floors == 1
+    assert keys == set(EPISODE_METADATA_KEYS)
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +202,7 @@ def test_render_episode_reproduces_the_v8_file(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_the_mirror_lays_out_the_v8_tree(store: SqliteStore, tmp_path: Path) -> None:
+def test_the_mirror_lays_out_the_v8_tree(store: Store, tmp_path: Path) -> None:
     named = _memory("a named record")
     unnamed = _memory("an unnamed record about kubernetes")
     store.put_memory(named, filename="2026-09-26-a-named-record.md")
@@ -263,7 +239,7 @@ def test_the_mirror_lays_out_the_v8_tree(store: SqliteStore, tmp_path: Path) -> 
 
 
 def test_a_second_run_leaves_unchanged_files_alone(
-    store: SqliteStore, tmp_path: Path
+    store: Store, tmp_path: Path
 ) -> None:
     memory = _memory("a record")
     store.put_memory(memory)
@@ -279,7 +255,7 @@ def test_a_second_run_leaves_unchanged_files_alone(
     assert path.stat().st_mtime_ns == before
 
 
-def test_a_changed_record_is_rewritten(store: SqliteStore, tmp_path: Path) -> None:
+def test_a_changed_record_is_rewritten(store: Store, tmp_path: Path) -> None:
     memory = _memory("a record")
     store.put_memory(memory, filename="2026-09-26-a-record.md")
     target = tmp_path / "mirror"
@@ -292,7 +268,7 @@ def test_a_changed_record_is_rewritten(store: SqliteStore, tmp_path: Path) -> No
 
 
 def test_what_the_store_no_longer_holds_is_removed(
-    store: SqliteStore, tmp_path: Path
+    store: Store, tmp_path: Path
 ) -> None:
     first = _memory("the first record")
     second = _memory("the second record")
@@ -326,7 +302,7 @@ def test_what_the_store_no_longer_holds_is_removed(
 
 
 def test_the_mirror_refuses_a_directory_it_did_not_make(
-    store: SqliteStore, tmp_path: Path
+    store: Store, tmp_path: Path
 ) -> None:
     foreign = tmp_path / "foreign"
     foreign.mkdir()
@@ -343,9 +319,9 @@ def test_the_mirror_refuses_a_directory_it_did_not_make(
 
 
 def test_the_mirror_refuses_another_stores_mirror(
-    store: SqliteStore, tmp_path: Path, keys_dir: Path
+    store: Store, tmp_path: Path, keys_dir: Path
 ) -> None:
-    other = SqliteStore.create(tmp_path / "other" / STORE_FILENAME, keys_dir=keys_dir)
+    other = Store.create(tmp_path / "other" / STORE_FILENAME, keys_dir=keys_dir)
     try:
         target = tmp_path / "mirror"
         write_mirror(other, target)
@@ -355,9 +331,7 @@ def test_the_mirror_refuses_another_stores_mirror(
         write_mirror(store, target)
 
 
-def test_an_empty_or_absent_target_is_accepted(
-    store: SqliteStore, tmp_path: Path
-) -> None:
+def test_an_empty_or_absent_target_is_accepted(store: Store, tmp_path: Path) -> None:
     store.put_memory(_memory("a record"))
     empty = tmp_path / "empty"
     empty.mkdir()

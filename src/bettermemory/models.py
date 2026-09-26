@@ -993,11 +993,11 @@ def looks_truncated(body: str) -> bool:
 
     That gate was deferred for two releases on description budget, and
     the reason is worth keeping: the always-resident surface had 10
-    characters of margin before it warns, against the ~141 the parameter
+    characters of margin before it warned, against the ~141 the parameter
     and its description sentence cost. It shipped by reclaiming 658 from
-    `DESC_MEMORY_LINKS_TAIL` in the same commit. Do not read a margin
-    figure out of this docstring — re-measure `_DESC_BASELINE` in
-    `tests/test_server.py`, which is the surface that governs it.
+    the links description in the same commit. Do not read a margin figure
+    out of this docstring: the served surface is measured by
+    `tests/test_tool_surface.py` and `bench/toolcost`.
     """
     text = body.strip()
     if not text:

@@ -1,15 +1,17 @@
 """The export mirror: the v8 file format, written from the bettermemory 9
 store.
 
-The store (``bettermemory.sqlite_store``) is canonical; markdown is the
+The store (``bettermemory.store``) is canonical; markdown is the
 export and import format. ``write_mirror`` lays a store out as a v8
 directory, the greppable and git-able mirror the plan promised: each
 active memory at its v8 filename, each tombstone under ``.tombstones/``,
 each episode under ``episodes/<session_id>/``. The renderers produce the
 bytes the v8 writers produced (``Store._write_path``, ``Store.tombstone``,
-``EpisodeStore._write_path``), which is what makes a migrated store's
-mirror byte-identical to the directory it came from; the tests pin each
-renderer against the v8 writer itself.
+``EpisodeStore._write_path``), from the frontmatter shapes frozen in
+``bettermemory.v8``, which is what makes a migrated store's mirror
+byte-identical to the directory it came from; the tests pin each renderer
+against the golden fixture those writers produced at 8.0.0
+(``tests/fixtures/v8``).
 
 A mirror is derived, so the target has rules. It must be absent, empty,
 or a directory this module made before, which it marks with
@@ -23,7 +25,6 @@ not write is removed, so the tree always says what the store says.
 from __future__ import annotations
 
 import json
-import re
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -33,69 +34,26 @@ from typing import Any
 
 from . import _frontmatter as frontmatter
 from ._fsutil import atomic_write_bytes, ensure_owner_only_dir
-from .episodes import EPISODES_DIR
-from .models import (
-    SCHEMA_VERSION,
-    Episode,
-    Memory,
-    MemoryLink,
-    TombstonedMemory,
-    build_filename,
-    make_slug,
-)
-from .sqlite_store import STORE_FILENAME, SqliteStore
-from .store import TOMBSTONE_DIR, _memory_metadata
+from .models import Episode, Memory, MemoryLink, TombstonedMemory
+from .store import STORE_FILENAME, Store
 from .time_utils import isoformat_utc
+from .v8 import (
+    EPISODES_DIR,
+    TOMBSTONE_DIR,
+    active_filename_for_tombstone,
+    episode_metadata,
+    is_legacy_tombstone_name,
+    memory_filename,
+    memory_metadata,
+    tombstone_filename,
+)
 
 MIRROR_MARKER = ".mirror.json"
 _MARKER_VERSION = 1
 
-_TOMBSTONE_SUFFIX = ".tombstone.md"
-# The name `Store.tombstone` writes: the active stem, the id, the suffix.
-# Before 2.6.4 the id was left out; those names still load by their id.
-_ID_TOMBSTONE_RE = re.compile(
-    r"^(?P<stem>.+)\.(?P<id>[0-9A-HJKMNP-TV-Z]{26})\.tombstone\.md$"
-)
-
 
 class MirrorRefused(ValueError):
     """The target is not a directory this module may write into."""
-
-
-# ---------------------------------------------------------------------------
-# Names
-# ---------------------------------------------------------------------------
-
-
-def memory_filename(memory: Memory) -> str:
-    """The name ``Store.write`` gives a new record: the date, the slug and
-    the lowercase id. Used when a row carries no filename."""
-    return build_filename(
-        memory.created, f"{make_slug(memory.body)}-{memory.id.lower()}"
-    )
-
-
-def tombstone_filename(active_filename: str, memory_id: str) -> str:
-    """The name ``Store.tombstone`` gives a removed record's file."""
-    stem = active_filename[:-3] if active_filename.endswith(".md") else active_filename
-    return f"{stem}.{memory_id}{_TOMBSTONE_SUFFIX}"
-
-
-def active_filename_for_tombstone(name: str) -> str:
-    """The active filename a tombstone's name was made from, the id and
-    the suffix stripped; a name that is not a tombstone's is returned as
-    it is."""
-    match = _ID_TOMBSTONE_RE.match(name)
-    if match is not None:
-        return match.group("stem") + ".md"
-    if name.endswith(_TOMBSTONE_SUFFIX):
-        return name[: -len(_TOMBSTONE_SUFFIX)] + ".md"
-    return name
-
-
-def is_legacy_tombstone_name(name: str) -> bool:
-    """A tombstone named before 2.6.4, without the id."""
-    return name.endswith(_TOMBSTONE_SUFFIX) and _ID_TOMBSTONE_RE.match(name) is None
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +73,7 @@ def _dump(body: str, metadata: dict[str, object]) -> bytes:
 
 def render_memory(memory: Memory) -> bytes:
     """The active record's file, as ``Store._write_path`` wrote it."""
-    return _dump(memory.body, _memory_metadata(memory))
+    return _dump(memory.body, memory_metadata(memory))
 
 
 def render_tombstone(
@@ -137,7 +95,7 @@ def render_tombstone(
         corroborations=corroborations,
         last_corroborated=last_corroborated,
     )
-    metadata = _memory_metadata(as_memory)
+    metadata = memory_metadata(as_memory)
     metadata["removed"] = dead.removed
     metadata["removed_reason"] = dead.removed_reason
     if dead.removed_session is not None:
@@ -149,25 +107,7 @@ def render_episode(episode: Episode) -> bytes:
     """The episode's file, as ``EpisodeStore._write_path`` wrote it: the
     optional keys only when set, so a plain episode keeps the shape it
     had before those keys existed."""
-    metadata: dict[str, object] = {
-        "schema_version": SCHEMA_VERSION,
-        "id": episode.id,
-        "session_id": episode.session_id,
-        "created": episode.created,
-    }
-    if episode.scopes:
-        metadata["scopes"] = list(episode.scopes)
-    if episode.takeaway is not None:
-        metadata["takeaway"] = episode.takeaway
-    if episode.origin is not None:
-        origin_dict = episode.origin.model_dump(mode="json", exclude_none=True)
-        if origin_dict:
-            metadata["origin"] = origin_dict
-    if episode.is_floor:
-        metadata["is_floor"] = True
-    if episode.swarm_id is not None:
-        metadata["swarm_id"] = episode.swarm_id
-    return _dump(episode.body, metadata)
+    return _dump(episode.body, episode_metadata(episode))
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +156,7 @@ def _read_marker(target: Path) -> dict[str, Any] | None:
     return raw if isinstance(raw, dict) else None
 
 
-def _check_target(store: SqliteStore, target: Path) -> None:
+def _check_target(store: Store, target: Path) -> None:
     store_dir = store.path.resolve().parent
     if target == store_dir or (target / STORE_FILENAME).exists():
         raise MirrorRefused(
@@ -240,7 +180,7 @@ def _check_target(store: SqliteStore, target: Path) -> None:
         )
 
 
-def _write_marker(target: Path, store: SqliteStore, counts: Mapping[str, int]) -> None:
+def _write_marker(target: Path, store: Store, counts: Mapping[str, int]) -> None:
     payload = {
         "bettermemory_mirror": _MARKER_VERSION,
         "store_id": store.store_id,
@@ -270,7 +210,7 @@ def _sweep(directory: Path, keep: set[Path]) -> int:
     return removed
 
 
-def write_mirror(store: SqliteStore, target: Path | str) -> MirrorReport:
+def write_mirror(store: Store, target: Path | str) -> MirrorReport:
     """Write the store as a v8 directory under ``target``; see the module
     docstring for the target's rules and what a run leaves behind."""
     started = time.perf_counter()

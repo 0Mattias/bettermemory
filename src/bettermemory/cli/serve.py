@@ -14,7 +14,7 @@ import sys
 
 from ..builder import build_server
 from ..config import load_config
-from ..store import Store
+from ..store import STORE_FILENAME, Store
 
 
 log = logging.getLogger("bettermemory")
@@ -34,13 +34,13 @@ def run_serve() -> None:
     )
     config = load_config()
     directory = config.resolved_directory()
-    store = Store.open(directory)
+    store = Store.open_or_create(directory / STORE_FILENAME)
 
     log.info("memory directory: %s", directory)
     log.info(
-        "telemetry: %s (event log at %s/.events.jsonl)",
+        "telemetry: %s (the store's log at %s)",
         "on" if config.telemetry.enabled else "off",
-        directory,
+        store.path,
     )
     log.info(
         "system prompt: server-level MCP `instructions` block carries "

@@ -24,10 +24,10 @@ from typing import Any
 
 import pytest
 
-from bettermemory import _frontmatter, identity
+from bettermemory import identity
 from bettermemory._response import ResponseBuilder
-from bettermemory.config import BehaviorConfig, Config, StorageConfig
-from bettermemory.events import Recorder, iter_events
+from bettermemory.config import Config, StorageConfig
+from bettermemory.events import Recorder
 from bettermemory.identity import (
     ENV_CLIENT,
     ENV_CLIENT_VERSION,
@@ -49,15 +49,12 @@ from bettermemory.identity import (
     Caller,
 )
 from bettermemory.init import patch_client_config, server_snippet
-from bettermemory.models import SCHEMA_VERSION
 from bettermemory.origin import Origin, capture
 from bettermemory.server import build_server
 from bettermemory.session import (
     _DEFAULT_CLIENT_KEY,
     SessionRegistry,
     SessionState,
-    _decode_payload,
-    _encode_payload,
 )
 from bettermemory.store import Store
 
@@ -85,13 +82,8 @@ async def _call(server: Any, name: str, **kwargs: Any) -> Any:
     return await fn(**kwargs)
 
 
-def _server(
-    root: Path, *, state: Any = None, confirm: bool = False
-) -> tuple[Any, Store]:
-    cfg = Config(
-        storage=StorageConfig(directory=str(root)),
-        behavior=BehaviorConfig(require_write_confirmation=confirm),
-    )
+def _server(root: Path, *, state: Any = None) -> tuple[Any, Store]:
+    cfg = Config(storage=StorageConfig(directory=str(root)))
     store = Store(root)
     return build_server(config=cfg, store=store, state=state), store
 
@@ -111,9 +103,18 @@ def _init_repo(path: Path, *, remote: str) -> None:
     )
 
 
-def _memory_file(store: Store, memory_id: str) -> Path:
-    (path,) = [p for p in store.root.glob("*.md") if memory_id in p.read_text()]
-    return path
+def _row(store: Store, memory_id: str) -> tuple[Any, Any]:
+    """The record as the store's row holds it: the actor block and the
+    origin block, each parsed from its JSON column or None."""
+    import json
+
+    row = store.conn.execute(
+        "SELECT actor_json, origin_json FROM memories WHERE id = ?", (memory_id,)
+    ).fetchone()
+    assert row is not None
+    actor = None if row["actor_json"] is None else json.loads(row["actor_json"])
+    origin = None if row["origin_json"] is None else json.loads(row["origin_json"])
+    return actor, origin
 
 
 # ---------------------------------------------------------------------------
@@ -121,12 +122,11 @@ def _memory_file(store: Store, memory_id: str) -> Path:
 # ---------------------------------------------------------------------------
 
 
-async def test_g1_a_client_that_declares_nothing_writes_the_7_9_0_frontmatter(
+async def test_g1_a_client_that_declares_nothing_writes_no_actor(
     tmp_path: Path,
 ) -> None:
-    """Proven on a real file, not asserted: the bytes the store wrote are
-    compared to a document rebuilt from the 7.9.0 key set — nothing else
-    is allowed to appear, including `actor` and `origin.source`."""
+    """Proven on the stored row, not asserted: a silent client leaves the
+    actor column empty and the record's actor None."""
     server, store = _server(tmp_path / "store")
     committed = await _call(
         server,
@@ -139,49 +139,16 @@ async def test_g1_a_client_that_declares_nothing_writes_the_7_9_0_frontmatter(
     memory = store.load_one(committed["id"])
     assert memory is not None
     assert memory.actor is None
-    # Reloaded from disk the origin names no channel: the process cwd is
-    # implicit in the file (that is G1) and labeled on the read surface.
-    assert memory.origin is not None and memory.origin.source is None
-
-    path = _memory_file(store, memory.id)
-    written = path.read_text(encoding="utf-8")
-
-    # The 7.9.0 key set, in the order the 7.9.0 serializer emitted it, and
-    # the 7.9.0 origin block: `exclude_none` over exactly four fields.
-    origin_7_9_0 = {
-        key: value
-        for key, value in (
-            ("cwd", memory.origin.cwd),
-            ("repo", memory.origin.repo),
-            ("branch", memory.origin.branch),
-            ("worktree_root", memory.origin.worktree_root),
-        )
-        if value is not None
-    }
-    expected_meta: dict[str, Any] = {
-        "schema_version": SCHEMA_VERSION,
-        "id": memory.id,
-        "created": memory.created,
-        "updated": memory.updated,
-        "scopes": list(memory.scopes),
-        "confidence": memory.confidence.value,
-        "source": memory.source.value,
-        "origin": origin_7_9_0,
-        "category": "fact",
-    }
-    expected = _frontmatter.dumps(
-        _frontmatter.Post(content=memory.body, metadata=expected_meta)
-    )
-    assert written == expected
-    assert "actor" not in written
-    assert "process-cwd" not in written
+    actor_row, _origin_row = _row(store, memory.id)
+    assert actor_row is None
+    assert "actor" not in committed
 
 
 async def test_g1_contrast_a_declaring_client_adds_the_block_and_nothing_else(
     tmp_path: Path,
 ) -> None:
-    """The additive half of G1: a declared client lands as one extra
-    `actor` block and the rest of the file is the 7.9.0 shape."""
+    """The additive half of G1: a declared client lands as one `actor`
+    block on the row, the same block the response carries."""
     server, store = _server(tmp_path / "store")
     committed = await _call(
         server,
@@ -192,13 +159,12 @@ async def test_g1_contrast_a_declaring_client_adds_the_block_and_nothing_else(
     )
     memory = store.load_one(committed["id"])
     assert memory is not None
-    post = _frontmatter.loads(_memory_file(store, memory.id).read_text())
-    assert post.metadata["actor"] == {
+    actor_row, _origin_row = _row(store, memory.id)
+    assert actor_row == {
         "client": "hermes",
         "model": "gpt-x",
         "sources": {"client": SOURCE_HEADER, "model": SOURCE_HEADER},
     }
-    assert "source" not in post.metadata["origin"]
     assert committed["actor"]["client"] == "hermes"
     assert committed["actor"]["principal"] is None
 
@@ -231,8 +197,8 @@ def test_g2_per_process_channels_do_not_split_the_bucket(
 ) -> None:
     """The environment and the handshake's clientInfo are facts about the
     PROCESS, not about one request among many: keying on them would move
-    every stdio client out of the default bucket (and its pending-write
-    sidecar rows) for no isolation gained."""
+    every stdio client out of the default bucket for no isolation
+    gained."""
     monkeypatch.setenv(ENV_CLIENT, "hermes")
     registry = SessionRegistry()
     env_state = registry.for_request(fake_ctx(with_request=False))
@@ -241,87 +207,35 @@ def test_g2_per_process_channels_do_not_split_the_bucket(
     assert env_state.client_key == _DEFAULT_CLIENT_KEY
 
 
-async def test_g2_pending_writes_cannot_cross_header_declared_identities(
+async def test_g2_session_state_cannot_cross_header_declared_identities(
     tmp_path: Path,
 ) -> None:
     """The first time this code path runs in production shape: two clients
     that differ only in what they declare, against one server."""
     registry = SessionRegistry()
-    server, _store = _server(tmp_path / "store", state=registry, confirm=True)
+    server, _store = _server(tmp_path / "store", state=registry)
     hermes = fake_ctx(headers={HEADER_CLIENT: "hermes"})
     claude = fake_ctx(headers={HEADER_CLIENT: "claude-code"})
 
-    pending = await _call(
-        server,
-        "memory_write",
-        content="hermes staged a durable preference about editor tabs",
-        scopes=["learning-style"],
-        ctx=hermes,
+    disabled = await _call(
+        server, "memory_admin", action="disable_scope", scope="tools", ctx=hermes
     )
-    assert pending["status"] == "pending"
-
-    crossed = await _call(
-        server, "memory_write_cancel", pending_id=pending["pending_id"], ctx=claude
-    )
-    assert crossed["existed"] is False
-
-    disabled = await _call(server, "memory_scope_disable", scope="tools", ctx=hermes)
     assert "tools" in disabled["disabled_scopes"]
-    other = await _call(server, "memory_scope_enable", scope="untouched", ctx=claude)
+    other = await _call(
+        server, "memory_admin", action="enable_scope", scope="untouched", ctx=claude
+    )
     assert other["disabled_scopes"] == []
 
     committed = await _call(
-        server, "memory_write_confirm", pending_id=pending["pending_id"], ctx=hermes
+        server,
+        "memory_write",
+        content="hermes wrote a durable preference about editor tabs",
+        scopes=["learning-style"],
+        acknowledge_user_claim=True,
+        ctx=hermes,
     )
     assert committed["status"] == "committed"
     assert committed["actor"]["client"] == "hermes"
-
-
-async def test_g2_a_staged_actor_survives_the_pending_sidecar_and_a_restart(
-    tmp_path: Path,
-) -> None:
-    """The actor rides the staged payload through JSON and back: a server
-    restart between `memory_write` and `memory_write_confirm` re-adopts
-    the row under the same bucket and the committed record still names
-    the writer."""
-    root = tmp_path / "store"
-    first, _ = _server(root, state=SessionRegistry(), confirm=True)
-    ctx = fake_ctx(headers={HEADER_CLIENT: "hermes", HEADER_MODEL: "gpt-x"})
-    pending = await _call(
-        first,
-        "memory_write",
-        content="a durable claim staged before the server restarted",
-        scopes=["projects:restart"],
-        ctx=ctx,
-    )
-    assert pending["status"] == "pending"
-
-    second, store = _server(root, state=SessionRegistry(), confirm=True)
-    committed = await _call(
-        second, "memory_write_confirm", pending_id=pending["pending_id"], ctx=ctx
-    )
-    assert committed["status"] == "committed"
-    memory = store.load_one(committed["id"])
-    assert memory is not None and memory.actor is not None
-    assert memory.actor.client == "hermes"
-    assert memory.actor.model == "gpt-x"
-    assert memory.actor.sources == {"client": SOURCE_HEADER, "model": SOURCE_HEADER}
-
-
-def test_payload_codec_round_trips_the_actor() -> None:
-    actor = Actor(client="hermes", sources={"client": SOURCE_HEADER})
-    encoded = _encode_payload({"content": "x", "actor": actor, "origin": None})
-    assert encoded["actor"] == {
-        "client": "hermes",
-        "client_version": None,
-        "model": None,
-        "principal": None,
-        "session": None,
-        "sources": {"client": SOURCE_HEADER},
-    }
-    decoded = _decode_payload(encoded)
-    assert decoded["actor"] == actor
-    assert _decode_payload(_encode_payload({"actor": None}))["actor"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -468,8 +382,8 @@ async def test_g3_the_hermes_shape_records_the_declared_workspace_and_says_so(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A gateway started in `$HOME` with `BETTERMEMORY_WORKSPACE` naming the
-    project: the memory's origin is the project — its git facts included —
-    and the file says the environment named it."""
+    project: the memory's origin is the project, its git facts included,
+    and the row says the environment named it."""
     home = tmp_path / "home"
     home.mkdir()
     project = tmp_path / "proj"
@@ -493,9 +407,9 @@ async def test_g3_the_hermes_shape_records_the_declared_workspace_and_says_so(
     assert memory.origin.worktree_root == str(project.resolve())
     assert memory.origin.source == SOURCE_ENV
 
-    post = _frontmatter.loads(_memory_file(store, memory.id).read_text())
-    assert post.metadata["origin"]["source"] == SOURCE_ENV
-    assert post.metadata["origin"]["cwd"] == str(project.resolve())
+    _actor_row, origin_row = _row(store, memory.id)
+    assert origin_row["source"] == SOURCE_ENV
+    assert origin_row["cwd"] == str(project.resolve())
 
     shown = await _call(server, "memory_show", id=memory.id, ctx=None)
     assert shown["origin"]["source"] == SOURCE_ENV
@@ -504,9 +418,9 @@ async def test_g3_the_hermes_shape_records_the_declared_workspace_and_says_so(
 async def test_g3_the_read_surface_labels_the_implicit_process_cwd(
     tmp_path: Path,
 ) -> None:
-    """On disk the process-cwd source stays implicit (G1); on every read
-    surface it is spelled out, and so is a legacy origin that predates
-    the field — both were captured from the server's cwd."""
+    """On every read surface the process-cwd source is spelled out, and
+    so is a legacy origin that predates the field. Both were captured
+    from the server's cwd."""
     server, store = _server(tmp_path / "store")
     committed = await _call(
         server,
@@ -520,12 +434,6 @@ async def test_g3_the_read_surface_labels_the_implicit_process_cwd(
     assert "actor" not in shown
     memory = store.load_one(committed["id"])
     assert memory is not None
-    assert (
-        "source"
-        not in _frontmatter.loads(_memory_file(store, memory.id).read_text()).metadata[
-            "origin"
-        ]
-    )
 
     legacy = ResponseBuilder(stale_after_days=30).origin_to_dict(
         Origin(cwd="/legacy/dir", repo="https://example.test/r.git")
@@ -669,7 +577,8 @@ def test_declared_values_are_bounded_client_input() -> None:
 def test_events_carry_the_actor_only_when_something_was_declared(
     tmp_path: Path,
 ) -> None:
-    recorder = Recorder(root=tmp_path, session_id="sess_test")
+    store = Store(tmp_path / "store")
+    recorder = Recorder(store=store, session_id="sess_test")
     recorder.record("probe", n=1)
     identity.publish(
         Caller(
@@ -681,7 +590,7 @@ def test_events_carry_the_actor_only_when_something_was_declared(
     recorder.record("probe", n=2)
     recorder.record("probe", n=3, actor={"client": "handler-wins"})
 
-    events = [e for e in iter_events(tmp_path) if e["kind"] == "probe"]
+    events = [e for e in store.iter_events() if e["kind"] == "probe"]
     assert "actor" not in events[0]
     assert events[1]["actor"] == {
         "client": "hermes",
@@ -709,9 +618,10 @@ def test_the_stop_hook_publishes_a_transcript_actor(tmp_path: Path) -> None:
     assert identity.registry_key(caller.actor) is None, (
         "a transcript id is not a bucket"
     )
-    recorder = Recorder(root=tmp_path, session_id="transcript-uuid")
+    store = Store(tmp_path / "store")
+    recorder = Recorder(store=store, session_id="transcript-uuid")
     recorder.record("turn_audited")
-    (event,) = list(iter_events(tmp_path))
+    (event,) = list(store.iter_events())
     assert event["actor"]["session"] == "transcript-uuid"
 
 

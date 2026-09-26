@@ -183,87 +183,16 @@ async def _call(server: Any, name: str, **kwargs: Any) -> Any:
 def two_client_server(
     tmp_path: Path,
 ) -> tuple[Any, SessionRegistry, dict[str, str]]:
-    """A confirming-write server backed by a single `SessionRegistry`.
+    """A server backed by a single `SessionRegistry`.
 
-    `require_write_confirmation=True` forces `memory_write` into the
-    pending-tier path — that's the surface where session-state
-    isolation matters most: a pending write from one client must not
-    be confirmable by another.
-
-    Returns (server, registry, client_ctxs) — client_ctxs is a small
+    Returns (server, registry, client_ctxs): client_ctxs is a small
     dict of name -> session_id strings so callers can vary it per
     request without re-typing the literal.
     """
-    from bettermemory.config import BehaviorConfig
-
-    cfg = Config(
-        storage=StorageConfig(directory=str(tmp_path)),
-        behavior=BehaviorConfig(require_write_confirmation=True),
-    )
+    cfg = Config(storage=StorageConfig(directory=str(tmp_path)))
     registry = SessionRegistry()
     server = build_server(config=cfg, store=Store(tmp_path), state=registry)
     return server, registry, {"alice": "client-alice", "bob": "client-bob"}
-
-
-async def test_pending_write_is_isolated_between_clients(
-    two_client_server: tuple[Any, SessionRegistry, dict[str, str]],
-) -> None:
-    """The load-bearing audit fix: alice stages a pending write, bob
-    can't confirm or cancel it.
-
-    Tests inject a forged Context via the `ctx` kwarg that every
-    handler now accepts. The SDK normally injects this at the wire
-    layer; passing it explicitly here lets us simulate two distinct
-    clients hitting the same in-process server.
-    """
-    server, registry, ids = two_client_server
-
-    # Alice opens a pending write under her session_id.
-    alice_ctx = _fake_ctx(session_id=ids["alice"])
-    pending = await _call(
-        server,
-        "memory_write",
-        content="alice's durable preference about tabs vs spaces",
-        scopes=["learning-style"],
-        ctx=alice_ctx,
-    )
-    assert pending["status"] == "pending"
-    pending_id = pending["pending_id"]
-
-    # Bob tries to cancel — under bob's session_id, the registry hands
-    # him a separate SessionState that knows nothing about alice's
-    # pending. The cancel reports "existed=False", confirming the
-    # isolation.
-    bob_ctx = _fake_ctx(session_id=ids["bob"])
-    bob_cancel = await _call(
-        server,
-        "memory_write_cancel",
-        pending_id=pending_id,
-        ctx=bob_ctx,
-    )
-    assert bob_cancel["existed"] is False, (
-        "bob should not be able to cancel alice's pending write — if this "
-        "assertion fails, the SessionRegistry isn't isolating pending state "
-        "between clients and the audit's M2 fix has regressed."
-    )
-
-    # Bob trying to confirm raises — same reason.
-    with pytest.raises(Exception, match="no pending write"):
-        await _call(
-            server,
-            "memory_write_confirm",
-            pending_id=pending_id,
-            ctx=bob_ctx,
-        )
-
-    # Alice's pending is still hers to commit.
-    committed = await _call(
-        server,
-        "memory_write_confirm",
-        pending_id=pending_id,
-        ctx=alice_ctx,
-    )
-    assert committed["status"] == "committed"
 
 
 async def test_disabled_scopes_are_isolated_between_clients(
@@ -272,7 +201,7 @@ async def test_disabled_scopes_are_isolated_between_clients(
     """A scope disabled by alice must not affect bob's searches.
 
     Pre-registry, `state.disabled_scopes` was a process-level set;
-    once alice ran `memory_scope_disable("tools")`, bob's
+    once alice disabled `tools` for her session, bob's
     `memory_search` would silently drop tool-scoped hits without his
     consent. The registry isolates `disabled_scopes` per client.
     """
@@ -283,16 +212,19 @@ async def test_disabled_scopes_are_isolated_between_clients(
     # Alice disables `tools`.
     alice_disable = await _call(
         server,
-        "memory_scope_disable",
+        "memory_admin",
+        action="disable_scope",
         scope="tools",
         ctx=alice_ctx,
     )
     assert "tools" in alice_disable["disabled_scopes"]
 
     # Bob queries his own disabled set — should be empty.
+    # Idempotent: enabling a scope that was never disabled reports empty.
     bob_disable_check = await _call(
         server,
-        "memory_scope_enable",  # idempotent; "enable a scope that wasn't disabled" reports empty
+        "memory_admin",
+        action="enable_scope",
         scope="never-disabled",
         ctx=bob_ctx,
     )

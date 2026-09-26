@@ -7,7 +7,8 @@ Covers the seven changes that landed together:
 2. Dead-weight rule fix + ``cold_memories`` bucket.
 3. ``staleness_verdict`` rollup field on every retrieval surface.
 4. Auto-``record_use`` via response tokens.
-5. ``curation_pending`` rollup in ``memory_scope_overview``.
+5. (the session-start rollup; its tool is gone, `health.curation_counts`
+   is pinned in `tests/test_server_commit_drift.py`)
 6. ``scope_mismatch`` warning at ``memory_write`` time.
 7. Structured ``verified_claims`` on ``memory_verify``.
 
@@ -20,7 +21,6 @@ hermetic per-test memory dir, isolated SessionState.
 from __future__ import annotations
 from ._mcp import call_tool as _mcp_call
 
-import json
 import os
 import shutil
 import subprocess
@@ -31,7 +31,8 @@ from typing import Any
 import pytest
 
 from bettermemory.config import BehaviorConfig, Config, StorageConfig
-from bettermemory.events import Recorder, iter_events
+from bettermemory.events import Recorder
+from bettermemory.health import report_for_store
 from bettermemory.origin import Origin
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
@@ -60,18 +61,19 @@ def server(memory_dir: Path) -> Any:
 
 
 @pytest.fixture
-def server_with_state(memory_dir: Path) -> tuple[Any, SessionState, Path]:
+def server_with_state(memory_dir: Path) -> tuple[Any, SessionState, Store]:
     """Variant fixture that exposes the SessionState so use-token tests
-    can introspect what the auto-commit pass did. Mirrors `server`
-    otherwise."""
+    can introspect what the auto-commit pass did, and the store so they
+    can read the event log. Mirrors `server` otherwise."""
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
     state = SessionState()
+    store = Store(memory_dir)
     srv = build_server(
         config=cfg,
-        store=Store(memory_dir),
+        store=store,
         state=state,
     )
-    return srv, state, memory_dir
+    return srv, state, store
 
 
 @pytest.fixture
@@ -107,6 +109,12 @@ def _unwrap(res: Any) -> Any:
     return res.get("result", res) if isinstance(res, dict) and "result" in res else res
 
 
+async def _advance(srv: Any) -> None:
+    """One memory tool turn that issues no use token and settles none:
+    what the use-token tests need to age a token by a turn."""
+    await _call(srv, "memory_admin", action="enable_scope", scope="never-disabled")
+
+
 # ---------------------------------------------------------------------------
 # Change 1 — ambient category
 # ---------------------------------------------------------------------------
@@ -134,10 +142,10 @@ async def test_ambient_category_commits_immediately(server: Any) -> None:
     assert res["category"] == "ambient"
 
 
-async def test_ambient_category_persists_in_frontmatter(
+async def test_ambient_category_persists_in_the_store(
     server: Any, memory_dir: Path
 ) -> None:
-    """The new field round-trips through disk."""
+    """The new field round-trips through the store."""
     res = await _call(
         server,
         "memory_write",
@@ -146,10 +154,8 @@ async def test_ambient_category_persists_in_frontmatter(
         category="ambient",
         acknowledge_user_claim=True,  # user claim filed as ambient; see above
     )
-    files = list(memory_dir.glob("*.md"))
-    assert len(files) == 1
-    raw = files[0].read_text(encoding="utf-8")
-    assert "category: ambient" in raw
+    [stored] = Store.open(memory_dir).load_all()
+    assert stored.category is not None and stored.category.value == "ambient"
 
     # Round-trip via memory_show.
     shown = await _call(server, "memory_show", id=res["id"])
@@ -208,7 +214,9 @@ async def test_unknown_category_rejected(server: Any) -> None:
         )
 
 
-async def test_ambient_excluded_from_dead_weight_via_health(server: Any) -> None:
+async def test_ambient_excluded_from_dead_weight_via_health(
+    server: Any, memory_dir: Path
+) -> None:
     """An ambient memory with no use signal must not appear in dead_weight."""
     written = await _call(
         server,
@@ -221,7 +229,7 @@ async def test_ambient_excluded_from_dead_weight_via_health(server: Any) -> None
     # Generate a search hit so the memory has retrieval_count > 0 — the
     # condition under which a non-ambient memory would land in dead_weight.
     await _call(server, "memory_search", query="code-driven tutorials")
-    health = await _call(server, "memory_health", window_days=0)
+    health = report_for_store(Store.open(memory_dir), window_days=0).to_dict()
     dead_ids = {m["id"] for m in health["dead_weight"]}
     cold_ids = {m["id"] for m in health["cold_memories"]}
     assert written["id"] not in dead_ids
@@ -233,7 +241,9 @@ async def test_ambient_excluded_from_dead_weight_via_health(server: Any) -> None
 # ---------------------------------------------------------------------------
 
 
-async def test_cold_memories_field_returned_by_health(server: Any) -> None:
+async def test_cold_memories_field_returned_by_health(
+    server: Any, memory_dir: Path
+) -> None:
     """A fact memory never retrieved (no `memory_search`) and older than
     `window_days` lands in the `cold_memories` bucket — not
     `dead_weight`. The prior version of this test only asserted that
@@ -250,7 +260,7 @@ async def test_cold_memories_field_returned_by_health(server: Any) -> None:
     # cutoff (cutoff == now), so the cold predicate (`created < cutoff
     # AND retrieval_count == 0 AND not ambient`) holds without us
     # needing to backdate the file on disk.
-    res = await _call(server, "memory_health", window_days=0)
+    res = report_for_store(Store.open(memory_dir), window_days=0).to_dict()
     assert "cold_memories" in res
     cold = res["cold_memories"]
     assert isinstance(cold, list)
@@ -467,11 +477,15 @@ def _commit_file(repo: Path, relpath: str) -> None:
     )
 
 
-def _build_stale_server_with_origin(memory_dir: Path, origin: Origin) -> Any:
+def _build_stale_server_with_origin(
+    memory_dir: Path, origin: Origin, monkeypatch: pytest.MonkeyPatch
+) -> Any:
     """Build a server with ``verification_stale_days=0`` whose
     ``capture_origin`` returns the supplied ``origin``. Mirrors the
     monkeypatch pattern from ``tests/test_server_commit_drift.py`` so the
-    test can pin the caller's repo without altering the process cwd."""
+    test can pin the caller's repo without altering the process cwd, and
+    so the fake is restored at teardown instead of leaking into later
+    tests that rely on the real capture."""
     import bettermemory._handlers as handlers_module
     import bettermemory.server as server_module
 
@@ -480,10 +494,11 @@ def _build_stale_server_with_origin(memory_dir: Path, origin: Origin) -> Any:
         storage=StorageConfig(directory=str(memory_dir)),
         behavior=BehaviorConfig(verification_stale_days=0),
     )
-    recorder = Recorder(root=memory_dir, session_id=state.session_id)
+    store = Store(memory_dir)
+    recorder = Recorder(store=store, session_id=state.session_id)
     srv = build_server(
         config=cfg,
-        store=Store(memory_dir),
+        store=store,
         state=state,
         recorder=recorder,
     )
@@ -491,8 +506,8 @@ def _build_stale_server_with_origin(memory_dir: Path, origin: Origin) -> Any:
     def fake_capture(cwd: Path | None = None) -> Origin:
         return origin
 
-    setattr(handlers_module, "capture_origin", fake_capture)
-    setattr(server_module, "capture_origin", fake_capture)
+    monkeypatch.setattr(handlers_module, "capture_origin", fake_capture)
+    monkeypatch.setattr(server_module, "capture_origin", fake_capture)
     return srv
 
 
@@ -632,7 +647,7 @@ async def test_staleness_verdict_via_search(stale_server: Any, status: str) -> N
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
 async def test_staleness_verdict_stale_survives_commit_drift_recompute(
-    memory_dir: Path, tmp_path: Path
+    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Pins the duplicate of the raise-status gate at ``_response.py:406``.
 
@@ -661,7 +676,7 @@ async def test_staleness_verdict_stale_survives_commit_drift_recompute(
     repo.mkdir()
     _init_repo(repo)
     origin = Origin(cwd=str(repo), repo=_FAKE_REPO_REMOTE, branch="main")
-    server = _build_stale_server_with_origin(memory_dir, origin)
+    server = _build_stale_server_with_origin(memory_dir, origin, monkeypatch)
 
     memory_id = await _write_memory_in_state(server, status="stale", repo=repo)
     hits = _unwrap(
@@ -692,7 +707,7 @@ async def test_staleness_verdict_stale_survives_commit_drift_recompute(
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
 async def test_staleness_verdict_matches_across_show_and_search(
-    memory_dir: Path, tmp_path: Path
+    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Cross-surface invariant: for a single stale memory, the verdict
     returned by ``memory_show`` and by ``memory_search``'s top hit
@@ -705,7 +720,7 @@ async def test_staleness_verdict_matches_across_show_and_search(
     repo.mkdir()
     _init_repo(repo)
     origin = Origin(cwd=str(repo), repo=_FAKE_REPO_REMOTE, branch="main")
-    server = _build_stale_server_with_origin(memory_dir, origin)
+    server = _build_stale_server_with_origin(memory_dir, origin, monkeypatch)
 
     memory_id = await _write_memory_in_state(server, status="stale", repo=repo)
     shown = await _call(server, "memory_show", id=memory_id)
@@ -795,7 +810,7 @@ def test_staleness_verdict_tier_string_values_unchanged() -> None:
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
 async def test_staleness_verdict_string_matches_constant_across_show_and_search(
-    memory_dir: Path, tmp_path: Path
+    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Cross-surface OUTPUT pin: for one stale memory routed through
     the commit-drift recompute path, both ``memory_show`` and
@@ -813,7 +828,7 @@ async def test_staleness_verdict_string_matches_constant_across_show_and_search(
     repo.mkdir()
     _init_repo(repo)
     origin = Origin(cwd=str(repo), repo=_FAKE_REPO_REMOTE, branch="main")
-    server = _build_stale_server_with_origin(memory_dir, origin)
+    server = _build_stale_server_with_origin(memory_dir, origin, monkeypatch)
 
     memory_id = await _write_memory_in_state(server, status="stale", repo=repo)
     shown = await _call(server, "memory_show", id=memory_id)
@@ -857,86 +872,6 @@ async def test_staleness_verdict_string_matches_constant_across_show_and_search(
 
 
 # ---------------------------------------------------------------------------
-# Change 3 (cont.) — pin verdict emission on the memory_list surfaces too
-# ---------------------------------------------------------------------------
-#
-# ``compute_staleness_verdict`` has 5 call sites in
-# ``_response.py`` + ``handlers/show.py``:
-#
-# - ``_response.py:103``  — ``hit_to_dict`` (memory_search)
-# - ``_response.py:161``  — ``summary_to_dict`` (memory_list summary)
-# - ``_response.py:224``  — ``memory_to_dict`` (memory_list with_bodies)
-# - ``_response.py:415``  — ``attach_commit_drift_counts`` recompute
-# - ``handlers/show.py``  — memory_show
-#
-# The cross-surface tests above triangulate three of them
-# (memory_show, memory_search hit, and the per-search recompute) but
-# leave the two memory_list paths unpinned. A single-site hardcoded
-# literal at ``_response.py:161`` or ``:224`` — e.g. a refactor that
-# inlined ``"spot_check_required"`` for "clarity" — would silently
-# desync the memory_list verdict from every other surface while every
-# existing test still passed. This test extends the cross-surface
-# coverage to both list shapes (summary + with_bodies) so a literal
-# at either site fails loudly.
-#
-# Negative-control: temporarily hardcoding the literal ``"wrong"`` at
-# ``_response.py:161`` flips the summary-path assertion below;
-# temporarily hardcoding it at ``_response.py:224`` flips the
-# with_bodies-path assertion. Both reverts confirmed.
-
-
-async def test_staleness_verdict_string_matches_constant_across_list_surfaces(
-    stale_server: Any,
-) -> None:
-    """Cross-surface OUTPUT pin on the memory_list paths: for a stale
-    memory routed through both ``memory_list`` (summary) and
-    ``memory_list(with_bodies=True)``, the emitted ``staleness_verdict``
-    on each returned row must equal the shared ``_VERDICT_REQUIRED``
-    constant. Catches a single-site hardcoded literal at
-    ``_response.py:161`` (``summary_to_dict``) or ``:224``
-    (``memory_to_dict``) — both are independent emission sites the
-    other cross-surface tests don't reach.
-
-    Uses the ``stale_server`` fixture (``verification_stale_days=0``)
-    plus the existing ``_write_memory_in_state(..., status="stale")``
-    helper so the produced memory is classified ``stale`` on the next
-    ``compute_verification_status`` call — driving the
-    ``_VERDICT_RAISE_STATUSES`` branch that pre-empts every drift
-    input."""
-    memory_id = await _write_memory_in_state(stale_server, status="stale")
-
-    # Summary path (`_response.py:161` → `summary_to_dict`).
-    summary_rows = _unwrap(await _call(stale_server, "memory_list"))
-    summary_row = next((r for r in summary_rows if r["id"] == memory_id), None)
-    assert summary_row is not None, (
-        f"seeded memory {memory_id!r} missing from memory_list summary"
-    )
-    assert summary_row["verification"]["status"] == "stale"
-    assert summary_row["staleness_verdict"] == _VERDICT_REQUIRED, (
-        f"memory_list (summary) emitted "
-        f"{summary_row['staleness_verdict']!r}, expected "
-        f"{_VERDICT_REQUIRED!r} (the shared constant) — possible "
-        f"single-site drift away from verify.py's _VERDICT_REQUIRED "
-        f"at _response.py:161 (summary_to_dict)"
-    )
-
-    # With-bodies path (`_response.py:224` → `memory_to_dict`).
-    body_rows = _unwrap(await _call(stale_server, "memory_list", with_bodies=True))
-    body_row = next((r for r in body_rows if r["id"] == memory_id), None)
-    assert body_row is not None, (
-        f"seeded memory {memory_id!r} missing from memory_list with_bodies"
-    )
-    assert body_row["verification"]["status"] == "stale"
-    assert body_row["staleness_verdict"] == _VERDICT_REQUIRED, (
-        f"memory_list (with_bodies) emitted "
-        f"{body_row['staleness_verdict']!r}, expected "
-        f"{_VERDICT_REQUIRED!r} (the shared constant) — possible "
-        f"single-site drift away from verify.py's _VERDICT_REQUIRED "
-        f"at _response.py:224 (memory_to_dict)"
-    )
-
-
-# ---------------------------------------------------------------------------
 # Change 4 — auto-record_use via use_token
 # ---------------------------------------------------------------------------
 
@@ -966,7 +901,7 @@ async def test_show_response_includes_use_token(server: Any) -> None:
 
 
 async def test_use_token_auto_commits_after_two_turns(
-    server_with_state: tuple[Any, SessionState, Path],
+    server_with_state: tuple[Any, SessionState, Store],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Issue token at turn N; two more memory_* calls (turns N+1, N+2)
@@ -979,7 +914,7 @@ async def test_use_token_auto_commits_after_two_turns(
     import bettermemory.session as session_mod
 
     monkeypatch.setattr(session_mod, "AUTO_COMMIT_MIN_AGE_SECONDS", 0.0)
-    srv, _state, memory_dir = server_with_state
+    srv, _state, store = server_with_state
     res = await _call(
         srv, "memory_write", content="A retrievable fact.", scopes=["tools"]
     )
@@ -987,11 +922,11 @@ async def test_use_token_auto_commits_after_two_turns(
     await _call(srv, "memory_search", query="retrievable fact")
     # Turn deltas: search at turn ~2 issued a token. Two more calls
     # advance the counter — by the third call, the auto-commit fires.
-    await _call(srv, "memory_list")  # +1
-    await _call(srv, "memory_list")  # +2
-    await _call(srv, "memory_list")  # +3 — auto-commit fires here
+    await _advance(srv)  # +1
+    await _advance(srv)  # +2
+    await _advance(srv)  # +3 — auto-commit fires here
 
-    events = list(iter_events(memory_dir))
+    events = list(store.iter_events())
     auto_uses = [
         e
         for e in events
@@ -1004,11 +939,11 @@ async def test_use_token_auto_commits_after_two_turns(
 
 
 async def test_explicit_record_use_overrides_pending_auto_commit(
-    server_with_state: tuple[Any, SessionState, Path],
+    server_with_state: tuple[Any, SessionState, Store],
 ) -> None:
     """An explicit record_use(ignored) for a still-pending token must
     NOT produce an `applied` shadow event in the log."""
-    srv, _state, memory_dir = server_with_state
+    srv, _state, store = server_with_state
     res = await _call(
         srv, "memory_write", content="A retrievable fact.", scopes=["tools"]
     )
@@ -1016,11 +951,11 @@ async def test_explicit_record_use_overrides_pending_auto_commit(
     await _call(srv, "memory_record_use", memory_ids=[res["id"]], outcome="ignored")
 
     # Advance enough turns for any rogue auto-commit to fire.
-    await _call(srv, "memory_list")
-    await _call(srv, "memory_list")
-    await _call(srv, "memory_list")
+    await _advance(srv)
+    await _advance(srv)
+    await _advance(srv)
 
-    events = list(iter_events(memory_dir))
+    events = list(store.iter_events())
     use_events = [e for e in events if e.get("kind") == "use"]
     # Find any event citing the memory id.
     for e in use_events:
@@ -1031,11 +966,11 @@ async def test_explicit_record_use_overrides_pending_auto_commit(
 
 
 async def test_explicit_record_use_purges_token(
-    server_with_state: tuple[Any, SessionState, Path],
+    server_with_state: tuple[Any, SessionState, Store],
 ) -> None:
     """After an explicit record_use, the pending token map should
     drop the id so a future auto-commit sweep doesn't double-fire."""
-    srv, state, _memory_dir = server_with_state
+    srv, state, _store = server_with_state
     res = await _call(
         srv, "memory_write", content="A retrievable fact.", scopes=["tools"]
     )
@@ -1046,18 +981,18 @@ async def test_explicit_record_use_purges_token(
 
 
 async def test_use_token_within_ttl_does_not_auto_commit(
-    server_with_state: tuple[Any, SessionState, Path],
+    server_with_state: tuple[Any, SessionState, Store],
 ) -> None:
     """One memory_* call after a search isn't enough for the token to age
     out; the auto-commit pass only fires after `ttl_turns` deltas."""
-    srv, _state, memory_dir = server_with_state
+    srv, _state, store = server_with_state
     res = await _call(
         srv, "memory_write", content="A retrievable fact.", scopes=["tools"]
     )
     await _call(srv, "memory_search", query="retrievable fact")
-    await _call(srv, "memory_list")  # one turn advance — still within TTL
+    await _advance(srv)  # one turn advance — still within TTL
 
-    events = list(iter_events(memory_dir))
+    events = list(store.iter_events())
     auto_uses = [
         e
         for e in events
@@ -1070,13 +1005,13 @@ async def test_use_token_within_ttl_does_not_auto_commit(
 
 
 async def test_hook_attributed_event_suppresses_auto_commit(
-    server_with_state: tuple[Any, SessionState, Path],
+    server_with_state: tuple[Any, SessionState, Store],
 ) -> None:
     """When the Stop hook has already emitted an `applied` event with
     `attribution="hook"` for a memory, the in-process auto-commit must
     NOT fire a second `applied` event two turns later. The hook
     happens cross-process; the dedup goes via the event log."""
-    srv, state, memory_dir = server_with_state
+    srv, state, store = server_with_state
     res = await _call(
         srv, "memory_write", content="A retrievable fact.", scopes=["tools"]
     )
@@ -1088,7 +1023,7 @@ async def test_hook_attributed_event_suppresses_auto_commit(
     # one uses; advance_turn's dedup pass reads the event log.
     from bettermemory.events import Recorder
 
-    Recorder(root=memory_dir, session_id=state.session_id).record(
+    Recorder(store=store, session_id=state.session_id).record(
         "use",
         ids=[res["id"]],
         outcome="applied",
@@ -1099,11 +1034,11 @@ async def test_hook_attributed_event_suppresses_auto_commit(
     )
 
     # Advance enough turns for any rogue auto-commit to fire.
-    await _call(srv, "memory_list")
-    await _call(srv, "memory_list")
-    await _call(srv, "memory_list")
+    await _advance(srv)
+    await _advance(srv)
+    await _advance(srv)
 
-    events = list(iter_events(memory_dir))
+    events = list(store.iter_events())
     use_events_for_id = [
         e
         for e in events
@@ -1119,7 +1054,7 @@ async def test_hook_attributed_event_suppresses_auto_commit(
 
 
 async def test_production_cross_id_space_hook_event_suppresses_auto_commit(
-    server_with_state: tuple[Any, SessionState, Path],
+    server_with_state: tuple[Any, SessionState, Store],
 ) -> None:
     """Regression for the PRODUCTION id-space gap: the in-process server
     session (`recorder.session_id`, a `sess_<hex>`) and the Stop hook's
@@ -1143,7 +1078,7 @@ async def test_production_cross_id_space_hook_event_suppresses_auto_commit(
     explicitly NOT `state.session_id`, then asserts EXACTLY ONE applied
     event total after the auto-commit window passes.
     """
-    srv, state, memory_dir = server_with_state
+    srv, state, store = server_with_state
     res = await _call(
         srv, "memory_write", content="A retrievable fact.", scopes=["tools"]
     )
@@ -1162,7 +1097,7 @@ async def test_production_cross_id_space_hook_event_suppresses_auto_commit(
 
     # Mirror `hook.run_audit`: the hook's Recorder carries the transcript
     # id, and every event it writes is tagged `triggered_from="stop_hook"`.
-    Recorder(root=memory_dir, session_id=transcript_session_id).record(
+    Recorder(store=store, session_id=transcript_session_id).record(
         "use",
         ids=[res["id"]],
         outcome="applied",
@@ -1173,11 +1108,11 @@ async def test_production_cross_id_space_hook_event_suppresses_auto_commit(
     )
 
     # Advance enough turns for any rogue auto-commit to fire.
-    await _call(srv, "memory_list")
-    await _call(srv, "memory_list")
-    await _call(srv, "memory_list")
+    await _advance(srv)
+    await _advance(srv)
+    await _advance(srv)
 
-    events = list(iter_events(memory_dir))
+    events = list(store.iter_events())
     use_events_for_id = [
         e
         for e in events
@@ -1196,7 +1131,7 @@ async def test_production_cross_id_space_hook_event_suppresses_auto_commit(
 
 
 async def test_stale_use_event_does_not_falsely_purge_fresh_token(
-    server_with_state: tuple[Any, SessionState, Path],
+    server_with_state: tuple[Any, SessionState, Store],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Regression: pre-2.6.8 the in-process dedup scan matched on
@@ -1213,7 +1148,7 @@ async def test_stale_use_event_does_not_falsely_purge_fresh_token(
     import bettermemory.session as session_mod
 
     monkeypatch.setattr(session_mod, "AUTO_COMMIT_MIN_AGE_SECONDS", 0.0)
-    srv, state, memory_dir = server_with_state
+    srv, state, store = server_with_state
     res = await _call(
         srv, "memory_write", content="A retrievable fact.", scopes=["tools"]
     )
@@ -1242,9 +1177,9 @@ async def test_stale_use_event_does_not_falsely_purge_fresh_token(
 
     # And after the TTL passes, the auto-commit DOES fire for the fresh
     # cycle — proving the token is live, not just resident-but-shadowed.
-    await _call(srv, "memory_list")
-    await _call(srv, "memory_list")
-    events = list(iter_events(memory_dir))
+    await _advance(srv)
+    await _advance(srv)
+    events = list(store.iter_events())
     auto_for_cycle_2 = [
         e
         for e in events
@@ -1278,7 +1213,7 @@ def _backdate_use_token(state: SessionState, memory_id: str) -> None:
 
 
 async def test_hook_settled_token_expiring_does_not_report_a_loss(
-    server_with_state: tuple[Any, SessionState, Path],
+    server_with_state: tuple[Any, SessionState, Store],
 ) -> None:
     """A retrieval the Stop hook ALREADY settled, whose token then dies
     of wall clock, must not be reported as a lost retrieval.
@@ -1300,7 +1235,7 @@ async def test_hook_settled_token_expiring_does_not_report_a_loss(
     `triggered_from="stop_hook"` under a transcript id from a different
     id space than the server's, mirroring `hook.run_audit`.
     """
-    srv, state, memory_dir = server_with_state
+    srv, state, store = server_with_state
     res = await _call(
         srv, "memory_write", content="A retrievable fact.", scopes=["tools"]
     )
@@ -1311,7 +1246,7 @@ async def test_hook_settled_token_expiring_does_not_report_a_loss(
     # The Stop hook settles the turn's retrieval seconds after the reply.
     transcript_session_id = "claude-code-transcript-expiry"
     assert transcript_session_id != state.session_id
-    Recorder(root=memory_dir, session_id=transcript_session_id).record(
+    Recorder(store=store, session_id=transcript_session_id).record(
         "use",
         ids=[mid],
         outcome="applied",
@@ -1326,9 +1261,9 @@ async def test_hook_settled_token_expiring_does_not_report_a_loss(
     # token's lifetime exactly as production would have it.
     _backdate_use_token(state, mid)
 
-    await _call(srv, "memory_list")
+    await _advance(srv)
 
-    events = list(iter_events(memory_dir))
+    events = list(store.iter_events())
     expiries = [e for e in events if e.get("kind") == "use_token_expired"]
     assert not [e for e in expiries if mid in (e.get("ids") or [])], (
         "a retrieval the Stop hook already settled was reported as a "
@@ -1341,7 +1276,7 @@ async def test_hook_settled_token_expiring_does_not_report_a_loss(
 
 
 async def test_expired_use_token_emits_event_and_is_not_applied(
-    server_with_state: tuple[Any, SessionState, Path],
+    server_with_state: tuple[Any, SessionState, Store],
 ) -> None:
     """A retrieval nothing settled surfaces as `use_token_expired` — and
     as NOTHING else.
@@ -1358,7 +1293,7 @@ async def test_expired_use_token_emits_event_and_is_not_applied(
     """
     import bettermemory.session as session_mod
 
-    srv, state, memory_dir = server_with_state
+    srv, state, store = server_with_state
     res = await _call(
         srv, "memory_write", content="A retrievable fact.", scopes=["tools"]
     )
@@ -1366,9 +1301,9 @@ async def test_expired_use_token_emits_event_and_is_not_applied(
     await _call(srv, "memory_search", query="retrievable fact")
     _backdate_use_token(state, mid)
 
-    await _call(srv, "memory_list")
+    await _advance(srv)
 
-    events = list(iter_events(memory_dir))
+    events = list(store.iter_events())
     expiries = [e for e in events if e.get("kind") == "use_token_expired"]
     assert len(expiries) == 1, f"expected exactly one expiry event; got {expiries}"
     expiry = expiries[0]
@@ -1387,7 +1322,7 @@ async def test_expired_use_token_emits_event_and_is_not_applied(
 
 
 async def test_explicit_record_use_of_an_expired_token_reports_no_loss(
-    server_with_state: tuple[Any, SessionState, Path],
+    server_with_state: tuple[Any, SessionState, Store],
 ) -> None:
     """The model settling a dead token explicitly is a settlement, not a
     loss — even though the settling event is written after the drain.
@@ -1404,7 +1339,7 @@ async def test_explicit_record_use_of_an_expired_token_reports_no_loss(
     Driven through `call_tool` rather than the handler function so the
     real intra-call ordering is what's under test.
     """
-    srv, state, memory_dir = server_with_state
+    srv, state, store = server_with_state
     res = await _call(
         srv, "memory_write", content="A retrievable fact.", scopes=["tools"]
     )
@@ -1424,7 +1359,7 @@ async def test_explicit_record_use_of_an_expired_token_reports_no_loss(
         claim_excerpts=["A retrievable fact"],
     )
 
-    events = list(iter_events(memory_dir))
+    events = list(store.iter_events())
     settled = {
         i for e in events if e.get("kind") == "use" for i in (e.get("ids") or [])
     }
@@ -1446,7 +1381,7 @@ async def test_explicit_record_use_of_an_expired_token_reports_no_loss(
 
 
 async def test_hookless_session_loses_no_retrieval_silently(
-    server_with_state: tuple[Any, SessionState, Path],
+    server_with_state: tuple[Any, SessionState, Store],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The acceptance criterion, as a closure over the event log.
@@ -1470,7 +1405,7 @@ async def test_hookless_session_loses_no_retrieval_silently(
     import bettermemory.session as session_mod
 
     monkeypatch.setattr(session_mod, "AUTO_COMMIT_MIN_AGE_SECONDS", 0.0)
-    srv, state, memory_dir = server_with_state
+    srv, state, store = server_with_state
     idle = await _call(
         srv,
         "memory_write",
@@ -1492,16 +1427,16 @@ async def test_hookless_session_loses_no_retrieval_silently(
     # One retrieval goes idle past the eviction TTL; the rest ride the
     # turn counter into the auto-commit.
     _backdate_use_token(state, idle["id"])
-    await _call(srv, "memory_list")
-    await _call(srv, "memory_list")
-    await _call(srv, "memory_list")
+    await _advance(srv)
+    await _advance(srv)
+    await _advance(srv)
 
     assert not state.pending_use_tokens, (
         "a token is still live — the closure below would be vacuously "
         "satisfiable by tokens that simply haven't been decided yet"
     )
 
-    events = list(iter_events(memory_dir))
+    events = list(store.iter_events())
     retrieved: set[str] = set()
     settled: set[str] = set()
     expired: set[str] = set()
@@ -1524,471 +1459,6 @@ async def test_hookless_session_loses_no_retrieval_silently(
     assert retrieved == settled | expired, (
         "retrievals fell off the log with no settlement and no expiry: "
         f"{sorted(retrieved - (settled | expired))}"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Change 5 — curation_pending in memory_scope_overview
-# ---------------------------------------------------------------------------
-
-
-async def test_scope_overview_returns_curation_pending(server: Any) -> None:
-    res = await _call(server, "memory_scope_overview")
-    assert "curation_pending" in res
-    assert set(res["curation_pending"].keys()) == {
-        "stale",
-        "never_verified",
-        "drifted",
-        "cold",
-        "dead",
-        "silent_misses",
-        "unique_silent_miss_memories",
-        "cold_endorsement_memories",
-        "conflicts",
-        "unaccounted",
-    }
-    # All counts must be integers.
-    for v in res["curation_pending"].values():
-        assert isinstance(v, int)
-
-
-async def test_scope_overview_curation_pending_zero_on_empty(server: Any) -> None:
-    res = await _call(server, "memory_scope_overview")
-    assert res["curation_pending"] == {
-        "stale": 0,
-        "never_verified": 0,
-        "drifted": 0,
-        "cold": 0,
-        "dead": 0,
-        "silent_misses": 0,
-        "unique_silent_miss_memories": 0,
-        "cold_endorsement_memories": 0,
-        "conflicts": 0,
-        "unaccounted": 0,
-    }
-
-
-async def test_scope_overview_curation_never_verified_increments(
-    server: Any,
-) -> None:
-    """A freshly-written memory has no last_verified_at, so the
-    `never_verified` count climbs by one."""
-    await _call(server, "memory_write", content="A new fact.", scopes=["tools"])
-    res = await _call(server, "memory_scope_overview")
-    assert res["curation_pending"]["never_verified"] == 1
-
-
-async def test_scope_overview_dead_count_rides_the_telemetry_gate(
-    server: Any, memory_dir: Path
-) -> None:
-    """`curation_pending.dead` gates on Stop-hook telemetry, on BOTH arms.
-
-    The third production entry point for the dead-weight honesty gate
-    (`memory_health`'s `report_for_directory` and the consolidate
-    demotion pass have their own end-to-end tests). It needs one because
-    the gate's default is `None` = "the caller did not measure; assume
-    covered": a handler that forgets to derive and pass the count never
-    gates at all, and every pure-function test still passes.
-
-    Both arms, because `curation_pending_new_since_last_session` makes
-    its own `curation_counts` call and can be wired wrong on its own.
-    And behavioural rather than structural: the standing AST guard
-    (`test_every_production_dead_weight_call_arms_the_telemetry_gate`)
-    proves the kwarg is passed, not that the value passed is the count
-    of hook rows in the log this call is reading.
-    """
-    from datetime import datetime, timedelta, timezone
-
-    from bettermemory.events import EVENT_LOG_FILENAME
-
-    now = datetime.now(timezone.utc)
-
-    def _append(*rows: dict[str, Any]) -> None:
-        """Append raw event rows carrying explicit timestamps.
-
-        Written to the legacy untagged log rather than through
-        `Recorder`, which always stamps `ts` with the wall clock: a
-        dead-weight fixture needs a retrieval older than BOTH the
-        30-day window and the 2-day endorsement grace, and there is no
-        way to backdate through the writer. Readers merge this file with
-        the per-session shards, so the handler sees one stream.
-        """
-        path = memory_dir / EVENT_LOG_FILENAME
-        with path.open("a", encoding="utf-8") as fh:
-            for row in rows:
-                fh.write(json.dumps(row) + "\n")
-
-    store = Store(memory_dir)
-    written = store.write(
-        content="Release tags go out only after the CI matrix is green.",
-        scopes=["tools"],
-    )
-    # Age it past the window on disk — `Store.write` stamps `created` /
-    # `updated` with now, and the rollup keys on the freshest
-    # maintenance touch.
-    aged = now - timedelta(days=60)
-    for path, mem in store.iter_active():
-        if mem.id == written.id:
-            store._write_path(
-                path, mem.model_copy(update={"created": aged, "updated": aged})
-            )
-            break
-
-    # One warm-up call, purely to learn the server recorder's session
-    # id. The retrieval row below has to carry it: an event stamped with
-    # any OTHER session becomes the newest prior-session boundary, and a
-    # boundary younger than the memory's `created` would make the delta
-    # arm drop the row for being old news rather than for being
-    # unmeasurable — the two look identical from the assertion.
-    await _call(server, "memory_scope_overview")
-    sessions = [ev.get("session") for ev in iter_events(memory_dir)]
-    session_id = sessions[-1]
-    assert isinstance(session_id, str) and session_id
-
-    _append(
-        # The prior-session boundary the delta arm deltas against.
-        {
-            "ts": (now - timedelta(days=120)).isoformat(),
-            "session": "sess_before",
-            "kind": "search",
-            "returned": [],
-        },
-        # The retrieval that makes the memory dead weight: past the
-        # endorsement grace, never followed by an apply.
-        {
-            "ts": (now - timedelta(days=50)).isoformat(),
-            "session": session_id,
-            "kind": "search",
-            "returned": [written.id],
-        },
-    )
-
-    res = await _call(server, "memory_scope_overview")
-    delta = res["curation_pending_new_since_last_session"]
-    assert delta is not None, "no prior-session boundary — the delta arm never ran"
-    assert res["curation_pending"]["dead"] == 0, (
-        "hookless store reported dead weight through memory_scope_overview"
-    )
-    assert delta["dead"] == 0, "the delta arm did not arm the gate"
-
-    # The positive control: same store, same memory, one Stop-hook row.
-    _append(
-        {
-            "ts": (now - timedelta(days=40)).isoformat(),
-            "session": session_id,
-            "kind": "turn_audited",
-            "triggered_from": "stop_hook",
-            "verdict": "ok",
-        }
-    )
-
-    res = await _call(server, "memory_scope_overview")
-    delta = res["curation_pending_new_since_last_session"]
-    assert delta is not None
-    assert res["curation_pending"]["dead"] == 1
-    assert delta["dead"] == 1
-
-
-# Wire-shape parity for the DESC_* tool descriptions — the prose the LLM
-# client sees has to enumerate the same bucket keys the runtime emits, or
-# the model will branch on names that don't exist (or miss names that do).
-# The existing pins above lock the runtime side
-# (`test_scope_overview_returns_curation_pending`,
-# `test_scope_overview_curation_pending_zero_on_empty`); these two pin
-# the prose side via regex extraction so a future docstring edit that
-# drops or renames a bucket fails CI instead of silently misleading
-# clients.
-
-
-def test_published_curation_pending_enumeration_matches_the_wire_shape() -> None:
-    """The published `curation_pending` leg list agrees with the runtime
-    wire shape (pinned at `test_scope_overview_curation_pending_zero_on_empty`).
-
-    This guard used to read the enumeration out of
-    `DESC_MEMORY_SCOPE_OVERVIEW`. 7.16.0's residency rule removed it from
-    there — a resident description pays for what decides a CALL, and an
-    exhaustive leg list is the response envelope restated, billed on every
-    turn to say what the one call that reads it hands back anyway. The
-    decision-bearing legs are still named in that description by name; the
-    SET is not.
-
-    The invariant is untouched and worth keeping, so it moved to where the
-    content now lives rather than being deleted with the prose — the same
-    call 7.15.1 made about citations. `docs/api.md` and the plugin skill
-    body are now the only published enumerations, both free of the
-    per-turn budget, and both were WRONG when this was rewritten: api.md
-    omitted `curation_unmeasured` and SKILL.md omitted `unaccounted`. They
-    had been the silent half of a guard that only ever checked the
-    description."""
-    import re
-
-    repo_root = Path(__file__).resolve().parents[1]
-    published = {
-        "docs/api.md": (
-            repo_root / "docs" / "api.md",
-            r"`\{current_repo.*?\}`",
-        ),
-        "plugin/skills/bettermemory/SKILL.md": (
-            repo_root / "plugin" / "skills" / "bettermemory" / "SKILL.md",
-            r"`curation_pending` rollup \(`\{([a-z_,\s]+)\}`",
-        ),
-    }
-
-    expected = {
-        "stale",
-        "never_verified",
-        "drifted",
-        "cold",
-        "dead",
-        "silent_misses",
-        "unique_silent_miss_memories",
-        "cold_endorsement_memories",
-        "conflicts",
-        "unaccounted",
-    }
-
-    # api.md states the rollup across prose rather than as one brace block,
-    # so it is checked by membership: every leg must be named there.
-    api_text = published["docs/api.md"][0].read_text()
-    api_missing = sorted(leg for leg in expected if f"`{leg}`" not in api_text)
-    assert not api_missing, (
-        "docs/api.md no longer names every curation_pending leg: "
-        f"{api_missing}. The description stopped enumerating them in "
-        "7.16.0, so this file is one of only two surfaces that still can."
-    )
-
-    skill_path, skill_pattern = published["plugin/skills/bettermemory/SKILL.md"]
-    match = re.search(skill_pattern, skill_path.read_text())
-    assert match is not None, (
-        "the plugin skill body no longer carries a brace-delimited "
-        "curation_pending rollup. Restore the `{name, name, ...}` block or "
-        "update this extraction — it is the session-start surface a plugin "
-        "install actually reads."
-    )
-    extracted = {name.strip() for name in match.group(1).split(",")}
-    assert extracted == expected, (
-        "the plugin skill's curation_pending list drifted from the runtime "
-        f"wire shape. Only in the skill: {sorted(extracted - expected)}; "
-        f"only in runtime: {sorted(expected - extracted)}. Sync it with the "
-        "dict returned by `curation_counts`."
-    )
-
-
-def test_desc_memory_health_enumerates_report_bucket_keys() -> None:
-    """`DESC_MEMORY_HEALTH` prose enumerates every bucket key returned by
-    `HealthReport.to_dict()`. Regex-extract the bucket region between
-    "Returns buckets" and "CLI equivalent", then assert set equality
-    against the expected bucket names — drift here misleads clients
-    about what `memory_health` actually returns."""
-    import re
-    from datetime import datetime, timezone
-
-    from bettermemory.handlers.health import DESC_MEMORY_HEALTH
-
-    # Slice the bucket-enumeration region. Anchoring on the surrounding
-    # prose ("Returns buckets" / "CLI equivalent:") keeps the extraction
-    # robust against future edits that add unrelated backticked tokens
-    # outside the bucket list (e.g. a tool-reference in a leading sentence).
-    start = DESC_MEMORY_HEALTH.index("Returns buckets")
-    end = DESC_MEMORY_HEALTH.index("CLI equivalent:")
-    region = DESC_MEMORY_HEALTH[start:end]
-
-    # Bucket names appear backticked inside the region. Parameter
-    # references — `window_days`, `min_applied`, `resolution_timeline`,
-    # `verification_stale_days`, and the cross-tool reference
-    # `memory_audit_turn` — also live here; filter them out explicitly so
-    # the assertion focuses on actual bucket names.
-    all_ticked = set(re.findall(r"`([a-z_][a-z_0-9]*)`", region))
-    NON_BUCKET = {
-        "window_days",
-        "min_applied",
-        "resolution_timeline",
-        "verification_stale_days",
-        "memory_audit_turn",
-        # `recommendations` row shape — fields documented inline to
-        # explain the digest, not bucket names.
-        "kind",
-        "summary",
-        "action",
-        "count",
-        "memory_ids",
-        "scope",
-        # Recommendation `kind` enum values — listed inline so the
-        # model can switch over them; not bucket names.
-        "remove_dead_weight",
-        "resolve_contradicted",
-        "cleanup_cold_endorsements",
-        "verify_drifted",
-        "review_unaccounted",
-        "fix_typo_scopes",
-        # `silent_misses` sub-fields — documented inline to explain the
-        # dedup + tombstone-filter contract on the payload itself, not
-        # buckets in their own right.
-        "audited_total",
-        "miss_total",
-        "unique_miss_memories",
-        # `actor_slices` payload shape — the two halves of the pivot
-        # (`declared` / `undeclared`) and the per-entry fields
-        # documented inline so a model knows what it can read and
-        # which spellings it can pass to the `client` / `model`
-        # filters. Same category as the `recommendations` row shape
-        # above: field reference, not bucket names. (`declared` and
-        # the brace-listed entry fields are not matched by the regex
-        # anyway — they ride inside one backticked brace group — but
-        # `undeclared` is called out separately in the prose because
-        # its always-present-at-zero contract needs stating.)
-        "client",
-        "models",
-        "principals",
-        "undeclared",
-    }
-    # Report METADATA is subtracted from BOTH sides. It is already out
-    # of `expected` below; without the same subtraction here, naming a
-    # metadata field in bucket prose breaks the equality even though
-    # nothing drifted. `actor_slices` names two of them on purpose —
-    # its counts reconcile exactly against `total_active_memories` and
-    # `total_events`, and that invariant cannot be stated without
-    # naming what it reconciles against. A metadata name is never a
-    # bucket name, in either direction, so this is the rule rather
-    # than a per-field exception.
-    METADATA = {
-        "generated_at",
-        "window_days",
-        "total_active_memories",
-        "total_events",
-        "distinct_sessions",
-    }
-    extracted = all_ticked - NON_BUCKET - METADATA
-
-    # DERIVED from `HealthReport.to_dict()`, not hand-listed. The
-    # hand-listed version of this set is how `telemetry_coverage` shipped
-    # as an undocumented wire key past the one test whose docstring
-    # claims to prevent exactly that: a literal `expected` never consults
-    # `to_dict()`, so a key added to both the report and the literal's
-    # blind spot is invisible here. Building it from the real shape means
-    # the NEXT new key fails this test until someone decides where it is
-    # documented.
-    #
-    # `recommendations` is technically a derived digest rather than a raw
-    # bucket, but it appears in `to_dict()` and is enumerated alongside
-    # the buckets in DESC for the same model-discovery reason, so the
-    # derivation picks it up on purpose.
-    from bettermemory.health import HealthReport
-
-    wire_keys = set(
-        HealthReport(
-            generated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            window_days=30,
-            total_active_memories=0,
-            total_events=0,
-            distinct_sessions=0,
-        ).to_dict()
-    )
-    # METADATA is defined above the extraction, because it is
-    # subtracted from both sides — see the comment there.
-    # Keys that are real wire keys and deliberately NOT in the bucket
-    # region. Each needs a reason, because "exclude it" is also how a key
-    # goes undocumented:
-    #
-    # - `telemetry_coverage` is documented after the `CLI equivalent:`
-    #   line, i.e. outside this slice by construction. It is not a
-    #   curation bucket — it is the honesty gate that says whether
-    #   `dead_weight` was measurable at all — and putting it in the
-    #   bucket list would invite the model to read it as another pile of
-    #   rows to act on.
-    # - `recent_silent_misses` is the inline triage subset of the
-    #   `silent_misses` bucket (the bounded newest-first list carrying
-    #   `event_id` for `memory_acknowledge_miss`). The DESC sends the
-    #   model to `memory_audit_turn` for that workflow and documents the
-    #   payload in `docs/api.md`; it has never been enumerated here.
-    # - `episode_volume` is documented after the `CLI equivalent:` line
-    #   too, for a reason of the same shape: it is not a curation bucket
-    #   of memory rows, it is the SIBLING tier's size gauge
-    #   (`{sessions, episodes, bytes, prunable_sessions, ttl_days}` for
-    #   `<root>/episodes/`). Episode content never enters any bucket
-    #   above; only the aggregate crosses. Enumerating it up there would
-    #   invite the model to read episodes as another pile of rows to
-    #   curate, which is the tier confusion the rest of the surface
-    #   spends prose avoiding.
-    DOCUMENTED_OUTSIDE_THE_BUCKET_REGION = {
-        "telemetry_coverage",
-        "recent_silent_misses",
-        "episode_volume",
-    }
-    expected = wire_keys - METADATA - DOCUMENTED_OUTSIDE_THE_BUCKET_REGION
-    assert extracted == expected, (
-        "DESC_MEMORY_HEALTH's enumerated bucket names drifted from "
-        f"HealthReport.to_dict(). Only in prose: "
-        f"{sorted(extracted - expected)}; only in runtime: "
-        f"{sorted(expected - extracted)}. Sync the docstring with the "
-        "report's wire shape — clients build mental models from this "
-        "description. A key that genuinely belongs outside the "
-        "'Returns buckets' region goes in "
-        "DOCUMENTED_OUTSIDE_THE_BUCKET_REGION above, WITH the sentence "
-        "of prose that documents it somewhere else."
-    )
-
-    # ...and "documented elsewhere in this DESC" has to be true, or the
-    # exclusion set is just a second blind spot with better comments.
-    # `recent_silent_misses` is exempt from this loop on the documented
-    # grounds above (its workflow lives in `memory_audit_turn` and
-    # `docs/api.md`); every other exclusion has to earn its place with a
-    # sentence in this same DESC.
-    for excluded_key in ("telemetry_coverage", "episode_volume"):
-        assert f"`{excluded_key}`" in DESC_MEMORY_HEALTH[end:], (
-            f"DESC_MEMORY_HEALTH excludes `{excluded_key}` from the bucket "
-            "region on the grounds that it is documented after the "
-            "`CLI equivalent:` line — and it no longer is. Either restore "
-            "that sentence or move the key into the bucket enumeration."
-        )
-
-
-def test_desc_strings_use_cold_endorsement_memories_not_endorsement_debt() -> None:
-    """Pin the rename target: the DESC strings for `memory_health` and
-    `memory_scope_overview` must enumerate the NEW name
-    `cold_endorsement_memories` and NOT the OLD `endorsement_debt`.
-
-    Catches future drift where someone copy-pastes prose from an older
-    release or a stale comment back into the active DESC strings. The
-    old name was renamed because it suggested per-turn counting; any
-    re-introduction silently regresses the dashboard-clarity fix.
-
-    Recommendation-kind drift is covered alongside: the
-    `cleanup_cold_endorsements` recommendation kind must appear, and
-    the legacy `cleanup_endorsement_debt` must not."""
-    from bettermemory.handlers.health import DESC_MEMORY_HEALTH
-    from bettermemory.handlers.scope_overview import DESC_MEMORY_SCOPE_OVERVIEW
-    from bettermemory.handlers.write import DESC_MEMORY_WRITE
-
-    for desc_name, desc in (
-        ("DESC_MEMORY_HEALTH", DESC_MEMORY_HEALTH),
-        ("DESC_MEMORY_SCOPE_OVERVIEW", DESC_MEMORY_SCOPE_OVERVIEW),
-        ("DESC_MEMORY_WRITE", DESC_MEMORY_WRITE),
-    ):
-        assert "endorsement_debt" not in desc, (
-            f"{desc_name} still references the legacy `endorsement_debt` "
-            "name. Rename to `cold_endorsement_memories` — the field was "
-            "renamed because it counts memories, not turns, and "
-            "endorsement_debt misled readers into per-turn interpretation."
-        )
-        assert "cleanup_endorsement_debt" not in desc, (
-            f"{desc_name} still references the legacy "
-            "`cleanup_endorsement_debt` recommendation kind. Rename to "
-            "`cleanup_cold_endorsements`."
-        )
-
-    assert "cold_endorsement_memories" in DESC_MEMORY_HEALTH, (
-        "DESC_MEMORY_HEALTH must enumerate `cold_endorsement_memories` "
-        "so the model knows the bucket exists and what it counts."
-    )
-    assert "cold_endorsement_memories" in DESC_MEMORY_SCOPE_OVERVIEW, (
-        "DESC_MEMORY_SCOPE_OVERVIEW must enumerate "
-        "`cold_endorsement_memories` in the curation_pending rollup."
-    )
-    assert "cleanup_cold_endorsements" in DESC_MEMORY_HEALTH, (
-        "DESC_MEMORY_HEALTH must enumerate `cleanup_cold_endorsements` "
-        "in the closed recommendation-kinds set so the model can "
-        "switch over the kind exhaustively."
     )
 
 
@@ -2026,8 +1496,8 @@ async def test_scope_mismatch_does_not_persist(server: Any, memory_dir: Path) ->
         content="A foo project fact.",
         scopes=["projects:foo"],
     )
-    # File count BEFORE the second write.
-    before = len(list(memory_dir.glob("*.md")))
+    # Record count BEFORE the second write.
+    before = len(Store.open(memory_dir).load_all())
     res = await _call(
         server,
         "memory_write",
@@ -2035,7 +1505,7 @@ async def test_scope_mismatch_does_not_persist(server: Any, memory_dir: Path) ->
         scopes=["tools"],
     )
     assert res["status"] == "scope_mismatch"
-    after = len(list(memory_dir.glob("*.md")))
+    after = len(Store.open(memory_dir).load_all())
     assert before == after
 
 
@@ -2058,8 +1528,7 @@ async def test_acknowledge_scope_mismatch_overrides_and_commits(
         acknowledge_scope_mismatch=True,
     )
     assert res["status"] == "committed"
-    files = list(memory_dir.glob("*.md"))
-    assert len(files) == 2
+    assert len(Store.open(memory_dir).load_all()) == 2
 
 
 async def test_scope_mismatch_skipped_when_scope_already_declared(
@@ -2152,10 +1621,8 @@ async def test_verify_persists_structured_claims(
         id=res["id"],
         verified_paths=[extant],
     )
-    files = list(memory_dir.glob("*.md"))
-    raw = files[0].read_text(encoding="utf-8")
-    assert "verified_paths" in raw
-    assert extant in raw
+    stored = Store.open(memory_dir).load_one(res["id"])
+    assert stored.verified_paths == [extant]
 
 
 async def test_show_after_verify_marks_path_verified(
@@ -2350,27 +1817,9 @@ async def test_per_hit_search_block_names_the_escalating_miss(
     assert hit["staleness_verdict"] == "spot_check_recommended"
 
 
-async def test_list_with_bodies_agrees_with_show_on_provenance(
-    server: Any, tmp_path: Path
-) -> None:
-    """`memory_list(with_bodies=True)` computes its own verdict from its
-    own `detect_path_drift` call — a fifth site, easy to miss. A prose
-    miss must not raise it there either, or the list view would nag about
-    memories `memory_show` reads as fresh."""
-    memory_id, _ = await _write_citing_a_vanished_file(
-        server, tmp_path, attest=False, name="prose-list.toml"
-    )
-    rows = _unwrap(await _call(server, "memory_list", with_bodies=True))
-    row = next(r for r in rows if r["id"] == memory_id)
-    shown = await _call(server, "memory_show", id=memory_id)
-
-    assert row["staleness_verdict"] == "fresh"
-    assert row["staleness_verdict"] == shown["staleness_verdict"]
-
-
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
 async def test_commit_drift_recompute_does_not_re_broaden_the_path_leg(
-    memory_dir: Path, tmp_path: Path
+    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The per-search recompute is a SECOND verdict emission site, and it
     used to take its path input from the serialised hit dict — where the
@@ -2388,7 +1837,7 @@ async def test_commit_drift_recompute_does_not_re_broaden_the_path_leg(
     repo.mkdir()
     _init_repo(repo)
     origin = Origin(cwd=str(repo), repo=_FAKE_REPO_REMOTE, branch="main")
-    server = _build_stale_server_with_origin(memory_dir, origin)
+    server = _build_stale_server_with_origin(memory_dir, origin, monkeypatch)
 
     # Inside the repo and committed there: the recompute only runs for an
     # anchor the commit leg applies to (see ``_commit_file``).

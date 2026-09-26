@@ -2143,55 +2143,6 @@ def _recency_factor(created: datetime, now: datetime, half_life_days: float) -> 
     return 1.0 + 0.1 * math.exp(-age_days / max(half_life_days, 0.001))
 
 
-def _endorsement_factor(applied_count: int) -> float:
-    """1 + 0.1 * (1 - exp(-applied_count / 3)). Mild usage bump, bounded to
-    [1.0, 1.1) — exactly the ceiling `_recency_factor` uses.
-
-    A memory the model has DELIBERATELY applied (an explicit
-    `memory_record_use(applied)`, not the auto-fallback) climbs slightly, so
-    a load-bearing fact wins a near-tie over a never-endorsed peer. The cap
-    is the whole point: like recency, it can only break near-ties, never
-    override the relevance signal — which keeps it from a rich-get-richer
-    runaway. `applied_count == 0` returns exactly 1.0 (neutral), so the
-    factor is a no-op unless real endorsement counts are supplied."""
-    if applied_count <= 0:
-        return 1.0
-    return 1.0 + 0.1 * (1.0 - math.exp(-applied_count / 3.0))
-
-
-def _demotion_factor(ignored_count: int, contradicted_count: int) -> float:
-    """1 - 0.15 * (1 - exp(-(ignored + 2*contradicted) / 3)). Bounded to
-    (0.85, 1.0] — the negative mirror of `_endorsement_factor`.
-
-    A memory the model has recently rejected (`memory_record_use(ignored)`
-    — retrieved but off-topic) or, worse, flagged as wrong
-    (`contradicted`) slides down slightly. Contradicted weighs double:
-    an off-topic surfacing is often the QUERY's fault, but a stored
-    claim that disagreed with reality is the memory's. The cap is
-    slightly deeper than endorsement's +10% on purpose — retrieving a
-    falsehood costs more than missing a bonus tie-break — but still a
-    near-tie signal, never a relevance override.
-
-    Three guards keep this from a rich-get-poorer death spiral (demoted →
-    less surfaced → never earns the clearing `applied`):
-
-    - counts come from a bounded window (the caller tallies over
-      `NEGATIVE_OUTCOME_WINDOW_DAYS`), so evidence expires;
-    - a later NON-AUTO `applied` supersedes earlier negatives (the same
-      rule `recent_negative_outcomes` uses — the model re-validated it);
-    - a `memory_update` or `memory_verify` newer than the negative event
-      clears it (the same resolution semantics as
-      `health._has_unresolved_contradiction` — the claim the event judged
-      no longer exists, or was re-attested true).
-
-    Both counts at 0 return exactly 1.0 (neutral), so the factor is a
-    no-op unless real negative counts are supplied."""
-    weighted = max(0, ignored_count) + 2 * max(0, contradicted_count)
-    if weighted <= 0:
-        return 1.0
-    return 1.0 - 0.15 * (1.0 - math.exp(-weighted / 3.0))
-
-
 # ---------------------------------------------------------------------------
 # BM25 scorer (Okapi variant)
 # ---------------------------------------------------------------------------
@@ -3083,8 +3034,6 @@ def _score_keyword(
     *,
     now: datetime,
     half_life_days: float,
-    applied_by_id: dict[str, int] | None = None,
-    negative_by_id: dict[str, tuple[int, int]] | None = None,
     candidate_tokens: list[_MemoryTokens] | None = None,
     scaffold_terms: frozenset[str] | None = None,
     scaffold_weight: float = 0.0,
@@ -3096,15 +3045,6 @@ def _score_keyword(
     `scaffold_terms` / `scaffold_weight` thread through to
     `score_memory` (L2, lane-internal — see there). None is the stock
     scorer.
-
-    `applied_by_id` (optional) maps memory id → explicit-applied count; when
-    given, a bounded `_endorsement_factor` nudges endorsed memories. None
-    (the default) leaves scores untouched.
-
-    `negative_by_id` (optional) maps memory id → (active-ignored,
-    active-contradicted) counts; when given, a bounded `_demotion_factor`
-    slides recently-rejected memories down. None (the default) leaves
-    scores untouched.
 
     `candidate_tokens` (optional): precomputed `_MemoryTokens`,
     index-aligned with `candidates` — see `search()`."""
@@ -3120,11 +3060,6 @@ def _score_keyword(
             scaffold_weight=scaffold_weight,
         )
         if score > 0:
-            if applied_by_id:
-                score *= _endorsement_factor(applied_by_id.get(memory.id, 0))
-            if negative_by_id:
-                ig, ct = negative_by_id.get(memory.id, (0, 0))
-                score *= _demotion_factor(ig, ct)
             out.append((memory, score, matched))
     return out
 
@@ -3135,16 +3070,14 @@ def _score_bm25(
     *,
     now: datetime,
     half_life_days: float,
-    applied_by_id: dict[str, int] | None = None,
-    negative_by_id: dict[str, tuple[int, int]] | None = None,
     candidate_tokens: list[_MemoryTokens] | None = None,
     stopword_fallback: bool = False,
     corpus_stats: CorpusStats | None = None,
 ) -> list[tuple[Memory, float, list[str]]]:
     """Run the BM25 scorer across all candidates. Returns
     `(memory, score, matched)` tuples for candidates with `score > 0`.
-    `applied_by_id` / `negative_by_id` / `candidate_tokens`: see
-    `_score_keyword`; `stopword_fallback`: see `score_memory_bm25`;
+    `candidate_tokens`: see `_score_keyword`; `stopword_fallback`: see
+    `score_memory_bm25`;
     `corpus_stats`: see `compute_idf` — required for a correct ranking
     whenever `candidates` is a query-filtered subset rather than the
     whole corpus."""
@@ -3167,11 +3100,6 @@ def _score_bm25(
             stopword_fallback=stopword_fallback,
         )
         if score > 0:
-            if applied_by_id:
-                score *= _endorsement_factor(applied_by_id.get(memory.id, 0))
-            if negative_by_id:
-                ig, ct = negative_by_id.get(memory.id, (0, 0))
-                score *= _demotion_factor(ig, ct)
             out.append((memory, score, matched))
     return out
 
@@ -3308,169 +3236,6 @@ def _hybrid_fuse(
     return [(by_id[mid], fused[mid], sorted(matched_by_id[mid])) for mid in ordered_ids]
 
 
-# Closed set of usage-aware ranking flags the toggle capture can report on.
-# Order is presentation order; the names are the `[behavior]` keys verbatim
-# so the offline reader (`eval.compute_usage_replay`) and the declared
-# flip bars talk about the same identifiers.
-#
-# 8.0.0 removed `corroboration_boost` from this set along with the flag
-# itself. Event logs written by 7.x can still carry that name in
-# `usage_active` / `usage_toggles`; the reader walks THIS tuple rather
-# than the logged keys, so a historical entry is skipped, not reported
-# under a flag that no longer exists.
-USAGE_FLAG_NAMES: tuple[str, ...] = (
-    "endorsement_boost",
-    "outcome_demotion",
-)
-
-
-def _usage_factor_components(
-    memory: Memory,
-    applied_by_id: dict[str, int] | None,
-    negative_by_id: dict[str, tuple[int, int]] | None,
-) -> dict[str, float]:
-    """The two per-memory usage factors exactly as the scorers apply them.
-
-    Keyed by `USAGE_FLAG_NAMES`. A flag whose input is absent (or whose
-    signal is neutral for this memory) contributes exactly 1.0, mirroring
-    the `if applied_by_id:` / `if negative_by_id:` guards in
-    `_score_keyword` / `_score_bm25` — the capture must divide out
-    precisely what the scorer multiplied in, nothing else.
-    """
-    endorsement = (
-        _endorsement_factor(applied_by_id.get(memory.id, 0)) if applied_by_id else 1.0
-    )
-    if negative_by_id:
-        ig, ct = negative_by_id.get(memory.id, (0, 0))
-        demotion = _demotion_factor(ig, ct)
-    else:
-        demotion = 1.0
-    return {
-        "endorsement_boost": endorsement,
-        "outcome_demotion": demotion,
-    }
-
-
-def _compute_usage_toggles(
-    scored: list[tuple[Memory, float, list[str]]],
-    *,
-    mode: SearchMode,
-    legs: list[list[tuple[Memory, float, list[str]]]],
-    rrf_k: int,
-    stopword_fallback: bool,
-    conv_reading: _TemporalReading | None,
-    query_tokens: list[str],
-    query_unique: int,
-    applied_by_id: dict[str, int] | None,
-    negative_by_id: dict[str, tuple[int, int]] | None,
-) -> dict[str, Any] | None:
-    """Per-flag counterfactual top-1s for the usage-aware ranking flags.
-
-    For each usage flag with live signal on this call, compute the
-    ranking that THIS call would have produced with that one flag
-    toggled off, by dividing the flag's per-memory factor back out of
-    every leg score, re-sorting each leg with the production sort key,
-    re-fusing with freshly recomputed weights, and re-applying the Lane
-    L conversational rerank. The factors are per-memory multiplicative
-    constants applied identically in every leg (`_score_keyword` /
-    `_score_bm25`), so the division reconstructs the untoggled leg
-    scores exactly; and since every factor is bounded inside
-    (0.85, 1.1], it can never zero a score, so leg MEMBERSHIP is
-    invariant under the toggle and the reconstruction is complete.
-
-    One pinned protocol choice: leg COMPOSITION is held fixed. The
-    rescue-expansion leg joins production's fusion behind a coverage
-    gate read off the factored base ranking, so a toggle could in
-    principle change whether the leg engages at all; the counterfactual
-    keeps whatever legs production fused and re-weighs them
-    (`_base_leg_weights` / `_leg_evidence_weight` recomputed on the
-    toggled orderings). "Same evidence, factor removed" is the question
-    the flip bars ask; re-litigating leg engagement would be a
-    different experiment.
-
-    Returns None when no flag has live signal. "Live signal" means a
-    non-neutral factor on at least one SCORED candidate — an endorsed
-    or demoted memory that didn't match this query contributes nothing
-    to any leg, so its flag was inert on this ranking and inflating
-    the per-flag denominator with such turns would be dishonest. The
-    same rule covers both flags symmetrically. Otherwise a dict:
-    `{"active": [flag, ...], "toggles": {flag: {"top1": {...}}}}` where
-    `toggles` carries ONLY the flags whose toggle CHANGES the top-1
-    memory, and `top1` is the counterfactual winner's raw coverage
-    features (the same formula-agnostic pair `MissHit` records) plus
-    its fused score under the toggle. An empty `toggles` dict with a
-    non-empty `active` list is the common case: signal present, no
-    near-tie flipped.
-    """
-    if not scored:
-        return None
-    if not applied_by_id and not negative_by_id:
-        return None
-
-    factors_by_id: dict[str, dict[str, float]] = {}
-    for leg in legs:
-        for memory, _, _ in leg:
-            if memory.id not in factors_by_id:
-                factors_by_id[memory.id] = _usage_factor_components(
-                    memory, applied_by_id, negative_by_id
-                )
-    active = [
-        flag
-        for flag in USAGE_FLAG_NAMES
-        if any(comp[flag] != 1.0 for comp in factors_by_id.values())
-    ]
-    if not active:
-        return None
-
-    production_top1 = scored[0][0].id
-    qset = set(query_tokens)
-    toggles: dict[str, Any] = {}
-    for flag in active:
-        variant_legs: list[list[tuple[Memory, float, list[str]]]] = []
-        for leg in legs:
-            variant = [
-                (memory, score / factors_by_id[memory.id][flag], matched)
-                for memory, score, matched in leg
-            ]
-            variant.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
-            variant_legs.append(variant)
-        if mode == "hybrid":
-            base_pair = variant_legs[:2]
-            base_weights = None if stopword_fallback else _base_leg_weights(base_pair)
-            weights: list[float] | None
-            if len(variant_legs) > 2:
-                exp_leg = variant_legs[2]
-                leg_weight = (
-                    _leg_evidence_weight(_leg_top_evidence(exp_leg)) if exp_leg else 0.0
-                )
-                weights = [*(base_weights or (1.0, 1.0)), leg_weight]
-            else:
-                weights = base_weights
-            variant_scored = _hybrid_fuse(variant_legs, rrf_k=rrf_k, weights=weights)
-            if conv_reading is not None:
-                variant_scored = _conversational_rerank(
-                    variant_scored, reading=conv_reading
-                )
-        else:
-            variant_scored = variant_legs[0]
-        if not variant_scored:
-            continue
-        top_memory, top_score, top_matched = variant_scored[0]
-        if top_memory.id == production_top1:
-            continue
-        matched_unique = len({t for t in top_matched if t in qset})
-        toggles[flag] = {
-            "top1": {
-                "id": top_memory.id,
-                "score": top_score,
-                "matched_unique": matched_unique,
-                "query_unique": query_unique,
-                "relevance_v2": _relevance_label_v2(matched_unique, query_unique),
-            }
-        }
-    return {"active": active, "toggles": toggles}
-
-
 def search(
     memories: list[Memory],
     query: str,
@@ -3486,14 +3251,11 @@ def search(
     half_life_days: float = 30.0,
     mode: SearchMode = "hybrid",
     rrf_k: int = _RRF_K_DEFAULT,
-    applied_by_id: dict[str, int] | None = None,
-    negative_by_id: dict[str, tuple[int, int]] | None = None,
     allow_empty_query: bool = False,
     corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None = None,
     matched_leg_out: dict[str, str] | None = None,
     rescue_expansion: bool = False,
     conversational: bool = True,
-    usage_toggles_out: dict[str, Any] | None = None,
 ) -> list[MemoryHit]:
     """Rank `memories` against `query` and return up to `max_results` hits.
 
@@ -3527,19 +3289,6 @@ def search(
     - `rrf_k`: smoothing constant for hybrid fusion. Larger spreads
       weight further down the list; smaller makes top ranks dominate.
       60 is the canonical default and almost always correct.
-    - `applied_by_id`: optional map of memory id → explicit-applied count.
-      When given, a bounded `_endorsement_factor` (≤ +10%, same ceiling as
-      recency) nudges endorsed memories up — a near-tie breaker, never a
-      relevance override. `None` (the default) leaves scores untouched, so
-      every existing caller and the package default are byte-stable.
-    - `negative_by_id`: optional map of memory id → (active-ignored,
-      active-contradicted) counts. When given, a bounded
-      `_demotion_factor` (≥ 0.85x) slides recently-rejected memories
-      down — the negative mirror of `applied_by_id`, with the same
-      near-tie-only ceiling. The caller owns the "active" semantics
-      (windowing, applied-supersedes, resolution clearing — see
-      `handlers.search._active_negative_counts`); this layer just
-      applies the factor. `None` (the default) is byte-stable.
     - `allow_empty_query`: when True, an empty or stopword-only query
       no longer short-circuits to `[]`. Instead the function runs the
       `_filter_candidates` pass (scope / repo / worktree / excluded)
@@ -3563,17 +3312,6 @@ def search(
       bookkeeping entirely, so every existing caller is byte-stable in
       both output and cost. Browse-mode hits get no entry — nothing
       ranked them.
-    - `usage_toggles_out`: optional dict the function fills with the
-      per-flag counterfactual top-1s for the usage-aware ranking flags
-      — see `_compute_usage_toggles` for the shape and the pinned
-      protocol. Like `matched_leg_out`, an out-parameter because the
-      toggle is a property of THIS CALL's ranker inputs, not of any
-      memory. The silent-miss probe (`audit.probe_for_miss`) is the
-      consumer: the capture lands on `turn_audited` / `prompt_recall`
-      events so the usage-signal flip bars can be read from the log
-      alone. `None` (the default) skips the capture entirely —
-      byte-stable in both output and cost — and the dict stays empty
-      when no usage input carries live signal.
     - `rescue_expansion`: hybrid-mode only, DEFAULT OFF. When True,
       two query-time repairs from the retrieval campaign run:
       (a) listed discourse-filler words (`expansion.QUERY_FILLER_WORDS`)
@@ -3600,9 +3338,9 @@ def search(
       criterion and ablations: the LongMemEval preregistration
       addendum 3 and the bench README. Flipping the default back on is
       earned by a fresh preregistration on both instruments, not by an
-      operator's hunch — but `[behavior] rescue_expansion = true` is a
-      supported, documented choice for stores that look like the gold
-      set (technical prose, casual queries).
+      operator's hunch. Since 9.0.0 there is no config key for it: the
+      product ranks with the leg off, and bench/retrieval's requery arm
+      is the one caller that turns the parameter on.
 
       `keyword` and `bm25` modes are explicit instrument choices and
       are never touched. Above the index threshold the FTS prefilter
@@ -3726,13 +3464,6 @@ def search(
     lexical_ids: set[str] = set()
     expansion_ids: set[str] = set()
 
-    # The leg lists the final ranking was built from, for the usage-toggle
-    # capture. Each terminal branch below assigns the exact lists it
-    # ranked/fused — including the rescue leg when it joined — so the
-    # counterfactual divides factors out of precisely what production
-    # multiplied them into. Stays empty when `usage_toggles_out` is None.
-    capture_legs: list[list[tuple[Memory, float, list[str]]]] = []
-
     # Tokenize each candidate exactly once per call and thread the streams
     # through every consumer below — the keyword scorer, compute_idf, BM25,
     # blocks otherwise re-tokenize the same
@@ -3790,8 +3521,6 @@ def search(
             query_tokens,
             now=now,
             half_life_days=half_life_days,
-            applied_by_id=applied_by_id,
-            negative_by_id=negative_by_id,
             candidate_tokens=candidate_tokens,
         )
         # Sort by score, then created (newer wins on tie), then id as the
@@ -3801,8 +3530,6 @@ def search(
         # clock. ULID-shaped ids are lexically time-ordered, so the final
         # tiebreaker also gives "newer wins" semantics.
         scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
-        if usage_toggles_out is not None:
-            capture_legs = [scored]
         if matched_leg_out is not None:
             lexical_ids = {memory.id for memory, _, _ in scored}
     elif mode == "bm25":
@@ -3811,15 +3538,11 @@ def search(
             query_tokens,
             now=now,
             half_life_days=half_life_days,
-            applied_by_id=applied_by_id,
-            negative_by_id=negative_by_id,
             candidate_tokens=candidate_tokens,
             stopword_fallback=stopword_fallback,
             corpus_stats=corpus_stats,
         )
         scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
-        if usage_toggles_out is not None:
-            capture_legs = [scored]
         if matched_leg_out is not None:
             lexical_ids = {memory.id for memory, _, _ in scored}
     else:  # mode == "hybrid"
@@ -3860,8 +3583,6 @@ def search(
                 query_tokens,
                 now=now,
                 half_life_days=half_life_days,
-                applied_by_id=applied_by_id,
-                negative_by_id=negative_by_id,
                 candidate_tokens=candidate_tokens,
                 scaffold_terms=conv_scaffold,
                 scaffold_weight=_CONV_KEYWORD_SCAFFOLD_WEIGHT or 0.0,
@@ -3871,8 +3592,6 @@ def search(
                 query_tokens,
                 now=now,
                 half_life_days=half_life_days,
-                applied_by_id=applied_by_id,
-                negative_by_id=negative_by_id,
                 candidate_tokens=candidate_tokens,
                 stopword_fallback=stopword_fallback,
                 corpus_stats=hybrid_stats,
@@ -3893,8 +3612,6 @@ def search(
         # byte-identically.
         base_weights = None if stopword_fallback else _base_leg_weights(rankings)
         scored = _hybrid_fuse(rankings, rrf_k=rrf_k, weights=base_weights)
-        if usage_toggles_out is not None:
-            capture_legs = list(rankings)
 
         # Rescue expansion: one extra, down-weighted BM25 leg over
         # synthesized vocabulary, engaged only when the base fusion is
@@ -3944,8 +3661,6 @@ def search(
                         exp_terms,
                         now=now,
                         half_life_days=half_life_days,
-                        applied_by_id=applied_by_id,
-                        negative_by_id=negative_by_id,
                         candidate_tokens=candidate_tokens,
                         corpus_stats=exp_stats,
                     )
@@ -3979,8 +3694,6 @@ def search(
                             rrf_k=rrf_k,
                             weights=[*(base_weights or (1.0, 1.0)), leg_weight],
                         )
-                        if usage_toggles_out is not None:
-                            capture_legs = [*rankings, exp_leg]
                         # `match_terms` stays a subset of the CALLER's
                         # tokens — synthesized terms explain the leg,
                         # not the caller's query, and letting them into
@@ -4001,22 +3714,6 @@ def search(
     # ranking the caller would otherwise have received, before the trim.
     if conv_reading is not None:
         scored = _conversational_rerank(scored, reading=conv_reading)
-
-    if usage_toggles_out is not None and capture_legs:
-        toggle_capture = _compute_usage_toggles(
-            scored,
-            mode=mode,
-            legs=capture_legs,
-            rrf_k=rrf_k,
-            stopword_fallback=stopword_fallback,
-            conv_reading=conv_reading,
-            query_tokens=query_tokens,
-            query_unique=query_unique,
-            applied_by_id=applied_by_id,
-            negative_by_id=negative_by_id,
-        )
-        if toggle_capture is not None:
-            usage_toggles_out.update(toggle_capture)
 
     trimmed = scored[:max_results]
     if matched_leg_out is not None:

@@ -53,12 +53,7 @@ from jsonschema import ValidationError
 from jsonschema import validate as jsonschema_validate
 
 from bettermemory.builder import _strip_titles, build_server
-from bettermemory.config import (
-    BehaviorConfig,
-    Config,
-    ProposalsConfig,
-    StorageConfig,
-)
+from bettermemory.config import Config, StorageConfig
 from bettermemory.session import SessionState
 from bettermemory.store import Store
 from ._mcp import (
@@ -68,16 +63,9 @@ from ._mcp import (
 )
 
 
-def _server(tmp_path: Path, *, full_surface: bool = True) -> Any:
-    """The FULL surface, so the scrub is checked on all 27 tools — the lean
-    surface is what `tests/test_resident_footprint.py` budgets, but a
-    title that survives on a gated tool is still a title on the wire for
-    anyone running `full_tool_surface`."""
-    cfg = Config(
-        storage=StorageConfig(directory=str(tmp_path)),
-        behavior=BehaviorConfig(full_tool_surface=full_surface),
-        proposals=ProposalsConfig(),
-    )
+def _server(tmp_path: Path) -> Any:
+    """The served surface, so the scrub is checked on every tool."""
+    cfg = Config(storage=StorageConfig(directory=str(tmp_path)))
     return build_server(config=cfg, store=Store(tmp_path), state=SessionState())
 
 
@@ -86,8 +74,9 @@ def _blob(obj: Any) -> str:
 
 
 def _without_titles(node: Any) -> Any:
-    """Independent re-implementation of the scrub — FUNCTIONAL (returns new
-    objects) where the shipped one mutates in place.
+    """Independent re-implementation of the scrub (titles and `default:
+    null`), FUNCTIONAL (returns new objects) where the shipped one mutates
+    in place.
 
     Deliberately not imported from `builder`: this is the oracle the served
     schemas are checked against, and an oracle that is the same code as the
@@ -96,6 +85,8 @@ def _without_titles(node: Any) -> Any:
         out = {}
         for key, value in node.items():
             if key == "title":
+                continue
+            if key == "default" and value is None:
                 continue
             if key in ("properties", "$defs", "definitions") and isinstance(
                 value, dict
@@ -185,9 +176,9 @@ async def test_served_schemas_are_the_pydantic_schemas_minus_titles(
 
 
 async def test_properties_and_required_survive_the_scrub(tmp_path: Path) -> None:
-    """The membership other tests pin by name — `acknowledge_credential` in
-    three tools' properties, `include_bodies` / `ids` on `episode_search`
-    — has to be membership the scrub cannot touch. Checked structurally
+    """The membership other tests pin by name (`acknowledge_credential` on
+    `memory_write` and `memory_update`, `include_bodies` on `episode`)
+    has to be membership the scrub cannot touch. Checked structurally
     for every tool rather than for the handful that happen to be named
     elsewhere."""
     mcp = _server(tmp_path)
@@ -432,7 +423,7 @@ async def test_the_served_schema_is_not_on_the_call_path(tmp_path: Path) -> None
             },
         ),
         ("memory_search", {"query": "uv build"}),
-        ("memory_scope_overview", {}),
+        ("memory_admin", {"action": "tombstones"}),
     ]
 
     async def transcript(mcp: Any) -> list[Any]:
@@ -463,7 +454,7 @@ async def test_the_served_schema_is_not_on_the_call_path(tmp_path: Path) -> None
         "user_claim_warning",
     ], f"the battery stopped covering the commit and reject paths: {statuses}"
     # The two reads are shaped like reads, not like a repeated error.
-    assert "result" in rows[4] and "scopes" in rows[5]
+    assert "result" in rows[4] and "tombstones" in rows[5]
 
     with pytest.raises(Exception) as excinfo:
         await control.call_tool("memory_record_use", {"outcome": "applied"})

@@ -1,6 +1,6 @@
 """Server tests for the tombstone lifecycle: memory_remove stamps the
-session, memory_list_tombstones surfaces the removed records, memory_restore
-brings them back."""
+session, `memory_admin(action="tombstones")` surfaces the removed records,
+`memory_admin(action="restore")` brings them back."""
 
 from __future__ import annotations
 from ._mcp import call_tool as _mcp_call
@@ -11,7 +11,6 @@ from typing import Any
 import pytest
 
 from bettermemory.config import Config, StorageConfig
-from bettermemory.events import iter_events
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
@@ -43,8 +42,8 @@ async def test_tombstone_tools_registered(server_with_state: Any) -> None:
     server, _, _ = server_with_state
     tools = await server.list_tools()
     names = {t.name for t in tools}
-    assert "memory_list_tombstones" in names
-    assert "memory_restore" in names
+    assert "memory_remove" in names
+    assert "memory_admin" in names
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +63,7 @@ async def test_remove_writes_session_id_to_tombstone(
 
 
 # ---------------------------------------------------------------------------
-# memory_list_tombstones
+# memory_admin(action="tombstones")
 # ---------------------------------------------------------------------------
 
 
@@ -77,8 +76,8 @@ async def test_list_tombstones_returns_removed_records(
     await _call(server, "memory_remove", id=a["id"], reason="r")
     await _call(server, "memory_remove", id=b["id"], reason="r")
 
-    raw = await _call(server, "memory_list_tombstones")
-    rows = raw.get("result", raw) if isinstance(raw, dict) else raw
+    raw = await _call(server, "memory_admin", action="tombstones")
+    rows = raw["tombstones"]
     ids = {row["id"] for row in rows}
     assert ids == {a["id"], b["id"]}
     for row in rows:
@@ -97,8 +96,8 @@ async def test_list_tombstones_filters_by_scope(
     await _call(server, "memory_remove", id=a["id"], reason="r")
     await _call(server, "memory_remove", id=b["id"], reason="r")
 
-    raw = await _call(server, "memory_list_tombstones", scopes=["tools"])
-    rows = raw.get("result", raw) if isinstance(raw, dict) else raw
+    raw = await _call(server, "memory_admin", action="tombstones", scopes=["tools"])
+    rows = raw["tombstones"]
     assert len(rows) == 1
     assert rows[0]["id"] == a["id"]
 
@@ -106,19 +105,19 @@ async def test_list_tombstones_filters_by_scope(
 async def test_list_tombstones_respects_session_disabled_scope(
     server_with_state: Any,
 ) -> None:
-    """A scope disabled via memory_scope_disable should be excluded from
-    the tombstones view too — the session-disable signal applies broadly."""
+    """A scope disabled via `memory_admin(action="disable_scope")` should
+    be excluded from the tombstones view too: the session-disable signal
+    applies broadly."""
     server, state, _ = server_with_state
     a = await _call(server, "memory_write", content="alpha", scopes=["tools"])
     await _call(server, "memory_remove", id=a["id"], reason="r")
     state.disable("tools")
-    raw = await _call(server, "memory_list_tombstones")
-    rows = raw.get("result", raw) if isinstance(raw, dict) else raw
-    assert rows == []
+    raw = await _call(server, "memory_admin", action="tombstones")
+    assert raw["tombstones"] == []
 
 
 # ---------------------------------------------------------------------------
-# memory_restore
+# memory_admin(action="restore")
 # ---------------------------------------------------------------------------
 
 
@@ -128,7 +127,7 @@ async def test_restore_brings_removed_memory_back(
     server, _, _ = server_with_state
     written = await _call(server, "memory_write", content="x", scopes=["tools"])
     await _call(server, "memory_remove", id=written["id"], reason="oops")
-    restored = await _call(server, "memory_restore", id=written["id"])
+    restored = await _call(server, "memory_admin", action="restore", id=written["id"])
     assert restored["status"] == "committed"
     assert restored["id"] == written["id"]
 
@@ -146,7 +145,7 @@ async def test_restore_active_id_raises_value_error(
     server, _, _ = server_with_state
     written = await _call(server, "memory_write", content="x", scopes=["tools"])
     with pytest.raises(Exception, match="active"):
-        await _call(server, "memory_restore", id=written["id"])
+        await _call(server, "memory_admin", action="restore", id=written["id"])
 
 
 async def test_restore_unknown_id_raises_value_error(
@@ -158,16 +157,16 @@ async def test_restore_unknown_id_raises_value_error(
 
     server, _, _ = server_with_state
     with pytest.raises(Exception, match="no tombstone|not found"):
-        await _call(server, "memory_restore", id=generate_ulid())
+        await _call(server, "memory_admin", action="restore", id=generate_ulid())
 
 
-async def test_restore_emits_event(server_with_state: Any, memory_dir: Path) -> None:
-    server, _, _ = server_with_state
+async def test_restore_emits_event(server_with_state: Any) -> None:
+    server, _, store = server_with_state
     written = await _call(server, "memory_write", content="x", scopes=["tools"])
     await _call(server, "memory_remove", id=written["id"], reason="r")
-    await _call(server, "memory_restore", id=written["id"])
+    await _call(server, "memory_admin", action="restore", id=written["id"])
 
-    events = list(iter_events(memory_dir))
+    events = list(store.iter_events())
     kinds = [e["kind"] for e in events]
     assert "restore" in kinds
     restore_events = [e for e in events if e["kind"] == "restore"]

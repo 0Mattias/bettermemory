@@ -182,7 +182,10 @@ def test_drain_clears_stash_when_recorder_disabled(tmp_path: Path) -> None:
     _backdate_past_wall_clock_ttl(state, "stale")
     state.advance_turn()
 
-    recorder = Recorder(root=tmp_path, session_id="sess_disabled", enabled=False)
+    from bettermemory.store import Store
+
+    store = Store(tmp_path / "store")
+    recorder = Recorder(store=store, session_id="sess_disabled", enabled=False)
     lost = _drain_expired_use_tokens(state, recorder)
 
     assert [tok.memory_id for tok in lost] == ["stale"]

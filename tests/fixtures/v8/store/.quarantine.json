@@ -1,0 +1,13 @@
+{
+  "files": {
+    "bad.md": {
+      "detail": "x",
+      "pulled_at": "2026-01-01T00:00:00Z",
+      "reason": "unparseable",
+      "remote": "origin",
+      "sha256": null,
+      "size": 3
+    }
+  },
+  "version": 1
+}

@@ -62,7 +62,6 @@ _ROOT = _HERE.parents[1]
 if str(_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(_ROOT / "src"))
 
-from bettermemory import index as _index  # noqa: E402
 from bettermemory._handlers import (  # noqa: E402
     _INDEX_THRESHOLD_DEFAULT,
     _PREFILTER_CAP,
@@ -159,29 +158,28 @@ def deterministic_id(slug: str, ordinal: int) -> str:
 
 
 def build_store(root: Path, corpus_path: Path) -> dict[str, str]:
-    """Write the corpus into a fresh v8 store at `root` with deterministic
-    ids and stamps, then rebuild the index the way a fresh reindex would.
+    """Write the corpus into a fresh store at `root` with deterministic
+    ids and stamps, one `put_memory` per document in corpus order, so the
+    rows and their rowids are the corpus's order on every rebuild.
     Returns slug -> id."""
     root = Path(root)
     if root.exists() and any(root.iterdir()):
         raise SystemExit(f"refusing to build into a non-empty directory: {root}")
-    store = Store(root)
-    store.ensure()
     ids: dict[str, str] = {}
-    for ordinal, row in enumerate(_read_jsonl(corpus_path)):
-        created = BASE_CREATED + timedelta(seconds=ordinal)
-        memory = Memory(
-            id=deterministic_id(row["slug"], ordinal),
-            created=created,
-            updated=created,
-            scopes=list(row["scopes"]),
-            confidence=Confidence.MEDIUM,
-            source=Source.EXPLICIT,
-            body=str(row["body"]).strip() + "\n",
-        )
-        store._write_path(store._path_for(memory), memory)
-        ids[row["slug"]] = memory.id
-    _index.rebuild(root, store.iter_active())
+    with Store(root) as store:
+        for ordinal, row in enumerate(_read_jsonl(corpus_path)):
+            created = BASE_CREATED + timedelta(seconds=ordinal)
+            memory = Memory(
+                id=deterministic_id(row["slug"], ordinal),
+                created=created,
+                updated=created,
+                scopes=list(row["scopes"]),
+                confidence=Confidence.MEDIUM,
+                source=Source.EXPLICIT,
+                body=str(row["body"]).strip() + "\n",
+            )
+            store.put_memory(memory)
+            ids[row["slug"]] = memory.id
     return ids
 
 
@@ -324,13 +322,13 @@ def run_public(
                     "prefilter": rank_prefilter(store, query),
                 }
             )
-    status = _index.status(root)
+    status = store.status()
     return {
         "kind": "rank-parity/public",
         "provenance": _provenance(),
         "engine": {
             "tokenizer_fingerprint": tokenizer_fingerprint(),
-            "index_schema_version": status.get("schema_version"),
+            "schema_version": status["schema_version"],
             "prefilter_cap": PREFILTER_CAP,
             "index_threshold": INDEX_THRESHOLD,
         },

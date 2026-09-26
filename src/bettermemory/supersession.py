@@ -20,7 +20,7 @@ against the active set and returns two lists:
 - `conflicts`: stored memories the new body disagrees with when
   nothing in it says which side is current. The caller files the pair
   for `memory_conflicts`; the judgment stays with the model, as it
-  does for the corpus scan in `consolidate`.
+  does for the corpus scan in `conflicts`.
 
 THE RULE. Three questions per stored memory, all lexical, all
 deterministic — the project ships no models and this runs inside every
@@ -36,7 +36,7 @@ deterministic — the project ships no models and this runs inside every
    lacks: a number, a joined compound (`deploy-gateway`, `prod-hlx-1`),
    a proper noun, or on the new side the token that follows a change
    cue ("switched to **yarn**"). Mutual, like the numeric-divergence
-   guard in `consolidate`: a one-sided extra is detail, not
+   guard in `conflicts`: a one-sided extra is detail, not
    disagreement.
 3. Same slot? Either the two values are kin — numerics of one shape
    (`8443` / `9443`, `3.11` / `3.13`) or compounds sharing half their
@@ -88,7 +88,6 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from .consolidate import _numeric_token_set, _strip_provenance
 from .models import Memory, snippet_for
 from .search import (
     _STOPWORDS,
@@ -97,6 +96,49 @@ from .search import (
     _raw_content_token_set,
     tokenize,
 )
+
+# Provenance stamp appended by the retired `consolidate --llm
+# --from-transcript` propose_new writes. The stamp is system-manufactured
+# boilerplate shared BY CONSTRUCTION between every fact distilled from
+# the same transcript turn: two semantically DISTINCT facts citing one
+# turn measure ~0.93 Jaccard stamped vs ~0.11 unstamped, above both the
+# 0.75 manual dedup default and the 0.90 unattended threshold, so
+# similarity over the stamped body tombstones a genuine fact. Stores
+# migrated from v8 still carry stamped bodies, so every comparison path
+# strips it the same way before comparing. Similarity/polarity input
+# only: the report summaries and the persisted body keep the stamp.
+# Greedy `.*` + DOTALL reach the final `)_` even when the excerpt
+# contains parentheses or newlines.
+_PROVENANCE_RE = re.compile(
+    r"\n\n_\(consolidate --llm --from-transcript: .*\)_\s*$", re.S
+)
+
+
+def _strip_provenance(body: str) -> str:
+    """Body with any trailing `--from-transcript` provenance stamp
+    removed, the comparison view of a memory for the dedup passes.
+    Unstamped bodies come back unchanged."""
+    return _PROVENANCE_RE.sub("", body)
+
+
+# Number-bearing tokens for the numeric-divergence guard. Length-capped
+# at 16 so long opaque identifiers (ULIDs, full SHAs, JWT fragments)
+# don't count: two bodies citing different record ids are referencing,
+# not disagreeing. Short version/port/date/count shapes all pass:
+# "5432", "3.27.0", "2026-07-20", "v2", "74f625d".
+_NUMERIC_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9.\-_]*")
+
+
+def _numeric_token_set(body: str) -> frozenset[str]:
+    """The digit-bearing tokens of a provenance-stripped body,
+    lowercased, trailing punctuation trimmed."""
+    out: set[str] = set()
+    for tok in _NUMERIC_TOKEN_RE.findall(body.lower()):
+        tok = tok.strip(".-_")
+        if tok and len(tok) <= 16 and any(c.isdigit() for c in tok):
+            out.add(tok)
+    return frozenset(out)
+
 
 # Both bodies must be single claims; see the module docstring.
 MAX_CLAIM_TOKENS = 80
@@ -326,7 +368,7 @@ def _proper_nouns(body: str) -> set[str]:
 
 def value_tokens(body: str, raw_tokens: set[str]) -> set[str]:
     """Question 2's value-shaped tokens of a body: digit-bearing tokens
-    (`consolidate._numeric_token_set`, length-capped so identifiers do
+    (`_numeric_token_set`, length-capped so identifiers do
     not count), joined compounds, and proper nouns — each intersected
     with the body's own content tokens so a stopword never qualifies."""
     values = set(_numeric_token_set(body)) & raw_tokens

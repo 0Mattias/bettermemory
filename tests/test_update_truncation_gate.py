@@ -57,10 +57,10 @@ from typing import Any
 import pytest
 
 from bettermemory.config import Config, StorageConfig
-from bettermemory.events import Recorder, iter_events
+from bettermemory.events import Recorder
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
-from bettermemory.store import Store
+from bettermemory.store import CONTROL_KINDS, MUTATION_KINDS, Store
 
 from ._mcp import call_tool as _mcp_call, input_schema as _input_schema
 
@@ -89,22 +89,35 @@ _GREW_ENDING_BARE = (
 
 
 @pytest.fixture
-def server_with_events(memory_dir: Path) -> tuple[Any, Path]:
+def server_with_events(memory_dir: Path) -> tuple[Any, Store]:
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
     state = SessionState()
-    rec = Recorder(root=memory_dir, session_id=state.session_id)
+    store = Store(memory_dir)
+    rec = Recorder(store=store, session_id=state.session_id)
     server = build_server(
         config=cfg,
-        store=Store(memory_dir),
+        store=store,
         state=state,
         recorder=rec,
     )
-    return server, memory_dir
+    return server, store
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
     """Invoke a tool and return its structured payload."""
     return await _mcp_call(server, name, kwargs)
+
+
+def _raw_event_log(store: Store) -> str:
+    """The telemetry rows' raw payload text, straight from the log table:
+    what the v8 tests read as the bytes of `.events*.jsonl`. The store's
+    mutation rows carry committed bodies by design and are not the log
+    this contract is about."""
+    return "".join(
+        str(row["payload"])
+        for row in store.conn.execute("SELECT kind, payload FROM log ORDER BY seq")
+        if row["kind"] not in MUTATION_KINDS and row["kind"] not in CONTROL_KINDS
+    )
 
 
 async def _seed(server: Any, body: str = _WHOLE) -> str:
@@ -124,7 +137,7 @@ async def _body_on_disk(server: Any, memory_id: str) -> str:
 
 
 async def test_a_shrinking_edit_that_ends_mid_sentence_is_refused(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The defect, end to end. The decisive assertion is the body on disk:
     a refusal that still persisted the edit would close nothing, and the
@@ -142,24 +155,22 @@ async def test_a_shrinking_edit_that_ends_mid_sentence_is_refused(
 
 
 async def test_the_refusal_event_carries_lengths_and_never_the_body(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     memory_id = await _seed(server)
     await _call(server, "memory_update", id=memory_id, content=_CUT)
 
     refusals = [
         e
-        for e in iter_events(memory_dir)
+        for e in store.iter_events()
         if e["kind"] == "update" and e.get("status") == "truncation_warning"
     ]
     assert refusals, "no truncation_warning update event recorded"
     assert refusals[-1]["previous_length"] == len(_WHOLE)
     assert refusals[-1]["new_length"] == len(_CUT)
 
-    raw = "".join(
-        p.read_text(encoding="utf-8") for p in sorted(memory_dir.glob(".events*.jsonl"))
-    )
+    raw = _raw_event_log(store)
     assert _CUT not in raw, "the refused body reached the event log"
 
 
@@ -169,7 +180,7 @@ async def test_the_refusal_event_carries_lengths_and_never_the_body(
 
 
 async def test_a_growing_edit_that_ends_mid_sentence_commits(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The shrink conjunct's reason for existing.
 
@@ -190,7 +201,7 @@ async def test_a_growing_edit_that_ends_mid_sentence_commits(
 
 
 async def test_a_shrinking_edit_that_ends_on_a_terminal_commits(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """Condensing is the most common update shape on the dogfood store, and
     the gate must be invisible to it. This is what rules out the rejected
@@ -205,7 +216,7 @@ async def test_a_shrinking_edit_that_ends_on_a_terminal_commits(
 
 
 async def test_a_metadata_only_edit_on_a_truncated_record_is_untouched(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The records this gate exists for are already IN the store — `doctor`
     is pointing at one. Re-scoping or re-tagging them has to stay possible,
@@ -224,9 +235,9 @@ async def test_a_metadata_only_edit_on_a_truncated_record_is_untouched(
 
 
 async def test_the_override_commits_and_the_event_records_it(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     memory_id = await _seed(server)
 
     res = await _call(
@@ -242,7 +253,7 @@ async def test_the_override_commits_and_the_event_records_it(
 
     commits = [
         e
-        for e in iter_events(memory_dir)
+        for e in store.iter_events()
         if e["kind"] == "update" and e.get("status") is None
     ]
     assert commits, "no committed update event recorded"
@@ -250,27 +261,27 @@ async def test_the_override_commits_and_the_event_records_it(
 
 
 async def test_the_field_is_present_on_unacknowledged_commits_too(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The override RATE is the only evidence that would ever reopen this
     predicate, and a rate needs a denominator. A field that appears only on
     the acknowledged path makes `grep truncation_acknowledged` count
     numerators."""
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     memory_id = await _seed(server)
 
     await _call(server, "memory_update", id=memory_id, content=_CONDENSED)
 
     commits = [
         e
-        for e in iter_events(memory_dir)
+        for e in store.iter_events()
         if e["kind"] == "update" and e.get("status") is None
     ]
     assert commits[-1]["truncation_acknowledged"] is False
 
 
 async def test_a_defensive_flag_on_a_growing_edit_records_no_override(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The numerator half of the same contract: the field must record
     gate-fired-and-overridden, not flag-was-present.
@@ -283,7 +294,7 @@ async def test_a_defensive_flag_on_a_growing_edit_records_no_override(
     exact complement of the refusal, all three conjuncts, the way
     `credentials_acknowledged` and `user_claims_acknowledged` are for
     theirs."""
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     memory_id = await _seed(server)
 
     res = await _call(
@@ -298,7 +309,7 @@ async def test_a_defensive_flag_on_a_growing_edit_records_no_override(
 
     commits = [
         e
-        for e in iter_events(memory_dir)
+        for e in store.iter_events()
         if e["kind"] == "update" and e.get("status") is None
     ]
     assert commits, "no committed update event recorded"
@@ -306,7 +317,7 @@ async def test_a_defensive_flag_on_a_growing_edit_records_no_override(
 
 
 async def test_the_override_is_served_on_the_wire_defaulting_to_off(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The served schema is built from the `_handlers.py` facade signature,
     so a parameter that reaches only the handler is dropped at call time and
@@ -335,7 +346,7 @@ async def test_the_override_is_served_on_the_wire_defaulting_to_off(
 
 
 async def test_the_credential_gate_refuses_first(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """A body that trips BOTH gates must come back `credential_warning`.
 

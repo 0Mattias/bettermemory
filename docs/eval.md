@@ -8,8 +8,8 @@ relevant stored fact? That leaves two questions unanswered:
    in and ignored?
 2. When the model didn't retrieve, should it have?
 
-bettermemory's telemetry (`memory_record_use`, `memory_audit_turn`, the
-auto/explicit `applied` split, `claim_excerpts`) exists to make both
+bettermemory's telemetry (`memory_record_use`, the Stop hook's turn
+audit, the auto/explicit `applied` split, `claim_excerpts`) exists to make both
 answerable. This document defines the three metrics it computes.
 
 ## The three rates
@@ -21,7 +21,7 @@ Of all retrievals, what fraction were attested as load-bearing?
 - Numerator: `record_use` events with `outcome="applied"`, `auto=false`,
   and non-empty `claim_excerpts`.
 - Denominator: per-event retrieval occurrences across `memory_search` /
-  `memory_list` / `memory_show` in the window, counted by memory id. A
+  `memory_show` in the window, counted by memory id. A
   memory surfaced N times counts N; there is no per-turn dedup.
 
 Two attestation tiers feed the numerator:
@@ -61,7 +61,7 @@ hook) versus the bare auto-fallback?
 - Denominator: per-memory-id references in all `applied` events.
 
 A low rate means nothing produced evidence the retrievals shaped a
-reply. The per-memory companion in `memory_health` is
+reply. The per-memory companion in the health report is
 `cold_endorsement_memories`: distinct memories with `retrieval_count >=
 30` and zero explicit applies — retrieved often, never visibly used.
 `bettermemory eval` publishes the same bucket under the same contract:
@@ -69,8 +69,8 @@ one floor (the 2026-08-30 recalibration of
 `health._COLD_ENDORSEMENT_MIN_RETRIEVALS`, derived as `(1-p)^N` against
 the store's own explicit-endorse rate per search delivery; parity with
 eval's default is test-pinned), one counting basis (search deliveries
-only — `memory_list` / `memory_show` occurrences feed the rate
-denominators but not the floor), and one honesty gate (with zero
+only; `memory_show` occurrences feed the rate denominators but not
+the floor), and one honesty gate (with zero
 Stop-hook settlement telemetry in the log the bucket is suppressed and
 says so, rather than reporting an unwired hook as acknowledge-debt).
 
@@ -78,9 +78,10 @@ says so, rather than reporting an unwired hook as acknowledge-debt).
 
 Of audited turns, what fraction were silent misses — the ranker would
 have surfaced a high-relevance hit and the model made no
-`memory_search` / `memory_show` / `memory_list` call?
+`memory_search` / `memory_show` call?
 
-- Numerator: `search_miss` events emitted by `memory_audit_turn`.
+- Numerator: `search_miss` events emitted by the Stop hook's turn audit
+  (`bettermemory audit-turn`).
 - Denominator: `turn_audited` events, excluding `no_signal` verdicts
   (probe declined: empty store, nothing relevant). Those are reported
   separately so a probe stuck at "declined" can't read as a healthy 0%.
@@ -129,14 +130,14 @@ independence can rank candidates but never confirm one.
 
 ### Invalidation
 
-All rate surfaces (`memory_health`, `memory_scope_overview`,
-`bettermemory eval`) apply identical invalidation semantics:
+All rate surfaces (the health report and `bettermemory eval`) apply
+identical invalidation semantics:
 
-- **Bulk cutoff**: `bettermemory consolidate
-  --acknowledge-misses-before <ISO_TS>` writes a `silent_miss_cutoff`
-  event; `turn_audited` and `search_miss` events before the cutoff drop
+- **Bulk cutoff**: `memory_admin(action="acknowledge_miss",
+  before=<ISO_TS>)` writes a `silent_miss_cutoff` event; `turn_audited` and `search_miss` events before the cutoff drop
   from both numerator and denominator. Latest cutoff wins.
-- **Per-event ack**: `memory_acknowledge_miss(event_id, reason)`
+- **Per-event ack**: `memory_admin(action="acknowledge_miss",
+  id=<event_id>, reason=...)`
   retracts one false-positive miss from the numerator; the audited
   denominator keeps its turn (the audit wasn't wrong, the verdict was).
 - **Tombstoned top-hit**: a miss pointing at a since-removed memory is
@@ -202,8 +203,7 @@ Five additional modes:
   empirical input for trimming the default tool surface. Tools without
   telemetry surface as "no telemetry" rather than a silent zero;
   unmapped event kinds get their own footer. Side-effect events
-  (`search_miss`, `pending_expired`, `silent_miss_cutoff`,
-  `proposals_enqueued`, `doctor_fix`, `use_token_expired`) are
+  (`search_miss`, `silent_miss_cutoff`, `use_token_expired`) are
   excluded — they're consequences of calls (or of admin CLI
   operations), not calls.
 - `--threshold-sweep`: replays logged `search_miss` events against
@@ -231,8 +231,8 @@ Five additional modes:
   from the event), so read the delta, not the absolutes. Because
   logging the RAW pair makes the record formula-agnostic, any future
   candidate rule can be back-tested the same way. Audits retracted by
-  a `silent_miss_cutoff` marker (written by `consolidate
-  --acknowledge-misses`) are dropped from both widening lanes under
+  a `silent_miss_cutoff` marker (written by the acknowledge_miss
+  action's `before` form) are dropped from both widening lanes under
   the rate surfaces' global latest-cutoff semantics and reported as
   `cutoff_retracted`, so the replayable population stays explicit.
 - `--widening-preview --detail`: the precision-labeling surface behind
@@ -247,47 +247,6 @@ Five additional modes:
   The flip decision on `relevance_v2` reads this lane, not the counts.
   Both lanes share one event-filter pipeline (`_collect_replayable_
   audits`), so the counts and the listed turns can never disagree.
-- `--usage-replay`: the measurement surface for the usage-signal
-  ranking flags' declared flip bars, which are maintainer-held and
-  not published here. On a store running `endorsement_boost` or
-  `outcome_demotion`, every probe records — additively, on
-  `turn_audited` and `prompt_recall` events — which
-  flags had live signal (`usage_active`: a non-neutral factor on at
-  least one scored candidate) and, per flag whose single-flag toggle
-  would have changed the top-1, the counterfactual winner's raw
-  coverage features (`usage_toggles`). The counterfactual is computed
-  INSIDE the production ranker at probe time (per-leg factors divided
-  out, legs re-sorted, fusion re-run with recomputed weights, the
-  temporal rerank re-applied; leg composition held fixed) because the
-  factors multiply per-leg scores before RRF rank fusion — no
-  arithmetic on a logged fused score can reproduce the toggle, which
-  is also why turns logged before the capture shipped are counted as
-  not-replayable rather than approximated. This mode aggregates the
-  captures over the window: changed top-1s judged under the pinned
-  rule (`v1_relevance_v2_tier_then_matched_unique` — shadow-label
-  tier, then matched-token count, else neutral, with "improving"
-  always meaning the flag's pick was better), the miss-labeled
-  worsening count (a `prompt_recall` delivery is miss-labeled by
-  definition — its top-1 is what got injected), the
-  `outcome_demotion` invariant
-  (`v1_later_top1_explicit_apply_within_600s`), and the density
-  preconditions (distinct explicitly-endorsed and negative-outcome
-  memories in the window), alongside corroborated-memory liveness
-  from the store rollup — kept as the one aggregate read of that
-  rollup, though no flag has ranked on it since 8.0.0 removed
-  `corroboration_boost`. Captures a 7.x log wrote under that name are
-  skipped, not reported. Each turn counts once: a delivered recall's
-  same-turn Stop-hook companion audit (which re-carries the same
-  capture under an `ok` verdict) is skipped on the producers' own
-  (session, probe-query) dedup key, keeping the `prompt_recall` row —
-  the one recording what the model was shown. Audit/recall rows honor
-  the bulk `silent_miss_cutoff` marker with the rate surfaces' global
-  latest-wins semantics; per-event `miss_ack`s reference a
-  `search_miss`'s event id, which no audit/recall row carries, so they
-  are structurally unjoinable here and not applied. Measurements only:
-  the declared thresholds are maintainer-held and unpublished, and an
-  unread bar is a hold.
-
 All honor `--since`; all but `--report` honor `--json` (the report is
 markdown by construction). Rules live in `eval.THRESHOLD_RULES` /
 `eval.WIDENING_RULES`; adding one is a checker function plus a registry
@@ -408,7 +367,7 @@ distractor or a hard negative that set any edge counts as a non-update
 link. For the admitted false facts: linked over the true fact when the
 edge lands on a statement of the target topic (the lever `SECURITY.md`
 records), and filed as a conflict when the write queued the pair for
-`memory_conflicts`. Refused writes stay in every denominator, so the
+the conflicts queue. Refused writes stay in every denominator, so the
 row reads the whole write path the way the staleness row does.
 
 Three references are computed from the corpus alone and printed beside

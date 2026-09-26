@@ -32,8 +32,8 @@ uv tool install bettermemory
 bettermemory init --client claude-desktop   # or cursor / cline / claude-code / hermes
 ```
 
-Restart the client. `bettermemory doctor` exits 0 when it's wired
-correctly and prints a one-line fix for anything that isn't.
+Restart the client and ask the model what memory tools it has: the
+nine `mcp__bettermemory__` tools mean the server is wired.
 
 Try it without installing: `uvx bettermemory try` writes a memory
 citing a file, deletes the file, and shows the next search flagging it.
@@ -44,7 +44,7 @@ Offline, throwaway store.
 - Checks memory before believing it. Every hit carries a staleness
   verdict: calendar age, whether the paths it cites still exist, the
   commits landed since it was last confirmed, and how the record
-  entered the store (written here, pulled, or placed by hand).
+  entered the store (written here, migrated, or placed by hand).
   Declared claims
   (`path`, `path::symbol`, `path::NAME=literal`) are re-checked
   against the working tree; a claim that stops being true blocks the
@@ -56,14 +56,17 @@ Offline, throwaway store.
 - The code is the model. Search is deterministic lexical ranking —
   keyword + BM25, fused — over your own vocabulary. No embedding
   models, no downloads, nothing to warm up, same answer every time.
-- Plain files. One markdown file per memory. Greppable,
-  git-syncable, no cloud, no account. The SQLite index beside the
-  files is a derived cache you can delete; `bettermemory reindex`
-  rebuilds it.
+- One file, and it keeps receipts. The store is a single SQLite file
+  whose tables are the fold of a hash-chained log: every write is a
+  signed log row first, every record points at the row that made it,
+  and a row planted around the tool, or a log row forged without the
+  key, reads `unaccounted` on the next search. `bettermemory log
+  verify` audits the whole chain; `bettermemory export` writes the
+  store out as JSON or as the 8.x markdown directory. No cloud, no
+  account.
 - Rot gets acted on, not accumulated. Episodes journal per-session
-  run-state without polluting durable search; health telemetry and
-  curation tools surface what drifted, what went cold, and what
-  contradicts what.
+  run-state without polluting durable search; the health report
+  surfaces what drifted, what went cold, and what contradicts what.
 - Receipts, not adjectives. The claims above are measured by
   preregistered benchmarks whose frozen result artifacts — misses
   included — live in [bench/][bench] (`results/*.json`, each carrying
@@ -84,17 +87,16 @@ Everywhere else, steps are idempotent and safe to re-run:
    `bettermemory init` prints the canonical `mcpServers` JSON snippet
    plus known config locations. (Continue needs a hand-written YAML
    entry — see [docs/clients.md][clients-continue].)
-3. `bettermemory doctor` — exit 0 means correctly wired; every failed
-   check prints a one-line fix.
-4. Have the user restart the client so the server loads, then confirm
-   by asking the model *"what memory tools do you have?"*
+3. Have the user restart the client so the server loads, then confirm
+   by asking the model *"what memory tools do you have?"*: nine tools
+   under the `mcp__bettermemory__` prefix.
 
 Your operating contract — tool signatures, retrieval discipline,
 write gates — is [docs/api.md][api]; the server's
 `instructions` block delivers the core policy automatically. For the
 long-form policy in your system prompt: `bettermemory init
---with-addendum`. Migrating from Claude Code's built-in auto-memory:
-`bettermemory ingest` imports those files once.
+--with-addendum`. Coming from an 8.x store: `bettermemory migrate v8`
+imports the directory once.
 
 ## Everything else
 

@@ -13,23 +13,16 @@ anyone noticing until a user filed "your example doesn't parse" months
 later.
 
 This test walks every shipped example, parses it via the same
-frontmatter loader the store uses, and validates the result against
-`Memory.model_validate`. If a schema bump rots the examples, the
-test fails immediately and the contributor knows to update the
+frontmatter loader the v8 migration uses, and validates the result
+against `Memory.model_validate`. If a schema bump rots the examples,
+the test fails immediately and the contributor knows to update the
 fixtures alongside the schema change.
 
-We intentionally re-implement the schema-version + additive-field
-plumbing from `Store._load_path` (rather than calling it directly)
-because:
-
-1. `Store._load_path` is a private method; depending on it from a
-   test pins the internal name.
-2. The examples may legitimately omit additive fields (`origin`,
-   `category`, `links`, `verified_*`) — testing the public
-   `Memory.model_validate` round-trip is the right contract surface.
-3. The store wraps `load_one` / `load_all` with extra concerns
-   (tombstones, schema-version gating) that are noise for an
-   example-validation test.
+The schema-version and additive-field plumbing is re-implemented here
+rather than borrowed from the migration's reader because the examples
+may legitimately omit additive fields (`origin`, `category`, `links`,
+`verified_*`), and the public `Memory.model_validate` round-trip is the
+right contract surface for that.
 """
 
 from __future__ import annotations
@@ -127,7 +120,7 @@ def test_example_memory_parses_and_validates(example_path: Path) -> None:
     missing = [k for k in required if k not in meta]
     assert not missing, f"{example_path.name}: missing required field(s): {missing}"
 
-    # Build the kwargs dict the way Store._load_path does, with the
+    # Build the kwargs dict the way the v8 reader does, with the
     # additive-field defaults that legacy memories rely on. Anything
     # the example file omits gets the documented default.
     origin_raw = meta.get("origin")

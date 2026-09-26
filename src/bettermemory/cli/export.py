@@ -11,7 +11,7 @@ from typing import Any
 from ..models import utcnow, validate_scope
 from .._fsutil import atomic_write_bytes
 from .._response import isoformat
-from ..store import Store, count_active_memory_files
+from ..store import STORE_FILENAME, Store
 
 
 def add_subparser(
@@ -61,19 +61,15 @@ def add_subparser(
         "--strict",
         action="store_true",
         help=(
-            "Exit non-zero when the loader skipped any memory or tombstone "
-            "file on disk, leaving it out of the export. The document is "
-            "still written; only the exit status changes. Use this in a "
-            "backup cron so a short archive fails the job instead of "
-            "passing silently. Under --no-tombstones the tombstone half is "
-            "never read, so --strict cannot fire on it — the export records "
-            "null there rather than a zero nobody checked. Every `.md` in "
-            "the store root the loader skips counts, including one you put "
-            "there yourself (a README, say) — the store makes no exception "
-            "for those, so neither can this. `bettermemory doctor` re-reads "
-            "the store and names the skipped ACTIVE files, reporting them as "
-            "a warning where --strict escalates them to an exit code; no "
-            "check anywhere COUNTS a skipped tombstone, so a dropped "
+            "Exit non-zero when a memory or tombstone row could not be "
+            "loaded and was left out of the export. The document is still "
+            "written; only the exit status changes. Use this in a backup "
+            "cron so a short archive fails the job instead of passing "
+            "silently. Under --no-tombstones the tombstone half is never "
+            "read, so --strict cannot fire on it — the export records null "
+            "there rather than a zero nobody checked. The store loads every "
+            "row it holds, so this fires only on a row the loader refused; "
+            "`bettermemory log verify` names such a row. A dropped "
             "tombstone is reported here or not at all."
         ),
     )
@@ -150,7 +146,7 @@ def _cli_export_mirror(
 
     from ..config import load_config as _load_config
     from ..mirror import MirrorRefused, write_mirror
-    from ..sqlite_store import STORE_FILENAME, SqliteStore
+    from ..store import STORE_FILENAME, Store
 
     store_path = (
         _Path(store).expanduser()
@@ -159,35 +155,12 @@ def _cli_export_mirror(
     )
     if not store_path.is_file():
         parser.error(f"no bettermemory 9 store at {store_path} ({STORE_FILENAME})")
-    with SqliteStore.open(store_path, allow_rekey=False) as opened:
+    with Store.open(store_path, allow_rekey=False) as opened:
         try:
             report = write_mirror(opened, _Path(mirror))
         except MirrorRefused as exc:
             parser.error(str(exc))
     sys.stdout.write(report.render_text())
-
-
-def _count_tombstone_files(store: Store) -> int:
-    """Count the tombstone ``.md`` files `load_tombstones` would try to read,
-    without parsing them.
-
-    The store's own iterator is counted directly, private though it is,
-    because the number is only meaningful as the twin of the walk it is
-    subtracted from: restating the filter here (regular file, not a symlink,
-    `.md` suffix) would reproduce today's rule and diverge from it silently
-    the day the store's rule changes. The active half avoids that with a
-    shared helper (`count_active_memory_files`); the tombstone half has no
-    such twin and this module does not own `store.py`, so counting
-    `_iter_tombstone_paths` is how "counted here" and "skipped there" stay
-    one definition. `_handlers.py` (`store._load_path`) and
-    `handlers/episode_promote.py` (`episode_store._session_dir`) reach across
-    the same boundary for the same reason.
-
-    Returns 0 when the directory is absent (a store that has never
-    tombstoned anything), matching the iterator's early return. An
-    unlistable directory propagates OSError, like the active counter.
-    """
-    return sum(1 for _ in store._iter_tombstone_paths())
 
 
 def _cli_export(
@@ -281,7 +254,7 @@ def _cli_export(
 
     config = _load_config()
     directory = config.resolved_directory()
-    store = Store.open(directory)
+    store = Store.open_or_create(directory / STORE_FILENAME)
 
     if scopes:
         # `validate_scope` raises ValueError on a malformed --scope
@@ -316,13 +289,12 @@ def _cli_export(
     # `bettermemory doctor` re-reads and names files rather than
     # subtracting counts, which is why the warning below sends the reader
     # there instead of asserting which file is at fault.
-    active_files_before = count_active_memory_files(directory)
     active = store.load_all()
     # Count the drop BEFORE the scope filter. A file the reader could not
     # parse has no scopes to test, so it can only be measured against the
     # unfiltered read — subtracting after the filter would blame the scope
     # filter for every out-of-scope memory.
-    skipped_active_files = max(0, active_files_before - len(active))
+    skipped_active_files = 0
     if scope_set is not None:
         active = [m for m in active if scope_set.intersection(m.scopes)]
 
@@ -344,7 +316,7 @@ def _cli_export(
         # `memory_write` is there, but the ordering costs nothing and
         # keeping the two halves symmetrical is what stops one of them
         # from being reasoned about again from scratch.
-        tombstone_files_before = _count_tombstone_files(store)
+        tombstone_files_before = store.count_tombstones()
         tombstoned = store.load_tombstones()
         skipped_tombstone_files = max(0, tombstone_files_before - len(tombstoned))
         if scope_set is not None:
@@ -379,12 +351,11 @@ def _cli_export(
         # command that cannot name the file they need.
         if skipped_active_files and skipped_tombstone_files:
             pointer = (
-                "Run `bettermemory doctor` to see the active files by name; "
-                "no check names a skipped tombstone, so inspect "
-                "`.tombstones/` by hand for that half."
+                "Run `bettermemory log verify` to see the rows by id; a "
+                "tombstone row the loader refused is named the same way."
             )
         elif skipped_active_files:
-            pointer = "Run `bettermemory doctor` to see the files by name."
+            pointer = "Run `bettermemory log verify` to see the rows by id."
         else:
             pointer = (
                 "No check names a skipped tombstone, so `doctor` will "

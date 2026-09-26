@@ -10,36 +10,17 @@ cross-process locks) against one shared store. Each agent runs a
 realistic, read-heavy op-mix (search / write / update / verify /
 remove) on its OWN memories plus a shared read corpus.
 
-Where the contention actually is at HEAD — three tiers, because
-naming the wrong one is how a contention benchmark misleads:
-
-*Per-memory, disjoint.* Every mutator holds an exclusive `flock` on
-the single `.md` it touches (`store._locked(path)`). Agents only
-ever mutate memories they wrote themselves, and bodies carry the
-agent id so even fresh-write filename slugs rarely collide — these
-locks stay disjoint, and the run measures the store rather than
-same-memory fighting.
-
-*Per-shard, 16-way.* The active event log has been striped since
-3.24.0. A `Recorder` appends to `.events.NN.jsonl` where
-`NN = crc32(session_id) % SHARD_COUNT`, and locks only that shard.
-Each agent is its own session (`agent-<n>`), so appends collide only
-when two agents hash to the same shard — chance below `SHARD_COUNT`
-(16) agents, guaranteed above it.
-
-*Store-global — the remaining bottleneck.* `.index.sqlite`. Every
-write / update / verify / remove calls `index.upsert` / `index.remove`
-from INSIDE the per-file flock, and SQLite's WAL mode admits many
-concurrent readers but exactly ONE writer per database. So every
-mutation the whole fleet performs funnels through that single
-writer, and each of those transactions additionally re-derives
-`meta.indexed_count` with a `SELECT COUNT(*)` over `memories`.
-Searches are WAL readers: they neither block nor are blocked.
-
-So the sweep measures a ~50% read half that scales with cores against
-a ~50% mutation half that serialises on one SQLite writer. When the
-curve flattens, that is the first thing to suspect — not the event
-log, which stopped being a store-global lock in 3.24.0.
+Where the contention is on the bettermemory 9 store: one SQLite file
+per store, WAL mode, a 5-second busy timeout. WAL admits many
+concurrent readers and exactly one writer per database, and every
+mutation the fleet performs is one transaction that appends a signed
+log row and applies it to its table, so the write half of the op-mix
+serialises on that writer while searches read without blocking. There
+are no per-file locks and no per-shard locks any more: the event a
+mutation records is a row in the same log, inside the same
+transaction. Agents only ever mutate memories they wrote themselves,
+so the CAS on `updated` rarely fires and the run measures the store
+rather than same-memory fighting.
 
 Three things come out:
 
@@ -47,20 +28,17 @@ Three things come out:
    agent count climbs. This is the real, measured number that
    replaces the invented "200+".
 2. The event-log tax — the same workload run with event-logging on
-   vs off at the top agent count. Before 3.24.0 this measured a
-   store-global append lock, and the 7-17% it came back with is what
-   motivated sharding. Post-sharding the gap is the residual
-   *per-event* cost — redaction, append, fsync, plus whatever
-   same-shard collisions the agent count forces — not cross-session
-   serialisation.
+   vs off at the top agent count. A telemetry row is one more signed
+   log row per op, in its own transaction, so the gap is the per-event
+   cost: redaction, the MAC, the append and the fsync behind it.
 3. A corruption check — after every run: no agent process crashed,
-   every active .md parses and the parsed count matches the files on
-   disk, every tombstone carries `removed` frontmatter, and every
-   active event segment is valid JSONL end to end. The gate prints
-   the evidence it collected (segments opened, event lines parsed,
-   memories parsed) next to its verdict, because a gate that passes
-   without having read anything is worse than no gate — see
-   `_check_event_log`, which is exactly how this one failed before.
+   every active record loads and the loaded count matches the table's
+   row count, every tombstone carries `removed`, and `log_verify`
+   reads `ok` (every MAC verifies, the chain is unbroken, the head
+   names the last row, and every table matches a refold of the log).
+   The gate prints the evidence it collected (records loaded, log rows
+   verified, telemetry rows read) next to its verdict, because a gate
+   that passes without having read anything is worse than no gate.
    This is the "zero corruption" half of any honest claim.
 
 Usage:
@@ -96,12 +74,7 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 
-from bettermemory import index as _index  # noqa: E402
-from bettermemory.events import (  # noqa: E402
-    SHARD_COUNT,
-    Recorder,
-    _active_segment_paths,
-)
+from bettermemory.events import Recorder  # noqa: E402
 from bettermemory.search import search as run_search  # noqa: E402
 from bettermemory.store import (  # noqa: E402
     ConcurrentUpdateError,
@@ -109,7 +82,6 @@ from bettermemory.store import (  # noqa: E402
     NotTombstonedError,
     Store,
     TombstonedError,
-    _parse_memory_file,
 )
 
 # A small shared vocabulary so seeded bodies and agent writes carry
@@ -124,9 +96,8 @@ _VOCAB = (
 
 # Realistic agent op-mix (weights). Read-heavy: agents search far more
 # than they write. update/verify/remove act on the agent's OWN
-# memories, so per-file locks stay disjoint and the shared contention
-# is the store-global one — the single SQLite writer on `.index.sqlite`
-# that every mutation passes through — not same-memory fighting.
+# memories, so the shared contention is the store's single SQLite
+# writer that every mutation passes through, not same-memory fighting.
 # Roughly half these ops mutate, so half of them hit that writer.
 _OPS = ("search", "write", "update", "verify", "remove")
 _WEIGHTS = (50, 18, 18, 12, 2)
@@ -144,25 +115,23 @@ def _query(rng: random.Random) -> str:
     return " ".join(rng.sample(_VOCAB, k=rng.randint(2, 3)))
 
 
-def _agent(args: tuple[str, int, int, int, bool]) -> dict[str, Any]:
+def _agent(args: tuple[str, str, int, int, int, bool]) -> dict[str, Any]:
     """One agent process: run `num_ops` mixed operations against the
     shared store, timing each and recording an event per op when
-    `record_events` is set — mirroring the MCP handler telemetry that
-    fires on every real tool call. Each agent passes its own
-    `session_id`, so its `Recorder` lands on the shard
-    `crc32(session_id) % SHARD_COUNT` and takes only that shard's
-    append lock; the store-global serialisation the mutating ops below
-    hit is the single SQLite writer on `.index.sqlite`, not the log.
+    `record_events` is set, mirroring the MCP handler telemetry that
+    fires on every real tool call. Each agent opens its own connection
+    to the one store file under its own `session_id`; every mutation
+    and every event is a transaction on the store's single writer.
 
     Returns per-op latencies and an outcome tally. Contention outcomes
     (a peer tombstoned our target, or the CAS rejected a stale
-    snapshot) are counted, never raised — the benchmark asserts on the
-    aggregate, like the store's own concurrency test.
+    snapshot) are counted, never raised; the benchmark asserts on the
+    aggregate.
     """
-    root, agent_id, num_ops, seed, record_events = args
-    store = Store(Path(root))
+    root, keys_dir, agent_id, num_ops, seed, record_events = args
+    store = Store(Path(root), keys_dir=Path(keys_dir))
     recorder = (
-        Recorder(Path(root), session_id=f"agent-{agent_id}") if record_events else None
+        Recorder(store=store, session_id=f"agent-{agent_id}") if record_events else None
     )
     rng = random.Random(seed * 100003 + agent_id + 17)
 
@@ -197,21 +166,13 @@ def _agent(args: tuple[str, int, int, int, bool]) -> dict[str, Any]:
                 tally["write"] += 1
 
             elif op == "search":
-                # The realistic read path the handler uses: FTS5 index
-                # for a bounded candidate set, resolve ids -> filenames
-                # via the index, and parse just those files by path —
-                # O(candidates). NOT `store.load_one` per id, which
-                # walks the whole directory (store.py:_find_path_for_id)
-                # and turns one search into 20 full-corpus scans.
+                # The realistic read path the handler uses: the FTS5
+                # candidate query for a bounded set, then the rows by
+                # id, O(candidates); a candidate a peer tombstoned in
+                # between is skipped by `load_many`, like the handler.
                 q = _query(rng)
-                pairs = _index.query(store.root, q, max_results=20)
-                fnames = _index.filenames_for_ids(store.root, [mid for mid, _ in pairs])
-                cands = []
-                for fname in fnames.values():
-                    try:
-                        cands.append(_parse_memory_file(store.root / fname))
-                    except (FileNotFoundError, ValueError, OSError):
-                        pass  # file raced away / torn — skip, like the handler
+                pairs = store.query_candidates(q, max_results=20)
+                cands = store.load_many([mid for mid, _ in pairs])
                 hits = run_search(cands, q, max_results=5) if cands else []
                 if recorder is not None:
                     recorder.record("search", n_hits=len(hits))
@@ -253,6 +214,7 @@ def _agent(args: tuple[str, int, int, int, bool]) -> dict[str, Any]:
             tally["conc_err"] += 1
         lat.append(time.perf_counter() - t0)
 
+    store.close()
     return {"tally": tally, "lat": lat}
 
 
@@ -269,141 +231,74 @@ def _pct(sorted_vals: list[float], p: float) -> float:
     return sorted_vals[lo] * (1 - frac) + sorted_vals[hi] * frac
 
 
-def _seed_corpus(root: Path, n: int, seed: int) -> None:
+def _seed_corpus(root: Path, keys_dir: Path, n: int, seed: int) -> None:
     """Single-process pre-seed so agent searches have real content to
     rank from op one."""
-    store = Store(root)
     rng = random.Random(seed)
-    for _ in range(n):
-        store.write(content=_body(rng, -1), scopes=["seed"])
+    with Store(root, keys_dir=keys_dir) as store:
+        for _ in range(n):
+            store.write(content=_body(rng, -1), scopes=["seed"])
 
 
 def _check_invariants(
-    root: Path, results: list[dict[str, Any]], *, expect_events: bool
+    root: Path, keys_dir: Path, results: list[dict[str, Any]], *, expect_events: bool
 ) -> dict[str, Any]:
     """Post-run corruption check. Four things, in order:
 
     1. No agent process crashed (a crash surfaces as a non-dict result).
-    2. Every active `.md` parses, AND the parsed count equals the
-       number of `.md` files on disk (`Store.load_all` skips malformed
-       files, so a gap means a torn write slipped through).
-    3. Every tombstone carries `removed` frontmatter.
-    4. Every active event segment is valid JSONL end to end.
+    2. Every active record loads, AND the loaded count equals the
+       memories table's row count.
+    3. Every tombstone carries `removed`.
+    4. `log_verify` reads `ok`: every row's MAC verifies under the key,
+       the chain is unbroken, the head names the last row, and every
+       table equals a refold of the log.
 
     Returns a report dict with a boolean `ok`, the `problems` list, and
-    the COUNTS the gate actually inspected (`md_parsed`, `segments`,
-    `event_lines`, `event_bytes`) — the caller prints those next to the
-    verdict so a pass is auditable rather than merely asserted.
+    the COUNTS the gate actually inspected (`records_loaded`,
+    `records_rows`, `log_rows`, `event_rows`), which the caller prints
+    next to the verdict so a pass is auditable rather than merely
+    asserted.
 
     `expect_events` is the run's own `events` flag. When it is set the
-    check is required to have READ something — see `_check_event_log`
-    for why a corruption gate that reads nothing is worse than no gate.
+    check is required to have READ telemetry rows: a corruption gate
+    that reads nothing is worse than no gate.
     """
     problems: list[str] = []
 
-    # No agent crashed (a crash would surface as a non-dict / missing key).
     if not all(isinstance(r, dict) and "tally" in r for r in results):
         problems.append("an agent process crashed or returned a bad result")
 
-    # Every active .md loads, and the on-disk count matches what parsed
-    # (Store.load_all is defensive and skips malformed files, so a
-    # mismatch means a torn write slipped through).
-    store = Store(root)
-    md_files = [p for p in root.glob("*.md") if not p.name.startswith(".")]
-    parsed = store.load_all()
-    if len(parsed) != len(md_files):
-        problems.append(
-            f"active .md parse gap: {len(parsed)} parsed vs {len(md_files)} on disk"
-        )
-
-    # Tombstones carry removal frontmatter.
-    tdir = root / ".tombstones"
-    if tdir.exists():
-        from bettermemory._frontmatter import loads as fm_loads
-
-        for tpath in tdir.glob("*.md"):
-            post = fm_loads(tpath.read_text(encoding="utf-8"))
-            if "removed" not in post.metadata:
-                problems.append(f"tombstone {tpath.name} missing `removed`")
+    with Store(root, keys_dir=keys_dir) as store:
+        loaded = store.load_all()
+        rows = store.count_memories()
+        if len(loaded) != rows:
+            problems.append(f"active record gap: {len(loaded)} loaded vs {rows} rows")
+        for summary in store.list_tombstones():
+            if summary.removed is None:
+                problems.append(f"tombstone {summary.id} missing `removed`")
                 break
+        report = store.log_verify()
+        if report["status"] != "ok":
+            problems.append(
+                f"log verify reads {report['status']}: "
+                f"{[p for p in report.get('problems', [])][:3]}"
+            )
+        log_rows = int(report.get("rows") or 0)
+        event_rows = sum(1 for _ in store.iter_events())
 
-    # Event log is fully-parseable JSONL (no torn append lines).
-    log = _check_event_log(root, expect_events=expect_events)
-    problems.extend(log["problems"])
+    if expect_events and event_rows <= 0:
+        problems.append(
+            "the event-log check read no telemetry rows; the corruption gate "
+            "had no input to check"
+        )
 
     return {
         "ok": not problems,
         "problems": problems,
-        "md_parsed": len(parsed),
-        "md_on_disk": len(md_files),
-        "segments": log["segments"],
-        "event_bytes": log["event_bytes"],
-        "event_lines": log["event_lines"],
-    }
-
-
-def _check_event_log(root: Path, *, expect_events: bool) -> dict[str, Any]:
-    """Verify every active event segment is fully-parseable JSONL, and
-    that we actually read something.
-
-    Segments are enumerated through `events._active_segment_paths` —
-    the SAME helper the product's readers use — never a hard-coded
-    filename. This gate used to open a literal `root / ".events.jsonl"`,
-    which stopped existing in 3.24.0 when the active log became the
-    sharded `.events.NN.jsonl` set. `Path.exists()` was simply False on
-    every store the benchmark creates, so the loop body never ran and
-    the check reported "no corruption" without having opened a byte.
-    Going through the product's own helper means the benchmark cannot
-    drift away from the layout again.
-
-    The vacuity guard below is the other half: a run that recorded
-    events MUST have found segments and read a positive number of bytes
-    and lines. A silent pass on zero input is treated as a failure of
-    the gate, not a clean bill of health — the numbers in
-    docs/swarm-convergence-plan.md rest on this check having run.
-    """
-    problems: list[str] = []
-    segments = _active_segment_paths(root)
-    event_bytes = 0
-    event_lines = 0
-
-    for seg in segments:
-        try:
-            event_bytes += seg.stat().st_size
-            raw_text = seg.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as exc:
-            problems.append(f"event segment {seg.name} is unreadable: {exc}")
-            continue
-        for raw in raw_text.splitlines():
-            if not raw.strip():
-                continue
-            try:
-                json.loads(raw)
-            except json.JSONDecodeError:
-                problems.append(
-                    f"event log has a malformed (torn) JSON line in {seg.name}"
-                )
-                break
-            event_lines += 1
-
-    if expect_events:
-        if not segments:
-            problems.append(
-                "event-log check found NO active segments — the corruption "
-                "gate read nothing, so its verdict is meaningless"
-            )
-        elif event_bytes <= 0 or event_lines <= 0:
-            problems.append(
-                f"event-log check read {event_bytes} bytes / {event_lines} "
-                f"events from {len(segments)} segment(s) — the corruption "
-                "gate had no input to check"
-            )
-
-    return {
-        "problems": problems,
-        "segments": len(segments),
-        "event_bytes": event_bytes,
-        "event_lines": event_lines,
+        "records_loaded": len(loaded),
+        "records_rows": rows,
+        "log_rows": log_rows,
+        "event_rows": event_rows,
     }
 
 
@@ -450,20 +345,25 @@ def _run_one(
     """One sweep point on a FRESH store dir so runs don't carry state."""
     root = base / f"store_{n_agents}a_{'ev' if events else 'noev'}"
     root.mkdir(parents=True, exist_ok=True)
-    _seed_corpus(root, seed_corpus, seed)
+    # The store's key lives under the run's own directory, never under
+    # the user's config directory, so a throwaway store leaves no key.
+    keys_dir = base / "keys"
+    _seed_corpus(root, keys_dir, seed_corpus, seed)
 
     ctx = mp.get_context("spawn")
     t0 = time.perf_counter()
     with ctx.Pool(n_agents) as pool:
         results = pool.map(
             _agent,
-            [(str(root), a, ops, seed, events) for a in range(n_agents)],
+            [(str(root), str(keys_dir), a, ops, seed, events) for a in range(n_agents)],
         )
     wall = time.perf_counter() - t0
 
     metrics = _aggregate(n_agents, ops, wall, results)
     metrics["events"] = events
-    metrics["corruption"] = _check_invariants(root, results, expect_events=events)
+    metrics["corruption"] = _check_invariants(
+        root, keys_dir, results, expect_events=events
+    )
     return metrics
 
 
@@ -496,20 +396,16 @@ def _format_text(sweep: list[dict[str, Any]], ab: dict[str, Any]) -> str:
         f"{peak['agents']} agents."
     )
     # The corruption verdict carries its own evidence: what the gate
-    # actually opened. "Zero corruption" next to `0 segments / 0 event
-    # lines` is a gate that read nothing and must read as such — that
-    # is precisely how the pre-fix version survived (see
-    # `_check_event_log`). Printed unconditionally, so a FAIL row is
-    # just as auditable as a pass.
-    md_seen = sum(m["corruption"]["md_parsed"] for m in sweep)
-    segs = sum(m["corruption"]["segments"] for m in sweep)
-    ev_lines = sum(m["corruption"]["event_lines"] for m in sweep)
-    ev_bytes = sum(m["corruption"]["event_bytes"] for m in sweep)
+    # actually read. "Zero corruption" next to zero rows is a gate that
+    # read nothing and must read as such. Printed unconditionally, so a
+    # FAIL row is just as auditable as a pass.
+    records = sum(m["corruption"]["records_loaded"] for m in sweep)
+    log_rows = sum(m["corruption"]["log_rows"] for m in sweep)
+    ev_rows = sum(m["corruption"]["event_rows"] for m in sweep)
     lines.append(
         f"Corruption gate: {'zero corruption' if all_ok else 'FAILED'} across "
-        f"{len(sweep)} sweep point(s) — inspected {md_seen} memory file(s), "
-        f"{segs} active event segment(s), {ev_lines} event line(s) "
-        f"({ev_bytes} bytes) parsed as JSON."
+        f"{len(sweep)} sweep point(s); inspected {records} record(s), "
+        f"{log_rows} log row(s) verified, {ev_rows} telemetry row(s) read."
     )
     if not all_ok:
         for m in sweep:
@@ -526,9 +422,8 @@ def _format_text(sweep: list[dict[str, Any]], ab: dict[str, Any]) -> str:
             f"{on['throughput_ops_s']:.0f} ops/s with logging on vs "
             f"{off['throughput_ops_s']:.0f} off "
             f"({tax:.0f}% of throughput, {speedup:.2f}x). "
-            f"The active log is now {SHARD_COUNT}-way sharded (no global "
-            f"lock), so this residual is per-event redaction + fsync, not "
-            f"cross-session contention."
+            f"Each event is one more signed row on the store's single "
+            f"writer, so this is the per-event MAC, append and fsync."
         )
     lines.append("")
     return "\n".join(lines)

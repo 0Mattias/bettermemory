@@ -53,7 +53,6 @@ from bettermemory.handlers._shared import (
     _validate_content_floor,
     _validate_write_payload,
 )
-from bettermemory.proposals import Proposal, ProposalQueue
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
@@ -247,30 +246,12 @@ def _unwrap(res: Any) -> Any:
 
 
 def _server(memory_dir: Path, **behavior: Any) -> Any:
-    """A real server over `memory_dir`, configured the way a deployment would.
-
-    `full_tool_surface` is on because `memory_proposals` — the second half of
-    the floor's documented blast radius — is otherwise not registered at all.
-    """
+    """A real server over `memory_dir`, configured the way a deployment would."""
     cfg = Config(
         storage=StorageConfig(directory=str(memory_dir)),
-        behavior=BehaviorConfig(full_tool_surface=True, **behavior),
+        behavior=BehaviorConfig(**behavior),
     )
     return build_server(config=cfg, store=Store(memory_dir), state=SessionState())
-
-
-def _queue_proposal(memory_dir: Path, body: str, *, pid: str = "p1") -> None:
-    ProposalQueue(Store(memory_dir).root).append(
-        [
-            Proposal(
-                id=pid,
-                body=body,
-                source_excerpt=body,
-                suggested_category="fact",
-                created="2026-01-01T12:00:00+00:00",
-            )
-        ]
-    )
 
 
 def _stored(memory_dir: Path) -> list[Any]:
@@ -355,53 +336,6 @@ async def test_memory_write_default_config_still_commits_a_one_token_body(
 
 
 # ---- proposal acceptance --------------------------------------------------
-
-
-async def test_proposal_accept_refuses_a_short_body_when_the_floor_is_configured(
-    memory_dir: Path,
-) -> None:
-    """The second surface `docs/api.md` and `DEFAULT_CONFIG` promise the floor
-    binds. It routes through the same shared validator but a SEPARATE call
-    site, so it could be threaded at one and not the other."""
-    server = _server(memory_dir, min_content_tokens=6)
-    _queue_proposal(memory_dir, _SHORT_BODY)
-
-    with pytest.raises(Exception, match="below min_content_tokens"):
-        await _call(
-            server,
-            "memory_proposals",
-            action="accept",
-            proposal_id="p1",
-            scopes=["tools"],
-        )
-
-    assert _stored(memory_dir) == []
-    # A payload rejection leaves the entry queued — the reviewer can edit it
-    # up to the floor and re-accept rather than losing the capture.
-    listed = await _call(server, "memory_proposals", action="list")
-    assert [p["id"] for p in listed["proposals"]] == ["p1"]
-
-
-async def test_proposal_accept_admits_a_short_body_under_the_default(
-    memory_dir: Path,
-) -> None:
-    """Default off, through the real accept tool: the queue's existing
-    behaviour is untouched for everyone who never sets the knob."""
-    server = _server(memory_dir)
-    _queue_proposal(memory_dir, _SHORT_BODY)
-
-    res = _unwrap(
-        await _call(
-            server,
-            "memory_proposals",
-            action="accept",
-            proposal_id="p1",
-            scopes=["tools"],
-        )
-    )
-
-    assert res["status"] == "accepted"
-    assert len(_stored(memory_dir)) == 1
 
 
 # ---- memory_update: the documented exemption ------------------------------
@@ -502,8 +436,8 @@ def test_every_write_validator_call_site_threads_the_floor() -> None:
     """The floor's default is 0, so FORGETTING to thread it is silent.
 
     That is precisely how it shipped inert: the validator grew the parameter,
-    both call sites kept passing `max_content_bytes` and `max_scopes_per_write`
-    and simply omitted the new one, and nothing failed. A third call site added
+    every call site kept passing `max_content_bytes` and `max_scopes_per_write`
+    and simply omitted the new one, and nothing failed. A call site added
     later would inherit the same silence, so the requirement is checked at the
     source level rather than one behaviour test per surface.
 
@@ -515,7 +449,7 @@ def test_every_write_validator_call_site_threads_the_floor() -> None:
 
     # Guard the scan itself: a rename that makes this find nothing would
     # otherwise turn the test into a permanent pass.
-    assert len(sites) >= 2, f"expected the known call sites, found {sites}"
+    assert len(sites) >= 1, f"expected the known call site, found {sites}"
 
     missing = [
         f"{path}:{lineno}"

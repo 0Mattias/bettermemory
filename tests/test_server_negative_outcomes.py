@@ -11,7 +11,6 @@ the rejection, so surfacing the rejection would be misleading.
 from __future__ import annotations
 from ._mcp import call_tool as _mcp_call
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -20,7 +19,7 @@ import pytest
 
 from bettermemory._response import ResponseBuilder
 from bettermemory.config import Config, StorageConfig
-from bettermemory.events import EVENT_LOG_FILENAME, Recorder
+from bettermemory.events import Recorder
 from bettermemory.models import Confidence, MemoryHit
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
@@ -36,10 +35,9 @@ def memory_dir(tmp_path: Path) -> Path:
 def server_with_rec(memory_dir: Path) -> tuple[Any, Recorder]:
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
     state = SessionState()
-    rec = Recorder(root=memory_dir, session_id=state.session_id, enabled=True)
-    server = build_server(
-        config=cfg, store=Store(memory_dir), state=state, recorder=rec
-    )
+    store = Store(memory_dir)
+    rec = Recorder(store=store, session_id=state.session_id, enabled=True)
+    server = build_server(config=cfg, store=store, state=state, recorder=rec)
     return server, rec
 
 
@@ -350,18 +348,15 @@ async def test_most_recent_ts_is_latest_event_timestamp(
     assert most_recent.endswith("Z") or "+" in most_recent
 
 
-def _append_raw_event(memory_dir: Path, event: dict[str, Any]) -> None:
-    """Append one raw JSON event line to the active event log.
+def _append_raw_event(store: Store, event: dict[str, Any]) -> None:
+    """Land one event under its own `ts` and field shapes.
 
     Bypasses the `Recorder` (which only ever stamps a canonical UTC
-    `…Z` ts) so a test can pin a specific on-disk `ts` shape — here, an
-    offset-less timestamp the way a hand-edited or legacy event carries
-    it. `iter_events` reads exactly this file and tolerates extra lines.
+    `...Z` ts) so a test can pin a specific stored `ts` shape, here an
+    offset-less timestamp the way a legacy or imported event carries it.
+    `store.import_event` is the one write that keeps a caller's `ts`.
     """
-    path = memory_dir / EVENT_LOG_FILENAME
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(event) + "\n")
+    store.import_event(event)
 
 
 async def test_offsetless_negative_outcome_ts_does_not_crash_search(
@@ -387,7 +382,7 @@ async def test_offsetless_negative_outcome_ts_does_not_crash_search(
     server, _ = server_with_rec
     mid = await _seed(server, "python list comprehension notes")
 
-    memory_dir = Path(server_with_rec[1].root)
+    store = server_with_rec[1].store
     now = datetime.now(timezone.utc)
     # Canonical `…Z` ts (tz-aware once parsed) — the shape the recorder
     # always writes.
@@ -400,7 +395,7 @@ async def test_offsetless_negative_outcome_ts_does_not_crash_search(
 
     for ts in (canonical_ts, offsetless_ts):
         _append_raw_event(
-            memory_dir,
+            store,
             {
                 "ts": ts,
                 "session": "sess_legacy",
@@ -514,13 +509,13 @@ async def test_poison_id_shapes_do_not_crash_search_and_claims_stay_aligned(
     indices mis-attributes the claim; both fail below."""
     server, _ = server_with_rec
     mid = await _seed(server, "python list comprehension notes")
-    memory_dir = Path(server_with_rec[1].root)
+    store = server_with_rec[1].store
     now = datetime.now(timezone.utc)
     ts = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     for poison_ids in (42, [["m-nested"]], {"d": 1}):
         _append_raw_event(
-            memory_dir,
+            store,
             {
                 "ts": ts,
                 "session": "sess_poison",
@@ -532,7 +527,7 @@ async def test_poison_id_shapes_do_not_crash_search_and_claims_stay_aligned(
     # Alignment probe: the real id sits at ORIGINAL index 2, BEHIND a
     # malformed element; its parallel claim excerpt must stay attached.
     _append_raw_event(
-        memory_dir,
+        store,
         {
             "ts": ts,
             "session": "sess_poison",

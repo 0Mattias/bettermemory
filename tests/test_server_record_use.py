@@ -10,21 +10,20 @@ from typing import Any
 import pytest
 
 from bettermemory.config import Config, StorageConfig
-from bettermemory.events import Recorder, iter_events
+from bettermemory.events import Recorder
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
 
 
 @pytest.fixture
-def server_with_events(memory_dir: Path) -> tuple[Any, Path]:
+def server_with_events(memory_dir: Path) -> tuple[Any, Store]:
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
     state = SessionState()
-    rec = Recorder(root=memory_dir, session_id=state.session_id)
-    server = build_server(
-        config=cfg, store=Store(memory_dir), state=state, recorder=rec
-    )
-    return server, memory_dir
+    store = Store(memory_dir)
+    rec = Recorder(store=store, session_id=state.session_id)
+    server = build_server(config=cfg, store=store, state=state, recorder=rec)
+    return server, store
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
@@ -42,7 +41,7 @@ async def _call(server: Any, name: str, **kwargs: Any) -> Any:
 
 
 async def test_memory_record_use_is_registered(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     server, _ = server_with_events
     tools = await server.list_tools()
@@ -56,9 +55,9 @@ async def test_memory_record_use_is_registered(
 
 
 async def test_record_applied_emits_event(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     written = await _call(
         server, "memory_write", content="durable fact", scopes=["tools"]
     )
@@ -72,7 +71,7 @@ async def test_record_applied_emits_event(
     assert res["recorded"] == [written["id"]]
     assert res["outcome"] == "applied"
 
-    use_events = [e for e in iter_events(memory_dir) if e["kind"] == "use"]
+    use_events = [e for e in store.iter_events() if e["kind"] == "use"]
     assert len(use_events) == 1
     e = use_events[0]
     assert e["ids"] == [written["id"]]
@@ -81,9 +80,9 @@ async def test_record_applied_emits_event(
 
 
 async def test_record_ignored_emits_event(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     written = await _call(
         server, "memory_write", content="durable fact", scopes=["tools"]
     )
@@ -94,14 +93,14 @@ async def test_record_ignored_emits_event(
         outcome="ignored",
     )
 
-    use_events = [e for e in iter_events(memory_dir) if e["kind"] == "use"]
+    use_events = [e for e in store.iter_events() if e["kind"] == "use"]
     assert use_events[-1]["outcome"] == "ignored"
 
 
 async def test_record_contradicted_with_note(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     written = await _call(
         server, "memory_write", content="durable fact", scopes=["tools"]
     )
@@ -113,13 +112,13 @@ async def test_record_contradicted_with_note(
         note="user said the project switched from SQLite to Postgres",
     )
 
-    e = [e for e in iter_events(memory_dir) if e["kind"] == "use"][-1]
+    e = [e for e in store.iter_events() if e["kind"] == "use"][-1]
     assert e["outcome"] == "contradicted"
     assert "Postgres" in e["note"]
 
 
 async def test_record_corrected_emits_event(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """`corrected` is the audit-after-fix outcome: the caller already
     resolved the drift via memory_update / memory_verify in the same
@@ -127,7 +126,7 @@ async def test_record_corrected_emits_event(
     it the same way as any other outcome — the behavioral difference
     (no contradiction-flag bump) lives in health.py, exercised by the
     test_health.py suite."""
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     written = await _call(
         server, "memory_write", content="durable fact", scopes=["tools"]
     )
@@ -139,15 +138,15 @@ async def test_record_corrected_emits_event(
         note="Tool list was missing memory_restore; updated body and re-verified.",
     )
 
-    e = [e for e in iter_events(memory_dir) if e["kind"] == "use"][-1]
+    e = [e for e in store.iter_events() if e["kind"] == "use"][-1]
     assert e["outcome"] == "corrected"
     assert "memory_restore" in e["note"]
 
 
 async def test_record_use_multiple_ids_at_once(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     a = await _call(server, "memory_write", content="alpha fact", scopes=["tools"])
     b = await _call(server, "memory_write", content="beta fact", scopes=["tools"])
     await _call(
@@ -157,7 +156,7 @@ async def test_record_use_multiple_ids_at_once(
         outcome="applied",
     )
 
-    e = [e for e in iter_events(memory_dir) if e["kind"] == "use"][-1]
+    e = [e for e in store.iter_events() if e["kind"] == "use"][-1]
     assert set(e["ids"]) == {a["id"], b["id"]}
 
 
@@ -167,7 +166,7 @@ async def test_record_use_multiple_ids_at_once(
 
 
 async def test_record_use_empty_ids_rejected(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     server, _ = server_with_events
     with pytest.raises(Exception, match="memory_ids must contain at least one"):
@@ -180,7 +179,7 @@ async def test_record_use_empty_ids_rejected(
 
 
 async def test_record_use_invalid_outcome_rejected(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     server, _ = server_with_events
     written = await _call(
@@ -196,7 +195,7 @@ async def test_record_use_invalid_outcome_rejected(
 
 
 async def test_record_use_invalid_ulid_rejected(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     server, _ = server_with_events
     with pytest.raises(Exception, match="invalid memory id"):
@@ -209,13 +208,13 @@ async def test_record_use_invalid_ulid_rejected(
 
 
 async def test_record_use_accepts_valid_ulid_against_unknown_memory(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """A well-formed ULID that doesn't correspond to a real memory is still
     accepted — the store isn't loaded on every record_use call. The event
     log captures what the caller said happened; analysis code can
     cross-reference."""
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     res = await _call(
         server,
         "memory_record_use",
@@ -240,7 +239,8 @@ async def test_record_use_with_telemetry_disabled_is_noop(
         telemetry=TelemetryConfig(enabled=False),
     )
     state = SessionState()
-    server = build_server(config=cfg, store=Store(memory_dir), state=state)
+    store = Store(memory_dir)
+    server = build_server(config=cfg, store=store, state=state)
 
     written = await _call(
         server, "memory_write", content="durable fact", scopes=["tools"]
@@ -251,11 +251,11 @@ async def test_record_use_with_telemetry_disabled_is_noop(
         memory_ids=[written["id"]],
         outcome="applied",
     )
-    # The tool returns success — disabled telemetry means the side effect
+    # The tool returns success: disabled telemetry means the side effect
     # is a no-op, not that the tool errors.
     assert res["outcome"] == "applied"
-    # And no event log file is created.
-    assert not (memory_dir / ".events.jsonl").exists()
+    # And no use event lands in the log.
+    assert not [e for e in store.iter_events() if e["kind"] == "use"]
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +264,7 @@ async def test_record_use_with_telemetry_disabled_is_noop(
 
 
 async def test_record_use_rejects_oversized_note(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """`note` caps at 800 chars so a hostile client (or a runaway
     model) can't inflate the JSONL event log with multi-megabyte
@@ -286,7 +286,7 @@ async def test_record_use_rejects_oversized_note(
 
 
 async def test_record_use_accepts_max_length_note(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """Sanity check: exactly 800 chars is accepted (the cap is
     inclusive)."""

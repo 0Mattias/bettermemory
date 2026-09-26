@@ -31,26 +31,18 @@ import argparse
 
 from . import (
     audit_turn_cmd,
-    capture_cmd,
-    consolidate,
-    doctor,
     episodes,
     eval as eval_cmd,
     export,
     health_cmd,
-    ingest,
     init as init_cmd,
     log_cmd,
     migrate,
     prompt_recall_cmd,
-    proposals,
-    reindex,
     rename_scope,
     rollback,
     serve,
-    session_end_cmd,
     session_start_cmd,
-    sync,
     tombstones,
     try_cmd,
 )
@@ -116,25 +108,17 @@ def _build_parser() -> tuple[
     # arm in `main()` below (`test_subparser_registry_matches_main_dispatch`).
     subparsers: dict[str, argparse.ArgumentParser] = {
         "health": health_cmd.add_subparser(sub),
-        "doctor": doctor.add_subparser(sub),
         "init": init_cmd.add_subparser(sub),
         "migrate": migrate.add_subparser(sub),
         "export": export.add_subparser(sub),
         "tombstones": tombstones.add_subparser(sub),
         "rollback": rollback.add_subparser(sub),
         "episodes": episodes.add_subparser(sub),
-        "sync": sync.add_subparser(sub),
-        "reindex": reindex.add_subparser(sub),
         "log": log_cmd.add_subparser(sub),
         "audit-turn": audit_turn_cmd.add_subparser(sub),
         "session-start": session_start_cmd.add_subparser(sub),
-        "session-end": session_end_cmd.add_subparser(sub),
         "prompt-recall": prompt_recall_cmd.add_subparser(sub),
-        "consolidate": consolidate.add_subparser(sub),
-        "ingest": ingest.add_subparser(sub),
-        "capture": capture_cmd.add_subparser(sub),
         "eval": eval_cmd.add_subparser(sub),
-        "proposals": proposals.add_subparser(sub),
         "rename-scope": rename_scope.add_subparser(sub),
         "try": try_cmd.add_subparser(sub),
     }
@@ -162,9 +146,6 @@ def main() -> None:
     if cmd == "health":
         health_cmd.run(args)
         return
-    if cmd == "doctor":
-        doctor.run(args)
-        return
     if cmd == "init":
         init_cmd.run(args)
         return
@@ -183,12 +164,6 @@ def main() -> None:
     if cmd == "episodes":
         episodes.run(args, sub_parser=subparsers["episodes"])
         return
-    if cmd == "sync":
-        sync.run(args, sub_parser=subparsers["sync"])
-        return
-    if cmd == "reindex":
-        reindex.run(args, sub_parser=subparsers["reindex"])
-        return
     if cmd == "log":
         log_cmd.run(args, sub_parser=subparsers["log"])
         return
@@ -198,26 +173,11 @@ def main() -> None:
     if cmd == "session-start":
         session_start_cmd.run(args)
         return
-    if cmd == "session-end":
-        session_end_cmd.run(args)
-        return
     if cmd == "prompt-recall":
         prompt_recall_cmd.run(args)
         return
-    if cmd == "consolidate":
-        consolidate.run(args)
-        return
-    if cmd == "ingest":
-        ingest.run(args, sub_parser=subparsers["ingest"])
-        return
-    if cmd == "capture":
-        capture_cmd.run(args)
-        return
     if cmd == "eval":
         eval_cmd.run(args, sub_parser=subparsers["eval"])
-        return
-    if cmd == "proposals":
-        proposals.run(args, root_parser=parser, sub_parser=subparsers["proposals"])
         return
     if cmd == "rename-scope":
         rename_scope.run(args, root_parser=parser)

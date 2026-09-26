@@ -8,15 +8,9 @@ flow has something to commit on the next turn.
 
 from __future__ import annotations
 
-import os
-import sqlite3
 from typing import TYPE_CHECKING, Any
 
-from .._response import (
-    isoformat,
-    isoformat_optional,
-    trust_unavailable_recommendation,
-)
+from .._response import isoformat, isoformat_optional
 from ..models import utcnow
 from ..store import MemoryNotFoundError, TombstonedError
 from ..verify import (
@@ -32,23 +26,9 @@ if TYPE_CHECKING:
 
 
 DESC_MEMORY_SHOW = (
-    "Fetch a single memory's full content by id. Typically used "
-    "after a memory_search snippet looks relevant. The response "
-    "carries the same staleness signals as a search hit:\n"
-    "- `verification.status` ('never' / 'stale' / 'fresh') with an "
-    "actionable `recommendation` when not fresh.\n"
-    "- `staleness_verdict` (fresh / spot_check_recommended / "
-    "spot_check_required) — rolled-up signal across calendar, path "
-    "and commit drift.\n"
-    "- `path_drift` (the full report; missing-on-disk paths "
-    "listed).\n"
-    "- `commit_drift` (when caller is inside the memory's origin "
-    "repo) — `status: 'clean' | 'drift'` + `commits_since_verify`.\n"
-    "- Forward `links` and `reverse_links` for navigation.\n\n"
-    "When the verdict isn't fresh, spot-check one claim before "
-    "relying. memory_verify(id, …) if it holds; memory_update if "
-    "drifted (content updates reset last_verified_at, so verify "
-    "again after the fix)."
+    "One memory in full: body, links both ways, verification, path and "
+    "commit drift, staleness_verdict. Read it before relying on a hit whose "
+    "verdict is not fresh."
 )
 
 
@@ -202,10 +182,7 @@ async def memory_show(
         # `provenance: null` alone said "not classified yet", which is a
         # different and benign state; this says the question could not
         # be asked, and demotes a stamp of unknown origin.
-        deps.responses.apply_trust_unavailable(
-            response,
-            recommendation=trust_unavailable_recommendation(deps.store.root),
-        )
+        deps.responses.apply_trust_unavailable(response)
     else:
         deps.responses.apply_trust(
             response,
@@ -309,7 +286,6 @@ def _links_payload(deps: ToolHandlers, memory: Any) -> dict[str, Any]:
     `memory_show` lifts it into its own slot; it rides here so the label
     costs no extra connection on the hot path.
     """
-    from .. import index as _index
 
     out: dict[str, Any] = {}
     if memory.links:
@@ -327,94 +303,21 @@ def _links_payload(deps: ToolHandlers, memory: Any) -> dict[str, Any]:
     # row gets, is the other. `os.path.exists`, not `Path.exists()`,
     # for the usual re-raise reason; one stat beside the open the links
     # query already pays.
-    trust_unavailable = False
-    try:
-        # The sixth element is the row's local-verification stamp (schema
-        # v8), read on the same open so the show path stays one index
-        # open; `apply_trust` below consumes it.
-        (
-            outbound,
-            inbound,
-            indexed_count,
-            needs_rebuild,
-            provenance,
-            verified_locally_at,
-        ) = _index.links_for_with_status(deps.store.root, memory.id)
-        trust_unavailable = not os.path.exists(_index.index_path(deps.store.root))
-    except (OSError, ValueError, sqlite3.DatabaseError, _index.IndexVersionError):
-        # A torn/truncated index raises DatabaseError; an on-disk
-        # schema_version newer than this reader raises
-        # IndexVersionError; a poisoned non-integer meta row raises
-        # ValueError from the `int()` reads (`_ensure_schema`'s version
-        # check, the helper's own `indexed_count` read) — unparseable
-        # meta IS corruption, exactly as `index.status()` classifies
-        # it; an unwritable store root raises OSError when
-        # `_ensure_schema`'s migration branch has to O_CREAT the
-        # `.index.sqlite.lock` flock sidecar (the class `status()`
-        # declares load-bearing for its never-raises contract). All
-        # fire inside `links_for_with_status` after it opens the file.
-        # The index is a regenerable cache and the canonical .md
-        # bodies are intact, so treat it as an unusable index (no
-        # inbound, zero rows) and route to the reverse-scan fallback
-        # below rather than hard-crashing memory_show for every id
-        # until reindex. Same tolerance
-        # `_handlers.load_search_candidates` gets from the
-        # corruption-swallowing `index.status()`. `outbound`
-        # is unused downstream (only `inbound` + `indexed_count` +
-        # `needs_rebuild` drive the fallback), so it's dropped here.
-        inbound, indexed_count, needs_rebuild = [], 0, False
-        provenance = verified_locally_at = None
-        trust_unavailable = True
-    out["provenance"] = provenance
+    _outbound, inbound, trust = deps.store.links_with_status(memory.id)
+    trust_unavailable = not deps.store.has_key
+    out["provenance"] = trust.provenance if trust is not None else None
     out["_trust_unavailable"] = trust_unavailable
-    # Carried to the handler under a private key: the trust rule
-    # (`ResponseBuilder.apply_trust`) needs the assembled response, with
-    # its `verification` block, not this links payload.
-    out["_verified_locally_at"] = verified_locally_at
-    if needs_rebuild:
-        # Rebuild-pending window: a schema migration dropped the data
-        # tables and the incremental hooks have refilled only touched
-        # memories, so `memory_links` can be missing rows from every
-        # untouched legacy source no matter what `indexed_count` says.
-        # Discard the partial answer and take the zero-count path.
-        inbound, indexed_count = [], 0
+    out["_verified_locally_at"] = (
+        trust.verified_locally_at if trust is not None else None
+    )
     reverse: list[dict[str, Any]] = []
-    if inbound:
-        for ltype, source_id, note in inbound:
-            if source_id == memory.id:
-                # Defensive: self-links shouldn't appear as reverse
-                # since they're already in `links`. Skip to keep
-                # the surface stable across index drift.
-                continue
-            entry: dict[str, Any] = {"type": ltype, "source_id": source_id}
-            if note is not None:
-                entry["note"] = note
-            reverse.append(entry)
-    elif indexed_count == 0:
-        # No usable index — fall back to the old shape so a freshly-
-        # initialised store (file absent) AND a post-upgrade store
-        # (file present but tables dropped empty by the SCHEMA_VERSION
-        # rebuild) still get reverse links. `links_for_with_status`
-        # reports `indexed_count == 0` for the absent, empty, and
-        # corrupt cases alike (rebuild-pending is coerced to zero
-        # above) — read on the SAME connection it already opened for
-        # the inbound query, so the common populated-but-no-inbound
-        # case stays a single index open (no second `status()`
-        # connection). Any zero count means the index can't answer, so
-        # walk the active set. After the next write / reindex the index
-        # repopulates and this branch stops firing.
-        for other in deps.store.load_all():
-            if other.id == memory.id:
-                continue
-            for link in other.links:
-                if link.target_id == memory.id:
-                    entry = {
-                        "type": link.type.value,
-                        "source_id": other.id,
-                    }
-                    if link.note is not None:
-                        entry["note"] = link.note
-                    reverse.append(entry)
+    for ltype, source_id, note in inbound:
+        if source_id == memory.id:
+            continue
+        entry: dict[str, Any] = {"type": ltype, "source_id": source_id}
+        if note is not None:
+            entry["note"] = note
+        reverse.append(entry)
     if reverse:
         out["reverse_links"] = reverse
     return out

@@ -81,52 +81,6 @@ def test_default_config_is_valid_toml() -> None:
     assert "telemetry" in parsed
 
 
-def test_default_config_scopes_prose_matches_the_ingest_exemption() -> None:
-    """The shipped `[scopes]` comment must not promise an absolute the
-    ingest path stopped honouring.
-
-    This text is written verbatim into every user's `config.toml` on first
-    run, so a drift here is a published false claim rather than an internal
-    comment — and it drifted exactly once already: it read "writes with
-    scopes outside this list fail" for a whole release window after ingest
-    grew an exemption for the scopes it stamps on a row ITSELF (the
-    provenance scope and the type-derived tag). The operator never typed
-    those and cannot opt out of them, so checking them against the
-    operator's own allowlist refused every row of any import.
-
-    Both halves are asserted here on purpose. The behavioural half fails if
-    someone removes the carve-out from `_scope_allowlist_reason`; the prose
-    half fails if someone restores the old absolute. Pinning either alone
-    would let the pair drift apart again, which is the whole defect.
-
-    This test owns the ingest half of the pair only.
-    `test_default_config_scopes_prose_matches_the_update_surface` owns the
-    other half — the exemption stops at ingest, and the comment says so.
-    """
-    from bettermemory.ingest import (
-        DEFAULT_PROVENANCE_SCOPE,
-        _scope_allowlist_reason,
-        _tool_stamped_scopes,
-    )
-
-    allowed = ["projects:demo"]
-    stamped = _tool_stamped_scopes("project")
-
-    # The scopes ingest stamps itself are exempt even though the allowlist
-    # names neither of them...
-    assert DEFAULT_PROVENANCE_SCOPE in stamped
-    assert _scope_allowlist_reason(sorted(stamped), allowed, stamped) is None
-
-    # ...while a scope the CALLER supplied is still refused, by name.
-    reason = _scope_allowlist_reason(["rogue"], allowed, stamped)
-    assert reason is not None
-    assert "rogue" in reason
-
-    block = DEFAULT_CONFIG.split("[scopes]")[1].split("[telemetry]")[0]
-    assert "caller-supplied" in block, block
-    assert "exempt" in block, block
-
-
 async def test_default_config_scopes_prose_matches_the_update_surface(
     tmp_path: Path,
 ) -> None:
@@ -135,10 +89,10 @@ async def test_default_config_scopes_prose_matches_the_update_surface(
     Its `scopes` argument REPLACES the stored list, so keeping a scope
     means resubmitting it. Checking the whole submitted list against
     `allowed` therefore refused a re-tag of any row carrying a scope the
-    operator never typed — an ingested row resubmits ingest's provenance
-    scope and type tag — and left no way to add a sanctioned scope without
+    operator never typed (an imported row resubmits its provenance scope
+    and type tag) and left no way to add a sanctioned scope without
     dropping the provenance stamp. The check now runs over the delta
-    (handlers/update.py), which needs no list of ingest's tag names to
+    (handlers/update.py), which needs no list of a tool's tag names to
     stay correct.
 
     Three halves, so neither the rule nor the comment can drift alone:
@@ -146,16 +100,19 @@ async def test_default_config_scopes_prose_matches_the_update_surface(
     whole-list check, the restrictive half fails if the exemption is
     widened into "anything on a re-tag passes", and the prose half fails
     if the comment stops scoping the exemption to what an edit adds.
+
+    The stamps stand in for scopes a tool put on the record that the
+    operator never typed (an importer's provenance scope and type tag);
+    they are written straight into the store, past the allowlist.
     """
     from bettermemory.config import ScopesConfig
-    from bettermemory.ingest import _tool_stamped_scopes
     from bettermemory.server import build_server
     from bettermemory.session import SessionState
     from bettermemory.store import Store
 
     from ._mcp import call_tool
 
-    stamped = sorted(_tool_stamped_scopes("project"))
+    stamped = ["imported-from-claude-code", "type:project"]
     memory = Store(tmp_path).write(
         content="the demo project pins its formatter version in CI",
         scopes=[*stamped, "projects:demo"],
@@ -191,7 +148,6 @@ async def test_default_config_scopes_prose_matches_the_update_surface(
         assert stamp not in str(excinfo.value), excinfo.value
 
     block = DEFAULT_CONFIG.split("[scopes]")[1].split("[telemetry]")[0]
-    assert "ingest's" in block, block
     assert "memory_update" in block, block
     assert "REPLACES" in block, block
     assert "ADDS" in block, block
@@ -201,25 +157,20 @@ def test_default_config_round_trips_through_load_config(tmp_path: Path) -> None:
     """Writing DEFAULT_CONFIG and loading it yields the same defaults as
     constructing `Config()` from scratch. Closes the loop on the
     first-run experience: a user who never edits the config file gets
-    exactly the dataclass defaults — with one deliberate, pinned exception
-    (full_tool_surface; asserted at the end)."""
+    exactly the dataclass defaults. Since 9.0.0 there is no exception:
+    the loader applies no deployment policy of its own."""
     config_path = tmp_path / "config.toml"
     config_path.write_text(DEFAULT_CONFIG, encoding="utf-8")
 
     loaded = load_config(config_path)
     fresh = Config()
 
-    assert (
-        loaded.behavior.require_write_confirmation
-        == fresh.behavior.require_write_confirmation
-    )
     assert loaded.behavior.default_max_results == fresh.behavior.default_max_results
     assert (
         loaded.behavior.recency_boost_half_life_days
         == fresh.behavior.recency_boost_half_life_days
     )
     assert loaded.behavior.prompt_recall == fresh.behavior.prompt_recall
-    assert loaded.behavior.standing_tier == fresh.behavior.standing_tier
     assert (
         loaded.behavior.heavily_used_min_applied
         == fresh.behavior.heavily_used_min_applied
@@ -238,8 +189,7 @@ def test_default_config_round_trips_through_load_config(tmp_path: Path) -> None:
     )
     # Fields added after the original round-trip pin. Each one has its
     # own coercion call in `load_config` (search_mode goes through its
-    # normaliser, max_content_bytes
-    # through `int(...)`, log_queries_verbatim through `bool(...)`); a
+    # normaliser, max_content_bytes through `int(...)`); a
     # silent drop or reordering that changed the coercion would survive
     # the field-level coercion tests above but break the round-trip
     # equality with `Config()` defaults that this test pins.
@@ -250,25 +200,12 @@ def test_default_config_round_trips_through_load_config(tmp_path: Path) -> None:
     # for the bug class this field closes (a takeaway > 64 KB corrupts
     # the YAML frontmatter; default must stay well under that).
     assert loaded.behavior.max_takeaway_bytes == 4_096
-    assert (
-        loaded.behavior.curation_hint_threshold
-        == fresh.behavior.curation_hint_threshold
-    )
-    assert loaded.behavior.curation_hint_enabled == fresh.behavior.curation_hint_enabled
-    assert loaded.telemetry.log_queries_verbatim == fresh.telemetry.log_queries_verbatim
+    assert loaded.behavior.conversational == fresh.behavior.conversational
+    assert loaded.behavior.write_supersession == fresh.behavior.write_supersession
+    assert loaded.behavior.recall_in_project == fresh.behavior.recall_in_project
+    assert loaded.behavior.min_content_tokens == fresh.behavior.min_content_tokens
     assert loaded.scopes.allowed == fresh.scopes.allowed
     assert loaded.telemetry.enabled == fresh.telemetry.enabled
-    assert loaded.telemetry.max_bytes == fresh.telemetry.max_bytes
-
-    # The one DELIBERATE exception to "round-trips to dataclass defaults":
-    # full_tool_surface. The dataclass default is True (the full capability
-    # set, for programmatic embedders), but the shipped server — load_config
-    # with no user-set key — applies the lean deployment policy (False). The
-    # objects are frozen-by-convention value types and the loader is the
-    # policy layer. Pinned so the divergence stays intentional rather than
-    # drifting silently. See BehaviorConfig.full_tool_surface and load_config.
-    assert fresh.behavior.full_tool_surface is True
-    assert loaded.behavior.full_tool_surface is False
 
 
 # ---------------------------------------------------------------------------
@@ -378,79 +315,24 @@ def test_load_config_coerces_behavior_float_fields(tmp_path: Path) -> None:
     assert isinstance(cfg.behavior.recency_boost_half_life_days, float)
 
 
-def test_load_config_consolidate_defaults(tmp_path: Path) -> None:
-    """The [consolidate] section defaults to OFF with a 24h debounce and a
-    500-memory cap — unattended consolidation never runs unless opted in."""
-    config_path = tmp_path / "config.toml"
-    config_path.write_text("[storage]\ndirectory = '/tmp/x'\n", encoding="utf-8")
-    cfg = load_config(config_path)
-    assert cfg.consolidate.auto_apply is False
-    assert cfg.consolidate.auto_apply_interval_hours == 24.0
-    assert cfg.consolidate.auto_apply_max_memories == 500
-
-
-def test_load_config_reads_consolidate_section(tmp_path: Path) -> None:
-    """The [consolidate] knobs are read and coerced (interval to float,
-    cap to int) the same way the other sections are."""
-    config_path = tmp_path / "config.toml"
-    config_path.write_text(
-        "[consolidate]\n"
-        "auto_apply = true\n"
-        "auto_apply_interval_hours = 6\n"  # integer — must coerce to float
-        "auto_apply_max_memories = 1000\n",
-        encoding="utf-8",
-    )
-    cfg = load_config(config_path)
-    assert cfg.consolidate.auto_apply is True
-    assert cfg.consolidate.auto_apply_interval_hours == 6.0
-    assert isinstance(cfg.consolidate.auto_apply_interval_hours, float)
-    assert cfg.consolidate.auto_apply_max_memories == 1000
-
-
-def test_load_config_proposals_defaults(tmp_path: Path) -> None:
-    """The [proposals] section defaults to OFF with a 20-item queue cap —
-    the write-reflex capture never runs unless opted in."""
-    config_path = tmp_path / "config.toml"
-    config_path.write_text("[storage]\ndirectory = '/tmp/x'\n", encoding="utf-8")
-    cfg = load_config(config_path)
-    assert cfg.proposals.auto_propose is False
-    assert cfg.proposals.max_pending == 20
-
-
-def test_load_config_reads_proposals_section(tmp_path: Path) -> None:
-    config_path = tmp_path / "config.toml"
-    config_path.write_text(
-        "[proposals]\nauto_propose = true\nmax_pending = 5\n",
-        encoding="utf-8",
-    )
-    cfg = load_config(config_path)
-    assert cfg.proposals.auto_propose is True
-    assert cfg.proposals.max_pending == 5
-
-
 def test_load_config_coerces_behavior_bool_fields(tmp_path: Path) -> None:
-    """`bool(...)` wraps the lookup so a missing field defaults False/True
-    via the dataclass without crashing, and an explicit value is coerced.
-    `prompt_recall` is the one default-TRUE bool in the batch, so its
-    explicit-false round-trip is the direction that proves the override
-    reaches the loader (a default-true knob that ignored its TOML value
-    would pass every default-shaped test in this file)."""
+    """`bool(...)` wraps the lookup so a missing field defaults True via
+    the dataclass without crashing, and an explicit value is coerced.
+    Every remaining `[behavior]` bool is default-TRUE, so the explicit-
+    false round-trip is the direction that proves each override reaches
+    the loader (a default-true knob that ignored its TOML value would
+    pass every default-shaped test in this file)."""
     config_path = tmp_path / "config.toml"
     config_path.write_text(
-        "[behavior]\nrequire_write_confirmation = true\n"
-        "prompt_recall = false\nstanding_tier = true\n"
-        "recall_in_project = false\n",
+        "[behavior]\nprompt_recall = false\nrecall_in_project = false\n"
+        "conversational = false\nwrite_supersession = false\n",
         encoding="utf-8",
     )
     cfg = load_config(config_path)
-    assert cfg.behavior.require_write_confirmation is True
     assert cfg.behavior.prompt_recall is False
-    # `standing_tier` is default-FALSE, so explicit-true is the direction
-    # that proves ITS override reaches the loader.
-    assert cfg.behavior.standing_tier is True
-    # `recall_in_project` is default-TRUE like prompt_recall; explicit
-    # false proves the override reaches the loader.
     assert cfg.behavior.recall_in_project is False
+    assert cfg.behavior.conversational is False
+    assert cfg.behavior.write_supersession is False
 
 
 def test_load_config_reads_scopes_allowed(tmp_path: Path) -> None:
@@ -465,59 +347,40 @@ def test_load_config_reads_scopes_allowed(tmp_path: Path) -> None:
 
 def test_load_config_reads_telemetry(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
-    config_path.write_text(
-        "[telemetry]\nenabled = false\nmax_bytes = 5000000\n",
-        encoding="utf-8",
-    )
+    config_path.write_text("[telemetry]\nenabled = false\n", encoding="utf-8")
     cfg = load_config(config_path)
     assert cfg.telemetry.enabled is False
-    assert cfg.telemetry.max_bytes == 5_000_000
 
 
-def test_load_config_quoted_false_bool_keeps_privacy_opt_out(tmp_path: Path) -> None:
+def test_load_config_quoted_false_bool_keeps_the_opt_out(tmp_path: Path) -> None:
     """A QUOTED bool ("false") is the string "false", and `bool("false")`
-    is True — a naive coercion would silently flip the privacy opt-out ON
-    (queries logged verbatim) when the user wrote "false" for privacy. The
-    string-aware coercion must keep these False, and must treat the sibling
-    bool keys the same way (case-insensitive)."""
+    is True — a naive coercion would silently flip a default-true knob
+    back ON when the user wrote "false" to opt out. The string-aware
+    coercion must keep these False, in every section, case-insensitively."""
     config_path = tmp_path / "config.toml"
 
     config_path.write_text(
-        '[telemetry]\nlog_queries_verbatim = "false"\n',
-        encoding="utf-8",
-    )
-    cfg = load_config(config_path)
-    assert cfg.telemetry.log_queries_verbatim is False
-
-    # Every bool key across every section honours quoted false-spellings.
-    config_path.write_text(
         "[behavior]\n"
-        'require_write_confirmation = "false"\n'
-        'curation_hint_enabled = "off"\n'
-        'full_tool_surface = "0"\n'
-        "[consolidate]\n"
-        'auto_apply = "FALSE"\n'
-        "[proposals]\n"
-        'auto_propose = "false"\n'
+        'conversational = "false"\n'
+        'write_supersession = "off"\n'
+        'recall_in_project = "0"\n'
         "[telemetry]\n"
         'enabled = "False"\n',
         encoding="utf-8",
     )
     cfg = load_config(config_path)
-    assert cfg.behavior.require_write_confirmation is False
-    assert cfg.behavior.curation_hint_enabled is False
-    assert cfg.behavior.full_tool_surface is False
-    assert cfg.consolidate.auto_apply is False
-    assert cfg.proposals.auto_propose is False
+    assert cfg.behavior.conversational is False
+    assert cfg.behavior.write_supersession is False
+    assert cfg.behavior.recall_in_project is False
     assert cfg.telemetry.enabled is False
 
     # Quoted truthy spellings still coerce to True (case-insensitive).
     config_path.write_text(
-        '[telemetry]\nlog_queries_verbatim = "TRUE"\nenabled = "on"\n',
+        '[behavior]\nprompt_recall = "TRUE"\n[telemetry]\nenabled = "on"\n',
         encoding="utf-8",
     )
     cfg = load_config(config_path)
-    assert cfg.telemetry.log_queries_verbatim is True
+    assert cfg.behavior.prompt_recall is True
     assert cfg.telemetry.enabled is True
 
 
@@ -525,50 +388,27 @@ def test_load_config_unrecognized_bool_string_falls_back_to_default(
     tmp_path: Path,
 ) -> None:
     """An unrecognized string falls back to the FIELD DEFAULT, not to
-    truthiness. log_queries_verbatim defaults False; curation_hint_enabled
-    defaults True — a garbage value must land on each respective default
-    rather than `bool(non_empty_str) == True`."""
+    truthiness: a garbage value must land on the default rather than
+    `bool(non_empty_str) == True`. Every shipped bool key defaults True,
+    so the False-default direction is pinned on the coercion helper."""
+    from bettermemory.config import _coerce_bool
+
     config_path = tmp_path / "config.toml"
     config_path.write_text(
-        "[telemetry]\n"
-        'log_queries_verbatim = "maybe"\n'
-        "[behavior]\n"
-        'curation_hint_enabled = "sometimes"\n',
+        '[telemetry]\nenabled = "maybe"\n[behavior]\nconversational = "sometimes"\n',
         encoding="utf-8",
     )
     cfg = load_config(config_path)
-    assert cfg.telemetry.log_queries_verbatim is False
-    assert cfg.behavior.curation_hint_enabled is True
-
-
-def test_load_config_telemetry_non_positive_max_bytes_clamps_to_default(
-    tmp_path: Path,
-) -> None:
-    """A 0/negative max_bytes would make the rotation guard never hold and
-    gzip-rotate on every append (rotation storm). The loader clamps any
-    non-positive (or non-int) configured value back to the 10 MB default;
-    a positive value is preserved unchanged."""
-    config_path = tmp_path / "config.toml"
-    for bad in (0, -1, -10_000):
-        config_path.write_text(f"[telemetry]\nmax_bytes = {bad}\n", encoding="utf-8")
-        cfg = load_config(config_path)
-        assert cfg.telemetry.max_bytes == 10_000_000
-
-    config_path.write_text(
-        '[telemetry]\nmax_bytes = "not a number"\n', encoding="utf-8"
-    )
-    cfg = load_config(config_path)
-    assert cfg.telemetry.max_bytes == 10_000_000
-
-    config_path.write_text("[telemetry]\nmax_bytes = 4096\n", encoding="utf-8")
-    cfg = load_config(config_path)
-    assert cfg.telemetry.max_bytes == 4096
+    assert cfg.telemetry.enabled is True
+    assert cfg.behavior.conversational is True
+    assert _coerce_bool("maybe", False) is False
+    assert _coerce_bool("maybe", True) is True
 
 
 def test_load_config_missing_sections_use_defaults(tmp_path: Path) -> None:
     """A config file with only one section still loads — the rest fall back
     to dataclass defaults. Important for partial overrides ("I only care
-    about flipping require_write_confirmation")."""
+    about flipping prompt_recall")."""
     config_path = tmp_path / "config.toml"
     config_path.write_text(
         "[behavior]\nprompt_recall = false\n",
@@ -578,7 +418,7 @@ def test_load_config_missing_sections_use_defaults(tmp_path: Path) -> None:
     assert cfg.behavior.prompt_recall is False
     # Untouched fields keep their dataclass defaults.
     assert cfg.behavior.default_max_results == 5
-    assert cfg.behavior.require_write_confirmation is False
+    assert cfg.behavior.write_supersession is True
     assert cfg.scopes.allowed == []
     assert cfg.telemetry.enabled is True
 
@@ -1335,7 +1175,7 @@ def test_removed_behavior_key_is_ignored_with_one_warning(
     _reset_deprecated_key_guard()
     config_path = tmp_path / "config.toml"
     config_path.write_text(
-        f"[behavior]\n{line}\ndefault_max_results = 9\noutcome_demotion = true\n",
+        f"[behavior]\n{line}\ndefault_max_results = 9\nconversational = false\n",
         encoding="utf-8",
     )
     with caplog.at_level("WARNING", logger="bettermemory.config"):
@@ -1343,7 +1183,7 @@ def test_removed_behavior_key_is_ignored_with_one_warning(
 
     # The neighbouring keys load exactly as they would without the line.
     assert cfg.behavior.default_max_results == 9
-    assert cfg.behavior.outcome_demotion is True
+    assert cfg.behavior.conversational is False
     assert not hasattr(cfg.behavior, "corroboration_boost")
 
     messages = _removed_key_warnings(caplog, "corroboration_boost")
@@ -1374,17 +1214,103 @@ def test_config_without_the_removed_key_is_silent(
     assert not _removed_key_warnings(caplog, "corroboration_boost")
 
 
+@pytest.mark.parametrize(
+    ("section", "line", "key"),
+    [
+        ("behavior", "require_write_confirmation = true", "require_write_confirmation"),
+        ("behavior", "rescue_expansion = true", "rescue_expansion"),
+        ("behavior", "endorsement_boost = true", "endorsement_boost"),
+        ("behavior", "outcome_demotion = true", "outcome_demotion"),
+        ("behavior", "standing_tier = true", "standing_tier"),
+        ("behavior", "full_tool_surface = true", "full_tool_surface"),
+        ("behavior", "curation_hint_threshold = 3", "curation_hint_threshold"),
+        ("behavior", "curation_hint_enabled = false", "curation_hint_enabled"),
+        ("telemetry", "log_queries_verbatim = true", "log_queries_verbatim"),
+        ("telemetry", "max_bytes = 5", "max_bytes"),
+        ("consolidate", "auto_apply = true", "auto_apply"),
+        ("proposals", "auto_propose = true", "auto_propose"),
+        ("capture", "enabled = true", "enabled"),
+    ],
+)
+def test_every_9_0_removal_loads_with_one_warning_and_no_error(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    section: str,
+    line: str,
+    key: str,
+) -> None:
+    """A config written for 8.x still loads under 9.0: each removed
+    `[behavior]` / `[telemetry]` key and each key of a removed section
+    is ignored with exactly one notice naming 9.0.0, and every setting
+    that still exists loads as written."""
+    _reset_deprecated_key_guard()
+    config_path = tmp_path / "config.toml"
+    body = "[behavior]\ndefault_max_results = 9\n"
+    if section == "behavior":
+        body += f"{line}\n"
+    else:
+        body += f"[{section}]\n{line}\n"
+    config_path.write_text(body, encoding="utf-8")
+    with caplog.at_level("WARNING", logger="bettermemory.config"):
+        cfg = load_config(config_path)
+    assert cfg.behavior.default_max_results == 9
+    if section == "behavior":
+        assert not hasattr(cfg.behavior, key)
+    elif section == "telemetry":
+        assert not hasattr(cfg.telemetry, key)
+    else:
+        assert not hasattr(cfg, section)
+    messages = _removed_key_warnings(caplog, f"[{section}] `{key}`")
+    assert len(messages) == 1, messages
+    assert "was removed in bettermemory 9.0.0" in messages[0]
+    assert "The line is ignored" in messages[0]
+
+
+def test_a_removed_section_warns_once_per_key(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Three keys under a removed section: three notices, one load, no
+    error, and a reload stays quiet."""
+    _reset_deprecated_key_guard()
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[consolidate]\nauto_apply = true\nauto_apply_interval_hours = 6\n"
+        "auto_apply_max_memories = 10\n",
+        encoding="utf-8",
+    )
+    with caplog.at_level("WARNING", logger="bettermemory.config"):
+        cfg = load_config(config_path)
+    assert not hasattr(cfg, "consolidate")
+    messages = _removed_key_warnings(caplog, "[consolidate]")
+    assert len(messages) == 3, messages
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="bettermemory.config"):
+        load_config(config_path)
+    assert not _removed_key_warnings(caplog, "[consolidate]")
+
+
 def test_every_removed_key_is_gone_from_the_config_surface() -> None:
-    """A key in the removed registry that still exists on `BehaviorConfig`
+    """A key in a removed registry that still exists on its dataclass
     or in the shipped `DEFAULT_CONFIG` has been only half removed: the
     loader would drop the operator's value and warn that the setting is
     gone while the field and the shipped prose say otherwise."""
-    from bettermemory.config import _REMOVED_BEHAVIOR_KEYS
+    from bettermemory.config import (
+        _REMOVED_BEHAVIOR_KEYS,
+        _REMOVED_SECTIONS,
+        _REMOVED_TELEMETRY_KEYS,
+        TelemetryConfig,
+    )
 
     assert _REMOVED_BEHAVIOR_KEYS, "the registry has no entry to pin"
     for key in _REMOVED_BEHAVIOR_KEYS:
         assert not hasattr(BehaviorConfig(), key), key
         assert key not in DEFAULT_CONFIG, key
+    for key in _REMOVED_TELEMETRY_KEYS:
+        assert not hasattr(TelemetryConfig(), key), key
+        assert key not in DEFAULT_CONFIG, key
+    for section in _REMOVED_SECTIONS:
+        assert not hasattr(Config(), section), section
+        assert f"[{section}]" not in DEFAULT_CONFIG, section
 
 
 def _unreadable_dir_is_enforceable() -> bool:

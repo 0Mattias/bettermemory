@@ -15,7 +15,6 @@ a single multi-hit response uses one consistent "now" across rows.
 from __future__ import annotations
 
 import bisect
-from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -59,8 +58,9 @@ from .verify import (
 # read (`ResponseBuilder.apply_trust_unavailable`). One string each, so
 # the three read surfaces and the tests say the same thing.
 TRUST_UNAVAILABLE_RECOMMENDATION = (
-    "The index could not be read, so whether this host made this stamp "
-    "is unknown. Run `bettermemory reindex`, then read again."
+    "This machine does not hold the store's key, so whether this host "
+    "made this stamp is unknown. Spot-check a claim before relying on "
+    "the memory; `bettermemory log verify` reports the same condition."
 )
 # The same state with a different CAUSE and a different repair. A
 # version-skewed index is intact; this process is older than whatever
@@ -75,23 +75,6 @@ TRUST_UNAVAILABLE_SCHEMA_SKEW_RECOMMENDATION = (
 )
 
 
-def trust_unavailable_recommendation(root: Path) -> str:
-    """Which of the two recommendations an unreadable index earns.
-
-    Call only AFTER a read has already come back unreadable (`trust_for`
-    returning None, or `_links_payload` setting the flag): the meta-only
-    `status()` open it costs is then paid on a path that is already
-    degraded, and never on the happy path. Resolve once per response and
-    pass the result down — `attach_provenance` decorates every row from
-    one call rather than reopening the index per row. `status()` never
-    raises."""
-    from . import index as _index
-
-    if _index.status(root).get("schema_skew"):
-        return TRUST_UNAVAILABLE_SCHEMA_SKEW_RECOMMENDATION
-    return TRUST_UNAVAILABLE_RECOMMENDATION
-
-
 __all__ = ["ResponseBuilder", "isoformat", "isoformat_optional"]
 
 
@@ -104,11 +87,8 @@ isoformat = _isoformat_utc
 isoformat_optional = _isoformat_utc_optional
 
 # The window over which a negative use outcome (ignored / contradicted)
-# stays live: it feeds both `attach_recent_negative_outcomes` (the hit
-# annotation) and, when `[behavior] outcome_demotion` is on, the ranking
-# tally in `handlers.search._active_negative_counts`. One constant so
-# the annotation a model sees and the demotion it experiences can never
-# window-drift apart.
+# stays live for `attach_recent_negative_outcomes`, the hit annotation.
+# Ranking never reads it: the usage multipliers left in 9.0.0.
 NEGATIVE_OUTCOME_WINDOW_DAYS = 30
 
 
@@ -567,43 +547,27 @@ class ResponseBuilder:
 
     # ---- per-search bulk decorators -------------------------------------
 
-    def attach_provenance(self, out: list[dict[str, Any]], *, root: Path) -> None:
-        """Mutate `out` in-place, adding `provenance` to each row whose id
-        the index has classified, and applying the trust rule
-        (`apply_trust`) to each.
+    def attach_provenance(self, out: list[dict[str, Any]], *, store: Any) -> None:
+        """Mutate `out` in place, adding `provenance` to each row and
+        applying the trust rule (`apply_trust`) to each, from one batched
+        `trust_rows` read per response: the row's verified provenance
+        label (the store checks each row's pointer into the log) and this
+        host's verification stamp. Read from the store, never from the
+        record, so nothing a writer put in a record can supply the label.
 
-        The label is index-resident (schema v7; `provenance.py` carries
-        the derivation) and is read here in one batched lookup per
-        response, beside the local-verification stamp (schema v8): one
-        SQLite query, no git, no file reads, so it rides every search and
-        every listing at no per-row cost. Omitted (key absent, not null)
-        when the index has no row for the id or an unclassified one: a
-        rebuild is what classifies, and a missing key says "not derived
-        yet" without inventing a tier. Read from the index and never from
-        the file, so a hand-written frontmatter field cannot supply it.
+        When the store was opened without its key nothing can be
+        verified, and every row says so (`apply_trust_unavailable`).
 
         Call it LAST in a response's assembly: the trust rule rewrites
         `verification` and `staleness_verdict`, and a later recompute
-        from the file's stamp would put a remote stamp back."""
+        from the record's stamp would put a remote stamp back."""
         ids = [row["id"] for row in out if isinstance(row.get("id"), str)]
         if not ids:
             return
-        from . import index as _index
-
-        rows = _index.trust_for(root, ids)
+        rows = store.trust_rows(ids)
         if rows is None:
-            # The index could not be read: no row's label or local stamp
-            # is knowable, so the rule cannot run and must not be read
-            # as having run clean. Every row says so, and a stamped row
-            # loses the verdict a stamp of unknown origin was carrying.
-            #
-            # ONE `status()` read decides which remedy all of those rows
-            # carry. Resolved here rather than inside the per-row helper
-            # so an unreadable index costs one extra meta open per
-            # response instead of one per hit.
-            recommendation = trust_unavailable_recommendation(root)
             for row in out:
-                self.apply_trust_unavailable(row, recommendation=recommendation)
+                self.apply_trust_unavailable(row)
             return
         for row in out:
             trust = rows.get(row.get("id", ""))
@@ -620,27 +584,18 @@ class ResponseBuilder:
         *,
         recommendation: str = TRUST_UNAVAILABLE_RECOMMENDATION,
     ) -> None:
-        """Mutate one response row for an index that could not be read.
+        """Mutate one response row for a store whose key is not on this
+        machine.
 
-        The trust rule (`apply_trust`) needs the row's label and this
-        host's local-verification stamp, and the index is the only place
-        either lives. With it unreadable — absent, torn, version-skewed —
-        nobody can say whether the file's `last_verified_at` is this
-        host's or arrived inside a `sync pull`, which is exactly the
-        question the rule exists to answer. So `trust_unavailable: true`
-        on every row, and a row that CARRIES a stamp drops to
-        `spot_check_required` with a recommendation naming the remedy.
-        The file's own verification block stays — the file did say it —
-        but the rollup a model branches on must not read a stamp of
-        unknown origin as fresh. Rows with no stamp already read `never`.
-        Called in place of `apply_trust`, never alongside it.
-
-        `recommendation` is the remedy the row carries, which depends on
-        WHY the index could not be read — `trust_unavailable_recommendation`
-        resolves it, and the caller passes the result so one degraded
-        response pays one status() read rather than one per row. It
-        defaults to the torn-index wording, so a caller that has not
-        classified the cause still says something true.
+        The trust rule (`apply_trust`) needs the row's verified label and
+        this host's verification stamp, and the label is verified against
+        the log under the store's key. Without the key nobody can say how
+        a row entered, so `trust_unavailable: true` on every row, and a
+        row that carries a stamp drops to `spot_check_required` with a
+        recommendation naming the remedy. The record's own verification
+        block stays, but the rollup a model branches on must not read a
+        stamp of unknown origin as fresh. Rows with no stamp already read
+        `never`. Called in place of `apply_trust`, never alongside it.
         """
         row["trust_unavailable"] = True
         raw = row.get("last_verified_at")
@@ -1216,7 +1171,6 @@ class ResponseBuilder:
         tombstoned / missing skipped silently, and the caller's scope/origin
         filter re-applied so a link can't leak a hidden-scope memory.
         """
-        from .index import links_for_many, status
         from .models import first_summary_line
         from .store import MemoryNotFoundError, TombstonedError
 
@@ -1246,76 +1200,13 @@ class ResponseBuilder:
                 "link_note": note,
             }
 
-        # One index open for ALL hits, not one per hit. attach_link_annotations
-        # is default-on on the busiest tool; the per-hit `links_for` opened the
-        # index file up to `max_results` (50) times per search. links_for_many
-        # folds that into a single connection + two `IN (...)` queries, and
-        # reports the `needs_rebuild` meta flag read on that same connection.
+        # One read for all hits: the store's link rows, both directions,
+        # in two IN (...) queries. Best-effort all the way down: a failure
+        # degrades to no annotations, never a broken search.
         hit_ids = [h.id for h in hits]
         try:
-            try:
-                links_map, unusable = links_for_many(store.root, hit_ids)
-            except Exception:  # noqa: BLE001 — an unreadable index (sqlite
-                # corruption, IndexVersionError from a newer-version store,
-                # ValueError from a poisoned non-integer meta row failing
-                # `_ensure_schema`'s int() version read, a lock outliving
-                # the busy timeout) is the same
-                # answer-may-be-missing-edges state as the rebuild-pending
-                # flag, with the same recovery (`rebuild()`) — so take the
-                # same candidate-scan fallback below instead of mapping the
-                # failure to an empty links map, which killed the
-                # `superseded_by` suppression signal exactly when the index
-                # was broken. `index.index_unreadable()` accepts every one of
-                # these states (`corrupt`, or `schema_skew` for the newer-
-                # version store), so `_handlers.load_search_candidates`
-                # served `memories` via `load_all` — the scan's corpus is
-                # already paid for.
-                links_map, unusable = {}, True
-            if not unusable:
-                # A clear flag doesn't finish the truth table:
-                # `links_for_many` returns the SAME all-empty map for an
-                # index that can't answer as for hits that genuinely have
-                # no links. Absent file (it short-circuits before
-                # connecting, flag reported False) and present-but-empty
-                # (`indexed_count == 0` with the flag clear — a zero-item
-                # rebuild, a schema created before the first write) are
-                # both states `_handlers.load_search_candidates` routes to
-                # `load_all` and reverse_links treats as no-usable-index,
-                # so judge them unusable here too. `status()` never raises
-                # and never creates the file (absent is a bare stat); its
-                # degraded corrupt shape omits `indexed_count`, caught by
-                # the explicit clause. One meta read per search — the same
-                # cost class as the candidate loader's own `status()` call.
-                index_status = status(store.root)
-                unusable = (
-                    not index_status.get("exists")
-                    or bool(index_status.get("corrupt"))
-                    or int(index_status.get("indexed_count", 0) or 0) == 0
-                )
-            if unusable:
-                # The completed unusable-index truth table: absent OR
-                # `indexed_count == 0` OR `needs_rebuild` OR exception.
-                # Flag case — the rebuild-pending window: a schema migration
-                # dropped the `memory_links` rows and the incremental hooks
-                # have refilled only touched memories, so the index answer
-                # above may be silently missing the very inbound `supersedes`
-                # edge this annotation exists to surface.
-                # `_handlers.load_search_candidates` routes every one of
-                # these states to `load_all` (same signals), so `memories`
-                # here is the full active corpus — scan it for the edges
-                # instead of trusting the partial index, at zero extra
-                # I/O. Union, not replace: on the one narrowed caller
-                # path (`since_prior_session`'s post-boundary slice) the partial
-                # index can still hold live hook-written edges whose sources
-                # fall outside `memories`, so keeping both sides means the
-                # fallback never serves fewer edges than the index alone.
-                # Dangling rows stay harmless — tombstoned / hidden targets
-                # are filtered at `_resolve` time either way.
-                links_map = _links_map_with_candidate_scan(links_map, memories, hit_ids)
-        except Exception:  # noqa: BLE001 — outermost guard: the annotation
-            # is best-effort all the way down; even a failure in the
-            # fallback scan degrades to no annotations, never a broken
-            # search.
+            links_map = store.links_for_many(hit_ids)
+        except Exception:  # noqa: BLE001 - the annotation is best-effort
             links_map = {}
 
         total = 0
@@ -1499,72 +1390,6 @@ class ResponseBuilder:
 
             if entries:
                 hit_dict["recent_negative_outcomes"] = entries
-
-
-def _links_map_with_candidate_scan(
-    links_map: dict[
-        str,
-        tuple[list[tuple[str, str, str | None]], list[tuple[str, str, str | None]]],
-    ],
-    memories: Iterable[Any],
-    hit_ids: list[str],
-) -> dict[
-    str,
-    tuple[list[tuple[str, str, str | None]], list[tuple[str, str, str | None]]],
-]:
-    """Merge the (possibly partial) `links_for_many` answer with a link scan
-    over the already-loaded `memories` candidates.
-
-    Serves `attach_link_annotations` during the rebuild-pending window
-    (`meta.needs_rebuild` set): the index's `memory_links` rows exist only
-    for memories touched since the schema migration, so inbound edges from
-    untouched legacy sources — the 'superseded by X' warning included — are
-    silently absent from the index answer. The scan recovers them from the
-    candidate list the search loader already paid for: while the flag is
-    set, `_handlers.load_search_candidates` routes to `load_all` (same flag,
-    same window), so `memories` carries every active memory and the scan yields
-    exactly the edge set a completed `rebuild()` would serve. Pure in-memory
-    work — no second store walk, no index reads. The other unusable-index
-    states reuse this same scan (the candidate loader routes every one of
-    them to `load_all` too): unreadable (corruption / newer-version schema)
-    with an empty `links_map`, and absent / present-but-empty
-    (`indexed_count == 0` with the flag clear), where the index's all-empty
-    answer contributes nothing and the scan is the whole result.
-
-    Union semantics with exact-duplicate collapse over the full
-    `(type, other_id, note)` tuple, mirroring the index's primary-key dedup.
-    Each per-id list comes back sorted `(type, other_id)` like `links_for`'s
-    ORDER BY; `note` breaks the remaining tie (None first), so the merged
-    order is deterministic where SQL's note-tie order is unspecified."""
-    wanted = set(hit_ids)
-    outbound_sets: dict[str, set[tuple[str, str, str | None]]] = {
-        hid: set() for hid in hit_ids
-    }
-    inbound_sets: dict[str, set[tuple[str, str, str | None]]] = {
-        hid: set() for hid in hit_ids
-    }
-    for hid in hit_ids:
-        outbound, inbound = links_map.get(hid, ([], []))
-        outbound_sets[hid].update(outbound)
-        inbound_sets[hid].update(inbound)
-    for memory in memories:
-        for link in memory.links:
-            link_type = link.type.value
-            if memory.id in wanted:
-                outbound_sets[memory.id].add((link_type, link.target_id, link.note))
-            if link.target_id in wanted:
-                inbound_sets[link.target_id].add((link_type, memory.id, link.note))
-
-    def _order(entry: tuple[str, str, str | None]) -> tuple[str, str, bool, str]:
-        return (entry[0], entry[1], entry[2] is not None, entry[2] or "")
-
-    return {
-        hid: (
-            sorted(outbound_sets[hid], key=_order),
-            sorted(inbound_sets[hid], key=_order),
-        )
-        for hid in hit_ids
-    }
 
 
 def _claim_at_index(event: dict[str, Any], index: int) -> str | None:

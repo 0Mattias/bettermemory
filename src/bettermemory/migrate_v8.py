@@ -4,14 +4,14 @@ The v8 store was a directory: markdown files for the active records,
 ``.tombstones/`` for the removed ones, ``episodes/<session>/`` for the
 journal, JSONL event segments and archives for telemetry, and a handful
 of sidecars. The bettermemory 9 store is one SQLite file whose tables are
-a fold of its hash-chained log (``bettermemory.sqlite_store``). This
-module reads the directory with the v8 readers (``bettermemory.store``,
-``bettermemory.episodes``, ``bettermemory.events`` and the sidecar
-modules) and writes what it finds into the store, in one batch.
+a fold of its hash-chained log (``bettermemory.store``). This
+module reads the directory with the frozen v8 readers
+(``bettermemory.v8``: the file formats, kept when the v8 runtime was
+retired) and writes what it finds into the store, in one batch.
 
 What lands where. Active memories become ``memories`` rows with
 provenance ``imported`` and their v8 filename, inserted in
-``Store.iter_active`` order, the order a v8 rebuild indexed them in, so
+``v8.iter_active`` order, the order a v8 rebuild indexed them in, so
 rowids and the candidate query's tie order agree with the index.
 Tombstones become ``tombstones`` rows with the links and corroboration
 rollup the file kept, and with the active filename their name was made
@@ -28,9 +28,8 @@ dismissals, the captures directory, the derived index and the lock files
 have no place in the phase 1 store and are left where they are, counted.
 Anything else in the directory is named as unknown and left alone.
 
-The directory is never written: the readers are the pure ones (no
-``Store.open``, no ``ensure``, no recorder), and the store file lands
-where the caller says, by default beside the v8 files as
+The directory is never written: the readers are pure, and the store file
+lands where the caller says, by default beside the v8 files as
 ``memory.sqlite``. A run is idempotent: records already in the store, by
 id, are reported as present and skipped, and so is an event whose exact
 row is already there; a re-run after the directory grew imports only the
@@ -47,39 +46,45 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from . import index as _index
-from .conflicts import ConflictQueue
-from .episodes import EPISODES_DIR, EpisodeStore
-from .events import (
-    ARCHIVE_PREFIX,
-    EVENT_LOG_FILENAME,
-    SHARD_COUNT,
-    _SEGMENT_TEMPLATE,
-    iter_all_events,
-)
-from .ingest import INGEST_WATERMARK_FILENAME, _load_watermark_sources
 from .log import canonical_payload
-from .mirror import active_filename_for_tombstone, is_legacy_tombstone_name
 from .models import Episode, Memory, TombstonedMemory
-from .patterns import PATTERNS_FILENAME
-from .proposals import PROPOSALS_FILENAME
-from .quarantine import QUARANTINE_FILENAME, load_quarantine
-from .session import PENDING_WRITES_FILENAME
-from .sqlite_store import (
+from .store import (
     IMPORTED,
     IMPORTED_FROM_V8,
     STORE_FILENAME,
-    SqliteStore,
+    Store,
     event_import_payload,
 )
-from .store import (
-    PARSE_SKIP_EXCEPTIONS,
-    TOMBSTONE_DIR,
-    Store,
-    _parse_memory_file,
-    iter_active_memory_paths,
-)
 from .time_utils import isoformat_utc
+from .v8 import (
+    ARCHIVE_PREFIX,
+    CONFLICTS_FILENAME,
+    EPISODES_DIR,
+    EVENT_LOG_FILENAME,
+    INDEX_FILENAME,
+    INGEST_WATERMARK_FILENAME,
+    PARSE_SKIP_EXCEPTIONS,
+    PATTERNS_FILENAME,
+    PENDING_WRITES_FILENAME,
+    PROPOSALS_FILENAME,
+    QUARANTINE_FILENAME,
+    SEGMENT_TEMPLATE,
+    SHARD_COUNT,
+    TOMBSTONE_DIR,
+    active_filename_for_tombstone,
+    is_legacy_tombstone_name,
+    iter_active,
+    iter_active_memory_paths,
+    iter_all_events,
+    iter_session_ids,
+    iter_tombstone_paths,
+    list_by_session,
+    load_conflicts,
+    load_quarantine,
+    load_watermark_sources,
+    parse_memory_file,
+    parse_tombstone_file,
+)
 
 CAPTURES_DIR = "captures"
 _REDACTED_FIELDS = ("query", "probe_query")
@@ -145,7 +150,7 @@ def _is_event_file(name: str) -> bool:
     holding file under the archive prefix."""
     if name == EVENT_LOG_FILENAME or name.startswith(ARCHIVE_PREFIX):
         return True
-    return any(name == _SEGMENT_TEMPLATE.format(shard) for shard in range(SHARD_COUNT))
+    return any(name == SEGMENT_TEMPLATE.format(shard) for shard in range(SHARD_COUNT))
 
 
 def _count_entries(path: Path) -> int:
@@ -161,53 +166,47 @@ def inventory(root: Path | str) -> Inventory:
     root = Path(root).expanduser().resolve()
     if not root.is_dir():
         raise FileNotFoundError(f"no v8 store directory at {root}")
-    store = Store(root)
 
     active_paths = list(iter_active_memory_paths(root))
-    memories = list(store.iter_active())
+    memories = list(iter_active(root))
     unparseable_memories = len(active_paths) - len(memories)
 
     tombstones: list[TombstoneSource] = []
     unparseable_tombstones = 0
-    tombstone_dir = root / TOMBSTONE_DIR
-    if tombstone_dir.is_dir():
-        for path in sorted(tombstone_dir.iterdir()):
-            if path.is_symlink() or not path.is_file() or path.suffix != ".md":
-                continue
-            try:
-                dead = store._load_tombstone_path(path)
-                # The tombstone model drops the links and the corroboration
-                # rollup; the memory reader keeps them and ignores the
-                # removal keys, so the same file read twice gives both.
-                kept = _parse_memory_file(path)
-            except PARSE_SKIP_EXCEPTIONS:
-                unparseable_tombstones += 1
-                continue
-            tombstones.append(
-                TombstoneSource(
-                    path=path,
-                    dead=dead,
-                    links=[
-                        link.model_dump(mode="json", exclude_none=True)
-                        for link in kept.links
-                    ],
-                    corroborations=kept.corroborations,
-                    last_corroborated=kept.last_corroborated,
-                    filename=active_filename_for_tombstone(path.name),
-                    legacy_name=is_legacy_tombstone_name(path.name),
-                )
+    for path in sorted(iter_tombstone_paths(root)):
+        try:
+            dead = parse_tombstone_file(path)
+            # The tombstone model drops the links and the corroboration
+            # rollup; the memory reader keeps them and ignores the
+            # removal keys, so the same file read twice gives both.
+            kept = parse_memory_file(path)
+        except PARSE_SKIP_EXCEPTIONS:
+            unparseable_tombstones += 1
+            continue
+        tombstones.append(
+            TombstoneSource(
+                path=path,
+                dead=dead,
+                links=[
+                    link.model_dump(mode="json", exclude_none=True)
+                    for link in kept.links
+                ],
+                corroborations=kept.corroborations,
+                last_corroborated=kept.last_corroborated,
+                filename=active_filename_for_tombstone(path.name),
+                legacy_name=is_legacy_tombstone_name(path.name),
             )
+        )
 
-    episode_store = EpisodeStore(root)
-    sessions = sorted(episode_store.iter_session_ids())
+    sessions = sorted(iter_session_ids(root))
     episodes: list[Episode] = []
     for session_id in sessions:
-        episodes.extend(episode_store.list_by_session(session_id))
+        episodes.extend(list_by_session(root, session_id))
 
-    conflicts = [candidate.to_dict() for candidate in ConflictQueue(root).load()]
+    conflicts = [candidate.to_dict() for candidate in load_conflicts(root)]
 
     imports: list[dict[str, Any]] = []
-    for source, entry in sorted(_load_watermark_sources(root).items()):
+    for source, entry in sorted(load_watermark_sources(root).items()):
         content_hash = entry.get("content_hash")
         if not isinstance(content_hash, str) or not content_hash:
             continue
@@ -224,7 +223,6 @@ def inventory(root: Path | str) -> Inventory:
         "pending_writes": _count_json_lines(root / PENDING_WRITES_FILENAME),
         "proposals": _count_json_lines(root / PROPOSALS_FILENAME),
     }
-    index_name = _index.index_path(root).name
     lock_files = 0
     unknown: list[str] = []
     known_sidecars = {
@@ -233,7 +231,7 @@ def inventory(root: Path | str) -> Inventory:
         PATTERNS_FILENAME,
         QUARANTINE_FILENAME,
         INGEST_WATERMARK_FILENAME,
-        ConflictQueue(root).path.name,
+        CONFLICTS_FILENAME,
     }
     for child in sorted(root.iterdir()):
         name = child.name
@@ -241,7 +239,7 @@ def inventory(root: Path | str) -> Inventory:
             lock_files += 1
         elif name in known_sidecars or _is_event_file(name):
             continue
-        elif name.startswith(index_name) or name.startswith(STORE_FILENAME):
+        elif name.startswith(INDEX_FILENAME) or name.startswith(STORE_FILENAME):
             continue
         elif name in (TOMBSTONE_DIR, EPISODES_DIR, CAPTURES_DIR):
             continue
@@ -249,6 +247,7 @@ def inventory(root: Path | str) -> Inventory:
             continue
         else:
             unknown.append(name)
+    tombstone_dir = root / TOMBSTONE_DIR
     if tombstone_dir.is_dir():
         for child in sorted(tombstone_dir.iterdir()):
             if child.name.endswith(".lock"):
@@ -259,7 +258,7 @@ def inventory(root: Path | str) -> Inventory:
         "quarantine": len(load_quarantine(root)),
         "episode_patterns": _count_json_lines(root / PATTERNS_FILENAME),
         "captures": _count_entries(root / CAPTURES_DIR),
-        "index": 1 if (root / index_name).is_file() else 0,
+        "index": 1 if (root / INDEX_FILENAME).is_file() else 0,
         "lock_files": lock_files,
     }
     return Inventory(
@@ -407,7 +406,7 @@ class _Present:
     events: set[tuple[str, str | None, str, str]] = field(default_factory=set)
 
     @classmethod
-    def read(cls, store: SqliteStore | None) -> _Present:
+    def read(cls, store: Store | None) -> _Present:
         if store is None:
             return cls()
         conn = store.conn
@@ -459,15 +458,15 @@ def migrate(
         unknown=list(inv.unknown),
     )
 
-    store: SqliteStore | None
+    store: Store | None
     if dry_run:
         store = (
-            SqliteStore.open(store_path, keys_dir=keys_dir, allow_rekey=False)
+            Store.open(store_path, keys_dir=keys_dir, allow_rekey=False)
             if store_path.is_file()
             else None
         )
     else:
-        store = SqliteStore.open_or_create(store_path, keys_dir=keys_dir)
+        store = Store.open_or_create(store_path, keys_dir=keys_dir)
     try:
         present = _Present.read(store)
 

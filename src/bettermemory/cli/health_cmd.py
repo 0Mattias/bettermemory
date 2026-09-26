@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from ..health import report_for_directory
+from ..health import report_for_store
 from ..origin import capture as capture_origin
 from ._common import cli_context
 
@@ -80,8 +80,8 @@ def _cli_health(
         if min_applied is not None
         else ctx.config.behavior.heavily_used_min_applied
     )
-    report = report_for_directory(
-        ctx.directory,
+    report = report_for_store(
+        ctx.store,
         window_days=days,
         heavily_used_top_k=top_k,
         heavily_used_min_applied=threshold,

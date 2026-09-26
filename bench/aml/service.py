@@ -62,7 +62,7 @@ from aml import distill
 from bettermemory import search as _engine
 from bettermemory.models import Memory
 from bettermemory.search import search as run_search
-from bettermemory.store import Store
+from bettermemory.store import STORE_FILENAME, Store
 
 SCOPE = ["aml"]
 
@@ -632,7 +632,11 @@ class MemoryService:
         us = self._user(user_id)
         with us.lock:
             if us.memories is None:
-                loaded = Store(us.root).load_all() if any(us.root.glob("*.md")) else []
+                loaded = (
+                    Store(us.root).load_all()
+                    if (us.root / STORE_FILENAME).exists()
+                    else []
+                )
                 us.memories = [m for m in loaded if m.id not in us.hidden]
                 us.tokens = {}
             memories = us.memories
@@ -717,9 +721,7 @@ class MemoryService:
             if us.unit_memories is None:
                 root = us.units_root
                 us.unit_memories = (
-                    Store(root).load_all()
-                    if root.exists() and any(root.glob("*.md"))
-                    else []
+                    Store(root).load_all() if (root / STORE_FILENAME).exists() else []
                 )
             return us.unit_memories, dict(us.unit_meta)
 

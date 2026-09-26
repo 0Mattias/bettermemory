@@ -274,7 +274,7 @@ def apply_rollback(
             store.tombstone(
                 candidate.memory_id,
                 reason=reason,
-                session_id=session_id,
+                session=session_id,
             )
         except Exception as exc:  # noqa: BLE001 — never break the pass
             report.failures.append(

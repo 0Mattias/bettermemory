@@ -47,9 +47,18 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 _PROTOCOL = "2025-06-18"
+
+
+class ProbeResult(NamedTuple):
+    """What one server put on the wire: its `tools/list` array and the
+    `instructions` string its `initialize` reply carried (empty when it
+    carried none)."""
+
+    tools: list[dict[str, Any]]
+    instructions: str
 
 
 def probe_tools(
@@ -58,8 +67,9 @@ def probe_tools(
     env: dict[str, str] | None = None,
     cwd: str | None = None,
     timeout: float = 90.0,
-) -> list[dict[str, Any]]:
-    """Spawn an MCP server over stdio and return its advertised tools.
+) -> ProbeResult:
+    """Spawn an MCP server over stdio and return its advertised tools and
+    server instructions.
 
     Hand-rolled JSON-RPC rather than an SDK client: the point is to
     measure exactly the bytes a server puts on the wire, and a client
@@ -105,7 +115,8 @@ def probe_tools(
         }
         proc.stdin.write(json.dumps(handshake) + "\n")
         proc.stdin.flush()
-        _read_response(proc, want_id=1, timeout=timeout)
+        init = _read_response(proc, want_id=1, timeout=timeout)
+        instructions = init.get("result", {}).get("instructions")
 
         proc.stdin.write(
             json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n"
@@ -121,7 +132,10 @@ def probe_tools(
         proc.stdin.flush()
         reply = _read_response(proc, want_id=2, timeout=timeout)
         tools = reply.get("result", {}).get("tools", [])
-        return list(tools)
+        return ProbeResult(
+            tools=list(tools),
+            instructions=instructions if isinstance(instructions, str) else "",
+        )
     finally:
         proc.terminate()
         try:
@@ -164,8 +178,12 @@ def _read_response(
             return dict(payload)
 
 
-def measure(tools: list[dict[str, Any]]) -> dict[str, Any]:
-    """Byte/char cost of a tool list, full and by component."""
+def measure(tools: list[dict[str, Any]], instructions: str = "") -> dict[str, Any]:
+    """Byte/char cost of a tool list, full and by component, plus the
+    server instructions the `initialize` reply carried. `full_bytes`
+    keeps its meaning (the tools array alone) so every dated result file
+    stays comparable; `instructions_bytes` and `session_bytes` (the two
+    together) are the additive keys the bettermemory 9 budget reads."""
 
     def blob(obj: Any) -> str:
         return json.dumps(obj, sort_keys=True, separators=(",", ":"))
@@ -178,16 +196,19 @@ def measure(tools: list[dict[str, Any]]) -> dict[str, Any]:
         ]
     )
     schemas = blob([t.get("inputSchema", {}) for t in tools])
+    full_bytes = len(full.encode("utf-8"))
+    instructions_bytes = len(instructions.encode("utf-8"))
     return {
         "tool_count": len(tools),
-        "full_bytes": len(full.encode("utf-8")),
+        "full_bytes": full_bytes,
         "full_chars": len(full),
         "name_description_bytes": len(names_descs.encode("utf-8")),
         "name_description_chars": len(names_descs),
         "input_schema_bytes": len(schemas.encode("utf-8")),
-        "bytes_per_tool": round(len(full.encode("utf-8")) / len(tools))
-        if tools
-        else None,
+        "instructions_bytes": instructions_bytes,
+        "instructions_chars": len(instructions),
+        "session_bytes": full_bytes + instructions_bytes,
+        "bytes_per_tool": round(full_bytes / len(tools)) if tools else None,
     }
 
 
@@ -229,11 +250,14 @@ def main() -> int:
     for spec in specs:
         label = spec["label"]
         try:
-            tools = probe_tools(
+            probe = probe_tools(
                 spec["command"], env=spec.get("env"), cwd=spec.get("cwd")
             )
-            row: dict[str, Any] = {"label": label, **measure(tools)}
-            row["tools"] = sorted(t.get("name", "") for t in tools)
+            row: dict[str, Any] = {
+                "label": label,
+                **measure(probe.tools, probe.instructions),
+            }
+            row["tools"] = sorted(t.get("name", "") for t in probe.tools)
         except Exception as exc:  # noqa: BLE001 - report, never fabricate
             row = {"label": label, "error": f"{type(exc).__name__}: {exc}"}
         results.append(row)

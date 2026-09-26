@@ -244,7 +244,8 @@ def test_skill_mentions_load_bearing_tools() -> None:
         "memory_show",
         "memory_verify",
         "memory_record_use",
-        "memory_scope_overview",
+        "memory_admin",
+        "episode",
     ):
         assert tool in body, (
             f"skill body should reference the {tool!r} tool — without it "
@@ -523,39 +524,6 @@ def test_prompt_recall_hook_has_tight_timeout() -> None:
         assert 0 < timeout <= 15, (
             f"UserPromptSubmit hook timeout {timeout!r} is outside the "
             f"1..15s window — this hook blocks every prompt submission"
-        )
-
-
-def test_plugin_ships_session_end_hook() -> None:
-    """The SessionEnd binding calls `bettermemory session-end` with the
-    `|| true` guard (an older wheel without the subcommand exits 2), no
-    matcher (every end reason ends a transcript), and a timeout that
-    stays short: Claude Code waits on this hook at exit, and whatever
-    the hook sets becomes the whole event's shared budget."""
-    body = json.loads(PLUGIN_HOOKS_PATH.read_text(encoding="utf-8"))
-    assert "SessionEnd" in body["hooks"], "SessionEnd event binding missing"
-    entries = body["hooks"]["SessionEnd"]
-    command_hooks = [
-        h
-        for entry in entries
-        for h in entry.get("hooks", [])
-        if h.get("type") == "command"
-    ]
-    matched = [
-        h for h in command_hooks if "bettermemory session-end" in h.get("command", "")
-    ]
-    assert matched, (
-        f"none of the SessionEnd command hooks call `bettermemory "
-        f"session-end`; got: {[h.get('command') for h in command_hooks]}"
-    )
-    for entry in entries:
-        assert entry.get("matcher") in {None, "", "*"}, entry
-    for hook in matched:
-        assert "|| true" in hook["command"], hook["command"]
-        timeout = hook.get("timeout")
-        assert timeout is not None and 0 < timeout <= 10, (
-            f"SessionEnd hook timeout {timeout!r} is outside 1..10s: "
-            f"Claude Code waits on it at exit"
         )
 
 

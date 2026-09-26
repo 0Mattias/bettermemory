@@ -6,18 +6,17 @@ outcome=contradicted` — the model vs. the world at use time). What it
 could not do is NOTICE one on its own: two stored memories disagreeing
 with EACH OTHER sat unflagged until one of them happened to be
 retrieved and judged. The dedup passes even computed the evidence and
-threw it away — `polarity_skipped` pairs surfaced on a consolidate
+threw it away — `polarity_skipped` pairs surfaced on a curation
 report and died with it, re-derived and re-shown every run.
 
-This module is the persistence + lifecycle half of corpus-level
-contradiction detection. The DETECTION stays mechanical and lives in
-`consolidate`'s pairwise dedup scan (high similarity plus a signal from
-`consolidate._conflict_signal` — a polarity flip or a numeric
-divergence; `_find_dedup_with_skips` is the entry point); the JUDGMENT
-stays with the model (the `memory_conflicts` MCP tool lists pending
-pairs and takes a verdict). The queue is the ONLY exit for a flagged
-pair: the signal is consulted inside `consolidate._pick_keeper`, which
-raises rather than crowning a keeper, so no dedup path — including the
+This module holds both halves of corpus-level contradiction detection.
+The DETECTION is mechanical: the pairwise dedup scan below (high
+similarity plus a signal from `_conflict_signal` — a polarity flip or a
+numeric divergence; `_find_dedup_with_skips` is the entry point); the
+JUDGMENT stays with the model (the `memory_conflicts` MCP tool lists
+pending pairs and takes a verdict). The queue is the ONLY exit for a
+flagged pair: the signal is consulted inside `_pick_keeper`, which
+raises rather than crowning a keeper, so no dedup path — including an
 unattended one — can tombstone a side instead of filing it here. The
 split mirrors the architecture
 everywhere else in this codebase: the server does the corpus-scale
@@ -61,7 +60,7 @@ never haunt every future scan):
 Rows whose members stop being active (tombstoned, merged) are dropped
 on the next full-corpus upsert — a conflict with a dead side is moot.
 `upsert_scan` is the ONLY garbage collector, which is why every
-applying consolidate pass calls it unconditionally: a pass that only
+applying pass calls it unconditionally: a pass that only
 upserted when it had fresh candidates would strand those rows in the
 file indefinitely. Until a scan collects one, no surface that counts
 arbitration WORK advertises it — `split_judgeable` is the shared filter
@@ -87,24 +86,26 @@ usual but collects NOTHING and reports `gc_deferred`. See
 
 On-disk: ``<root>/.conflicts.jsonl`` — one JSON object per line,
 0o600, atomically rewritten under a per-file ``flock`` (the
-`memory_conflicts` handler and the auto-consolidate scan can race
-across processes; same discipline as `proposals.ProposalQueue`).
+`memory_conflicts` handler and an unattended scan can race across
+processes).
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
+import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
-from ._fsutil import atomic_write_bytes, flock_excl
-from .models import Memory, utcnow
-from .store import count_active_memory_files
+from .models import Memory, snippet_for, utcnow
+from .search import _pairwise_content_jaccard, _raw_content_token_set
+from .supersession import _numeric_token_set, _strip_provenance
 from .time_utils import parse_event_ts
+
+if TYPE_CHECKING:
+    from .store import Store
 
 log = logging.getLogger("bettermemory.conflicts")
 
@@ -228,10 +229,464 @@ class ConflictCandidate:
         )
 
 
+# ---------------------------------------------------------------------------
+# Detection: the pairwise dedup scan and its contradiction guards
+# ---------------------------------------------------------------------------
+#
+# Moved here whole from the retired consolidate module. The scan still
+# computes both halves of its old report, the dedup candidates and the
+# pairs the guards kept out of them, because the guard is a property
+# of the keeper decision (`_pick_keeper` raises rather than crowning a
+# keeper) and the skipped list is what this module files.
+
+_DEFAULT_JACCARD_THRESHOLD = 0.75
+
+
+@dataclass
+class DedupCandidate:
+    """One pair of memories proposed for dedup. `keeper_id` is kept;
+    `duplicate_id` is the one proposed for tombstoning."""
+
+    keeper_id: str
+    keeper_summary: str
+    duplicate_id: str
+    duplicate_summary: str
+    similarity: float
+    method: str  # always "jaccard" since 4.0.0; kept for report shape
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "keeper_id": self.keeper_id,
+            "keeper_summary": self.keeper_summary,
+            "duplicate_id": self.duplicate_id,
+            "duplicate_summary": self.duplicate_summary,
+            "similarity": round(self.similarity, 4),
+            "method": self.method,
+        }
+
+
+@dataclass
+class PolaritySkippedPair:
+    """A pair whose similarity cleared the dedup threshold but whose
+    bodies disagree in a way that makes merging wrong. Two detectors
+    populate the list (`detector` says which):
+
+    - ``"polarity"``: the bodies differ in negation polarity. Stopword
+      stripping makes the negation invisible to the token sets, so a
+      high similarity here usually labels a contradiction as a
+      duplicate.
+    - ``"numeric"``: near-identical bodies whose number-bearing tokens
+      DIVERGE on both sides ("port 5432" vs "port 5433", version
+      3.27.0 vs 3.27.1). Token overlap on everything else pushes the
+      pair over the threshold, and a silent merge would tombstone one
+      of two claims that disagree about a value — a mis-curation, not
+      a dedup.
+
+    Either way the pair is a disagreement to arbitrate, not a duplicate
+    to merge; the guard keeps it out of `dedup_candidates` and the
+    conflict flow (`memory_conflicts` / `conflicts.scan_conflicts`)
+    takes it from here. The skip is surfaced rather than swallowed
+    because both detectors also catch benign cases (an incidental
+    negator; an added-detail number) that a human/model reviewer should
+    be able to wave through. Suggest-only: the apply path iterates
+    `dedup_candidates` exclusively and never tombstones a member of
+    this list. No keeper/duplicate roles — no merge decision was made.
+    """
+
+    memory_id_a: str
+    summary_a: str
+    memory_id_b: str
+    summary_b: str
+    similarity: float
+    method: str  # always "jaccard" since 4.0.0; kept for report shape
+    # Additive (3.28.0): rows serialized before the field default to
+    # "polarity", the only detector that existed.
+    detector: str = "polarity"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "memory_id_a": self.memory_id_a,
+            "summary_a": self.summary_a,
+            "memory_id_b": self.memory_id_b,
+            "summary_b": self.summary_b,
+            "similarity": round(self.similarity, 4),
+            "method": self.method,
+            "detector": self.detector,
+        }
+
+
+class ConflictingPair(Exception):
+    """`_pick_keeper` refusing a pair that carries a contradiction
+    signal: there is no keeper to crown, because the pair is a
+    disagreement to arbitrate rather than a duplicate to merge.
+
+    `detector` names the signal — ``"polarity"`` or ``"numeric"``, the
+    same vocabulary `PolaritySkippedPair.detector` and the conflict
+    queue use — so the catching loop can report WHY without re-running
+    detection.
+
+    An exception rather than a sentinel return on purpose. This is the
+    fence that keeps the unattended pass off contradictions, and the
+    two dedup loops are not its only conceivable callers; a `None` a
+    future caller forgets to check would tombstone one side of a
+    contradiction silently, whereas an unhandled raise cannot be
+    mistaken for a keeper.
+    """
+
+    def __init__(self, detector: str) -> None:
+        super().__init__(f"contradiction signal ({detector}) — pair has no keeper")
+        self.detector = detector
+
+
+def _pick_keeper(
+    a: Memory,
+    b: Memory,
+    *,
+    signals_a: _BodySignals | None = None,
+    signals_b: _BodySignals | None = None,
+) -> tuple[Memory, Memory]:
+    """Decide which memory wins a dedup pair.
+
+    Raises `ConflictingPair` FIRST, before any tier below runs, when
+    the two bodies carry a contradiction signal (`_conflict_signal`:
+    negation polarity flip or mutual numeric divergence). Every
+    `DedupCandidate` in this module is constructed from this function's
+    return value, so routing conflict-shaped pairs to the conflict
+    queue instead of the tombstone list is a property of the keeper
+    decision itself rather than of a check each loop remembers to make;
+    the distinction matters because an unattended pass applies its
+    candidates with nobody reviewing the diff, and a similarity
+    threshold is no defence
+    (the inverse-clause pair "Deploy with the blue-green strategy;
+    never do in-place." vs its swap measures Jaccard 1.0).
+
+    `signals_a` / `signals_b` are the caller's precomputed
+    `_body_signals` for the two bodies — a cache, not a gate: omitting
+    them costs one tokenisation pass per body and changes no outcome,
+    so a caller cannot disarm the fence by forgetting them.
+
+    Tier 0: when exactly one member carries verification attestation
+    (non-empty `verified_paths` or a set `last_verified_at`), it wins
+    outright. Safe because content edits deliberately reset
+    verification (`Store.update`), so an attested body is by
+    construction the spot-checked one. Without this tier the
+    "attestation is authority" rule below is unreachable on real
+    microsecond-distinct timestamps, and a metadata-only retag (the
+    retired demotion pass was one) would bump `updated` and crown
+    an unattested ambient husk over the verified fact.
+    Tier 1: more-recently-updated wins. Refining a memory implies
+    that's the canonical version. Tier 2 (tie on `updated`): more
+    `verified_paths` wins — attestation is authority. Tier 3 (tie on
+    both): higher ULID wins — newer creation under
+    microsecond-tied writes. Returns `(keeper, duplicate)`.
+    """
+    sig_a = signals_a if signals_a is not None else _body_signals(a.body)
+    sig_b = signals_b if signals_b is not None else _body_signals(b.body)
+    detector = _conflict_signal(sig_a, sig_b)
+    if detector is not None:
+        raise ConflictingPair(detector)
+    a_attested = bool(a.verified_paths) or a.last_verified_at is not None
+    b_attested = bool(b.verified_paths) or b.last_verified_at is not None
+    if a_attested != b_attested:
+        return (a, b) if a_attested else (b, a)
+    if a.updated != b.updated:
+        return (a, b) if a.updated > b.updated else (b, a)
+    a_verified = len(a.verified_paths or [])
+    b_verified = len(b.verified_paths or [])
+    if a_verified != b_verified:
+        return (a, b) if a_verified > b_verified else (b, a)
+    return (a, b) if a.id > b.id else (b, a)
+
+
+def _find_dedup_with_skips(
+    memories: list[Memory],
+    *,
+    threshold: float | None = None,
+) -> tuple[list[DedupCandidate], list[PolaritySkippedPair], str]:
+    """The pairwise Jaccard dedup scan: the candidate pairs plus the
+    pairs the contradiction guards kept out of them (see
+    `PolaritySkippedPair`). Both lists are sorted descending by
+    similarity. `threshold` defaults to 0.75, the calibration the
+    write-time dedup path uses."""
+    if len(memories) < 2:
+        return [], [], "jaccard"
+
+    method = "jaccard"
+    eff_threshold = threshold if threshold is not None else _DEFAULT_JACCARD_THRESHOLD
+    candidates, polarity_skipped = _find_dedup_jaccard(
+        memories, threshold=eff_threshold
+    )
+
+    candidates.sort(key=lambda c: c.similarity, reverse=True)
+    polarity_skipped.sort(key=lambda p: p.similarity, reverse=True)
+    return candidates, polarity_skipped, method
+
+
+# Negation tokens that flip a body's polarity. Both dedup paths are
+# blind to negation: the Jaccard tokenizer strips these as stopwords,
+# so "Do not use sudo" and "Use sudo" reduce to IDENTICAL token sets
+# (Jaccard 1.0) — above even the unattended 0.90 threshold, with zero
+# headroom for the threshold to save it — and sentence-embedding
+# models routinely score a negated pair above the 0.85 cosine
+# threshold too. A negated pair is a semantic contradiction requiring
+# judgment, which no unattended pass may take; the pair belongs to the
+# contradiction flow (`record_use outcome=contradicted` / the conflict
+# queue below), not dedup, regardless of which similarity method
+# surfaced it. Word-order reversals ("A
+# proxies to B" vs "B proxies to A") would need a positional/bigram
+# signal — out of scope for this guard.
+_NEGATION_MARKERS = frozenset(
+    {
+        "no",
+        "not",
+        "never",
+        "none",
+        "neither",
+        "nor",
+        "without",
+        "cannot",
+        # Apostrophe-stripped contractions ("don't" -> "dont").
+        "dont",
+        "doesnt",
+        "didnt",
+        "wont",
+        "cant",
+        "isnt",
+        "arent",
+        "wasnt",
+        "werent",
+        "shouldnt",
+        "wouldnt",
+        "couldnt",
+    }
+)
+
+_NEGATION_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def _has_negation(body: str) -> bool:
+    """True when the body carries a grammatical-negation token.
+
+    Tokenizes WITHOUT stopword stripping (the whole point — the shared
+    dedup tokenizer `search._raw_content_token_set` drops the negators)
+    and normalizes apostrophes away so contracted forms ("don't",
+    "won't") match their stripped spellings in `_NEGATION_MARKERS`.
+    """
+    normalized = body.lower().replace("’", "").replace("'", "")
+    return any(
+        token in _NEGATION_MARKERS for token in _NEGATION_TOKEN_RE.findall(normalized)
+    )
+
+
+def _numeric_divergence(nums_a: frozenset[str], nums_b: frozenset[str]) -> bool:
+    """True when BOTH sides carry number-bearing tokens the other lacks.
+
+    One-sided difference is additional detail, not disagreement:
+    "deployed v3 on 2026-07-20" vs "deployed v3" merges fine. Mutual
+    difference on bodies similar enough to clear the dedup threshold —
+    "port 5432" vs "port 5433" — is two claims disagreeing about a
+    value, and `_pick_keeper` would tombstone one of them on recency
+    rather than truth. That pair belongs to the conflict flow."""
+    return bool(nums_a - nums_b) and bool(nums_b - nums_a)
+
+
+# Clause boundaries for the ORDER-SENSITIVE half of the polarity guard.
+# `_has_negation` is whole-body token presence and therefore order-blind:
+# "Deploy with the blue-green strategy; never do in-place." and its exact
+# inverse both contain "never", so the whole-body rule sees matching
+# polarity while the token sets measure Jaccard 1.0 — a pair the
+# unattended 0.90 threshold could not save. Scoping negation to the
+# clause it sits in recovers the order the token sets threw away.
+#
+# Sentence/clause terminators only. Commas are deliberately NOT
+# boundaries: a negator scopes across a comma list ("do not use A, B, or
+# C"), and splitting there would file B and C as ASSERTED and invent a
+# flip against a body that agrees.
+_CLAUSE_SPLIT_RE = re.compile(r"[.;!?\n]+")
+
+
+def _clause_polarity(body: str) -> tuple[frozenset[str], frozenset[str]]:
+    """`(asserted, negated)` content tokens, scoped per clause.
+
+    A clause carrying any `_NEGATION_MARKERS` token negates every
+    content token in it; the rest are asserted. Tokenisation is the
+    dedup tokeniser (`_raw_content_token_set`) so the sets are directly
+    comparable to the ones the similarity score is computed over.
+
+    Tokens appearing on BOTH sides within one body are dropped from both
+    returned sets: a body that both asserts and negates a term ("use
+    sudo for deploys; never use sudo for backups") makes no comparable
+    polarity claim about it, and counting it would flip that body
+    against any body that merely asserts the term.
+    """
+    asserted: set[str] = set()
+    negated: set[str] = set()
+    for clause in _CLAUSE_SPLIT_RE.split(body):
+        tokens = _raw_content_token_set(clause)
+        if not tokens:
+            continue
+        if _has_negation(clause):
+            negated |= tokens
+        else:
+            asserted |= tokens
+    return frozenset(asserted - negated), frozenset(negated - asserted)
+
+
+class _BodySignals(NamedTuple):
+    """Every contradiction-guard input for ONE body, computed once.
+
+    Held per memory by the dedup loops (the pairwise comparison is
+    O(N²) and re-tokenising inside it would be too), and computed
+    on demand by `_pick_keeper` for callers that don't have them.
+    All four fields judge the provenance-stripped body — see
+    `_PROVENANCE_RE` for why the stamp is not claim content.
+    """
+
+    has_negation: bool
+    asserted: frozenset[str]
+    negated: frozenset[str]
+    numbers: frozenset[str]
+
+
+def _body_signals(body: str) -> _BodySignals:
+    """Contradiction-guard inputs for a raw (still-stamped) body."""
+    stripped = _strip_provenance(body)
+    asserted, negated = _clause_polarity(stripped)
+    return _BodySignals(
+        has_negation=_has_negation(stripped),
+        asserted=asserted,
+        negated=negated,
+        numbers=_numeric_token_set(stripped),
+    )
+
+
+def _polarity_flip(sig_a: _BodySignals, sig_b: _BodySignals) -> bool:
+    """True when two bodies disagree in negation polarity. Two rules:
+
+    1. **Whole-body**: exactly one side carries a negator at all. The
+       original guard, and still the only one that fires when the
+       negated claim shares no tokens with the other body ("It is fast"
+       vs "It is not slow").
+    2. **Clause-scoped, mutual**: each body asserts a term the other
+       negates. Mutuality mirrors `_numeric_divergence`'s rule and for
+       the same reason — a one-sided difference is usually scope, not
+       disagreement. "Run migrations with the CLI, not by hand." negates
+       its whole clause (a comma is not a boundary), so it one-sidedly
+       "negates" `cli` against a body that asserts it; requiring the
+       mirror keeps that agreeing pair merging as before, while the
+       inverse-clause pairs this rule exists for — "Always squash-merge;
+       do not rebase." vs "Never squash-merge; always rebase." — swap in
+       both directions by construction.
+
+    Documented gap: a pair where BOTH bodies carry a negator and only
+    ONE term swaps polarity passes both rules. Reaching the dedup
+    threshold at all takes near-identical token sets, which makes the
+    unmirrored shape hard to construct, but it is a gap and not a proof.
+    """
+    if sig_a.has_negation != sig_b.has_negation:
+        return True
+    return bool(sig_a.negated & sig_b.asserted) and bool(sig_b.negated & sig_a.asserted)
+
+
+def _conflict_signal(sig_a: _BodySignals, sig_b: _BodySignals) -> str | None:
+    """The detector name for a pair that must NOT be merged, or None.
+
+    The single definition of "this is a disagreement, not a duplicate",
+    consulted from inside `_pick_keeper` so both dedup paths — and any
+    future one — inherit it. Polarity is checked first: when a pair
+    trips both, the negation is the more legible frame for the reviewer.
+    """
+    if _polarity_flip(sig_a, sig_b):
+        return "polarity"
+    if _numeric_divergence(sig_a.numbers, sig_b.numbers):
+        return "numeric"
+    return None
+
+
+def _polarity_skip(
+    a: Memory, b: Memory, similarity: float, method: str, detector: str = "polarity"
+) -> PolaritySkippedPair:
+    """Build the report entry for a pair a conflict guard skipped.
+    Shared by both dedup paths (and both detectors) so the surfaced
+    shape can't drift."""
+    return PolaritySkippedPair(
+        memory_id_a=a.id,
+        summary_a=snippet_for(a.body, max_chars=100),
+        memory_id_b=b.id,
+        summary_b=snippet_for(b.body, max_chars=100),
+        similarity=similarity,
+        method=method,
+        detector=detector,
+    )
+
+
+def _find_dedup_jaccard(
+    memories: list[Memory], *, threshold: float
+) -> tuple[list[DedupCandidate], list[PolaritySkippedPair]]:
+    # Pre-compute RAW token sets (and polarity) once per memory, over
+    # the provenance-stripped body — the stamp is shared boilerplate,
+    # not claim content, and polarity likewise judges the claim, not
+    # the quoted transcript turn (see `_PROVENANCE_RE`). Kebab
+    # expansion happens per PAIR inside `_pairwise_content_jaccard` —
+    # a compound the pair shares must stay one token (symmetric
+    # expansion of a shared compound strictly inflates Jaccard; see
+    # the helper's docstring), so it can't be precomputed per memory.
+    token_sets: list[tuple[Memory, set[str], _BodySignals]] = []
+    for m in memories:
+        token_sets.append(
+            (
+                m,
+                _raw_content_token_set(_strip_provenance(m.body)),
+                _body_signals(m.body),
+            )
+        )
+    out: list[DedupCandidate] = []
+    skipped: list[PolaritySkippedPair] = []
+    for i in range(len(token_sets)):
+        m_i, t_i, sig_i = token_sets[i]
+        if not t_i:
+            continue
+        for j in range(i + 1, len(token_sets)):
+            m_j, t_j, sig_j = token_sets[j]
+            if not t_j:
+                continue
+            sim = _pairwise_content_jaccard(t_i, t_j)
+            if sim < threshold:
+                continue
+            try:
+                keeper, duplicate = _pick_keeper(
+                    m_i, m_j, signals_a=sig_i, signals_b=sig_j
+                )
+            except ConflictingPair as conflict:
+                # A contradiction signal, not a duplicate — `_pick_keeper`
+                # refuses to crown a keeper, so no candidate exists to
+                # tombstone. Surface the pair rather than dropping it: the
+                # guards also catch genuine duplicates (an incidental
+                # negator, an added-detail number) that a reviewer should
+                # be able to wave through, and a bare `continue` hid those
+                # from the report forever. Threshold filtering above keeps
+                # the list small.
+                skipped.append(
+                    _polarity_skip(m_i, m_j, sim, "jaccard", detector=conflict.detector)
+                )
+                continue
+            out.append(
+                DedupCandidate(
+                    keeper_id=keeper.id,
+                    keeper_summary=snippet_for(keeper.body, max_chars=100),
+                    duplicate_id=duplicate.id,
+                    duplicate_summary=snippet_for(duplicate.body, max_chars=100),
+                    similarity=sim,
+                    method="jaccard",
+                )
+            )
+    return out, skipped
+
+
 def skip_to_candidate(pair: Any, *, created: str) -> ConflictCandidate:
-    """Lift a consolidate `PolaritySkippedPair` (either detector) into a
-    queue row. Shared by both producers — the `memory_conflicts(scan=True)`
-    handler and the consolidate apply pass — so the mapping can't drift."""
+    """Lift a `PolaritySkippedPair` (either detector) into a queue row.
+    The one mapping every producer of a row goes through, so it can't
+    drift."""
     return ConflictCandidate(
         id=_pair_id(pair.memory_id_a, pair.memory_id_b),
         a_id=pair.memory_id_a,
@@ -253,8 +708,6 @@ def find_conflict_candidates(
     """Run the dedup scan and lift its conflict-shaped skips into
     candidates. Pure detection — no queue I/O; `scan_conflicts` is the
     persistence wrapper."""
-    from .consolidate import _find_dedup_with_skips
-
     _, skipped, _method = _find_dedup_with_skips(memories, threshold=threshold)
     now_iso = utcnow().isoformat()
     out: list[ConflictCandidate] = []
@@ -270,61 +723,19 @@ def find_conflict_candidates(
     return out
 
 
-@dataclass
 class ConflictQueue:
-    """The on-disk conflict queue rooted at a memory store directory.
-    Cheap to construct (no I/O until a method is called); every
-    mutation is a read-modify-write under a per-file ``flock``."""
+    """The contradiction pairs awaiting a verdict, as rows of the store's
+    `conflicts` table. Every change is one mutation row of the log, so a
+    verdict is attested like any other write. Concurrent verdicts
+    serialise on the store's write transaction: the loser re-reads the
+    row inside its transaction, finds it resolved, and mutates nothing."""
 
-    root: Path
-
-    def __post_init__(self) -> None:
-        self.root = Path(self.root).expanduser().resolve()
-
-    @property
-    def path(self) -> Path:
-        return self.root / CONFLICTS_FILENAME
+    def __init__(self, store: Store) -> None:
+        self.store = store
 
     def load(self) -> list[ConflictCandidate]:
-        """All rows, file order. Malformed lines are skipped defensively
-        (same discipline as `ProposalQueue.load`).
-
-        "Skipped" UNDERSTATES it, and the reader should know before
-        relying on this: every mutation path is a read-modify-write —
-        `upsert_scan` and `resolve` both call this and then hand
-        the result to `_write_all_locked`, which rewrites the whole file
-        from the survivors. So a line this cannot parse is not skipped
-        for the duration of one read, it is DELETED on the next write.
-
-        Left as-is deliberately rather than fixed in passing. Repairing
-        it means `load` reporting its own lossiness so a writer can
-        refuse or quarantine, which is a signature change here and in
-        `ProposalQueue`, and the damage does not justify that on a
-        release window: this file is only ever written by
-        `atomic_write_bytes` under `flock_excl`, so a torn line needs
-        outside editing or genuine corruption to appear, and a lost
-        PENDING row is re-derived by the next full scan. What does not
-        come back is a recorded verdict — `confirmed` is terminal and
-        `dismissed` resurrects only on a body change — so the user is
-        silently re-asked a question they already answered.
-        """
-        if not self.path.exists():
-            return []
-        try:
-            text = self.path.read_text(encoding="utf-8")
-        except OSError:
-            return []
         out: list[ConflictCandidate] = []
-        for line in text.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                raw = json.loads(line)
-            except (ValueError, TypeError):
-                continue
-            if not isinstance(raw, dict) or "id" not in raw:
-                continue
+        for raw in self.store.list_conflicts():
             try:
                 out.append(ConflictCandidate.from_dict(raw))
             except (KeyError, TypeError, ValueError):
@@ -334,69 +745,32 @@ class ConflictQueue:
     def pending(self) -> list[ConflictCandidate]:
         return [c for c in self.load() if c.status == "pending"]
 
-    def file_pair(self, cand: ConflictCandidate) -> str:
-        """Queue one pair found at write time, without collecting.
-
-        The write path detects a disagreement between the body it just
-        persisted and one stored claim (`supersession.detect_supersession`,
-        with no change cue to say which side is current) and files it
-        here, so `memory_conflicts` lists it the way a scan's candidates
-        are listed and the model rules on it the same way. A single-pair
-        upsert cannot rule on liveness — that takes the full snapshot
-        `upsert_scan` demands — so it drops nothing, and it never
-        overwrites a verdict: an existing row keeps its status, and the
-        return value says which. A new pair lands `pending`, which is
-        the only case a freshly minted id can produce.
-        """
-        with flock_excl(self.path):
-            current = self.load()
-            for row in current:
+    def file_pair(self, cand: ConflictCandidate, *, session: str | None = None) -> str:
+        """Queue one pair the write path detected. Returns the row's
+        status: the new row's `pending`, or the existing row's when the
+        pair is already queued or judged, in which case nothing changes."""
+        with self.store.batch():
+            for row in self.load():
                 if row.id == cand.id:
                     return row.status
-            self._write_all_locked(current + [cand])
+            self.store.put_conflict(cand.to_dict(), session=session)
             return cand.status
 
     def upsert_scan(
         self,
         fresh: list[ConflictCandidate],
         memories_by_id: dict[str, Memory],
+        *,
+        session: str | None = None,
     ) -> dict[str, int]:
-        """Merge one FULL-CORPUS scan's candidates into the queue.
-
-        `memories_by_id` must cover the whole active set — it doubles as
-        the liveness authority: rows with a non-active member are
-        dropped (a conflict with a tombstoned side is moot). Callers
-        scanning a subset must not call this.
-
-        Per row: new pair → pending; pending → refresh summaries and
-        similarity (bodies may have drifted since detection); dismissed
-        → resurrect to pending ONLY when a member's body no longer
-        matches the fingerprint the verdict recorded (see
-        `_judged_content_changed`); confirmed → terminal, left alone.
-
-        Collection is skipped wholesale when `memories_by_id` looks
-        incomplete against the store root — see `_snapshot_is_complete`
-        and the module docstring. Returns integer counters for
-        telemetry: `{added, resurrected, refreshed, dropped, gc_deferred,
-        pending_rows_on_disk}`, where `gc_deferred` is 1 on exactly the
-        pass that declined to collect.
-
-        `pending_rows_on_disk` is the raw file count — the `pending` rows
-        this merge left in the queue, the same quantity
-        `conflicts_pending_count` reads back — and deliberately NOT the
-        judgeable count the model-facing surfaces report. The two part
-        company exactly on a deferred pass, which by definition leaves
-        rows with a dead member sitting in the file while
-        `split_judgeable` keeps them out of `memory_conflicts`'s
-        `pending_total` and `memory_scope_overview`'s
-        `curation_pending.conflicts`. The name carries the distinction
-        because one `memory_conflicts` response embeds these counters
-        beside that `pending_total`, and two keys sharing a name while
-        carrying different numbers erodes the count worse than either
-        number alone.
-        """
-        with flock_excl(self.path):
+        """Fold a fresh scan into the queue: new pairs are added, pending
+        rows refreshed, dismissed rows resurrected when a judged body
+        changed since the verdict, and rows whose member is no longer
+        active collected, provided the caller's snapshot covers the
+        whole active set (`gc_deferred` says when it did not)."""
+        with self.store.batch():
             current = self.load()
+            before = {c.id: c.to_dict() for c in current}
             by_id = {c.id: c for c in current}
             added = resurrected = refreshed = 0
             for cand in fresh:
@@ -424,8 +798,14 @@ class ConflictQueue:
                     existing.similarity = cand.similarity
                     existing.created = cand.created
                     resurrected += 1
-                # confirmed: terminal — the contradicts link is the artifact.
-            collectable = self._snapshot_is_complete(memories_by_id)
+            collectable = len(memories_by_id) >= self.store.count_memories()
+            if not collectable:
+                log.warning(
+                    "conflict-queue GC deferred: the caller's snapshot has %d "
+                    "memories but the store holds %d",
+                    len(memories_by_id),
+                    self.store.count_memories(),
+                )
             kept = [
                 c
                 for c in by_id.values()
@@ -433,7 +813,7 @@ class ConflictQueue:
                 or (c.a_id in memories_by_id and c.b_id in memories_by_id)
             ]
             dropped = len(by_id) - len(kept)
-            self._write_all_locked(kept)
+            self._replace_all(kept, before, session=session)
             return {
                 "added": added,
                 "resurrected": resurrected,
@@ -443,97 +823,13 @@ class ConflictQueue:
                 "pending_rows_on_disk": sum(1 for c in kept if c.status == "pending"),
             }
 
-    def _snapshot_is_complete(self, memories_by_id: dict[str, Memory]) -> bool:
-        """Is the caller's snapshot fit to rule that a member DIED?
-
-        True when it holds at least as many memories as the store root
-        holds active `.md` files. GC is permanent and irreversible — the
-        dropped row carries away a settled verdict's status, timestamp,
-        note and body hashes — so it may only run on evidence that
-        distinguishes "the file is gone" from "the file did not parse".
-        `Store.load_all` cannot: it skips per-file failures on
-        `PARSE_SKIP_EXCEPTIONS`, which is `(Exception,)`, so one
-        truncated write or one bad `chmod` used to be enough to erase an
-        arbitration decision the model can never re-derive.
-
-        A bare file count (`store.count_active_memory_files` — the same
-        regular-file/non-symlink/`.md` filter `Store._iter_active_paths`
-        walks, borrowed rather than re-spelt so the two cannot drift)
-        answers that without re-parsing anything: a load that skipped a
-        file necessarily returns fewer memories than there are files.
-
-        The comparison is `>=`, not `==`, and it is deliberately
-        one-sided — it detects an under-count, never an over-count:
-
-        - A memory WRITTEN between the caller's load and this call makes
-          the count exceed the snapshot. Benign: GC waits for the next
-          pass, and every applying curation pass runs one.
-        - A memory TOMBSTONED in that window leaves the snapshot larger
-          than the count. Also benign — the stale member is still in the
-          map, so its rows are kept, and the next pass collects them.
-        - Two active files carrying the SAME id collapse to one entry in
-          the caller's dict, and a stray non-memory `.md` dropped into
-          the root parses as nothing. Both read as an under-count and
-          defer GC until they are cleaned up; both are corruption the
-          store already flags loudly (the S4 divergence warning at
-          construction, `doctor`'s `index_health`). Dead rows lingering
-          in the queue file cost nothing model-visible — every reporting
-          surface filters them through `split_judgeable` — so deferring
-          is the cheap side of this trade in a way that dropping a
-          verdict is not.
-
-        An unlistable root is treated as incomplete for the same reason:
-        no evidence, no collection.
-        """
-        try:
-            on_disk = count_active_memory_files(self.root)
-        except OSError:
-            log.warning(
-                "conflict-queue GC deferred: cannot list %s", self.root, exc_info=True
-            )
-            return False
-        if len(memories_by_id) < on_disk:
-            log.warning(
-                "conflict-queue GC deferred: caller's snapshot has %d memories but "
-                "%s holds %d active .md files — an unreadable file must not look "
-                "like a dead conflict member",
-                len(memories_by_id),
-                self.root,
-                on_disk,
-            )
-            return False
-        return True
-
     @staticmethod
     def _judged_content_changed(
         cand: ConflictCandidate, memories_by_id: dict[str, Memory]
     ) -> bool:
-        """Has either member's body stopped being the text the verdict
-        ruled on? The resurrect predicate for a dismissed row.
-
-        Per side, keyed on the `_body_hash` the verdict recorded — NOT on
-        `updated`. The arbitration surface itself rewrites memories (the
-        confirm path adds a `contradicts` link, the dismiss path strips
-        one), so `updated` moves for reasons that are not claim edits and
-        that belong to a DIFFERENT pair: any dismissed pair sharing a
-        member with the pair just arbitrated used to resurrect on the
-        next scan. A body hash is blind to link edits, which is the whole
-        point.
-
-        A side whose row carries no hash (dismissed before the field
-        existed, or its member was already gone at verdict time) falls
-        back to the old `updated > verdict_ts` rule — including its
-        "unprovable verdict cannot stay sticky" escape when
-        `verdict_ts` will not parse. Such a row converges: resurrecting
-        it once re-queues it, and the next dismissal records hashes.
-
-        A member absent from the snapshot is skipped rather than treated
-        as changed. Callers only reach this for a pair in `fresh`, whose
-        members came from the very list `memories_by_id` was built from,
-        so absence here means a caller broke the full-corpus contract —
-        and guessing "changed" would flip a settled verdict on no
-        evidence at all.
-        """
+        """Did either judged body change since the verdict? Per side the
+        stored body hash decides; a side without one falls back to
+        `updated > verdict_ts`."""
         verdict = parse_event_ts(cand.verdict_ts)
         for mid, judged in (
             (cand.a_id, cand.verdict_hash_a),
@@ -557,50 +853,25 @@ class ConflictQueue:
         note: str | None = None,
         member_bodies: dict[str, str] | None = None,
         before_stamp: Callable[[], None] | None = None,
+        session: str | None = None,
     ) -> ConflictCandidate | None:
-        """Stamp a verdict on a PENDING candidate. Returns the updated
-        row, or None when no pending row has that id.
-
-        `member_bodies` maps memory id → body text as the model judged
-        it; the two sides of this pair are fingerprinted onto the row and
-        become what the resurrect rule compares against. A caller that
-        omits it (or omits one side — a member already gone leaves no
-        body to hash) leaves that side hashless and on the legacy
-        `updated > verdict_ts` fallback, so pass it whenever the bodies
-        are in hand.
-
-        `before_stamp` runs the caller's side effects (the `contradicts`
-        link write or clear) INSIDE the queue flock, after the pending
-        re-check and before the stamp. The three orderings that fall out
-        are each load-bearing:
-
-        - re-check before side effects: two concurrent opposite verdicts
-          serialise on the flock, and the loser's re-check finds the row
-          already resolved — so it mutates NOTHING. The pre-hook shape
-          re-checked only at stamp time, after the loser's link mutation
-          had already landed, leaving the queue and the link layer
-          permanently disagreeing (a refusal that fires after the
-          mutation is not a refusal).
-        - side effects before the stamp: a hook that raises (e.g. a
-          concurrent memory edit tripping W2) leaves the row PENDING and
-          the file unwritten, so the caller can retry the whole verdict.
-        - stamp last also keeps `verdict_ts` after the link's `updated`
-          bump for hashless legacy rows on the timestamp fallback.
-
-        Lock order: this is the one site that holds the queue flock
-        while taking per-memory file locks (inside the hook's
-        `Store.update`). Nothing takes them in the other order — scan
-        reads memories lock-free before its queue write — so the
-        nesting cannot invert."""
+        """Stamp a verdict on a pending row: `confirmed` or `dismissed`,
+        with the bodies as judged fingerprinted onto the row. Returns the
+        stamped row, or None when no pending row has that id.
+        `before_stamp` runs the caller's side effects inside the same
+        transaction, after the pending re-check and before the stamp."""
         if status not in ("confirmed", "dismissed"):
             raise ValueError(
                 f"verdict status must be 'confirmed' or 'dismissed', got {status!r}"
             )
         bodies = member_bodies or {}
-        with flock_excl(self.path):
-            current = self.load()
+        with self.store.batch():
             hit = next(
-                (c for c in current if c.id == candidate_id and c.status == "pending"),
+                (
+                    c
+                    for c in self.load()
+                    if c.id == candidate_id and c.status == "pending"
+                ),
                 None,
             )
             if hit is None:
@@ -613,28 +884,39 @@ class ConflictQueue:
             body_a, body_b = bodies.get(hit.a_id), bodies.get(hit.b_id)
             hit.verdict_hash_a = None if body_a is None else _body_hash(body_a)
             hit.verdict_hash_b = None if body_b is None else _body_hash(body_b)
-            self._write_all_locked(current)
+            self.store.put_conflict(hit.to_dict(), session=session)
             return hit
 
-    def _write_all_locked(self, rows: list[ConflictCandidate]) -> None:
-        body = "".join(
-            json.dumps(c.to_dict(), separators=(",", ":")) + "\n" for c in rows
-        )
-        atomic_write_bytes(self.path, body.encode("utf-8"), mode_before_rename=0o600)
+    def _replace_all(
+        self,
+        rows: list[ConflictCandidate],
+        before: dict[str, dict[str, Any]],
+        *,
+        session: str | None,
+    ) -> None:
+        """Make the table hold exactly `rows`, writing only what changed
+        against `before` so an unchanged queue appends no log row."""
+        keep = {c.id: c.to_dict() for c in rows}
+        for conflict_id in before:
+            if conflict_id not in keep:
+                self.store.delete_conflict(conflict_id, session=session)
+        for conflict_id, record in keep.items():
+            if before.get(conflict_id) != record:
+                self.store.put_conflict(record, session=session)
 
 
 def scan_conflicts(
-    root: Path,
+    store: Store,
     memories: list[Memory],
     *,
     threshold: float | None = None,
+    session: str | None = None,
 ) -> dict[str, int]:
-    """Detect over the (full) active set and merge into the queue.
-    The one-call orchestration both producers use — the
-    `memory_conflicts(scan=True)` handler and the consolidate pass."""
+    """Detect the contradiction pairs in `memories` and fold them into
+    the store's queue; returns the upsert counters."""
     fresh = find_conflict_candidates(memories, threshold=threshold)
-    queue = ConflictQueue(root)
-    return queue.upsert_scan(fresh, {m.id: m for m in memories})
+    queue = ConflictQueue(store)
+    return queue.upsert_scan(fresh, {m.id: m for m in memories}, session=session)
 
 
 def split_judgeable(
@@ -683,28 +965,15 @@ def split_judgeable(
     return judgeable, omitted
 
 
-def conflicts_pending_count(root: Path) -> int:
-    """Raw count of rows sitting in `pending` status on disk. One
-    small-file read; 0 when the queue has never been created.
-
-    Deliberately NOT what the model-facing surfaces report: a row whose
-    member has since been removed is still `pending` in the file but is
-    not judgeable work, so both `memory_conflicts`'s `pending_total`
-    and `memory_scope_overview`'s `curation_pending.conflicts` filter it
-    out through `split_judgeable`. This counts the file — the probe for
-    "has a scan collected that row yet?", not for "is there arbitration
-    work?". `upsert_scan` reports the same quantity under the name that
-    says so, `pending_rows_on_disk`.
-    """
+def conflicts_pending_count(store: Store) -> int:
     try:
-        return len(ConflictQueue(root).pending())
-    except Exception:  # noqa: BLE001 — a corrupt queue must not break health
-        log.warning("conflict queue unreadable under %s", root, exc_info=True)
+        return len(ConflictQueue(store).pending())
+    except Exception:  # noqa: BLE001 - a corrupt queue must not break health
+        log.warning("conflict queue unreadable in %s", store.path, exc_info=True)
         return 0
 
 
 __all__ = [
-    "CONFLICTS_FILENAME",
     "ConflictCandidate",
     "ConflictQueue",
     "conflicts_pending_count",

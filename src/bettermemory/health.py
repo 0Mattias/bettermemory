@@ -46,8 +46,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from .durability import canonical_marker
-from .episodes import EpisodeStore, EpisodeVolume
-from .events import _event_id_list, iter_all_events
+from .events import _event_id_list
+from .store import EpisodeVolume
 from .models import Category, Memory, first_summary_line
 from .origin import (
     Origin,
@@ -354,8 +354,8 @@ _HOOKLESS_REASON = (
     "settlement left is the in-process auto-commit, which cannot settle "
     "a retrieval the session never returns to, so zero applied and zero "
     "explicit-applied counts do not distinguish an unhelpful memory "
-    "from an unwired hook. Run "
-    "`bettermemory doctor` to wire the Stop hook, then re-check."
+    "from an unwired hook. Wire the Stop hook (the plugin's "
+    "hooks.json carries the shape), then re-check."
 )
 
 
@@ -2664,10 +2664,9 @@ def _compute_recommendations(report: HealthReport) -> list[Recommendation]:
                     "they don't shape replies."
                 ),
                 action=(
-                    "memory_remove(id, reason=...) on the unhelpful ones, "
-                    "or `bettermemory consolidate --acknowledge-debt` to "
-                    "clear the signal without touching bodies if the "
-                    "memories are still valuable."
+                    "memory_remove(id, reason=...) on the unhelpful ones; "
+                    "memory_record_use(applied) on the ones that are still "
+                    "valuable clears the signal without touching bodies."
                 ),
                 count=len(report.dead_weight),
                 memory_ids=[s.id for s in report.dead_weight[:_RECOMMENDATION_ROW_CAP]],
@@ -2708,9 +2707,9 @@ def _compute_recommendations(report: HealthReport) -> list[Recommendation]:
                     "the model deliberately reaching for them."
                 ),
                 action=(
-                    "`bettermemory consolidate --acknowledge-debt` to clear "
-                    "the signal once you're sure the memories are useful; "
-                    "memory_remove on the ones that aren't."
+                    "memory_record_use(applied) on the ones you are sure are "
+                    "useful clears the signal; memory_remove on the ones "
+                    "that aren't."
                 ),
                 count=report.cold_endorsement_memories.total,
                 memory_ids=[
@@ -2765,9 +2764,9 @@ def _compute_recommendations(report: HealthReport) -> list[Recommendation]:
                 action=(
                     "memory_show(id) each one. To keep a record you "
                     "recognise, memory_remove(id, reason=...) then "
-                    "memory_restore(id): the restore re-admits it through "
-                    "the store and it reads local from then on. Remove the "
-                    "rest."
+                    'memory_admin(action="restore", id=...): the restore '
+                    "re-admits it through the store and it reads local from "
+                    "then on. Remove the rest."
                 ),
                 count=report.provenance.unaccounted_total,
                 memory_ids=[
@@ -2789,8 +2788,9 @@ def _compute_recommendations(report: HealthReport) -> list[Recommendation]:
                     "typos of more common scopes."
                 ),
                 action=(
-                    "memory_rename_scope(old, new) to fold each singleton "
-                    "into the intended scope name."
+                    'memory_admin(action="rename_scope", old_scope=..., '
+                    "new_scope=...) to fold each singleton into the intended "
+                    "scope name."
                 ),
                 count=len(report.rare_scopes),
                 memory_ids=[],
@@ -3821,7 +3821,7 @@ def curation_counts(
     since: datetime | None = None,
     tombstoned_ids: set[str] | None = None,
     hook_telemetry_events: int | None = None,
-    index_root: Path | None = None,
+    store: Any | None = None,
 ) -> dict[str, int]:
     """The counts half of `curation_counts_with_coverage`, for callers
     that read the rollup as pressure and treat an unmeasured leg's 0 as
@@ -3840,7 +3840,7 @@ def curation_counts(
         since=since,
         tombstoned_ids=tombstoned_ids,
         hook_telemetry_events=hook_telemetry_events,
-        index_root=index_root,
+        store=store,
     )[0]
 
 
@@ -3857,7 +3857,7 @@ def curation_counts_with_coverage(
     since: datetime | None = None,
     tombstoned_ids: set[str] | None = None,
     hook_telemetry_events: int | None = None,
-    index_root: Path | None = None,
+    store: Any | None = None,
 ) -> tuple[dict[str, int], list[str]]:
     """Cheap summary of curation pressure, and the legs it could not measure.
 
@@ -4308,20 +4308,16 @@ def curation_counts_with_coverage(
     # only the ones created after the boundary (`mem_list` is already
     # the post-`since` slice, so membership in it is the filter).
     unaccounted = 0
-    if index_root is not None:
-        from . import index as _index
-
-        unaccounted_ids = _index.provenance_rows(index_root, label="unaccounted")
-        if unaccounted_ids is None:
-            # `provenance_rows` returns None, deliberately, for "could
-            # not look" — absent or unusable index — and `[]` for
-            # "looked and found none". A bare truthiness test collapsed
-            # them into the same 0. With no memories in scope there is
-            # nothing the index could have labelled, so the leg is
-            # trivially measured; otherwise it was not asked.
-            if mem_list:
-                unmeasured.append("unaccounted")
-        elif unaccounted_ids:
+    if store is not None and not store.has_key:
+        # Without the key no pointer can be verified, so the store labels
+        # nothing; `provenance_debt` answers None for the same state. A 0
+        # here is the leg unasked, a finding only when there were rows to
+        # classify.
+        if mem_list:
+            unmeasured.append("unaccounted")
+    elif store is not None:
+        unaccounted_ids = store.unaccounted_ids()
+        if unaccounted_ids:
             if since_aware is None:
                 unaccounted = len(unaccounted_ids)
             else:
@@ -4393,19 +4389,16 @@ _parse_event_ts = parse_event_ts
 _ensure_utc = ensure_utc
 
 
-def provenance_debt(root: Path, memories: Iterable[Memory]) -> ProvenanceDebt | None:
-    """The provenance bucket for `root`'s index, joined against `memories`.
-
-    Reads the index's per-label counts and its `unaccounted` ids, and
-    fills the rows from the memories the caller already loaded (no
-    second parse). None when the index is absent or unusable, which the
-    report carries as null rather than as an empty bucket."""
-    from . import index as _index
-
-    counts = _index.provenance_counts(root)
-    if counts is None:
+def provenance_debt(store: Any, memories: Iterable[Memory]) -> ProvenanceDebt | None:
+    """The provenance bucket of the store, joined against `memories`.
+    Reads the per-label counts and the ids whose pointer into the log
+    fails, and fills the rows from the memories the caller already
+    loaded. None when the store cannot verify (no key on this machine),
+    which the report carries as null rather than as an empty bucket."""
+    if not store.has_key:
         return None
-    ids = _index.provenance_rows(root, label="unaccounted") or []
+    counts = store.provenance_counts()
+    ids = store.unaccounted_ids()
     by_id = {m.id: m for m in memories}
     rows: list[ProvenanceRow] = []
     for memory_id in ids:
@@ -4425,8 +4418,8 @@ def provenance_debt(root: Path, memories: Iterable[Memory]) -> ProvenanceDebt | 
     return ProvenanceDebt(counts=counts, unaccounted_total=len(ids), unaccounted=rows)
 
 
-def report_for_directory(
-    root: Path,
+def report_for_store(
+    store: Any,
     *,
     window_days: int = 30,
     heavily_used_top_k: int = 10,
@@ -4438,45 +4431,31 @@ def report_for_directory(
     now: datetime | None = None,
     typo_scope_exceptions: Iterable[str] | None = None,
 ) -> HealthReport:
-    """Convenience: load memories from `root`, walk the event log, return
-    the report. Used by both the MCP tool and the CLI subcommand.
+    """Load the store's memories, walk its log, return the report. The
+    entry point both production surfaces use: `memory_admin(health)` and
+    `bettermemory health`.
 
     `typo_scope_exceptions` suppresses `fix_typo_scopes` for scopes the
-    owner has confirmed are not typos. Left None it reads
-    `[scopes] typo_exceptions` from the loaded config, so both production
-    surfaces honour the setting without either having to remember to pass
-    it; a caller that wants the unfiltered view passes `[]` explicitly.
+    owner confirmed are not typos; left None it reads `[scopes]
+    typo_exceptions` from the loaded config. `caller_origin`, if given,
+    drives the cwd-aware `commit_drift_debt` rollup.
 
-    `caller_origin`, if provided, drives the cwd-aware `commit_drift_debt`
-    rollup. Production callers should pass `origin.capture()`'s result;
-    leaving it None skips the rollup, which is appropriate for offline
-    tooling that doesn't have a meaningful cwd to anchor against.
-
-    This is the entry point BOTH production surfaces use — the
-    `memory_health` MCP tool (`handlers/health.py`) and `bettermemory
-    health` (`cli/health_cmd.py`) — which is why the dead-weight honesty
-    gate is armed here rather than in `compute_health`'s default: every
-    caller looking at a REAL store goes through this function, and every
-    caller passing a synthetic event list does not."""
-    from .store import Store
-
+    The dead-weight honesty gate is armed here rather than in
+    `compute_health`'s default: every caller looking at a real store goes
+    through this function, and a caller passing a synthetic event list
+    does not."""
     if typo_scope_exceptions is None:
-        # Lazy, and tolerant: a store is still inspectable when the
-        # config file is unreadable, so a load failure degrades to "no
-        # exemptions" rather than taking the health report down.
         try:
             from .config import load_config
 
             typo_scope_exceptions = load_config().scopes.typo_exceptions
-        except Exception:  # noqa: BLE001 — a bad config must not block health.
+        except Exception:  # noqa: BLE001 - a bad config must not block health
             typo_scope_exceptions = []
-
-    store = Store(root)
     tombstoned_ids = {t.id for t in store.load_tombstones()}
     memories = store.load_all()
     report = compute_health(
         memories,
-        iter_all_events(root),
+        store.iter_events(),
         window_days=window_days,
         heavily_used_top_k=heavily_used_top_k,
         heavily_used_min_applied=heavily_used_min_applied,
@@ -4486,58 +4465,12 @@ def report_for_directory(
         caller_origin=caller_origin,
         now=now,
         tombstoned_ids=tombstoned_ids,
-        # `0`, not a pre-measured count: `iter_all_events` is a
-        # generator we hand straight in, and pre-counting would mean a
-        # second full walk of the log for two dict reads per event.
-        # Zero arms the gate and delegates the measurement to the walk
-        # `compute_health` is about to do anyway — see its docstring.
         hook_telemetry_events=0,
         typo_scope_exceptions=typo_scope_exceptions,
     )
-    # Post-assigned for the reason the episode gauge below is: the
-    # label lives in the index, and `compute_health` never sees a root.
-    # Recommendations are recomputed so `review_unaccounted` can fire
-    # on what the bucket found.
-    report.provenance = provenance_debt(root, memories)
+    report.provenance = provenance_debt(store, memories)
     report.recommendations = _compute_recommendations(report)
-    # Post-assigned rather than threaded through `compute_health`, for
-    # the same reason the honesty gate is armed here: `compute_health`
-    # takes a memory list and an event iterable and NEVER sees `root`, so
-    # there is no way for it to reach the episode subtree. Wiring the
-    # gauge at the one entry point that has a root — the one both
-    # production surfaces use — is what keeps `episode_volume` from
-    # shipping as a permanent null while every hand-built unit fixture
-    # passes.
-    #
-    # Stat-only (`EpisodeStore.volume` parses no frontmatter) and
-    # deliberately confined to this function: `memory_health` and
-    # `bettermemory health` are curation-pass surfaces, not per-turn
-    # ones. `memory_scope_overview` — the session-start hot path — does
-    # not call this function and must not grow an episode walk.
-    #
-    # Guarded because the tiers fail separately: this is the one line in
-    # the function that touches `<root>/episodes`, and it reaches it
-    # through the bare `iterdir` in `EpisodeStore.iter_session_ids`. A
-    # regular FILE where that directory belongs (a bad export, a sync
-    # conflict copy) raises NotADirectoryError; a directory this process
-    # cannot read raises PermissionError. Both are OSError, both arrive
-    # after every bucket above is already computed, and not one of those
-    # buckets reads an episode — so letting the raise through would trade
-    # the whole memory-health surface for its one episode gauge.
-    #
-    # Degrades to None rather than a zeroed `EpisodeVolume`, because an
-    # unwalkable subtree is not an empty one and the readers act on that
-    # distinction: on None `render_text` omits its "Episodes:" line and
-    # `to_dict` carries a null, where zeroes would have both state an
-    # empty subtree over episodes nobody could count. None already means
-    # "no reading" for a `compute_health` caller, which never has a root
-    # to measure — this widens that case to "no root, or a root whose
-    # episode subtree could not be walked" rather than inventing a second
-    # null meaning.
-    try:
-        report.episode_volume = EpisodeStore(root).volume()
-    except OSError:
-        report.episode_volume = None
+    report.episode_volume = store.episode_volume()
     return report
 
 
@@ -4561,5 +4494,5 @@ __all__ = [
     "is_hook_telemetry_event",
     "render_text",
     "render_json",
-    "report_for_directory",
+    "report_for_store",
 ]

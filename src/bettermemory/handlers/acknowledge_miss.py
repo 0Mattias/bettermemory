@@ -29,9 +29,9 @@ gate.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
-from ..events import iter_all_events
 from ._shared import Context, _advance_turn
 
 if TYPE_CHECKING:
@@ -143,7 +143,7 @@ async def memory_acknowledge_miss(
     found_search_miss = False
     already_acked = False
     wrong_kind: str | None = None
-    for ev in iter_all_events(deps.store.root):
+    for ev in deps.store.iter_events():
         kind = ev.get("kind")
         ev_event_id = ev.get("event_id")
         if not isinstance(ev_event_id, str) or ev_event_id != target_event_id:
@@ -194,14 +194,12 @@ async def memory_acknowledge_miss(
             "status": "not_found",
             "event_id": target_event_id,
             "hint": (
-                "No search_miss event with this id anywhere in the event "
-                "log — the lookup covers rotated archives as well as the "
-                "active log. Either the id is mistyped or stale (check "
-                "memory_health.recent_silent_misses for live ids) or the "
-                "event predates per-event ids: search_miss events written "
-                "before T4 lack an event_id field and cannot be "
-                "acknowledged individually — use `bettermemory consolidate "
-                "--acknowledge-misses-before <ts>` for those."
+                "No search_miss event with this id anywhere in the log. "
+                "Either the id is mistyped or stale (check the health "
+                "report's recent_silent_misses for live ids) or the event "
+                "predates per-event ids and cannot be acknowledged "
+                'individually — use memory_admin(action="acknowledge_miss", '
+                "before=<ts>) for those."
             ),
         }
 
@@ -219,4 +217,75 @@ async def memory_acknowledge_miss(
     }
 
 
-__all__ = ["DESC_MEMORY_ACKNOWLEDGE_MISS", "memory_acknowledge_miss"]
+# How far ahead of now a bulk cutoff may sit. A cutoff in the future would
+# silence misses that have not happened yet; a day of slack absorbs clock
+# skew between the caller and this host.
+_CUTOFF_FUTURE_SLACK = timedelta(days=1)
+
+
+def canonical_cutoff(value: str) -> str:
+    """Validate a bulk-acknowledgement cutoff and return it as the
+    recorder's UTC spelling. The offset must be explicit (a trailing Z or
+    a numeric offset): a naive local time from a caller in another zone
+    would land the cutoff hours off and silence the wrong misses. Raises
+    ValueError with the reason."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("`before` must be an ISO-8601 timestamp")
+    raw = value.strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError as exc:
+        raise ValueError(f"`before` is not ISO-8601: {value!r}") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(
+            f"`before` needs an explicit UTC offset or a trailing Z: {value!r}"
+        )
+    now = datetime.now(timezone.utc)
+    if parsed > now + _CUTOFF_FUTURE_SLACK:
+        raise ValueError(f"`before` lies in the future: {value!r}")
+    return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+async def acknowledge_misses_before(
+    deps: ToolHandlers,
+    before: str,
+    *,
+    reason: str | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Acknowledge every `search_miss` earlier than `before` at once.
+
+    Writes one additive `silent_miss_cutoff` event; the health and eval
+    rollups honour the latest cutoff seen and drop `turn_audited` and
+    `search_miss` events stamped earlier than it. Nothing is removed from
+    the log. Refused when telemetry is off, because the cutoff is itself
+    a telemetry event and a disabled recorder would drop it silently.
+    """
+    state = deps.sessions.for_request(ctx)
+    _advance_turn(state, deps.recorder)
+    cutoff = canonical_cutoff(before)
+    if not deps.recorder.enabled:
+        raise ValueError(
+            "telemetry is disabled, so the cutoff event would be dropped; "
+            "enable [telemetry] before acknowledging misses in bulk"
+        )
+    note = (reason or "").strip() or None
+    if note is not None and len(note) > _MAX_REASON_LENGTH:
+        raise ValueError(f"reason is over the {_MAX_REASON_LENGTH}-char cap")
+    deps.recorder.record(
+        "silent_miss_cutoff",
+        cutoff_ts=cutoff,
+        note=note,
+        session_id=state.session_id,
+    )
+    return {"status": "cutoff_recorded", "cutoff_ts": cutoff, "reason": note}
+
+
+__all__ = [
+    "DESC_MEMORY_ACKNOWLEDGE_MISS",
+    "acknowledge_misses_before",
+    "canonical_cutoff",
+    "memory_acknowledge_miss",
+]

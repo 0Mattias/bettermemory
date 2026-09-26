@@ -18,7 +18,7 @@ import sys
 from typing import Any
 
 from .._response import isoformat
-from ..episodes import DEFAULT_EPISODE_TTL_DAYS, EpisodeStore
+from ..store import DEFAULT_EPISODE_TTL_DAYS
 from ._common import cli_context
 
 
@@ -112,15 +112,15 @@ def _cli_episodes_list(*, session_id: str | None, json_out: bool) -> None:
     import json as _json
 
     ctx = cli_context()
-    ep_store = EpisodeStore(ctx.directory)
+    ep_store = ctx.store
 
     rows: list[dict[str, Any]] = []
     if session_id is not None:
-        for ep in ep_store.list_by_session(session_id):
+        for ep in ep_store.episodes_by_session(session_id):
             rows.append(_episode_row(ep))
     else:
-        for sid in sorted(ep_store.iter_session_ids()):
-            for ep in ep_store.list_by_session(sid):
+        for sid in sorted(ep_store.episode_session_ids()):
+            for ep in ep_store.episodes_by_session(sid):
                 rows.append(_episode_row(ep))
 
     if json_out:
@@ -150,7 +150,7 @@ def _cli_episodes_prune(*, ttl_days: int, dry_run: bool, json_out: bool) -> None
     import json as _json
 
     ctx = cli_context()
-    ep_store = EpisodeStore(ctx.directory)
+    ep_store = ctx.store
 
     if dry_run:
         # `prunable_session_ids` is the shared predicate — read-only (it
@@ -167,7 +167,7 @@ def _cli_episodes_prune(*, ttl_days: int, dry_run: bool, json_out: bool) -> None
         # would list every session while a real prune deletes nothing,
         # i.e. the dry-run would lie), and a directory holding no regular
         # file is collectable.
-        candidates = ep_store.prunable_session_ids(ttl_days=ttl_days)
+        candidates = ep_store.prunable_episode_sessions(ttl_days=ttl_days)
 
         if json_out:
             sys.stdout.write(
@@ -190,7 +190,7 @@ def _cli_episodes_prune(*, ttl_days: int, dry_run: bool, json_out: bool) -> None
         sys.stdout.write("(Dry run — re-run without --dry-run to apply.)\n")
         return
 
-    pruned = ep_store.prune_old_sessions(ttl_days=ttl_days)
+    pruned = ep_store.prune_episode_sessions(ttl_days=ttl_days)
     if json_out:
         sys.stdout.write(
             _json.dumps({"deleted": pruned, "ttl_days": ttl_days}, indent=2) + "\n"

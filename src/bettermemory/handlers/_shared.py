@@ -2,7 +2,7 @@
 
 The per-tool modules in this package own their happy-path logic; the
 helpers here own the bookkeeping every handler runs (turn counter
-advance, pending-write TTL drain, use-token attribution scan,
+advance, use-token attribution scan,
 use-token expiry drain, payload validation, event log timestamp
 parsing).
 
@@ -25,7 +25,7 @@ from typing import Any, TypeAlias
 from mcp.server.mcpserver import Context as _SDKContext
 
 from ..claims import check_claim, claim_reason_is_indeterminate, parse_claims
-from ..events import Recorder, iter_events_backward
+from ..events import Recorder
 from ..models import Category, Confidence, Source, validate_scope
 from ..session import PendingUseToken, SessionState
 from ..time_utils import parse_event_ts
@@ -354,39 +354,6 @@ def _validate_declared_claims(
     return [claim.render() for claim in parsed]
 
 
-def _drain_pending_expired(state: SessionState, recorder: Recorder) -> None:
-    """Emit one `pending_expired` event per pending write that hit its
-    TTL since the last drain.
-
-    Pre-2.6.8 expiry was a silent map deletion — a user saying "yes,
-    save it" 61 minutes after the prompt would see `memory_write_confirm`
-    fail with "no pending write" and have no way to know it had been
-    evicted. The recorder log now carries the eviction so the eval
-    surface can render a curation cue, and the confirm handler can
-    distinguish "expired" from "never existed" via
-    `state.was_recently_expired`.
-    """
-    drained = state.pop_recently_expired()
-    if not drained:
-        return
-    for pending in drained:
-        # `category` is the headline payload field, surfaced so the
-        # curation cue downstream can tell what kind of claim was lost
-        # when a staged write expires unconfirmed.
-        category = None
-        payload = pending.payload
-        if isinstance(payload, dict):
-            cat = payload.get("category")
-            if isinstance(cat, str):
-                category = cat
-        recorder.record(
-            "pending_expired",
-            pending_id=pending.pending_id,
-            ttl_seconds=int(time.time() - pending.created_at),
-            category=category,
-        )
-
-
 def _drain_expired_use_tokens(
     state: SessionState,
     recorder: Recorder,
@@ -551,7 +518,6 @@ def _advance_turn(
     it performs is the same purge the auto-commit depends on.
     """
     state.advance_turn()
-    _drain_pending_expired(state, recorder)
     # Drain + dedup in one pass: `_drain_expired_use_tokens` also
     # purges the LIVE tokens the log already settled, which is why the
     # standalone purge loop that used to live here is gone.
@@ -704,7 +670,7 @@ def _already_recorded_pending_ids(
     allowed_sessions = {recorder.session_id}
     if extra_session_ids:
         allowed_sessions |= extra_session_ids
-    for event in iter_events_backward(recorder.root):
+    for event in recorder.store.iter_events_backward():
         ev_ts = _event_ts_epoch(event.get("ts"))
         if ev_ts is not None and ev_ts < oldest_pending_issued_at:
             # Every later-yielded event has an `ev_ts` that's older
@@ -781,113 +747,6 @@ def _attach_use_tokens(
         h["use_token"] = tokens[h["id"]]
 
 
-def _maybe_attach_curation_hint(
-    response: dict[str, Any],
-    deps: Any,
-    state: SessionState,
-) -> None:
-    """One-shot per-session passive curation-pressure surface.
-
-    Closes the in-conversation surfacing loop the audit identified:
-    `curation_pending` aggregation has lived on
-    `memory_scope_overview` since 2.7.x, but the model has to call
-    that tool to see it. When pressure crosses the configured
-    threshold, attach a `curation_hint` block to the first
-    `memory_write` response of the session so a model that never
-    asks for `memory_scope_overview` still gets the nudge.
-
-    Pull-based discovery (calling `memory_health` /
-    `memory_scope_overview`) remains the primary surface. This is a
-    passive notification, not auto-detour. Flipped off by setting
-    `curation_hint_enabled = False` or `curation_hint_threshold = 0`
-    in `[behavior]`.
-
-    Cost: one `curation_counts` walk over the event log + a
-    `load_all` of the memory directory. Both are bounded (rotation
-    cap on the log, store size in practice). Paid once per session
-    because the underlying counts (dead_weight, drifted,
-    cold_endorsement_memories) accumulate across sessions and don't
-    shift meaningfully within one, so re-walking on every write
-    would burn cost for no signal.
-    """
-    if state.curation_hint_checked:
-        return
-    behavior = deps.config.behavior
-    if not behavior.curation_hint_enabled:
-        return
-    threshold = behavior.curation_hint_threshold
-    if threshold <= 0:
-        return
-
-    # Mark checked unconditionally so a session that doesn't cross the
-    # threshold doesn't re-pay the walk on every subsequent write.
-    state.curation_hint_checked = True
-
-    from ..events import iter_all_events
-    from ..health import curation_counts
-
-    counts = curation_counts(
-        deps.store.load_all(),
-        iter_all_events(deps.store.root),
-        window_days=30,
-        verification_stale_days=behavior.verification_stale_days,
-        cold_endorsement_ratio_threshold=behavior.cold_endorsement_ratio_threshold,
-        # Arm the dead-weight telemetry gate — production entry point.
-        # `0` (rather than a pre-measured count) because the event
-        # stream above is a generator handed straight in; zero turns the
-        # gate on and delegates the measurement to the walk
-        # `curation_counts` is about to do. Without this the hint would
-        # nag about dead weight that is really an unwired Stop hook —
-        # and it is the one curation surface the model does not have to
-        # ask for.
-        hook_telemetry_events=0,
-    )
-    pressure = counts["dead"] + counts["drifted"] + counts["cold_endorsement_memories"]
-    if pressure < threshold:
-        return
-
-    # Every route named below has to exist on the surface the hint can
-    # actually reach. This fires on `memory_write`, which is registered
-    # under BOTH surfaces, and `load_config()` defaults
-    # `full_tool_surface` to false — so the stock install reading this
-    # message has no `memory_health` to call. The full-bucket route is
-    # therefore the `bettermemory health` CLI, which every install ships.
-    # `tests/test_server.py` ratchets this twice over: the message may
-    # not name a tool the lean server doesn't register, and every
-    # backticked `bettermemory <subcommand>` it names is resolved against
-    # the argparse subparsers the CLI actually registers — a renamed
-    # route fails the build here rather than misdirecting the model.
-    #
-    # The remedies are also per-axis rather than a shared "or". Cold
-    # endorsements are defined by `explicit_applied_count == 0`
-    # (health._is_weakly_endorsed), and `memory_verify` writes a
-    # verification, not a use event — it cannot decrement that counter,
-    # so naming it here aimed the drift remedy at a bucket it cannot
-    # move. The thing that does move it is `consolidate
-    # --acknowledge-debt`, which writes one explicit `use(applied)` per
-    # cold row; it is what `memory_health`'s own
-    # `cleanup_cold_endorsements` recommendation names.
-    response["curation_hint"] = {
-        "pressure": pressure,
-        "threshold": threshold,
-        "counts": {
-            "dead_weight": counts["dead"],
-            "drifted": counts["drifted"],
-            "cold_endorsement_memories": counts["cold_endorsement_memories"],
-        },
-        "message": (
-            f"Curation pressure {pressure} >= threshold {threshold}: "
-            f"{counts['dead']} dead_weight + {counts['drifted']} drifted + "
-            f"{counts['cold_endorsement_memories']} "
-            "cold_endorsement_memories. Run `bettermemory health` for the "
-            "full buckets. Drifted: memory_update the rotted claims, then "
-            "memory_verify. Dead weight: memory_remove. Cold endorsements: "
-            "`bettermemory consolidate --acknowledge-debt` (memory_verify "
-            "does not touch that axis). One-shot per session."
-        ),
-    }
-
-
 __all__ = [
     "Context",
     "_AMBIENT_LONG_BODY_WORDS",
@@ -898,11 +757,9 @@ __all__ = [
     "_already_recorded_pending_ids",
     "_attach_use_tokens",
     "_drain_expired_use_tokens",
-    "_drain_pending_expired",
     "_emit_expired_use_tokens",
     "_event_ts_epoch",
     "_hook_attributed_pending_ids",
-    "_maybe_attach_curation_hint",
     "_validate_content_floor",
     "_validate_content_size",
     "_validate_declared_claims",

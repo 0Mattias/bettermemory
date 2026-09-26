@@ -22,7 +22,7 @@ from typing import Any
 import pytest
 
 from bettermemory.config import Config, StorageConfig
-from bettermemory.events import Recorder, iter_events
+from bettermemory.events import Recorder
 from bettermemory.handlers._shared import _USE_OUTCOMES
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
@@ -74,14 +74,13 @@ _EXPECTED_USE_OUTCOMES: tuple[str, ...] = (
 
 
 @pytest.fixture
-def server_with_events(memory_dir: Path) -> tuple[Any, Path]:
+def server_with_events(memory_dir: Path) -> tuple[Any, Store]:
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
     state = SessionState()
-    rec = Recorder(root=memory_dir, session_id=state.session_id)
-    server = build_server(
-        config=cfg, store=Store(memory_dir), state=state, recorder=rec
-    )
-    return server, memory_dir
+    store = Store(memory_dir)
+    rec = Recorder(store=store, session_id=state.session_id)
+    server = build_server(config=cfg, store=store, state=state, recorder=rec)
+    return server, store
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
@@ -93,8 +92,8 @@ async def _call(server: Any, name: str, **kwargs: Any) -> Any:
     return await _mcp_call(server, name, kwargs)
 
 
-def _use_events(memory_dir: Path) -> list[dict[str, Any]]:
-    return [e for e in iter_events(memory_dir) if e["kind"] == "use"]
+def _use_events(store: Store) -> list[dict[str, Any]]:
+    return [e for e in store.iter_events() if e["kind"] == "use"]
 
 
 async def _seed_two(server: Any) -> tuple[str, str]:
@@ -104,12 +103,12 @@ async def _seed_two(server: Any) -> tuple[str, str]:
 
 
 async def test_claim_excerpts_land_in_event_log(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The whole point: the excerpt lands in the on-disk event log so an
     audit can replay which claim was applied. Without this round-trip,
     the field is informational only."""
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     a_id, b_id = await _seed_two(server)
 
     await _call(
@@ -120,7 +119,7 @@ async def test_claim_excerpts_land_in_event_log(
         claim_excerpts=["alpha is durable", "beta is durable"],
     )
 
-    events = _use_events(memory_dir)
+    events = _use_events(store)
     assert len(events) == 1
     assert events[0]["claim_excerpts"] == ["alpha is durable", "beta is durable"]
     assert events[0]["ids"] == [a_id, b_id]
@@ -128,7 +127,7 @@ async def test_claim_excerpts_land_in_event_log(
 
 
 async def test_claim_excerpts_response_echoes_recorded_values(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The tool response includes the recorded excerpts so the caller
     can confirm what was stored — useful when the model trims whitespace
@@ -147,13 +146,13 @@ async def test_claim_excerpts_response_echoes_recorded_values(
 
 
 async def test_claim_excerpts_omitted_when_not_passed(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """Byte-stability: callers that never pass claim_excerpts should see
     event-log entries with no `claim_excerpts` key at all (not a key
     with a null value). Old log parsers / health rollups must keep
     working without seeing a new field on every event."""
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     a_id, _ = await _seed_two(server)
 
     await _call(
@@ -163,18 +162,18 @@ async def test_claim_excerpts_omitted_when_not_passed(
         outcome="applied",
     )
 
-    events = _use_events(memory_dir)
+    events = _use_events(store)
     assert len(events) == 1
     assert "claim_excerpts" not in events[0]
 
 
 async def test_claim_excerpts_with_none_entries_for_partial_provenance(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The model may know the claim for one memory but not another in
     the same record_use call. None entries are allowed in the parallel
     list — they round-trip through the event log as null."""
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     a_id, b_id = await _seed_two(server)
 
     await _call(
@@ -185,12 +184,12 @@ async def test_claim_excerpts_with_none_entries_for_partial_provenance(
         claim_excerpts=["alpha quote", None],
     )
 
-    events = _use_events(memory_dir)
+    events = _use_events(store)
     assert events[0]["claim_excerpts"] == ["alpha quote", None]
 
 
 async def test_claim_excerpts_length_mismatch_rejected(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """Length must match memory_ids exactly. The alternative (sparse
     dict keyed by id) would be harder for the model to assemble and
@@ -209,7 +208,7 @@ async def test_claim_excerpts_length_mismatch_rejected(
 
 
 async def test_claim_excerpts_empty_string_rejected(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """An empty-string excerpt is ambiguous — "no claim" should be None,
     explicit so the audit log can distinguish. Reject loudly so the
@@ -228,7 +227,7 @@ async def test_claim_excerpts_empty_string_rejected(
 
 
 async def test_claim_excerpts_oversized_rejected(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """Excerpts are quotes, not body dumps. Cap at 500 chars so the
     event log stays small and the model is encouraged to extract the
@@ -247,12 +246,12 @@ async def test_claim_excerpts_oversized_rejected(
 
 
 async def test_claim_excerpts_strips_surrounding_whitespace(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The model often emits whitespace-padded excerpts. Strip on the
     way in so two semantically-identical excerpts hash to the same
     audit-log entry."""
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     a_id, _ = await _seed_two(server)
 
     await _call(
@@ -263,7 +262,7 @@ async def test_claim_excerpts_strips_surrounding_whitespace(
         claim_excerpts=["   the trimmed phrase   "],
     )
 
-    events = _use_events(memory_dir)
+    events = _use_events(store)
     assert events[0]["claim_excerpts"] == ["the trimmed phrase"]
 
 
@@ -280,7 +279,7 @@ def test_use_outcomes_match_frozenset() -> None:
 
 @pytest.mark.parametrize("outcome", _EXPECTED_USE_OUTCOMES)
 async def test_claim_excerpts_per_outcome(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
     outcome: str,
 ) -> None:
     """Parametrised delete-side coverage: every member of
@@ -290,7 +289,7 @@ async def test_claim_excerpts_per_outcome(
     means a silent deletion from the source set causes the
     corresponding case to fail loudly — parametrising off the source
     would just shrink the case count, silently dropping coverage."""
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     written = await _call(
         server,
         "memory_write",
@@ -305,14 +304,14 @@ async def test_claim_excerpts_per_outcome(
         claim_excerpts=[f"the {outcome} claim"],
     )
 
-    events = _use_events(memory_dir)
+    events = _use_events(store)
     matching = [e for e in events if e["outcome"] == outcome]
     assert matching, f"no use event recorded for outcome {outcome!r}"
     assert matching[-1]["claim_excerpts"] == [f"the {outcome} claim"]
 
 
 async def test_claim_excerpts_work_for_all_outcomes(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """All four outcomes accept claim_excerpts — provenance is just as
     valuable when recording a contradiction or correction as when
@@ -323,7 +322,7 @@ async def test_claim_excerpts_work_for_all_outcomes(
     deletion from ``_USE_OUTCOMES`` fails the loop loudly rather than
     silently shrinking. The companion
     ``test_use_outcomes_match_frozenset`` catches the addition side."""
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     for outcome in _EXPECTED_USE_OUTCOMES:
         a = await _call(
             server,
@@ -339,7 +338,7 @@ async def test_claim_excerpts_work_for_all_outcomes(
             claim_excerpts=[f"the {outcome} claim"],
         )
 
-    events = _use_events(memory_dir)
+    events = _use_events(store)
     by_outcome = {e["outcome"]: e for e in events}
     for outcome in _EXPECTED_USE_OUTCOMES:
         assert outcome in by_outcome, f"missing outcome {outcome}"
@@ -347,7 +346,7 @@ async def test_claim_excerpts_work_for_all_outcomes(
 
 
 async def test_claim_excerpts_non_string_rejected(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """Each entry must be str or None. A list of ints, dicts, etc. is a
     caller bug — the SDK's pydantic validation layer rejects non-string

@@ -34,7 +34,7 @@ from typing import Any
 import pytest
 
 from bettermemory.config import Config, StorageConfig
-from bettermemory.events import Recorder, iter_events
+from bettermemory.events import Recorder
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.search import (
     _RRF_K_DEFAULT,
@@ -135,14 +135,12 @@ def test_an_all_zero_result_set_leads_nothing() -> None:
 
 
 @pytest.fixture
-def server_with_events(memory_dir: Path) -> tuple[Any, Path]:
+def server_with_events(memory_dir: Path) -> tuple[Any, Store]:
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
     state = SessionState()
-    rec = Recorder(root=memory_dir, session_id=state.session_id, enabled=True)
-    return (
-        build_server(config=cfg, store=Store(memory_dir), state=state, recorder=rec),
-        memory_dir,
-    )
+    store = Store(memory_dir)
+    rec = Recorder(store=store, session_id=state.session_id, enabled=True)
+    return build_server(config=cfg, store=store, state=state, recorder=rec), store
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
@@ -159,7 +157,7 @@ def _unwrap(res: Any) -> Any:
 
 
 async def test_expand_top_fires_on_a_decisive_lead_without_a_high_label(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The suppression this item exists to remove.
 
@@ -201,7 +199,7 @@ async def test_expand_top_fires_on_a_decisive_lead_without_a_high_label(
 
 
 async def test_expand_top_holds_when_the_runner_up_is_within_a_rank_slot(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The gate widened; it did not open.
 
@@ -238,7 +236,7 @@ async def test_expand_top_holds_when_the_runner_up_is_within_a_rank_slot(
 
 
 async def test_a_sole_low_hit_still_does_not_expand(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """ "Won a field of one" is an absence of evidence.
 
@@ -283,7 +281,7 @@ async def test_a_sole_low_hit_still_does_not_expand(
 # and the `no_extras` marker went with the registration the strip
 # removed.
 async def test_matched_leg_rides_the_search_response(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     server, _ = server_with_events
     await _call(
@@ -299,7 +297,7 @@ async def test_matched_leg_rides_the_search_response(
 
 
 async def test_search_events_record_the_matched_leg(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The instrument whose absence closed the label recut negative.
 
@@ -309,7 +307,7 @@ async def test_search_events_record_the_matched_leg(
     not. Dropping this field puts the next attempt back where this one
     started — blind.
     """
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     await _call(
         server,
         "memory_write",
@@ -317,40 +315,5 @@ async def test_search_events_record_the_matched_leg(
         scopes=["tools"],
     )
     await _call(server, "memory_search", query="postgres replication lag")
-    searches = [e for e in iter_events(memory_dir) if e.get("kind") == "search"]
+    searches = [e for e in store.iter_events() if e.get("kind") == "search"]
     assert searches[-1]["matched_leg"] == ["lexical"]
-
-
-# ---------------------------------------------------------------------------
-# What the description promises about the label
-# ---------------------------------------------------------------------------
-
-
-def _desc_line(fragment: str) -> str:
-    from bettermemory.handlers.search import DESC_MEMORY_SEARCH
-
-    return next(seg for seg in DESC_MEMORY_SEARCH.split("\n") if fragment in seg)
-
-
-def test_the_description_no_longer_calls_a_low_label_noise() -> None:
-    """The absolutism was the harm.
-
-    "treat low as probable noise" over-read the label pre-4.0 (a
-    paraphrase hit wore it while being exactly what was asked for) and
-    over-reads it now in the other direction: low coverage is a fact
-    about wording overlap, and the actionable response is a re-query
-    with different nouns, not a dismissal. The description must state
-    what the label measures and stop short of a quality verdict —
-    scoped to the `relevance` line so an unrelated future bullet can
-    still use the word.
-    """
-    line = _desc_line("`relevance`")
-    assert "noise" not in line
-    assert "not how good it is" in line
-
-
-def test_the_description_does_not_promise_expand_top_gates_on_high() -> None:
-    """It stopped being true; a resident surface may not lag the code."""
-    line = _desc_line("`expand_top=True`")
-    assert 'relevance is "high"' not in line
-    assert "score lead" in line

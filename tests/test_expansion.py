@@ -9,18 +9,14 @@ numbers.
 
 from __future__ import annotations
 
-from ._mcp import call_tool
 
 import inspect
-import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
 
 import pytest
 
-from bettermemory.audit import probe_for_miss
-from bettermemory.config import BehaviorConfig, Config, StorageConfig, load_config
+from bettermemory.config import BehaviorConfig, load_config
 from bettermemory.expansion import (
     _MIN_EXPANSION_LEN,
     CLIPPINGS,
@@ -31,7 +27,6 @@ from bettermemory.expansion import (
     expansion_terms,
     morph_variants,
 )
-from bettermemory.handlers.search import RankingInputs, resolve_ranking_inputs
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.search import (
     _EVIDENCE_FULL_AT,
@@ -47,9 +42,6 @@ from bettermemory.search import (
     reciprocal_rank_fusion,
     search,
 )
-from bettermemory.server import build_server
-from bettermemory.session import SessionState
-from bettermemory.store import Store
 
 TABLES = _EXPANSION_TABLES
 
@@ -534,143 +526,31 @@ def test_bm25_and_keyword_modes_are_untouched_by_the_flag() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The config key, end to end
+# No config key
 #
-# Everything above drives `search()` directly. The shipped feature is a
-# `[behavior]` key, and until this section existed nothing exercised the
-# path from that key to the ranker — the flag could have been dropped
-# anywhere between the loader and `run_search` and every test here
-# would still have passed.
+# Everything above drives `search()` directly, and that is the whole
+# surface: 9.0.0 removed `[behavior] rescue_expansion`. The product ranks
+# with the leg off, and bench/retrieval's requery arm is the one caller
+# that turns the parameter on.
 # ---------------------------------------------------------------------------
 
 
-def test_config_file_key_reaches_the_behavior_config(tmp_path: Path) -> None:
-    """`[behavior] rescue_expansion` parses, and the default is off."""
+def test_the_lane_has_no_config_key_and_the_parameter_defaults_off(
+    tmp_path: Path,
+) -> None:
+    """A config still carrying the 8.x key loads (the loader drops it
+    with a notice), `BehaviorConfig` has no such field, and `search()`'s
+    parameter stays default-False."""
     config_path = tmp_path / "config.toml"
-    config_path.write_text(
-        f"[storage]\ndirectory = '{tmp_path / 'memories'}'\n", encoding="utf-8"
-    )
-    assert load_config(config_path).behavior.rescue_expansion is False
-
     config_path.write_text(
         f"[storage]\ndirectory = '{tmp_path / 'memories'}'\n"
         "[behavior]\nrescue_expansion = true\n",
         encoding="utf-8",
     )
-    assert load_config(config_path).behavior.rescue_expansion is True
-
-
-def _server(memory_dir: Path, *, rescue_expansion: bool) -> Any:
-    cfg = Config(
-        storage=StorageConfig(directory=str(memory_dir)),
-        behavior=BehaviorConfig(rescue_expansion=rescue_expansion),
-    )
-    return build_server(config=cfg, store=Store(memory_dir), state=SessionState())
-
-
-async def _seed(server: Any, body: str) -> None:
-    await call_tool(server, "memory_write", {"content": body, "scopes": ["tools"]})
-
-
-async def _search(server: Any, query: str) -> list[dict[str, Any]]:
-    res = await call_tool(server, "memory_search", {"query": query})
-    hits = res.get("result", res) if isinstance(res, dict) and "result" in res else res
-    return list(hits)
-
-
-async def test_behavior_key_on_surfaces_the_paraphrase_over_the_wire(
-    tmp_path: Path,
-) -> None:
-    """The pure-paraphrase shape, driven by the config key rather than
-    the parameter: 'creds' reaches a body that only says 'credential',
-    and the hit is labelled `matched_leg="expansion"` with honestly
-    empty `match_terms`."""
-    server = _server(tmp_path / "memories", rescue_expansion=True)
-    await _seed(server, "Credential and secret injection for containers uses files.")
-    await _seed(server, "The reconciliation job runs at 0300 UTC.")
-
-    hits = await _search(server, "creds")
-    assert hits, "the config key did not reach the ranker"
-    assert hits[0]["matched_leg"] == "expansion"
-    assert hits[0]["match_terms"] == []
-    assert hits[0]["relevance"] == "low"
-
-
-async def test_behavior_key_off_is_the_shipped_default_over_the_wire(
-    tmp_path: Path,
-) -> None:
-    """Default off, all the way through the handler: the same query
-    returns nothing and no hit anywhere ever reports an expansion leg."""
-    server = _server(tmp_path / "memories", rescue_expansion=False)
-    await _seed(server, "Credential and secret injection for containers uses files.")
-    await _seed(server, "The reconciliation job runs at 0300 UTC.")
-
-    assert await _search(server, "creds") == []
-
-    # And the flag really is what differs — the same store, same query,
-    # with the key on.
-    on = _server(tmp_path / "memories", rescue_expansion=True)
-    assert await _search(on, "creds")
-
-
-def test_ranking_inputs_carry_the_flag_to_every_ranking_surface() -> None:
-    """`RankingInputs` is the shape that exists so ranking surfaces
-    cannot drift apart on `[behavior]` inputs, and `probe_for_miss` is
-    the surface whose entire job is to rank the way production ranked.
-    A flag readable only at the search handler's own call site would
-    make the silent-miss probe score a two-leg fusion against
-    production's three."""
-    fields = RankingInputs._fields
-    assert "rescue_expansion" in fields, (
-        "rescue_expansion left RankingInputs, so the audit probe can no "
-        "longer see it and the miss verdict stops matching production"
-    )
-    assert "rescue_expansion" in inspect.signature(probe_for_miss).parameters, (
-        "probe_for_miss cannot take the flag; the parity contract is broken"
-    )
-
-    on = BehaviorConfig(rescue_expansion=True)
-    off = BehaviorConfig(rescue_expansion=False)
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        assert resolve_ranking_inputs(root, [], on).rescue_expansion is True
-        assert resolve_ranking_inputs(root, [], off).rescue_expansion is False
-
-
-def test_the_miss_probe_ranks_the_expansion_leg_when_the_lane_is_on() -> None:
-    """The parity failure, in the terms the verdict is read in.
-
-    With the lane on, a paraphrase-only memory is production's rank-1
-    hit. A probe blind to the flag scores a two-leg fusion against
-    production's three: here it finds no hit at all and reports
-    `no_signal` — the structurally-unmeasured bucket — for a turn
-    production would have served. The verdict reads only rank 1, so the
-    disagreement runs the other way too on a store where the expansion
-    leg merely reorders."""
-    # Older than the probe's creation shield, which drops memories
-    # written during the turn being audited.
-    old = datetime.now(timezone.utc) - timedelta(days=3)
-    memories = [
-        _memory(
-            "Credential and secret injection for containers uses files.",
-            created=old,
-        ),
-        _memory("The reconciliation job runs at 0300 UTC.", created=old),
-    ]
-    # Above MIN_PROBE_CONTENT_TOKENS; 'cred' is reachable only through
-    # the clipping table.
-    query = "remind me where the creds go"
-    blind = probe_for_miss(
-        memories, query, recent_events=[], session_id="s", rescue_expansion=False
-    )
-    threaded = probe_for_miss(
-        memories, query, recent_events=[], session_id="s", rescue_expansion=True
-    )
-    assert blind.verdict == "no_signal"
-    assert blind.top_hits == ()
-    assert threaded.top_hits
-    assert threaded.top_hits[0].id == memories[0].id
-    assert threaded.verdict != "no_signal"
+    cfg = load_config(config_path)
+    assert not hasattr(cfg.behavior, "rescue_expansion")
+    assert not hasattr(BehaviorConfig(), "rescue_expansion")
+    assert inspect.signature(search).parameters["rescue_expansion"].default is False
 
 
 def test_expansion_stats_fetch_covers_kebab_parts_like_the_base_fetch() -> None:

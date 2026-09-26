@@ -11,16 +11,7 @@ if TYPE_CHECKING:
     from .._handlers import ToolHandlers
 
 
-DESC_MEMORY_REMOVE = (
-    "Tombstone a memory. The file is moved to .tombstones/ with a "
-    "removal reason and the originating session id — never hard-"
-    "deleted. Use when a stored fact is wrong or no longer relevant. "
-    "Tombstones remain searchable via memory_list_tombstones and "
-    "are surfaced as `removed_matches` on memory_write when a new "
-    "body looks similar to a previously-removed fact, so the "
-    "lesson encoded in the removal reason isn't lost. Use "
-    "memory_restore(id) to undo an accidental removal."
-)
+DESC_MEMORY_REMOVE = "Tombstone a memory with a reason; memory_admin restore undoes it."
 
 
 async def memory_remove(
@@ -31,7 +22,7 @@ async def memory_remove(
     if not reason or not reason.strip():
         raise ValueError("reason must be a non-empty string")
     try:
-        tombstone_path = deps.store.tombstone(id, reason, session_id=state.session_id)
+        deps.store.tombstone(id, reason, session=state.session_id)
     except TombstonedError as exc:
         raise ValueError(str(exc)) from exc
     except MemoryNotFoundError as exc:
@@ -79,10 +70,7 @@ async def memory_remove(
             f"removal. ({exc})"
         ) from exc
     deps.recorder.record("remove", id=id, reason=reason)
-    return {
-        "removed": id,
-        "tombstone_path": str(tombstone_path),
-    }
+    return {"removed": id}
 
 
 __all__ = ["DESC_MEMORY_REMOVE", "memory_remove"]

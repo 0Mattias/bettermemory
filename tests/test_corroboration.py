@@ -4,7 +4,7 @@ A dedup-rejected memory_write IS the stored claim re-entering a
 conversation — `Store.record_corroboration` bumps a persisted rollup
 (`corroborations`, `last_corroborated`) on the matched memory without
 touching `updated`. Consumers: the freshest-touch curation window and
-memory_show / memory_list surfacing (absent while zero).
+memory_show surfacing (absent while zero).
 
 Ranking is NOT a consumer. 8.0.0 removed the `[behavior]
 corroboration_boost` nudge (deprecated in 7.6.0): a corroboration needs
@@ -27,13 +27,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from bettermemory.config import BehaviorConfig, Config, StorageConfig
 from bettermemory.events import Recorder
 from bettermemory.health import _freshest_touch_ts
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
-from bettermemory.search import USAGE_FLAG_NAMES, search
+from bettermemory.search import search
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
@@ -85,21 +83,10 @@ def test_rollup_never_moves_a_ranking() -> None:
 
     for mode in ("keyword", "bm25", "hybrid"):
         for query in ("alpha beta gamma", "alpha", "delta alpha", "gamma notes"):
-            capture: dict[str, Any] = {}
-            with_rollup = search(
-                corroborated, query, now=_T, mode=mode, usage_toggles_out=capture
-            )
+            with_rollup = search(corroborated, query, now=_T, mode=mode)
             without = search(zeroed, query, now=_T, mode=mode)
             assert with_rollup, (mode, query)
             assert _ranking(with_rollup) == _ranking(without), (mode, query)
-            # No usage input was supplied, so the toggle capture has
-            # nothing to report — a corroborated candidate is no longer
-            # live signal for any flag.
-            assert capture == {}, (mode, query)
-
-    # The removed flag is gone from the capture's closed set too, so no
-    # new event can name it.
-    assert "corroboration_boost" not in USAGE_FLAG_NAMES
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +107,7 @@ def test_record_corroboration_bumps_rollup_not_updated(tmp_path: Path) -> None:
     )
     assert bumped.last_verified_at is None, "nothing was checked against reality"
 
-    # Round-trip through the on-disk frontmatter.
+    # Round-trip through the store.
     reloaded = store.load_one(written.id)
     assert reloaded.corroborations == 1
     assert reloaded.last_corroborated == bumped.last_corroborated
@@ -129,16 +116,18 @@ def test_record_corroboration_bumps_rollup_not_updated(tmp_path: Path) -> None:
     assert again.corroborations == 2
 
 
-def test_zero_rollup_keeps_frontmatter_byte_identical(tmp_path: Path) -> None:
-    """A never-corroborated memory must serialize without the new keys —
-    the absence-as-signal shape older readers already expect."""
+def test_zero_rollup_round_trips_as_absent(tmp_path: Path) -> None:
+    """A never-corroborated memory carries the zero rollup, and the record
+    the store hands back is the record it took: the absence-as-signal
+    shape memory_show reads (no key while zero) has nothing to invent."""
     store = Store(tmp_path / "memories")
     written = store.write(content="alpha beta", scopes=["tools"])
-    path = next(p for p in (tmp_path / "memories").glob("*.md"))
-    text = path.read_text(encoding="utf-8")
-    assert written.id in text
-    assert "corroborations" not in text
-    assert "last_corroborated" not in text
+    assert written.corroborations == 0
+    assert written.last_corroborated is None
+    reloaded = store.load_one(written.id)
+    assert reloaded.corroborations == 0
+    assert reloaded.last_corroborated is None
+    assert reloaded == written
 
 
 # ---------------------------------------------------------------------------
@@ -164,19 +153,16 @@ def test_freshest_touch_includes_corroboration() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def memory_dir(tmp_path: Path) -> Path:
-    return tmp_path / "memories"
-
-
-def _build(memory_dir: Path, **behavior: Any) -> Any:
+def _build(store: Store, **behavior: Any) -> Any:
+    """A server over `store`; a second call is a new session on the same
+    store, which is what the once-per-session rule is measured against."""
     cfg = Config(
-        storage=StorageConfig(directory=str(memory_dir)),
+        storage=StorageConfig(directory=str(store.path.parent)),
         behavior=BehaviorConfig(**behavior),
     )
     state = SessionState()
-    rec = Recorder(root=memory_dir, session_id=state.session_id, enabled=True)
-    return build_server(config=cfg, store=Store(memory_dir), state=state, recorder=rec)
+    rec = Recorder(store=store, session_id=state.session_id, enabled=True)
+    return build_server(config=cfg, store=store, state=state, recorder=rec)
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
@@ -192,8 +178,8 @@ def _unwrap(res: Any) -> Any:
     return res.get("result", res) if isinstance(res, dict) and "result" in res else res
 
 
-async def test_e2e_duplicate_write_records_corroboration(memory_dir: Path) -> None:
-    server = _build(memory_dir)
+async def test_e2e_duplicate_write_records_corroboration(store: Store) -> None:
+    server = _build(store)
     first = await _call(
         server,
         "memory_write",
@@ -231,7 +217,7 @@ async def test_e2e_duplicate_write_records_corroboration(memory_dir: Path) -> No
 
     # A NEW session is a new opportunity — build a second server over
     # the same store (fresh SessionState) and re-enter the claim.
-    server2 = _build(memory_dir)
+    server2 = _build(store)
     dup3 = await _call(
         server2,
         "memory_write",
@@ -243,10 +229,8 @@ async def test_e2e_duplicate_write_records_corroboration(memory_dir: Path) -> No
     assert dup3["corroborations"] == 2
 
 
-async def test_e2e_duplicate_event_carries_corroborated_id(memory_dir: Path) -> None:
-    from bettermemory.events import iter_events
-
-    server = _build(memory_dir)
+async def test_e2e_duplicate_event_carries_corroborated_id(store: Store) -> None:
+    server = _build(store)
     first = await _call(
         server, "memory_write", content="redis caches sessions", scopes=["infra"]
     )
@@ -255,17 +239,17 @@ async def test_e2e_duplicate_event_carries_corroborated_id(memory_dir: Path) -> 
     )
     write_events = [
         e
-        for e in iter_events(memory_dir)
+        for e in store.iter_events()
         if e.get("kind") == "write" and e.get("status") == "duplicate"
     ]
     assert write_events, "duplicate write event missing"
     assert write_events[-1].get("corroborated_id") == first["id"]
 
 
-async def test_e2e_forced_write_does_not_corroborate(memory_dir: Path) -> None:
+async def test_e2e_forced_write_does_not_corroborate(store: Store) -> None:
     """force=True skips the dedup gate entirely — the caller asserts the
     new memory is meaningfully different, so no recurrence is credited."""
-    server = _build(memory_dir)
+    server = _build(store)
     first = await _call(
         server, "memory_write", content="nginx fronts the homelab", scopes=["infra"]
     )

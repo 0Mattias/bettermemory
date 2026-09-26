@@ -28,12 +28,12 @@ bench that re-derives the scorer measures the re-derivation; this one
 cannot drift from the code it is about.
 
 PRIVACY. The default corpus is the operator's own live store, which is
-personal data. This script READS it and never writes to it (it parses
-files through `store._parse_memory_file` rather than constructing a
-`Store`, which would mkdir and chmod). The emitted report is COUNTS
-ONLY — no bodies, no ids, no scopes, no filenames — so a result JSON is
-safe to commit from a private store. `--corpus` runs the same arms over
-a committed public corpus for anyone who wants to reproduce the shape.
+personal data. This script READS it and never writes to it (it opens
+the store with `Store.open(..., allow_rekey=False)`, which refuses to
+mutate and never rekeys). The emitted report is COUNTS ONLY: no bodies,
+no ids, no scopes, no filenames, so a result JSON is safe to commit
+from a private store. `--corpus` runs the same arms over a committed
+public corpus for anyone who wants to reproduce the shape.
 
 METHOD: LEAVE-ONE-OUT. Real future writes aren't available, so each
 stored memory stands in for "a write of this content", scored against
@@ -75,11 +75,7 @@ from bettermemory.models import (  # noqa: E402
     snippet_for,
 )
 from bettermemory.search import HIGH_SIMILARITY, find_similar  # noqa: E402
-from bettermemory.store import (  # noqa: E402
-    PARSE_SKIP_EXCEPTIONS,
-    TOMBSTONE_DIR,
-    _parse_memory_file,
-)
+from bettermemory.store import Store  # noqa: E402
 
 # The floors swept in the surgical arm. 0.40 is production; 0.30 is the
 # proposal; the rest bracket it so the report shows where (and whether)
@@ -88,40 +84,20 @@ FLOORS = (0.40, 0.35, 0.30, 0.25, 0.20, 0.15)
 
 
 def load_store(directory: Path) -> tuple[list[Memory], list[TombstonedMemory]]:
-    """Active + tombstoned memories, parsed WITHOUT constructing a Store.
+    """Active + tombstoned memories, read without touching the store.
 
-    `Store.__post_init__` mkdirs and chmods its root. This bench points
-    at the operator's real store, so it goes through the module-level
-    parser instead and stays strictly read-only.
-
-    Tombstone files share the active on-disk format, so they parse with
-    the same reader; `removed` / `removed_reason` are re-attached as
-    placeholders because only `body` participates in scoring and neither
-    field reaches the counts-only report.
+    This bench points at the operator's real store, so it opens the
+    SQLite file with `allow_rekey=False`: a missing or foreign key then
+    leaves the store read-only instead of writing a new key and a
+    `rekey` row. Only `body` participates in scoring and neither the
+    tombstone's `removed` nor `removed_reason` reaches the counts-only
+    report.
     """
-
-    def _parse(paths: Any) -> list[Memory]:
-        out: list[Memory] = []
-        for path in sorted(paths):
-            if not path.is_file() or path.is_symlink() or path.suffix != ".md":
-                continue
-            try:
-                out.append(_parse_memory_file(path))
-            except PARSE_SKIP_EXCEPTIONS:
-                continue
-        return out
-
-    active = _parse(directory.iterdir())
-    tomb_dir = directory / TOMBSTONE_DIR
-    tombs = [
-        TombstonedMemory(
-            **memory.model_dump(),
-            removed=memory.updated,
-            removed_reason="(not read by this bench)",
-        )
-        for memory in (_parse(tomb_dir.iterdir()) if tomb_dir.is_dir() else [])
-    ]
-    return active, tombs
+    store = Store.open(directory, allow_rekey=False)
+    try:
+        return store.load_all(), store.load_tombstones()
+    finally:
+        store.close()
 
 
 def load_corpus(path: Path) -> list[Memory]:

@@ -12,7 +12,6 @@ Covers, in one place, the feature set that ships together:
 - end-of-turn use settlement: hook attribution + auto-fallback split,
   and the wall-clock floor that keeps the in-process auto-commit from
   racing the hook;
-- the `pending_writes` count on memory_scope_overview;
 - the eval `--widening-preview` replay lane and its `--detail`
   precision-labeling surface (`compute_widening_detail`).
 
@@ -50,7 +49,7 @@ from bettermemory.eval import (
     render_widening_detail_text,
     render_widening_preview_text,
 )
-from bettermemory.events import Recorder, iter_events, redact_query
+from bettermemory.events import Recorder, redact_query
 from bettermemory.health import compute_health
 from bettermemory.hook import _extract_last_exchange, main as hook_main, run_audit
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
@@ -503,7 +502,7 @@ def test_run_audit_dedups_repeats_and_stamps_model(tmp_path: Path) -> None:
             client_model="claude-sonnet-5",
             config=cfg,
         )
-    audits = [e for e in iter_events(mem_dir) if e["kind"] == "turn_audited"]
+    audits = [e for e in store.iter_events() if e["kind"] == "turn_audited"]
     assert len(audits) == 2
     first, second = audits
     assert "repeat" not in first
@@ -514,7 +513,7 @@ def test_run_audit_dedups_repeats_and_stamps_model(tmp_path: Path) -> None:
     assert isinstance(first["probe_query"], dict)
     assert first["probe_query"]["hash"] == redact_query(message)["hash"]
     # A miss (if flagged at all) is never emitted twice for a repeat.
-    misses = [e for e in iter_events(mem_dir) if e["kind"] == "search_miss"]
+    misses = [e for e in store.iter_events() if e["kind"] == "search_miss"]
     assert len(misses) <= 1
 
 
@@ -537,7 +536,7 @@ def test_hook_settlement_splits_attribution_and_auto(
         content="Database migrations for the billing service run from the cron box.",
         scopes=["infrastructure"],
     )
-    Recorder(root=mem_dir, session_id="sess-split").record(
+    Recorder(store=store, session_id="sess-split").record(
         "search",
         query="seed",
         scopes_filter=None,
@@ -570,7 +569,7 @@ def test_hook_settlement_splits_attribution_and_auto(
     )
     assert code == 0
 
-    use_events = [e for e in iter_events(mem_dir) if e["kind"] == "use"]
+    use_events = [e for e in store.iter_events() if e["kind"] == "use"]
     hook_events = [e for e in use_events if e.get("attribution") == "hook"]
     auto_events = [e for e in use_events if e.get("attribution") == "auto"]
     assert len(hook_events) == 1
@@ -1095,7 +1094,7 @@ def test_health_excludes_repeat_audits_from_audited_total() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Server-level: pending_writes surface, shadow-field leak guards, dedup
+# Server-level: the shadow-field leak guard
 # ---------------------------------------------------------------------------
 
 
@@ -1109,46 +1108,13 @@ async def _call(server: Any, name: str, **kwargs: Any) -> Any:
 
 
 @pytest.fixture
-def confirming_server(memory_dir: Path) -> tuple[Any, SessionState]:
-    from bettermemory.config import BehaviorConfig
-
-    cfg = Config(
-        storage=StorageConfig(directory=str(memory_dir)),
-        behavior=BehaviorConfig(require_write_confirmation=True),
-    )
-    state = SessionState()
-    return build_server(config=cfg, store=Store(memory_dir), state=state), state
-
-
-@pytest.fixture
-def plain_server(memory_dir: Path) -> Any:
+def plain_server(memory_dir: Path, store: Store) -> Any:
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
-    return build_server(config=cfg, store=Store(memory_dir), state=SessionState())
-
-
-async def test_scope_overview_counts_pending_writes(
-    confirming_server: tuple[Any, SessionState],
-) -> None:
-    server, _state = confirming_server
-    staged = await _call(
-        server,
-        "memory_write",
-        content="a durable fact awaiting explicit confirmation",
-        scopes=["tools"],
-    )
-    assert staged["status"] == "pending"
-    overview = await _call(server, "memory_scope_overview", auto_scope=False)
-    assert overview["pending_writes"] == 1
-    confirmed = await _call(
-        server, "memory_write_confirm", pending_id=staged["pending_id"]
-    )
-    assert confirmed["status"] == "committed"
-    overview = await _call(server, "memory_scope_overview", auto_scope=False)
-    assert overview["pending_writes"] == 0
+    return build_server(config=cfg, store=store, state=SessionState())
 
 
 async def test_search_event_carries_shadow_features_response_does_not(
-    plain_server: Any, memory_dir: Path
+    plain_server: Any, store: Store
 ) -> None:
     """The calibration features land on the `search` EVENT; the MCP
     response stays shadow-free — surfacing relevance_v2 live would
@@ -1168,7 +1134,7 @@ async def test_search_event_carries_shadow_features_response_does_not(
         assert "relevance_v2" not in hit
         assert "query_unique" not in hit
 
-    search_events = [e for e in iter_events(memory_dir) if e["kind"] == "search"]
+    search_events = [e for e in store.iter_events() if e["kind"] == "search"]
     assert search_events
     ev = search_events[-1]
     assert ev["query_unique"] == 2
@@ -1177,24 +1143,3 @@ async def test_search_event_carries_shadow_features_response_does_not(
     ]
     assert len(ev["scores"]) == len(ev["returned"])
     assert len(ev["match_counts"]) == len(ev["returned"])
-
-
-async def test_audit_turn_handler_dedups_repeats(
-    plain_server: Any, memory_dir: Path
-) -> None:
-    # A non-empty store is required for a dedup anchor: on an empty
-    # store the probe aborts before `probe_query` is set, so the first
-    # audit event carries nothing to match a repeat against.
-    await _call(
-        plain_server,
-        "memory_write",
-        content="kubernetes ingress staging cluster reference notes",
-        scopes=["infrastructure"],
-    )
-    message = "kubernetes ingress staging cluster question"
-    for _ in range(2):
-        await _call(plain_server, "memory_audit_turn", user_message=message)
-    audits = [e for e in iter_events(memory_dir) if e["kind"] == "turn_audited"]
-    assert len(audits) == 2
-    assert "repeat" not in audits[0]
-    assert audits[1]["repeat"] is True

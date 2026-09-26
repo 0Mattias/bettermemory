@@ -104,6 +104,7 @@ narrowing.
 from __future__ import annotations
 
 import dataclasses
+from datetime import datetime, timedelta, timezone
 import json
 import sys
 from pathlib import Path
@@ -123,12 +124,20 @@ from .audit import (
 )
 from .config import Config, load_config
 from .events import Recorder, redact_query
-from .events import iter_events_window
 from .models import utcnow
 from . import identity
 from .origin import Origin, capture as capture_origin
-from .store import MemoryNotFoundError, Store, TombstonedError
+from .store import (
+    STORE_FILENAME,
+    MemoryNotFoundError,
+    Store,
+    TombstonedError,
+)
 from .time_utils import parse_event_ts
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 # Wall-clock window the hook attributes against. A retrieval older
@@ -137,19 +146,18 @@ from .time_utils import parse_event_ts
 # wall-clock floor mirroring this window) has fired, so attributing
 # to a stale retrieval would risk double-counting. Wide enough to
 # cover normal conversational pauses, narrow enough to focus on the
-# current turn. The constant
-# itself lives in `audit.py` (round 88) so the production search
-# handler's endorsement tally can share the exact window without
-# importing this module; the module-local alias keeps every existing
-# in-file reference (and the historical name) intact.
+# current turn. The constant itself lives in `audit.py` so the
+# production search handler's negative-outcome annotation can share the
+# exact window without importing this module; the module-local alias
+# keeps every existing in-file reference (and the historical name)
+# intact.
 _ATTRIBUTION_LOOKBACK_SECONDS = ATTRIBUTION_LOOKBACK_SECONDS
 
 # Cap the transcript read to the trailing 1 MiB. The hook only needs the
 # latest user + assistant message, which sit at the tail of an append-only
 # JSONL log; older content is irrelevant for this turn. Reading the whole
 # file was a real OOM vector on long Claude Code sessions (transcripts grow
-# to hundreds of MB in extended pairing sessions). The cap mirrors the
-# `_TRANSCRIPT_READ_CAP_BYTES` constant in consolidate.py and is enforced
+# to hundreds of MB in extended pairing sessions). The cap is enforced
 # at byte granularity (not character) so multibyte UTF-8 can't bypass it.
 _TRANSCRIPT_TAIL_READ_BYTES = 1_048_576
 
@@ -249,10 +257,8 @@ def _extract_last_exchange(
     `<task-notification>` bodies, `<command-name>`/`<local-command-*>`
     bookkeeping, `<system-reminder>` injections, slash-command/skill
     expansions (those carry `isMeta: true`), and occasional empty
-    strings. Accepting them verbatim made the audit probe (and the
-    proposals extractor, whose contract is "only the user's own words
-    are mined") run on harness text whenever such a row landed after
-    the human's message. The walk skips those rows and keeps going —
+    strings. Accepting them verbatim made the audit probe run on
+    harness text whenever such a row landed after the human's message. The walk skips those rows and keeps going —
     the human's message is usually a few rows earlier. If nothing
     human-looking is in the tail, `user` stays None and the hook
     no-ops, the same fail-quiet contract as before.
@@ -354,7 +360,6 @@ def _flatten_assistant_content(content: Any) -> str | None:
 def _probe_message(
     *,
     cfg: Config,
-    root: Path,
     store: Store,
     user_message: str,
     session_id: str,
@@ -374,12 +379,7 @@ def _probe_message(
     hand-kept copies of this plumbing would let the promise drift the
     first time one of them was retuned.
     """
-    from .handlers.search import (
-        default_search_width,
-        ranking_events_window_seconds,
-        resolve_ranking_inputs,
-        resolve_search_pool,
-    )
+    from .handlers.search import default_search_width, resolve_search_pool
 
     # Candidate pool: production's, not an unconditional `load_all()`.
     # `resolve_search_pool` is the same helper `memory_search` builds its
@@ -403,9 +403,7 @@ def _probe_message(
     # leaves open.
     #
     # `probe_pool` is deliberately NOT named `memories`: it is a capped,
-    # query-biased SEARCH pool, and anything downstream that wants the
-    # store's size (the auto-consolidate bounded-store guard in
-    # `run_audit`) must load the active set itself.
+    # query-biased SEARCH pool, not the store.
     probe_pool = resolve_search_pool(
         store,
         user_message,
@@ -414,39 +412,13 @@ def _probe_message(
         worktree_filter=caller_origin.worktree_root,
         min_survivors=default_search_width(cfg.behavior),
     )
-    # Config-driven ranking inputs: the SAME `RankingInputs` the
-    # production search handler threads
-    # (`handlers.search.resolve_ranking_inputs`), so the probe cannot
-    # rank on a different set of factors than the model's actual
-    # retrieval would have. That covers both usage-aware directions —
-    # `endorsement_boost` nudges applied memories up, `outcome_demotion`
-    # slides recently ignored/contradicted ones down — plus the recency
-    # half-life. Threading only the endorsement half was a
-    # telemetry-honesty bug in both directions, because the miss verdict
-    # reads ONLY the rank-1 hit: a memory production had demoted out of
-    # the top slot still held rank 1 here (masked miss), and the hit
-    # production's demotion promoted instead was never the one this
-    # probe judged (phantom miss).
-    #
-    # The event read is issued HERE, not inside the helper, and is
-    # separately scoped — NOT the dedup-widened `recent` the caller
-    # read (`REAUDIT_DEDUP_WINDOW_SECONDS`, 3600s). `recent` is a
-    # coverage read for the dedup / shield / attribution consumers,
-    # each of which applies its own narrower cutoff. The tallies
-    # enforce their own cutoffs too, so the width here is about
-    # matching production's ROTATION-PROOFING rather than bounding a
-    # count: `ranking_events_window_seconds` returns 600s with
-    # endorsement alone (narrower than `recent`) and the full 30-day
-    # negative window once demotion is on (wider), and returns None
-    # when neither flag is set — the default-config path, which pays
-    # no read at all.
-    tally_window = ranking_events_window_seconds(cfg.behavior)
-    tally_events: list[dict[str, Any]] | None = None
-    if tally_window is not None and probe_pool.memories:
-        tally_events = list(iter_events_window(root, tally_window))
-    ranking = resolve_ranking_inputs(
-        root, probe_pool.memories, cfg.behavior, now=utcnow(), events=tally_events
-    )
+    # The ranker knobs production `memory_search` threads — the recency
+    # half-life and the Lane L conversational repairs — are read straight
+    # off the config, so the probe cannot rank on a different set of
+    # factors than the model's actual retrieval would have. No event read
+    # is issued here: the usage-aware multipliers that once needed one
+    # left in 9.0.0, and `recent` (the dedup-widened coverage read the
+    # caller took) already serves the retrieval shield.
     return probe_for_miss(
         probe_pool.memories,
         user_message,
@@ -472,11 +444,8 @@ def _probe_message(
         caller_origin=caller_origin,
         excluded_scopes=excluded_scopes,
         mode=cfg.behavior.search_mode or "hybrid",
-        half_life_days=ranking.half_life_days,
-        applied_by_id=ranking.applied_by_id,
-        negative_by_id=ranking.negative_by_id,
-        rescue_expansion=ranking.rescue_expansion,
-        conversational=ranking.conversational,
+        half_life_days=cfg.behavior.recency_boost_half_life_days,
+        conversational=cfg.behavior.conversational,
         corpus_stats_provider=probe_pool.corpus_stats_provider,
     )
 
@@ -535,7 +504,7 @@ def run_audit(
             cfg, telemetry=dataclasses.replace(cfg.telemetry, enabled=False)
         )
     root = cfg.resolved_directory()
-    store = Store(root)
+    store = Store.open_or_create(root / STORE_FILENAME)
     # Window-aware read: rotation archives the ENTIRE active log at a
     # moment independent of turn boundaries, so a turn that straddles a
     # rotation would lose its own `search` / `scope_disable` events
@@ -549,11 +518,10 @@ def run_audit(
     # `REAUDIT_DEDUP_WINDOW_SECONDS` — which is a coverage request, not
     # a filter: the reader yields the whole active log either way, and
     # every time-scoped consumer (the retrieval shield, the attribution
-    # pass) applies its own narrower cutoff internally. The usage-aware
-    # ranking tallies are deliberately NOT consumers: they issue their
-    # own read at production's width, which under `outcome_demotion` is
-    # wider than this one.
-    recent = list(iter_events_window(root, REAUDIT_DEDUP_WINDOW_SECONDS))
+    # pass) applies its own narrower cutoff internally.
+    recent = list(
+        store.events_since(_utcnow() - timedelta(seconds=REAUDIT_DEDUP_WINDOW_SECONDS))
+    )
     # The hook reads a transcript, not the wire: publish its caller so
     # the events below carry `actor` (client, transcript-derived model,
     # transcript id as the session — every value declared, the principal
@@ -593,7 +561,6 @@ def run_audit(
     )
     report = _probe_message(
         cfg=cfg,
-        root=root,
         store=store,
         user_message=user_message,
         session_id=session_id,
@@ -604,16 +571,14 @@ def run_audit(
     )
     # Emit the audit event so cadence is visible even when there's
     # nothing to flag — matches the MCP handler's discipline. Honour
-    # the same `telemetry.enabled` / `telemetry.max_bytes` config
-    # the server-side recorder reads, so a user who opted out of
+    # the same `telemetry.enabled` config the server-side recorder
+    # reads, so a user who opted out of
     # event logging doesn't see the hook silently override that
     # choice on every Stop event.
     recorder = Recorder(
-        root=root,
+        store=store,
         session_id=session_id,
         enabled=cfg.telemetry.enabled,
-        max_bytes=cfg.telemetry.max_bytes,
-        log_queries_verbatim=cfg.telemetry.log_queries_verbatim,
         worktree_root=caller_origin.worktree_root,
     )
     # `turn_audited` / `search_miss` field sets come from the shared
@@ -694,70 +659,6 @@ def run_audit(
             client_model=client_model,
         )
 
-    # Opt-in self-improving loop. Run the structurally-safe consolidation
-    # subset (conservative dedup + non-destructive demote), debounced, at
-    # turn end. Gated on `telemetry.enabled` because the event log is BOTH
-    # the debounce clock AND the audit trail — no log means no reviewable
-    # record, so we refuse to auto-mutate. Imported lazily so users who
-    # haven't opted in never pay consolidate's (semantic/health/search)
-    # import cost on every Stop event. Isolated in try/except so a
-    # consolidate hiccup can neither block the turn end nor drop the audit
-    # result above.
-    if cfg.consolidate.auto_apply and cfg.telemetry.enabled:
-        try:
-            from .consolidate import run_auto_consolidate
-
-            # No `memories=`: the only list this function holds is
-            # `probe_pool.memories`, a capped query-biased SEARCH pool,
-            # and the argument feeds the BOUNDED safety guard, which
-            # reads `len()` as the store's active-set size. Handing it
-            # the pool would cap the measured size at `_PREFILTER_CAP`
-            # and run the unattended O(N²) dedup on exactly the
-            # oversized stores the guard exists to defer. Passing None
-            # makes `run_auto_consolidate` load the active set itself —
-            # a cost paid only when the debounce says the pass is due,
-            # i.e. at most once per `auto_apply_interval_hours`.
-            run_auto_consolidate(
-                store,
-                recorder=recorder,
-                session_id=session_id,
-                interval_hours=cfg.consolidate.auto_apply_interval_hours,
-                max_memories=cfg.consolidate.auto_apply_max_memories,
-                now=utcnow(),
-            )
-        except Exception as exc:  # noqa: BLE001 — hook must never block turn end
-            print(f"bettermemory auto-consolidate: {exc}", file=sys.stderr)
-
-    # Opt-in write-reflex closure (the capture half of the self-improving
-    # loop). Scan this turn's user message for durable-looking statements
-    # the model didn't write and queue them as inert, review-gated
-    # proposals for the `memory_proposals` tool. Imported lazily so users
-    # who haven't opted in pay nothing per turn; best-effort so it can
-    # never block the turn end. No telemetry gate — the proposal queue is
-    # its own file and proposals are inert until the model reviews them;
-    # the recorded event is best-effort observability only. Stands down
-    # while session capture is on: capture reads the same messages, and
-    # what it keeps it writes through the gates rather than queueing.
-    if cfg.proposals.auto_propose and not cfg.capture.enabled:
-        try:
-            from .proposals import propose_from_exchange
-
-            proposed = propose_from_exchange(
-                root,
-                user_text=user_message,
-                max_pending=cfg.proposals.max_pending,
-                now=utcnow(),
-            )
-            if proposed:
-                recorder.record(
-                    "proposals_enqueued",
-                    count=len(proposed),
-                    session_id=session_id,
-                    triggered_from="stop_hook",
-                )
-        except Exception as exc:  # noqa: BLE001 — hook must never block turn end
-            print(f"bettermemory proposals: {exc}", file=sys.stderr)
-
     return report.to_dict()
 
 
@@ -834,7 +735,7 @@ def _render_recall_block(
         # default": this is the one delivery that reaches the model
         # without a tool call, and a record of unknown provenance must
         # announce itself here exactly as an `unaccounted` one does.
-        pointer += " [provenance: unknown, index unreadable]"
+        pointer += " [provenance: unknown, key absent]"
     elif provenance is not None and provenance != "local":
         qualifier = ", unverified here" if remote_stamp else ""
         pointer += f" [provenance: {provenance}{qualifier}]"
@@ -927,10 +828,12 @@ def run_prompt_recall(
     if not cfg.behavior.prompt_recall or not cfg.telemetry.enabled:
         return None
     root = cfg.resolved_directory()
-    if not root.exists():
+    if not (root / STORE_FILENAME).is_file():
         return None
-    store = Store(root)
-    recent = list(iter_events_window(root, REAUDIT_DEDUP_WINDOW_SECONDS))
+    store = Store.open_or_create(root / STORE_FILENAME)
+    recent = list(
+        store.events_since(_utcnow() - timedelta(seconds=REAUDIT_DEDUP_WINDOW_SECONDS))
+    )
     # Same caller the Stop hook publishes (`run_audit`), minus the model
     # — this hook fires before the assistant has answered.
     identity.bind_transcript(session_id=session_id, model=None)
@@ -952,7 +855,6 @@ def run_prompt_recall(
     )
     report = _probe_message(
         cfg=cfg,
-        root=root,
         store=store,
         user_message=prompt,
         session_id=session_id,
@@ -967,13 +869,8 @@ def run_prompt_recall(
         delivered_reason = "project_cohort"
     else:
         return None
-    # One index read for the top hit's provenance label; lazy import
-    # because this path runs on every prompt submission and the SQLite
-    # module is only needed once a delivery is actually happening.
-    from . import index as _index
-
     top_hit = report.top_hits[0]
-    rows = _index.trust_for(root, [top_hit.id])
+    rows = store.trust_rows([top_hit.id])
     trust = rows.get(top_hit.id) if rows is not None else None
     provenance = trust.provenance if trust is not None else None
     remote_stamp = (
@@ -989,11 +886,9 @@ def run_prompt_recall(
         trust_unavailable=rows is None,
     )
     recorder = Recorder(
-        root=root,
+        store=store,
         session_id=session_id,
         enabled=cfg.telemetry.enabled,
-        max_bytes=cfg.telemetry.max_bytes,
-        log_queries_verbatim=cfg.telemetry.log_queries_verbatim,
         worktree_root=caller_origin.worktree_root,
     )
     recorder.record(
@@ -1348,20 +1243,6 @@ def _pending_retrievals(
     return retrieved - used
 
 
-def _capture_checkpoint(session_id: object, transcript_path: Path) -> None:
-    """Session capture's turn-end half (`capture_hook.on_stop`): register
-    the session and start a checkpoint capture when one is due. Riding
-    this hook rather than a Stop hook of its own saves a process start on
-    every turn. Isolated, so a capture problem can never cost the audit.
-    Imported lazily: `capture` imports this module."""
-    try:
-        from .capture_hook import on_stop
-
-        on_stop(load_config(None), session_id, transcript_path)
-    except Exception as exc:  # noqa: BLE001 — hook must never block turn end
-        print(f"bettermemory capture: {exc}", file=sys.stderr)
-
-
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point wired into `bettermemory audit-turn`.
 
@@ -1445,8 +1326,6 @@ def main(argv: list[str] | None = None) -> int:
         transcript_path = Path(str(transcript_raw)).expanduser().resolve()
         if not transcript_path.is_file():
             return 0
-        if not args.dry_run:
-            _capture_checkpoint(session_id, transcript_path)
         user, assistant, model = _extract_last_exchange(transcript_path)
         if not user:
             return 0

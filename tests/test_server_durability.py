@@ -15,24 +15,25 @@ from typing import Any
 import pytest
 
 from bettermemory.config import Config, StorageConfig
-from bettermemory.events import Recorder, iter_events
+from bettermemory.events import Recorder
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
 
 
 @pytest.fixture
-def server_with_events(memory_dir: Path) -> tuple[Any, Path]:
+def server_with_events(memory_dir: Path) -> tuple[Any, Store]:
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
     state = SessionState()
-    rec = Recorder(root=memory_dir, session_id=state.session_id)
+    store = Store(memory_dir)
+    rec = Recorder(store=store, session_id=state.session_id)
     server = build_server(
         config=cfg,
-        store=Store(memory_dir),
+        store=store,
         state=state,
         recorder=rec,
     )
-    return server, memory_dir
+    return server, store
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
@@ -50,7 +51,7 @@ async def _call(server: Any, name: str, **kwargs: Any) -> Any:
 
 
 async def test_transient_body_returns_warning(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     server, _ = server_with_events
     res = await _call(
@@ -65,27 +66,21 @@ async def test_transient_body_returns_warning(
 
 
 async def test_transient_warning_does_not_persist(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
-    """A transient_warning response must not write to disk."""
-    server, _ = server_with_events
+    """A transient_warning response must not write to the store."""
+    server, store = server_with_events
     await _call(
         server,
         "memory_write",
         content="Today I refactored the auth flow.",
         scopes=["projects:auth"],
     )
-    listing = await _call(server, "memory_list")
-    listing = (
-        listing.get("result", listing)
-        if isinstance(listing, dict) and "result" in listing
-        else listing
-    )
-    assert listing == []
+    assert store.load_all() == []
 
 
 async def test_multiple_markers_all_reported(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     server, _ = server_with_events
     res = await _call(
@@ -105,7 +100,7 @@ async def test_multiple_markers_all_reported(
 
 
 async def test_marker_response_includes_snippet(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     server, _ = server_with_events
     res = await _call(
@@ -128,7 +123,7 @@ async def test_marker_response_includes_snippet(
 
 
 async def test_acknowledge_transient_commits(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     server, _ = server_with_events
     res = await _call(
@@ -142,11 +137,11 @@ async def test_acknowledge_transient_commits(
 
 
 async def test_acknowledge_transient_records_overridden_markers(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The override is logged so we can compute the override rate per
     marker in the health view."""
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     await _call(
         server,
         "memory_write",
@@ -154,7 +149,7 @@ async def test_acknowledge_transient_records_overridden_markers(
         scopes=["learning-style"],
         acknowledge_transient=True,
     )
-    write_events = [e for e in iter_events(memory_dir) if e["kind"] == "write"]
+    write_events = [e for e in store.iter_events() if e["kind"] == "write"]
     assert write_events
     e = write_events[-1]
     assert e["status"] == "committed"
@@ -162,18 +157,18 @@ async def test_acknowledge_transient_records_overridden_markers(
 
 
 async def test_clean_body_records_empty_acknowledged_list(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """Normal writes carry markers_acknowledged=[] so analytics can count
     explicit overrides without filtering out clean writes by absence."""
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     await _call(
         server,
         "memory_write",
         content="The auth service uses JWT with rotating refresh tokens.",
         scopes=["projects:auth"],
     )
-    write_events = [e for e in iter_events(memory_dir) if e["kind"] == "write"]
+    write_events = [e for e in store.iter_events() if e["kind"] == "write"]
     assert write_events[-1]["status"] == "committed"
     assert write_events[-1]["markers_acknowledged"] == []
 
@@ -184,7 +179,7 @@ async def test_clean_body_records_empty_acknowledged_list(
 
 
 async def test_durability_fires_before_dedup(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """Two transient bodies that overlap heavily: the second write should
     return transient_warning, not duplicate. Catching transience first
@@ -205,7 +200,7 @@ async def test_durability_fires_before_dedup(
 
 
 async def test_acknowledged_transient_body_can_still_be_blocked_by_dedup(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """Once acknowledge_transient passes the durability gate, dedup runs
     normally — a second acknowledged write of the same body returns
@@ -237,16 +232,16 @@ async def test_acknowledged_transient_body_can_still_be_blocked_by_dedup(
 
 
 async def test_transient_warning_logs_event_with_markers(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     await _call(
         server,
         "memory_write",
         content="Currently shipping a fix for the login bug.",
         scopes=["projects:auth"],
     )
-    write_events = [e for e in iter_events(memory_dir) if e["kind"] == "write"]
+    write_events = [e for e in store.iter_events() if e["kind"] == "write"]
     assert len(write_events) == 1
     e = write_events[0]
     assert e["status"] == "transient_warning"

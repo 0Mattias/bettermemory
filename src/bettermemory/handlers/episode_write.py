@@ -140,7 +140,7 @@ async def episode_write(
     # `_check_swarm_id` (charset + length) inside `store.write`; an
     # invalid value raises ValueError that surfaces uniformly with the
     # body/takeaway/scope caps above.
-    episode = deps.episode_store.write(
+    episode = deps.store.write_episode(
         session_id=session_id,
         body=body,
         takeaway=takeaway,
@@ -153,7 +153,7 @@ async def episode_write(
     # survives across the pause. The prune walks one level (session
     # dirs only) and stats one file per session — bounded by the
     # number of sessions in the worktree's lifetime, which is small.
-    pruned = deps.episode_store.prune_old_sessions(keep_session_id=session_id)
+    pruned = deps.store.prune_episode_sessions(keep_session_id=session_id)
 
     deps.recorder.record(
         "episode_write",

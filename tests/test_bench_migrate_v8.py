@@ -1,9 +1,10 @@
 """Tests for the migration-parity harness, `bench/parity/migrate_v8.py`.
 
 The harness migrates a v8 directory into the bettermemory 9 store,
-mirrors it back out, and compares. Its determinism is pinned here on a
-small corpus, and the committed artifact is checked against the tree:
-the corpus it names is the one on disk, and it records no differing file.
+mirrors it back out, and compares. Its run over the golden fixture under
+tests/fixtures/v8/store is pinned here against the fixture's manifest,
+and the committed artifact is checked against the tree: it names the
+fixture, its counts are the fixture's, and it records no differing file.
 """
 
 from __future__ import annotations
@@ -13,12 +14,15 @@ import json
 import sys
 from pathlib import Path
 from types import ModuleType
-
-from .test_bench_parity import _subset
+from typing import Any
 
 _ROOT = Path(__file__).resolve().parents[1]
 _HERE = _ROOT / "bench" / "parity"
 _ARTIFACT = _HERE / "results" / "migrate-v8-8.0.0-2026-09-26.json"
+_FIXTURE_DIR = _ROOT / "tests" / "fixtures" / "v8"
+MANIFEST: dict[str, Any] = json.loads(
+    (_FIXTURE_DIR / "manifest.json").read_text(encoding="utf-8")
+)
 
 
 def _load() -> ModuleType:
@@ -37,48 +41,49 @@ def _load() -> ModuleType:
 harness = _load()
 
 
-def test_the_public_fixture_migrates_and_mirrors_identically_on_a_subset(
-    tmp_path: Path,
-) -> None:
-    corpus_path, _ = _subset(tmp_path)
-    v8_root = tmp_path / "v8"
-    built = harness.build_public_v8(v8_root, corpus_path)
-    assert built["tombstones"] == 5 and built["episodes"] == 4
-    assert built["events"] == 43
+def test_the_golden_fixture_migrates_and_mirrors_identically(tmp_path: Path) -> None:
+    assert harness.FIXTURE == _FIXTURE_DIR / "store"
+    artifact = harness.run_migration(tmp_path / "run", harness.FIXTURE)
+    assert artifact["source"]["root"] == "tests/fixtures/v8/store"
 
-    artifact = harness.run_migration(tmp_path / "run", v8_root)
     migrated = artifact["migrate"]
-    assert migrated["memories"]["imported"] == built["active"]
-    assert migrated["tombstones"]["imported"] == 5
+    active = len(MANIFEST["memories"])
+    assert migrated["memories"]["imported"] == active == 3
+    assert migrated["tombstones"]["imported"] == len(MANIFEST["tombstones"]) == 2
     assert migrated["tombstones"]["legacy_names"] == 1
-    assert migrated["episodes"]["imported"] == 4
-    assert migrated["events"]["imported"] == 43
-    assert migrated["events"]["redacted"] == 9
-    assert migrated["conflicts"]["imported"] == 1
-    assert migrated["imports"]["imported"] == 1
+    assert migrated["episodes"]["imported"] == len(MANIFEST["episodes"]) == 3
+    assert migrated["episodes"]["sessions"] == 2
+    assert migrated["events"]["imported"] == MANIFEST["events_total"]
+    assert migrated["events"]["redacted"] == MANIFEST["events_redacted"]
+    assert migrated["event_kinds"] == MANIFEST["event_kinds"]
+    assert migrated["conflicts"]["imported"] == len(MANIFEST["conflicts"])
+    assert migrated["imports"]["imported"] == len(MANIFEST["imports"])
+    assert migrated["dropped"] == MANIFEST["dropped"]
+    assert migrated["unknown"] == MANIFEST["unknown"]
+    for key, count in MANIFEST["left"].items():
+        assert migrated["left"][key] == count, key
 
     compare = artifact["mirror"]["compare"]
     assert compare["active"]["differing"] == []
-    assert (
-        compare["active"]["identical"] == compare["active"]["files"] == built["active"]
-    )
+    assert compare["active"]["identical"] == compare["active"]["files"] == active
     assert compare["tombstones"]["differing"] == []
-    assert compare["tombstones"]["identical"] == 5
+    assert compare["tombstones"]["identical"] == 2
     assert len(compare["tombstones"]["renamed"]) == 1
     assert compare["episodes"]["differing"] == []
-    assert compare["episodes"]["identical"] == 4
-    assert compare["mirror_files"] == compare["source_files"]
+    assert compare["episodes"]["identical"] == 3
+    assert compare["mirror_files"] == compare["source_files"] == 8
 
     assert artifact["events"]["equal"] is True
+    assert artifact["events"]["v8_kinds"] == MANIFEST["event_kinds"]
     assert artifact["events"]["v8_kinds"]["migrate"] == 1
     assert artifact["eval"]["markdown_equal"] is True
     assert artifact["eval"]["alltime_equal"] is True
-    assert artifact["order"] == {
-        "index_present": True,
-        "equal": True,
-        "rows": built["active"],
-    }
-    assert artifact["candidates"] is None
+    # The index was built in the generator's directory-listing order; the
+    # rowid order agrees on a filesystem that lists the same way, and the
+    # set of ids agrees everywhere.
+    assert artifact["order"]["index_present"] is True
+    assert artifact["order"]["rows"] == active
+    assert artifact["order"]["same_set"] is True
     assert artifact["second_run"]["log_rows"] == 0
     assert artifact["second_run"]["events"] == 0
     assert artifact["verify"]["status"] == "ok"
@@ -89,15 +94,19 @@ def test_the_public_fixture_migrates_and_mirrors_identically_on_a_subset(
 def test_the_committed_artifact_matches_the_tree() -> None:
     artifact = json.loads(_ARTIFACT.read_text(encoding="utf-8"))
     assert artifact["kind"] == "migrate-v8/parity"
+    assert artifact["source"]["root"] == "tests/fixtures/v8/store"
     compare = artifact["mirror"]["compare"]
     assert compare["active"]["differing"] == []
     assert compare["tombstones"]["differing"] == []
     assert compare["episodes"]["differing"] == []
-    assert compare["active"]["files"] == 1075
-    assert compare["tombstones"]["files"] == 5
-    assert compare["episodes"]["files"] == 4
+    assert compare["active"]["files"] == len(MANIFEST["memories"])
+    assert compare["tombstones"]["files"] == len(MANIFEST["tombstones"])
+    assert compare["episodes"]["files"] == len(MANIFEST["episodes"])
+    assert artifact["migrate"]["events"]["imported"] == MANIFEST["events_total"]
+    assert artifact["migrate"]["event_kinds"] == MANIFEST["event_kinds"]
     assert artifact["events"]["equal"] is True
     assert artifact["eval"]["markdown_equal"] is True
     assert artifact["order"]["equal"] is True
+    assert artifact["order"]["same_set"] is True
     assert artifact["second_run"]["log_rows"] == 0
     assert artifact["verify"]["status"] == "ok"

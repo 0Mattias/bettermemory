@@ -1,9 +1,9 @@
 """Shared helpers for the CLI subcommand modules.
 
-Folds the duplicated ``load_config() + Store(directory)`` pattern that
+Folds the duplicated ``load_config()`` plus store-open pattern that
 every ``_cli_*`` handler used to repeat (audit finding M8). One call to
 :func:`cli_context` returns the resolved ``Config``, the storage
-directory ``Path``, and a ``Store`` rooted at that directory — the three
+directory ``Path``, and the store opened there, the three
 fixtures every subcommand needs.
 
 Kept minimal: no logging configuration, no I/O beyond the config read.
@@ -20,10 +20,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..config import Config, load_config
-from ..store import Store
+from ..store import STORE_FILENAME, Store
 
 if TYPE_CHECKING:
-    from ..events import AttributedRecorder
+    from ..events import Recorder
 
 
 @dataclass(frozen=True)
@@ -57,7 +57,7 @@ def cli_context() -> CliContext:
     # and run the startup checks. `bettermemory doctor` builds its own
     # Stores with the pure constructor instead, so inspecting a store
     # cannot rebuild the index it was asked to inspect.
-    store = Store.open(directory)
+    store = Store.open_or_create(directory / STORE_FILENAME)
     return CliContext(config=config, directory=directory, store=store)
 
 
@@ -67,7 +67,7 @@ def cli_recorder(
     attribution: str,
     session_id: str | None = None,
     triggered_from: str = "",
-) -> AttributedRecorder:
+) -> Recorder:
     """An event recorder for a CLI command that mutates the store.
 
     Mirrors the server's recorder construction (`builder.py`) so CLI
@@ -93,15 +93,13 @@ def cli_recorder(
     out-of-process writer on every event (`AttributedRecorder` says why);
     only `bettermemory capture` sets it.
     """
-    from ..events import AttributedRecorder
+    from ..events import Recorder
     from ..session import SessionState
 
-    return AttributedRecorder(
-        root=ctx.directory,
+    return Recorder(
+        store=ctx.store,
         session_id=session_id or SessionState().session_id,
         enabled=ctx.config.telemetry.enabled,
-        max_bytes=ctx.config.telemetry.max_bytes,
-        log_queries_verbatim=ctx.config.telemetry.log_queries_verbatim,
         attribution=attribution,
         triggered_from=triggered_from,
     )

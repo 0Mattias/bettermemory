@@ -21,10 +21,10 @@ from typing import Any
 import pytest
 
 from bettermemory.config import Config, StorageConfig
-from bettermemory.events import Recorder, iter_events
+from bettermemory.events import Recorder
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
-from bettermemory.store import Store
+from bettermemory.store import CONTROL_KINDS, MUTATION_KINDS, Store
 
 
 def _shaped(*parts: str) -> str:
@@ -41,17 +41,18 @@ _GITHUB = _shaped("ghp_", "1234567890abcdefABCDEF1234567890abcd")
 
 
 @pytest.fixture
-def server_with_events(memory_dir: Path) -> tuple[Any, Path]:
+def server_with_events(memory_dir: Path) -> tuple[Any, Store]:
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
     state = SessionState()
-    rec = Recorder(root=memory_dir, session_id=state.session_id)
+    store = Store(memory_dir)
+    rec = Recorder(store=store, session_id=state.session_id)
     server = build_server(
         config=cfg,
-        store=Store(memory_dir),
+        store=store,
         state=state,
         recorder=rec,
     )
-    return server, memory_dir
+    return server, store
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
@@ -63,13 +64,25 @@ async def _call(server: Any, name: str, **kwargs: Any) -> Any:
     return await _mcp_call(server, name, kwargs)
 
 
+def _raw_event_log(store: Store) -> str:
+    """The telemetry rows' raw payload text, straight from the log table:
+    what the v8 tests read as the bytes of `.events*.jsonl`. The store's
+    mutation rows carry committed bodies by design and are not the log
+    this contract is about."""
+    return "".join(
+        str(row["payload"])
+        for row in store.conn.execute("SELECT kind, payload FROM log ORDER BY seq")
+        if row["kind"] not in MUTATION_KINDS and row["kind"] not in CONTROL_KINDS
+    )
+
+
 # ---------------------------------------------------------------------------
 # Secret-shaped bodies are blocked by default
 # ---------------------------------------------------------------------------
 
 
 async def test_credential_body_returns_warning(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     server, _ = server_with_events
     res = await _call(
@@ -84,26 +97,20 @@ async def test_credential_body_returns_warning(
 
 
 async def test_credential_warning_does_not_persist(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
-    server, _ = server_with_events
+    server, store = server_with_events
     await _call(
         server,
         "memory_write",
         content=f"openai key {_OPENAI} for the bot",
         scopes=["tools"],
     )
-    listing = await _call(server, "memory_list")
-    listing = (
-        listing.get("result", listing)
-        if isinstance(listing, dict) and "result" in listing
-        else listing
-    )
-    assert listing == []
+    assert store.load_all() == []
 
 
 async def test_warning_response_redacts_secret(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     server, _ = server_with_events
     res = await _call(
@@ -123,12 +130,12 @@ async def test_warning_response_redacts_secret(
 
 
 async def test_secret_never_written_to_event_log(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The strongest contract: the value the gate refused must not be
-    recoverable from `.events.jsonl` — not in the warning event, not
-    anywhere. We read the raw bytes, not the parsed events."""
-    server, memory_dir = server_with_events
+    recoverable from the event log, not in the warning event, not
+    anywhere. We read the raw payload text, not the parsed events."""
+    server, store = server_with_events
     secret = _ANTHROPIC
     await _call(
         server,
@@ -144,12 +151,7 @@ async def test_secret_never_written_to_event_log(
         scopes=["tools"],
         acknowledge_credential=True,
     )
-    # Scan every active shard segment (and any legacy log), not one
-    # file — the event log is sharded. The glob matches `.events.jsonl`
-    # and `.events.NN.jsonl` but not the `.gz` archives.
-    raw = "".join(
-        p.read_text(encoding="utf-8") for p in sorted(memory_dir.glob(".events*.jsonl"))
-    )
+    raw = _raw_event_log(store)
     assert secret not in raw
     # The kind, however, is logged so override-rate analytics works.
     assert "openai-anthropic-key" in raw
@@ -161,7 +163,7 @@ async def test_secret_never_written_to_event_log(
 
 
 async def test_acknowledge_credential_commits(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     server, _ = server_with_events
     res = await _call(
@@ -175,9 +177,9 @@ async def test_acknowledge_credential_commits(
 
 
 async def test_acknowledge_credential_records_kinds(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     await _call(
         server,
         "memory_write",
@@ -185,7 +187,7 @@ async def test_acknowledge_credential_records_kinds(
         scopes=["reference"],
         acknowledge_credential=True,
     )
-    write_events = [e for e in iter_events(memory_dir) if e["kind"] == "write"]
+    write_events = [e for e in store.iter_events() if e["kind"] == "write"]
     assert write_events
     e = write_events[-1]
     assert e["status"] == "committed"
@@ -193,16 +195,16 @@ async def test_acknowledge_credential_records_kinds(
 
 
 async def test_clean_body_records_empty_credentials_acknowledged(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     await _call(
         server,
         "memory_write",
         content="The auth service uses JWT with rotating refresh tokens.",
         scopes=["projects:auth"],
     )
-    write_events = [e for e in iter_events(memory_dir) if e["kind"] == "write"]
+    write_events = [e for e in store.iter_events() if e["kind"] == "write"]
     assert write_events[-1]["status"] == "committed"
     assert write_events[-1]["credentials_acknowledged"] == []
 
@@ -213,7 +215,7 @@ async def test_clean_body_records_empty_credentials_acknowledged(
 
 
 async def test_credential_fires_before_durability(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """A body with BOTH a secret and a transient marker returns
     credential_warning — the higher-severity refusal wins."""
@@ -228,7 +230,7 @@ async def test_credential_fires_before_durability(
 
 
 async def test_acknowledged_credential_still_hits_durability(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """Once acknowledge_credential passes the credential gate, the durability
     gate runs normally — a body that is also transient still warns."""
@@ -249,16 +251,16 @@ async def test_acknowledged_credential_still_hits_durability(
 
 
 async def test_credential_warning_logs_event_with_kinds(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     await _call(
         server,
         "memory_write",
         content=f"prod key {_AWS}",
         scopes=["infrastructure"],
     )
-    write_events = [e for e in iter_events(memory_dir) if e["kind"] == "write"]
+    write_events = [e for e in store.iter_events() if e["kind"] == "write"]
     assert len(write_events) == 1
     e = write_events[0]
     assert e["status"] == "credential_warning"
@@ -271,7 +273,7 @@ async def test_credential_warning_logs_event_with_kinds(
 
 
 async def test_update_body_with_credential_warns_and_does_not_persist(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """A secret can't be smuggled into the store by EDITING a memory: a body
     update that introduces a secret returns credential_warning and the stored
@@ -299,26 +301,21 @@ async def test_update_body_with_credential_warns_and_does_not_persist(
 
 
 async def test_update_secret_never_in_event_log(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     created = await _call(
         server, "memory_write", content="auth notes.", scopes=["projects:auth"]
     )
     secret = _GITHUB
     await _call(server, "memory_update", id=created["id"], content=f"token {secret}")
-    # Scan every active shard segment (and any legacy log), not one
-    # file — the event log is sharded. The glob matches `.events.jsonl`
-    # and `.events.NN.jsonl` but not the `.gz` archives.
-    raw = "".join(
-        p.read_text(encoding="utf-8") for p in sorted(memory_dir.glob(".events*.jsonl"))
-    )
+    raw = _raw_event_log(store)
     assert secret not in raw
     assert "github-token" in raw
 
 
 async def test_update_acknowledge_credential_commits(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     server, _ = server_with_events
     created = await _call(
@@ -335,7 +332,7 @@ async def test_update_acknowledge_credential_commits(
 
 
 async def test_update_acknowledge_credential_records_kinds(
-    server_with_events: tuple[Any, Path],
+    server_with_events: tuple[Any, Store],
 ) -> None:
     """The override marker is auditable on the UPDATE surface too. An
     acknowledged body edit must record the detector KIND on the update
@@ -344,7 +341,7 @@ async def test_update_acknowledge_credential_records_kinds(
     it the too-loose-detector override-rate signal and a forensic
     `grep credentials_acknowledged` sweep silently miss every secret
     introduced by EDIT rather than by write."""
-    server, memory_dir = server_with_events
+    server, store = server_with_events
     created = await _call(
         server, "memory_write", content="aws docs notes.", scopes=["reference"]
     )
@@ -360,15 +357,10 @@ async def test_update_acknowledge_credential_records_kinds(
     # credential_warning / stale short-circuits) must log the acknowledged
     # detector kind so override-rate analytics covers the edit surface.
     committed = [
-        e for e in iter_events(memory_dir) if e["kind"] == "update" and e.get("fields")
+        e for e in store.iter_events() if e["kind"] == "update" and e.get("fields")
     ]
     assert committed, "no committed update event recorded"
     assert "aws-access-key-id" in committed[-1].get("credentials_acknowledged", [])
     # ...and the raw secret must never reach the event log — kind only.
-    # Scan every active shard segment (and any legacy log), not one
-    # file — the event log is sharded. The glob matches `.events.jsonl`
-    # and `.events.NN.jsonl` but not the `.gz` archives.
-    raw = "".join(
-        p.read_text(encoding="utf-8") for p in sorted(memory_dir.glob(".events*.jsonl"))
-    )
+    raw = _raw_event_log(store)
     assert _AWS not in raw

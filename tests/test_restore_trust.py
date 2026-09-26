@@ -1,6 +1,6 @@
 """A restore re-checks the trust the tombstone carried.
 
-`memory_restore` used to re-admit `last_verified_at`, the attestations and
+The restore action used to re-admit `last_verified_at`, the attestations and
 the claims exactly as the tombstone held them, with no oracle re-check —
 the remaining half of the 2026-09-01 integrity recon's third weak point.
 The tree moves while a record sits tombstoned, so the two checks the verify
@@ -18,8 +18,8 @@ from typing import Any
 
 import pytest
 
-from bettermemory.config import BehaviorConfig, Config, StorageConfig
-from bettermemory.events import Recorder, iter_events
+from bettermemory.config import Config, StorageConfig
+from bettermemory.events import Recorder
 from bettermemory.handlers.restore import restore_with_trust_check, trust_strip_for
 from bettermemory.origin import Origin
 from bettermemory.server import build_server
@@ -62,15 +62,11 @@ def _seed(
 
 
 def _build(memory_dir: Path) -> Any:
-    cfg = Config(
-        storage=StorageConfig(directory=str(memory_dir)),
-        behavior=BehaviorConfig(full_tool_surface=True),
-    )
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
     state = SessionState()
-    recorder = Recorder(root=memory_dir, session_id=state.session_id, enabled=True)
-    return build_server(
-        config=cfg, store=Store(memory_dir), state=state, recorder=recorder
-    )
+    store = Store(memory_dir)
+    recorder = Recorder(store=store, session_id=state.session_id, enabled=True)
+    return build_server(config=cfg, store=store, state=state, recorder=recorder)
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
@@ -78,8 +74,8 @@ async def _call(server: Any, name: str, **kwargs: Any) -> Any:
     return res.get("result", res) if isinstance(res, dict) and "result" in res else res
 
 
-def _restore_events(memory_dir: Path) -> list[dict[str, Any]]:
-    return [e for e in iter_events(memory_dir) if e.get("kind") == "restore"]
+def _restore_events(store: Store) -> list[dict[str, Any]]:
+    return [e for e in store.iter_events() if e.get("kind") == "restore"]
 
 
 async def test_a_claim_the_tree_now_contradicts_leaves_with_the_stamp(
@@ -91,7 +87,7 @@ async def test_a_claim_the_tree_now_contradicts_leaves_with_the_stamp(
     (root / "pkg" / "mod.py").write_text("TIMEOUT = 60\n", encoding="utf-8")
 
     server = _build(memory_dir)
-    res = await _call(server, "memory_restore", id=mid)
+    res = await _call(server, "memory_admin", action="restore", id=mid)
     assert res["status"] == "committed" and res["id"] == mid
     assert res["trust_stripped"] == {
         "claims": ["pkg/mod.py::TIMEOUT=30"],
@@ -104,7 +100,7 @@ async def test_a_claim_the_tree_now_contradicts_leaves_with_the_stamp(
     assert restored.claims == []
     assert restored.last_verified_at is None
     assert restored.body.strip() == _BODY
-    (event,) = _restore_events(memory_dir)
+    (event,) = _restore_events(store)
     assert event["claims_dropped"] == ["pkg/mod.py::TIMEOUT=30"]
     assert event["verification_cleared"] is True
     assert "attestations_dropped" not in event
@@ -123,7 +119,7 @@ async def test_an_attested_path_that_vanished_leaves_with_the_stamp(
     attested.unlink()
 
     server = _build(memory_dir)
-    res = await _call(server, "memory_restore", id=mid)
+    res = await _call(server, "memory_admin", action="restore", id=mid)
     assert res["trust_stripped"] == {
         "claims": [],
         "verified_paths": [str(attested)],
@@ -135,7 +131,7 @@ async def test_an_attested_path_that_vanished_leaves_with_the_stamp(
     # The claim still holds and stays; only the stamp over the record goes.
     assert restored.claims == ["pkg/mod.py::TIMEOUT=30"]
     assert restored.last_verified_at is None
-    (event,) = _restore_events(memory_dir)
+    (event,) = _restore_events(store)
     assert event["attestations_dropped"] == [str(attested)]
     assert "claims_dropped" not in event
 
@@ -153,13 +149,13 @@ async def test_trust_that_still_holds_comes_back_intact(
     stamp = store.load_tombstone(mid).last_verified_at
 
     server = _build(memory_dir)
-    res = await _call(server, "memory_restore", id=mid)
+    res = await _call(server, "memory_admin", action="restore", id=mid)
     assert "trust_stripped" not in res and "hint" not in res
     restored = store.load_one(mid)
     assert restored.last_verified_at == stamp
     assert restored.claims == ["pkg/mod.py::TIMEOUT=30"]
     assert restored.verified_paths == [str(attested)]
-    (event,) = _restore_events(memory_dir)
+    (event,) = _restore_events(store)
     assert not {"claims_dropped", "attestations_dropped", "verification_cleared"} & set(
         event
     )
@@ -208,7 +204,7 @@ def test_the_cli_restore_runs_the_same_check(
     assert f"Restored {mid}" in out
     assert "dropped 1 claim(s) and 0 attested path(s)" in out
     assert store.load_one(mid).claims == []
-    (event,) = _restore_events(memory_dir)
+    (event,) = _restore_events(store)
     assert event["claims_dropped"] == ["pkg/mod.py::TIMEOUT=30"]
 
 
@@ -295,7 +291,7 @@ async def test_an_anchor_the_origin_tree_no_longer_resolves_is_dropped(
     assert strip.any is False and strip.reported is True
 
     server = _build(memory_dir)
-    res = await _call(server, "memory_restore", id=mid)
+    res = await _call(server, "memory_admin", action="restore", id=mid)
     assert res["trust_stripped"] == {
         "claims": [],
         "verified_paths": [],
@@ -307,7 +303,7 @@ async def test_an_anchor_the_origin_tree_no_longer_resolves_is_dropped(
     assert restored.verified_head is None
     assert restored.last_verified_at == stamp
     assert restored.verified_paths == ["pkg/mod.py"]
-    (event,) = _restore_events(memory_dir)
+    (event,) = _restore_events(store)
     assert event["verified_head_dropped"] is True
     assert "verification_cleared" not in event
 
@@ -320,10 +316,10 @@ async def test_an_anchor_that_still_resolves_comes_back_intact(
     store = Store(memory_dir)
     mid = _seed_anchored(store, root, head)
     server = _build(memory_dir)
-    res = await _call(server, "memory_restore", id=mid)
+    res = await _call(server, "memory_admin", action="restore", id=mid)
     assert "trust_stripped" not in res
     assert store.load_one(mid).verified_head == head
-    (event,) = _restore_events(memory_dir)
+    (event,) = _restore_events(store)
     assert "verified_head_dropped" not in event
 
 

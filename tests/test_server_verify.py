@@ -33,7 +33,7 @@ import pytest
 from ._mcp import call_tool as _mcp_call
 
 from bettermemory.config import Config, StorageConfig
-from bettermemory.events import Recorder, iter_events
+from bettermemory.events import Recorder
 from bettermemory.handlers.verify import _refuse_unverifiable_stored_attestations
 from bettermemory.origin import Origin
 from bettermemory.server import build_server
@@ -293,12 +293,12 @@ def _server(memory_dir: Path) -> tuple[Any, Store]:
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
     state = SessionState()
     store = Store(memory_dir)
-    recorder = Recorder(root=memory_dir, session_id=state.session_id, enabled=True)
+    recorder = Recorder(store=store, session_id=state.session_id, enabled=True)
     return build_server(config=cfg, store=store, state=state, recorder=recorder), store
 
 
-def _verify_events(memory_dir: Path) -> list[dict[str, Any]]:
-    return [e for e in iter_events(memory_dir) if e.get("kind") == "verify"]
+def _verify_events(store: Store) -> list[dict[str, Any]]:
+    return [e for e in store.iter_events() if e.get("kind") == "verify"]
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
@@ -323,7 +323,7 @@ async def test_the_stamp_records_the_origin_checkouts_head(
     )
     assert res["verified_head"] == head
     assert store.load_one(memory.id).verified_head == head
-    (event,) = _verify_events(memory_dir)
+    (event,) = _verify_events(store)
     assert event["verified_head"] == head
 
     (root / "notes.md").write_text("moved on\n", encoding="utf-8")
@@ -386,7 +386,7 @@ async def test_a_memory_with_no_checkout_stamps_without_an_anchor(
     )
     res = await _call(server, "memory_verify", id=dead.id)
     assert res["verified_head"] is None
-    for event in _verify_events(memory_dir):
+    for event in _verify_events(store):
         assert "verified_head" not in event
 
 
