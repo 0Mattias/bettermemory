@@ -120,6 +120,56 @@ def keys_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return keys
 
 
+#: The developer's own global store, read once at import time, before any
+#: test fakes the home directory. The autouse guard below redirects a
+#: resolution that would land here; a faked home resolves elsewhere and
+#: passes through, so the tests of the resolution rule are unaffected.
+_DEVELOPER_GLOBAL_DIR = (Path.home() / _config.GLOBAL_DIR_NAME).resolve()
+
+
+@pytest.fixture(autouse=True)
+def storage_dir(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """No test resolves the developer's own store or config.
+
+    A resolution that would land on the developer's global store (no
+    ``BETTERMEMORY_DIR``, no project directory, the real home) is
+    redirected under the test's own directory. ``build_server()`` with
+    no arguments was the call that reached it: with the keys directory
+    above already redirected, every run of the suite opened the
+    developer's live store without its key and rekeyed it. An explicit
+    ``storage.directory``, the environment override and a faked home
+    resolve exactly as before, so nothing a test asked for changes.
+
+    ``default_config_path`` is pointed at the test's directory for the
+    same reason: a test must not read the developer's ``config.toml``,
+    and ``load_config`` creates a default one where none exists. The
+    file is written up front with the shipped defaults so ``load_config``
+    stays silent, which the tests of the hook commands' silence rely on.
+
+    In-process only. A child process the test spawns resolves on its
+    own; the spawn helpers in the suite set ``BETTERMEMORY_DIR`` for it.
+    """
+    # A sibling of the test's `tmp_path`, not a child: tests of the
+    # atomic-write helpers count the entries under `tmp_path`.
+    guard_dir = tmp_path_factory.mktemp("bettermemory-guard")
+    fallback = (guard_dir / "store").resolve()
+    original = _config.Config.resolved_directory
+
+    def guarded(self: _config.Config, cwd: Path | None = None) -> Path:
+        resolved = original(self, cwd=cwd)
+        if resolved == _DEVELOPER_GLOBAL_DIR:
+            return fallback
+        return resolved
+
+    monkeypatch.setattr(_config.Config, "resolved_directory", guarded)
+    config_path = guard_dir / "config.toml"
+    config_path.write_text(_config.DEFAULT_CONFIG, encoding="utf-8")
+    monkeypatch.setattr(_config, "default_config_path", lambda: config_path)
+    return fallback
+
+
 @pytest.fixture
 def store(memory_dir: Path) -> Store:
     return Store(memory_dir)
