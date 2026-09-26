@@ -16,6 +16,7 @@ import random
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -127,6 +128,18 @@ def _undetermined(start: Path) -> bool:
     """Whether `signature` marks `start` as undetermined: two calls with
     nothing changed in between compare unequal."""
     return githead.signature(start) != githead.signature(start)
+
+
+def _stamp(path: Path, *, follow: bool = True) -> tuple[int, int, int, int, int]:
+    """What `githead.stamp` must read for an existing `path`."""
+    status = os.stat(path, follow_symlinks=follow)
+    return (
+        status.st_mtime_ns,
+        status.st_ctime_ns,
+        status.st_size,
+        status.st_ino,
+        status.st_mode,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -752,10 +765,11 @@ def test_seeded_operation_sequence_agrees_with_git(tmp_path: Path) -> None:
             # The git-directory and HEAD slots move exactly when HEAD does;
             # the config slot also moves when an operation rewrites the
             # shared config (`git branch -m` renames its section), and
-            # always reads the file as it now stands.
+            # always reads the file as it now stands, as the HEAD file's
+            # slot reads HEAD.
             assert (after[:2] != before[checkout][:2]) == head_moved
-            status = (gd.commondir / "config").stat()
-            assert after[2] == (status.st_mtime_ns, status.st_size)
+            assert after[2] == _stamp(gd.commondir / "config")
+            assert after[3] == _stamp(gd.gitdir / "HEAD", follow=False)
 
 
 # ---------------------------------------------------------------------------
@@ -776,12 +790,73 @@ def test_signature_is_stable_across_reads(tmp_path: Path) -> None:
     _run(repo, "rev-parse", "HEAD")
     assert githead.signature(repo) == before
     assert githead.signature(sub) == before
-    gitdir, head, config, *env = before
+    gitdir, head, config, head_file, refs, packed, *env = before
     assert gitdir == str(repo.resolve() / ".git")
     assert head == b"ref: refs/heads/main\n"
-    status = (repo / ".git" / "config").stat()
-    assert config == (status.st_mtime_ns, status.st_size)
+    assert config == _stamp(repo / ".git" / "config")
+    assert head_file == _stamp(repo / ".git" / "HEAD", follow=False)
+    assert refs == (_stamp(repo / ".git" / "refs" / "heads" / "main", follow=False),)
+    assert packed is None
     assert env == [None, None, None]
+
+
+@posix_only
+@pytest.mark.parametrize(
+    "move",
+    ["HEAD rewritten", "loose ref", "packed ref", "detached HEAD", "symbolic chain"],
+)
+def test_signature_sees_a_head_that_moves_and_returns(
+    move: str, tmp_path: Path
+) -> None:
+    """A head moved to another commit and back leaves HEAD's bytes and the
+    commit it names as they were. Git writes HEAD, a loose ref and
+    packed-refs through a lock file and a rename, so the file it rewrote
+    has a new inode and ctime, and the signature, which carries the stamp
+    of each, differs from the one read before the move."""
+    repo = _init_repo(tmp_path / "repo")
+    first = _commit(repo, "one")
+    second = _commit(repo, "two")
+    _run(repo, "branch", "side", first)
+    if move == "packed ref":
+        _run(repo, "pack-refs", "--all")
+    elif move == "detached HEAD":
+        _run(repo, "checkout", "--quiet", "--detach")
+    elif move == "symbolic chain":
+        _run(repo, "symbolic-ref", "refs/heads/alias", "refs/heads/main")
+        _run(repo, "symbolic-ref", "HEAD", "refs/heads/alias")
+    gd = githead.find_gitdir(repo)
+    assert gd is not None and githead.head_sha(gd) == second
+    # The files the move rewrites, aged an hour, so the rewrite never
+    # falls within one tick of the filesystem's clock of the fixture's own
+    # write: the limit the signature declares, not exercised here.
+    past = time.time_ns() - 3600 * 10**9
+    for path in [gd.gitdir / "HEAD", *(gd.commondir / "refs").rglob("*")]:
+        if path.is_file():
+            os.utime(path, ns=(past, past))
+    if (gd.commondir / "packed-refs").exists():
+        os.utime(gd.commondir / "packed-refs", ns=(past, past))
+    before = githead.signature(repo)
+    assert not _undetermined(repo)
+
+    if move == "HEAD rewritten":
+        _run(repo, "symbolic-ref", "HEAD", "refs/heads/side")
+        _run(repo, "symbolic-ref", "HEAD", "refs/heads/main")
+    elif move == "packed ref":
+        for sha in (first, second):
+            _run(repo, "update-ref", "refs/heads/main", sha)
+            _run(repo, "pack-refs", "--all")
+        assert not (repo / ".git" / "refs" / "heads" / "main").exists()
+    elif move == "detached HEAD":
+        for sha in (first, second):
+            _run(repo, "update-ref", "--no-deref", "HEAD", sha)
+    else:
+        for sha in (first, second):
+            _run(repo, "update-ref", "--no-deref", "refs/heads/main", sha)
+
+    after = githead.signature(repo)
+    assert githead.head_sha(gd) == second, "premise: the head came back"
+    assert after[:2] == before[:2], "premise: HEAD's bytes are as they were"
+    assert after != before
 
 
 @posix_only

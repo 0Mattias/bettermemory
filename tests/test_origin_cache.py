@@ -362,6 +362,46 @@ def test_a_change_while_the_probes_run_is_not_cached(
     _same(after, _uncached(repo))
 
 
+@posix_only
+@pytest.mark.parametrize("move", ["symbolic-ref", "checkout"])
+def test_a_head_that_leaves_and_returns_while_the_probes_run_is_not_cached(
+    move: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HEAD pointed at another branch as the branch probe starts and back
+    once it returns: HEAD's bytes before and after the probes are the
+    same, while the probe read the other branch. Git rewrites HEAD through
+    a lock file and a rename, which leaves it with a new inode and ctime,
+    so the signature before the probes differs from the one after them
+    and the capture is not kept."""
+    repo = _repo(tmp_path / "repo")
+    _commit(repo)
+    _run(repo, "branch", "side")
+    real_branch = origin._git_branch
+
+    def point(branch: str) -> None:
+        if move == "symbolic-ref":
+            _run(repo, "symbolic-ref", "HEAD", f"refs/heads/{branch}")
+        else:
+            _run(repo, "checkout", "--quiet", branch)
+
+    def read_away_then_return(cwd: Path) -> str | None:
+        point("side")
+        try:
+            return real_branch(cwd)
+        finally:
+            point("main")
+
+    monkeypatch.setattr(origin, "_git_branch", read_away_then_return)
+    during = capture(repo)
+    monkeypatch.setattr(origin, "_git_branch", real_branch)
+    assert during.branch == "side", "premise: the probe read the other branch"
+    assert _run(repo, "symbolic-ref", "HEAD") == "refs/heads/main"
+    assert _key(repo) not in origin._ORIGIN_CACHE
+    after = capture(repo)
+    assert after.branch == "main"
+    _same(after, _uncached(repo))
+
+
 # ---------------------------------------------------------------------------
 # What is not cached
 # ---------------------------------------------------------------------------

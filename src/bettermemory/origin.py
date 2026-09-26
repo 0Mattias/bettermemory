@@ -49,6 +49,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
+from typing import TypeAlias
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, PrivateAttr
@@ -183,7 +184,10 @@ def capture(cwd: Path | None = None, *, source: str | None = None) -> Origin:
     the remote's alternates are registered the same way, so the result is
     the uncached one field for field, private attributes included. A
     capture is kept only when every probe ran and the signature read the
-    same before and after them.
+    same before and after them, which a HEAD moved away and back while
+    they ran does not (git rewrote HEAD). A first probe that ran and
+    exited non-zero is an answer, "not a repository", and is kept for the
+    lifetime like any other.
     """
     if cwd is None:
         declared = identity.workspace_declaration()
@@ -295,17 +299,23 @@ class _OriginEntry:
 # the capture began. `capture` answers from an entry while it is younger
 # than ORIGIN_CACHE_SECONDS and the directory's signature equals the
 # entry's. The signature holds the git directory the walk from the
-# directory reaches, the bytes of its HEAD, the stat of its config and the
-# GIT_DIR, GIT_WORK_TREE and GIT_CEILING_DIRECTORIES values, so a branch
+# directory reaches, the bytes of its HEAD, the stamps of its config, of
+# HEAD itself, of the loose refs HEAD's chain reads and of packed-refs, and
+# the GIT_DIR, GIT_WORK_TREE and GIT_CEILING_DIRECTORIES values, so a branch
 # switch, a remote changed in the repository's config, a repository created
 # or removed on the path, or a change to one of those variables is never
-# answered from an entry; where the files do not settle what git would
-# find, the signature equals no other and every capture asks git. What the
-# signature does not see (whether git can run, configuration outside the
-# repository's config file, a tag named like the checked-out branch) holds
-# for at most the lifetime. Keyed by directory, never by process. The lock
-# serialises the store, the eviction and the clear; a lookup is one dict
-# read.
+# answered from an entry, and no capture is kept whose probes ran while
+# HEAD moved to another branch and back (git rewrites HEAD through a
+# rename, which leaves a new inode and ctime); where the files do not
+# settle what git would find, the signature equals no other and every
+# capture asks git. What the signature does not see (whether git can run,
+# configuration outside the repository's config file, a tag named like the
+# checked-out branch) holds for at most the lifetime, and so does a capture
+# whose first probe ran and exited non-zero: `_probe_worktree_root` reads
+# that exit as "not a repository", an answer, and a failure that clears
+# (an unreadable file, a lock) exits non-zero as well. Keyed by directory,
+# never by process. The lock serialises the store, the eviction and the
+# clear; a lookup is one dict read.
 _ORIGIN_CACHE: dict[str, _OriginEntry] = {}
 _ORIGIN_CACHE_LOCK = threading.Lock()
 
@@ -1233,21 +1243,33 @@ class ReachableWalk:
 
 
 # The reachable walk is memoised per process, keyed on (root, anchor,
-# head): the walk names both ends (`_walk_reachable` runs to the key's
-# head, not to whatever HEAD names by then), and the range between two
-# named commits never changes, so an entry is never stale, and the key's
-# `head` is what lets a long-lived server stop reusing a walk the moment
-# a commit lands. Bounded so a store with many distinct anchors cannot
+# head) and the stamps of the files beside the history that decide what
+# its listing shows (`walk_files_signature`: the repository's config and
+# the working tree's .gitmodules). The walk names both ends
+# (`_walk_reachable` runs to the key's head, not to whatever HEAD names by
+# then), and the range between two named commits never changes, so an
+# entry is never stale while those files read as they did; the key's
+# `head` is what lets a long-lived server stop reusing a walk the moment a
+# commit lands, and the stamps what stops it once log.showRoot or a
+# submodule's ignore setting is written. A walk is kept only when those
+# files and the root directory read the same after it as before it, so a
+# .gitmodules created and removed while git ran is not kept either. Where
+# the stamps cannot be read (`githead` declines: off POSIX, under
+# GIT_DIR), no walk is kept. What the stamps do not see (git's
+# configuration outside the repository's config file, config.worktree, a
+# history rewritten under an unchanged head) reads the memoised walk until
+# the head moves. Bounded so a store with many distinct anchors cannot
 # grow it without limit. Only a walk is stored, never a None: a None is
 # also what a git process that failed yields (an object briefly
 # unreadable, a timeout), and the fallback taken on a failure must not
 # outlive the call that met it. A caller that resolves many memories in
-# one pass keeps the Nones for that pass in its `dead` mapping
-# (`commits_since_anchor`). The lock makes each look-up-and-touch and each
-# insert-and-evict atomic; the walk runs outside it. Registered with
-# `_caches`, which empties it before each test.
+# one pass keeps the Nones for that pass, and the walks no memo keeps, in
+# its `walked` mapping (`commits_since_anchor`). The lock makes each
+# look-up-and-touch and each insert-and-evict atomic; the walk runs outside
+# it. Registered with `_caches`, which empties it before each test.
 _WALK_MEMO_CAP = 128
-_WALK_MEMO: OrderedDict[tuple[str, str, str], ReachableWalk] = OrderedDict()
+_WalkKey: TypeAlias = tuple[str, str, str, tuple[object, ...]]
+_WALK_MEMO: OrderedDict[_WalkKey, ReachableWalk] = OrderedDict()
 _WALK_MEMO_LOCK = threading.Lock()
 
 
@@ -1268,12 +1290,13 @@ def commits_since_anchor(
     *,
     toplevel: Path | None = None,
     head: str | None = None,
-    dead: dict[tuple[str, str, str], bool] | None = None,
+    walked: dict[tuple[str, str, str], ReachableWalk | bool] | None = None,
 ) -> ReachableWalk | None:
     """The reachable walk from `anchor` to HEAD, or None when the count
     must fall back to author-date space.
 
-    One git process per distinct (root, anchor, head), the walks memoised
+    One git process per distinct (root, anchor, head) and stamps of the
+    files beside the history (`walk_files_signature`), the walks memoised
     (see `_WALK_MEMO`) and the Nones not.
     ``git log --boundary --name-only anchor..<head>``, the head named by
     its hash, lists every commit in the range with the paths it changed,
@@ -1282,16 +1305,18 @@ def commits_since_anchor(
     boundary commit is a parent of a commit reachable from HEAD, and an
     ancestor that is not HEAD itself is the parent of the range's oldest
     commit on some path). An EMPTY listing means HEAD is reachable from
-    the anchor — the same commit, or a checkout that moved backwards —
-    and only the first of those is a measurement.
+    the anchor (the same commit, or a checkout that moved backwards), and
+    only the first of those is a measurement.
 
-    `dead`, a mapping the caller keeps for one pass over many memories,
-    remembers each (root, anchor, head) whose walk came back None and
-    whether a git process failed for it. A later call for the same key in
-    that pass returns None without a process and counts the failure again
-    on the calling thread (`failed_git_calls`), so a caller that keeps a
-    value only when no git call failed judges every hit at that anchor as
-    it judged the first.
+    `walked`, a mapping the caller keeps for one pass over many memories,
+    remembers per (root, anchor, head) what no memo keeps: each walk that
+    came back None, as whether a git process failed for it, and each walk
+    the process-wide memo could not key (the stamps unreadable). A later
+    call for the same key in that pass returns the remembered walk, or
+    None without a process, counting the failure again on the calling
+    thread (`failed_git_calls`), so a caller that keeps a value only when
+    no git call failed judges every hit at that anchor as it judged the
+    first.
 
     None, and the author-date fallback, when: `anchor` is not a full
     hash (never handed to git as a revision), git cannot answer, the
@@ -1308,26 +1333,38 @@ def commits_since_anchor(
         if located is None:
             return None
         toplevel, head = located
-    key = (str(toplevel), anchor, head)
-    with _WALK_MEMO_LOCK:
-        stored = _WALK_MEMO.get(key)
-        if stored is not None:
-            _WALK_MEMO.move_to_end(key)
-            return stored
-    if dead is not None and key in dead:
-        if dead[key]:
+    held: dict[str, tuple[int, int]] = {}
+    files = walk_files_signature(toplevel, directories=held)
+    within = (str(toplevel), anchor, head)
+    key = None if files is None else (*within, files)
+    if key is not None:
+        with _WALK_MEMO_LOCK:
+            stored = _WALK_MEMO.get(key)
+            if stored is not None:
+                _WALK_MEMO.move_to_end(key)
+                return stored
+    if walked is not None and within in walked:
+        seen = walked[within]
+        if isinstance(seen, ReachableWalk):
+            return seen
+        if seen:
             _FAILED.count += 1
         return None
     failed = _FAILED.count
     walk = _walk_reachable(toplevel, anchor, head)
     if walk is None:
-        if dead is not None:
-            dead[key] = _FAILED.count != failed
+        if walked is not None:
+            walked[within] = _FAILED.count != failed
         return None
-    with _WALK_MEMO_LOCK:
-        _WALK_MEMO[key] = walk
-        while len(_WALK_MEMO) > _WALK_MEMO_CAP:
-            _WALK_MEMO.popitem(last=False)
+    if key is None:
+        if walked is not None:
+            walked[within] = walk
+        return walk
+    if walk_files_signature(toplevel) == files and directories_held(held):
+        with _WALK_MEMO_LOCK:
+            _WALK_MEMO[key] = walk
+            while len(_WALK_MEMO) > _WALK_MEMO_CAP:
+                _WALK_MEMO.popitem(last=False)
     return walk
 
 
@@ -1990,46 +2027,103 @@ def commit_patch_stream(
 _PATHSPEC_WILDCARDS = frozenset("*?[\\")
 
 
-def _stamp(path: str | Path, *, follow: bool = True) -> tuple[int, int, int] | None:
-    """``(st_mtime_ns, st_size, st_ino)`` of `path`, or None when nothing
-    is there. Any other failure to stat raises OSError."""
+# The stamp each attribute file, each file beside the walk and the
+# githead signature's config carry: githead's, so the two agree.
+_stamp = githead.stamp
+
+
+def _hold_directory(path: str | Path, held: dict[str, tuple[int, int]]) -> None:
+    """Record in `held` the ``(st_mtime_ns, st_ctime_ns)`` of the directory
+    `path`, or of its nearest existing ancestor while it does not exist.
+    Creating or removing an entry changes its directory's stamp, and
+    creating a missing directory changes its parent's, so a file created
+    and removed between two reads, absent at both, still moves a stamp
+    recorded here. Read for a check before and after a computation, never
+    for a key: a directory changes whenever any entry in it does. A
+    directory already in `held` is not read again and keeps the stamp
+    first recorded for it, which is the one the check must compare with.
+    Raises OSError or ValueError where a stat fails for any reason but
+    absence."""
+    current = os.fspath(path)
+    while current not in held:
+        try:
+            status = os.stat(current)
+        except (FileNotFoundError, NotADirectoryError):
+            parent = os.path.dirname(current)
+            if parent == current:
+                raise
+            current = parent
+            continue
+        held[current] = (status.st_mtime_ns, status.st_ctime_ns)
+
+
+def directories_held(held: Mapping[str, tuple[int, int]]) -> bool:
+    """Whether every directory `_hold_directory` recorded in `held` still
+    has the stamp recorded for it; False where one cannot be read."""
     try:
-        status = os.stat(path, follow_symlinks=follow)
-    except (FileNotFoundError, NotADirectoryError):
-        return None
-    return (status.st_mtime_ns, status.st_size, status.st_ino)
+        for directory, recorded in held.items():
+            status = os.stat(directory)
+            if (status.st_mtime_ns, status.st_ctime_ns) != recorded:
+                return False
+    except (OSError, ValueError):
+        return False
+    return True
 
 
 def _global_attributes_path(root: Path) -> str | None:
     """The global attributes file git reads when no ``core.attributesFile``
-    names another: ``$XDG_CONFIG_HOME/git/attributes``, or
-    ``$HOME/.config/git/attributes`` when XDG_CONFIG_HOME is unset or
-    empty, and none with neither (git's ``xdg_config_home``). A relative
-    value is read from the root, where the drift readers run git."""
+    names another, spelled as git's ``xdg_config_home_for`` spells it:
+    ``$XDG_CONFIG_HOME/git/attributes`` when XDG_CONFIG_HOME is set and not
+    empty, else ``$HOME/.config/git/attributes`` whenever HOME is set, an
+    empty HOME naming ``/.config/git/attributes``, and none with neither. A
+    relative name is read from the root, where the drift readers run
+    git."""
     config_home = os.environ.get("XDG_CONFIG_HOME")
     if config_home:
-        return os.path.join(root, config_home, "git", "attributes")
-    home = os.environ.get("HOME")
-    if home:
-        return os.path.join(root, home, ".config", "git", "attributes")
-    return None
+        candidate = f"{config_home}/git/attributes"
+    else:
+        home = os.environ.get("HOME")
+        if home is None:
+            return None
+        candidate = f"{home}/.config/git/attributes"
+    if os.path.isabs(candidate):
+        return candidate
+    return os.path.join(root, candidate)
 
 
-def attribute_files_signature(cwd: Path, root: Path) -> tuple[object, ...] | None:
+def attribute_files_signature(
+    cwd: Path,
+    root: Path,
+    *,
+    directories: dict[str, tuple[int, int]] | None = None,
+) -> tuple[object, ...] | None:
     """The files outside the working tree that decide how
     `commit_patch_stream` diffs a file, for a memo to key on: the
     repository's ``config`` (its diff drivers, and whether it names an
     attributes file), ``info/attributes`` in the common directory, and the
-    global attributes file with its path. Each is ``(st_mtime_ns,
-    st_size, st_ino)``, or None while it does not exist, so writing,
-    creating or removing one changes the signature.
+    global attributes file with its path. Each is its `_stamp`
+    (``st_mtime_ns``, ``st_ctime_ns``, ``st_size``, ``st_ino``,
+    ``st_mode``), or None while it does not exist, so writing, creating,
+    removing, replacing or changing the permissions of one changes the
+    signature.
+
+    `directories`, when given, receives the stamps of ``info`` in the
+    common directory and of the global file's directory
+    (`_hold_directory`), for a caller that checks at the end of its work
+    that no attributes file there was created and removed meanwhile.
 
     None, and nothing to key on, where these files do not settle it: a
     repository `githead` does not read, a ``config`` that cannot be read,
     one that mentions ``attributesfile`` or an ``[attr`` section (a
     ``core.attributesFile`` or ``attr.tree`` there sends git to a file or a
-    tree these stats do not cover), and a stat that fails for any reason
-    but absence. `root` is the root `cwd`'s repository names."""
+    tree these stats do not cover), one that mentions ``follow`` (a
+    ``log.follow`` there makes the single-pathspec patch stream follow a
+    claimed file across a rename and diff the renaming commit with the
+    attributes of the rename source's path, which no chain of the claimed
+    path covers), and a stat that fails for any reason but absence. A
+    ``log.follow`` set outside the repository's config (the global and
+    system files, an include) is not seen. `root` is the root `cwd`'s
+    repository names."""
     gd = githead.find_gitdir(cwd)
     if gd is None:
         return None
@@ -2038,29 +2132,39 @@ def attribute_files_signature(cwd: Path, root: Path) -> tuple[object, ...] | Non
     if text is None or len(text) > _CONFIG_LIMIT:
         return None
     lowered = text.lower()
-    if b"attributesfile" in lowered or b"[attr" in lowered:
+    if b"attributesfile" in lowered or b"[attr" in lowered or b"follow" in lowered:
         return None
     global_file = _global_attributes_path(root)
     try:
+        if directories is not None:
+            _hold_directory(gd.commondir / "info", directories)
+            if global_file is not None:
+                _hold_directory(os.path.dirname(global_file), directories)
         return (
             _stamp(config),
             _stamp(gd.commondir / "info" / "attributes"),
             global_file,
             None if global_file is None else _stamp(global_file),
         )
-    except OSError:
+    except (OSError, ValueError):
         return None
 
 
 def gitattributes_signature(
-    root: Path, pathspecs: Sequence[str]
+    root: Path,
+    pathspecs: Sequence[str],
+    *,
+    directories: dict[str, tuple[int, int]] | None = None,
 ) -> tuple[object, ...] | None:
     """The working tree's ``.gitattributes`` files that decide how
     `commit_patch_stream` diffs the files `pathspecs` name, for a memo to
     key on. Git reads the attributes of ``a/b/c.py`` from ``.gitattributes``
     at the root, in ``a`` and in ``a/b``, not through a symbolic link, and
-    ``git log`` reads no index for them. Each is ``(st_mtime_ns, st_size,
-    st_ino)``, or None while it does not exist.
+    ``git log`` reads no index for them. Each is its `_stamp`, or None
+    while it does not exist. `directories`, when given, receives the stamps
+    of those directories (`_hold_directory`), for a caller that checks at
+    the end of its work that no ``.gitattributes`` there was created and
+    removed meanwhile.
 
     None, and nothing to key on, where the pathspecs reach files below
     those directories: a pathspec with a wildcard, an escape or pathspec
@@ -2068,8 +2172,9 @@ def gitattributes_signature(
     holds as a directory, whose files take attributes from
     ``.gitattributes`` anywhere under it. A pathspec that is no directory
     now has no such file under it until it becomes one, which this check
-    then sees. Also None when a stat fails for any reason but absence."""
-    directories: dict[Path, None] = {}
+    then sees. Also None when a stat fails for any reason but absence, a
+    path holding a NUL byte among them."""
+    chain: dict[Path, None] = {}
     try:
         for spec in pathspecs:
             parts = spec.split("/")
@@ -2085,15 +2190,53 @@ def gitattributes_signature(
             except (FileNotFoundError, NotADirectoryError):
                 pass
             directory = root
-            directories.setdefault(directory, None)
+            chain.setdefault(directory, None)
             for part in parts[:-1]:
                 directory = directory / part
-                directories.setdefault(directory, None)
+                chain.setdefault(directory, None)
+        if directories is not None:
+            for directory in chain:
+                _hold_directory(directory, directories)
         return tuple(
-            _stamp(directory / ".gitattributes", follow=False)
-            for directory in directories
+            _stamp(directory / ".gitattributes", follow=False) for directory in chain
         )
-    except OSError:
+    except (OSError, ValueError):
+        return None
+
+
+def walk_files_signature(
+    root: Path, *, directories: dict[str, tuple[int, int]] | None = None
+) -> tuple[object, ...] | None:
+    """The files beside the history that decide what the drift readers'
+    logs list, for a memo to key on: the repository's ``config`` in the
+    common directory (``log.showRoot`` there drops a root commit's paths
+    from the reachable walk's ``--name-only``, ``diff.ignoreSubmodules`` a
+    gitlink's, and ``log.follow`` makes a log over one path follow it
+    across renames) and the working tree's ``.gitmodules`` at the root
+    (``submodule.<name>.ignore`` there drops a gitlink's changes from the
+    walk). Each is its `_stamp`, or None while it does not exist. The walk
+    memo (`commits_since_anchor`) and the per-hit drift memo key on it.
+    `directories`, when given, receives the root's stamp
+    (`_hold_directory`), for a caller that checks at the end of its work
+    that no ``.gitmodules`` was created and removed meanwhile.
+
+    Read through `githead.gitdir_at`, which reads the repository only when
+    `root` holds its ``.git`` entry, so a root git names elsewhere
+    (``core.worktree``) is never stamped against an enclosing repository.
+    None where `githead` declines (off POSIX, under GIT_DIR and the other
+    variables that move discovery, a root that holds no ``.git`` entry)
+    and where a stat fails for any reason but absence; what would key on
+    it is then not memoised. The configuration git reads outside that file
+    (the global and system files, an include, ``config.worktree``) is not
+    seen."""
+    gd = githead.gitdir_at(root)
+    if gd is None:
+        return None
+    try:
+        if directories is not None:
+            _hold_directory(root, directories)
+        return (_stamp(gd.commondir / "config"), _stamp(root / ".gitmodules"))
+    except (OSError, ValueError):
         return None
 
 
@@ -2287,6 +2430,7 @@ __all__ = [
     "commit_patch_stream",
     "commit_reachable",
     "commits_since_anchor",
+    "directories_held",
     "failed_git_calls",
     "gitattributes_signature",
     "head_sha",
@@ -2299,5 +2443,6 @@ __all__ = [
     "should_include_for_caller",
     "toplevel_and_head_from_files",
     "unanswered_git_calls",
+    "walk_files_signature",
     "worktrees_match",
 ]

@@ -51,6 +51,7 @@ from .store import EpisodeVolume
 from .models import Category, Memory, first_summary_line
 from .origin import (
     Origin,
+    ReachableWalk,
     _worktree_root_is_gone,
     capture,
     commit_author_timestamps,
@@ -2825,9 +2826,10 @@ def _drift_rows_for_candidates(
     reachable walk from it, the rest over the author-date bisect.
     """
     rows: list[CommitDriftRow] = []
-    # The walks that came back None in this pass: a store verified at one
-    # dead anchor forks one walk for it (`commits_since_anchor`).
-    dead_walks: dict[tuple[str, str, str], bool] = {}
+    # The walks of this pass no memo keeps (`commits_since_anchor`): a store
+    # verified at one dead anchor forks one walk for it, and so does one
+    # anchor where the walk memo cannot key the walk.
+    walked: dict[tuple[str, str, str], ReachableWalk | bool] = {}
     for stats in candidates:
         since = stats.last_verified_at
         assert since is not None  # callers filter on this
@@ -2845,7 +2847,7 @@ def _drift_rows_for_candidates(
         anchor = verified_head_by_id.get(stats.id) if verified_head_by_id else None
         if anchor is not None and head is not None:
             walk = commits_since_anchor(
-                root, anchor, toplevel=toplevel, head=head, dead=dead_walks
+                root, anchor, toplevel=toplevel, head=head, walked=walked
             )
         if walk is not None:
             count = len(walk.commits)
@@ -4251,9 +4253,9 @@ def curation_counts_with_coverage(
             located = repo_toplevel_and_head(cwd_path)
             toplevel = located[0] if located is not None else None
             head = located[1] if located is not None else None
-            # The walks that came back None in this pass, so a store
-            # verified at one dead anchor forks one walk for it.
-            dead_walks: dict[tuple[str, str, str], bool] = {}
+            # The walks of this pass no memo keeps, so a store verified at
+            # one dead anchor forks one walk for it.
+            walked: dict[tuple[str, str, str], ReachableWalk | bool] = {}
             for m in mem_list:
                 if m.last_verified_at is None:
                     continue
@@ -4292,7 +4294,7 @@ def curation_counts_with_coverage(
                         m.verified_head,
                         toplevel=toplevel,
                         head=head,
-                        dead=dead_walks,
+                        walked=walked,
                     )
                 if walk is not None:
                     count = len(walk.commits)

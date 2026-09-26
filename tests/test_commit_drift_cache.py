@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -127,11 +128,19 @@ def _write(
     at: datetime = _V1,
     claims: list[str] | None = None,
     verified_head: str | None = None,
+    verified_paths: list[str] | None = None,
 ) -> str:
     memory = store.write(
         content=content, scopes=["tools"], origin=caller, claims=claims
     )
-    _stamp(store, monkeypatch, memory.id, at=at, verified_head=verified_head)
+    _stamp(
+        store,
+        monkeypatch,
+        memory.id,
+        at=at,
+        verified_head=verified_head,
+        verified_paths=verified_paths,
+    )
     return memory.id
 
 
@@ -142,6 +151,7 @@ def _stamp(
     *,
     at: datetime,
     verified_head: str | None = None,
+    verified_paths: list[str] | None = None,
 ) -> None:
     """`mark_verified` with the stamp's instant pinned, so the fixtures'
     commit dates fall on a known side of it."""
@@ -149,7 +159,9 @@ def _stamp(
 
     with monkeypatch.context() as patch:
         patch.setattr(store_module, "utcnow", lambda: at)
-        store.mark_verified(memory_id, verified_head=verified_head)
+        store.mark_verified(
+            memory_id, verified_head=verified_head, verified_paths=verified_paths
+        )
 
 
 def _attach(
@@ -158,10 +170,16 @@ def _attach(
     monkeypatch: pytest.MonkeyPatch,
     *,
     query: str = "widget rule",
+    first: list[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[tuple[str, ...]]]:
     """One search's hits, decorated; and every git argv the decoration
-    spawned. Any process at all is recorded, not only `origin._git`'s."""
+    spawned. Any process at all is recorded, not only `origin._git`'s.
+    The hits whose ids are in `first` are decorated before the rest, each
+    group in rank order, so a test can place a change between two hits'
+    resolutions."""
     hits = run_search(memories, query, max_results=50)
+    if first:
+        hits.sort(key=lambda hit: hit.id not in first)
     builder = ResponseBuilder(stale_after_days=30)
     out = [builder.hit_to_dict(hit, now=_NOW) for hit in hits]
     calls: list[tuple[str, ...]] = []
@@ -565,6 +583,137 @@ def test_a_head_that_moves_during_the_attach_stores_nothing(
     back, calls = _attach(memories, caller, monkeypatch)
     assert _by_id(back)[memory_id]["commit_drift_count"] == 1
     assert calls, "resolved again at the first head"
+
+
+def _age(*paths: Path) -> None:
+    """Set the mtime of each file under `paths` an hour back. A test that
+    rewrites a file moments after its fixture wrote it could otherwise
+    land within one tick of the filesystem's clock (a jiffy where the
+    kernel stamps from a coarse clock), where a stamp that also got its
+    old inode number back reads as unchanged: the limit `githead.stamp`
+    declares, which no test here means to exercise."""
+    past = time.time_ns() - 3600 * 10**9
+    for path in paths:
+        for found in [path, *path.rglob("*")] if path.is_dir() else [path]:
+            if found.is_file():
+                os.utime(found, ns=(past, past))
+
+
+def _point_head(repo: Path, move: str, to: str) -> None:
+    """Move the checkout's head: `git switch` to the branch `to` for
+    "switch", `git reset --soft` of the checked-out branch to the commit
+    `to` for "reset"."""
+    if move == "switch":
+        _git(repo, "switch", "-q", to)
+    else:
+        _git(repo, "reset", "-q", "--soft", to)
+
+
+@files_only
+@pytest.mark.parametrize("dead", [False, True], ids=["live anchors", "dead anchor"])
+@pytest.mark.parametrize("move", ["switch", "reset"])
+def test_a_head_that_leaves_and_returns_during_the_attach_stores_nothing(
+    move: str,
+    dead: bool,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A head moved to another commit and back while one attach runs (a
+    branch switched and switched back, or the checked-out branch reset to
+    another commit and back) reads at the end as the head the attach
+    settled at the start, while a path-filtered log in between read the
+    other head's history. Git writes HEAD and a branch's ref through a lock
+    file and a rename, so the move and the return leave the file with a new
+    inode and ctime: the attach reads `githead.signature` when it settles
+    the head and again at the end, and keeps nothing when the two differ.
+    With a dead anchor, hits verified at a commit the repository lacks are
+    resolved first and the head leaves as their walk fails, so the attach's
+    record of dead walks, keyed on the settled head, answers while the head
+    is elsewhere. The other head holds the same tree as this one, so a
+    switch to it and back rewrites HEAD and no file of the working tree:
+    only the signature can see it."""
+    repo = _repo(tmp_path)
+    base = _commit(
+        repo, "c0", when=_day(0), files={"src/app.py": _MODULE, "README.md": "r\n"}
+    )
+    _commit(
+        repo,
+        "c1",
+        when=_day(60),
+        files={"src/app.py": _MODULE.replace("TIMEOUT = 30", "TIMEOUT = 31")},
+    )
+    head = _commit(repo, "c2", when=_day(70), files={"README.md": "r2\n"})
+    # The same tree, one commit on c0, authored before the stamp: its
+    # history has no change to src/app.py after it.
+    other = _git(
+        repo, "commit-tree", f"{head}^{{tree}}", "-p", base, "-m", "s1", when=_day(5)
+    )
+    _git(repo, "branch", "side", other)
+    store = Store(memory_dir)
+    caller = _caller(repo)
+    author = _write(
+        store,
+        caller,
+        monkeypatch,
+        f"widget rule a lives in {repo / 'src' / 'app.py'}",
+        at=_day(30),
+    )
+    first = [
+        _write(
+            store,
+            caller,
+            monkeypatch,
+            f"widget rule {i} lives in {repo / 'README.md'}",
+            at=_day(30),
+            verified_head="b" * 40,
+        )
+        for i in range(2 if dead else 0)
+    ]
+    memories = store.load_all()
+    _age(repo / ".git" / "HEAD", repo / ".git" / "refs")
+    away, back = ("side", "main") if move == "switch" else (other, head)
+    real_log = origin.commit_author_timestamps_touching_pathspecs
+    real_walk = origin._walk_reachable
+    moved: list[str] = []
+
+    def leave() -> None:
+        if not moved:
+            _point_head(repo, move, away)
+            moved.append(away)
+
+    def walk_then_leave(*args: Any, **kwargs: Any) -> Any:
+        walk = real_walk(*args, **kwargs)
+        leave()
+        return walk
+
+    def read_away_then_return(cwd: Any, pathspecs: Any, **kwargs: Any) -> Any:
+        if "src/app.py" not in pathspecs:
+            return real_log(cwd, pathspecs, **kwargs)
+        leave()
+        try:
+            return real_log(cwd, pathspecs, **kwargs)
+        finally:
+            _point_head(repo, move, back)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            verify, "commit_author_timestamps_touching_pathspecs", read_away_then_return
+        )
+        if dead:
+            patch.setattr(origin, "_walk_reachable", walk_then_leave)
+        during, calls = _attach(memories, caller, monkeypatch, first=first)
+    assert moved, "premise: the head left during the attach"
+    assert _git(repo, "rev-parse", "HEAD") == head, "premise: and came back"
+    assert _drift(during, author) == (0, "author-date"), (
+        "premise: the log read the other head's history"
+    )
+    if dead:
+        assert len(_walks(calls)) == 1, "premise: one dead walk, remembered"
+
+    cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
+    assert _drift(uncached, author) == (1, "author-date")
+    assert cached == uncached
 
 
 def test_the_memos_are_registered_with_the_cache_registry() -> None:
@@ -1234,6 +1383,374 @@ def test_an_attribute_file_that_moves_during_the_attach_stores_nothing(
     assert cached == uncached
 
 
+def _attributes_file(source: str, repo: Path, config_home: Path) -> Path:
+    """The attributes file `source` names: the working tree's root
+    .gitattributes, the one in the claimed file's directory, the common
+    directory's info/attributes, or the global attributes file."""
+    return {
+        "root": repo / ".gitattributes",
+        "directory": repo / "src" / ".gitattributes",
+        "info": repo / ".git" / "info" / "attributes",
+        "global": config_home / "git" / "attributes",
+    }[source]
+
+
+@pytest.mark.parametrize("source", ["root", "directory", "info", "global"])
+def test_an_attribute_file_created_and_removed_during_the_attach_stores_nothing(
+    source: str,
+    git_config_home: Path,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An attributes file created before one hit's patch stream runs and
+    removed once it returns is absent at the start of the attach and at
+    its end, so its own stamp reads the same both times, while that hit's
+    stream read `-diff` from it. Creating or removing a file changes its
+    directory's (mtime, ctime): the attach reads the stamps of the
+    directories that hold the attribute files it keyed on when it keys
+    them and again at the end, and keeps nothing when one moved."""
+    repo, caller, memories, ids = _claimed(
+        tmp_path, memory_dir, monkeypatch, claim="src/app.py::handler"
+    )
+    attributes = _attributes_file(source, repo, git_config_home)
+    real_stream = origin.commit_patch_stream
+    created: list[Path] = []
+
+    def create_read_remove(*args: Any, **kwargs: Any) -> Any:
+        if created:
+            return real_stream(*args, **kwargs)
+        attributes.parent.mkdir(parents=True, exist_ok=True)
+        attributes.write_text("*.py -diff\n", encoding="utf-8")
+        created.append(attributes)
+        try:
+            return real_stream(*args, **kwargs)
+        finally:
+            attributes.unlink()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(verify, "commit_patch_stream", create_read_remove)
+        during, _ = _attach(memories, caller, monkeypatch)
+    assert created and not attributes.exists(), "premise: created and removed"
+    assert sorted(_counts(during, ids)) == [0, 2], (
+        "premise: one hit's stream read the attribute, the other's did not"
+    )
+
+    cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
+    assert _counts(uncached, ids) == [0, 0]
+    assert cached == uncached
+
+
+def test_a_later_chain_through_a_changed_directory_stores_nothing(
+    git_config_home: Path,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two governed files share the root's .gitattributes. The attach keys
+    the chain of the second only when its first hit comes up, after the
+    first file's patch stream ran with a root .gitattributes created and
+    removed: the root is held again then, and must keep the stamp read
+    when the first chain was keyed, or the check at the end compares the
+    root with itself."""
+    repo, caller, memories, ids = _claimed(
+        tmp_path, memory_dir, monkeypatch, claim="src/app.py::handler"
+    )
+    _commit(repo, "helper", when=_day(1), files={"lib/x.py": _UTIL})
+    store = Store(memory_dir)
+    later = _write(
+        store,
+        caller,
+        monkeypatch,
+        "widget rule c: the helper is declared in the x module",
+        at=_day(10),
+        claims=["lib/x.py::helper"],
+    )
+    memories = store.load_all()
+    attributes = repo / ".gitattributes"
+    real_stream = origin.commit_patch_stream
+    created: list[Path] = []
+
+    def create_read_remove(*args: Any, **kwargs: Any) -> Any:
+        if created:
+            return real_stream(*args, **kwargs)
+        attributes.write_text("*.py -diff\n", encoding="utf-8")
+        created.append(attributes)
+        try:
+            return real_stream(*args, **kwargs)
+        finally:
+            attributes.unlink()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(verify, "commit_patch_stream", create_read_remove)
+        during, _ = _attach(memories, caller, monkeypatch, first=ids)
+    assert created and not attributes.exists(), "premise: created and removed"
+    assert "commit_drift_count" in _by_id(during)[later], "premise: keyed after"
+    assert sorted(_counts(during, ids)) == [0, 2], (
+        "premise: one hit's stream read the attribute"
+    )
+
+    cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
+    assert _counts(uncached, ids) == [0, 0]
+    assert cached == uncached
+
+
+def test_a_directory_held_twice_keeps_its_first_stamp(tmp_path: Path) -> None:
+    """The check at the end of a search compares each directory with the
+    stamp read before anything could change in it: a directory held again
+    after a file was created and removed in it keeps its first stamp, and
+    the check sees the change."""
+    past = time.time_ns() - 3600 * 10**9
+    os.utime(tmp_path, ns=(past, past))
+    held: dict[str, tuple[int, int]] = {}
+    origin._hold_directory(tmp_path, held)
+    first = held[str(tmp_path)]
+    assert origin.directories_held(held)
+    (tmp_path / "attributes").write_text("*.py -diff\n", encoding="utf-8")
+    (tmp_path / "attributes").unlink()
+    origin._hold_directory(tmp_path, held)
+    assert held == {str(tmp_path): first}
+    assert not origin.directories_held(held)
+
+
+def test_a_missing_directory_is_held_through_its_nearest_ancestor(
+    tmp_path: Path,
+) -> None:
+    """A directory that does not exist yet holds no stamp of its own, and
+    creating it (to put an attributes file in it) changes its parent's."""
+    past = time.time_ns() - 3600 * 10**9
+    os.utime(tmp_path, ns=(past, past))
+    held: dict[str, tuple[int, int]] = {}
+    origin._hold_directory(tmp_path / "git" / "info", held)
+    assert list(held) == [str(tmp_path)]
+    assert origin.directories_held(held)
+    (tmp_path / "git").mkdir()
+    (tmp_path / "git").rmdir()
+    assert not origin.directories_held(held)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes")
+@pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0, reason="root reads any file"
+)
+@pytest.mark.parametrize("readable_first", [True, False], ids=["to 000", "to 644"])
+@pytest.mark.parametrize("source", ["root", "info", "global"])
+def test_a_permission_change_to_an_attribute_file_is_a_new_key(
+    source: str,
+    readable_first: bool,
+    git_config_home: Path,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Git reads an attributes file it cannot open as absent: it warns and
+    exits 0. A chmod of a `*.py -diff` file to 000 therefore moves git's
+    answer from the binary 2 to the weak tier's 0, and a chmod back moves
+    it back, while the file's mtime, size and inode stay as they were. The
+    stamp carries st_ctime_ns and st_mode, which a chmod moves, so the warm
+    attach answers as the cold one in both directions."""
+    repo, caller, memories, ids = _claimed(
+        tmp_path, memory_dir, monkeypatch, claim="src/app.py::handler"
+    )
+    attributes = _attributes_file(source, repo, git_config_home)
+    attributes.parent.mkdir(parents=True, exist_ok=True)
+    attributes.write_text("*.py -diff\n", encoding="utf-8")
+    if not readable_first:
+        attributes.chmod(0)
+    try:
+        for _ in range(2):
+            before, calls = _attach(memories, caller, monkeypatch)
+        assert _counts(before, ids) == ([2, 2] if readable_first else [0, 0])
+        if _FILES:
+            assert calls == [], "premise: the memo answers"
+
+        status = attributes.stat()
+        attributes.chmod(0 if readable_first else 0o644)
+        after = attributes.stat()
+        assert (after.st_mtime_ns, after.st_size, after.st_ino) == (
+            status.st_mtime_ns,
+            status.st_size,
+            status.st_ino,
+        ), "premise: only the mode moved"
+        cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
+        assert _counts(uncached, ids) == ([0, 0] if readable_first else [2, 2]), (
+            "premise: git reads the unreadable file as absent"
+        )
+        assert cached == uncached
+    finally:
+        attributes.chmod(0o644)
+
+
+def test_a_repository_config_that_mentions_follow_keeps_the_hit_out_of_the_memo(
+    git_config_home: Path,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With log.follow in the repository's config, the patch stream's
+    single-pathspec `git log -p` follows the claimed file across a rename,
+    and the commit that renamed it takes the diff attribute of the rename
+    source's path, from a .gitattributes no chain of the claimed path
+    covers. A config that mentions `follow` keeps the hit out of the memo,
+    so an untracked lib/.gitattributes written between two attaches is read
+    by both."""
+    repo = _repo(tmp_path)
+    _git(repo, "config", "log.follow", "true")
+    anchor = _commit(
+        repo,
+        "c1",
+        when=_day(0),
+        files={"lib/app.py": _MODULE, "src/keep.txt": "k\n"},
+    )
+    _git(repo, "mv", "lib/app.py", "src/app.py")
+    renamed = _MODULE.replace("def handler():", "def handler(x=None):")
+    _commit(repo, "c2", when=_day(20), files={"src/app.py": renamed})
+    _commit(
+        repo,
+        "c3",
+        when=_day(30),
+        files={
+            "src/app.py": renamed.replace(
+                "def other():\n    return 1", "def other():\n    return 3"
+            )
+        },
+    )
+    store = Store(memory_dir)
+    caller = _caller(repo)
+    body = "the handler is declared in the app module"
+    ids = [
+        _write(
+            store,
+            caller,
+            monkeypatch,
+            f"widget rule a: {body}",
+            at=_day(10),
+            claims=["src/app.py::handler"],
+            verified_head=anchor,
+        ),
+        _write(
+            store,
+            caller,
+            monkeypatch,
+            f"widget rule b: {body}",
+            at=_day(10),
+            claims=["src/app.py::handler"],
+        ),
+    ]
+    memories = store.load_all()
+    for _ in range(2):
+        before, calls = _attach(memories, caller, monkeypatch)
+    assert _counts(before, ids) == [1, 1]
+
+    (repo / "lib").mkdir(exist_ok=True)
+    (repo / "lib" / ".gitattributes").write_text("*.py -diff\n", encoding="utf-8")
+    cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
+    assert _counts(uncached, ids) != [1, 1], (
+        "premise: the rename source's attributes moved git"
+    )
+    assert cached == uncached
+    assert calls, "the second attach resolved through git again"
+    assert len(_response._DRIFT_MEMO) == 0
+
+
+def test_a_plain_hit_is_keyed_on_the_repository_config(
+    git_config_home: Path,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hit with no claim and no recorded head reads no attribute file
+    and walks nothing, but its path-filtered log reads the repository's
+    config: with log.follow there, a log over the one cited path follows
+    it across a rename and counts the commit that edited the rename
+    source after the stamp too. Every key carries the config's stamp, so
+    the warm attach answers as the cold one after the setting is written
+    and after it is removed."""
+    repo = _repo(tmp_path)
+    _commit(
+        repo, "c1", when=_day(0), files={"lib/app.py": _MODULE, "src/keep.txt": "k\n"}
+    )
+    _commit(
+        repo,
+        "c2",
+        when=_day(20),
+        files={"lib/app.py": _MODULE.replace("TIMEOUT = 30", "TIMEOUT = 31")},
+    )
+    _git(repo, "mv", "lib/app.py", "src/app.py")
+    _commit(repo, "c3 rename", when=_day(30))
+    store = Store(memory_dir)
+    caller = _caller(repo)
+    memory_id = _write(
+        store,
+        caller,
+        monkeypatch,
+        f"widget rule a lives in {repo / 'src' / 'app.py'}",
+        at=_day(10),
+    )
+    memories = store.load_all()
+    for _ in range(2):
+        before, _ = _attach(memories, caller, monkeypatch)
+    assert _drift(before, memory_id) == (1, "author-date")
+
+    for command, expected in (
+        (("config", "log.follow", "true"), 2),
+        (("config", "--unset", "log.follow"), 1),
+    ):
+        _git(repo, *command)
+        cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
+        assert _drift(uncached, memory_id) == (expected, "author-date"), (
+            "premise: the setting moved the path-filtered log"
+        )
+        assert cached == uncached
+
+
+def test_a_governed_path_holding_a_nul_byte_keys_nothing(tmp_path: Path) -> None:
+    """A path no file can have, which `os.stat` refuses with ValueError, is
+    one the chain cannot settle: None, as for any stat that fails."""
+    assert origin.gitattributes_signature(tmp_path, ["src/a\x00b.py"]) is None
+    assert origin.gitattributes_signature(tmp_path, ["src\x00/b.py"]) is None
+
+
+@pytest.mark.parametrize(
+    ("xdg", "home", "expected"),
+    [
+        (None, "", "/.config/git/attributes"),
+        ("", "", "/.config/git/attributes"),
+        (None, "/h", "/h/.config/git/attributes"),
+        ("/x", "/h", "/x/git/attributes"),
+        (None, None, None),
+    ],
+)
+def test_the_global_attributes_file_is_the_one_git_names(
+    xdg: str | None,
+    home: str | None,
+    expected: str | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Git's `xdg_config_home_for`: $XDG_CONFIG_HOME/git/attributes when
+    that is set and not empty, else $HOME/.config/git/attributes whenever
+    HOME is set, empty or not (an empty HOME names /.config/git/attributes),
+    and no file with neither."""
+    for name, value in (("XDG_CONFIG_HOME", xdg), ("HOME", home)):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    assert origin._global_attributes_path(tmp_path) == expected
+
+
+def test_a_relative_global_attributes_file_is_read_from_the_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Git runs from the root, so a relative XDG_CONFIG_HOME or HOME names
+    a file below it."""
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setenv("HOME", "home")
+    expected = os.path.join(tmp_path, "home/.config/git/attributes")
+    assert origin._global_attributes_path(tmp_path) == expected
+
+
 def test_a_hit_without_governed_claims_reads_no_attribute_file(
     memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1285,6 +1802,214 @@ def test_a_hit_without_governed_claims_reads_no_attribute_file(
         assert set(attributes_by_claims) == {(), ("pkg/mod.py::handler",)}
         assert attributes_by_claims[()] is None
         assert attributes_by_claims[("pkg/mod.py::handler",)] is not None
+
+
+# ---------------------------------------------------------------------------
+# The walk and the files beside the history it lists
+# ---------------------------------------------------------------------------
+
+_UTIL = "def helper():\n    return 1\n"
+
+
+def _root_in_range(
+    tmp_path: Path,
+    memory_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    claim: bool,
+) -> tuple[Path, Origin, list[Any], str]:
+    """A repository whose verified range holds a second root commit: an
+    unrelated history adding lib/util.py, merged after the stamp, as
+    `git subtree add` or `merge --allow-unrelated-histories` leaves it. The
+    walk's --name-only listing names lib/util.py for that root commit only
+    while log.showRoot is true, git's default. One memory, verified at the
+    first root and anchored on lib/util.py by a claim or by its body."""
+    repo = _repo(tmp_path)
+    anchor = _commit(repo, "c0", when=_day(0), files={"src/app.py": _MODULE})
+    _git(repo, "switch", "-q", "--orphan", "imported")
+    _commit(repo, "r0", when=_day(15), files={"lib/util.py": _UTIL})
+    _git(repo, "switch", "-q", "main")
+    _git(
+        repo,
+        "merge",
+        "-q",
+        "--no-edit",
+        "--allow-unrelated-histories",
+        "imported",
+        when=_day(20),
+    )
+    store = Store(memory_dir)
+    caller = _caller(repo)
+    if claim:
+        memory_id = _write(
+            store,
+            caller,
+            monkeypatch,
+            "widget rule u: the helper is declared in the util module",
+            at=_day(10),
+            claims=["lib/util.py::helper"],
+            verified_head=anchor,
+        )
+    else:
+        memory_id = _write(
+            store,
+            caller,
+            monkeypatch,
+            f"widget rule u lives in {repo / 'lib' / 'util.py'}",
+            at=_day(10),
+            verified_head=anchor,
+        )
+    return repo, caller, store.load_all(), memory_id
+
+
+@pytest.mark.parametrize("surface", ["claim hit", "attested hit", "health"])
+def test_the_walk_is_keyed_on_the_repository_config(
+    surface: str,
+    git_config_home: Path,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """log.showRoot = false in the repository's config drops the root
+    commit's paths from the walk's listing, so a hit anchored on a file only
+    that root commit added counts 0 instead of 1, under an unchanged head.
+    The walk memo and the per-hit key carry the config's stamp: the search
+    and the health rollup, which share the walk memo, answer as the cold
+    code after the setting is written and after it is removed."""
+    from bettermemory import health
+
+    repo, caller, memories, memory_id = _root_in_range(
+        tmp_path, memory_dir, monkeypatch, claim=surface == "claim hit"
+    )
+
+    def answer() -> Any:
+        if surface == "health":
+            report = health.compute_health(memories, [], caller_origin=caller, now=_NOW)
+            assert report.commit_drift_debt is not None
+            return report.commit_drift_debt.total_drifted
+        out, _ = _attach(memories, caller, monkeypatch)
+        return out
+
+    def count(answered: Any) -> Any:
+        return answered if surface == "health" else _drift(answered, memory_id)
+
+    def drifting(n: int) -> Any:
+        return n if surface == "health" else (n, "reachability")
+
+    for _ in range(2):
+        before = answer()
+    assert count(before) == drifting(1)
+
+    for command, expected in (
+        (("config", "log.showRoot", "false"), 0),
+        (("config", "--unset", "log.showRoot"), 1),
+    ):
+        _git(repo, *command)
+        cached = answer()
+        _caches.clear_all()
+        uncached = answer()
+        assert count(uncached) == drifting(expected), (
+            "premise: the setting moved the walk"
+        )
+        assert cached == uncached
+
+
+def test_the_walk_is_keyed_on_the_working_trees_gitmodules(
+    git_config_home: Path,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """submodule.<name>.ignore = all in the working tree's .gitmodules drops
+    the gitlink's changes from the walk's --name-only listing, while the
+    path-limited log still lists them: a hit attested on the submodule's
+    path, verified before it was added, counts 0 with the setting and 2
+    without it, under an unchanged head. The walk memo and the per-hit key
+    carry the .gitmodules stamp."""
+    source = _repo(tmp_path, "source")
+    _commit(source, "s1", when=_day(0), files={"a.txt": "a\n"})
+    _commit(source, "s2", when=_day(1), files={"a.txt": "b\n"})
+    repo = _repo(tmp_path, "super")
+    anchor = _commit(repo, "c0", when=_day(0), files={"README.md": "r\n"})
+    _git(
+        repo,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        "-q",
+        str(source),
+        "sub",
+    )
+    _git(repo, "commit", "-q", "-m", "add sub", when=_day(20))
+    _git(repo / "sub", "checkout", "-q", "HEAD~1")
+    _git(repo, "add", "sub")
+    _git(repo, "commit", "-q", "-m", "move sub", when=_day(30))
+    store = Store(memory_dir)
+    caller = _caller(repo)
+    memory_id = _write(
+        store,
+        caller,
+        monkeypatch,
+        "widget rule s: the submodule pin",
+        at=_day(10),
+        verified_head=anchor,
+        verified_paths=["sub"],
+    )
+    memories = store.load_all()
+    ignore = ("config", "-f", ".gitmodules", "submodule.sub.ignore")
+    _git(repo, *ignore, "all")
+    for _ in range(2):
+        before, _ = _attach(memories, caller, monkeypatch)
+    assert _drift(before, memory_id) == (0, "reachability")
+
+    for command, expected in (
+        (("config", "-f", ".gitmodules", "--unset", "submodule.sub.ignore"), 2),
+        ((*ignore, "all"), 0),
+    ):
+        _git(repo, *command)
+        cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
+        assert _drift(uncached, memory_id) == (expected, "reachability"), (
+            "premise: the setting moved the walk"
+        )
+        assert cached == uncached
+
+
+def test_a_walk_whose_files_cannot_be_read_is_kept_for_the_pass_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Where githead declines (here GIT_DIR names the git directory), the
+    stamps a walk is keyed on cannot be read, so no memo keeps the walk
+    past the call. A pass over many memories keeps it in its own mapping,
+    so hits at one anchor fork one walk per pass."""
+    repo = _repo(tmp_path)
+    anchor = _commit(repo, "a", when=_T0, files={"a.txt": "a\n"})
+    head = _commit(repo, "b", when=_T1, files={"b.txt": "b\n"})
+    root = repo.resolve()
+    monkeypatch.setenv("GIT_DIR", str(root / ".git"))
+    assert origin.walk_files_signature(root) is None
+    calls: list[tuple[str, ...]] = []
+    real_git = origin._git
+
+    def spy(cwd: Path, *args: str, **kwargs: Any) -> Any:
+        calls.append(args)
+        return real_git(cwd, *args, **kwargs)
+
+    monkeypatch.setattr(origin, "_git", spy)
+    first = origin.commits_since_anchor(repo, anchor, toplevel=root, head=head)
+    second = origin.commits_since_anchor(repo, anchor, toplevel=root, head=head)
+    assert first is not None and first == second
+    assert len(_walks(calls)) == 2
+    assert len(origin._WALK_MEMO) == 0
+
+    walked: dict[tuple[str, str, str], Any] = {}
+    for _ in range(3):
+        walk = origin.commits_since_anchor(
+            repo, anchor, toplevel=root, head=head, walked=walked
+        )
+        assert walk == first
+    assert len(_walks(calls)) == 3, "one walk for the pass"
+    assert len(origin._WALK_MEMO) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1356,15 +2081,20 @@ def test_the_walk_memo_touches_a_hit_under_its_lock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An anchor at its head is an empty walk, stored without a process,
-    so the other thread inserts at once."""
+    so the other thread inserts at once. The files the walk is keyed on
+    are stubbed: neither root is a repository."""
     monkeypatch.setattr(origin, "_WALK_MEMO_CAP", 1)
+    files = ("stub",)
+    monkeypatch.setattr(
+        origin, "walk_files_signature", lambda root, directories=None: files
+    )
     anchor = "a" * 40
     touched, evicting = Path("/touched"), Path("/evicting")
     first = origin.commits_since_anchor(touched, anchor, toplevel=touched, head=anchor)
     assert first is not None
     memo = _Interleaved(
         origin._WALK_MEMO,
-        (str(touched), anchor, anchor),
+        (str(touched), anchor, anchor, files),
         lambda: origin.commits_since_anchor(
             evicting, anchor, toplevel=evicting, head=anchor
         ),
@@ -1374,7 +2104,7 @@ def test_the_walk_memo_touches_a_hit_under_its_lock(
     assert walk is first
     memo.others[0].join()
     assert memo.errors == []
-    assert list(memo) == [(str(evicting), anchor, anchor)]
+    assert list(memo) == [(str(evicting), anchor, anchor, files)]
 
 
 @files_only

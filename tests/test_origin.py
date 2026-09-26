@@ -1946,11 +1946,13 @@ def test_the_walk_never_hands_git_anything_but_a_full_hash(
 def test_the_walk_is_memoised_per_head(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """One process per (root, anchor, head); a commit landing changes
-    the head and so the key, so a long-lived server never reuses a walk
-    the tree has moved past. A None is never memoised: each call for a
-    dead anchor forks, unless the caller passes the `dead` mapping it
-    keeps for one pass, which forks once."""
+    """One process per (root, anchor, head) and the stamps of the files
+    the listing reads beside the history (`walk_files_signature`); a
+    commit landing changes the head and so the key, so a long-lived server
+    never reuses a walk the tree has moved past. A None is never memoised:
+    each call for a dead anchor forks, unless the caller passes the
+    `walked` mapping it keeps for one pass, which forks once. Off POSIX
+    the files are not read and no memo keeps a walk past the call."""
     from bettermemory import origin as origin_module
     from bettermemory.origin import commits_since_anchor, repo_toplevel_and_head
 
@@ -1958,6 +1960,9 @@ def test_the_walk_is_memoised_per_head(
     located = repo_toplevel_and_head(tmp_path)
     assert located is not None
     root, head = located
+    files = origin_module.walk_files_signature(root)
+    memoised = files is not None
+    assert memoised == (os.name == "posix")
     calls: list[tuple[str, ...]] = []
     real_git = origin_module._git
 
@@ -1968,21 +1973,26 @@ def test_the_walk_is_memoised_per_head(
     monkeypatch.setattr(origin_module, "_git", spy)
     first = commits_since_anchor(tmp_path, shas["anchor"], toplevel=root, head=head)
     second = commits_since_anchor(tmp_path, shas["anchor"], toplevel=root, head=head)
-    assert first is second and first is not None
-    assert len(calls) == 1 and calls[0][2:4] == ("log", "--boundary")
+    assert first is not None and second == first
+    assert calls[0][2:4] == ("log", "--boundary")
+    assert len(calls) == (1 if memoised else 2)
+    assert (first is second) == memoised
 
+    walks = len(calls)
     assert commits_since_anchor(tmp_path, "b" * 40, toplevel=root, head=head) is None
     assert commits_since_anchor(tmp_path, "b" * 40, toplevel=root, head=head) is None
-    assert len(calls) == 3, "a dead anchor forks on every call"
-    assert list(origin_module._WALK_MEMO) == [(str(root), shas["anchor"], head)]
-    dead: dict[tuple[str, str, str], bool] = {}
+    assert len(calls) == walks + 2, "a dead anchor forks on every call"
+    assert list(origin_module._WALK_MEMO) == (
+        [(str(root), shas["anchor"], head, files)] if memoised else []
+    )
+    walked: dict[tuple[str, str, str], Any] = {}
     for _ in range(2):
         walk = commits_since_anchor(
-            tmp_path, "b" * 40, toplevel=root, head=head, dead=dead
+            tmp_path, "b" * 40, toplevel=root, head=head, walked=walked
         )
         assert walk is None
-    assert len(calls) == 4, "within one pass the dead anchor forks once"
-    assert dead == {(str(root), "b" * 40, head): True}, "git failed on it"
+    assert len(calls) == walks + 3, "within one pass the dead anchor forks once"
+    assert walked == {(str(root), "b" * 40, head): True}, "git failed on it"
 
     _commit_file(
         tmp_path, "d.txt", content="d\n", when=datetime(2025, 4, 1, tzinfo=timezone.utc)

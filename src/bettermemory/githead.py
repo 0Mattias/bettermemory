@@ -1,15 +1,16 @@
 """The commit HEAD names, and a change signature, read from the
 repository's files.
 
-A warm daemon keys its caches on the commit HEAD names, and its origin
-cache on whether anything the origin capture reads has changed. Git
-answers both at the cost of a process per question. The answers sit in a
-few small files: the ``.git`` entry that names the git directory, the
-``HEAD`` file in it, the loose ref HEAD names or its line in
-``packed-refs``, and the repository's ``config``. This module reads them
-with the standard library and no subprocess, and answers only where the
-files settle the question the way git's own reader does. Everywhere else
-it returns None, and the caller asks git.
+A warm daemon keys its caches on the commit HEAD names, and asks, for its
+origin cache and at the end of each search that fills its commit-drift
+memo, whether a file that names the head or holds the repository's
+configuration has changed. Git answers both at the cost of a process per
+question. The answers sit in a few small files: the ``.git`` entry that
+names the git directory, the ``HEAD`` file in it, the loose ref HEAD names
+or its line in ``packed-refs``, and the repository's ``config``. This
+module reads them with the standard library and no subprocess, and answers
+only where the files settle the question the way git's own reader does.
+Everywhere else it returns None, and the caller asks git.
 
 Discovery (`find_gitdir`, `gitdir_at`) follows ``setup_git_directory_gently``
 in git's ``setup.c``. Walking up from the resolved start directory, it
@@ -58,12 +59,14 @@ from pathlib import Path
 __all__ = [
     "GitDir",
     "Signature",
+    "Stamp",
     "find_gitdir",
     "gitdir_at",
     "head_bytes",
     "head_ref",
     "head_sha",
     "signature",
+    "stamp",
 ]
 
 # Environment variables under which git's discovery or its check of a
@@ -112,9 +115,12 @@ _REF_LIMIT = 1 << 16
 _PACKED_LIMIT = 1 << 26
 _READ_CHUNK = 1 << 16
 
-#: ``(gitdir, head, config, GIT_DIR, GIT_WORK_TREE, GIT_CEILING_DIRECTORIES)``;
-#: see `signature`.
+#: ``(gitdir, head, config, head_file, refs, packed_refs, GIT_DIR,
+#: GIT_WORK_TREE, GIT_CEILING_DIRECTORIES)``; see `signature`.
 Signature = tuple[object, ...]
+
+#: ``(st_mtime_ns, st_ctime_ns, st_size, st_ino, st_mode)``; see `stamp`.
+Stamp = tuple[int, int, int, int, int]
 
 
 @dataclass(frozen=True)
@@ -198,6 +204,31 @@ def _real(path: str) -> str:
         return os.path.realpath(path, strict=True)
     except OSError as exc:
         raise _Unsettled from exc
+
+
+def stamp(path: str | bytes | os.PathLike[str], *, follow: bool = True) -> Stamp | None:
+    """``(st_mtime_ns, st_ctime_ns, st_size, st_ino, st_mode)`` of `path`,
+    or None when nothing is there; with `follow` False a symbolic link is
+    stamped itself. A write moves the mtime and the ctime, a chmod the ctime
+    and the mode, and a file replaced through a rename (how git writes HEAD,
+    a ref, packed-refs and its config) has a new inode and ctime. Two stamps
+    of one path therefore differ once any of these happened between them,
+    except where the change fell within one tick of the filesystem's clock
+    of the file's last one and kept the size and the inode number (a rewrite
+    in place at the same size, a replacement that reused the number). Any
+    other failure to stat raises OSError, and a path holding a NUL byte
+    ValueError."""
+    try:
+        status = os.stat(path, follow_symlinks=follow)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    return (
+        status.st_mtime_ns,
+        status.st_ctime_ns,
+        status.st_size,
+        status.st_ino,
+        status.st_mode,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -567,56 +598,99 @@ def head_ref(gd: GitDir) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def signature(start: Path) -> Signature:
-    """A cheap change detector for the origin cache: equal across calls
-    while nothing it covers has changed, different once something has.
+def _ref_stamps(gd: GitDir, head: bytes) -> tuple[Stamp | None, ...]:
+    """The `stamp` of each loose ref file the chain from HEAD reads, in
+    order: none when HEAD is detached, one for the branch HEAD names (None
+    while the branch has no loose file and lives in ``packed-refs`` only),
+    and one more for each symbolic ref the chain passes through, as
+    `_resolve` follows it. A chain past git's depth, content of a shape
+    `_parse` refuses, and a ref file that is neither a regular file nor a
+    directory decline."""
+    name, _ = _parse(head)
+    stamps: list[Stamp | None] = []
+    reads = 1
+    while name is not None:
+        if reads == _MAX_READS:
+            raise _Unsettled
+        reads += 1
+        base = gd.gitdir if name.startswith(_PER_WORKTREE) else gd.commondir
+        path = os.fsencode(base) + b"/" + name
+        found = stamp(path, follow=False)
+        stamps.append(found)
+        if found is None or stat.S_ISDIR(found[4]):
+            # No loose file, or a directory where it would be: git reads
+            # packed-refs next, whose stamp the signature carries.
+            break
+        if not stat.S_ISREG(found[4]):
+            raise _Unsettled
+        content = _read(path, _REF_LIMIT, follow=False)
+        if len(content) > _REF_LIMIT:
+            raise _Unsettled
+        name, _ = _parse(content)
+    return tuple(stamps)
 
-    ``(gitdir, head, config, GIT_DIR, GIT_WORK_TREE, GIT_CEILING_DIRECTORIES)``:
-    the git directory the walk from `start` reaches, as a string, or None
-    outside any repository; the raw bytes of its HEAD, which name the
-    branch; ``(st_mtime_ns, st_size)`` of the common directory's ``config``,
-    which holds the remotes and ``core.worktree``, or None when there is no
-    such file; and the three environment variables that move discovery.
-    The walk, a read of HEAD and a stat of config; it never raises.
+
+def signature(start: Path) -> Signature:
+    """A cheap change detector for the origin cache and for the commit-drift
+    memo's check at the end of a search: equal across calls while nothing it
+    covers has changed, different once something has.
+
+    ``(gitdir, head, config, head_file, refs, packed_refs, GIT_DIR,
+    GIT_WORK_TREE, GIT_CEILING_DIRECTORIES)``: the git directory the walk
+    from `start` reaches, as a string, or None outside any repository; the
+    raw bytes of its HEAD, which name the branch; the `stamp` of the common
+    directory's ``config``, which holds the remotes and ``core.worktree``,
+    or None when there is no such file; the stamp of HEAD itself; the stamps
+    of the loose ref files the chain from HEAD reads (`_ref_stamps`); the
+    stamp of ``packed-refs``, or None; and the three environment variables
+    that move discovery. The walk, a read of HEAD and of each loose ref its
+    chain names, and a stat of each file; it never raises.
+
+    Git writes HEAD, a loose ref and ``packed-refs`` through a lock file and
+    a rename, so a head moved to another commit and back (a branch switched
+    and switched back, a branch reset and reset back, whether its ref is
+    loose or packed) leaves the file it rewrote with a new inode and ctime:
+    the signature read before the move differs from the one read after the
+    return, though HEAD's bytes and the commit HEAD names are what they
+    were. Two reads agree across such a move only where every write fell
+    within one tick of the filesystem's clock and each rename reused the
+    inode number the file had before.
 
     Where the files do not settle what git would find (every case
-    `find_gitdir` declines, and a HEAD `head_sha` cannot parse, such as a
-    reftable repository's ``ref: refs/heads/.invalid``), the first slot is
-    a new marker that equals nothing else, so the signature matches no
-    stored one and the caller asks git every time. A None there would make
-    each such call equal to the last, however the repository moved. A
-    cache therefore compares the signature it stored beside a value with
-    the current one; used as part of a key, an undetermined signature
-    would add an entry on every call.
+    `find_gitdir` declines, a HEAD `head_sha` cannot parse, such as a
+    reftable repository's ``ref: refs/heads/.invalid``, and a ref file the
+    chain from HEAD cannot read), the first slot is a new marker that
+    equals nothing else, so the signature matches no stored one and the
+    caller asks git every time. A None there would make each such call
+    equal to the last, however the repository moved. A cache therefore
+    compares the signature it stored beside a value with the current one;
+    used as part of a key, an undetermined signature would add an entry on
+    every call.
 
     It does not see configuration outside the repository's own config file
     (the global and system files, ``include.path`` targets,
-    ``config.worktree``), refs other than HEAD's own bytes (a tag named
-    like the checked-out branch turns ``git symbolic-ref --short HEAD`` from
-    ``main`` into ``heads/main`` and leaves the signature as it was), or a
-    same-size rewrite of ``config`` inside one tick of the filesystem's
-    clock.
+    ``config.worktree``), refs other than the ones HEAD's chain reads (a tag
+    named like the checked-out branch turns ``git symbolic-ref --short
+    HEAD`` from ``main`` into ``heads/main`` and leaves the signature as it
+    was), or a rewrite of ``config`` in place at the same size within one
+    tick of the filesystem's clock.
     """
     env = (
         os.environ.get("GIT_DIR"),
         os.environ.get("GIT_WORK_TREE"),
         os.environ.get("GIT_CEILING_DIRECTORIES"),
     )
-    config: tuple[int, int] | None
     try:
         gd = _discover(start)
         if gd is None:
-            return (None, None, None, *env)
+            return (None, None, None, None, None, None, *env)
         head = head_bytes(gd)
         if head is None:
             raise _Unsettled
-        _parse(head)
-        try:
-            status = os.stat(os.path.join(gd.commondir, "config"))
-        except FileNotFoundError:
-            config = None
-        else:
-            config = (status.st_mtime_ns, status.st_size)
+        refs = _ref_stamps(gd, head)
+        head_file = stamp(os.path.join(gd.gitdir, "HEAD"), follow=False)
+        config = stamp(os.path.join(gd.commondir, "config"))
+        packed = stamp(os.path.join(gd.commondir, "packed-refs"))
     except (_Unsettled, OSError, ValueError):
-        return (_Undetermined(), None, None, *env)
-    return (str(gd.gitdir), head, config, *env)
+        return (_Undetermined(), None, None, None, None, None, *env)
+    return (str(gd.gitdir), head, config, head_file, refs, packed, *env)

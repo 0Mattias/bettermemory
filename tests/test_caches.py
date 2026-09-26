@@ -68,7 +68,7 @@ def test_clear_all_empties_the_reachable_walk_memo() -> None:
     imported."""
     assert origin._clear_walk_memo in _caches._CLEARERS
     anchor = "a" * 40
-    origin._WALK_MEMO[("/repo", anchor, anchor)] = origin.ReachableWalk(
+    origin._WALK_MEMO[("/repo", anchor, anchor, ())] = origin.ReachableWalk(
         anchor=anchor, head=anchor, commits=(), touched={}
     )
     _caches.clear_all()
