@@ -1,0 +1,176 @@
+{
+ "kind": "migrate-v8/parity",
+ "provenance": {
+  "bettermemory_version": "8.0.0",
+  "commit": "7cc4e72",
+  "tree_dirty": true,
+  "date": "2026-09-26",
+  "machine": {
+   "os": "Darwin 25.6.0",
+   "machine": "arm64",
+   "python": "3.11.15"
+  }
+ },
+ "source": {
+  "root": "/private/var/folders/vn/d8j177l96glfn87569fzlz8m0000gn/T/tmpqn07yw31/v8",
+  "bytes": 6985008
+ },
+ "migrate": {
+  "source": "/private/var/folders/vn/d8j177l96glfn87569fzlz8m0000gn/T/tmpqn07yw31/v8",
+  "store": "/var/folders/vn/d8j177l96glfn87569fzlz8m0000gn/T/tmpqn07yw31/run/v9/memory.sqlite",
+  "dry_run": false,
+  "memories": {
+   "found": 1075,
+   "imported": 1075,
+   "present": 0,
+   "unparseable": 0
+  },
+  "tombstones": {
+   "found": 5,
+   "imported": 5,
+   "present": 0,
+   "unparseable": 0,
+   "legacy_names": 1
+  },
+  "episodes": {
+   "sessions": 2,
+   "found": 4,
+   "imported": 4,
+   "present": 0
+  },
+  "events": {
+   "found": 43,
+   "imported": 43,
+   "present": 0,
+   "redacted": 9,
+   "unstamped": 0,
+   "malformed": 0
+  },
+  "event_kinds": {
+   "list": 1,
+   "migrate": 1,
+   "search": 8,
+   "show": 8,
+   "turn_audited": 1,
+   "use": 8,
+   "verify": 8,
+   "write": 8
+  },
+  "conflicts": {
+   "found": 1,
+   "imported": 1,
+   "present": 0
+  },
+  "imports": {
+   "found": 1,
+   "imported": 1,
+   "present": 0
+  },
+  "dropped": {
+   "pending_writes": 0,
+   "proposals": 0
+  },
+  "left": {
+   "quarantine": 0,
+   "episode_patterns": 0,
+   "captures": 0,
+   "index": 1,
+   "lock_files": 8
+  },
+  "unknown": [],
+  "seconds": 0.666,
+  "log_rows": 1130,
+  "size_bytes": 6545408
+ },
+ "second_run": {
+  "memories": 0,
+  "tombstones": 0,
+  "episodes": 0,
+  "events": 0,
+  "conflicts": 0,
+  "imports": 0,
+  "log_rows": 0
+ },
+ "mirror": {
+  "target": "/private/var/folders/vn/d8j177l96glfn87569fzlz8m0000gn/T/tmpqn07yw31/run/mirror",
+  "active": 1075,
+  "tombstones": 5,
+  "episodes": 4,
+  "written": 1084,
+  "unchanged": 0,
+  "removed": 0,
+  "seconds": 0.498,
+  "compare": {
+   "active": {
+    "files": 1075,
+    "identical": 1075,
+    "differing": []
+   },
+   "tombstones": {
+    "files": 5,
+    "identical": 5,
+    "differing": [],
+    "renamed": [
+     "2026-01-01-a-cache-miss-is-never-an-01kdve7d38xmpt0m20dn62c163.tombstone.md -> 2026-01-01-a-cache-miss-is-never-an-01kdve7d38xmpt0m20dn62c163.01KDVE7D38XMPT0M20DN62C163.tombstone.md"
+    ]
+   },
+   "episodes": {
+    "files": 4,
+    "identical": 4,
+    "differing": []
+   },
+   "mirror_files": 1084,
+   "source_files": 1084
+  }
+ },
+ "events": {
+  "v8_kinds": {
+   "list": 1,
+   "migrate": 1,
+   "search": 8,
+   "show": 8,
+   "turn_audited": 1,
+   "use": 8,
+   "verify": 8,
+   "write": 8
+  },
+  "v9_kinds": {
+   "list": 1,
+   "migrate": 1,
+   "search": 8,
+   "show": 8,
+   "turn_audited": 1,
+   "use": 8,
+   "verify": 8,
+   "write": 8
+  },
+  "equal": true
+ },
+ "eval": {
+  "markdown_equal": true,
+  "alltime_equal": true,
+  "window_equal": true,
+  "differing_lines": 0,
+  "total_events": [
+   43,
+   43
+  ]
+ },
+ "order": {
+  "index_present": true,
+  "equal": true,
+  "rows": 1075
+ },
+ "candidates": null,
+ "verify": {
+  "status": "ok",
+  "rows": 1131,
+  "seconds": 0.325
+ },
+ "size": {
+  "sqlite_bytes": 6545408,
+  "page_size": 8192,
+  "log_rows": 1131,
+  "ratio_to_source_bytes": 0.937
+ }
+}

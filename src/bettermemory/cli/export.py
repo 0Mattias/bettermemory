@@ -77,6 +77,31 @@ def add_subparser(
             "tombstone is reported here or not at all."
         ),
     )
+    parser.add_argument(
+        "--mirror",
+        type=str,
+        default=None,
+        metavar="DIR",
+        help=(
+            "Write the bettermemory 9 store as a v8 directory under DIR: each "
+            "active memory at its filename, tombstones under .tombstones/, "
+            "episodes under episodes/<session>/, byte for byte what v8 wrote. "
+            "DIR must be absent, empty, or a mirror this command made before; "
+            "inside a mirror, unchanged files are left alone and files the "
+            "store no longer holds are removed. Not combined with the JSON "
+            "export's flags."
+        ),
+    )
+    parser.add_argument(
+        "--store",
+        type=str,
+        default=None,
+        metavar="FILE",
+        help=(
+            "With --mirror: the store file to read. Default: memory.sqlite in "
+            "the resolved store directory."
+        ),
+    )
     return parser
 
 
@@ -93,6 +118,16 @@ def run(
     ``ValueError`` traceback — mirroring how ``eval`` / ``episodes``
     thread their subparser through.
     """
+    if args.mirror is not None:
+        if args.output or args.no_tombstones or args.scope or args.strict:
+            sub_parser.error(
+                "--mirror writes the v8 directory and takes none of the JSON "
+                "export's flags (--output, --no-tombstones, --scope, --strict)"
+            )
+        _cli_export_mirror(mirror=args.mirror, store=args.store, parser=sub_parser)
+        return
+    if args.store is not None:
+        sub_parser.error("--store only applies to --mirror")
     _cli_export(
         output=args.output,
         include_tombstones=not args.no_tombstones,
@@ -100,6 +135,36 @@ def run(
         strict=args.strict,
         parser=sub_parser,
     )
+
+
+def _cli_export_mirror(
+    *,
+    mirror: str,
+    store: str | None,
+    parser: argparse.ArgumentParser,
+) -> None:
+    """`bettermemory export --mirror DIR` — the store as a v8 directory.
+    The store is opened without its key when the key is absent: an
+    export reads and never rekeys."""
+    from pathlib import Path as _Path
+
+    from ..config import load_config as _load_config
+    from ..mirror import MirrorRefused, write_mirror
+    from ..sqlite_store import STORE_FILENAME, SqliteStore
+
+    store_path = (
+        _Path(store).expanduser()
+        if store
+        else _load_config().resolved_directory() / STORE_FILENAME
+    )
+    if not store_path.is_file():
+        parser.error(f"no bettermemory 9 store at {store_path} ({STORE_FILENAME})")
+    with SqliteStore.open(store_path, allow_rekey=False) as opened:
+        try:
+            report = write_mirror(opened, _Path(mirror))
+        except MirrorRefused as exc:
+            parser.error(str(exc))
+    sys.stdout.write(report.render_text())
 
 
 def _count_tombstone_files(store: Store) -> int:

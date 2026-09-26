@@ -250,6 +250,18 @@ The bettermemory 9 store (`src/bettermemory/sqlite_store.py`) keeps its records 
 
 `log verify` walks the chain and reports one of three statuses. `tampered`: a row fails its MAC, the chain or the seq sequence breaks, the head names a row the log no longer holds, or a table differs from a replay of the log (a row nobody logged is listed as `unaccounted`, a logged row that is gone as `missing`). `unverifiable`: a segment of the chain was signed by a key this machine does not hold, or there is no head checkpoint. `ok` otherwise. The command never writes: a store opened for verification without its key is reported, not rekeyed. Exit status 0 on `ok`, 1 otherwise, 2 when the store directory holds no `memory.sqlite`. `--json` prints the full report (segments, problems by seq, the head, the fold per table).
 
+## Migration to the bettermemory 9 store
+
+### `bettermemory migrate v8 [--from DIR] [--to FILE] [--dry-run] [--json]`
+
+Reads a v8 store directory and writes its records into a bettermemory 9 store (`src/bettermemory/migrate_v8.py`). `DIR` defaults to the resolved store directory and `FILE` to `memory.sqlite` inside it; the store is created when absent and opened when present. Active memories become `imported` rows with their v8 filenames, inserted in the order a v8 rebuild indexed them, so the candidate query's tie order is the index's. Tombstones keep the links and corroboration rollup their files kept, and the active filename their name was made from. Episodes, conflicts and the ingest watermark take their tables. Every event, from every shard, archive and the legacy file, becomes a telemetry row under its original timestamp and session, its fields the payload plus `imported_from: "v8"`, with verbatim query text redacted the way every v9 row is. The run opens with one `migrate_v8` control row naming the directory and the counts, and everything lands in one transaction: a failure part way leaves the store as it was.
+
+The directory is never written. A re-run imports what is new and reports the rest as present: records by id, events by their exact row. Pending writes and write proposals are dropped with a count; the quarantine sidecar, the episode-pattern dismissals, the captures directory, the index and the lock files are left in place with a count; anything else is named as unknown and left alone. `--dry-run` prints the same report and writes nothing. Exit status zero with the report, two when `DIR` is not a directory, one when the store cannot be written.
+
+### `bettermemory export --mirror DIR [--store FILE]`
+
+Writes the store as a v8 directory under `DIR` (`src/bettermemory/mirror.py`): each active memory at its filename, tombstones under `.tombstones/` named by the current v8 rule, episodes under `episodes/<session>/`, the bytes the v8 writers produced, so a migrated store mirrors back to the directory it came from (`bench/parity/migrate_v8.py` records the round trip). `FILE` defaults to `memory.sqlite` in the resolved store directory and is opened without its key when the key is absent: an export reads and never rekeys. `DIR` must be absent, empty, or a mirror this command made before, which it marks with `.mirror.json`; anything else is refused, so a v8 store can never be written over. Inside a mirror, a file whose bytes already match is left alone, a changed or new one is written, and a file the store no longer holds is removed. The JSON export's flags do not combine with `--mirror`.
+
 ## Curation
 
 ### `memory_record_use(memory_ids, outcome, note?, claim_excerpts?)`

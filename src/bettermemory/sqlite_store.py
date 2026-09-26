@@ -40,6 +40,7 @@ import os
 import secrets
 import sqlite3
 from collections.abc import Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -52,11 +53,13 @@ from .identity import Actor
 from . import log as _chain
 from .log import (
     CONTROL_KINDS,
+    MIGRATE_V8,
     REKEY,
     STORE_CREATED,
     KeyRing,
     LogRow,
     append_row,
+    canonical_payload,
     fingerprint,
     iter_rows,
     verify_chain,
@@ -155,6 +158,34 @@ _VERIFICATION_LISTS = (
 )
 
 _PROVENANCE_BATCH = 500
+
+# What an imported row's payload says about where it came from. The v8
+# migration is the one importer today; a later `import` names itself.
+IMPORTED_FROM_V8 = "v8"
+
+
+@dataclass(frozen=True)
+class MemoryRow:
+    """An active record with the two columns the record itself does not
+    carry: how it entered the store and the v8 filename it keeps."""
+
+    memory: Memory
+    provenance: str
+    filename: str | None
+
+
+@dataclass(frozen=True)
+class TombstoneRow:
+    """A tombstone with what the record carried while active and the
+    tombstone model drops: its links, its corroboration rollup, and the
+    active filename the mirror derives the tombstone's name from."""
+
+    tombstone: TombstonedMemory
+    provenance: str
+    filename: str | None
+    links: list[dict[str, Any]]
+    corroborations: int
+    last_corroborated: datetime | None
 
 
 # ---------------------------------------------------------------------------
@@ -907,6 +938,41 @@ def _key_label(table: str, key: tuple[Any, ...]) -> Any:
     return list(key)
 
 
+_ROW_COLUMNS = ("ts", "session", "kind")
+
+
+def event_import_payload(
+    event: Mapping[str, Any], *, imported_from: str = IMPORTED_FROM_V8
+) -> tuple[str | None, str | None, str, dict[str, Any]]:
+    """The row a v8 event becomes: ``(ts, session, kind, payload)``.
+
+    ``ts``, ``session`` and ``kind`` leave the event for the row's own
+    columns; every other field stays in the payload, ``query`` and
+    ``probe_query`` redacted the way ``record_event`` redacts them, and
+    ``imported_from`` names the source. An absent or empty ``ts`` comes
+    back as None (the caller stamps the row). Raises ValueError on an
+    event without a string kind, or whose kind names a mutation or a
+    control row: those are not events in any store.
+    """
+    kind = event.get("kind")
+    if not isinstance(kind, str) or not kind:
+        raise ValueError("an event needs a string kind")
+    if kind in MUTATION_KINDS or kind in CONTROL_KINDS:
+        raise ValueError(f"{kind!r} is a mutation or control kind, not an event")
+    ts = event.get("ts")
+    session = event.get("session")
+    payload = _redact_event_fields(
+        {k: v for k, v in event.items() if k not in _ROW_COLUMNS}
+    )
+    payload["imported_from"] = imported_from
+    return (
+        ts if isinstance(ts, str) and ts else None,
+        session if isinstance(session, str) and session else None,
+        kind,
+        payload,
+    )
+
+
 # ---------------------------------------------------------------------------
 # The store
 # ---------------------------------------------------------------------------
@@ -930,6 +996,7 @@ class SqliteStore:
         self._key = key
         self._store_id = store_id
         self._last_appended: LogRow | None = None
+        self._in_batch = False
         self._unaccounted_memory_ids: set[str] = set()
 
     # -- construction ------------------------------------------------------
@@ -1110,7 +1177,13 @@ class SqliteStore:
 
     @contextlib.contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
+        """One mutating method's transaction. Inside a ``batch`` the
+        batch owns the transaction and the head write, and this yields
+        the connection as it is."""
         conn = self._conn
+        if self._in_batch:
+            yield conn
+            return
         self._last_appended = None
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -1119,6 +1192,32 @@ class SqliteStore:
             conn.execute("ROLLBACK")
             raise
         conn.execute("COMMIT")
+        self._move_head()
+
+    @contextlib.contextmanager
+    def batch(self) -> Iterator[SqliteStore]:
+        """One transaction around many mutations: everything put or
+        deleted inside the block commits together or not at all, and the
+        head checkpoint moves once, at the commit. A migration runs in
+        one, so a failure part way leaves the store as it was. Batches
+        do not nest."""
+        if self._in_batch:
+            raise RuntimeError(f"a batch is already open on store {self._path}")
+        conn = self._conn
+        self._last_appended = None
+        self._in_batch = True
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield self
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+        finally:
+            self._in_batch = False
+        conn.execute("COMMIT")
+        self._move_head()
+
+    def _move_head(self) -> None:
         appended = self._last_appended
         if appended is not None:
             try:
@@ -1133,13 +1232,14 @@ class SqliteStore:
         payload: Mapping[str, Any],
         *,
         session: str | None,
+        ts: str | None = None,
     ) -> LogRow:
         if self._key is None:
             raise RuntimeError(
                 f"store {self._path} has no key (opened with allow_rekey=False)"
             )
         row = append_row(
-            conn, key=self._key, kind=kind, payload=payload, session=session
+            conn, key=self._key, kind=kind, payload=payload, session=session, ts=ts
         )
         self._last_appended = row
         return row
@@ -1220,6 +1320,16 @@ class SqliteStore:
         for row in self._conn.execute("SELECT * FROM memories ORDER BY rowid"):
             yield _row_to_memory(row)
 
+    def iter_memory_rows(self) -> Iterator[MemoryRow]:
+        """Every active record with its provenance and filename, in
+        rowid order: what the mirror writes."""
+        for row in self._conn.execute("SELECT * FROM memories ORDER BY rowid"):
+            yield MemoryRow(
+                memory=_row_to_memory(row),
+                provenance=str(row["provenance"]),
+                filename=None if row["filename"] is None else str(row["filename"]),
+            )
+
     def memory_ids(self) -> list[str]:
         return [
             str(r["id"])
@@ -1277,6 +1387,53 @@ class SqliteStore:
             self._mutate(tx, "tombstone_put", payload, session=session)
         return dead
 
+    def put_tombstone(
+        self,
+        dead: TombstonedMemory,
+        *,
+        provenance: str | None = None,
+        filename: str | None = None,
+        links: Sequence[MemoryLink | Mapping[str, Any]] = (),
+        corroborations: int = 0,
+        last_corroborated: datetime | None = None,
+        session: str | None = None,
+    ) -> TombstonedMemory:
+        """Insert or replace a tombstone row directly, with the link list
+        and the corroboration rollup the record carried while active, so
+        a later ``restore`` is as lossless as one after ``tombstone``.
+        ``provenance`` None keeps the row's label (``local`` for a new
+        row) and ``filename`` None the row's name, as ``put_memory`` does.
+        Refuses an id that is active: a record is in one table or the
+        other."""
+        if provenance is not None and provenance not in _WRITABLE_PROVENANCE:
+            raise ValueError(
+                f"provenance must be one of {sorted(_WRITABLE_PROVENANCE)}, got {provenance!r}"
+            )
+        if self.has_memory(dead.id):
+            raise ValueError(f"{dead.id} is active; tombstone it instead")
+        existing = self._conn.execute(
+            "SELECT provenance, filename FROM tombstones WHERE id = ?", (dead.id,)
+        ).fetchone()
+        if existing is not None:
+            provenance = provenance or str(existing["provenance"])
+            filename = filename if filename is not None else existing["filename"]
+        payload = {
+            "tombstone": dead.model_dump(mode="json"),
+            "provenance": provenance or LOCAL,
+            "filename": filename,
+            "links": [
+                MemoryLink.model_validate(link).model_dump(
+                    mode="json", exclude_none=True
+                )
+                for link in links
+            ],
+            "corroborations": int(corroborations),
+            "last_corroborated": _iso_opt(last_corroborated),
+        }
+        with self._transaction() as tx:
+            self._mutate(tx, "tombstone_put", payload, session=session)
+        return dead
+
     def get_tombstone(self, memory_id: str) -> TombstonedMemory:
         row = self._conn.execute(
             "SELECT * FROM tombstones WHERE id = ?", (memory_id,)
@@ -1290,6 +1447,21 @@ class SqliteStore:
             "SELECT * FROM tombstones ORDER BY removed, rowid"
         ):
             yield _row_to_tombstone(row)
+
+    def iter_tombstone_rows(self) -> Iterator[TombstoneRow]:
+        """Every tombstone with what its row keeps beside the record, in
+        removal order: what the mirror writes."""
+        for row in self._conn.execute(
+            "SELECT * FROM tombstones ORDER BY removed, rowid"
+        ):
+            yield TombstoneRow(
+                tombstone=_row_to_tombstone(row),
+                provenance=str(row["provenance"]),
+                filename=None if row["filename"] is None else str(row["filename"]),
+                links=list(_load_json(row["links_json"], [])),
+                corroborations=int(row["corroborations"]),
+                last_corroborated=_dt_opt(row["last_corroborated"]),
+            )
 
     def count_tombstones(self) -> int:
         return int(self._conn.execute("SELECT COUNT(*) FROM tombstones").fetchone()[0])
@@ -1591,6 +1763,91 @@ class SqliteStore:
             log.warning("event %s not recorded: %s", kind, exc)
             return None
 
+    def import_event(
+        self, event: Mapping[str, Any], *, imported_from: str = IMPORTED_FROM_V8
+    ) -> LogRow:
+        """One v8 event as a telemetry row under its original ``ts`` and
+        ``session``, the rest of its fields as the payload plus
+        ``imported_from``, query fields redacted (``event_import_payload``
+        says exactly what). An event without a ``ts`` is stamped now.
+        Raises rather than swallowing: a migration wants to know."""
+        ts, session, kind, payload = event_import_payload(
+            event, imported_from=imported_from
+        )
+        with self._transaction() as tx:
+            return self._append(tx, kind, payload, session=session, ts=ts)
+
+    def imported_event_keys(
+        self, imported_from: str = IMPORTED_FROM_V8
+    ) -> set[tuple[str, str | None, str, str]]:
+        """``(ts, session, kind, payload text)`` of every telemetry row
+        that names ``imported_from``: what a re-run of the importer skips.
+        The payload text is the canonical one the row stores, so the
+        caller compares ``canonical_payload`` of what it would write."""
+        needle = canonical_payload({"imported_from": imported_from})[1:-1]
+        out: set[tuple[str, str | None, str, str]] = set()
+        for row in self._conn.execute(
+            "SELECT ts, session, kind, payload FROM log WHERE payload LIKE ? "
+            "ORDER BY seq",
+            (f"%{needle}%",),
+        ):
+            kind = str(row["kind"])
+            if kind in MUTATION_KINDS or kind in CONTROL_KINDS:
+                continue
+            out.add(
+                (
+                    str(row["ts"]),
+                    None if row["session"] is None else str(row["session"]),
+                    kind,
+                    str(row["payload"]),
+                )
+            )
+        return out
+
+    def iter_events(self, since_seq: int = 0) -> Iterator[dict[str, Any]]:
+        """The telemetry rows in the v8 event shape, seq order: ``ts``,
+        ``session`` (when the row has one), ``kind``, then the payload's
+        fields. Mutation and control rows are not events and are
+        skipped; so is a row whose payload is not an object."""
+        for row in iter_rows(self._conn, since_seq):
+            if row.kind in MUTATION_KINDS or row.kind in CONTROL_KINDS:
+                continue
+            try:
+                payload = json.loads(row.payload)
+            except ValueError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            event: dict[str, Any] = {"ts": row.ts}
+            if row.session is not None:
+                event["session"] = row.session
+            event["kind"] = row.kind
+            for key, value in payload.items():
+                if key not in _ROW_COLUMNS:
+                    event[key] = value
+            yield event
+
+    def record_migration(
+        self,
+        *,
+        source: str,
+        counts: Mapping[str, Any],
+        session: str | None = None,
+    ) -> LogRow:
+        """The ``migrate_v8`` control row: which v8 directory was read and
+        how much of it this run imports, written before the imports it
+        counts so the log says what was attested when."""
+        from . import __version__
+
+        payload = {
+            "imported_from": IMPORTED_FROM_V8,
+            "source": source,
+            "counts": dict(counts),
+            "engine_version": __version__,
+        }
+        with self._transaction() as tx:
+            return self._append(tx, MIGRATE_V8, payload, session=session)
+
     # -- search seams ---------------------------------------------------------
 
     def query_candidates(
@@ -1817,6 +2074,7 @@ class SqliteStore:
 __all__ = [
     "FOLDED_TABLES",
     "IMPORTED",
+    "IMPORTED_FROM_V8",
     "LOCAL",
     "MUTATION_KINDS",
     "PROVENANCE_LABELS",
@@ -1825,6 +2083,9 @@ __all__ = [
     "STORE_FILENAME",
     "SYNCED",
     "UNACCOUNTED",
+    "MemoryRow",
     "NotFoundError",
     "SqliteStore",
+    "TombstoneRow",
+    "event_import_payload",
 ]

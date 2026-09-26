@@ -23,6 +23,21 @@ spells out exactly what's stable.
   table edit that no log row accounts for. The store is not yet wired
   into the tool surface: the v8 file store stays the product until the
   engine port lands on it.
+- **`bettermemory migrate v8` and `bettermemory export --mirror`.** The
+  migration reads a v8 store directory with the v8 readers and writes it
+  into the bettermemory 9 store in one transaction: active memories as
+  `imported` rows with their filenames, in the order the v8 index held
+  them; tombstones with the links and corroborations their files kept;
+  episodes, conflicts and the ingest watermark; every event from every
+  shard, archive and the legacy file as a telemetry row under its
+  original timestamp, verbatim query text redacted; and one `migrate_v8`
+  control row ahead of them with the counts. The directory is never
+  written, a re-run imports only what is new, and `--dry-run` reports
+  without writing. The mirror writes the store back out as a v8
+  directory, byte for byte what v8 wrote, into a directory it made or an
+  empty one and never over a store; `bench/parity/migrate_v8.py` records
+  the round trip. (`src/bettermemory/migrate_v8.py`,
+  `src/bettermemory/mirror.py`)
 - **`bettermemory capture`: a Claude Code session in, dated memories
   out.** Step 2 of session capture. The command reads a transcript from
   where the last capture of that session stopped, asks a model for

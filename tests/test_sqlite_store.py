@@ -26,6 +26,7 @@ from hypothesis import HealthCheck, given, settings, strategies as st
 from bettermemory import index as v8_index
 from bettermemory import sqlite_store
 from bettermemory.identity import Actor
+from bettermemory.log import MIGRATE_V8, STORE_CREATED
 from bettermemory.models import (
     Category,
     Confidence,
@@ -934,3 +935,211 @@ def test_log_without_a_subcommand_prints_help(
 ) -> None:
     assert _run_cli(["log"], monkeypatch) == 2
     assert "verify" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# U3: batches, direct tombstones, imported events, the migration control row
+# ---------------------------------------------------------------------------
+
+
+def test_a_batch_commits_everything_together_and_moves_the_head_once(
+    store: SqliteStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    writes: list[int] = []
+    original = store.keyring.write_head
+
+    def counting(*, seq: int, mac: str) -> None:
+        writes.append(seq)
+        original(seq=seq, mac=mac)
+
+    monkeypatch.setattr(store.keyring, "write_head", counting)
+    a, b = _memory("alpha"), _memory("beta")
+    with store.batch() as batched:
+        assert batched is store
+        store.put_memory(a)
+        store.put_memory(b)
+        store.put_episode(_episode())
+        store.tombstone(a.id, "gone inside the batch")
+    assert store.count_memories() == 1 and store.count_tombstones() == 1
+    assert len(store.log_rows()) == 6
+    head = store.keyring.read_head()
+    assert head is not None and head.seq == 6
+    assert writes == [6]
+
+    with pytest.raises(RuntimeError, match="stop"):
+        with store.batch():
+            store.put_memory(_memory("gamma"))
+            store.delete_tombstone(a.id)
+            raise RuntimeError("stop")
+    assert store.count_memories() == 1 and store.count_tombstones() == 1
+    assert len(store.log_rows()) == 6
+    assert writes == [6]
+
+    store.put_memory(_memory("delta"))
+    assert store.count_memories() == 2 and writes == [6, 7]
+    assert store.log_verify()["status"] == "ok"
+
+    with store.batch():
+        with pytest.raises(RuntimeError, match="already open"):
+            with store.batch():
+                pass
+
+
+def test_put_tombstone_inserts_directly_and_refuses_an_active_id(
+    store: SqliteStore,
+) -> None:
+    memory = _full_memory()
+    dead = TombstonedMemory(
+        **{
+            name: getattr(memory, name)
+            for name in TombstonedMemory.model_fields
+            if name not in ("removed", "removed_reason", "removed_session")
+        },
+        removed=_NOW + timedelta(days=2),
+        removed_reason="gone",
+        removed_session="sess_x",
+    )
+    store.put_tombstone(
+        dead,
+        provenance=IMPORTED,
+        filename="2026-09-26-full.md",
+        links=memory.links,
+        corroborations=memory.corroborations,
+        last_corroborated=memory.last_corroborated,
+    )
+    assert store.get_tombstone(memory.id) == dead
+    row = store.conn.execute(
+        "SELECT * FROM tombstones WHERE id = ?", (memory.id,)
+    ).fetchone()
+    assert row["provenance"] == IMPORTED
+    assert row["filename"] == "2026-09-26-full.md"
+    assert json.loads(row["links_json"]) == [
+        link.model_dump(mode="json", exclude_none=True) for link in memory.links
+    ]
+    assert row["corroborations"] == 2
+    assert memory.last_corroborated is not None
+    assert row["last_corroborated"] == memory.last_corroborated.isoformat()
+
+    restored = store.restore(memory.id)
+    assert restored == memory
+    assert store.filename_for(memory.id) == "2026-09-26-full.md"
+    with pytest.raises(ValueError, match="active"):
+        store.put_tombstone(dead)
+    with pytest.raises(ValueError, match="provenance"):
+        store.put_tombstone(
+            TombstonedMemory(**{**dead.model_dump(), "id": generate_ulid()}),
+            provenance="elsewhere",
+        )
+
+    other = _memory("another record")
+    other_dead = TombstonedMemory(
+        **{
+            name: getattr(other, name)
+            for name in TombstonedMemory.model_fields
+            if name not in ("removed", "removed_reason", "removed_session")
+        },
+        removed=_NOW,
+        removed_reason="gone",
+    )
+    store.put_tombstone(other_dead, links=[{"type": "extends", "target_id": memory.id}])
+    row = store.conn.execute(
+        "SELECT provenance, filename, links_json FROM tombstones WHERE id = ?",
+        (other.id,),
+    ).fetchone()
+    assert row["provenance"] == LOCAL and row["filename"] is None
+    assert json.loads(row["links_json"]) == [
+        {"target_id": memory.id, "type": "extends"}
+    ]
+    assert store.log_verify()["status"] == "ok"
+
+
+def test_import_event_keeps_the_original_ts_and_session_and_redacts(
+    store: SqliteStore,
+) -> None:
+    event = {
+        "ts": "2026-07-20T04:17:40.971883Z",
+        "session": "sess_v8",
+        "kind": "search",
+        "id": "01ABC",
+        "query": "kubernetes networking secrets and more words here",
+        "probe_query": {"hash": "x", "preview": "p", "len": 3},
+        "returned": ["01ABC"],
+    }
+    row = store.import_event(event)
+    assert row.ts == event["ts"] and row.session == "sess_v8"
+    assert row.kind == "search" and row.seq == 2
+    payload = json.loads(row.payload)
+    assert payload["imported_from"] == "v8"
+    assert set(payload["query"]) == {"hash", "preview", "len"}
+    assert payload["query"]["preview"] == str(event["query"])[:32]
+    assert payload["probe_query"] == event["probe_query"]
+    assert not {"ts", "session", "kind"} & set(payload)
+    assert list(store.iter_events()) == [
+        {
+            "ts": event["ts"],
+            "session": "sess_v8",
+            "kind": "search",
+            "id": "01ABC",
+            "query": payload["query"],
+            "probe_query": event["probe_query"],
+            "returned": ["01ABC"],
+            "imported_from": "v8",
+        }
+    ]
+    assert store.imported_event_keys() == {(row.ts, row.session, row.kind, row.payload)}
+
+    store.record_event("show", session="sess_live", id="01ABC")
+    assert len(store.imported_event_keys()) == 1
+    assert [e["kind"] for e in store.iter_events()] == ["search", "show"]
+    assert [e["kind"] for e in store.iter_events(since_seq=2)] == ["show"]
+
+    unstamped = store.import_event({"kind": "list", "session": None})
+    assert unstamped.session is None and unstamped.ts.endswith("Z")
+    for bad in (
+        {"kind": "memory_put"},
+        {"kind": STORE_CREATED},
+        {"kind": MIGRATE_V8},
+        {"kind": ""},
+        {"ts": "x"},
+    ):
+        with pytest.raises(ValueError):
+            store.import_event(bad)
+    assert store.log_verify()["status"] == "ok"
+
+
+def test_record_migration_is_a_control_row_the_fold_ignores(
+    store: SqliteStore,
+) -> None:
+    row = store.record_migration(source="the-v8-directory", counts={"memories": 1})
+    assert row.kind == MIGRATE_V8 and row.seq == 2
+    payload = json.loads(row.payload)
+    assert payload["source"] == "the-v8-directory"
+    assert payload["counts"] == {"memories": 1}
+    assert payload["imported_from"] == "v8"
+    assert payload["engine_version"]
+    store.put_memory(_memory("alpha"))
+    assert store.refold()["status"] == "ok"
+    assert store.log_verify()["status"] == "ok"
+    assert list(store.iter_events()) == []
+    with pytest.raises(ValueError):
+        store.record_event(MIGRATE_V8)
+
+
+def test_the_row_iterators_carry_the_filename_and_provenance(
+    store: SqliteStore,
+) -> None:
+    memory = _full_memory()
+    store.put_memory(memory, provenance=IMPORTED, filename="x.md")
+    rows = list(store.iter_memory_rows())
+    assert rows[0].memory == memory
+    assert rows[0].filename == "x.md" and rows[0].provenance == IMPORTED
+    store.tombstone(memory.id, "gone")
+    assert list(store.iter_memory_rows()) == []
+    dead = list(store.iter_tombstone_rows())[0]
+    assert dead.tombstone.id == memory.id
+    assert dead.filename == "x.md" and dead.provenance == IMPORTED
+    assert [link["target_id"] for link in dead.links] == [
+        link.target_id for link in memory.links
+    ]
+    assert dead.corroborations == 2
+    assert dead.last_corroborated == memory.last_corroborated

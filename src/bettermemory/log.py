@@ -66,10 +66,15 @@ GENESIS_MAC = "00" * 32
 KEY_BYTES = 32
 
 # Control rows. `store_created` is seq 1 of every store; `rekey` marks a
-# key change and starts a new segment. Neither is a mutation of a table.
+# key change and starts a new segment; `migrate_v8` opens a migration
+# from a v8 directory and carries what it imported. None is a mutation
+# of a table, and none is telemetry. The migration row is not named
+# `migrate` because v8 had a telemetry kind of that name (the origin
+# backfill), and imported events keep their kinds.
 STORE_CREATED = "store_created"
 REKEY = "rekey"
-CONTROL_KINDS = frozenset({STORE_CREATED, REKEY})
+MIGRATE_V8 = "migrate_v8"
+CONTROL_KINDS = frozenset({STORE_CREATED, REKEY, MIGRATE_V8})
 
 # A retired key is filed under the first characters of its fingerprint.
 _RETIRED_PREFIX_CHARS = 16
@@ -467,6 +472,7 @@ __all__ = [
     "CONTROL_KINDS",
     "GENESIS_MAC",
     "KEY_BYTES",
+    "MIGRATE_V8",
     "REKEY",
     "STORE_CREATED",
     "TAMPER_PROBLEMS",
