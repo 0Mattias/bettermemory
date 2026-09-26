@@ -15,6 +15,7 @@ did not make.
 from __future__ import annotations
 
 import json
+import subprocess
 from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
@@ -140,6 +141,31 @@ def test_the_fixture_names_are_the_ones_the_writers_gave() -> None:
 # ---------------------------------------------------------------------------
 # The renderers against the files the v8 writers wrote
 # ---------------------------------------------------------------------------
+
+
+def test_the_fixture_is_checked_out_byte_for_byte() -> None:
+    """The renderer tests below and the mirror tests in `test_migrate_v8.py`
+    compare bytes with the fixture, so git must check every file under it
+    out as committed. With `core.autocrlf` on, the windows-latest leg got
+    the text files with CRLF endings, which no v8 writer produced, and
+    every byte comparison failed; `.gitattributes` unsets `text` for the
+    tree, which turns end-of-line conversion off on every platform."""
+    repo = FIXTURE.parents[3]
+    listed = subprocess.run(
+        ["git", "-C", str(repo), "ls-files", "-z", "--", "tests/fixtures/v8/store"],
+        capture_output=True,
+        check=True,
+    ).stdout.decode("utf-8")
+    paths = [path for path in listed.split("\0") if path]
+    assert paths
+    checked = subprocess.run(
+        ["git", "-C", str(repo), "check-attr", "-z", "text", "--", *paths],
+        capture_output=True,
+        check=True,
+    ).stdout.decode("utf-8")
+    # `-z` prints <path> NUL <attribute> NUL <value> NUL per path.
+    fields = checked.split("\0")
+    assert dict(zip(fields[0::3], fields[2::3])) == dict.fromkeys(paths, "unset")
 
 
 def test_render_memory_reproduces_the_v8_files() -> None:

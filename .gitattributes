@@ -18,6 +18,17 @@ bench/rot/frame/*.json -text
 # a corpus hash that is allowed to differ per platform is not an anchor.
 bench/retrieval/*.jsonl -text
 
+# The golden v8 fixture, byte for byte. `tests/test_export_mirror.py` pins
+# the mirror's renderers by comparing their output with every memory,
+# tombstone and episode file under it, and the migration tests compare the
+# mirror of a migrated copy with it. The files are what the v8 writers wrote
+# at 8.0.0, LF endings included; a Windows checkout with core.autocrlf
+# rewrote them to CRLF, which no writer produced, and every one of those
+# comparisons failed on that leg. The rule covers the whole tree, the
+# dot-directories and the sidecars with it, so a fixture file added later is
+# covered too.
+tests/fixtures/v8/store/** -text
+
 # DELIBERATELY ABSENT: any `*.py diff=python` rule.
 #
 # Git's default funcname heuristic — not the Python driver — is what produces
