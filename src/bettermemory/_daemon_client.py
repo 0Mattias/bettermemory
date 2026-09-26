@@ -154,7 +154,7 @@ def pid_alive(pid: int) -> bool:
     if sys.platform == "win32":
         import ctypes
 
-        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        kernel32 = ctypes.windll.kernel32
         process_query_limited_information = 0x1000
         still_active = 259
         handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
@@ -237,8 +237,7 @@ def start_daemon(
         }
         if sys.platform == "win32":
             kwargs["creationflags"] = (
-                subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
-                | subprocess.DETACHED_PROCESS  # type: ignore[attr-defined]
+                subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
             )
         else:
             kwargs["start_new_session"] = True
