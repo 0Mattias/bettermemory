@@ -15,6 +15,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +44,7 @@ NINE = {
 
 
 @pytest.fixture
-def daemon_env(tmp_path: Path) -> dict[str, str]:
+def daemon_env(tmp_path: Path) -> Iterator[dict[str, str]]:
     env = _env(tmp_path)
     yield env
     _cli(["down"], env, timeout=30)

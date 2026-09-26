@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -21,7 +22,7 @@ from .test_daemon_lifecycle import _cli, _env, _wait_running
 
 
 @pytest.fixture
-def daemon_env(tmp_path: Path) -> dict[str, str]:
+def daemon_env(tmp_path: Path) -> Iterator[dict[str, str]]:
     env = _env(tmp_path)
     yield env
     _cli(["down"], env, timeout=30)

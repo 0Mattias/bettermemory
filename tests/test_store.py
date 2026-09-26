@@ -38,6 +38,7 @@ from bettermemory.models import (
     generate_ulid,
 )
 from bettermemory.origin import Origin
+from bettermemory.search import fts_index_text
 from bettermemory.store import (
     FOLDED_TABLES,
     IMPORTED,
@@ -1103,9 +1104,9 @@ def _plant(store: Store, body: str, *, log_mac: str | None) -> str:
     columns = store_module._record_columns(planted)
     columns.update(
         {
-            "body_fts": store_module.fts_index_text(planted.body),
+            "body_fts": fts_index_text(planted.body),
             "scopes_text": store_module._scopes_text(planted.scopes),
-            "scopes_fts": store_module.fts_index_text(" ".join(planted.scopes)),
+            "scopes_fts": fts_index_text(" ".join(planted.scopes)),
             "filename": None,
             "provenance": LOCAL,
             "links_json": "[]",

@@ -34,6 +34,7 @@ from bettermemory.models import (
     Source,
     generate_ulid,
 )
+from bettermemory.search import fts_index_text
 from bettermemory.store import LOCAL, Store
 
 
@@ -3600,9 +3601,9 @@ def _plant(store: Store, body: str, scopes: list[str]) -> Memory:
     columns = _store._record_columns(planted)
     columns.update(
         {
-            "body_fts": _store.fts_index_text(planted.body),
+            "body_fts": fts_index_text(planted.body),
             "scopes_text": _store._scopes_text(planted.scopes),
-            "scopes_fts": _store.fts_index_text(" ".join(planted.scopes)),
+            "scopes_fts": fts_index_text(" ".join(planted.scopes)),
             "filename": None,
             "provenance": LOCAL,
             "links_json": "[]",

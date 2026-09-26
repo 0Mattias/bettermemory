@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -70,7 +71,7 @@ def _wait_running(tmp_path: Path, timeout: float = 15.0) -> dict:
 
 
 @pytest.fixture
-def daemon_env(tmp_path: Path) -> dict[str, str]:
+def daemon_env(tmp_path: Path) -> Iterator[dict[str, str]]:
     env = _env(tmp_path)
     yield env
     # Whatever the test left running goes down with it.
@@ -100,7 +101,9 @@ def test_up_writes_the_state_file_and_status_reads_running(
     # `up` twice is one daemon: the second call reports the first.
     again = _cli(["up", "--port", "0"], daemon_env)
     assert again.returncode == 0, again.stderr
-    assert read_state(tmp_path / "state", _store_path(tmp_path))["pid"] == state["pid"]
+    again_state = read_state(tmp_path / "state", _store_path(tmp_path))
+    assert again_state is not None
+    assert again_state["pid"] == state["pid"]
 
 
 def test_down_stops_the_daemon_and_removes_the_state_file(

@@ -22,9 +22,10 @@ import pytest
 
 from bettermemory.config import Config, StorageConfig
 from bettermemory.events import Recorder
+from bettermemory.log import CONTROL_KINDS
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
-from bettermemory.store import CONTROL_KINDS, MUTATION_KINDS, Store
+from bettermemory.store import MUTATION_KINDS, Store
 
 
 def _shaped(*parts: str) -> str:

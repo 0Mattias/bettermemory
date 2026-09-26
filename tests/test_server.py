@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from bettermemory.config import Config, StorageConfig
+from bettermemory.search import fts_index_text
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
@@ -64,9 +65,9 @@ def _plant(store: Store, body: str, scopes: list[str]) -> str:
     columns = _store._record_columns(planted)
     columns.update(
         {
-            "body_fts": _store.fts_index_text(planted.body),
+            "body_fts": fts_index_text(planted.body),
             "scopes_text": _store._scopes_text(planted.scopes),
-            "scopes_fts": _store.fts_index_text(" ".join(planted.scopes)),
+            "scopes_fts": fts_index_text(" ".join(planted.scopes)),
             "filename": None,
             "provenance": _store.LOCAL,
             "links_json": "[]",
