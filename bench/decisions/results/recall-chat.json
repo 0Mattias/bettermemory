@@ -1,0 +1,83 @@
+{
+ "instrument": "claude-fable-5.1-in-session",
+ "version": {
+  "model": "claude-fable-5-1",
+  "shape": "blind judgement of the same states and questions, probabilities written by the model"
+ },
+ "n": 771,
+ "positives": 507,
+ "seconds": 0.0,
+ "budget_high": 198,
+ "baseline": {
+  "auc": 0.7218,
+  "at_budget": {
+   "budget": 198,
+   "precision": 0.9141,
+   "recall": 0.357
+  }
+ },
+ "arm": {
+  "auc": 0.8769,
+  "brier": 0.1643,
+  "ece": 0.1674,
+  "at_budget": {
+   "budget": 198,
+   "precision": 0.9596,
+   "recall": 0.3748
+  },
+  "at_tau": {
+   "0.5": {
+    "flagged": 426,
+    "precision": 0.8873,
+    "recall": 0.7456
+   },
+   "0.7": {
+    "flagged": 231,
+    "precision": 0.9524,
+    "recall": 0.4339
+   },
+   "0.9": {
+    "flagged": 45,
+    "precision": 1.0,
+    "recall": 0.0888
+   }
+  }
+ },
+ "question": {
+  "helps": {
+   "type": "noul",
+   "instructions": "This stored memory contains something the assistant needs in order to answer the user's message well.",
+   "criteria": {
+    "true": "The memory is needed for a good answer to this message.",
+    "false": "The memory is not needed for this message."
+   }
+  }
+ },
+ "usage": null,
+ "body_chars": 1800,
+ "run_at": "2026-09-26T00:33:52Z",
+ "operating_points": {
+  "baseline_at_high": {
+   "budget": 198,
+   "precision": 0.9141,
+   "recall": 0.357
+  },
+  "arm_at_high_budget": {
+   "budget": 198,
+   "precision": 0.9596,
+   "recall": 0.3748
+  },
+  "baseline_at_high_medium": {
+   "budget": 612,
+   "precision": 0.7157,
+   "recall": 0.8639
+  },
+  "arm_at_high_medium_budget": {
+   "budget": 612,
+   "precision": 0.7925,
+   "recall": 0.9566
+  }
+ },
+ "items_omitted": 771,
+ "items_note": "per-memory rows omitted: they name memories and sessions from the owner's private store"
+}

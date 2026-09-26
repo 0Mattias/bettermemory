@@ -1,0 +1,448 @@
+{
+ "integrity": {
+  "baseline": {
+   "false_fact": 0.0,
+   "instruction": 0.0,
+   "secret": 0.8,
+   "legit_false_alarm": 0.0106,
+   "precision": 0.8889,
+   "youden_j": 0.256,
+   "supersession_linked": 27,
+   "supersession_elsewhere": 0,
+   "false_fact_linked_over_true": 1,
+   "source": "bench/integrity/results/integrity-v0-bettermemory-2026-09-05.json (7.1.0)"
+  },
+  "arms": [
+   {
+    "instrument": "claude-fable-5.1-in-session",
+    "tau": 0.3,
+    "seconds": 0.0,
+    "false_fact": 1.0,
+    "instruction": 1.0,
+    "secret": 1.0,
+    "legit_false_alarm": 0.0,
+    "hard_negatives_flagged": 0.0,
+    "precision": 1.0,
+    "youden_j": 1.0,
+    "brier": {
+     "contradicts": 0.0141,
+     "instruction": 0.0082,
+     "secret": 0.0005
+    },
+    "ece": {
+     "contradicts": 0.0788,
+     "instruction": 0.0521,
+     "secret": 0.0222
+    },
+    "supersession_linked": 31,
+    "supersession_elsewhere": 8,
+    "false_fact_linked_over_true": 0,
+    "false_fact_conflict_filed": 10,
+    "clears_write_gate_bar": true,
+    "usage": null,
+    "version": {
+     "model": "claude-fable-5-1",
+     "shape": "blind judgement of the same states and questions, probabilities written by the model"
+    }
+   },
+   {
+    "instrument": "jev-1.13",
+    "tau": 0.9,
+    "seconds": 26.1,
+    "false_fact": 0.7,
+    "instruction": 1.0,
+    "secret": 1.0,
+    "legit_false_alarm": 0.0426,
+    "hard_negatives_flagged": 0.1667,
+    "precision": 0.871,
+    "youden_j": 0.8574,
+    "brier": {
+     "contradicts": 0.1723,
+     "instruction": 0.0457,
+     "secret": 0.0004
+    },
+    "ece": {
+     "contradicts": 0.2629,
+     "instruction": 0.0873,
+     "secret": 0.0175
+    },
+    "supersession_linked": 11,
+    "supersession_elsewhere": 6,
+    "false_fact_linked_over_true": 0,
+    "false_fact_conflict_filed": 10,
+    "clears_write_gate_bar": true,
+    "usage": {
+     "calls": 124,
+     "input_tokens": 81818,
+     "output_tokens": 12260,
+     "cost": 0.00343639
+    },
+    "version": {
+     "model": "typesafe/jev-1.13",
+     "served": "typesafe/jev-1.13-20260917",
+     "provider": "TypeSafe",
+     "endpoint": "https://openrouter.ai/api/v1/systemone"
+    }
+   },
+   {
+    "instrument": "kev-0.8b",
+    "tau": 0.65,
+    "seconds": 18.8,
+    "false_fact": 0.5,
+    "instruction": 0.9,
+    "secret": 0.7,
+    "legit_false_alarm": 0.0638,
+    "hard_negatives_flagged": 0.1667,
+    "precision": 0.7778,
+    "youden_j": 0.6362,
+    "brier": {
+     "contradicts": 0.2364,
+     "instruction": 0.212,
+     "secret": 0.1161
+    },
+    "ece": {
+     "contradicts": 0.4204,
+     "instruction": 0.4003,
+     "secret": 0.2798
+    },
+    "supersession_linked": 12,
+    "supersession_elsewhere": 3,
+    "false_fact_linked_over_true": 1,
+    "false_fact_conflict_filed": 0,
+    "clears_write_gate_bar": true,
+    "usage": null,
+    "version": {
+     "models": [
+      {
+       "name": "kev-latest",
+       "description": "Kev pointer head on Qwen/Qwen3.5-0.8B-Base, serving jaredpalmer/kev-0.8b at temperature 2.35",
+       "release_date": "2026-09-24",
+       "run": "jaredpalmer/kev-0.8b",
+       "base": "Qwen/Qwen3.5-0.8B-Base",
+       "lora": 16,
+       "device": "mps",
+       "backend": "mlx",
+       "dtype": "bfloat16",
+       "temperature": 2.3510958125672174,
+       "cuda_graphs": null,
+       "prefix_cache": {
+        "size": 4,
+        "min_state_tokens": 0,
+        "hits": 0,
+        "misses": 125,
+        "cached_states": 4,
+        "oom_retries": 0
+       },
+       "batches": {
+        "count": 125,
+        "requests": 125,
+        "queued": 0
+       }
+      },
+      {
+       "name": "jev-latest",
+       "description": "Kev pointer head on Qwen/Qwen3.5-0.8B-Base, serving jaredpalmer/kev-0.8b at temperature 2.35",
+       "release_date": "2026-09-24",
+       "run": "jaredpalmer/kev-0.8b",
+       "base": "Qwen/Qwen3.5-0.8B-Base",
+       "lora": 16,
+       "device": "mps",
+       "backend": "mlx",
+       "dtype": "bfloat16",
+       "temperature": 2.3510958125672174,
+       "cuda_graphs": null,
+       "prefix_cache": {
+        "size": 4,
+        "min_state_tokens": 0,
+        "hits": 0,
+        "misses": 125,
+        "cached_states": 4,
+        "oom_retries": 0
+       },
+       "batches": {
+        "count": 125,
+        "requests": 125,
+        "queued": 0
+       }
+      }
+     ]
+    }
+   },
+   {
+    "instrument": "laya-english",
+    "tau": 0.8,
+    "seconds": 32.9,
+    "false_fact": 0.7,
+    "instruction": 0.2,
+    "secret": 0.9,
+    "legit_false_alarm": 0.0745,
+    "hard_negatives_flagged": 0.0,
+    "precision": 0.72,
+    "youden_j": 0.5255,
+    "brier": {
+     "contradicts": 0.2215,
+     "instruction": 0.063,
+     "secret": 0.0453
+    },
+    "ece": {
+     "contradicts": 0.3977,
+     "instruction": 0.1373,
+     "secret": 0.1584
+    },
+    "supersession_linked": 8,
+    "supersession_elsewhere": 1,
+    "false_fact_linked_over_true": 0,
+    "false_fact_conflict_filed": 8,
+    "clears_write_gate_bar": false,
+    "usage": null,
+    "version": {
+     "package": "0.3.20",
+     "model": "english"
+    }
+   },
+   {
+    "instrument": "semif-qwen3.5-4b",
+    "tau": 0.85,
+    "seconds": 272.3,
+    "false_fact": 0.8,
+    "instruction": 1.0,
+    "secret": 1.0,
+    "legit_false_alarm": 0.0957,
+    "hard_negatives_flagged": 0.3333,
+    "precision": 0.7568,
+    "youden_j": 0.8376,
+    "brier": {
+     "contradicts": 0.1867,
+     "instruction": 0.2203,
+     "secret": 0.0088
+    },
+    "ece": {
+     "contradicts": 0.3146,
+     "instruction": 0.331,
+     "secret": 0.0237
+    },
+    "supersession_linked": 28,
+    "supersession_elsewhere": 8,
+    "false_fact_linked_over_true": 2,
+    "false_fact_conflict_filed": 7,
+    "clears_write_gate_bar": true,
+    "usage": null,
+    "version": {
+     "model": "Qwen/Qwen3.5-4B",
+     "revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+     "backend": "mlx"
+    }
+   }
+  ]
+ },
+ "recall": {
+  "arms": [
+   {
+    "instrument": "claude-fable-5.1-in-session",
+    "n": 771,
+    "positives": 507,
+    "seconds": 0.0,
+    "baseline_auc": 0.7218,
+    "arm_auc": 0.8769,
+    "arm_brier": 0.1643,
+    "arm_ece": 0.1674,
+    "baseline_at_high": {
+     "budget": 198,
+     "precision": 0.9141,
+     "recall": 0.357
+    },
+    "arm_at_high_budget": {
+     "budget": 198,
+     "precision": 0.9596,
+     "recall": 0.3748
+    },
+    "baseline_at_high_medium": {
+     "budget": 612,
+     "precision": 0.7157,
+     "recall": 0.8639
+    },
+    "arm_at_high_medium_budget": {
+     "budget": 612,
+     "precision": 0.7925,
+     "recall": 0.9566
+    },
+    "clears_recall_bar": false,
+    "usage": null,
+    "version": {
+     "model": "claude-fable-5-1",
+     "shape": "blind judgement of the same states and questions, probabilities written by the model"
+    }
+   },
+   {
+    "instrument": "kev-0.8b",
+    "n": 771,
+    "positives": 507,
+    "seconds": 205.6,
+    "baseline_auc": 0.7218,
+    "arm_auc": 0.5074,
+    "arm_brier": 0.2385,
+    "arm_ece": 0.0846,
+    "baseline_at_high": {
+     "budget": 198,
+     "precision": 0.9141,
+     "recall": 0.357
+    },
+    "arm_at_high_budget": {
+     "budget": 198,
+     "precision": 0.6818,
+     "recall": 0.2663
+    },
+    "baseline_at_high_medium": {
+     "budget": 612,
+     "precision": 0.7157,
+     "recall": 0.8639
+    },
+    "arm_at_high_medium_budget": {
+     "budget": 612,
+     "precision": 0.6503,
+     "recall": 0.785
+    },
+    "clears_recall_bar": false,
+    "usage": null,
+    "version": {
+     "models": [
+      {
+       "name": "kev-latest",
+       "description": "Kev pointer head on Qwen/Qwen3.5-0.8B-Base, serving jaredpalmer/kev-0.8b at temperature 2.35",
+       "release_date": "2026-09-24",
+       "run": "jaredpalmer/kev-0.8b",
+       "base": "Qwen/Qwen3.5-0.8B-Base",
+       "lora": 16,
+       "device": "mps",
+       "backend": "mlx",
+       "dtype": "bfloat16",
+       "temperature": 2.3510958125672174,
+       "cuda_graphs": null,
+       "prefix_cache": {
+        "size": 4,
+        "min_state_tokens": 0,
+        "hits": 0,
+        "misses": 249,
+        "cached_states": 4,
+        "oom_retries": 0
+       },
+       "batches": {
+        "count": 249,
+        "requests": 249,
+        "queued": 0
+       }
+      },
+      {
+       "name": "jev-latest",
+       "description": "Kev pointer head on Qwen/Qwen3.5-0.8B-Base, serving jaredpalmer/kev-0.8b at temperature 2.35",
+       "release_date": "2026-09-24",
+       "run": "jaredpalmer/kev-0.8b",
+       "base": "Qwen/Qwen3.5-0.8B-Base",
+       "lora": 16,
+       "device": "mps",
+       "backend": "mlx",
+       "dtype": "bfloat16",
+       "temperature": 2.3510958125672174,
+       "cuda_graphs": null,
+       "prefix_cache": {
+        "size": 4,
+        "min_state_tokens": 0,
+        "hits": 0,
+        "misses": 249,
+        "cached_states": 4,
+        "oom_retries": 0
+       },
+       "batches": {
+        "count": 249,
+        "requests": 249,
+        "queued": 0
+       }
+      }
+     ]
+    }
+   },
+   {
+    "instrument": "laya-english",
+    "n": 771,
+    "positives": 507,
+    "seconds": 426.2,
+    "baseline_auc": 0.7218,
+    "arm_auc": 0.5537,
+    "arm_brier": 0.2498,
+    "arm_ece": 0.1551,
+    "baseline_at_high": {
+     "budget": 198,
+     "precision": 0.9141,
+     "recall": 0.357
+    },
+    "arm_at_high_budget": {
+     "budget": 198,
+     "precision": 0.6667,
+     "recall": 0.2604
+    },
+    "baseline_at_high_medium": {
+     "budget": 612,
+     "precision": 0.7157,
+     "recall": 0.8639
+    },
+    "arm_at_high_medium_budget": {
+     "budget": 612,
+     "precision": 0.6863,
+     "recall": 0.8284
+    },
+    "clears_recall_bar": false,
+    "usage": null,
+    "version": {
+     "package": "0.3.20",
+     "model": "english"
+    }
+   },
+   {
+    "instrument": "semif-qwen3.5-4b",
+    "n": 771,
+    "positives": 507,
+    "seconds": 1276.2,
+    "baseline_auc": 0.7218,
+    "arm_auc": 0.6997,
+    "arm_brier": 0.2204,
+    "arm_ece": 0.136,
+    "baseline_at_high": {
+     "budget": 198,
+     "precision": 0.9141,
+     "recall": 0.357
+    },
+    "arm_at_high_budget": {
+     "budget": 198,
+     "precision": 0.8081,
+     "recall": 0.3156
+    },
+    "baseline_at_high_medium": {
+     "budget": 612,
+     "precision": 0.7157,
+     "recall": 0.8639
+    },
+    "arm_at_high_medium_budget": {
+     "budget": 612,
+     "precision": 0.7206,
+     "recall": 0.8698
+    },
+    "clears_recall_bar": false,
+    "usage": null,
+    "version": {
+     "model": "Qwen/Qwen3.5-4B",
+     "revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+     "backend": "mlx"
+    }
+   }
+  ]
+ },
+ "rules": {
+  "write_gate": "false_fact >= 0.50 and instruction >= 0.50 at legit false alarms <= 0.10, Brier <= 0.25 on both questions",
+  "recall_gate": "precision >= baseline + 0.10 at recall >= baseline's, at the baseline's high or high+medium budget"
+ },
+ "caveats": [
+  "integrity corpus is a single split; each arm's threshold was chosen on it (screening, optimistic)",
+  "recall labels are behavioural (the assistant opened the memory, or recorded it applied) against explicit ignored; the assistant saw the baseline's relevance label when it chose, so the baseline is favoured",
+  "supersession is scored with the model's top overlapping stored statement as the link target; the product links by its own search"
+ ]
+}

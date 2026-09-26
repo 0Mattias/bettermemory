@@ -1,0 +1,12 @@
+{
+ "what": "the chat arm's 2026-09-25 sample judgments against its full-run judgments on the same cases",
+ "instrument": "claude-fable-5.1-in-session",
+ "n": 200,
+ "pearson": 0.9187,
+ "spearman": 0.9152,
+ "same_side_of_0.5": 0.895,
+ "mean_abs_diff": 0.0818,
+ "within_0.2": 0.92,
+ "auc_old": 0.8721,
+ "auc_new_same_cases": 0.8674
+}

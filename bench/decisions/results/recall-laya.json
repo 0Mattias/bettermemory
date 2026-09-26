@@ -1,0 +1,82 @@
+{
+ "instrument": "laya-english",
+ "version": {
+  "package": "0.3.20",
+  "model": "english"
+ },
+ "n": 771,
+ "positives": 507,
+ "seconds": 426.2,
+ "budget_high": 198,
+ "baseline": {
+  "auc": 0.7218,
+  "at_budget": {
+   "budget": 198,
+   "precision": 0.9141,
+   "recall": 0.357
+  }
+ },
+ "arm": {
+  "auc": 0.5537,
+  "brier": 0.2498,
+  "ece": 0.1551,
+  "at_budget": {
+   "budget": 198,
+   "precision": 0.6667,
+   "recall": 0.2604
+  },
+  "at_tau": {
+   "0.5": {
+    "flagged": 509,
+    "precision": 0.6935,
+    "recall": 0.6963
+   },
+   "0.7": {
+    "flagged": 23,
+    "precision": 0.6087,
+    "recall": 0.0276
+   },
+   "0.9": {
+    "flagged": 0,
+    "precision": 0.0,
+    "recall": 0.0
+   }
+  }
+ },
+ "question": {
+  "helps": {
+   "type": "noul",
+   "instructions": "This stored memory contains something the assistant needs in order to answer the user's message well.",
+   "criteria": {
+    "true": "The memory is needed for a good answer to this message.",
+    "false": "The memory is not needed for this message."
+   }
+  }
+ },
+ "body_chars": 1200,
+ "run_at": "2026-09-25T19:56:47Z",
+ "operating_points": {
+  "baseline_at_high": {
+   "budget": 198,
+   "precision": 0.9141,
+   "recall": 0.357
+  },
+  "arm_at_high_budget": {
+   "budget": 198,
+   "precision": 0.6667,
+   "recall": 0.2604
+  },
+  "baseline_at_high_medium": {
+   "budget": 612,
+   "precision": 0.7157,
+   "recall": 0.8639
+  },
+  "arm_at_high_medium_budget": {
+   "budget": 612,
+   "precision": 0.6863,
+   "recall": 0.8284
+  }
+ },
+ "items_omitted": 771,
+ "items_note": "per-memory rows omitted: they name memories and sessions from the owner's private store"
+}

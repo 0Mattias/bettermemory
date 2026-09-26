@@ -1,0 +1,83 @@
+{
+ "instrument": "semif-qwen3.5-4b",
+ "version": {
+  "model": "Qwen/Qwen3.5-4B",
+  "revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+  "backend": "mlx"
+ },
+ "n": 771,
+ "positives": 507,
+ "seconds": 1276.2,
+ "budget_high": 198,
+ "baseline": {
+  "auc": 0.7218,
+  "at_budget": {
+   "budget": 198,
+   "precision": 0.9141,
+   "recall": 0.357
+  }
+ },
+ "arm": {
+  "auc": 0.6997,
+  "brier": 0.2204,
+  "ece": 0.136,
+  "at_budget": {
+   "budget": 198,
+   "precision": 0.8081,
+   "recall": 0.3156
+  },
+  "at_tau": {
+   "0.5": {
+    "flagged": 549,
+    "precision": 0.745,
+    "recall": 0.8067
+   },
+   "0.7": {
+    "flagged": 449,
+    "precision": 0.7862,
+    "recall": 0.6963
+   },
+   "0.9": {
+    "flagged": 273,
+    "precision": 0.8059,
+    "recall": 0.4339
+   }
+  }
+ },
+ "question": {
+  "helps": {
+   "type": "noul",
+   "instructions": "This stored memory contains something the assistant needs in order to answer the user's message well.",
+   "criteria": {
+    "true": "The memory is needed for a good answer to this message.",
+    "false": "The memory is not needed for this message."
+   }
+  }
+ },
+ "body_chars": 1800,
+ "run_at": "2026-09-25T20:14:13Z",
+ "operating_points": {
+  "baseline_at_high": {
+   "budget": 198,
+   "precision": 0.9141,
+   "recall": 0.357
+  },
+  "arm_at_high_budget": {
+   "budget": 198,
+   "precision": 0.8081,
+   "recall": 0.3156
+  },
+  "baseline_at_high_medium": {
+   "budget": 612,
+   "precision": 0.7157,
+   "recall": 0.8639
+  },
+  "arm_at_high_medium_budget": {
+   "budget": 612,
+   "precision": 0.7206,
+   "recall": 0.8698
+  }
+ },
+ "items_omitted": 771,
+ "items_note": "per-memory rows omitted: they name memories and sessions from the owner's private store"
+}

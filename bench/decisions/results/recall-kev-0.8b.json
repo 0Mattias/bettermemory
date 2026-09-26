@@ -1,0 +1,134 @@
+{
+ "instrument": "kev-0.8b",
+ "version": {
+  "models": [
+   {
+    "name": "kev-latest",
+    "description": "Kev pointer head on Qwen/Qwen3.5-0.8B-Base, serving jaredpalmer/kev-0.8b at temperature 2.35",
+    "release_date": "2026-09-24",
+    "run": "jaredpalmer/kev-0.8b",
+    "base": "Qwen/Qwen3.5-0.8B-Base",
+    "lora": 16,
+    "device": "mps",
+    "backend": "mlx",
+    "dtype": "bfloat16",
+    "temperature": 2.3510958125672174,
+    "cuda_graphs": null,
+    "prefix_cache": {
+     "size": 4,
+     "min_state_tokens": 0,
+     "hits": 0,
+     "misses": 249,
+     "cached_states": 4,
+     "oom_retries": 0
+    },
+    "batches": {
+     "count": 249,
+     "requests": 249,
+     "queued": 0
+    }
+   },
+   {
+    "name": "jev-latest",
+    "description": "Kev pointer head on Qwen/Qwen3.5-0.8B-Base, serving jaredpalmer/kev-0.8b at temperature 2.35",
+    "release_date": "2026-09-24",
+    "run": "jaredpalmer/kev-0.8b",
+    "base": "Qwen/Qwen3.5-0.8B-Base",
+    "lora": 16,
+    "device": "mps",
+    "backend": "mlx",
+    "dtype": "bfloat16",
+    "temperature": 2.3510958125672174,
+    "cuda_graphs": null,
+    "prefix_cache": {
+     "size": 4,
+     "min_state_tokens": 0,
+     "hits": 0,
+     "misses": 249,
+     "cached_states": 4,
+     "oom_retries": 0
+    },
+    "batches": {
+     "count": 249,
+     "requests": 249,
+     "queued": 0
+    }
+   }
+  ]
+ },
+ "n": 771,
+ "positives": 507,
+ "seconds": 205.6,
+ "budget_high": 198,
+ "baseline": {
+  "auc": 0.7218,
+  "at_budget": {
+   "budget": 198,
+   "precision": 0.9141,
+   "recall": 0.357
+  }
+ },
+ "arm": {
+  "auc": 0.5074,
+  "brier": 0.2385,
+  "ece": 0.0846,
+  "at_budget": {
+   "budget": 198,
+   "precision": 0.6818,
+   "recall": 0.2663
+  },
+  "at_tau": {
+   "0.5": {
+    "flagged": 622,
+    "precision": 0.6463,
+    "recall": 0.7929
+   },
+   "0.7": {
+    "flagged": 94,
+    "precision": 0.6809,
+    "recall": 0.1262
+   },
+   "0.9": {
+    "flagged": 0,
+    "precision": 0.0,
+    "recall": 0.0
+   }
+  }
+ },
+ "question": {
+  "helps": {
+   "type": "noul",
+   "instructions": "This stored memory contains something the assistant needs in order to answer the user's message well.",
+   "criteria": {
+    "true": "The memory is needed for a good answer to this message.",
+    "false": "The memory is not needed for this message."
+   }
+  }
+ },
+ "body_chars": 1800,
+ "run_at": "2026-09-25T20:00:16Z",
+ "operating_points": {
+  "baseline_at_high": {
+   "budget": 198,
+   "precision": 0.9141,
+   "recall": 0.357
+  },
+  "arm_at_high_budget": {
+   "budget": 198,
+   "precision": 0.6818,
+   "recall": 0.2663
+  },
+  "baseline_at_high_medium": {
+   "budget": 612,
+   "precision": 0.7157,
+   "recall": 0.8639
+  },
+  "arm_at_high_medium_budget": {
+   "budget": 612,
+   "precision": 0.6503,
+   "recall": 0.785
+  }
+ },
+ "items_omitted": 771,
+ "items_note": "per-memory rows omitted: they name memories and sessions from the owner's private store"
+}
