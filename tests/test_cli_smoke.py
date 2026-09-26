@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import io
 import json
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -31,6 +32,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from bettermemory import store as store_module
 from bettermemory.config import Config, load_config
 from bettermemory.models import utcnow
 from bettermemory.origin import Origin
@@ -404,6 +406,47 @@ def test_try_json_emits_the_raw_hit(
     assert row["staleness_verdict"] == "spot_check_recommended"
     assert row["verification"]["status"] == "fresh"
     assert row["path_drift"]["missing"]
+
+
+def test_try_closes_its_store_before_removing_the_directory(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Every store connection the demo opens is closed by the time its
+    temporary directory is removed. Windows refuses to delete a file a
+    process holds open: with the connection left open, the cleanup raised
+    WinError 32 on `memory.sqlite` after the demo had printed its result."""
+    connections: list[sqlite3.Connection] = []
+    connect = store_module._connect
+
+    def recording_connect(path: Path) -> sqlite3.Connection:
+        conn = connect(path)
+        connections.append(conn)
+        return conn
+
+    def is_open(conn: sqlite3.Connection) -> bool:
+        try:
+            conn.execute("SELECT 1")
+        except sqlite3.ProgrammingError:
+            return False
+        return True
+
+    open_at_cleanup: list[bool] = []
+    cleanup = tempfile.TemporaryDirectory.cleanup
+
+    def checking_cleanup(self: tempfile.TemporaryDirectory[str]) -> None:
+        open_at_cleanup.extend(is_open(conn) for conn in connections)
+        cleanup(self)
+
+    monkeypatch.setattr(store_module, "_connect", recording_connect)
+    monkeypatch.setattr(tempfile.TemporaryDirectory, "cleanup", checking_cleanup)
+    with pytest.raises(SystemExit) as exc:
+        _run_main(["try", "--json"], monkeypatch=monkeypatch, storage=tmp_path)
+    assert exc.value.code == 0
+    assert json.loads(capsys.readouterr().out)["path_drift"]["missing"]
+    assert open_at_cleanup
+    assert not any(open_at_cleanup)
 
 
 def test_init_show_and_tell_prints_snippet(

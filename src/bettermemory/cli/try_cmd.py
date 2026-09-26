@@ -48,9 +48,15 @@ def run(args: argparse.Namespace) -> None:
     from ..search import search as run_search
     from ..store import STORE_FILENAME, Store
 
-    with tempfile.TemporaryDirectory(prefix="bettermemory-try-") as tmp:
+    with (
+        tempfile.TemporaryDirectory(prefix="bettermemory-try-") as tmp,
+        # Entered second, so it exits first: the store is closed before the
+        # directory is removed, as Windows refuses to delete an open file.
+        Store.create(
+            Path(tmp) / "store" / STORE_FILENAME, keys_dir=Path(tmp) / "keys"
+        ) as store,
+    ):
         root = Path(tmp)
-        store = Store.create(root / "store" / STORE_FILENAME, keys_dir=root / "keys")
 
         # A file the memory will cite. Multi-segment with an extension so the
         # path-drift extractor treats it as a real path (single-segment,
