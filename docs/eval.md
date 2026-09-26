@@ -81,7 +81,7 @@ have surfaced a high-relevance hit and the model made no
 `memory_search` / `memory_show` call?
 
 - Numerator: `search_miss` events emitted by the Stop hook's turn audit
-  (`bettermemory audit-turn`).
+  (`bettermemory hook stop`).
 - Denominator: `turn_audited` events, excluding `no_signal` verdicts
   (probe declined: empty store, nothing relevant). Those are reported
   separately so a probe stuck at "declined" can't read as a healthy 0%.

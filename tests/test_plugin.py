@@ -292,7 +292,7 @@ def test_plugin_ships_stop_hook() -> None:
 
 
 def test_stop_hook_calls_audit_turn() -> None:
-    """The Stop binding must invoke `bettermemory audit-turn`. Pin
+    """The Stop binding must invoke `bettermemory hook stop`. Pin
     the exact command so a rename of the CLI subcommand or the hook
     config shape shows up here, not as a silent telemetry regression
     when users next install the plugin."""
@@ -310,10 +310,10 @@ def test_stop_hook_calls_audit_turn() -> None:
     ]
     assert command_hooks, "no command-form hook under Stop"
     matched = [
-        h for h in command_hooks if "bettermemory audit-turn" in h.get("command", "")
+        h for h in command_hooks if "bettermemory hook stop" in h.get("command", "")
     ]
     assert matched, (
-        f"none of the Stop command hooks call `bettermemory audit-turn`; "
+        f"none of the Stop command hooks call `bettermemory hook stop`; "
         f"got: {[h.get('command') for h in command_hooks]}"
     )
 
@@ -345,7 +345,7 @@ def test_stop_hook_has_reasonable_timeout() -> None:
 # A SessionStart hook's stdout is one of the three (with UserPromptSubmit
 # and UserPromptExpansion) that Claude Code injects into the model's
 # context rather than routing to the debug log. That is the whole feature:
-# `bettermemory session-start` prints the per-scope counts, so the model
+# `bettermemory hook session-start` prints the per-scope counts, so the model
 # starts every conversation knowing what is stored instead of spending a
 # `memory_scope_overview` call to find out — or, far more often, never
 # finding out, since retrieval is opt-in and, between prompts the recall
@@ -386,7 +386,9 @@ def test_plugin_ships_session_start_hook() -> None:
     ]
     assert command_hooks, "no command-form hook under SessionStart"
     matched = [
-        h for h in command_hooks if "bettermemory session-start" in h.get("command", "")
+        h
+        for h in command_hooks
+        if "bettermemory hook session-start" in h.get("command", "")
     ]
     assert matched, (
         f"none of the SessionStart command hooks call `bettermemory "
@@ -445,7 +447,7 @@ def test_session_start_hook_has_reasonable_timeout() -> None:
 # ---------------------------------------------------------------------------
 # UserPromptSubmit hook — score-gated recall at prompt time (3.41.0).
 #
-# The second of the stdout-injecting events. `bettermemory prompt-recall`
+# The second of the stdout-injecting events. `bettermemory hook prompt`
 # runs the same silent-miss predicate the Stop hook audits with and prints
 # a one-hit pointer block only on the ~2% of prompts that clear it; empty
 # stdout — the common case — adds nothing to context. The four guards
@@ -478,7 +480,7 @@ def test_plugin_ships_prompt_recall_hook() -> None:
     ]
     assert command_hooks, "no command-form hook under UserPromptSubmit"
     matched = [
-        h for h in command_hooks if "bettermemory prompt-recall" in h.get("command", "")
+        h for h in command_hooks if "bettermemory hook prompt" in h.get("command", "")
     ]
     assert matched, (
         f"none of the UserPromptSubmit command hooks call `bettermemory "

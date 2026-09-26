@@ -70,6 +70,42 @@ surfaces leave with them. An 8.x directory is imported once by
   descriptions and schemas (`instructions_bytes`, `instructions_chars`,
   `session_bytes`).
 
+- **The local daemon, the stdio shim and the hook client.** `bettermemory
+  up` starts one daemon per store on 127.0.0.1 (`[daemon] port`, default
+  7397, an ephemeral port when that one is held), detached, with `down`
+  and `status` beside it and `--foreground` for supervisors. The daemon
+  owns the store, the recorder and the session registry and serves the
+  nine tools over streamable HTTP at `/mcp` (stateless, JSON responses),
+  the three hook bodies at `/api/v1/hook/session-start`, `/stop` and
+  `/prompt`, `/health` and `/api/v1/admin/shutdown`. Every request but
+  `/health` carries the bearer token of the state file
+  (`daemon-<store hash>.json` under the user's state directory, or
+  `BETTERMEMORY_STATE_DIR`), mode 0600. `bettermemory` with no arguments
+  is now a stdio shim: a real stdio MCP server whose `initialize`
+  carries the daemon's instructions and this package's version and
+  whose `tools/list` and `tools/call` forward to the daemon, starting
+  one when none answers, restarting one of another version, and serving
+  the store in-process (the 8.x shape, `bettermemory serve`) with one
+  stderr line when no daemon can be reached or started. Per-client
+  session state is keyed on the `x-bettermemory-session` header the
+  shim sets per process; the shim forwards the client's `clientInfo`
+  and its working directory as the `x-bettermemory-client`,
+  `-client-version` and `-workspace` headers unless the environment
+  declared them. `bettermemory hook session-start|stop|prompt` reads
+  the hook's stdin JSON, posts it to the daemon and prints the answer,
+  through a path that imports nothing from the SDK; `session-start`,
+  `audit-turn` and `prompt-recall` stay as aliases of it, and the
+  plugin's `hooks.json` names the new commands.
+  (`src/bettermemory/daemon.py`, `shim.py`, `_daemon_client.py`,
+  `cli/daemon_cmd.py`)
+- **`Store.open_or_create` refuses to create an empty store beside an
+  un-migrated 8.x directory** (a memory file, an event shard or the
+  tombstone directory present, no `memory.sqlite`), naming
+  `bettermemory migrate v8`. A server pointed at such a directory used
+  to serve an empty store and say nothing.
+- `[daemon] port` in `config.toml`; `BETTERMEMORY_STATE_DIR` for the
+  daemon's state files, the shape `BETTERMEMORY_KEYS_DIR` set.
+
 ### Changed
 
 - **Nine tools, always registered.** `memory_search`, `memory_show`,
@@ -87,8 +123,13 @@ surfaces leave with them. An 8.x directory is imported once by
   and conflicts are rows; this host's verification stamp is a
   `verifications` row written by `memory_verify`. Query text is always
   redacted in the log.
-- The session-start hint reads its per-scope counts off the store; the
-  Stop hook and the recall hook open the store as spawned processes.
+- The session-start hint, the Stop hook and the recall hook are one HTTP
+  round trip to the daemon each; the daemon reads the store for them.
+  The `bettermemory` console script now enters through
+  `bettermemory._entry:main`, and importing the package no longer
+  imports the MCP SDK: `build_server`, `main` and
+  `SYSTEM_PROMPT_ADDENDUM` resolve on first use, so a hook process pays
+  the interpreter and the standard library and nothing else.
 - The plugin's SessionEnd hook is gone with session capture; the Stop,
   SessionStart and UserPromptSubmit hooks stay.
 - A config file that still sets a removed key or section loads with one

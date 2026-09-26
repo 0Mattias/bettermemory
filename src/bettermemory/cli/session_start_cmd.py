@@ -69,7 +69,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     # <anything>` invocation, so a top-level `from ..origin import Origin`
     # would tax every other subcommand for a symbol only this one uses.
 
-    from ..origin import Origin
+    pass
 
 # How many scopes the context block names before collapsing the tail into
 # "+N more". The block is injected into EVERY session, so its cost is
@@ -209,13 +209,15 @@ def _build_context_block() -> str | None:
 
     Split from `run` so the gates are testable without capturing stdout,
     and so `run` holds nothing but the never-raise / always-exit-0
-    contract. Reads scope counts off the store's rows, never a body.
+    contract. The body is `hook.session_start_block`, shared with the
+    daemon's session-start endpoint; this in-process shape opens the
+    store read-only and prints the note on stderr.
     """
     import sys
 
     from ..config import load_config
+    from ..hook import session_start_block
     from ..origin import capture as capture_origin
-    from ..search import candidate_admitted
     from ..store import STORE_FILENAME, Store
 
     config = load_config()
@@ -225,64 +227,17 @@ def _build_context_block() -> str | None:
         return None
 
     current = capture_origin()
-
-    def _admit(scopes: list[str], memory_origin: Origin | None) -> bool:
-        return candidate_admitted(
-            scopes,
-            memory_origin,
-            None,
-            scope_filter=None,
-            excluded=set(),
-            repo_filter=current.repo,
-            worktree_filter=current.worktree_root,
-        )
-
     with Store.open(store_path, allow_rekey=False) as store:
-        stored = store.count_memories()
-        if stored == 0:
-            return None
-        total, scopes = store.scope_counts(admit=_admit)
-    if total == 0:
-        return None
-
-    print(
-        f"[bettermemory] session-start: {total} in scope out of {stored} "
-        f"stored in {directory} (repo={current.repo!r}).",
-        file=sys.stderr,
-    )
-    return _render_block(total, scopes)
+        block, note = session_start_block(store, origin=current)
+    if note:
+        print(note, file=sys.stderr)
+    return block
 
 
 def _render_block(total: int, scopes: dict[str, int]) -> str:
-    """Format the context block the model actually sees.
+    """The context block the model sees; `hook.render_session_start_block`
+    is the one renderer, kept here under its 8.x name for the tests that
+    hold the shape."""
+    from ..hook import render_session_start_block
 
-    Ordering is count-descending then name-ascending — the same
-    determinism `memory_scope_overview` sorts by, so a model that sees
-    both surfaces in one session cannot find them disagreeing about
-    which scope is "top".
-
-    The wording earns its length twice over: it states what the numbers
-    are NOT (no bodies, no ids), so the model doesn't treat this as
-    retrieval already performed, and it restates the opt-in rule, so a
-    non-zero count doesn't read as an invitation to search. The text is
-    byte-identical to what this surface printed before 9.0.0 with the
-    standing tier off; `test_session_start_stdout_is_only_the_context_block`
-    holds the shape.
-    """
-    ordered = sorted(scopes.items(), key=lambda kv: (-kv[1], kv[0]))
-    shown = ordered[:_MAX_SCOPES_SHOWN]
-    rendered = ", ".join(f"{name} ({count})" for name, count in shown)
-    remaining = len(ordered) - len(shown)
-    if remaining > 0:
-        rendered += f", +{remaining} more"
-    noun = "memory is" if total == 1 else "memories are"
-    head = (
-        f"bettermemory: {total} {noun} in scope for this repository.\n"
-        f"Top scopes: {rendered}.\n"
-    )
-    return head + (
-        "Per-scope counts only — no bodies, no ids; memory_admin's health "
-        "action carries the curation rollups when you need them. Retrieval "
-        "stays opt-in: reach for memory_search when a request leans on "
-        "shared context or is ambiguous, not for self-contained questions."
-    )
+    return render_session_start_block(total, scopes)

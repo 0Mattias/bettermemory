@@ -450,6 +450,108 @@ def _probe_message(
     )
 
 
+def _origin_for(cwd: Path | None) -> Origin:
+    """The caller's origin: the process's own when `cwd` is None (the
+    8.x hook, a process spawned in the project), else the directory the
+    hook posted to the daemon, labelled as the process cwd it was."""
+    if cwd is None:
+        return capture_origin()
+    return capture_origin(cwd, source=identity.SOURCE_PROCESS_CWD)
+
+
+def audit_transcript(
+    *,
+    transcript_path: Path,
+    session_id: str,
+    config: Config | None = None,
+    store: Store | None = None,
+    cwd: Path | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any] | None:
+    """`run_audit` over the last exchange of a Claude Code transcript:
+    the body of the Stop hook, shared by the `audit-turn` process and
+    the daemon's stop endpoint. None when there is nothing to audit."""
+    transcript_path = Path(transcript_path).expanduser()
+    if not transcript_path.is_file():
+        return None
+    user, assistant, model = _extract_last_exchange(transcript_path)
+    if not user:
+        return None
+    return run_audit(
+        user_message=user,
+        assistant_response=assistant,
+        session_id=session_id,
+        client_model=model,
+        config=config,
+        dry_run=dry_run,
+        store=store,
+        cwd=cwd,
+    )
+
+
+_SESSION_START_MAX_SCOPES_SHOWN = 5
+
+
+def session_start_block(
+    store: Store, *, cwd: Path | None = None, origin: Origin | None = None
+) -> tuple[str | None, str | None]:
+    """The session-start context block and a one-line stderr note, each
+    None when there is nothing to say. Reads scope counts off the store's
+    rows for the repository at `origin` (captured at `cwd`, or at the
+    process cwd, when None), never a body. The body of `bettermemory
+    session-start` and of the daemon's session-start endpoint."""
+    from .search import candidate_admitted
+
+    stored = store.count_memories()
+    if stored == 0:
+        return None, None
+    current = origin if origin is not None else _origin_for(cwd)
+
+    def _admit(scopes: list[str], memory_origin: Origin | None) -> bool:
+        return candidate_admitted(
+            scopes,
+            memory_origin,
+            None,
+            scope_filter=None,
+            excluded=set(),
+            repo_filter=current.repo,
+            worktree_filter=current.worktree_root,
+        )
+
+    total, scopes = store.scope_counts(admit=_admit)
+    if total == 0:
+        return None, None
+    note = (
+        f"[bettermemory] session-start: {total} in scope out of {stored} "
+        f"stored in {store.path.parent} (repo={current.repo!r})."
+    )
+    return render_session_start_block(total, scopes), note
+
+
+def render_session_start_block(total: int, scopes: dict[str, int]) -> str:
+    """Format the context block the model sees: count-descending then
+    name-ascending, the top five scopes, no bodies, no ids, and the
+    opt-in rule restated. Byte-identical to what `bettermemory
+    session-start` printed before 9.0.0 with the standing tier off."""
+    ordered = sorted(scopes.items(), key=lambda kv: (-kv[1], kv[0]))
+    shown = ordered[:_SESSION_START_MAX_SCOPES_SHOWN]
+    rendered = ", ".join(f"{name} ({count})" for name, count in shown)
+    remaining = len(ordered) - len(shown)
+    if remaining > 0:
+        rendered += f", +{remaining} more"
+    noun = "memory is" if total == 1 else "memories are"
+    head = (
+        f"bettermemory: {total} {noun} in scope for this repository.\n"
+        f"Top scopes: {rendered}.\n"
+    )
+    return head + (
+        "Per-scope counts only — no bodies, no ids; memory_admin's health "
+        "action carries the curation rollups when you need them. Retrieval "
+        "stays opt-in: reach for memory_search when a request leans on "
+        "shared context or is ambiguous, not for self-contained questions."
+    )
+
+
 def run_audit(
     *,
     user_message: str,
@@ -458,6 +560,8 @@ def run_audit(
     client_model: str | None = None,
     config: Config | None = None,
     dry_run: bool = False,
+    store: Store | None = None,
+    cwd: Path | None = None,
 ) -> dict[str, Any]:
     """Pure-function entry point: given a user message and session
     id, run the probe and emit events. Returns a small dict suitable
@@ -503,8 +607,9 @@ def run_audit(
         cfg = dataclasses.replace(
             cfg, telemetry=dataclasses.replace(cfg.telemetry, enabled=False)
         )
-    root = cfg.resolved_directory()
-    store = Store.open_or_create(root / STORE_FILENAME)
+    if store is None:
+        root = cfg.resolved_directory()
+        store = Store.open_or_create(root / STORE_FILENAME)
     # Window-aware read: rotation archives the ENTIRE active log at a
     # moment independent of turn boundaries, so a turn that straddles a
     # rotation would lose its own `search` / `scope_disable` events
@@ -530,13 +635,14 @@ def run_audit(
     # Capture once; reused for the probe's auto-scope and stamped on the
     # hook's events so episode_handoff can worktree-match this turn's
     # session (queue #28). The hook runs as a fresh process in the
-    # turn's cwd, so this reflects the user's working repo. When git
+    # turn's cwd, or the daemon's endpoint is handed that cwd by the
+    # hook client, so this reflects the user's working repo. When git
     # could not be asked (`caller_origin.git_indeterminate`) the nulls
     # below mean "unknown", not "nowhere": the two shields that key on
     # `worktree_root` then match every window, which errs toward
     # suppressing a miss, and `probe_for_miss` declines to declare one
     # outright (`suppressed_by="origin_indeterminate"`).
-    caller_origin = capture_origin()
+    caller_origin = _origin_for(cwd)
     # Reconstruct the session-disabled scope set from the event log so the
     # probe shields the same scopes the in-process audit would. Without
     # this, a scope the user disabled via `memory_scope_disable` (e.g.
@@ -772,6 +878,8 @@ def run_prompt_recall(
     prompt: str,
     session_id: str,
     config: Config | None = None,
+    store: Store | None = None,
+    cwd: Path | None = None,
 ) -> str | None:
     """UserPromptSubmit entry point: probe the submitted prompt and, on
     a would-be silent miss, return the context block to inject (None
@@ -827,17 +935,18 @@ def run_prompt_recall(
     cfg = config or load_config(None)
     if not cfg.behavior.prompt_recall or not cfg.telemetry.enabled:
         return None
-    root = cfg.resolved_directory()
-    if not (root / STORE_FILENAME).is_file():
-        return None
-    store = Store.open_or_create(root / STORE_FILENAME)
+    if store is None:
+        root = cfg.resolved_directory()
+        if not (root / STORE_FILENAME).is_file():
+            return None
+        store = Store.open_or_create(root / STORE_FILENAME)
     recent = list(
         store.events_since(_utcnow() - timedelta(seconds=REAUDIT_DEDUP_WINDOW_SECONDS))
     )
     # Same caller the Stop hook publishes (`run_audit`), minus the model
     # — this hook fires before the assistant has answered.
     identity.bind_transcript(session_id=session_id, model=None)
-    caller_origin = capture_origin()
+    caller_origin = _origin_for(cwd)
     if caller_origin.git_indeterminate:
         # Delivery is scope-gated on the caller's repo and worktree, and
         # git could not say what they are. A null repo here would open
@@ -1324,19 +1433,14 @@ def main(argv: list[str] | None = None) -> int:
         # this way. The contents go nowhere observable even without
         # this guard, but the read itself is the surface worth closing.
         transcript_path = Path(str(transcript_raw)).expanduser().resolve()
-        if not transcript_path.is_file():
-            return 0
-        user, assistant, model = _extract_last_exchange(transcript_path)
-        if not user:
-            return 0
-
-        result = run_audit(
-            user_message=user,
-            assistant_response=assistant,
+        maybe = audit_transcript(
+            transcript_path=transcript_path,
             session_id=str(session_id),
-            client_model=model,
             dry_run=args.dry_run,
         )
+        if maybe is None:
+            return 0
+        result = maybe
         if args.dry_run:
             result = {**result, "dry_run": True}
         if not args.quiet:

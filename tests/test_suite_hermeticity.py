@@ -39,4 +39,6 @@ def test_build_server_with_no_store_opens_one_under_the_test_directory(
 def test_the_config_file_is_under_the_test_directory(tmp_path: Path) -> None:
     config = load_config()
     assert config.config_path is not None
-    assert config.config_path.resolve().is_relative_to(Path(str(tmp_path)).resolve().parent)
+    assert config.config_path.resolve().is_relative_to(
+        Path(str(tmp_path)).resolve().parent
+    )

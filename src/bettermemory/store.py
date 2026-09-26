@@ -34,6 +34,7 @@ leaves the store readable and refuses mutations.
 from __future__ import annotations
 
 import contextlib
+import re
 import hmac
 import json
 import logging
@@ -52,7 +53,7 @@ from ._fsutil import ensure_owner_only_dir
 from .events import _redact_event_fields
 from .identity import Actor
 from . import log as _chain
-from .config import KEYS_DIR_ENV
+from .config import KEYS_DIR_ENV, STORE_FILENAME
 from .log import (
     CONTROL_KINDS,
     MIGRATE_V8,
@@ -88,7 +89,8 @@ from .time_utils import isoformat_utc
 
 log = logging.getLogger("bettermemory.store")
 
-STORE_FILENAME = "memory.sqlite"
+# `STORE_FILENAME` is defined in `config` so the standard-library-only
+# daemon client can name the file without importing this module.
 SCHEMA_VERSION = 1
 
 # Set on a store's first open, before its first table and before WAL mode
@@ -1128,6 +1130,32 @@ def store_path(path: Path | str) -> Path:
     return resolved / STORE_FILENAME
 
 
+class UnmigratedV8DirectoryError(RuntimeError):
+    """A directory holds bettermemory 8 files and no store file."""
+
+
+#: A v8 memory file: `<date>-<slug>-<ULID>.md` (`v8.py`).
+_V8_MEMORY_NAME = re.compile(r".*-[0-9A-HJKMNP-TV-Z]{26}\.md$")
+
+
+def holds_v8_files(directory: Path) -> bool:
+    """Whether `directory` carries a bettermemory 8 store: a memory
+    file, the event log or a shard of it, or the tombstone directory."""
+    try:
+        children = list(directory.iterdir())
+    except OSError:
+        return False
+    for child in children:
+        name = child.name
+        if name == ".events.jsonl" or name == ".tombstones":
+            return True
+        if name.startswith(".events.") and name.endswith(".jsonl"):
+            return True
+        if name.endswith(".md") and _V8_MEMORY_NAME.match(name):
+            return True
+    return False
+
+
 class Store:
     """One store, one file, one connection. ``Store(directory)`` opens the
     store in the directory, creating it on first use, which is what every
@@ -1310,9 +1338,20 @@ class Store:
     def open_or_create(
         cls, path: Path | str, *, keys_dir: Path | str | None = None
     ) -> Store:
+        """Open the store at `path`, or create one. Refuses to create one
+        in a directory that holds an un-migrated bettermemory 8 store: a
+        server pointed at such a directory would otherwise serve an empty
+        store and say nothing, and `bettermemory migrate v8` is the
+        answer. `create` itself is unchanged."""
         path = store_path(path)
         if path.is_file():
             return cls.open(path, keys_dir=keys_dir)
+        if path.parent.is_dir() and holds_v8_files(path.parent):
+            raise UnmigratedV8DirectoryError(
+                f"{path.parent} holds a bettermemory 8 store and no "
+                f"{STORE_FILENAME}; run `bettermemory migrate v8` to import it "
+                "(the directory is never written)"
+            )
         return cls.create(path, keys_dir=keys_dir)
 
     def close(self) -> None:

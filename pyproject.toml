@@ -89,7 +89,7 @@ dev = [
 ]
 
 [project.scripts]
-bettermemory = "bettermemory.server:main"
+bettermemory = "bettermemory._entry:main"
 
 [project.urls]
 # Surfaced as the "Project links" rail on PyPI — without these the

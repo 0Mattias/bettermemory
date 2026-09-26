@@ -10,18 +10,20 @@ The plugin bundles five things:
 
 1. **MCP server registration** ([`.mcp.json`](.mcp.json)): spawns
    `uvx bettermemory` as a stdio MCP server, which registers the nine
-   tools (see [docs/api.md](../docs/api.md)).
+   tools (see [docs/api.md](../docs/api.md)). It is a shim in front of
+   the local daemon (`bettermemory up`), started on first use, so every
+   session and every hook on the machine shares one warm process.
 2. **Memory-discipline skill**
    ([`skills/bettermemory/SKILL.md`](skills/bettermemory/SKILL.md)):
    the long-form retrieval and writing policy at the system-prompt
    level. The server's own `instructions` block carries a short
    summary; Claude Code truncates that block, the skill has no cap.
 3. **Stop hook** ([`hooks/hooks.json`](hooks/hooks.json)): runs
-   `uvx bettermemory audit-turn --quiet` at each turn end to settle the
+   `uvx bettermemory hook stop --quiet` at each turn end to settle the
    turn's retrievals and log silent retrieval misses. Always exits 0,
    so a transient failure never surfaces as a hook-error banner.
 4. **SessionStart hook** (same file): runs
-   `uvx bettermemory session-start` when a conversation opens and
+   `uvx bettermemory hook session-start` when a conversation opens and
    prints the per-scope memory counts for the current repository.
    Claude Code injects a SessionStart hook's stdout into the model's
    context, so the session begins knowing what is stored without
@@ -29,7 +31,7 @@ The plugin bundles five things:
    (never memory bodies), records nothing, prints nothing when the
    store is empty, and always exits 0.
 5. **UserPromptSubmit hook** (same file): runs
-   `uvx bettermemory prompt-recall` on each prompt submission. Probes
+   `uvx bettermemory hook prompt` on each prompt submission. Probes
    the prompt with the same silent-miss predicate the Stop hook
    audits with; on the few prompts that clear it, prints a one-hit
    pointer block (memory id, scopes and snippet, never a body) that

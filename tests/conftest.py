@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Iterator
 
 # Make `src/` importable without depending on the editable install. This is
 # belt-and-suspenders: if the venv's editable .pth file is unreadable for any
@@ -23,6 +24,7 @@ import pytest
 
 from bettermemory.config import BehaviorConfig, Config, ScopesConfig, StorageConfig
 from bettermemory.session import SessionState
+from bettermemory import _daemon_client
 from bettermemory import config as _config
 from bettermemory import log as _log
 from bettermemory.store import Store
@@ -130,7 +132,7 @@ _DEVELOPER_GLOBAL_DIR = (Path.home() / _config.GLOBAL_DIR_NAME).resolve()
 @pytest.fixture(autouse=True)
 def storage_dir(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
-) -> Path:
+) -> Iterator[Path]:
     """No test resolves the developer's own store or config.
 
     A resolution that would land on the developer's global store (no
@@ -167,7 +169,17 @@ def storage_dir(
     config_path = guard_dir / "config.toml"
     config_path.write_text(_config.DEFAULT_CONFIG, encoding="utf-8")
     monkeypatch.setattr(_config, "default_config_path", lambda: config_path)
-    return fallback
+    # A daemon a test starts (through the shim, a hook command or `up`)
+    # keeps its state file under the test's directory, in this process
+    # and in any child, and is stopped when the test ends.
+    state_dir = guard_dir / "state"
+    monkeypatch.setenv(_daemon_client.STATE_DIR_ENV, str(state_dir))
+    yield fallback
+    for state_file in state_dir.glob("daemon-*.json"):
+        state = _daemon_client.read_state_file(state_file)
+        if state is not None:
+            _daemon_client.shutdown_daemon(state, timeout=10.0)
+        state_file.unlink(missing_ok=True)
 
 
 @pytest.fixture

@@ -60,6 +60,16 @@ You should see the nine tools: `memory_search`, `memory_show`,
 failed to start; run `bettermemory` by hand from a terminal and read
 its startup log.
 
+The `bettermemory` command your client spawns is a stdio shim in front
+of one local daemon per store, started on first use and shared by every
+session and hook on the machine. `bettermemory status` says whether it
+is running, `bettermemory up` and `down` start and stop it, and a
+client that speaks streamable HTTP can point at
+`http://127.0.0.1:<port>/mcp` directly with the bearer token from the
+state file `status` names. When no daemon can be started the shim
+serves the store in-process and says so on stderr, so memory keeps
+working either way.
+
 ## 4. Optional: long-form policy
 
 The server's `instructions` block carries the core contract and lands

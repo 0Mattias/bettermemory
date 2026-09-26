@@ -31,6 +31,7 @@ import argparse
 
 from . import (
     audit_turn_cmd,
+    daemon_cmd,
     episodes,
     eval as eval_cmd,
     export,
@@ -121,22 +122,79 @@ def _build_parser() -> tuple[
         "eval": eval_cmd.add_subparser(sub),
         "rename-scope": rename_scope.add_subparser(sub),
         "try": try_cmd.add_subparser(sub),
+        "up": daemon_cmd.add_up(sub),
+        "down": daemon_cmd.add_down(sub),
+        "status": daemon_cmd.add_status(sub),
+        "serve": serve.add_subparser(sub),
+        "hook": _add_hook_subparser(sub),
     }
     return parser, subparsers
 
 
+def _add_hook_subparser(
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> argparse.ArgumentParser:
+    """`bettermemory hook <event>`, listed here for `--help`. The process
+    entry point (`_entry.main`) dispatches the hook words to
+    `_daemon_client.hook_main` before this package is imported, so the
+    parser arm below is reached only by an in-process caller."""
+    parser = sub.add_parser(
+        "hook",
+        help=(
+            "Run a harness hook through the daemon: session-start, stop or "
+            "prompt. Reads the hook's stdin JSON, prints the daemon's answer, "
+            "always exits 0."
+        ),
+    )
+    parser.add_argument("event", choices=["session-start", "stop", "prompt"])
+    parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--transcript-path", default=None)
+    parser.add_argument("--session-id", default=None)
+    parser.add_argument("--prompt", default=None)
+    return parser
+
+
 def main() -> None:
-    """CLI entry point. By default runs the MCP server over stdio
-    (``bettermemory``). Subcommands provide offline tooling: ``bettermemory
-    health`` prints the aggregate report, mirroring the ``memory_health``
-    tool in human-readable form."""
+    """CLI entry point. By default runs the stdio shim in front of the
+    local daemon (``bettermemory``); ``bettermemory serve`` runs the
+    in-process stdio server. Subcommands provide offline tooling:
+    ``bettermemory health`` prints the aggregate report, mirroring the
+    ``memory_admin`` health action in human-readable form."""
     parser, subparsers = _build_parser()
     args = parser.parse_args()
 
     cmd = args.cmd
     if cmd is None:
+        from ..shim import run_shim
+
+        run_shim()
+        return
+    if cmd == "up":
+        daemon_cmd.run_up(args)
+        return
+    if cmd == "down":
+        daemon_cmd.run_down(args)
+        return
+    if cmd == "status":
+        daemon_cmd.run_status(args)
+        return
+    if cmd == "serve":
         serve.run_serve()
         return
+    if cmd == "hook":
+        from .._daemon_client import hook_main
+
+        words = ["hook", args.event]
+        if args.quiet:
+            words.append("--quiet")
+        if args.dry_run:
+            words.append("--dry-run")
+        for flag in ("transcript_path", "session_id", "prompt"):
+            value = getattr(args, flag)
+            if value is not None:
+                words += ["--" + flag.replace("_", "-"), value]
+        raise SystemExit(hook_main(words))
 
     # Dispatch table. The two-parser convention (root + subparser) for
     # the multi-level commands mirrors the original server.main:

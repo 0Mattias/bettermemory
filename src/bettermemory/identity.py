@@ -108,6 +108,10 @@ HEADER_MODEL = "x-bettermemory-model"
 HEADER_WORKSPACE = "x-bettermemory-workspace"
 #: The streamable-HTTP transport's session header, per the MCP spec.
 HEADER_MCP_SESSION = "mcp-session-id"
+#: The session a client declares when the transport carries none: the
+#: stdio shim sets it per process, so two shims against one stateless
+#: daemon keep separate session state (`session.SessionRegistry`).
+HEADER_SESSION = "x-bettermemory-session"
 
 ENV_CLIENT = "BETTERMEMORY_CLIENT"
 ENV_CLIENT_VERSION = "BETTERMEMORY_CLIENT_VERSION"
@@ -397,6 +401,10 @@ def resolve(
     session = _clean(headers.get(HEADER_MCP_SESSION))
     if session is not None:
         sources["session"] = SOURCE_TRANSPORT
+    else:
+        session = _clean(headers.get(HEADER_SESSION))
+        if session is not None:
+            sources["session"] = SOURCE_HEADER
 
     actor = Actor(
         client=client,
@@ -544,7 +552,10 @@ def registry_key(actor: Actor) -> str | None:
     parts: list[str] = []
     if actor.principal is not None:
         parts.append(f"principal={actor.principal}")
-    if actor.session is not None and actor.sources.get("session") == SOURCE_TRANSPORT:
+    if actor.session is not None and actor.sources.get("session") in (
+        SOURCE_TRANSPORT,
+        SOURCE_HEADER,
+    ):
         parts.append(f"session={actor.session}")
     if actor.client is not None and actor.sources.get("client") == SOURCE_HEADER:
         parts.append(f"client={actor.client}")

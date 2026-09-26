@@ -34,6 +34,8 @@ ENV_DIR_OVERRIDE = "BETTERMEMORY_DIR"
 # directory. A scratch store (a bench, a demo, a test that spawns the
 # server) sets it so it leaves no key behind.
 KEYS_DIR_ENV = "BETTERMEMORY_KEYS_DIR"
+#: The store file inside the resolved directory (`store.py` re-exports it).
+STORE_FILENAME = "memory.sqlite"
 
 DEFAULT_CONFIG = """\
 # bettermemory config
@@ -229,6 +231,13 @@ allowed = []
 # flagged are simply inert.
 typo_exceptions = []
 
+[daemon]
+# The port the local daemon binds on 127.0.0.1. `bettermemory up` falls
+# back to an ephemeral port when this one is held by something else and
+# records the port it got in the state file, which is how the stdio
+# shim and the hook commands find it.
+port = 7397
+
 [telemetry]
 # Append-only JSONL event log at <storage>/.events.jsonl. One line per tool
 # call: search queries, returned IDs, write/update/remove events. Used by the
@@ -377,6 +386,11 @@ class ScopesConfig:
 
 
 @dataclass
+class DaemonConfig:
+    port: int = 7397
+
+
+@dataclass
 class TelemetryConfig:
     """Event-log toggles. See DEFAULT_CONFIG for prose."""
 
@@ -389,6 +403,7 @@ class Config:
     behavior: BehaviorConfig = field(default_factory=BehaviorConfig)
     scopes: ScopesConfig = field(default_factory=ScopesConfig)
     telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
+    daemon: DaemonConfig = field(default_factory=DaemonConfig)
     config_path: Path | None = None
 
     # ---- methods ----------------------------------------------------------
@@ -1000,6 +1015,9 @@ def load_config(path: Path | None = None) -> Config:
     behavior_raw = data.get("behavior", {})
     scopes_raw = data.get("scopes", {})
     telemetry_raw = data.get("telemetry", {})
+    daemon_raw = data.get("daemon", {})
+    if not isinstance(daemon_raw, dict):
+        daemon_raw = {}
 
     # T9: back-compat for the 3.1.x -> 3.2.0 TOML key rename. Mutates
     # `behavior_raw` so the downstream `behavior_raw.get(...)` lookups
@@ -1115,6 +1133,14 @@ def load_config(path: Path | None = None) -> Config:
         ),
         telemetry=TelemetryConfig(
             enabled=_coerce_bool(telemetry_raw.get("enabled"), True),
+        ),
+        daemon=DaemonConfig(
+            port=_coerce_int(
+                daemon_raw.get("port"),
+                7397,
+                label="[daemon] port",
+                config_path=config_path,
+            ),
         ),
         config_path=config_path,
     )

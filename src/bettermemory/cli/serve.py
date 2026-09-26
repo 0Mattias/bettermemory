@@ -9,6 +9,7 @@ home.
 
 from __future__ import annotations
 
+import argparse
 import logging
 import sys
 
@@ -18,6 +19,18 @@ from ..store import STORE_FILENAME, Store
 
 
 log = logging.getLogger("bettermemory")
+
+
+def add_subparser(
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> argparse.ArgumentParser:
+    return sub.add_parser(
+        "serve",
+        help=(
+            "Run the MCP server over stdio in this process, without the daemon. "
+            "`bettermemory` with no arguments is the stdio shim in front of the daemon."
+        ),
+    )
 
 
 def run_serve() -> None:

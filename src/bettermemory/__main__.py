@@ -1,11 +1,8 @@
-"""Entry point for `python -m bettermemory`.
+"""Entry point for `python -m bettermemory`, the same as the installed
+``bettermemory`` script: `_entry.main` routes the hook words before the
+CLI package loads and everything else to `cli.main`."""
 
-The installed `bettermemory` script (registered under `[project.scripts]`)
-calls `bettermemory.server:main` directly. This shim makes the same
-behaviour available without depending on the script being on PATH.
-"""
-
-from .server import main
+from ._entry import main
 
 
 if __name__ == "__main__":

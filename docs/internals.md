@@ -271,8 +271,10 @@ bettermemory log verify            # audit the hash chain
 bettermemory eval                  # the three metrics, with CIs
 ```
 
-`bettermemory <command> --help` for flags. `audit-turn`, `session-start`
-and `prompt-recall` are the hook commands the plugin wires.
+`bettermemory <command> --help` for flags. `hook session-start|stop|prompt`
+is the hook command the plugin wires; it posts the hook's payload to the
+local daemon (`bettermemory up`, `down`, `status`), which is also what
+`bettermemory` with no arguments serves stdio in front of.
 
 ## Configuration
 

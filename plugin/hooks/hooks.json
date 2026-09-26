@@ -1,14 +1,14 @@
 {
-  "$schema-comment": "Claude Code plugin hook manifest. The Stop event fires once per assistant response, every turn end. The hook calls `bettermemory audit-turn`, which reads the hook's stdin JSON (session_id and transcript_path), runs the silent-miss probe over the pool memory_search would have built for that message (`handlers.search.resolve_search_pool`), settles the turn's retrievals as applied, and records `turn_audited` / `search_miss` events. The CLI always exits 0; the trailing `|| true` keeps a uvx network failure or an older wheel without the subcommand from surfacing as a hook error banner. Losing one turn of telemetry is preferable to interrupting the user.",
-  "$schema-comment-session-start": "The SessionStart event fires when a conversation opens; its stdout is injected verbatim into the model's context. `bettermemory session-start` prints the per-scope memory counts for the current repository, so a fresh session begins knowing what is stored. It records no event, prints nothing when the store is empty, and always exits 0. MATCHER DELIBERATELY OMITTED: an omitted matcher means match all, and every SessionStart matcher (startup, resume, clear, compact, fork) wants the hint; clear and compact have just discarded the context this block supplies. Timeout 20 s because this one blocks session open.",
-  "$schema-comment-prompt-recall": "The UserPromptSubmit event fires when the user submits a prompt, before the model sees it; stdout on exit 0 is injected into the model's context. `bettermemory prompt-recall` runs the same probe the Stop hook's audit-turn runs (production's search pool, ranking and threshold rule, all four shields). Where that probe would later have flagged the turn a silent miss, this hook instead prints a one-hit pointer block (memory id, scopes and a query-biased snippet, never a body) and records a `prompt_recall` event, which the Stop hook's audit of the same turn reads as a delivery. `[behavior] prompt_recall = false` makes the hook a no-op, and with telemetry off it refuses to inject rather than inject off the books. MATCHER DELIBERATELY OMITTED. Timeout 10 s, the tightest of the three, because it sits between the user pressing enter and the model starting.",
+  "$schema-comment": "Claude Code plugin hook manifest. The Stop event fires once per assistant response, every turn end. The hook calls `bettermemory hook stop`, a standard-library client that posts the hook's stdin JSON (session_id and transcript_path) to the local daemon, which runs the silent-miss probe over the pool memory_search would have built for that message (`hook.audit_transcript`), settles the turn's retrievals as applied, and records `turn_audited` / `search_miss` events. The client starts the daemon when none answers and always exits 0; the trailing `|| true` keeps a uvx network failure or an older wheel without the subcommand from surfacing as a hook error banner. Losing one turn of telemetry is preferable to interrupting the user.",
+  "$schema-comment-session-start": "The SessionStart event fires when a conversation opens; its stdout is injected verbatim into the model's context. `bettermemory hook session-start` asks the daemon for the per-scope memory counts of the current repository, so a fresh session begins knowing what is stored. It records no event, prints nothing when nothing is in scope, and always exits 0. MATCHER DELIBERATELY OMITTED: an omitted matcher means match all, and every SessionStart matcher (startup, resume, clear, compact, fork) wants the hint; clear and compact have just discarded the context this block supplies. Timeout 20 s because this one blocks session open and may be the call that starts the daemon.",
+  "$schema-comment-prompt-recall": "The UserPromptSubmit event fires when the user submits a prompt, before the model sees it; stdout on exit 0 is injected into the model's context. `bettermemory hook prompt` asks the daemon to run the same probe the Stop hook's audit runs (production's search pool, ranking and threshold rule, all four shields). Where that probe would later have flagged the turn a silent miss, the daemon answers with a one-hit pointer block (memory id, scopes and a query-biased snippet, never a body) and records a `prompt_recall` event, which the Stop hook's audit of the same turn reads as a delivery. `[behavior] prompt_recall = false` makes it a no-op, and with telemetry off it refuses to inject rather than inject off the books. MATCHER DELIBERATELY OMITTED. Timeout 10 s, the tightest of the three, because it sits between the user pressing enter and the model starting.",
   "hooks": {
     "Stop": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "uvx bettermemory audit-turn --quiet || true",
+            "command": "uvx bettermemory hook stop --quiet || true",
             "timeout": 30
           }
         ]
@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uvx bettermemory session-start || true",
+            "command": "uvx bettermemory hook session-start || true",
             "timeout": 20
           }
         ]
@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uvx bettermemory prompt-recall || true",
+            "command": "uvx bettermemory hook prompt || true",
             "timeout": 10
           }
         ]

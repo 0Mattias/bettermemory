@@ -10,7 +10,7 @@ The contractual list of MCP tools bettermemory exposes. Signatures, defaults and
 - **Session-local**: `memory_admin(action="disable_scope" | "enable_scope")`
 - **Episodes** (the journal beside memory): `episode(action="write" | "handoff")`
 
-The `bettermemory` CLI carries the rest: `health`, `tombstones`, `rollback`, `rename-scope`, `episodes`, `export`, `migrate v8`, `log verify`, `eval`, `init`, `try`, and the three hook commands (`audit-turn`, `session-start`, `prompt-recall`). The [CLI](#cli) section lists them.
+The `bettermemory` CLI carries the rest: `up`, `down` and `status` for the local daemon, `serve`, `health`, `tombstones`, `rollback`, `rename-scope`, `episodes`, `export`, `migrate v8`, `log verify`, `eval`, `init`, `try`, and the hook command (`hook session-start|stop|prompt`; `session-start`, `audit-turn` and `prompt-recall` are its 8.x aliases). The [CLI](#cli) section lists them.
 
 What 9.0 removed from the MCP surface, and where the work went: `memory_list` and `memory_scope_overview` (the session-start hook prints the per-scope counts; `bettermemory export` lists the store), `memory_write_confirm` and `memory_write_cancel` with the staged-write flow, `memory_audit_turn` (the Stop hook runs the audit out of process), `memory_curate` and `memory_proposals` with their modules, `episode_search`, `episode_promote` (a promotion is a `memory_write` the model makes from a handoff it has read) and `episode_patterns`, and the eight tools that became `memory_admin` actions. The [CHANGELOG](../CHANGELOG.md) entry for 9.0.0 has the full list.
 
@@ -195,7 +195,7 @@ Returns `{recorded: [<memory_id>...], outcome}`, where `recorded` echoes the ids
 
 Auto-settlement: every `memory_search` hit and `memory_show` response carries an opaque `use_token`. Unless `memory_record_use` is called, the retrieval settles as `outcome="applied"` automatically, normally at turn end by the Stop hook, otherwise by the in-process fallback on a later tool call once the token is both at least two handler entries old and past a wall-clock floor (`AUTO_COMMIT_MIN_AGE_SECONDS`, 600s, mirroring the hook's attribution window). Explicit calls win: the server purges the pending token before recording and writes `attribution="model"`.
 
-Hook settlement: at turn end the Stop hook (`bettermemory audit-turn`) matches the assistant's reply text against recently retrieved memory bodies, verbatim (case- and whitespace-normalised) or by distinctive-token containment. Matches emit `applied` with `attribution="hook"`, `auto=false` and the matched sentence as the `claim_excerpt`; the retrieved-but-unmatched remainder emits the plain `applied` with `auto=true, attribution="auto"` in the same pass. Both shapes carry `client_model` when known. The in-process pass reads the event log and purges any already-settled token, so each retrieval generates exactly one `applied` event. One caveat about the manual path only: `bettermemory audit-turn --session-id <made-up>` breaks that invariant, because the settlement dedup spans the retrieval session and the supplied id. Pass `--dry-run` whenever you invoke the hook by hand to inspect a store.
+Hook settlement: at turn end the Stop hook (`bettermemory hook stop`, which posts the turn to the daemon) matches the assistant's reply text against recently retrieved memory bodies, verbatim (case- and whitespace-normalised) or by distinctive-token containment. Matches emit `applied` with `attribution="hook"`, `auto=false` and the matched sentence as the `claim_excerpt`; the retrieved-but-unmatched remainder emits the plain `applied` with `auto=true, attribution="auto"` in the same pass. Both shapes carry `client_model` when known. The in-process pass reads the event log and purges any already-settled token, so each retrieval generates exactly one `applied` event. One caveat about the manual path only: `bettermemory hook stop --session-id <made-up>` breaks that invariant, because the settlement dedup spans the retrieval session and the supplied id. Pass `--dry-run` whenever you invoke the hook by hand to inspect a store.
 
 ### `memory_admin(action="health")`
 
@@ -351,7 +351,8 @@ The JSON export writes every active memory (and, unless `--no-tombstones`, every
 | `migrate v8 …` | The 8.x migration, above. |
 | `log verify [--json]` | The chain audit, above. |
 | `eval [--since TS] [--scope S] [--report] [--tool-usage] [--threshold-sweep] [--widening-preview [--detail]] [--json] [--output FILE]` | The three effectiveness rates and their diagnostics ([eval.md](eval.md)). |
-| `audit-turn`, `session-start`, `prompt-recall` | The Claude Code hook commands; the plugin wires them. |
+| `up [--foreground] [--port N]`, `down`, `status` | The local daemon for this store: one process that owns the store and serves the nine tools at `http://127.0.0.1:<port>/mcp` and the hook bodies under `/api/v1/hook/`. `bettermemory` with no arguments is the stdio shim in front of it; `serve` runs the in-process stdio server without it. |
+| `hook session-start\|stop\|prompt [--quiet] [--dry-run]` | The Claude Code hook command; the plugin wires it. Reads the hook's stdin JSON, posts it to the daemon (starting one when none answers), prints the answer, always exits 0. `session-start`, `audit-turn` and `prompt-recall` are its 8.x aliases. |
 
 ## Naming conventions
 

@@ -466,7 +466,13 @@ def migrate(
             else None
         )
     else:
-        store = Store.open_or_create(store_path, keys_dir=keys_dir)
+        # The migration is the one path that creates a store beside 8.x
+        # files; `open_or_create` refuses that and names this command.
+        store = (
+            Store.open(store_path, keys_dir=keys_dir)
+            if store_path.is_file()
+            else Store.create(store_path, keys_dir=keys_dir)
+        )
     try:
         present = _Present.read(store)
 
