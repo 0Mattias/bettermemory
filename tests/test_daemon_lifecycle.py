@@ -147,11 +147,27 @@ def test_a_stale_state_file_reads_not_running_and_is_removed(
     assert not _state_path(tmp_path).exists()
 
 
+# A launcher in front of the interpreter, as a Windows venv's python.exe
+# is: it runs the interpreter as its child, waits, and exits with its code.
+_LAUNCHER = (
+    "import subprocess, sys; sys.exit(subprocess.call([sys.executable, *sys.argv[1:]]))"
+)
+
+
+@pytest.mark.parametrize("launcher", [False, True], ids=["direct", "launcher"])
 def test_foreground_serves_until_shutdown(
-    tmp_path: Path, daemon_env: dict[str, str]
+    tmp_path: Path, daemon_env: dict[str, str], launcher: bool
 ) -> None:
+    """`up --foreground` serves until `down` stops it, and the process
+    started exits 0 then. The state file names the process that serves,
+    which /health confirms by its pid; with a launcher in front, as on the
+    windows-latest leg, that is the launcher's child, not the process
+    started."""
+    command = ["-m", "bettermemory", "up", "--foreground", "--port", "0"]
+    if launcher:
+        command = ["-c", _LAUNCHER, *command]
     proc = subprocess.Popen(
-        [sys.executable, "-m", "bettermemory", "up", "--foreground", "--port", "0"],
+        [sys.executable, *command],
         env=daemon_env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -159,10 +175,17 @@ def test_foreground_serves_until_shutdown(
     )
     try:
         state = _wait_running(tmp_path)
-        assert state["pid"] == proc.pid
+        answer = health(state["port"])
+        assert answer is not None and answer["pid"] == state["pid"]
+        assert pid_alive(state["pid"])
+        if launcher:
+            assert state["pid"] != proc.pid
+        assert proc.poll() is None
         assert _cli(["down"], daemon_env).returncode == 0
         proc.wait(timeout=15)
     finally:
         if proc.poll() is None:
             proc.kill()
     assert proc.returncode == 0
+    assert not pid_alive(state["pid"])
+    assert not _state_path(tmp_path).exists()

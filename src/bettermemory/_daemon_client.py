@@ -215,7 +215,10 @@ def start_daemon(
     env: dict[str, str] | None = None,
 ) -> int:
     """Spawn `bettermemory up --foreground` detached from this process and
-    return its pid. The child inherits `env` (default: this environment)
+    return the pid of the process spawned. That need not be the daemon's: a
+    Windows venv's python.exe is a launcher that runs the interpreter as its
+    child, and the daemon writes its own pid to the state file, which is the
+    one to act on. The child inherits `env` (default: this environment)
     with the state directory pinned, so it writes the state file where the
     caller will look for it."""
     state_dir = Path(state_dir)
