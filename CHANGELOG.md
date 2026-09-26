@@ -66,6 +66,22 @@ surfaces leave with them. An 8.x directory is imported once by
   used to.
 - **`exclude_scopes` on `memory_search`**: the scopes to drop, applied
   before ranking like the session's disabled set.
+- **The warm daemon's caches.** Three memoisations that keep every
+  answer bit-identical and remove the git processes and the
+  re-tokenising a warm `memory_search` paid: the origin captured per
+  directory for two seconds, validated on every lookup against the
+  repository's HEAD bytes, config stat and environment
+  (`origin.capture`); the commit-drift work keyed on the repository
+  root and the commit HEAD names, read from the repository files by
+  `githead.py` without a git process, with the whole-history author
+  dates per head and the per-hit resolution per head, anchors, claims
+  and verify instant memoised (`_response.attach_commit_drift_counts`,
+  `origin.commit_author_timestamps`); and the token streams of a memory
+  per body and scopes (`search._memory_tokens`, a 5,000-entry LRU). A
+  warm search forks no git process; `_caches.clear_all` empties every
+  cache and the test suite calls it before each test. The numbers are
+  in `docs/eval-results.md` under Daemon latency.
+  (`src/bettermemory/githead.py`, `src/bettermemory/_caches.py`)
 - `bench/toolcost` records the served `instructions` block beside the
   descriptions and schemas (`instructions_bytes`, `instructions_chars`,
   `session_bytes`).

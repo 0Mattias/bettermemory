@@ -10,6 +10,10 @@ Phase 1's P5 in numbers, each with its method:
   hook_service       the same endpoint called from a warm client in this
                      process (`_daemon_client.post`), so the daemon's own
                      answer time without the interpreter's start.
+  hook_service_cold  hook_service with the daemon's origin cache expired
+                     before each call: N_cold calls (default 10), each after
+                     sleeping ORIGIN_CACHE_SECONDS plus 0.2 s, so every call
+                     pays the origin probes.
   shim_search        memory_search through one stdio shim process (the SDK
                      client speaking stdio to `bettermemory`, which forwards
                      to the daemon); N queries, p50 and p95 per call.
@@ -52,6 +56,10 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 QUESTIONS = ROOT / "bench" / "retrieval" / "questions.jsonl"
 PYTHON = sys.executable
+
+# How far past the origin cache's lifetime `hook_service_cold` sleeps
+# before each call.
+COLD_MARGIN_SECONDS = 0.2
 
 
 def _pct(values: list[float], pct: float) -> float:
@@ -246,6 +254,33 @@ def hook_service(scratch: Path, n: int, cwd: Path) -> list[float]:
     return times
 
 
+def hook_service_cold(scratch: Path, n: int, cwd: Path) -> list[float]:
+    """`hook_service` with the origin cache expired before every call: the
+    same endpoint from the same warm client, each call after sleeping
+    ORIGIN_CACHE_SECONDS plus COLD_MARGIN_SECONDS, so each call pays the
+    probes `origin.capture` runs."""
+    from bettermemory._daemon_client import post, read_state
+    from bettermemory.origin import ORIGIN_CACHE_SECONDS
+
+    state = read_state(scratch / "state", scratch / "store" / "memory.sqlite")
+    if state is None:
+        raise SystemExit("no daemon state after the hook calls")
+    payload = {"cwd": str(cwd)}
+    times: list[float] = []
+    for _ in range(n):
+        time.sleep(ORIGIN_CACHE_SECONDS + COLD_MARGIN_SECONDS)
+        started = time.perf_counter()
+        post(
+            state["port"],
+            state["token"],
+            "/api/v1/hook/session-start",
+            payload,
+            timeout=30,
+        )
+        times.append(time.perf_counter() - started)
+    return times
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -258,6 +293,12 @@ def main() -> None:
     )
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--n", type=int, default=50)
+    parser.add_argument(
+        "--cold-n",
+        type=int,
+        default=10,
+        help="calls in hook_service_cold, each after the origin cache expires",
+    )
     parser.add_argument(
         "--scratch",
         type=Path,
@@ -291,6 +332,10 @@ def main() -> None:
     print(f"hook wall {results['hook_wall']}", file=sys.stderr)
     results["hook_service"] = _summary(hook_service(scratch, args.n, ROOT))
     print(f"hook service {results['hook_service']}", file=sys.stderr)
+    results["hook_service_cold"] = _summary(
+        hook_service_cold(scratch, args.cold_n, ROOT)
+    )
+    print(f"hook service cold {results['hook_service_cold']}", file=sys.stderr)
     results["shim_search"] = _summary(asyncio.run(shim_search(env, qs)))
     print(f"shim search {results['shim_search']}", file=sys.stderr)
     results["in_process_search"] = _summary(asyncio.run(in_process_search(scratch, qs)))
@@ -305,6 +350,7 @@ def main() -> None:
     )
 
     from bettermemory import __version__
+    from bettermemory.origin import ORIGIN_CACHE_SECONDS
 
     artifact = {
         "kind": "daemon-latency",
@@ -329,6 +375,13 @@ def main() -> None:
             "warm_ups": 3,
             "hook_wall": "subprocess.run of `python -m bettermemory hook session-start`, wall time",
             "hook_service": "_daemon_client.post to /api/v1/hook/session-start from a warm client",
+            "cold_n": args.cold_n,
+            "hook_service_cold": (
+                "_daemon_client.post to /api/v1/hook/session-start from a warm client, "
+                f"each of cold_n calls after sleeping ORIGIN_CACHE_SECONDS ({ORIGIN_CACHE_SECONDS} s) "
+                f"plus {COLD_MARGIN_SECONDS} s, so the origin cache has expired and the call "
+                "pays the origin probes"
+            ),
             "shim_search": "one stdio shim process, SDK ClientSession.call_tool memory_search",
             "in_process_search": "build_server(...).call_tool memory_search in this process",
         },

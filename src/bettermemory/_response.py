@@ -15,10 +15,13 @@ a single multi-hit response uses one consistent "now" across rows.
 from __future__ import annotations
 
 import bisect
+from collections import OrderedDict
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeAlias
 
+from . import _caches
 from .credentials import CredentialMatch
 from .durability import TransientMatch
 from .events import _event_id_items
@@ -31,19 +34,23 @@ from .models import (
 from .identity import SOURCE_PROCESS_CWD, Actor
 from .origin import (
     Origin,
+    ReachableWalk,
     commit_author_timestamps,
     commits_since_anchor,
     repo_toplevel_and_head,
     repos_match,
     should_include_for_caller,
+    toplevel_and_head_from_files,
+    unanswered_git_calls,
 )
 from .time_utils import isoformat_utc as _isoformat_utc
 from .time_utils import isoformat_utc_optional as _isoformat_utc_optional
 from .time_utils import parse_event_ts
-from .claims import load_claims
+from .claims import Claim, load_claims
 from .verify import (
     BASIS_AUTHOR_DATE,
     BASIS_REACHABILITY,
+    ResolvedCommitDrift,
     _quiescent_drift_applicable,
     commit_drift_anchor_paths,
     compute_staleness_verdict,
@@ -90,6 +97,24 @@ isoformat_optional = _isoformat_utc_optional
 # stays live for `attach_recent_negative_outcomes`, the hit annotation.
 # Ranking never reads it: the usage multipliers left in 9.0.0.
 NEGATIVE_OUTCOME_WINDOW_DAYS = 30
+
+# The per-hit commit-drift memo of `ResponseBuilder.attach_commit_drift_
+# counts`: one hit's resolution, keyed on every input of it. The key is
+# the repository root and the commit HEAD names as the repository's files
+# give them, the caller's directory, the memory's anchors (derived from
+# its body and verified_paths) and its declared claims as stored, the
+# verify instant and the stamp's recorded head; the value is the resolved
+# count, basis and claim detail, or None for a hit whose count is omitted.
+# A commit moves the head and so every key; a new stamp, a rewritten body
+# or a changed claim changes its own row's. The values are frozen, so a
+# hit can share one without a later hit's edit reaching it. Bounded LRU;
+# registered with `_caches`, which empties it before each test.
+_DRIFT_MEMO_CAP = 5000
+_DriftKey: TypeAlias = tuple[
+    str, str, str, tuple[str, ...], tuple[str, ...], datetime, str | None
+]
+_DRIFT_MEMO: OrderedDict[_DriftKey, ResolvedCommitDrift | None] = OrderedDict()
+_caches.register(_DRIFT_MEMO.clear)
 
 
 class ResponseBuilder:
@@ -659,11 +684,13 @@ class ResponseBuilder:
         ride every hit, whereas this one is gated (the omission list
         below).
 
-        COST scales with the result count — do NOT add per-hit work here
-        believing the loop is free. Paid once per search regardless of how
-        many hits there are: `commit_author_timestamps` (``git log
-        --format=%aI HEAD``) and `repo_toplevel_and_head` (``git rev-parse
-        --show-toplevel HEAD``). Paid per hit: a `bisect_right` against the
+        COST, cold, scales with the result count: do NOT add per-hit work
+        here believing the loop is free. The repo root and the commit HEAD
+        names come from the repository's files
+        (`origin.toplevel_and_head_from_files`), with no process. Paid once
+        per search regardless of how many hits there are, and memoised per
+        (root, head): `commit_author_timestamps` (``git log --format=%aI
+        <head>``). Paid per hit: a `bisect_right` against the
         sorted timestamp list and `commit_drift_anchor_paths` (both pure
         CPU) — plus, for every hit that reaches the narrowing (count > 0
         AND at least one claim anchor or declared claim), git work whose
@@ -677,24 +704,46 @@ class ResponseBuilder:
         reads its count off the walk without a process; a reachability hit
         whose range touched none of its anchors pays the phantom
         classification log on top, the same log a quiescent hit pays. The
-        git-process count is therefore ``2 + <author-date hits that fork a
-        path-filtered log> + <distinct reachability anchors walked> +
-        <hits that needed the phantom classification>``: every drifting
+        cold git-process count is therefore ``1 + <author-date hits that
+        fork a path-filtered log> + <distinct reachability anchors walked>
+        + <hits that needed the phantom classification>``: every drifting
         author-date hit, one walk per anchor, plus every quiescent
         (count == 0) anchored hit with at least one in-repo anchor — the
         phantom half of the applicability classification
         (`verify._quiescent_drift_applicable`; an all-escaping anchor set
-        is classified without git). Bounded above by ``2 + 2 * len(hits)``
+        is classified without git). Bounded above by ``1 + 2 * len(hits)``
         (`max_results` caps that at 50 on the MCP surface, 30 on the
-        web's), and by ``2 + len(hits)`` for an all-author-date result.
+        web's), and by ``1 + len(hits)`` for an all-author-date result.
         The narrowing call buys the SAME claim-anchored narrowing
         `memory_show` and the health rollups run — a cheaper per-surface
         shortcut here is precisely how the four surfaces used to disagree
         — and the untethered gate (no anchors, no declared claims) keeps
         that shape at zero extra forks.
+
+        WARM, the count is zero. Each hit's resolution is memoised
+        (`_DRIFT_MEMO`) on exactly its inputs: the root, the head, the
+        caller's directory, the anchors, the declared claims, the verify
+        instant and `verified_head`. The same search at the same head
+        forks nothing; a commit moves the head and so every key, and a new
+        stamp, a rewritten body or a changed claim changes its own row's.
+        A value is not kept when a git process could not run while it was
+        computed (a timeout folds into the conservative count, which the
+        uncached code answers on that call and not the next), nor when the
+        head moved before the search ended (the path-filtered logs read
+        HEAD as they run). Where the files do not settle the root and the
+        head, ``git rev-parse --show-toplevel HEAD`` answers them and
+        neither memo is used: that shape pays ``2 + ...`` on every search,
+        the walks memoised per (root, anchor, head) as before. The key
+        does not see the working tree's symbolic links on an anchor's path
+        or the home directory ``~`` expands to (`origin.resolve_repo_
+        pathspecs` reads both), git's own configuration, or a history
+        rewritten under an unchanged head (a deepened shallow clone, a
+        replace ref, a graft); a change there reads the memoised value
+        until the head moves.
         ``tests/test_server_commit_drift.py::test_commit_drift_count_git_cost_shape``,
         its quiescent sibling and its reachability sibling pin that
-        arithmetic.
+        arithmetic, cold and warm; ``tests/test_commit_drift_cache.py``
+        pins the keys.
 
         Beside the count, `commit_drift_basis` names the axis it was
         measured on (`"reachability"` / `"author-date"`), so a reader of
@@ -734,17 +783,22 @@ class ResponseBuilder:
         if caller_origin.repo is None or caller_origin.cwd is None:
             return
         cwd_path = Path(caller_origin.cwd)
-        timestamps = commit_author_timestamps(cwd_path)
+        # The repo root and the head, from the repository's files. They key
+        # the whole-history log and the per-hit memo; where the files do not
+        # settle them, both run uncached, from git.
+        settled = toplevel_and_head_from_files(cwd_path)
+        timestamps = commit_author_timestamps(cwd_path, located=settled)
         if timestamps is None:
             return
-        # Resolve the repo root ONCE for the whole search — the per-hit
+        # Resolve the repo root ONCE for the whole search (the per-hit
         # anchor resolution below would otherwise pay a `git rev-parse`
-        # fork+exec per hit — and the head with it, in the same process:
-        # the reachable walks are keyed on it. None is tolerated (the
-        # resolver re-derives; a hit with an anchor then counts in
-        # author-date space), but with `commit_author_timestamps` having
-        # just answered, git is demonstrably reachable here.
-        located = repo_toplevel_and_head(cwd_path)
+        # fork+exec per hit) and the head with it: the reachable walks
+        # are keyed on it. From git where the files did not settle them.
+        # None is tolerated (the resolver re-derives; a hit with an anchor
+        # then counts in author-date space), but with
+        # `commit_author_timestamps` having just answered, git is
+        # demonstrably reachable here.
+        located = settled if settled is not None else repo_toplevel_and_head(cwd_path)
         toplevel = located[0] if located is not None else None
         head = located[1] if located is not None else None
         # Build the id → memory side-map from the in-memory `memories`
@@ -757,6 +811,8 @@ class ResponseBuilder:
         # memory memory_show reads as fresh — defeating the policy on
         # its highest-traffic surface.
         memory_by_id = {m.id: m for m in memories}
+        # What this search resolved, stored at the end if the head held.
+        resolved_here: dict[_DriftKey, ResolvedCommitDrift | None] = {}
         for hit_dict, hit in zip(out, hits):
             if hit.last_verified_at is None:
                 continue
@@ -787,93 +843,57 @@ class ResponseBuilder:
             since = hit.last_verified_at
             if since.tzinfo is None:
                 since = since.replace(tzinfo=timezone.utc)
-            # The basis, per hit — the same rule `verify.compute_commit_
-            # drift` applies: the reachable walk from the stamp's
-            # recorded HEAD when the record carries one and HEAD still
-            # descends from it, the author-date bisect otherwise.
-            walk = None
-            if record.verified_head is not None and head is not None:
-                walk = commits_since_anchor(
-                    cwd_path, record.verified_head, toplevel=toplevel, head=head
+            # The per-hit memo, keyed on every input `_resolve_hit_drift`
+            # reads (the head's history, `timestamps`, is read under the
+            # same root and head). Only where the files settled the root and
+            # the head: the check after the loop reads the head from them
+            # again, and the git path runs uncached, as before the memo.
+            key: _DriftKey | None = None
+            if settled is not None:
+                key = (
+                    str(settled[0]),
+                    settled[1],
+                    str(cwd_path),
+                    anchors,
+                    tuple(record.claims),
+                    since,
+                    record.verified_head,
                 )
-            if walk is not None:
-                count = len(walk.commits)
-                basis = BASIS_REACHABILITY
+            if key is not None and key in _DRIFT_MEMO:
+                _DRIFT_MEMO.move_to_end(key)
+                resolved = _DRIFT_MEMO[key]
+            elif key is not None and key in resolved_here:
+                resolved = resolved_here[key]
             else:
-                # bisect_right on the ascending list gives the first index
-                # strictly greater than `since`; len - idx is the count of
-                # commits strictly after the verify timestamp.
-                # Equal-timestamp commits are not counted as drift,
-                # matching the health rollup's semantics.
-                idx = bisect.bisect_right(timestamps, since)
-                count = len(timestamps) - idx
-                basis = BASIS_AUTHOR_DATE
-            # Narrow to commits that touched an anchor (mirrors memory_show
-            # / the expand_top block), so stable-claim memories don't nag
-            # here. None means the anchors all escape this repo — the
-            # signal is not applicable; omit the field entirely.
-            #
-            # The `count > 0` guard mirrors `verify.compute_commit_drift` +
-            # `health._compute_commit_drift_debt` (the four anchor-narrowing
-            # sites must gate identically). It is no longer a CORRECTNESS
-            # guard: `resolve_commit_drift_count` now counts the path-filtered
-            # commits on AUTHOR date (`git log --format=%aI`) with the same
-            # `bisect_right` boundary as the unfiltered bisect, so the filtered
-            # count is a strict subset and can never exceed `count`. (It once
-            # counted on COMMITTER date via `rev-list --since`, whose inclusive
-            # whole-second boundary could resurrect drift a clean bisect had
-            # ruled out — hence the clamp this guard used to backstop. Both are
-            # gone; the date spaces are unified at the source.)
-            # What the guard still does: route a caught-up memory to the
-            # quiescent applicability classification below instead of the
-            # narrowing, so an unmoved repo reads "clean" only for a memory
-            # the signal actually applies to.
-            if count > 0:
-                # The claim-aware entry point over the same shared core
-                # `memory_show` uses (`resolve_commit_drift_count` is its
-                # count-only projection) — a claim-carrying memory gets
-                # the weak-tier narrowing here too, or this surface would
-                # nag `spot_check_recommended` on a memory `memory_show`
-                # reads as fresh.
-                resolved = resolve_commit_drift(
+                unanswered = unanswered_git_calls()
+                resolved = _resolve_hit_drift(
                     cwd=cwd_path,
-                    since=since,
-                    unfiltered=count,
+                    toplevel=toplevel,
+                    head=head,
+                    timestamps=timestamps,
                     anchors=anchors,
                     claims=parsed_claims,
-                    toplevel=toplevel,
-                    walk=walk,
+                    since=since,
+                    verified_head=record.verified_head,
                 )
-                if resolved is None:
-                    continue
-                count = resolved.count
-                basis = resolved.basis
-                # Additive, claim-carrying hits only — mirrors
-                # `CommitDriftStatus.to_dict`'s claim_drift block so both
-                # display surfaces speak the same sub-dict.
-                if resolved.claims_checked:
-                    hit_dict["claim_drift"] = {
-                        "checked": resolved.claims_checked,
-                        "drifted": list(resolved.claims_drifted),
-                    }
-            elif not _quiescent_drift_applicable(
-                cwd_path, anchors, parsed_claims, toplevel=toplevel
-            ):
-                # Zero repo-wide commits since the verify. Classify
-                # applicability BEFORE minting the affirmative 0 the model
-                # reads as "measured, nothing moved" — the same
-                # escape/phantom rules `verify.compute_commit_drift` runs
-                # on its quiescent branch, so a hit citing only
-                # remote-host paths omits the key here exactly as
-                # memory_show returns None for it. Pre-fix this surface
-                # gated ALL resolution on `count > 0` and stamped 0 on
-                # the very memory the show surface had stopped reading
-                # clean. The escape half is pure path arithmetic against
-                # the threaded toplevel; only a memory with at least one
-                # in-repo anchor pays the phantom check's filtered log.
+                if key is not None and unanswered_git_calls() == unanswered:
+                    resolved_here[key] = resolved
+            if resolved is None:
+                # The anchors all escape this repo or are phantoms: the
+                # signal is not applicable; omit the field entirely.
                 continue
+            # Additive, claim-carrying hits only; mirrors
+            # `CommitDriftStatus.to_dict`'s claim_drift block so both
+            # display surfaces speak the same sub-dict. Built fresh per
+            # hit: the resolution it is read from may be shared.
+            if resolved.claims_checked:
+                hit_dict["claim_drift"] = {
+                    "checked": resolved.claims_checked,
+                    "drifted": list(resolved.claims_drifted),
+                }
+            count = resolved.count
             hit_dict["commit_drift_count"] = count
-            hit_dict["commit_drift_basis"] = basis
+            hit_dict["commit_drift_basis"] = resolved.basis
             # Recompute the verdict now that we have the commit-drift
             # contribution. `hit_to_dict` initialised it without that
             # input; the upgrade only fires for hits where the count was
@@ -904,6 +924,14 @@ class ResponseBuilder:
                 path_drift_missing=len(hit.path_drift_claim_anchored_missing_paths),
                 commit_drift_count=count,
             )
+        # Keep this search's resolutions only while the head they are keyed
+        # on is still the head: the path-filtered logs read HEAD as they
+        # run, so a commit landing mid-search would otherwise store the next
+        # head's answer under this one's key.
+        if resolved_here and toplevel_and_head_from_files(cwd_path) == settled:
+            _DRIFT_MEMO.update(resolved_here)
+            while len(_DRIFT_MEMO) > _DRIFT_MEMO_CAP:
+                _DRIFT_MEMO.popitem(last=False)
 
     def attach_depends_on_resolved(  # type: ignore[no-untyped-def]
         self,
@@ -1390,6 +1418,94 @@ class ResponseBuilder:
 
             if entries:
                 hit_dict["recent_negative_outcomes"] = entries
+
+
+def _resolve_hit_drift(
+    *,
+    cwd: Path,
+    toplevel: Path | None,
+    head: str | None,
+    timestamps: list[datetime],
+    anchors: tuple[str, ...],
+    claims: Sequence[Claim],
+    since: datetime,
+    verified_head: str | None,
+) -> ResolvedCommitDrift | None:
+    """One hit's commit drift as `ResponseBuilder.attach_commit_drift_
+    counts` stamps it: the count, the basis it was measured on and the
+    claim detail, or None when the count is omitted. `timestamps` is the
+    head's whole history; everything else read here is an argument, and
+    all of it is in the per-hit memo's key (`_DRIFT_MEMO`)."""
+    # The basis, per hit, by the rule `verify.compute_commit_drift`
+    # applies: the reachable walk from the stamp's recorded HEAD when the
+    # record carries one and HEAD still descends from it, the author-date
+    # bisect otherwise.
+    walk: ReachableWalk | None = None
+    if verified_head is not None and head is not None:
+        walk = commits_since_anchor(cwd, verified_head, toplevel=toplevel, head=head)
+    if walk is not None:
+        count = len(walk.commits)
+        basis = BASIS_REACHABILITY
+    else:
+        # bisect_right on the ascending list gives the first index
+        # strictly greater than `since`; len - idx is the count of
+        # commits strictly after the verify timestamp.
+        # Equal-timestamp commits are not counted as drift,
+        # matching the health rollup's semantics.
+        idx = bisect.bisect_right(timestamps, since)
+        count = len(timestamps) - idx
+        basis = BASIS_AUTHOR_DATE
+    # Narrow to commits that touched an anchor (mirrors memory_show
+    # / the expand_top block), so stable-claim memories don't nag
+    # here. None means the anchors all escape this repo: the
+    # signal is not applicable, and the caller omits the field.
+    #
+    # The `count > 0` guard mirrors `verify.compute_commit_drift` +
+    # `health._compute_commit_drift_debt` (the four anchor-narrowing
+    # sites must gate identically). It is no longer a CORRECTNESS
+    # guard: `resolve_commit_drift_count` now counts the path-filtered
+    # commits on AUTHOR date (`git log --format=%aI`) with the same
+    # `bisect_right` boundary as the unfiltered bisect, so the filtered
+    # count is a strict subset and can never exceed `count`. (It once
+    # counted on COMMITTER date via `rev-list --since`, whose inclusive
+    # whole-second boundary could resurrect drift a clean bisect had
+    # ruled out, hence the clamp this guard used to backstop. Both are
+    # gone; the date spaces are unified at the source.)
+    # What the guard still does: route a caught-up memory to the
+    # quiescent applicability classification below instead of the
+    # narrowing, so an unmoved repo reads "clean" only for a memory
+    # the signal actually applies to.
+    if count > 0:
+        # The claim-aware entry point over the same shared core
+        # `memory_show` uses (`resolve_commit_drift_count` is its
+        # count-only projection): a claim-carrying memory gets
+        # the weak-tier narrowing here too, or this surface would
+        # nag `spot_check_recommended` on a memory `memory_show`
+        # reads as fresh.
+        return resolve_commit_drift(
+            cwd=cwd,
+            since=since,
+            unfiltered=count,
+            anchors=anchors,
+            claims=claims,
+            toplevel=toplevel,
+            walk=walk,
+        )
+    if not _quiescent_drift_applicable(cwd, anchors, claims, toplevel=toplevel):
+        # Zero repo-wide commits since the verify. Classify
+        # applicability BEFORE minting the affirmative 0 the model
+        # reads as "measured, nothing moved", by the same
+        # escape/phantom rules `verify.compute_commit_drift` runs
+        # on its quiescent branch, so a hit citing only
+        # remote-host paths omits the key here exactly as
+        # memory_show returns None for it. Pre-fix this surface
+        # gated ALL resolution on `count > 0` and stamped 0 on
+        # the very memory the show surface had stopped reading
+        # clean. The escape half is pure path arithmetic against
+        # the threaded toplevel; only a memory with at least one
+        # in-repo anchor pays the phantom check's filtered log.
+        return None
+    return ResolvedCommitDrift(count, basis=basis)
 
 
 def _claim_at_index(event: dict[str, Any], index: int) -> str | None:

@@ -30,12 +30,15 @@ import hashlib
 import logging
 import math
 import re
+import threading
 import unicodedata
 from bisect import bisect_left
+from collections import OrderedDict
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Any, Callable, Literal, NamedTuple
 
+from . import _caches
 from .expansion import (
     ExpansionTables,
     build_tables as _build_expansion_tables,
@@ -2095,7 +2098,8 @@ def _scope_tokens(scope: str) -> list[str]:
 
 
 class _MemoryTokens(NamedTuple):
-    """Per-memory token streams, computed once per `search()` call.
+    """Per-memory token streams, computed once per distinct body and scopes
+    and served from `_memory_tokens`' cache to every later search.
 
     `tokenize()` is the hot spot of a search (NFKC + diacritic fold +
     stemmer + CJK segmentation), and before this existed each candidate's
@@ -2105,8 +2109,10 @@ class _MemoryTokens(NamedTuple):
     ~500-memory store. The scorers accept this as an optional `tokens`
     argument; passing it must be a pure perf change (the fields are
     exactly the expressions the recompute path evaluates), pinned by the
-    precompute-equality test in test_search.py. Consumers only read —
-    never mutate — the shared lists/sets.
+    precompute-equality test in test_search.py. Consumers only read,
+    never mutate, the shared lists and set: a cached entry outlives the
+    search that built it, so a mutation would reach every later search
+    (test_token_cache.py runs every lane and checks no entry changes).
     """
 
     body: list[str]
@@ -2123,15 +2129,60 @@ class _MemoryTokens(NamedTuple):
     kept."""
 
 
+# The token cache. `_memory_tokens` is a pure function of `memory.body`
+# and `memory.scopes` (the tokenizer reads only module constants), so it
+# is memoised on exactly those inputs and a hit is the value a recompute
+# builds. The key is the inputs rather than `(id, updated)`: a record is
+# rewritten without `updated` moving (`Store.mark_verified`), and benches
+# and tests build Memory objects in one process that share an id and an
+# `updated` stamp with different bodies (tests/test_server_commit_drift.py
+# does so on purpose). The key costs one string hash per candidate, about
+# 1.9 µs on a body of the owner's store against about 0.82 ms to tokenise
+# it. The bound holds every record of a store of up to 5,000; past it the
+# least recently used entry goes. Callers on several threads share the
+# cache (bench/aml/server.py runs searches in a thread pool), so the lock
+# makes each look-up-and-touch and each insert-and-evict atomic;
+# tokenising runs outside it.
+TOKEN_CACHE_ENTRIES = 5000
+
+_TOKEN_CACHE: OrderedDict[tuple[str, tuple[str, ...]], _MemoryTokens] = OrderedDict()
+_TOKEN_CACHE_LOCK = threading.Lock()
+
+
+def clear_token_cache() -> None:
+    """Drop every entry of `_memory_tokens`' cache, so the next call for
+    any body and scopes tokenises them again."""
+    with _TOKEN_CACHE_LOCK:
+        _TOKEN_CACHE.clear()
+
+
+_caches.register(clear_token_cache)
+
+
 def _memory_tokens(memory: Memory) -> _MemoryTokens:
-    """Build the `_MemoryTokens` for one candidate. Field expressions
-    mirror the scorers' recompute paths token for token — see
-    `_MemoryTokens` for why equality is load-bearing."""
+    """Build the `_MemoryTokens` for one candidate, or return the entry an
+    earlier call built for an equal body and scopes tuple. Field
+    expressions mirror the scorers' recompute paths token for token; see
+    `_MemoryTokens` for why equality is load-bearing, and the comment on
+    `TOKEN_CACHE_ENTRIES` for the cache."""
+    key = (memory.body, tuple(memory.scopes))
+    with _TOKEN_CACHE_LOCK:
+        cached = _TOKEN_CACHE.get(key)
+        if cached is not None:
+            _TOKEN_CACHE.move_to_end(key)
+            return cached
     body = _expand_kebab(tokenize(memory.body))
     scope_set: set[str] = set()
     for scope in memory.scopes:
         scope_set.update(_scope_tokens(scope))
-    return _MemoryTokens(body=body, content=_strip_stopwords(body), scope_set=scope_set)
+    tokens = _MemoryTokens(
+        body=body, content=_strip_stopwords(body), scope_set=scope_set
+    )
+    with _TOKEN_CACHE_LOCK:
+        _TOKEN_CACHE[key] = tokens
+        while len(_TOKEN_CACHE) > TOKEN_CACHE_ENTRIES:
+            _TOKEN_CACHE.popitem(last=False)
+    return tokens
 
 
 def _recency_factor(created: datetime, now: datetime, half_life_days: float) -> float:
@@ -3464,11 +3515,13 @@ def search(
     lexical_ids: set[str] = set()
     expansion_ids: set[str] = set()
 
-    # Tokenize each candidate exactly once per call and thread the streams
+    # Tokenize each candidate at most once per call and thread the streams
     # through every consumer below — the keyword scorer, compute_idf, BM25,
     # blocks otherwise re-tokenize the same
     # bodies and scopes (6 tokenize calls per memory per hybrid search,
     # ~88% of cumulative search time). Pure perf: see `_MemoryTokens`.
+    # A candidate whose body and scopes an earlier call tokenised is
+    # served from `_memory_tokens`' cache and not tokenised again.
     candidate_tokens = [_memory_tokens(m) for m in candidates]
 
     # Corpus-wide document frequencies for the BM25 rankers, resolved from

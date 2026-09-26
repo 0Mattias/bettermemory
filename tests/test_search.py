@@ -909,6 +909,9 @@ def test_snippet_scan_tokenize_cost_is_bounded(
         return real_impl(text, stem=stem)
 
     monkeypatch.setattr(search_module, "_tokenize_impl", counting)
+    # The ranking's share of the count is the cold one; an earlier search
+    # in this process may have cached the body (`_memory_tokens`).
+    search_module.clear_token_cache()
     hits = search([_memory(body, created=now)], "staging database", now=now)
 
     assert hits[0].snippet.startswith("...")  # the scan really ran
@@ -2175,7 +2178,9 @@ def test_search_tokenizes_each_candidate_once(
     once per candidate body, once per scope entry, and once for the
     query — not once per (candidate, consumer). Pre-fix the same search
     made 6 tokenize calls per memory (body+scopes across the keyword
-    scorer, compute_idf, and BM25), 88% of cumulative search time."""
+    scorer, compute_idf, and BM25), 88% of cumulative search time. The
+    count is the cold one: a warm token cache skips the candidates
+    entirely (test_token_cache.py)."""
     import bettermemory.search as search_module
 
     now = datetime(2026, 7, 1, tzinfo=timezone.utc)
@@ -2192,6 +2197,7 @@ def test_search_tokenizes_each_candidate_once(
         return real_impl(text, stem=stem)
 
     monkeypatch.setattr(search_module, "_tokenize_impl", counting)
+    search_module.clear_token_cache()
     hits = search(memories, "docker redis caches", mode="hybrid", now=now)
     assert hits  # the counted run must be a real, scoring search
     # 1 query + per candidate: 1 body + 1 scope (each _memory has one).

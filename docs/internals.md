@@ -141,7 +141,7 @@ open one.
 
 ## Module map
 
-Seventy-eight Python files under `src/bettermemory/`, its `handlers/`
+Eighty-five Python files under `src/bettermemory/`, its `handlers/`
 and `cli/`. A tool call crosses them in one order, and the map is that
 order.
 
@@ -183,7 +183,14 @@ bench's expansion arm. Ranking is drift-independent; `verify.py` then
 annotates each hit with the staleness verdict from path, commit and
 calendar drift, with `symbols.py` for advisory symbol citations, and
 the store's `trust_rows` supplies the provenance label and this host's
-stamp.
+stamp. The warm daemon's caches sit on this path and keep every answer
+bit-identical: `origin.py` keeps the captured origin per directory for
+two seconds under a signature of the repository's HEAD bytes, config
+and environment; `_response.py` and `origin.py` memoise the commit-drift
+work per repository root and commit HEAD names, which `githead.py`
+reads from the repository files without a git process; `search.py`
+memoises the token streams per body and scopes. Every cache registers
+its clearer with `_caches.py`, and `_caches.clear_all` empties them.
 
 **Telemetry.** `events.py` is the recorder every handler records
 through; each event is a row of the store's log. `audit.py` and
@@ -206,7 +213,8 @@ else's; `init.py` and `_install_hints.py` are client onboarding.
 **Leaves.** `models.py` (Pydantic models, enums, ULIDs), `config.py`
 (config loading and the store-directory rule), `prompts.py` (the
 system-prompt addendum), `_fsutil.py` (atomic writes and owner-only
-directories). Nothing in this group imports a handler or the store, and
+directories), `githead.py` (HEAD and the ref it names, read from the
+repository files) and `_caches.py` (the cache registry). Nothing in this group imports a handler or the store, and
 a new cross-cutting concept belongs here, not in a cycle.
 
 ## Storage

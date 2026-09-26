@@ -1773,9 +1773,10 @@ def _merge_repo(root: Path) -> dict[str, str]:
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
-def test_repo_toplevel_and_head_answers_both_from_one_process(
+def test_repo_toplevel_and_head_answers_both_from_the_files_or_one_process(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from bettermemory import githead
     from bettermemory import origin as origin_module
     from bettermemory.origin import repo_toplevel_and_head
 
@@ -1798,6 +1799,13 @@ def test_repo_toplevel_and_head_answers_both_from_one_process(
     root, head = located
     assert root == tmp_path.resolve()
     assert head == _git_out(tmp_path, "rev-parse", "HEAD")
+    # The repository's files answer both on POSIX; elsewhere they decline
+    # and one git process does.
+    assert len(calls) == (0 if os.name == "posix" else 1)
+    # Where the files do not settle the head, one git process answers both.
+    monkeypatch.setattr(githead, "head_sha", lambda gd: None)
+    calls.clear()
+    assert repo_toplevel_and_head(tmp_path / "src") == located
     assert len(calls) == 1 and calls[0][:2] == ("rev-parse", "--show-toplevel")
 
 
@@ -2012,6 +2020,7 @@ def test_capture_marks_the_origin_indeterminate_when_git_cannot_run(
     the auto-scope filter — read both as "the caller is nowhere". The
     origin now says which it was, on a private attribute that never
     reaches frontmatter or an event payload."""
+    from bettermemory import _caches
     from bettermemory import origin as _origin
 
     plain = tmp_path / "plain"
@@ -2025,6 +2034,10 @@ def test_capture_marks_the_origin_indeterminate_when_git_cannot_run(
         raise FileNotFoundError(errno.ENOENT, "No such file or directory", "git")
 
     monkeypatch.setattr(subprocess, "run", _no_binary)
+    # Whether git can run is outside what the origin cache compares, so the
+    # second capture starts from an empty cache, as a capture after the
+    # first one's lifetime would.
+    _caches.clear_all()
     unknown = _origin.capture(plain)
     assert unknown.cwd == str(plain.resolve())
     assert unknown.repo is None and unknown.worktree_root is None

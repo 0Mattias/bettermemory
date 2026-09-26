@@ -37,6 +37,15 @@ from bettermemory.store import Store
 _GIT_AVAILABLE = shutil.which("git") is not None
 _REMOTE = "git@github.com:example/foo.git"
 
+# The repo root and the head are read from the repository's files on
+# POSIX (`origin.toplevel_and_head_from_files`), and the per-hit
+# resolutions are memoised on them. Elsewhere the files decline, and
+# `git rev-parse` answers the root and the head on every search with
+# nothing memoised: the cost shape the pins below read there is the one
+# the search paid before the memos.
+_FILES_ANSWER_HEAD = os.name == "posix"
+_PER_SEARCH_FORKS = 1 if _FILES_ANSWER_HEAD else 2
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -787,10 +796,13 @@ def test_commit_drift_count_git_cost_shape(
     hit with drift to narrow forks a second, path-filtered `git log` inside
     `resolve_commit_drift_count`. That mattered because a cost contract
     nobody can check invites the next author to add per-hit work believing
-    the loop is free. So the real arithmetic is pinned here instead:
-    `2 + <drifting anchored hits>` git processes, with the two gates
-    (count > 0, anchors present) holding the ordinary shapes at 2.
+    the loop is free. So the real arithmetic is pinned here instead: cold,
+    `1 + <drifting anchored hits>` git processes, with the two gates
+    (count > 0, anchors present) holding the ordinary shapes at 1, the root
+    and the head read from the repository's files; warm, the same search
+    forks nothing and reads the same hits.
     """
+    from bettermemory import _caches
     from bettermemory import origin as origin_module
     from bettermemory._response import ResponseBuilder
     from bettermemory.search import search as run_search
@@ -840,37 +852,49 @@ def test_commit_drift_count_git_cost_shape(
         hits = run_search(memories, "widget rule", max_results=50)
         builder = ResponseBuilder(stale_after_days=30)
         now = datetime.now(timezone.utc)
-        out = [builder.hit_to_dict(h, now=now) for h in hits]
-        calls: list[tuple[str, ...]] = []
         real_git = origin_module._git
 
-        def spy(cwd: Path, *args: str, **kwargs: Any) -> Any:
-            calls.append(args)
-            return real_git(cwd, *args, **kwargs)
+        def attach() -> tuple[list[dict[str, Any]], list[tuple[str, ...]]]:
+            out = [builder.hit_to_dict(h, now=now) for h in hits]
+            calls: list[tuple[str, ...]] = []
 
-        monkeypatch.setattr(origin_module, "_git", spy)
-        try:
-            builder.attach_commit_drift_counts(
-                out, hits, memories, caller_origin=origin
-            )
-        finally:
-            monkeypatch.setattr(origin_module, "_git", real_git)
+            def spy(cwd: Path, *args: str, **kwargs: Any) -> Any:
+                calls.append(args)
+                return real_git(cwd, *args, **kwargs)
+
+            monkeypatch.setattr(origin_module, "_git", spy)
+            try:
+                builder.attach_commit_drift_counts(
+                    out, hits, memories, caller_origin=origin
+                )
+            finally:
+                monkeypatch.setattr(origin_module, "_git", real_git)
+            return out, calls
+
+        _caches.clear_all()
+        out, calls = attach()
         annotated = sum(1 for hit in out if "commit_drift_count" in hit)
-        # The two per-search calls, in order: the unfiltered author-date log
-        # and the one repo-root resolution the per-hit narrowing reuses.
+        # The one per-search call: the unfiltered author-date log. The repo
+        # root the per-hit narrowing reuses is read from the files.
         assert calls[0][:2] == ("log", "--format=%aI")
-        assert calls[1][:2] == ("rev-parse", "--show-toplevel")
+        rev_parse = any(call[0] == "rev-parse" for call in calls)
+        assert rev_parse is not _FILES_ANSWER_HEAD
+        # Warm: the same search again forks nothing and reads the same hits.
+        warm, warm_calls = attach()
+        assert warm == out
+        if _FILES_ANSWER_HEAD:
+            assert warm_calls == []
         return len(calls), annotated
 
     forks, annotated = count_git_calls(bodies_cite_paths=True)
     assert annotated == 3, "fixture must produce three drifting anchored hits"
-    assert forks == 2 + annotated
+    assert forks == _PER_SEARCH_FORKS + annotated
 
     # Same three hits, no claim anchors: the gate keeps the per-hit path
-    # closed, so the cost falls back to the two per-search calls.
+    # closed, so the cost falls back to the one per-search call.
     forks, annotated = count_git_calls(bodies_cite_paths=False)
     assert annotated == 0
-    assert forks == 2
+    assert forks == _PER_SEARCH_FORKS
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
@@ -940,8 +964,9 @@ def test_commit_drift_count_quiescent_anchored_hits_pay_one_classification_log(
 ) -> None:
     """The quiescent half of the cost contract: a caught-up hit with an
     in-repo anchor forks exactly one path-filtered log (the phantom
-    check), so three such hits cost ``2 + 3`` git processes — the same
-    bound the drifting shape pays, never more."""
+    check), so three such hits cost ``1 + 3`` git processes cold, the same
+    bound the drifting shape pays and never more, and none warm."""
+    from bettermemory import _caches
     from bettermemory import origin as origin_module
     from bettermemory._response import ResponseBuilder
     from bettermemory.search import search as run_search
@@ -971,24 +996,36 @@ def test_commit_drift_count_quiescent_anchored_hits_pay_one_classification_log(
     hits = run_search(memories, "widget rule", max_results=50)
     builder = ResponseBuilder(stale_after_days=30)
     now = datetime.now(timezone.utc)
-    out = [builder.hit_to_dict(h, now=now) for h in hits]
-    calls: list[tuple[str, ...]] = []
     real_git = origin_module._git
 
-    def spy(cwd: Path, *args: str, **kwargs: Any) -> Any:
-        calls.append(args)
-        return real_git(cwd, *args, **kwargs)
+    def attach() -> tuple[list[dict[str, Any]], list[tuple[str, ...]]]:
+        out = [builder.hit_to_dict(h, now=now) for h in hits]
+        calls: list[tuple[str, ...]] = []
 
-    monkeypatch.setattr(origin_module, "_git", spy)
-    try:
-        builder.attach_commit_drift_counts(out, hits, memories, caller_origin=origin)
-    finally:
-        monkeypatch.setattr(origin_module, "_git", real_git)
+        def spy(cwd: Path, *args: str, **kwargs: Any) -> Any:
+            calls.append(args)
+            return real_git(cwd, *args, **kwargs)
+
+        monkeypatch.setattr(origin_module, "_git", spy)
+        try:
+            builder.attach_commit_drift_counts(
+                out, hits, memories, caller_origin=origin
+            )
+        finally:
+            monkeypatch.setattr(origin_module, "_git", real_git)
+        return out, calls
+
+    _caches.clear_all()
+    out, calls = attach()
     counts = [hit["commit_drift_count"] for hit in out if "commit_drift_count" in hit]
     assert counts == [0, 0, 0]
     assert calls[0][:2] == ("log", "--format=%aI")
-    assert calls[1][:2] == ("rev-parse", "--show-toplevel")
-    assert len(calls) == 2 + 3
+    assert any(call[0] == "rev-parse" for call in calls) is not _FILES_ANSWER_HEAD
+    assert len(calls) == _PER_SEARCH_FORKS + 3
+    warm, warm_calls = attach()
+    assert warm == out
+    if _FILES_ANSWER_HEAD:
+        assert warm_calls == []
 
 
 # ---------------------------------------------------------------------------
@@ -2085,10 +2122,13 @@ def test_commit_drift_count_git_cost_shape_for_reachability_hits(
     """The reachability sibling of the cost pin: the per-hit fork is the
     walk from the hit's anchor, paid once per DISTINCT anchor, plus the
     phantom classification for a hit whose range touched none of its
-    anchors. Three hits at one anchor, all touched: ``2 + 1``. The same
-    three hits stamped at three anchors: ``2 + 3``. One of them citing a
-    real file the range never touched: one classification log more.
+    anchors. Three hits at one anchor, all touched: ``1 + 1``. The same
+    three hits stamped at three anchors: ``1 + 3``. One of them citing a
+    real file the range never touched: one classification log more. The
+    walks are keyed on the head the repository's files name; warm, the
+    same search forks nothing.
     """
+    from bettermemory import _caches
     from bettermemory import origin as origin_module
     from bettermemory._response import ResponseBuilder
     from bettermemory.search import search as run_search
@@ -2113,35 +2153,45 @@ def test_commit_drift_count_git_cost_shape_for_reachability_hits(
     store = Store(memory_dir)
 
     def count_git_calls(query: str) -> tuple[int, dict[str, tuple[int, str]]]:
-        origin_module._WALK_MEMO.clear()
+        _caches.clear_all()
         memories = store.load_all()
         hits = run_search(memories, query, max_results=50)
         builder = ResponseBuilder(stale_after_days=30)
         now = datetime.now(timezone.utc)
-        out = [builder.hit_to_dict(h, now=now) for h in hits]
-        calls: list[tuple[str, ...]] = []
         real_git = origin_module._git
 
-        def spy(cwd: Path, *args: str, **kwargs: Any) -> Any:
-            calls.append(args)
-            return real_git(cwd, *args, **kwargs)
+        def attach() -> tuple[list[dict[str, Any]], list[tuple[str, ...]]]:
+            out = [builder.hit_to_dict(h, now=now) for h in hits]
+            calls: list[tuple[str, ...]] = []
 
-        monkeypatch.setattr(origin_module, "_git", spy)
-        try:
-            builder.attach_commit_drift_counts(
-                out, hits, memories, caller_origin=origin
-            )
-        finally:
-            monkeypatch.setattr(origin_module, "_git", real_git)
-        # The two per-search calls, in order: the unfiltered author-date log
-        # and the one repo-root-plus-head resolution the walks are keyed on.
+            def spy(cwd: Path, *args: str, **kwargs: Any) -> Any:
+                calls.append(args)
+                return real_git(cwd, *args, **kwargs)
+
+            monkeypatch.setattr(origin_module, "_git", spy)
+            try:
+                builder.attach_commit_drift_counts(
+                    out, hits, memories, caller_origin=origin
+                )
+            finally:
+                monkeypatch.setattr(origin_module, "_git", real_git)
+            return out, calls
+
+        out, calls = attach()
+        # The one per-search call: the unfiltered author-date log. The repo
+        # root and the head the walks are keyed on are read from the files.
         assert calls[0][:2] == ("log", "--format=%aI")
-        assert calls[1][:3] == ("rev-parse", "--show-toplevel", "HEAD")
+        rev_parse = any(call[0] == "rev-parse" for call in calls)
+        assert rev_parse is not _FILES_ANSWER_HEAD
         annotated = {
             hit["id"]: (hit["commit_drift_count"], hit["commit_drift_basis"])
             for hit in out
             if "commit_drift_count" in hit
         }
+        warm, warm_calls = attach()
+        assert warm == out
+        if _FILES_ANSWER_HEAD:
+            assert warm_calls == []
         return len(calls), annotated
 
     # One anchor for all three, every cited file touched afterwards.
@@ -2165,7 +2215,7 @@ def test_commit_drift_count_git_cost_shape_for_reachability_hits(
     )
     forks, annotated = count_git_calls("widget rule")
     assert {annotated[i] for i in ids} == {(1, "reachability")}
-    assert forks == 2 + 1, "three hits at one anchor: one walk"
+    assert forks == _PER_SEARCH_FORKS + 1, "three hits at one anchor: one walk"
 
     # Three distinct anchors: a stamp, then a commit, three times over.
     for i, memory_id in enumerate(ids):
@@ -2180,7 +2230,7 @@ def test_commit_drift_count_git_cost_shape_for_reachability_hits(
     # Each range holds the later commits too, but only the one touching
     # the hit's own file escalates: three ranges, one anchored commit each.
     assert {annotated[i] for i in ids} == {(1, "reachability")}
-    assert forks == 2 + 3, "three anchors: three walks"
+    assert forks == _PER_SEARCH_FORKS + 3, "three anchors: three walks"
 
     # A hit citing a real file the range never touched pays the phantom
     # classification on top of its walk.
@@ -2198,4 +2248,6 @@ def test_commit_drift_count_git_cost_shape_for_reachability_hits(
     )
     forks, annotated = count_git_calls("widget rule")
     assert annotated[quiet.id] == (0, "reachability")
-    assert forks == 2 + 4 + 1, "four anchors walked, one classification log"
+    assert forks == _PER_SEARCH_FORKS + 4 + 1, (
+        "four anchors walked, one classification log"
+    )

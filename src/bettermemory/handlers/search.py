@@ -540,11 +540,12 @@ async def memory_search(
     # Per-hit `commit_drift_count`: cheap repo-aware staleness signal
     # surfaced on every hit (parallel to `path_drift_checked` /
     # `path_drift_missing`) so the model can self-triage which hit to
-    # expand without a memory_show round-trip. Two git calls up front
-    # (`commit_author_timestamps` + `repo_toplevel`) and one more — the
-    # path-filtered log inside `resolve_commit_drift_count` — for each
-    # hit that has drift to narrow, so the cost scales with
-    # `max_results` rather than being flat; the COST paragraph on
+    # expand without a memory_show round-trip. Cold, one git call up
+    # front (`commit_author_timestamps`; the repo root and the head come
+    # from the repository's files) and one more (the path-filtered log
+    # inside `resolve_commit_drift_count`) for each hit that has drift
+    # to narrow, so the cold cost scales with `max_results`; warm, the
+    # memoised resolutions answer with no process. The COST paragraph on
     # `attach_commit_drift_counts` carries the arithmetic. Omitted from
     # the hit JSON when the signal isn't applicable (caller not in a
     # repo, hit's memory from a different repo, hit's memory never

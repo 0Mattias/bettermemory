@@ -38,7 +38,11 @@ import errno
 import logging
 import os
 import re
+import stat
 import subprocess
+import sys
+import threading
+import time
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -49,7 +53,7 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, PrivateAttr
 
-from . import identity
+from . import _caches, githead, identity
 
 log = logging.getLogger("bettermemory.origin")
 
@@ -170,6 +174,16 @@ def capture(cwd: Path | None = None, *, source: str | None = None) -> Origin:
     Stop hook, where the user can `rm -rf` the dir they were working in
     before the turn ends — we'd rather log a `null`-origin event than
     let the audit explode.
+
+    Once the directory is resolved, the probes' answers come from the
+    origin cache (`_ORIGIN_CACHE`) when a capture of the same directory
+    began less than `ORIGIN_CACHE_SECONDS` ago and the directory's
+    `githead.signature` reads as it did then; no git runs. The Origin is
+    built from them as from fresh answers, with this call's `source`, and
+    the remote's alternates are registered the same way, so the result is
+    the uncached one field for field, private attributes included. A
+    capture is kept only when every probe ran and the signature read the
+    same before and after them.
     """
     if cwd is None:
         declared = identity.workspace_declaration()
@@ -186,12 +200,38 @@ def capture(cwd: Path | None = None, *, source: str | None = None) -> Origin:
         resolved = cwd.resolve()
     cwd_str = str(resolved)
 
-    worktree_root, indeterminate = _probe_worktree_root(resolved)
-    repo_url: str | None = None
-    repo_url_alternates: tuple[str, ...] = ()
-    if worktree_root:
-        repo_url, repo_url_alternates = _git_remote_url_and_alternates(resolved)
-    branch = _git_branch(resolved) if worktree_root else None
+    started = time.monotonic()
+    signature = githead.signature(resolved)
+    entry = _ORIGIN_CACHE.get(cwd_str)
+    keep = False
+    repo_url: str | None
+    repo_url_alternates: tuple[str, ...]
+    if (
+        entry is not None
+        and 0.0 <= started - entry.captured_at < ORIGIN_CACHE_SECONDS
+        and entry.signature == signature
+    ):
+        cached = entry.origin
+        worktree_root, indeterminate = cached.worktree_root, cached.git_indeterminate
+        repo_url, repo_url_alternates = cached.repo, entry.alternates
+        branch = cached.branch
+    else:
+        unanswered = _UNANSWERED.count
+        worktree_root, indeterminate = _probe_worktree_root(resolved)
+        repo_url = None
+        repo_url_alternates = ()
+        if worktree_root:
+            repo_url, repo_url_alternates = _git_remote_url_and_alternates(resolved)
+        branch = _git_branch(resolved) if worktree_root else None
+        # Kept only when every probe ran and nothing the signature covers
+        # moved while they ran. A probe git could not run for may answer on
+        # the next call, and a change undone before the next call would
+        # leave the old signature beside what the probes saw.
+        keep = (
+            not indeterminate
+            and _UNANSWERED.count == unanswered
+            and githead.signature(resolved) == signature
+        )
 
     origin = Origin(
         cwd=cwd_str,
@@ -212,7 +252,91 @@ def capture(cwd: Path | None = None, *, source: str | None = None) -> Origin:
         # callers that hold the object.
         _register_caller_alternates(repo_url, repo_url_alternates)
         origin._repo_url_alternates = repo_url_alternates
+    if keep:
+        _remember(
+            cwd_str,
+            _OriginEntry(
+                origin=origin.model_copy(),
+                alternates=repo_url_alternates,
+                signature=signature,
+                captured_at=started,
+            ),
+        )
     return origin
+
+
+# ---------------------------------------------------------------------------
+# The origin cache
+# ---------------------------------------------------------------------------
+
+#: How long a capture answers for its directory, in seconds from the moment
+#: it began.
+ORIGIN_CACHE_SECONDS = 2.0
+
+# The most directories the cache holds; past it the oldest capture goes.
+_ORIGIN_CACHE_CAP = 256
+
+
+@dataclass(frozen=True)
+class _OriginEntry:
+    """One capture, kept for the directory it was taken in: the Origin the
+    probes returned (a copy no caller holds), the alternates registered for
+    its remote, the directory's `githead.signature` as read before and after
+    the probes, and the `time.monotonic` reading at which the capture
+    began."""
+
+    origin: Origin
+    alternates: tuple[str, ...]
+    signature: githead.Signature
+    captured_at: float
+
+
+# One entry per resolved directory, keyed by its string and ordered by when
+# the capture began. `capture` answers from an entry while it is younger
+# than ORIGIN_CACHE_SECONDS and the directory's signature equals the
+# entry's. The signature holds the git directory the walk from the
+# directory reaches, the bytes of its HEAD, the stat of its config and the
+# GIT_DIR, GIT_WORK_TREE and GIT_CEILING_DIRECTORIES values, so a branch
+# switch, a remote changed in the repository's config, a repository created
+# or removed on the path, or a change to one of those variables is never
+# answered from an entry; where the files do not settle what git would
+# find, the signature equals no other and every capture asks git. What the
+# signature does not see (whether git can run, configuration outside the
+# repository's config file, a tag named like the checked-out branch) holds
+# for at most the lifetime. Keyed by directory, never by process. The lock
+# serialises the store, the eviction and the clear; a lookup is one dict
+# read.
+_ORIGIN_CACHE: dict[str, _OriginEntry] = {}
+_ORIGIN_CACHE_LOCK = threading.Lock()
+
+
+@_caches.register
+def _clear_origin_cache() -> None:
+    with _ORIGIN_CACHE_LOCK:
+        _ORIGIN_CACHE.clear()
+
+
+def _remember(key: str, entry: _OriginEntry) -> None:
+    """Keep `entry` as the newest capture for `key`, and evict the oldest
+    captures past `_ORIGIN_CACHE_CAP`."""
+    with _ORIGIN_CACHE_LOCK:
+        _ORIGIN_CACHE.pop(key, None)
+        _ORIGIN_CACHE[key] = entry
+        while len(_ORIGIN_CACHE) > _ORIGIN_CACHE_CAP:
+            del _ORIGIN_CACHE[next(iter(_ORIGIN_CACHE))]
+
+
+class _Unanswered(threading.local):
+    """The number of git calls through `_git` on the current thread that
+    git could not run for: no binary, a timeout, a failed spawn. `_git`
+    folds such a failure into the same None as an answer of "no", and the
+    probes after the first go through it; `capture` compares the count
+    before and after its probes and keeps no capture in which it moved."""
+
+    count = 0
+
+
+_UNANSWERED = _Unanswered()
 
 
 # ---------------------------------------------------------------------------
@@ -576,6 +700,23 @@ def _log_subcommand(args: tuple[str, ...]) -> str:
     return args[i] if i < len(args) else ""
 
 
+# How many git invocations could not run at all since import: no binary on
+# PATH, a timeout, an OSError from the spawn. Such a failure says nothing
+# about the repository, so the drift memos compare this count before and
+# after computing a value and keep the value only when it did not move.
+# Read through `unanswered_git_calls`.
+_unanswered = 0
+
+
+def unanswered_git_calls() -> int:
+    """How many git invocations since import could not run at all (the
+    None `_git_result` returns). A memo reads it before and after a
+    computation and stores the result only when it is unchanged: a
+    conservative fallback taken because git timed out is what the
+    uncached code answers on that call, and not on the next one."""
+    return _unanswered
+
+
 def _git_result(
     cwd: Path, *args: str, timeout: float = 1.0
 ) -> subprocess.CompletedProcess[str] | None:
@@ -587,12 +728,13 @@ def _git_result(
     read. `_git` below folds both into one None for the callers that
     only want stdout; the probes that must tell "git said no" from "git
     could not be asked" (`_probe_worktree_root`, `commit_reachable`)
-    read this directly.
+    read this directly. Each None is counted (`unanswered_git_calls`).
 
     Failure logging is tiered so the operationally interesting failures
     (missing binary, timeouts) reach the log at WARNING while the
     per-call non-zero exits, which `_git` logs at DEBUG, stay out of it.
     """
+    global _unanswered
     try:
         return subprocess.run(
             ["git", *args],
@@ -612,7 +754,6 @@ def _git_result(
         )
     except FileNotFoundError as exc:
         log.warning("git binary not found on PATH: %s", exc)
-        return None
     except subprocess.TimeoutExpired:
         log.warning(
             "git %s timed out after %ss in %s",
@@ -620,10 +761,10 @@ def _git_result(
             timeout,
             cwd,
         )
-        return None
     except OSError as exc:
         log.warning("git invocation failed in %s: %s", cwd, exc)
-        return None
+    _unanswered += 1
+    return None
 
 
 def _log_nonzero_exit(
@@ -678,6 +819,7 @@ def _git(
     """
     result = _git_result(cwd, *args, timeout=timeout)
     if result is None:
+        _UNANSWERED.count += 1
         return None
     if result.returncode != 0:
         _log_nonzero_exit(args, result, cwd)
@@ -824,19 +966,24 @@ def repo_toplevel(cwd: Path | None) -> Path | None:
 
 
 def repo_toplevel_and_head(cwd: Path | None) -> tuple[Path, str] | None:
-    """`repo_toplevel` and the commit HEAD names, from ONE git process.
+    """`repo_toplevel` and the commit HEAD names: read from the
+    repository's files when they settle both (`toplevel_and_head_from_
+    files`), from ONE git process otherwise.
 
-    ``git rev-parse --show-toplevel HEAD`` prints the root and then the
-    full hash, one per line. The commit-drift surfaces that count in
-    reachability space need both — the root to resolve pathspecs
-    against and the head to key the reachable walk on (`commits_since_
-    anchor`) — and paying a second ``rev-parse`` for the head would
-    move the pinned per-search git-process count. None when git cannot
-    answer, including a repository with no commit yet (``HEAD`` does
-    not resolve there; the author-date readers fail on it the same way).
+    The commit-drift surfaces that count in reachability space need both,
+    the root to resolve pathspecs against and the head to key the
+    reachable walk and the drift memos on, once per search or show. The
+    files answer without a process; where they decline, ``git rev-parse
+    --show-toplevel HEAD`` prints the root and then the full hash, one
+    per line. None when git cannot answer, including a repository with no
+    commit yet (``HEAD`` does not resolve there; the author-date readers
+    fail on it the same way).
     """
     if cwd is None:
         return None
+    located = toplevel_and_head_from_files(cwd)
+    if located is not None:
+        return located
     raw = _git(cwd, "rev-parse", "--show-toplevel", "HEAD")
     if raw is None:
         return None
@@ -847,6 +994,131 @@ def repo_toplevel_and_head(cwd: Path | None) -> tuple[Path, str] | None:
         return Path(lines[0]).resolve(), lines[1]
     except OSError:
         return None
+
+
+# The repository's own configuration file, read to see whether it moves
+# the working tree git names; larger than any configuration a checkout
+# carries.
+_CONFIG_LIMIT = 1 << 20
+
+# The one ``bare`` line that leaves the working tree where it is: a plain
+# false, as ``git init`` writes it. Matched against a lowercased line.
+_BARE_FALSE = re.compile(rb"[ \t]*bare[ \t]*=[ \t]*(?:false|no|off|0)[ \t]*\r?")
+
+
+def toplevel_and_head_from_files(cwd: Path | None) -> tuple[Path, str] | None:
+    """`repo_toplevel_and_head` read from the repository's files, with no
+    process: the root git prints for `cwd` and the commit HEAD names. None
+    wherever the files do not settle what git would print.
+
+    The head is `githead.head_sha` of the repository the walk up from
+    `cwd` finds (`githead.find_gitdir`). The root is the directory holding
+    that walk's ``.git`` entry, which is the root git prints unless the
+    repository's own configuration moves it: ``core.worktree`` names
+    another directory and a true ``core.bare`` leaves none, and git reads
+    both from ``config`` in the common directory and, under
+    ``extensions.worktreeConfig``, from ``config.worktree`` in the git
+    directory, and from no other file (a global or ``include.path`` file
+    and a ``-c`` do not move a discovered repository's working tree). A
+    mention of either key in those files declines (`_config_moves_
+    worktree`), and so does everything `githead` declines.
+
+    The root is spelled the way git prints it (`_spelled_as_git`), which
+    is the spelling the pathspec resolution needs: an absolute anchor is
+    made relative to it by string prefix.
+    """
+    if cwd is None:
+        return None
+    gd = githead.find_gitdir(cwd)
+    if gd is None:
+        return None
+    head = githead.head_sha(gd)
+    if head is None or _config_moves_worktree(gd):
+        return None
+    root = _spelled_as_git(gd.worktree_root)
+    if root is None:
+        return None
+    return root, head
+
+
+def _read_small(path: Path, limit: int) -> bytes | None:
+    """Up to ``limit + 1`` bytes of the regular file `path`, b"" when it
+    does not exist, None when it cannot be read or is not a regular file.
+    The open does not block, so a FIFO fails instead of waiting."""
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(path, flags)
+    except FileNotFoundError:
+        return b""
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        chunks: list[bytes] = []
+        size = 0
+        while size <= limit:
+            chunk = os.read(fd, limit + 1 - size)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+        return b"".join(chunks)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
+def _config_moves_worktree(gd: githead.GitDir) -> bool:
+    """Whether the repository's own configuration could make git name a
+    working tree other than the directory holding ``.git``. Any mention of
+    ``worktree`` (the key, ``extensions.worktreeConfig``, a name that
+    merely contains the word) reads as yes; so does a line naming
+    ``bare`` with anything but a plain false, and a file that cannot be
+    read. The answer only decides whether the files or git answer, so a
+    false yes costs one process and a false no would be a wrong root."""
+    for path in (gd.commondir / "config", gd.gitdir / "config.worktree"):
+        data = _read_small(path, _CONFIG_LIMIT)
+        if data is None or len(data) > _CONFIG_LIMIT:
+            return True
+        text = data.lower()
+        if b"worktree" in text:
+            return True
+        for line in text.split(b"\n"):
+            if b"bare" in line and _BARE_FALSE.fullmatch(line) is None:
+                return True
+    return False
+
+
+def _spelled_as_git(root: Path) -> Path | None:
+    """`root` spelled the way git prints a working tree's root.
+
+    Git names the root from the kernel's path for the directory
+    (``getcwd``), which gives each component the case and Unicode form the
+    directory holds it in. `githead` walks from ``os.path.realpath``,
+    which keeps the spelling it was handed, so on a filesystem that
+    ignores case or normalization (macOS's default) a caller that named
+    ``~/documents`` for ``~/Documents`` gets a root git would not print.
+    On macOS the kernel's spelling is read back with ``F_GETPATH``; None
+    when the directory cannot be opened. Elsewhere the realpath stands,
+    as it does on every filesystem that holds one spelling per name.
+    """
+    if sys.platform != "darwin":
+        return root
+    import fcntl
+
+    try:
+        fd = os.open(root, os.O_RDONLY | os.O_CLOEXEC)
+    except OSError:
+        return None
+    try:
+        raw = fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024))
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    return Path(os.fsdecode(raw.split(b"\0", 1)[0]))
 
 
 def head_sha(cwd: Path | None) -> str | None:
@@ -932,14 +1204,19 @@ class ReachableWalk:
 
 
 # The reachable walk is memoised per process, keyed on (root, anchor,
-# head): the range between two named commits never changes, so an entry
-# is never stale, and the key's `head` is what lets a long-lived server
-# stop reusing a walk the moment a commit lands. Bounded so a store with
-# many distinct anchors cannot grow it without limit. A None entry (the
-# anchor is not an ancestor of that head) is memoised too, so a search
-# over many hits at one dead anchor forks once.
-_WALK_MEMO_CAP = 32
+# head): the walk names both ends (`_walk_reachable` runs to the key's
+# head, not to whatever HEAD names by then), and the range between two
+# named commits never changes, so an entry is never stale, and the key's
+# `head` is what lets a long-lived server stop reusing a walk the moment
+# a commit lands. Bounded so a store with many distinct anchors cannot
+# grow it without limit. A None entry (the anchor is not an ancestor of
+# that head) is memoised too, so a search over many hits at one dead
+# anchor forks once; a None because git could not run at all is not
+# (`unanswered_git_calls`). Registered with `_caches`, which empties it
+# before each test.
+_WALK_MEMO_CAP = 128
 _WALK_MEMO: OrderedDict[tuple[str, str, str], ReachableWalk | None] = OrderedDict()
+_caches.register(_WALK_MEMO.clear)
 
 # Record separator for the walk's format line, the same control
 # character the patch stream carries: a path cannot contain it.
@@ -956,9 +1233,10 @@ def commits_since_anchor(
     """The reachable walk from `anchor` to HEAD, or None when the count
     must fall back to author-date space.
 
-    One git process per distinct (root, anchor, head), memoised — see
-    `_WALK_MEMO`. ``git log --boundary --name-only anchor..HEAD`` lists
-    every commit in the range with the paths it changed, and marks the
+    One git process per distinct (root, anchor, head), memoised (see
+    `_WALK_MEMO`). ``git log --boundary --name-only anchor..<head>``,
+    the head named by its hash, lists every commit in the range with
+    the paths it changed, and marks the
     range's boundary commits with ``-`` in ``%m``: the anchor is an
     ancestor of HEAD exactly when it appears among them (a boundary
     commit is a parent of a commit reachable from HEAD, and an ancestor
@@ -971,8 +1249,9 @@ def commits_since_anchor(
     hash (never handed to git as a revision), git cannot answer, the
     anchor does not resolve here, it is not an ancestor of HEAD (a
     rewritten history), or HEAD sits behind it. `toplevel` and `head`
-    skip the ``rev-parse`` when the caller already has them, the way
-    the batch surfaces thread a once-resolved root.
+    skip the root and head resolution (`repo_toplevel_and_head`) when
+    the caller already has them, the way the batch surfaces thread a
+    once-resolved root.
     """
     if cwd is None or not is_full_commit_sha(anchor):
         return None
@@ -985,14 +1264,19 @@ def commits_since_anchor(
     if key in _WALK_MEMO:
         _WALK_MEMO.move_to_end(key)
         return _WALK_MEMO[key]
+    unanswered = _unanswered
     walk = _walk_reachable(toplevel, anchor, head)
-    _WALK_MEMO[key] = walk
-    while len(_WALK_MEMO) > _WALK_MEMO_CAP:
-        _WALK_MEMO.popitem(last=False)
+    if _unanswered == unanswered:
+        _WALK_MEMO[key] = walk
+        while len(_WALK_MEMO) > _WALK_MEMO_CAP:
+            _WALK_MEMO.popitem(last=False)
     return walk
 
 
 def _walk_reachable(toplevel: Path, anchor: str, head: str) -> ReachableWalk | None:
+    """The walk from `anchor` to `head`, both named: the memo keys it on
+    `head`, so the range must end there even if HEAD has moved since the
+    caller read it."""
     if anchor == head:
         return ReachableWalk(anchor=anchor, head=head, commits=(), touched={})
     raw = _git(
@@ -1010,7 +1294,7 @@ def _walk_reachable(toplevel: Path, anchor: str, head: str) -> ReachableWalk | N
         "--no-renames",
         f"--format={_WALK_MARK}%m%H",
         "--name-only",
-        f"{anchor}..HEAD",
+        f"{anchor}..{head}",
         timeout=5.0,
         empty_ok=True,
     )
@@ -1150,7 +1434,19 @@ def _instant(stamp: datetime) -> float:
     return stamp.timestamp()
 
 
-def commit_author_timestamps(cwd: Path | None) -> list[datetime] | None:
+# The whole-history author dates, memoised per (root, head): the log names
+# the head by its hash, whose history never changes, and a commit landing
+# moves the head and so the key. A process serves the few checkouts its
+# callers stand in, so the bound is small. A None is never stored.
+# Registered with `_caches`, which empties it before each test.
+_TIMESTAMPS_MEMO_CAP = 16
+_TIMESTAMPS_MEMO: OrderedDict[tuple[str, str], list[datetime]] = OrderedDict()
+_caches.register(_TIMESTAMPS_MEMO.clear)
+
+
+def commit_author_timestamps(
+    cwd: Path | None, *, located: tuple[Path, str] | None = None
+) -> list[datetime] | None:
     """All author timestamps from the HEAD history of `cwd`'s repo.
 
     Returns a list of timezone-aware datetimes, or None on any failure
@@ -1177,9 +1473,41 @@ def commit_author_timestamps(cwd: Path | None) -> list[datetime] | None:
     Used by the health rollup to count commits-since for many memories
     from one git invocation; a per-memory ``git rev-list --count`` would
     otherwise pay a fork+exec for every row.
+
+    MEMOISED per (root, head) (`_TIMESTAMPS_MEMO`). `located` is the root
+    and the head as the caller already resolved them for `cwd`; without
+    it they are read from the repository's files
+    (`toplevel_and_head_from_files`). The log then names the head by its
+    hash, so the list stored under a head is that head's history even if
+    a commit lands while git runs. Where the files do not settle the pair
+    and the caller passed none, the log runs from HEAD uncached. A hit
+    returns the stored list itself: every caller only bisects it. The key
+    does not see a history rewritten under an unchanged head: a shallow
+    clone deepened in place, a ``git replace`` ref or a graft reads the
+    earlier walk until the head moves.
     """
     if cwd is None:
         return None
+    if located is None:
+        located = toplevel_and_head_from_files(cwd)
+    if located is None:
+        return _read_author_timestamps(cwd, "HEAD")
+    key = (str(located[0]), located[1])
+    stored = _TIMESTAMPS_MEMO.get(key)
+    if stored is not None:
+        _TIMESTAMPS_MEMO.move_to_end(key)
+        return stored
+    stamps = _read_author_timestamps(cwd, located[1])
+    if stamps is not None:
+        _TIMESTAMPS_MEMO[key] = stamps
+        while len(_TIMESTAMPS_MEMO) > _TIMESTAMPS_MEMO_CAP:
+            _TIMESTAMPS_MEMO.popitem(last=False)
+    return stamps
+
+
+def _read_author_timestamps(cwd: Path, revision: str) -> list[datetime] | None:
+    """`commit_author_timestamps`' read: the author dates of every commit
+    reachable from `revision`, ascending, or None."""
     # timeout=5.0, not the 1.0 default: the default is calibrated for
     # write-path origin capture, where origin is nice-to-have and a
     # hanging git must never stall a memory_write. This log and its two
@@ -1188,7 +1516,7 @@ def commit_author_timestamps(cwd: Path | None) -> list[datetime] | None:
     # on a slow host (observed: the windows-latest CI runner) times out,
     # collapsing a real count into the omitted/conservative branch. Same
     # ceiling `commit_patch_stream` already runs at.
-    raw = _git(cwd, "log", "--format=%aI", "HEAD", timeout=5.0)
+    raw = _git(cwd, "log", "--format=%aI", revision, timeout=5.0)
     if raw is None:
         return None
     out: list[datetime] = []
@@ -1777,5 +2105,7 @@ __all__ = [
     "repos_match",
     "resolve_repo_pathspecs",
     "should_include_for_caller",
+    "toplevel_and_head_from_files",
+    "unanswered_git_calls",
     "worktrees_match",
 ]

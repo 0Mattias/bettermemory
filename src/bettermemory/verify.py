@@ -2969,10 +2969,12 @@ def compute_commit_drift(
     # that anchor is still an ancestor of HEAD; `commits_since_anchor`
     # answers None otherwise (a rewritten history, a checkout that moved
     # backwards, an anchor this repository does not have) and the
-    # author-date count below stands. One `rev-parse` for the root and
-    # the head together, then the walk, memoised per (root, anchor,
-    # head) so a search over many hits verified at one anchor forks it
-    # once.
+    # author-date count below stands. The root and the head together,
+    # read from the repository's files (one `rev-parse` where they do not
+    # settle them), then the walk, memoised per (root, anchor, head) so a
+    # search over many hits verified at one anchor forks it once. The
+    # whole-history log below is memoised per (root, head), shared with
+    # the per-hit search surface.
     walk: ReachableWalk | None = None
     toplevel: Path | None = None
     if verified_head is not None:

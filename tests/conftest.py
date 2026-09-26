@@ -24,6 +24,7 @@ import pytest
 
 from bettermemory.config import BehaviorConfig, Config, ScopesConfig, StorageConfig
 from bettermemory.session import SessionState
+from bettermemory import _caches
 from bettermemory import _daemon_client
 from bettermemory import config as _config
 from bettermemory import log as _log
@@ -180,6 +181,19 @@ def storage_dir(
         if state is not None:
             _daemon_client.shutdown_daemon(state, timeout=10.0)
         state_file.unlink(missing_ok=True)
+
+
+@pytest.fixture(autouse=True)
+def clear_caches() -> None:
+    """Every test starts with the package's module-level caches empty.
+
+    A cache would otherwise hand a test the value an earlier test
+    computed, and a test that counts git processes or patches what a
+    cache reads would measure the earlier test's work instead of its
+    own. Each module registers its caches' clearers with
+    ``bettermemory._caches`` when it is imported.
+    """
+    _caches.clear_all()
 
 
 @pytest.fixture
