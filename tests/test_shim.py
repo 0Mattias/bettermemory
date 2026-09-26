@@ -95,9 +95,14 @@ async def test_shim_starts_a_daemon_when_none_answers(
             await session.initialize()
             listed = await session.list_tools()
             first_answer = time.monotonic() - started
+            # Checked while the shim serves. On Windows the SDK's stdio
+            # client puts the shim in a job object that permits no breakaway
+            # and kills its members when the session ends, so the daemon the
+            # shim started goes with it; a detached daemon outliving the
+            # process that started it is test_daemon_lifecycle's to check.
+            state = _wait_running(tmp_path)
+            assert health(state["port"]) is not None
     assert {tool.name for tool in listed.tools} == NINE
-    state = _wait_running(tmp_path)
-    assert health(state["port"]) is not None
     # U5-P5: the cold path answers its first tools/list within 1.5 s;
     # MISSED-if over 3 s. The assertion holds the MISSED-if bound.
     assert first_answer < 3.0
@@ -195,10 +200,12 @@ async def test_shim_restarts_a_daemon_of_another_version(
                 assert init.server_info.version == __version__
                 listed = await session.list_tools()
                 assert {tool.name for tool in listed.tools} == NINE
-        assert fake.shutdown_calls == 1
-        state = _wait_running(tmp_path)
-        assert state["version"] == __version__
-        assert state["port"] != fake.server_address[1]
+                # While the shim serves, for the reason given in
+                # test_shim_starts_a_daemon_when_none_answers.
+                assert fake.shutdown_calls == 1
+                state = _wait_running(tmp_path)
+                assert state["version"] == __version__
+                assert state["port"] != fake.server_address[1]
     finally:
         fake.shutdown()
         fake.server_close()
