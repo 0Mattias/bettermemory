@@ -12,7 +12,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from types import ModuleType
 from typing import Any
 
@@ -89,6 +89,15 @@ def test_the_golden_fixture_migrates_and_mirrors_identically(tmp_path: Path) -> 
     assert artifact["verify"]["status"] == "ok"
     assert artifact["size"]["sqlite_bytes"] > 0
     assert "differing" in harness.summary(artifact)
+
+
+def test_the_source_root_is_recorded_in_posix_form() -> None:
+    """The committed artifact names the fixture with forward slashes, and a
+    run on any platform records the same string for it; the windows-latest
+    leg recorded `tests\\fixtures\\v8\\store`."""
+    checkout = PureWindowsPath("D:/a/bettermemory/bettermemory")
+    fixture = checkout / "tests" / "fixtures" / "v8" / "store"
+    assert harness._root_label(fixture, checkout) == "tests/fixtures/v8/store"
 
 
 def test_the_committed_artifact_matches_the_tree() -> None:

@@ -49,7 +49,7 @@ import tempfile
 import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 
 _HERE = Path(__file__).resolve().parent
@@ -183,6 +183,16 @@ def _compare_trees(v8_root: Path, mirror: Path) -> dict[str, Any]:
     }
 
 
+def _root_label(v8_root: PurePath, checkout: PurePath = _ROOT) -> str:
+    """The input as the artifact names it: inside the checkout, the path
+    relative to it in POSIX form, which is how the committed artifact names
+    the golden fixture whatever platform wrote it; outside, the path as
+    given."""
+    if v8_root.is_relative_to(checkout):
+        return v8_root.relative_to(checkout).as_posix()
+    return str(v8_root)
+
+
 def _index_order(v8_root: Path) -> list[str] | None:
     """The memory ids in the v8 index's rowid order, or None when the
     directory holds no index. Opened immutable: nothing is created beside
@@ -280,12 +290,7 @@ def run_migration(scratch: Path, v8_root: Path) -> dict[str, Any]:
     return {
         "kind": "migrate-v8/parity",
         "provenance": _provenance(),
-        "source": {
-            "root": str(v8_root.relative_to(_ROOT))
-            if v8_root.is_relative_to(_ROOT)
-            else str(v8_root),
-            "bytes": source_bytes,
-        },
+        "source": {"root": _root_label(v8_root), "bytes": source_bytes},
         "migrate": {**first.to_dict(), "seconds": round(migrate_seconds, 3)},
         "second_run": {
             "memories": second.memories["imported"],
