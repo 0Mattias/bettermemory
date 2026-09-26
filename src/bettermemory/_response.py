@@ -15,6 +15,7 @@ a single multi-hit response uses one consistent "now" across rows.
 from __future__ import annotations
 
 import bisect
+import threading
 from collections import OrderedDict
 from collections.abc import Sequence
 from datetime import datetime, timezone
@@ -35,18 +36,20 @@ from .identity import SOURCE_PROCESS_CWD, Actor
 from .origin import (
     Origin,
     ReachableWalk,
+    attribute_files_signature,
     commit_author_timestamps,
     commits_since_anchor,
+    failed_git_calls,
+    gitattributes_signature,
     repo_toplevel_and_head,
     repos_match,
     should_include_for_caller,
     toplevel_and_head_from_files,
-    unanswered_git_calls,
 )
 from .time_utils import isoformat_utc as _isoformat_utc
 from .time_utils import isoformat_utc_optional as _isoformat_utc_optional
 from .time_utils import parse_event_ts
-from .claims import Claim, load_claims
+from .claims import Claim, governed_claim_paths, load_claims
 from .verify import (
     BASIS_AUTHOR_DATE,
     BASIS_REACHABILITY,
@@ -98,23 +101,91 @@ isoformat_optional = _isoformat_utc_optional
 # Ranking never reads it: the usage multipliers left in 9.0.0.
 NEGATIVE_OUTCOME_WINDOW_DAYS = 30
 
-# The per-hit commit-drift memo of `ResponseBuilder.attach_commit_drift_
-# counts`: one hit's resolution, keyed on every input of it. The key is
-# the repository root and the commit HEAD names as the repository's files
-# give them, the caller's directory, the memory's anchors (derived from
-# its body and verified_paths) and its declared claims as stored, the
-# verify instant and the stamp's recorded head; the value is the resolved
-# count, basis and claim detail, or None for a hit whose count is omitted.
-# A commit moves the head and so every key; a new stamp, a rewritten body
-# or a changed claim changes its own row's. The values are frozen, so a
+# The per-hit commit-drift memo of
+# `ResponseBuilder.attach_commit_drift_counts`: one hit's resolution, keyed
+# on every input of it. The key is the repository root and the commit HEAD
+# names as the repository's files give them, the caller's directory, the
+# memory's anchors (derived from its body and verified_paths) and its
+# declared claims as stored, the verify instant, the stamp's recorded head,
+# and for a hit with a governed claim the attribute files its patch stream
+# reads (`origin.attribute_files_signature` and
+# `origin.gitattributes_signature`; None for every other hit, which reads
+# none); the value is the resolved count, basis and claim detail, or None
+# for a hit whose count is omitted. A commit moves the head and so every
+# key; a new stamp, a rewritten body, a changed claim or an edited
+# attributes file changes its own row's. A value computed while a git
+# process failed is never stored (`origin.failed_git_calls`). What the key
+# does not see (git's configuration outside the repository's config file, a
+# core.attributesFile set there, a history rewritten under an unchanged
+# head, and the rest) is listed on
+# `ResponseBuilder.attach_commit_drift_counts`. The values are frozen, so a
 # hit can share one without a later hit's edit reaching it. Bounded LRU;
-# registered with `_caches`, which empties it before each test.
+# the lock makes each look-up-and-touch and each merge-and-evict atomic,
+# and the resolution runs outside it. Registered with `_caches`, which
+# empties it before each test.
 _DRIFT_MEMO_CAP = 5000
 _DriftKey: TypeAlias = tuple[
-    str, str, str, tuple[str, ...], tuple[str, ...], datetime, str | None
+    str,
+    str,
+    str,
+    tuple[str, ...],
+    tuple[str, ...],
+    datetime,
+    str | None,
+    tuple[object, ...] | None,
 ]
 _DRIFT_MEMO: OrderedDict[_DriftKey, ResolvedCommitDrift | None] = OrderedDict()
-_caches.register(_DRIFT_MEMO.clear)
+_DRIFT_MEMO_LOCK = threading.Lock()
+
+
+@_caches.register
+def _clear_drift_memo() -> None:
+    with _DRIFT_MEMO_LOCK:
+        _DRIFT_MEMO.clear()
+
+
+def _recall_drift(key: _DriftKey) -> tuple[bool, ResolvedCommitDrift | None]:
+    """Whether the per-hit memo holds `key`, and the value it holds; a hit
+    becomes the most recently used entry."""
+    with _DRIFT_MEMO_LOCK:
+        if key in _DRIFT_MEMO:
+            _DRIFT_MEMO.move_to_end(key)
+            return True, _DRIFT_MEMO[key]
+    return False, None
+
+
+def _remember_drift(resolved: dict[_DriftKey, ResolvedCommitDrift | None]) -> None:
+    """Merge one search's resolutions into the per-hit memo and evict the
+    least recently used entries past `_DRIFT_MEMO_CAP`."""
+    with _DRIFT_MEMO_LOCK:
+        _DRIFT_MEMO.update(resolved)
+        while len(_DRIFT_MEMO) > _DRIFT_MEMO_CAP:
+            _DRIFT_MEMO.popitem(last=False)
+
+
+# Stands for the repository-wide attribute files before a search has read
+# them.
+_UNREAD = object()
+
+
+def _attributes_held(
+    cwd: Path,
+    root: Path,
+    repository: object,
+    chains: dict[tuple[str, ...], tuple[object, ...] | None],
+) -> bool:
+    """Whether the attribute files a search keyed its hits on still read as
+    they did when it keyed them: `repository` is what `attribute_files_
+    signature` gave, `chains` what `gitattributes_signature` gave for each
+    set of governed files. A half that keyed nothing (never read, or None)
+    is not read again."""
+    if repository is not _UNREAD and repository is not None:
+        if attribute_files_signature(cwd, root) != repository:
+            return False
+    return all(
+        chain is None or gitattributes_signature(root, specs) == chain
+        for specs, chain in chains.items()
+    )
 
 
 class ResponseBuilder:
@@ -692,24 +763,27 @@ class ResponseBuilder:
         (root, head): `commit_author_timestamps` (``git log --format=%aI
         <head>``). Paid per hit: a `bisect_right` against the
         sorted timestamp list and `commit_drift_anchor_paths` (both pure
-        CPU) — plus, for every hit that reaches the narrowing (count > 0
-        AND at least one claim anchor or declared claim), git work whose
-        shape depends on the hit's BASIS. An author-date hit (no
-        `verified_head` on the record, or one HEAD no longer descends
-        from) forks the path-filtered
+        CPU), a handful of stats of the attribute files for a hit with a
+        governed claim (its memo key) — plus, for every hit that reaches
+        the narrowing (count > 0 AND at least one claim anchor or declared
+        claim), git work whose shape depends on the hit's BASIS. An
+        author-date hit (no `verified_head` on the record, or one HEAD no
+        longer descends from) forks the path-filtered
         `commit_author_timestamps_touching_pathspecs` log. A reachability
         hit forks the walk from its anchor instead (`commits_since_anchor`,
         ``git log --boundary --name-only anchor..HEAD``), memoised per
         distinct anchor, so every further hit verified at the same commit
         reads its count off the walk without a process; a reachability hit
         whose range touched none of its anchors pays the phantom
-        classification log on top, the same log a quiescent hit pays. The
-        cold git-process count is therefore ``1 + <author-date hits that
-        fork a path-filtered log> + <distinct reachability anchors walked>
-        + <hits that needed the phantom classification>``: every drifting
-        author-date hit, one walk per anchor, plus every quiescent
-        (count == 0) anchored hit with at least one in-repo anchor — the
-        phantom half of the applicability classification
+        classification log on top, the same log a quiescent hit pays. A
+        dead anchor (one whose walk comes back None) is walked once per
+        search, remembered for that search only, and its hits count as
+        author-date hits. The cold git-process count is therefore ``1 +
+        <author-date hits that fork a path-filtered log> + <distinct
+        anchors walked> + <hits that needed the phantom classification>``:
+        every drifting author-date hit, one walk per anchor, plus every
+        quiescent (count == 0) anchored hit with at least one in-repo
+        anchor — the phantom half of the applicability classification
         (`verify._quiescent_drift_applicable`; an all-escaping anchor set
         is classified without git). Bounded above by ``1 + 2 * len(hits)``
         (`max_results` caps that at 50 on the MCP surface, 30 on the
@@ -723,20 +797,36 @@ class ResponseBuilder:
         WARM, the count is zero. Each hit's resolution is memoised
         (`_DRIFT_MEMO`) on exactly its inputs: the root, the head, the
         caller's directory, the anchors, the declared claims, the verify
-        instant and `verified_head`. The same search at the same head
-        forks nothing; a commit moves the head and so every key, and a new
-        stamp, a rewritten body or a changed claim changes its own row's.
-        A value is not kept when a git process could not run while it was
-        computed (a timeout folds into the conservative count, which the
-        uncached code answers on that call and not the next), nor when the
-        head moved before the search ended (the path-filtered logs read
-        HEAD as they run). Where the files do not settle the root and the
-        head, ``git rev-parse --show-toplevel HEAD`` answers them and
-        neither memo is used: that shape pays ``2 + ...`` on every search,
-        the walks memoised per (root, anchor, head) as before. The key
-        does not see the working tree's symbolic links on an anchor's path
-        or the home directory ``~`` expands to (`origin.resolve_repo_
-        pathspecs` reads both), git's own configuration, or a history
+        instant and `verified_head`, and for a hit with a governed claim
+        the attribute files its patch stream reads (the ``.gitattributes``
+        on each governed file's path, ``info/attributes``, the global
+        attributes file and the repository's ``config``); a governed path
+        that is a directory or a pattern, or a ``config`` that names an
+        attributes file or tree, keeps such a hit out of the memo. The
+        same search at the same head forks nothing; a commit moves the
+        head and so every key, and a new stamp, a rewritten body, a
+        changed claim or an edited attributes file changes its own row's.
+        A failure is never memoised. A value is not kept when any git
+        process its resolution ran failed, whether git exited non-zero or
+        could not run (the fallback taken on a failure is what the
+        uncached code answers on that call and not the next, so such a hit
+        resolves again on the next search), and no memo keeps a walk that
+        came back None. Nothing is kept when the head or an attributes
+        file moved before the search ended (the path-filtered logs read
+        HEAD, and the patch stream the attributes, as they run). Where the
+        files do not settle the root and the head, ``git rev-parse
+        --show-toplevel HEAD`` answers them and neither memo is used: that
+        shape pays ``2 + ...`` on every search, the walks memoised per
+        (root, anchor, head) as before. The key does not see the working
+        tree's symbolic links on an anchor's path or the home directory
+        ``~`` expands to (`origin.resolve_repo_pathspecs` reads both),
+        git's configuration outside the repository's ``config`` (the
+        global and system files, a file an include names, the environment,
+        and what they set: a ``core.attributesFile`` naming a file other
+        than the default, a diff driver, the program a textconv runs), the
+        system attributes file, the repository's ``config`` for a hit with
+        no governed claim, an attributes file rewritten in place at the
+        same size within one tick of the filesystem's clock, or a history
         rewritten under an unchanged head (a deepened shallow clone, a
         replace ref, a graft); a change there reads the memoised value
         until the head moves.
@@ -811,8 +901,17 @@ class ResponseBuilder:
         # memory memory_show reads as fresh — defeating the policy on
         # its highest-traffic surface.
         memory_by_id = {m.id: m for m in memories}
-        # What this search resolved, stored at the end if the head held.
+        # What this search resolved, stored at the end if nothing it is
+        # keyed on moved while it ran.
         resolved_here: dict[_DriftKey, ResolvedCommitDrift | None] = {}
+        # The walks that came back None in this search, and whether git
+        # failed on them: several hits at one dead anchor fork one walk.
+        dead_here: dict[tuple[str, str, str], bool] = {}
+        # The attribute files the claim-carrying hits key on: the
+        # repository's read once per search, the working tree's once per
+        # set of governed files.
+        repository_attributes: object = _UNREAD
+        attribute_chains: dict[tuple[str, ...], tuple[object, ...] | None] = {}
         for hit_dict, hit in zip(out, hits):
             if hit.last_verified_at is None:
                 continue
@@ -847,25 +946,45 @@ class ResponseBuilder:
             # reads (the head's history, `timestamps`, is read under the
             # same root and head). Only where the files settled the root and
             # the head: the check after the loop reads the head from them
-            # again, and the git path runs uncached, as before the memo.
+            # again, and the git path runs uncached, as before the memo. A
+            # governed claim's patch stream also reads the attribute files,
+            # so its hit keys on them, and runs uncached where they do not
+            # settle it; no other hit reads them.
             key: _DriftKey | None = None
             if settled is not None:
-                key = (
-                    str(settled[0]),
-                    settled[1],
-                    str(cwd_path),
-                    anchors,
-                    tuple(record.claims),
-                    since,
-                    record.verified_head,
-                )
-            if key is not None and key in _DRIFT_MEMO:
-                _DRIFT_MEMO.move_to_end(key)
-                resolved = _DRIFT_MEMO[key]
-            elif key is not None and key in resolved_here:
+                governed = tuple(governed_claim_paths(parsed_claims))
+                attributes: tuple[object, ...] | None = None
+                if governed:
+                    if repository_attributes is _UNREAD:
+                        repository_attributes = attribute_files_signature(
+                            cwd_path, settled[0]
+                        )
+                    if governed not in attribute_chains:
+                        attribute_chains[governed] = gitattributes_signature(
+                            settled[0], governed
+                        )
+                    chain = attribute_chains[governed]
+                    if repository_attributes is not None and chain is not None:
+                        attributes = (repository_attributes, chain)
+                if not governed or attributes is not None:
+                    key = (
+                        str(settled[0]),
+                        settled[1],
+                        str(cwd_path),
+                        anchors,
+                        tuple(record.claims),
+                        since,
+                        record.verified_head,
+                        attributes,
+                    )
+            found, resolved = (False, None) if key is None else _recall_drift(key)
+            if not found and key is not None and key in resolved_here:
                 resolved = resolved_here[key]
-            else:
-                unanswered = unanswered_git_calls()
+            elif not found:
+                # Kept only when every git process the resolution ran
+                # answered: a fallback taken on a failure is what the
+                # uncached code serves on this call and not on the next.
+                failed = failed_git_calls()
                 resolved = _resolve_hit_drift(
                     cwd=cwd_path,
                     toplevel=toplevel,
@@ -875,8 +994,9 @@ class ResponseBuilder:
                     claims=parsed_claims,
                     since=since,
                     verified_head=record.verified_head,
+                    dead=dead_here,
                 )
-                if key is not None and unanswered_git_calls() == unanswered:
+                if key is not None and failed_git_calls() == failed:
                     resolved_here[key] = resolved
             if resolved is None:
                 # The anchors all escape this repo or are phantoms: the
@@ -924,14 +1044,20 @@ class ResponseBuilder:
                 path_drift_missing=len(hit.path_drift_claim_anchored_missing_paths),
                 commit_drift_count=count,
             )
-        # Keep this search's resolutions only while the head they are keyed
-        # on is still the head: the path-filtered logs read HEAD as they
-        # run, so a commit landing mid-search would otherwise store the next
-        # head's answer under this one's key.
-        if resolved_here and toplevel_and_head_from_files(cwd_path) == settled:
-            _DRIFT_MEMO.update(resolved_here)
-            while len(_DRIFT_MEMO) > _DRIFT_MEMO_CAP:
-                _DRIFT_MEMO.popitem(last=False)
+        # Keep this search's resolutions only while what they are keyed on
+        # reads as it did: the path-filtered logs read HEAD as they run, and
+        # the patch stream the attribute files, so a commit landing or an
+        # attributes file changing mid-search would otherwise store the
+        # next state's answer under this one's key.
+        if (
+            resolved_here
+            and settled is not None
+            and toplevel_and_head_from_files(cwd_path) == settled
+            and _attributes_held(
+                cwd_path, settled[0], repository_attributes, attribute_chains
+            )
+        ):
+            _remember_drift(resolved_here)
 
     def attach_depends_on_resolved(  # type: ignore[no-untyped-def]
         self,
@@ -1430,19 +1556,25 @@ def _resolve_hit_drift(
     claims: Sequence[Claim],
     since: datetime,
     verified_head: str | None,
+    dead: dict[tuple[str, str, str], bool],
 ) -> ResolvedCommitDrift | None:
     """One hit's commit drift as `ResponseBuilder.attach_commit_drift_
     counts` stamps it: the count, the basis it was measured on and the
     claim detail, or None when the count is omitted. `timestamps` is the
     head's whole history; everything else read here is an argument, and
-    all of it is in the per-hit memo's key (`_DRIFT_MEMO`)."""
+    all of it is in the per-hit memo's key (`_DRIFT_MEMO`), with the
+    attribute files a governed claim's patch stream reads. `dead` is the
+    search's record of the walks that came back None
+    (`origin.commits_since_anchor`)."""
     # The basis, per hit, by the rule `verify.compute_commit_drift`
     # applies: the reachable walk from the stamp's recorded HEAD when the
     # record carries one and HEAD still descends from it, the author-date
     # bisect otherwise.
     walk: ReachableWalk | None = None
     if verified_head is not None and head is not None:
-        walk = commits_since_anchor(cwd, verified_head, toplevel=toplevel, head=head)
+        walk = commits_since_anchor(
+            cwd, verified_head, toplevel=toplevel, head=head, dead=dead
+        )
     if walk is not None:
         count = len(walk.commits)
         basis = BASIS_REACHABILITY

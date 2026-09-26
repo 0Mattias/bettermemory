@@ -1948,7 +1948,9 @@ def test_the_walk_is_memoised_per_head(
 ) -> None:
     """One process per (root, anchor, head); a commit landing changes
     the head and so the key, so a long-lived server never reuses a walk
-    the tree has moved past. A dead anchor is memoised as None too."""
+    the tree has moved past. A None is never memoised: each call for a
+    dead anchor forks, unless the caller passes the `dead` mapping it
+    keeps for one pass, which forks once."""
     from bettermemory import origin as origin_module
     from bettermemory.origin import commits_since_anchor, repo_toplevel_and_head
 
@@ -1971,7 +1973,16 @@ def test_the_walk_is_memoised_per_head(
 
     assert commits_since_anchor(tmp_path, "b" * 40, toplevel=root, head=head) is None
     assert commits_since_anchor(tmp_path, "b" * 40, toplevel=root, head=head) is None
-    assert len(calls) == 2, "the dead anchor forked once"
+    assert len(calls) == 3, "a dead anchor forks on every call"
+    assert list(origin_module._WALK_MEMO) == [(str(root), shas["anchor"], head)]
+    dead: dict[tuple[str, str, str], bool] = {}
+    for _ in range(2):
+        walk = commits_since_anchor(
+            tmp_path, "b" * 40, toplevel=root, head=head, dead=dead
+        )
+        assert walk is None
+    assert len(calls) == 4, "within one pass the dead anchor forks once"
+    assert dead == {(str(root), "b" * 40, head): True}, "git failed on it"
 
     _commit_file(
         tmp_path, "d.txt", content="d\n", when=datetime(2025, 4, 1, tzinfo=timezone.utc)

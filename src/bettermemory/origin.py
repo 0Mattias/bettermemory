@@ -700,21 +700,45 @@ def _log_subcommand(args: tuple[str, ...]) -> str:
     return args[i] if i < len(args) else ""
 
 
-# How many git invocations could not run at all since import: no binary on
-# PATH, a timeout, an OSError from the spawn. Such a failure says nothing
-# about the repository, so the drift memos compare this count before and
-# after computing a value and keep the value only when it did not move.
-# Read through `unanswered_git_calls`.
+# How many git invocations could not run at all since import, on any
+# thread: no binary on PATH, a timeout, an OSError from the spawn. Read
+# through `unanswered_git_calls`.
 _unanswered = 0
 
 
 def unanswered_git_calls() -> int:
     """How many git invocations since import could not run at all (the
-    None `_git_result` returns). A memo reads it before and after a
-    computation and stores the result only when it is unchanged: a
-    conservative fallback taken because git timed out is what the
-    uncached code answers on that call, and not on the next one."""
+    None `_git_result` returns), on every thread. The drift memos read
+    `failed_git_calls` instead, which counts these and every other None
+    on the calling thread."""
     return _unanswered
+
+
+class _Failed(threading.local):
+    """The number of git calls on the current thread that came back None
+    from `_git` or `_git_result`, whatever the reason. Read through
+    `failed_git_calls`."""
+
+    count = 0
+
+
+_FAILED = _Failed()
+
+
+def failed_git_calls() -> int:
+    """How many git calls on the current thread have come back None from
+    `_git` or `_git_result`: git could not run, it exited non-zero, or
+    `_git` folded an empty output into None.
+
+    The drift readers fold each such None into a fallback (the unfiltered
+    count, the author-date basis, the could-not-ask applicability), and a
+    non-zero exit cannot be told from a failure that clears (an object
+    briefly unreadable, an I/O error, a lock) without reading git's
+    message. The uncached code takes the fallback on the call that met the
+    failure and not on the next one, so a memo reads this count before and
+    after computing a value and keeps the value only when it did not
+    move."""
+    return _FAILED.count
 
 
 def _git_result(
@@ -728,7 +752,8 @@ def _git_result(
     read. `_git` below folds both into one None for the callers that
     only want stdout; the probes that must tell "git said no" from "git
     could not be asked" (`_probe_worktree_root`, `commit_reachable`)
-    read this directly. Each None is counted (`unanswered_git_calls`).
+    read this directly. Each None is counted (`unanswered_git_calls`,
+    and on the calling thread `failed_git_calls`).
 
     Failure logging is tiered so the operationally interesting failures
     (missing binary, timeouts) reach the log at WARNING while the
@@ -764,6 +789,7 @@ def _git_result(
     except OSError as exc:
         log.warning("git invocation failed in %s: %s", cwd, exc)
     _unanswered += 1
+    _FAILED.count += 1
     return None
 
 
@@ -800,6 +826,7 @@ def _git(
     <specs>` listing no commit) apart from an actual failure (non-zero
     exit, missing binary, timeout — still None). Default False keeps the
     historical ``out or None`` collapse every other caller relies on.
+    Every None is counted on the calling thread (`failed_git_calls`).
 
     Failure logging is tiered so the common "not a repo" case stays
     silent while operationally interesting failures (missing binary,
@@ -823,11 +850,13 @@ def _git(
         return None
     if result.returncode != 0:
         _log_nonzero_exit(args, result, cwd)
+        _FAILED.count += 1
         return None
     out = result.stdout.strip()
-    if empty_ok:
+    if out or empty_ok:
         return out
-    return out or None
+    _FAILED.count += 1
+    return None
 
 
 def _git_remote_url_and_alternates(cwd: Path) -> tuple[str | None, tuple[str, ...]]:
@@ -1209,14 +1238,24 @@ class ReachableWalk:
 # named commits never changes, so an entry is never stale, and the key's
 # `head` is what lets a long-lived server stop reusing a walk the moment
 # a commit lands. Bounded so a store with many distinct anchors cannot
-# grow it without limit. A None entry (the anchor is not an ancestor of
-# that head) is memoised too, so a search over many hits at one dead
-# anchor forks once; a None because git could not run at all is not
-# (`unanswered_git_calls`). Registered with `_caches`, which empties it
-# before each test.
+# grow it without limit. Only a walk is stored, never a None: a None is
+# also what a git process that failed yields (an object briefly
+# unreadable, a timeout), and the fallback taken on a failure must not
+# outlive the call that met it. A caller that resolves many memories in
+# one pass keeps the Nones for that pass in its `dead` mapping
+# (`commits_since_anchor`). The lock makes each look-up-and-touch and each
+# insert-and-evict atomic; the walk runs outside it. Registered with
+# `_caches`, which empties it before each test.
 _WALK_MEMO_CAP = 128
-_WALK_MEMO: OrderedDict[tuple[str, str, str], ReachableWalk | None] = OrderedDict()
-_caches.register(_WALK_MEMO.clear)
+_WALK_MEMO: OrderedDict[tuple[str, str, str], ReachableWalk] = OrderedDict()
+_WALK_MEMO_LOCK = threading.Lock()
+
+
+@_caches.register
+def _clear_walk_memo() -> None:
+    with _WALK_MEMO_LOCK:
+        _WALK_MEMO.clear()
+
 
 # Record separator for the walk's format line, the same control
 # character the patch stream carries: a path cannot contain it.
@@ -1229,21 +1268,30 @@ def commits_since_anchor(
     *,
     toplevel: Path | None = None,
     head: str | None = None,
+    dead: dict[tuple[str, str, str], bool] | None = None,
 ) -> ReachableWalk | None:
     """The reachable walk from `anchor` to HEAD, or None when the count
     must fall back to author-date space.
 
-    One git process per distinct (root, anchor, head), memoised (see
-    `_WALK_MEMO`). ``git log --boundary --name-only anchor..<head>``,
-    the head named by its hash, lists every commit in the range with
-    the paths it changed, and marks the
-    range's boundary commits with ``-`` in ``%m``: the anchor is an
-    ancestor of HEAD exactly when it appears among them (a boundary
-    commit is a parent of a commit reachable from HEAD, and an ancestor
-    that is not HEAD itself is the parent of the range's oldest commit
-    on some path). An EMPTY listing means HEAD is reachable from the
-    anchor — the same commit, or a checkout that moved backwards — and
-    only the first of those is a measurement.
+    One git process per distinct (root, anchor, head), the walks memoised
+    (see `_WALK_MEMO`) and the Nones not.
+    ``git log --boundary --name-only anchor..<head>``, the head named by
+    its hash, lists every commit in the range with the paths it changed,
+    and marks the range's boundary commits with ``-`` in ``%m``: the
+    anchor is an ancestor of HEAD exactly when it appears among them (a
+    boundary commit is a parent of a commit reachable from HEAD, and an
+    ancestor that is not HEAD itself is the parent of the range's oldest
+    commit on some path). An EMPTY listing means HEAD is reachable from
+    the anchor — the same commit, or a checkout that moved backwards —
+    and only the first of those is a measurement.
+
+    `dead`, a mapping the caller keeps for one pass over many memories,
+    remembers each (root, anchor, head) whose walk came back None and
+    whether a git process failed for it. A later call for the same key in
+    that pass returns None without a process and counts the failure again
+    on the calling thread (`failed_git_calls`), so a caller that keeps a
+    value only when no git call failed judges every hit at that anchor as
+    it judged the first.
 
     None, and the author-date fallback, when: `anchor` is not a full
     hash (never handed to git as a revision), git cannot answer, the
@@ -1261,12 +1309,22 @@ def commits_since_anchor(
             return None
         toplevel, head = located
     key = (str(toplevel), anchor, head)
-    if key in _WALK_MEMO:
-        _WALK_MEMO.move_to_end(key)
-        return _WALK_MEMO[key]
-    unanswered = _unanswered
+    with _WALK_MEMO_LOCK:
+        stored = _WALK_MEMO.get(key)
+        if stored is not None:
+            _WALK_MEMO.move_to_end(key)
+            return stored
+    if dead is not None and key in dead:
+        if dead[key]:
+            _FAILED.count += 1
+        return None
+    failed = _FAILED.count
     walk = _walk_reachable(toplevel, anchor, head)
-    if _unanswered == unanswered:
+    if walk is None:
+        if dead is not None:
+            dead[key] = _FAILED.count != failed
+        return None
+    with _WALK_MEMO_LOCK:
         _WALK_MEMO[key] = walk
         while len(_WALK_MEMO) > _WALK_MEMO_CAP:
             _WALK_MEMO.popitem(last=False)
@@ -1437,11 +1495,19 @@ def _instant(stamp: datetime) -> float:
 # The whole-history author dates, memoised per (root, head): the log names
 # the head by its hash, whose history never changes, and a commit landing
 # moves the head and so the key. A process serves the few checkouts its
-# callers stand in, so the bound is small. A None is never stored.
-# Registered with `_caches`, which empties it before each test.
+# callers stand in, so the bound is small. A None is never stored. The
+# lock makes each look-up-and-touch and each insert-and-evict atomic; the
+# log runs outside it. Registered with `_caches`, which empties it before
+# each test.
 _TIMESTAMPS_MEMO_CAP = 16
 _TIMESTAMPS_MEMO: OrderedDict[tuple[str, str], list[datetime]] = OrderedDict()
-_caches.register(_TIMESTAMPS_MEMO.clear)
+_TIMESTAMPS_MEMO_LOCK = threading.Lock()
+
+
+@_caches.register
+def _clear_timestamps_memo() -> None:
+    with _TIMESTAMPS_MEMO_LOCK:
+        _TIMESTAMPS_MEMO.clear()
 
 
 def commit_author_timestamps(
@@ -1493,15 +1559,17 @@ def commit_author_timestamps(
     if located is None:
         return _read_author_timestamps(cwd, "HEAD")
     key = (str(located[0]), located[1])
-    stored = _TIMESTAMPS_MEMO.get(key)
-    if stored is not None:
-        _TIMESTAMPS_MEMO.move_to_end(key)
-        return stored
+    with _TIMESTAMPS_MEMO_LOCK:
+        stored = _TIMESTAMPS_MEMO.get(key)
+        if stored is not None:
+            _TIMESTAMPS_MEMO.move_to_end(key)
+            return stored
     stamps = _read_author_timestamps(cwd, located[1])
     if stamps is not None:
-        _TIMESTAMPS_MEMO[key] = stamps
-        while len(_TIMESTAMPS_MEMO) > _TIMESTAMPS_MEMO_CAP:
-            _TIMESTAMPS_MEMO.popitem(last=False)
+        with _TIMESTAMPS_MEMO_LOCK:
+            _TIMESTAMPS_MEMO[key] = stamps
+            while len(_TIMESTAMPS_MEMO) > _TIMESTAMPS_MEMO_CAP:
+                _TIMESTAMPS_MEMO.popitem(last=False)
     return stamps
 
 
@@ -1855,6 +1923,14 @@ def commit_patch_stream(
     normalization lives with the producer and the parser keeps its
     one-argument guarantee.
 
+    What each file's diff looks like is left to its attributes (``-diff``
+    and ``binary`` print "Binary files differ", a textconv driver prints
+    its conversion), read from the working tree's ``.gitattributes``
+    files, ``info/attributes`` and the global attributes file; ``--text``
+    would change what a repository with such attributes is served.
+    `attribute_files_signature` and `gitattributes_signature` name those
+    files for a memo that keys on this stream.
+
     ``--format=<COMMIT_MARK>%H`` writes the same control-character
     record separator the bench streams carry; source content cannot
     collide with it. Returns the raw stream ("" is a real value: the
@@ -1906,6 +1982,119 @@ def commit_patch_stream(
     if raw is None:
         return None
     return _dequote_patch_headers(raw)
+
+
+# Characters with which a pathspec matches more than the one path it
+# spells: git's wildcards and their escape. A leading colon opens pathspec
+# magic.
+_PATHSPEC_WILDCARDS = frozenset("*?[\\")
+
+
+def _stamp(path: str | Path, *, follow: bool = True) -> tuple[int, int, int] | None:
+    """``(st_mtime_ns, st_size, st_ino)`` of `path`, or None when nothing
+    is there. Any other failure to stat raises OSError."""
+    try:
+        status = os.stat(path, follow_symlinks=follow)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    return (status.st_mtime_ns, status.st_size, status.st_ino)
+
+
+def _global_attributes_path(root: Path) -> str | None:
+    """The global attributes file git reads when no ``core.attributesFile``
+    names another: ``$XDG_CONFIG_HOME/git/attributes``, or
+    ``$HOME/.config/git/attributes`` when XDG_CONFIG_HOME is unset or
+    empty, and none with neither (git's ``xdg_config_home``). A relative
+    value is read from the root, where the drift readers run git."""
+    config_home = os.environ.get("XDG_CONFIG_HOME")
+    if config_home:
+        return os.path.join(root, config_home, "git", "attributes")
+    home = os.environ.get("HOME")
+    if home:
+        return os.path.join(root, home, ".config", "git", "attributes")
+    return None
+
+
+def attribute_files_signature(cwd: Path, root: Path) -> tuple[object, ...] | None:
+    """The files outside the working tree that decide how
+    `commit_patch_stream` diffs a file, for a memo to key on: the
+    repository's ``config`` (its diff drivers, and whether it names an
+    attributes file), ``info/attributes`` in the common directory, and the
+    global attributes file with its path. Each is ``(st_mtime_ns,
+    st_size, st_ino)``, or None while it does not exist, so writing,
+    creating or removing one changes the signature.
+
+    None, and nothing to key on, where these files do not settle it: a
+    repository `githead` does not read, a ``config`` that cannot be read,
+    one that mentions ``attributesfile`` or an ``[attr`` section (a
+    ``core.attributesFile`` or ``attr.tree`` there sends git to a file or a
+    tree these stats do not cover), and a stat that fails for any reason
+    but absence. `root` is the root `cwd`'s repository names."""
+    gd = githead.find_gitdir(cwd)
+    if gd is None:
+        return None
+    config = gd.commondir / "config"
+    text = _read_small(config, _CONFIG_LIMIT)
+    if text is None or len(text) > _CONFIG_LIMIT:
+        return None
+    lowered = text.lower()
+    if b"attributesfile" in lowered or b"[attr" in lowered:
+        return None
+    global_file = _global_attributes_path(root)
+    try:
+        return (
+            _stamp(config),
+            _stamp(gd.commondir / "info" / "attributes"),
+            global_file,
+            None if global_file is None else _stamp(global_file),
+        )
+    except OSError:
+        return None
+
+
+def gitattributes_signature(
+    root: Path, pathspecs: Sequence[str]
+) -> tuple[object, ...] | None:
+    """The working tree's ``.gitattributes`` files that decide how
+    `commit_patch_stream` diffs the files `pathspecs` name, for a memo to
+    key on. Git reads the attributes of ``a/b/c.py`` from ``.gitattributes``
+    at the root, in ``a`` and in ``a/b``, not through a symbolic link, and
+    ``git log`` reads no index for them. Each is ``(st_mtime_ns, st_size,
+    st_ino)``, or None while it does not exist.
+
+    None, and nothing to key on, where the pathspecs reach files below
+    those directories: a pathspec with a wildcard, an escape or pathspec
+    magic, one that is not a plain relative path, and one the working tree
+    holds as a directory, whose files take attributes from
+    ``.gitattributes`` anywhere under it. A pathspec that is no directory
+    now has no such file under it until it becomes one, which this check
+    then sees. Also None when a stat fails for any reason but absence."""
+    directories: dict[Path, None] = {}
+    try:
+        for spec in pathspecs:
+            parts = spec.split("/")
+            if (
+                spec.startswith(":")
+                or not _PATHSPEC_WILDCARDS.isdisjoint(spec)
+                or any(part in ("", ".", "..") for part in parts)
+            ):
+                return None
+            try:
+                if stat.S_ISDIR(os.stat(root.joinpath(*parts)).st_mode):
+                    return None
+            except (FileNotFoundError, NotADirectoryError):
+                pass
+            directory = root
+            directories.setdefault(directory, None)
+            for part in parts[:-1]:
+                directory = directory / part
+                directories.setdefault(directory, None)
+        return tuple(
+            _stamp(directory / ".gitattributes", follow=False)
+            for directory in directories
+        )
+    except OSError:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -2090,6 +2279,7 @@ def _canonicalize_azure(
 __all__ = [
     "MAX_PATCH_STREAM_COMMITS",
     "Origin",
+    "attribute_files_signature",
     "capture",
     "commit_author_sha_pairs_touching_pathspecs",
     "commit_author_timestamps",
@@ -2097,6 +2287,8 @@ __all__ = [
     "commit_patch_stream",
     "commit_reachable",
     "commits_since_anchor",
+    "failed_git_calls",
+    "gitattributes_signature",
     "head_sha",
     "is_full_commit_sha",
     "ReachableWalk",

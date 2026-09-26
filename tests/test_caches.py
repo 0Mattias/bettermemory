@@ -64,8 +64,12 @@ def test_a_bound_method_read_twice_is_one_clearer(registry: None) -> None:
 
 
 def test_clear_all_empties_the_reachable_walk_memo() -> None:
-    """origin registers its reachable-walk memo when it is imported."""
-    assert origin._WALK_MEMO.clear in _caches._CLEARERS
-    origin._WALK_MEMO[("/repo", "a" * 40, "b" * 40)] = None
+    """origin registers its reachable-walk memo's clearer when it is
+    imported."""
+    assert origin._clear_walk_memo in _caches._CLEARERS
+    anchor = "a" * 40
+    origin._WALK_MEMO[("/repo", anchor, anchor)] = origin.ReachableWalk(
+        anchor=anchor, head=anchor, commits=(), touched={}
+    )
     _caches.clear_all()
     assert not origin._WALK_MEMO

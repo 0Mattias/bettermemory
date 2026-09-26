@@ -2825,6 +2825,9 @@ def _drift_rows_for_candidates(
     reachable walk from it, the rest over the author-date bisect.
     """
     rows: list[CommitDriftRow] = []
+    # The walks that came back None in this pass: a store verified at one
+    # dead anchor forks one walk for it (`commits_since_anchor`).
+    dead_walks: dict[tuple[str, str, str], bool] = {}
     for stats in candidates:
         since = stats.last_verified_at
         assert since is not None  # callers filter on this
@@ -2841,7 +2844,9 @@ def _drift_rows_for_candidates(
         walk = None
         anchor = verified_head_by_id.get(stats.id) if verified_head_by_id else None
         if anchor is not None and head is not None:
-            walk = commits_since_anchor(root, anchor, toplevel=toplevel, head=head)
+            walk = commits_since_anchor(
+                root, anchor, toplevel=toplevel, head=head, dead=dead_walks
+            )
         if walk is not None:
             count = len(walk.commits)
             basis = BASIS_REACHABILITY
@@ -4246,6 +4251,9 @@ def curation_counts_with_coverage(
             located = repo_toplevel_and_head(cwd_path)
             toplevel = located[0] if located is not None else None
             head = located[1] if located is not None else None
+            # The walks that came back None in this pass, so a store
+            # verified at one dead anchor forks one walk for it.
+            dead_walks: dict[tuple[str, str, str], bool] = {}
             for m in mem_list:
                 if m.last_verified_at is None:
                     continue
@@ -4280,7 +4288,11 @@ def curation_counts_with_coverage(
                 walk = None
                 if m.verified_head is not None and head is not None:
                     walk = commits_since_anchor(
-                        cwd_path, m.verified_head, toplevel=toplevel, head=head
+                        cwd_path,
+                        m.verified_head,
+                        toplevel=toplevel,
+                        head=head,
+                        dead=dead_walks,
                     )
                 if walk is not None:
                     count = len(walk.commits)

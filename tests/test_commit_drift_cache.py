@@ -16,7 +16,9 @@ import os
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
+import threading
+from collections import OrderedDict
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -566,9 +568,10 @@ def test_a_head_that_moves_during_the_attach_stores_nothing(
 
 
 def test_the_memos_are_registered_with_the_cache_registry() -> None:
-    assert _response._DRIFT_MEMO.clear in _caches._CLEARERS
-    assert origin._TIMESTAMPS_MEMO.clear in _caches._CLEARERS
-    assert origin._WALK_MEMO.clear in _caches._CLEARERS
+    """Each memo is emptied by a registered clearer that takes its lock."""
+    assert _response._clear_drift_memo in _caches._CLEARERS
+    assert origin._clear_timestamps_memo in _caches._CLEARERS
+    assert origin._clear_walk_memo in _caches._CLEARERS
     assert (_response._DRIFT_MEMO_CAP, origin._TIMESTAMPS_MEMO_CAP) == (5000, 16)
     assert origin._WALK_MEMO_CAP == 128
 
@@ -846,3 +849,576 @@ async def test_memory_show_reads_the_same_block_around_a_warm_search(
         )
         assert by_id[memory_id]["commit_drift_count"] == block["commits_since_verify"]
         assert by_id[memory_id]["commit_drift_basis"] == block["basis"]
+
+
+# ---------------------------------------------------------------------------
+# A git process that failed is not an answer
+# ---------------------------------------------------------------------------
+
+
+def _day(days: int) -> datetime:
+    return _T0 + timedelta(days=days)
+
+
+def _walks(calls: list[tuple[str, ...]]) -> list[tuple[str, ...]]:
+    return [call for call in calls if "--boundary" in call]
+
+
+def _drift(out: list[dict[str, Any]], memory_id: str) -> tuple[Any, Any]:
+    hit = _by_id(out)[memory_id]
+    return hit.get("commit_drift_count"), hit.get("commit_drift_basis")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes")
+@pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0, reason="root reads any file"
+)
+def test_a_git_process_that_exited_non_zero_is_not_memoised(
+    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A process that ran and failed folds into the same fallback as one
+    that could not run: the unfiltered count, the author-date basis. The
+    uncached code takes that fallback on the call that met the failure and
+    not on the next, so no memo keeps a value computed across one. The
+    failure is read permission withheld from one loose tree object for the
+    first attach, a stand-in for an object briefly unreadable: the walk and
+    the path-filtered logs read trees and exit 128, while the whole-history
+    log reads only commits and answers."""
+    repo = _repo(tmp_path)
+    anchor = _commit(
+        repo, "c1", when=_day(0), files={"src/app.py": _MODULE, "README.md": "r\n"}
+    )
+    _commit(repo, "c2", when=_day(20), files={"README.md": "r2\n"})
+    unreadable = _commit(repo, "c3", when=_day(30), files={"README.md": "r3\n"})
+    _commit(
+        repo,
+        "c4",
+        when=_day(40),
+        files={"src/app.py": _MODULE.replace("TIMEOUT = 30", "TIMEOUT = 31")},
+    )
+    _commit(repo, "c5", when=_day(50), files={"README.md": "r5\n"})
+    _commit(repo, "c6", when=_day(60), files={"README.md": "r6\n"})
+    store = Store(memory_dir)
+    caller = _caller(repo)
+    body = "the timeout lives in src/app.py"
+    author = _write(store, caller, monkeypatch, f"widget rule a: {body}", at=_day(10))
+    reach = _write(
+        store,
+        caller,
+        monkeypatch,
+        f"widget rule b: {body}",
+        at=_day(10),
+        verified_head=anchor,
+    )
+    quiet = _write(store, caller, monkeypatch, f"widget rule c: {body}", at=_day(45))
+    tree = _git(repo, "rev-parse", f"{unreadable}^{{tree}}")
+    victim = repo / ".git" / "objects" / tree[:2] / tree[2:]
+    assert victim.is_file(), "premise: the tree is a loose object"
+    memories = store.load_all()
+    order = (author, reach, quiet)
+
+    mode = victim.stat().st_mode
+    victim.chmod(0)
+    try:
+        during, _ = _attach(memories, caller, monkeypatch)
+    finally:
+        victim.chmod(mode)
+    assert [_drift(during, i) for i in order] == [
+        (5, "author-date"),
+        (5, "author-date"),
+        (2, "author-date"),
+    ], "premise: the failure took the fallbacks"
+    assert len(_response._DRIFT_MEMO) == 0
+    assert len(origin._WALK_MEMO) == 0
+
+    cached, _ = _attach(memories, caller, monkeypatch)
+    _caches.clear_all()
+    uncached, _ = _attach(memories, caller, monkeypatch)
+    assert [_drift(uncached, i) for i in order] == [
+        (1, "author-date"),
+        (1, "reachability"),
+        (0, "author-date"),
+    ]
+    assert cached == uncached
+
+
+@pytest.mark.parametrize("kind", ["missing", "rewritten"])
+def test_a_dead_anchor_forks_once_per_attach_and_is_not_memoised(
+    kind: str, memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A walk that comes back None is not kept past the attach that asked
+    for it: a missing anchor fails the process, and a failure may clear;
+    an anchor HEAD no longer descends from answers None without failing,
+    and is not kept either. Within one attach it is remembered, so three
+    hits at one dead anchor fork one walk. A hit resolved around a walk git
+    answered is kept per hit; one resolved around a failed walk is not,
+    and the next attach walks once again."""
+    repo = _repo(tmp_path)
+    names = [f"notes{i}.md" for i in range(3)]
+    _commit(repo, "seed", when=_T0, files={name: "a\n" for name in names})
+    if kind == "missing":
+        dead = "b" * 40
+    else:
+        dead = _commit(repo, "amended away", when=_day(1), files={names[0]: "x\n"})
+        _git(repo, "reset", "-q", "--hard", "HEAD~1")
+    store = Store(memory_dir)
+    caller = _caller(repo)
+    ids = [
+        _write(
+            store,
+            caller,
+            monkeypatch,
+            f"widget rule {i} lives in {repo / name}",
+            verified_head=dead,
+        )
+        for i, name in enumerate(names)
+    ]
+    _commit(repo, "post", when=_T1, files={name: "b\n" for name in names})
+    memories = store.load_all()
+
+    cold, cold_calls = _attach(memories, caller, monkeypatch)
+    assert {_drift(cold, i) for i in ids} == {(1, "author-date")}
+    assert len(_walks(cold_calls)) == 1, "three hits at one dead anchor: one walk"
+    assert [key for key in origin._WALK_MEMO if key[1] == dead] == []
+
+    warm, warm_calls = _attach(memories, caller, monkeypatch)
+    assert warm == cold
+    if _FILES:
+        if kind == "missing":
+            assert len(_response._DRIFT_MEMO) == 0, "resolved around a failure"
+            assert len(_walks(warm_calls)) == 1, "the failed walk runs again"
+        else:
+            assert len(_response._DRIFT_MEMO) == 3
+            assert warm_calls == []
+
+
+@pytest.mark.parametrize("rollup", ["commit_drift_debt", "curation drifted"])
+def test_a_health_pass_walks_a_dead_anchor_once(
+    rollup: str, memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The health rollups resolve every memory in one pass and remember
+    that pass's dead anchors, as a search does: three memories verified at
+    one missing anchor fork one walk, and nothing of it outlives the
+    pass."""
+    from bettermemory import health
+
+    repo = _repo(tmp_path)
+    names = [f"notes{i}.md" for i in range(3)]
+    _commit(repo, "seed", when=_T0, files={name: "a\n" for name in names})
+    store = Store(memory_dir)
+    caller = _caller(repo)
+    for i, name in enumerate(names):
+        _write(
+            store,
+            caller,
+            monkeypatch,
+            f"widget rule {i} lives in {repo / name}",
+            verified_head="b" * 40,
+        )
+    _commit(repo, "post", when=_T1, files={name: "b\n" for name in names})
+    memories = store.load_all()
+    calls: list[tuple[str, ...]] = []
+    real_run = subprocess.run
+
+    def spy(argv: Any, *args: Any, **kwargs: Any) -> Any:
+        calls.append(tuple(argv[1:]))
+        return real_run(argv, *args, **kwargs)
+
+    for _ in range(2):
+        calls.clear()
+        with monkeypatch.context() as patch:
+            patch.setattr(subprocess, "run", spy)
+            if rollup == "commit_drift_debt":
+                report = health.compute_health(
+                    memories, [], caller_origin=caller, now=_NOW
+                )
+                assert report.commit_drift_debt is not None
+                drifted = report.commit_drift_debt.total_drifted
+            else:
+                counts = health.curation_counts(
+                    memories, [], caller_origin=caller, now=_NOW
+                )
+                drifted = counts["drifted"]
+        assert drifted == 3
+        assert len(_walks(calls)) == 1
+    assert len(origin._WALK_MEMO) == 0
+
+
+# ---------------------------------------------------------------------------
+# The attribute files the patch stream reads
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def git_config_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Git's global and system configuration kept off the developer's own:
+    an empty global file, no system file, and XDG_CONFIG_HOME under the
+    test's directory, where git looks for the global attributes file."""
+    home = tmp_path / "xdg"
+    (home / "git").mkdir(parents=True)
+    empty = tmp_path / "gitconfig"
+    empty.write_text("", encoding="utf-8")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home))
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    return home
+
+
+def _claimed(
+    tmp_path: Path,
+    memory_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    claim: str,
+) -> tuple[Path, Origin, list[Any], list[str]]:
+    """A repository whose two later commits change `other` in the claimed
+    module, and two memories claiming `claim`, one counted from an anchor
+    and one on author date. The weak tier reads the hunks and finds the
+    claim untouched, so both count 0; where the hunks read as binary it
+    cannot index them and both count the 2 commits that touched the file."""
+    repo = _repo(tmp_path)
+    anchor = _commit(repo, "c1", when=_day(0), files={"src/app.py": _MODULE})
+    store = Store(memory_dir)
+    caller = _caller(repo)
+    body = "the handler is declared in the app module"
+    ids = [
+        _write(
+            store,
+            caller,
+            monkeypatch,
+            f"widget rule a: {body}",
+            at=_day(10),
+            claims=[claim],
+            verified_head=anchor,
+        ),
+        _write(
+            store,
+            caller,
+            monkeypatch,
+            f"widget rule b: {body}",
+            at=_day(10),
+            claims=[claim],
+        ),
+    ]
+    for n in (2, 3):
+        changed = _MODULE.replace(
+            "def other():\n    return 1", f"def other():\n    return {n}"
+        )
+        _commit(repo, f"c{n}", when=_day(10 * n), files={"src/app.py": changed})
+    return repo, caller, store.load_all(), ids
+
+
+def _counts(out: list[dict[str, Any]], ids: list[str]) -> list[Any]:
+    return [_by_id(out)[i].get("commit_drift_count") for i in ids]
+
+
+def _cached_and_uncached(
+    memories: list[Any], caller: Origin, monkeypatch: pytest.MonkeyPatch
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """The attach the memos answer now, then the one every memo cleared
+    answers; the cached one runs first, so it reads nothing the other
+    computed."""
+    cached, _ = _attach(memories, caller, monkeypatch)
+    _caches.clear_all()
+    uncached, _ = _attach(memories, caller, monkeypatch)
+    return cached, uncached
+
+
+@pytest.mark.parametrize("source", ["root", "directory", "info", "global"])
+def test_an_attribute_file_the_patch_stream_reads_is_in_the_key(
+    source: str,
+    git_config_home: Path,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`git log -p` reads the diff attribute from the working tree's
+    .gitattributes on the claimed file's path, from info/attributes and
+    from the global attributes file. `-diff` there turns the claimed file's
+    hunks into "Binary files differ", which the weak tier cannot index, and
+    the governed half counts any touch. An edit to any of them, committed
+    or not, moves git's answer under an unchanged head: the warm attach
+    answers as the cold one after the edit and after its removal."""
+    repo, caller, memories, ids = _claimed(
+        tmp_path, memory_dir, monkeypatch, claim="src/app.py::handler"
+    )
+    attributes = {
+        "root": repo / ".gitattributes",
+        "directory": repo / "src" / ".gitattributes",
+        "info": repo / ".git" / "info" / "attributes",
+        "global": git_config_home / "git" / "attributes",
+    }[source]
+    for _ in range(2):
+        before, calls = _attach(memories, caller, monkeypatch)
+    assert _counts(before, ids) == [0, 0]
+    if _FILES:
+        assert calls == [], "premise: the memo answers"
+
+    attributes.parent.mkdir(parents=True, exist_ok=True)
+    attributes.write_text("*.py -diff\n", encoding="utf-8")
+    cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
+    assert _counts(uncached, ids) == [2, 2], "premise: the attribute moved git"
+    assert cached == uncached
+
+    attributes.unlink()
+    cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
+    assert _counts(uncached, ids) == [0, 0]
+    assert cached == uncached
+
+
+@pytest.mark.parametrize("shape", ["directory claim", "attributes file in config"])
+def test_attributes_the_files_cannot_settle_are_never_memoised(
+    shape: str,
+    git_config_home: Path,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A governed spec that names a directory takes the diff attribute of
+    every file below it from .gitattributes files anywhere under it, and a
+    core.attributesFile in the repository's configuration names a file no
+    stat of the repository covers. Neither is settled by a handful of
+    stats, so such a hit resolves through git on every attach, as the
+    uncached code does."""
+    claim = "src" if shape == "directory claim" else "src/app.py::handler"
+    repo, caller, memories, ids = _claimed(
+        tmp_path, memory_dir, monkeypatch, claim=claim
+    )
+    if shape == "directory claim":
+        attributes = repo / "src" / ".gitattributes"
+    else:
+        attributes = tmp_path / "attributes"
+        attributes.write_text("", encoding="utf-8")
+        _git(repo, "config", "core.attributesFile", str(attributes))
+    for _ in range(2):
+        before, calls = _attach(memories, caller, monkeypatch)
+    assert _counts(before, ids) == [0, 0]
+    assert calls, "resolved through git again"
+    assert len(_response._DRIFT_MEMO) == 0
+
+    attributes.write_text("*.py -diff\n", encoding="utf-8")
+    cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
+    assert _counts(uncached, ids) == [2, 2], "premise: the attribute moved git"
+    assert cached == uncached
+
+
+def test_an_attribute_file_that_moves_during_the_attach_stores_nothing(
+    git_config_home: Path,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The patch stream reads the attribute files as it runs, so one
+    written after the hits were keyed and removed before the next attach
+    would leave that attach's answer under a key that reads as unchanged.
+    Nothing from such an attach is kept."""
+    repo, caller, memories, ids = _claimed(
+        tmp_path, memory_dir, monkeypatch, claim="src/app.py::handler"
+    )
+    attributes = repo / ".gitattributes"
+    real_stream = origin.commit_patch_stream
+
+    def write_then_read(*args: Any, **kwargs: Any) -> Any:
+        attributes.write_text("*.py -diff\n", encoding="utf-8")
+        return real_stream(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(verify, "commit_patch_stream", write_then_read)
+        during, _ = _attach(memories, caller, monkeypatch)
+    assert _counts(during, ids) == [2, 2], "premise: the stream read the attribute"
+    assert len(_response._DRIFT_MEMO) == 0
+
+    attributes.unlink()
+    cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
+    assert _counts(uncached, ids) == [0, 0]
+    assert cached == uncached
+
+
+def test_a_hit_without_governed_claims_reads_no_attribute_file(
+    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only a governed claim reaches the patch stream, so only a hit that
+    carries one stats the attribute files and keys on them."""
+    repo = _repo(tmp_path)
+    _commit(repo, "seed", when=_T0, files={"notes0.md": "a\n", "pkg/mod.py": _MODULE})
+    store = Store(memory_dir)
+    caller = _caller(repo)
+    plain = _write(
+        store, caller, monkeypatch, f"widget rule a lives in {repo / 'notes0.md'}"
+    )
+    claimed = _write(
+        store,
+        caller,
+        monkeypatch,
+        "widget rule e is anchored in pkg/mod.py",
+        claims=["pkg/mod.py::handler"],
+    )
+    _commit(
+        repo,
+        "post",
+        when=_T1,
+        files={
+            "notes0.md": "a1\n",
+            "pkg/mod.py": _MODULE.replace("def other():", "def other(flag=False):"),
+        },
+    )
+    memories = store.load_all()
+    stats: list[str] = []
+
+    def spy(real: Any) -> Any:
+        def counted(path: Any, *args: Any, **kwargs: Any) -> Any:
+            if os.path.basename(os.fspath(path)) in (".gitattributes", "attributes"):
+                stats.append(os.fspath(path))
+            return real(path, *args, **kwargs)
+
+        return counted
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "stat", spy(os.stat))
+        patch.setattr(os, "lstat", spy(os.lstat))
+        _attach([m for m in memories if m.id == plain], caller, monkeypatch)
+        assert stats == []
+        _attach([m for m in memories if m.id == claimed], caller, monkeypatch)
+    if _FILES:
+        assert stats, "the claim-carrying hit keys on the attribute files"
+        attributes_by_claims = {key[4]: key[7] for key in _response._DRIFT_MEMO}
+        assert set(attributes_by_claims) == {(), ("pkg/mod.py::handler",)}
+        assert attributes_by_claims[()] is None
+        assert attributes_by_claims[("pkg/mod.py::handler",)] is not None
+
+
+# ---------------------------------------------------------------------------
+# Threads
+# ---------------------------------------------------------------------------
+
+
+class _Interleaved(OrderedDict[Any, Any]):
+    """A memo whose look-up of one key starts another thread's work and
+    gives it 100 ms before returning: the other thread inserts past a bound
+    of one. Under the memo's lock it waits for the lock, and evicts only
+    after the hit has been touched; without the lock the key is gone before
+    `move_to_end`, which raises KeyError. The token cache's test is the
+    model (`tests/test_token_cache.py`)."""
+
+    def __init__(self, source: OrderedDict[Any, Any], key: Any, work: Any) -> None:
+        super().__init__(source)
+        self.key = key
+        self.work = work
+        self.others: list[threading.Thread] = []
+        self.errors: list[BaseException] = []
+
+    def _run(self) -> None:
+        try:
+            self.work()
+        except BaseException as exc:  # recorded for the test to read
+            self.errors.append(exc)
+
+    def _interleave(self, key: Any) -> None:
+        if key == self.key and not self.others:
+            other = threading.Thread(target=self._run)
+            self.others.append(other)
+            other.start()
+            other.join(timeout=0.1)
+
+    def get(self, key: Any, default: Any = None) -> Any:
+        value = super().get(key, default)
+        self._interleave(key)
+        return value
+
+    def __contains__(self, key: object) -> bool:
+        found = super().__contains__(key)
+        self._interleave(key)
+        return found
+
+
+def test_the_whole_history_memo_touches_a_hit_under_its_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The read is stubbed, so the other thread inserts at once."""
+    monkeypatch.setattr(origin, "_TIMESTAMPS_MEMO_CAP", 1)
+    monkeypatch.setattr(origin, "_read_author_timestamps", lambda cwd, revision: [_T0])
+    touched = (Path("/touched"), "a" * 40)
+    evicting = (Path("/evicting"), "b" * 40)
+    first = origin.commit_author_timestamps(touched[0], located=touched)
+    memo = _Interleaved(
+        origin._TIMESTAMPS_MEMO,
+        (str(touched[0]), touched[1]),
+        lambda: origin.commit_author_timestamps(evicting[0], located=evicting),
+    )
+    monkeypatch.setattr(origin, "_TIMESTAMPS_MEMO", memo)
+    assert origin.commit_author_timestamps(touched[0], located=touched) is first
+    memo.others[0].join()
+    assert memo.errors == []
+    assert list(memo) == [(str(evicting[0]), evicting[1])]
+
+
+def test_the_walk_memo_touches_a_hit_under_its_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An anchor at its head is an empty walk, stored without a process,
+    so the other thread inserts at once."""
+    monkeypatch.setattr(origin, "_WALK_MEMO_CAP", 1)
+    anchor = "a" * 40
+    touched, evicting = Path("/touched"), Path("/evicting")
+    first = origin.commits_since_anchor(touched, anchor, toplevel=touched, head=anchor)
+    assert first is not None
+    memo = _Interleaved(
+        origin._WALK_MEMO,
+        (str(touched), anchor, anchor),
+        lambda: origin.commits_since_anchor(
+            evicting, anchor, toplevel=evicting, head=anchor
+        ),
+    )
+    monkeypatch.setattr(origin, "_WALK_MEMO", memo)
+    walk = origin.commits_since_anchor(touched, anchor, toplevel=touched, head=anchor)
+    assert walk is first
+    memo.others[0].join()
+    assert memo.errors == []
+    assert list(memo) == [(str(evicting), anchor, anchor)]
+
+
+@files_only
+def test_the_drift_memo_touches_a_hit_under_its_lock(
+    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two hits whose anchors escape the repository resolve without a
+    process once the head's history is read, so the other thread's attach
+    runs inside the 100 ms."""
+    repo = _repo(tmp_path)
+    _commit(repo, "seed", when=_T0, files={"notes0.md": "a\n"})
+    store = Store(memory_dir)
+    caller = _caller(repo)
+    touched = _write(
+        store,
+        caller,
+        monkeypatch,
+        "widget rule a: the router config lives at /data/compose/.env on the board",
+    )
+    evicting = _write(
+        store,
+        caller,
+        monkeypatch,
+        "widget rule b: the switch config lives at /data/switch/.env on the board",
+    )
+    _commit(repo, "post", when=_T1, files={"notes0.md": "a1\n"})
+    memories = store.load_all()
+    builder = ResponseBuilder(stale_after_days=30)
+
+    def attach_one(memory_id: str) -> list[dict[str, Any]]:
+        subset = [m for m in memories if m.id == memory_id]
+        hits = run_search(subset, "widget rule", max_results=50)
+        out = [builder.hit_to_dict(hit, now=_NOW) for hit in hits]
+        builder.attach_commit_drift_counts(out, hits, subset, caller_origin=caller)
+        return out
+
+    first = attach_one(touched)
+    (touched_key,) = _response._DRIFT_MEMO
+    monkeypatch.setattr(_response, "_DRIFT_MEMO_CAP", 1)
+    memo = _Interleaved(
+        _response._DRIFT_MEMO, touched_key, lambda: attach_one(evicting)
+    )
+    monkeypatch.setattr(_response, "_DRIFT_MEMO", memo)
+    assert attach_one(touched) == first
+    memo.others[0].join()
+    assert memo.errors == []
+    assert len(memo) == 1 and touched_key not in memo
