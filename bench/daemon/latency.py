@@ -16,10 +16,18 @@ Phase 1's P5 in numbers, each with its method:
                      pays the origin probes.
   shim_search        memory_search through one stdio shim process (the SDK
                      client speaking stdio to `bettermemory`, which forwards
-                     to the daemon); N queries, p50 and p95 per call.
+                     to the daemon); N queries, p50 and p95 per call, measured
+                     on a second pass over the queries: three calls and one
+                     full pass warm the daemon's caches first, since the
+                     per-hit commit-drift memo holds a hit only once a search
+                     has resolved it. The first pass is reported beside it
+                     as shim_search_first_pass: what each query costs the
+                     first time the daemon sees its hits, the origin, the
+                     whole-history dates and the token streams already warm.
   in_process_search  the same N queries against `build_server(...)`'s
                      `call_tool` in this process, the floor the shim adds
-                     one hop to.
+                     one hop to; the same two passes, the first reported as
+                     in_process_search_first_pass.
   cold_first_list    one measurement: with no daemon running, the time from
                      spawning the shim to its first `tools/list` answer
                      (the daemon's start is inside it).
@@ -154,26 +162,34 @@ async def cold_first_list(env: dict[str, str]) -> float:
             return time.perf_counter() - started
 
 
-async def shim_search(env: dict[str, str], qs: list[str]) -> list[float]:
+async def shim_search(
+    env: dict[str, str], qs: list[str]
+) -> tuple[list[float], list[float]]:
+    """Two passes over `qs` after three warm-up calls: the first pass, in
+    which the daemon's per-hit memo sees each query's hits for the first
+    time, and the second, warm one. Returns (first, second)."""
     params, ClientSession, stdio_client = await _shim_session(env, [])
-    times: list[float] = []
+    passes: list[list[float]] = []
     async with stdio_client(params) as (r, w):
         async with ClientSession(r, w) as session:
             await session.initialize()
             await session.list_tools()
             for q in qs[:3]:
                 await session.call_tool("memory_search", {"query": q, "max_results": 5})
-            for q in qs:
-                started = time.perf_counter()
-                result = await session.call_tool(
-                    "memory_search", {"query": q, "max_results": 5}
-                )
-                times.append(time.perf_counter() - started)
-                if result.is_error:
-                    raise SystemExit(
-                        f"memory_search errored through the shim: {result}"
+            for _ in range(2):
+                times: list[float] = []
+                for q in qs:
+                    started = time.perf_counter()
+                    result = await session.call_tool(
+                        "memory_search", {"query": q, "max_results": 5}
                     )
-    return times
+                    times.append(time.perf_counter() - started)
+                    if result.is_error:
+                        raise SystemExit(
+                            f"memory_search errored through the shim: {result}"
+                        )
+                passes.append(times)
+    return passes[0], passes[1]
 
 
 async def serve_first_search(env: dict[str, str], q: str) -> float:
@@ -186,7 +202,10 @@ async def serve_first_search(env: dict[str, str], q: str) -> float:
             return time.perf_counter() - started
 
 
-async def in_process_search(scratch: Path, qs: list[str]) -> list[float]:
+async def in_process_search(
+    scratch: Path, qs: list[str]
+) -> tuple[list[float], list[float]]:
+    """The same two passes as `shim_search`, in this process."""
     from bettermemory.config import BehaviorConfig, Config, ScopesConfig, StorageConfig
     from bettermemory.server import build_server
     from bettermemory.session import SessionState
@@ -203,12 +222,15 @@ async def in_process_search(scratch: Path, qs: list[str]) -> list[float]:
     )
     for q in qs[:3]:
         await server.call_tool("memory_search", {"query": q, "max_results": 5})
-    times: list[float] = []
-    for q in qs:
-        started = time.perf_counter()
-        await server.call_tool("memory_search", {"query": q, "max_results": 5})
-        times.append(time.perf_counter() - started)
-    return times
+    passes: list[list[float]] = []
+    for _ in range(2):
+        times: list[float] = []
+        for q in qs:
+            started = time.perf_counter()
+            await server.call_tool("memory_search", {"query": q, "max_results": 5})
+            times.append(time.perf_counter() - started)
+        passes.append(times)
+    return passes[0], passes[1]
 
 
 def hook_wall(env: dict[str, str], n: int, cwd: Path) -> list[float]:
@@ -336,9 +358,13 @@ def main() -> None:
         hook_service_cold(scratch, args.cold_n, ROOT)
     )
     print(f"hook service cold {results['hook_service_cold']}", file=sys.stderr)
-    results["shim_search"] = _summary(asyncio.run(shim_search(env, qs)))
+    shim_first, shim_warm = asyncio.run(shim_search(env, qs))
+    results["shim_search_first_pass"] = _summary(shim_first)
+    results["shim_search"] = _summary(shim_warm)
     print(f"shim search {results['shim_search']}", file=sys.stderr)
-    results["in_process_search"] = _summary(asyncio.run(in_process_search(scratch, qs)))
+    proc_first, proc_warm = asyncio.run(in_process_search(scratch, qs))
+    results["in_process_search_first_pass"] = _summary(proc_first)
+    results["in_process_search"] = _summary(proc_warm)
     print(f"in-process search {results['in_process_search']}", file=sys.stderr)
     _cli(["down"], env)
     results["serve_first_search"] = {
@@ -372,7 +398,14 @@ def main() -> None:
             "n": args.n,
             "queries": f"the first {args.n} `question` fields of {QUESTIONS.relative_to(ROOT)}",
             "hook_payload": {"cwd": str(ROOT)},
-            "warm_ups": 3,
+            "warm_ups": {
+                "calls": 3,
+                "passes": 1,
+                "note": (
+                    "the searches are measured on the second pass over the "
+                    "queries; the first pass is reported as *_first_pass"
+                ),
+            },
             "hook_wall": "subprocess.run of `python -m bettermemory hook session-start`, wall time",
             "hook_service": "_daemon_client.post to /api/v1/hook/session-start from a warm client",
             "cold_n": args.cold_n,
@@ -382,8 +415,21 @@ def main() -> None:
                 f"plus {COLD_MARGIN_SECONDS} s, so the origin cache has expired and the call "
                 "pays the origin probes"
             ),
-            "shim_search": "one stdio shim process, SDK ClientSession.call_tool memory_search",
-            "in_process_search": "build_server(...).call_tool memory_search in this process",
+            "shim_search": (
+                "one stdio shim process, SDK ClientSession.call_tool memory_search, "
+                "the second pass over the queries"
+            ),
+            "shim_search_first_pass": (
+                "the same shim session's first pass over the queries, each query's "
+                "hits new to the daemon's per-hit memo"
+            ),
+            "in_process_search": (
+                "build_server(...).call_tool memory_search in this process, the "
+                "second pass over the queries"
+            ),
+            "in_process_search_first_pass": (
+                "the same server's first pass over the queries"
+            ),
         },
         "results": results,
     }

@@ -1,0 +1,106 @@
+{
+  "kind": "daemon-latency",
+  "machine": {
+    "cpu_count": 12,
+    "machine": "arm64",
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "python": "3.11.15"
+  },
+  "method": {
+    "cold_n": 10,
+    "hook_payload": {
+      "cwd": "/Users/mattias/Documents/projects/bettermemory"
+    },
+    "hook_service": "_daemon_client.post to /api/v1/hook/session-start from a warm client",
+    "hook_service_cold": "_daemon_client.post to /api/v1/hook/session-start from a warm client, each of cold_n calls after sleeping ORIGIN_CACHE_SECONDS (2.0 s) plus 0.2 s, so the origin cache has expired and the call pays the origin probes",
+    "hook_wall": "subprocess.run of `python -m bettermemory hook session-start`, wall time",
+    "in_process_search": "build_server(...).call_tool memory_search in this process, the second pass over the queries",
+    "in_process_search_first_pass": "the same server's first pass over the queries",
+    "n": 50,
+    "queries": "the first 50 `question` fields of bench/retrieval/questions.jsonl",
+    "shim_search": "one stdio shim process, SDK ClientSession.call_tool memory_search, the second pass over the queries",
+    "shim_search_first_pass": "the same shim session's first pass over the queries, each query's hits new to the daemon's per-hit memo",
+    "warm_ups": {
+      "calls": 3,
+      "note": "the searches are measured on the second pass over the queries; the first pass is reported as *_first_pass",
+      "passes": 1
+    }
+  },
+  "results": {
+    "cold_first_list": {
+      "seconds": 0.806
+    },
+    "hook_service": {
+      "max_ms": 5.89,
+      "min_ms": 5.09,
+      "n": 50,
+      "p50_ms": 5.35,
+      "p95_ms": 5.84
+    },
+    "hook_service_cold": {
+      "max_ms": 86.93,
+      "min_ms": 63.63,
+      "n": 10,
+      "p50_ms": 84.44,
+      "p95_ms": 86.93
+    },
+    "hook_wall": {
+      "max_ms": 93.17,
+      "min_ms": 49.72,
+      "n": 50,
+      "p50_ms": 50.72,
+      "p95_ms": 52.16
+    },
+    "in_process_search": {
+      "max_ms": 80.5,
+      "min_ms": 25.94,
+      "n": 50,
+      "p50_ms": 40.72,
+      "p95_ms": 51.4
+    },
+    "in_process_search_first_pass": {
+      "max_ms": 170.66,
+      "min_ms": 28.79,
+      "n": 50,
+      "p50_ms": 83.48,
+      "p95_ms": 157.66
+    },
+    "serve_first_search": {
+      "seconds": 0.657
+    },
+    "shim_search": {
+      "max_ms": 95.91,
+      "min_ms": 29.67,
+      "n": 50,
+      "p50_ms": 42.35,
+      "p95_ms": 55.18
+    },
+    "shim_search_first_pass": {
+      "max_ms": 177.22,
+      "min_ms": 30.7,
+      "n": 50,
+      "p50_ms": 83.53,
+      "p95_ms": 161.03
+    }
+  },
+  "run_at": "2026-09-27T00:10:38.399102Z",
+  "store": {
+    "events_imported": {
+      "found": 15871,
+      "imported": 15871,
+      "malformed": 0,
+      "present": 0,
+      "redacted": 123,
+      "unstamped": 0
+    },
+    "memories_imported": {
+      "found": 662,
+      "imported": 662,
+      "present": 0,
+      "unparseable": 0
+    },
+    "migration_seconds": 2.13,
+    "source": "/Users/mattias/.cache/bettermemory-v9/live-copy"
+  },
+  "version": "8.0.0"
+}

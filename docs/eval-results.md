@@ -607,53 +607,133 @@ and the scored results are all committed.
 
 ## Daemon latency
 
-`bench/daemon/latency.py`, run 2026-09-26 on the owner's live store
-migrated into a scratch store (662 memories, 15,871 events; the sealed
-copy of 2026-09-25), Apple silicon, Python 3.11.15,
-N = 50 warm calls after three warm-ups, p50 and p95 in
-milliseconds. The artifact is
-`bench/daemon/results/latency-9.0.0-2026-09-26.json`; every number below
-is printed from it.
+`bench/daemon/latency.py` on the owner's live store migrated into a
+scratch store (662 memories, 15,871 events; the sealed copy of
+2026-09-25), Apple silicon, Python 3.11.15, N = 50 calls, p50 and p95 in
+milliseconds. At 39d544b the fifty searches ran after three warm-up
+calls; at ad44e75 they ran after three calls and one full pass over the
+queries, because the per-hit commit-drift memo holds a hit only once a
+search has resolved it, and that first pass is reported beside the
+second (the bench's `warm_ups` field records which). Two artifacts, one
+tree each: `bench/daemon/results/latency-9.0.0-2026-09-26.json` at
+39d544b, the daemon before the warm-daemon caches, and
+`bench/daemon/results/latency-9.0.0-2026-09-26-u6.json` at ad44e75, the
+phase 1 gate's tree, with them. Every number below is printed from
+those two files.
 
-| measurement | what it times | p50 | p95 |
-|---|---|---|---|
-| `hook_wall` | `bettermemory hook session-start` as the harness runs it: one process per call, spawn to exit | 108.03 | 114.85 |
-| `hook_service` | the same endpoint from a warm client: the daemon's own answer | 56.94 | 62.54 |
-| `shim_search` | `memory_search` through one stdio shim (the SDK client speaking stdio, the shim forwarding to the daemon) | 283.99 | 364.42 |
-| `in_process_search` | the same queries against `build_server(...).call_tool` in one process | 275.39 | 340.19 |
+| measurement | what it times | 39d544b p50 | p95 | ad44e75 p50 | p95 |
+|---|---|---|---|---|---|
+| `hook_wall` | `bettermemory hook session-start` as the harness runs it: one process per call, spawn to exit | 108.03 | 114.85 | 50.72 | 52.16 |
+| `hook_service` | the same endpoint from a warm client: the daemon's own answer | 56.94 | 62.54 | 5.35 | 5.84 |
+| `hook_service_cold` | the same endpoint with the origin cache expired before each call (N = 10, 2.2 s apart) | not measured | | 84.44 | 86.93 |
+| `shim_search` | `memory_search` through one stdio shim (the SDK client speaking stdio, the shim forwarding to the daemon), the second pass over the queries | 283.99 | 364.42 | 42.35 | 55.18 |
+| `shim_search_first_pass` | the same session's first pass: each query's hits new to the per-hit memo | not measured | | 83.53 | 161.03 |
+| `in_process_search` | the same queries against `build_server(...).call_tool` in one process, the second pass | 275.39 | 340.19 | 40.72 | 51.40 |
+| `in_process_search_first_pass` | the same server's first pass | not measured | | 83.48 | 157.66 |
 
-One-off measurements from the same run: a shim spawned with no daemon
-running answers its first `tools/list` in 0.803 s
-(the daemon's start is inside that); `bettermemory serve`, the 8.x shape
-(spawn, import the SDK, open the store), answers initialize plus one
-`memory_search` in 0.751 s.
+One-off measurements from the same runs: a shim spawned with no daemon
+running answers its first `tools/list` in 0.803 s at 39d544b and
+0.806 s at ad44e75 (the daemon's start is inside that);
+`bettermemory serve`, the 8.x shape (spawn, import the SDK, open the
+store), answers initialize plus one `memory_search` in 0.751 s and
+0.657 s.
 
 Reading the table. The daemon costs what it promised to cost and no
-more: the shim adds about 8.6 ms
-to a search, and the hook client adds about
-51.1 ms of
-process start (11.5 ms of interpreter and 26 ms of standard library on
-this machine; the path imports nothing from the SDK, checked by
-`tests/test_hook_client.py`). What the daemon does not remove is the
-engine's own per-call work, which a fresh process paid too and which the
-8.0.0 numbers hid inside a 0.4 s spawn: profiled on the same store,
-`memory_search` spends about 146 ms per call in `git` subprocesses for
-the commit-drift verdicts of the hits, about 55 ms in the origin capture
-(four `git` calls per request) and about 106 ms re-tokenising the
-candidate bodies, and `session-start` spends 61 of its 77 profiled ms in
-the same origin capture. Phase 1's P5 (session-start under 20 ms warm,
-`memory_search` through the shim under 40 ms) is therefore missed at
-9.0.0, and the U5 declaration's restatement of it (hook wall under 60
-ms, service under 5 ms, search under 40 ms) is missed on all three; the
-cold-start bound (under 1.5 s) and the byte-identical surface through
-the shim (`bench/toolcost/results/bettermemory-shim-2026-09-26.json`,
-8,387 bytes of `tools/list` and 1,000 of instructions, equal to the
-2026-09-26 artifact on every field) hold. The warm process is exactly
-where those costs can be cached: an origin per working directory with a
-short lifetime, a commit-drift answer per commit and head, and the
-tokens of a memory row per (id, updated). None of the three is built
-here; each changes what a fresh process could not have known, so each is
-declared before it is built.
+more: the shim adds about 1.6 ms to a search and the hook client adds
+about 45.4 ms of process start (11.5 ms of interpreter and 26 ms of
+standard library on this machine; the path imports nothing from the
+SDK, checked by `tests/test_hook_client.py`). The 39d544b column is the
+engine's own per-call work, which a fresh process paid too and which
+the 8.0.0 numbers hid inside a 0.4 s spawn: measured wall-clock on the
+same store at 39d544b (the U5b declaration's profile, subprocess.run
+wrapped to time every git process), a `memory_search` forked 9.38 git
+processes costing 168 ms per call, four of them the origin capture at
+52 ms, and re-tokenised its candidates for 27 ms; `session-start` spent
+52 of its 57 ms in the same capture. The ad44e75 column is the
+warm-daemon caches of U5b (the CHANGELOG's entry names them): inside
+the origin cache's two-second lifetime a search forks no git process,
+the commit-drift resolution of a hit is memoised on its inputs until
+the head moves, and a memory is tokenised once per body. The first pass
+over the queries, each query's hits new to the per-hit memo, costs
+83.48 ms in process: the path-filtered logs and patch streams of hits
+the daemon has not resolved before, which a session pays once per new
+hit and head. What remains in a warm search is about 41 ms of engine
+work the caches do not touch (the query-biased snippets of the hits,
+the document frequencies, scoring, the pointer-checked loads, path
+drift and the recent-outcome window), and in a hook the client's
+process start. Phase 1's P5 (session-start under 20 ms warm,
+`memory_search` through the shim under 40 ms) reads hit on
+session-start (5.35 ms warm against 20) and missed on the shim search
+(42.35 ms against 40) on the gate's tree; U5b's own predictions and
+their grades are in its outcome record. A session-start hook that fires
+alone, seconds after nothing, pays the `hook_service_cold` number,
+which carries this machine's idle wake beside the four probes (a lone
+origin capture with the cache cleared measures 73.8 ms after 2.2 s of
+idleness against 37.5 ms back to back): the lifetime serves a burst,
+not a session, and a longer lifetime under the same validation is
+proposed for U5c, not built here.
+
+## Phase 1 gate
+
+The gate the bettermemory 9 plan set for phase 1, run 2026-09-26 on the
+tree at ad44e75 (branch v9): the owner's live store copy migrated, both
+rank-parity fixtures identical, every bench at its dated number,
+LongMemEval S and M, the rot multirepo census, and the Windows leg of
+CI. Every bench ran from a worktree pinned at that commit against
+scratch stores; the artifacts carry the `-u6` suffix beside their
+baselines. Two live outside the repository because they read the
+owner's transcripts and store: the private parity artifact and the
+migration parity artifact, under `~/.cache/bettermemory-v9/`. A
+baseline is the artifact each bench was pinned to when it was ported
+(U1 and U4, 2026-09-25 and 2026-09-26) or, for the daemon, the U5
+measurement before the caches. "Equal" means every scored field of the
+artifact is equal, timing fields aside; the table's method column names
+what was compared.
+
+| bench | baseline | final tree (ad44e75) | result |
+|---|---|---|---|
+| rank parity, public (360 rows) | 360 rows, digest 4879fa82d588dbaf (`bench/parity/results/public-9.0.0-2026-09-26.json`) | 360 rows, digest 4879fa82d588dbaf (`bench/parity/results/public-9.0.0-2026-09-26-u6.json`) | equal |
+| rank parity, private, vs 8.0.0 fixture | 594 specs, digest d1a4c3bec600ff53 (`~/.cache/bettermemory-v9/private-fixture-8.0.0.json`) | 621 specs, digest e8274191b7e19359 (`~/.cache/bettermemory-v9/private-9.0.0-2026-09-26-u6.json`) | equal on shared specs (27 specs new since the baseline) |
+| rank parity, private, vs 9.0.0 U4 run | 607 specs, digest 76b1706fbb662778 (`~/.cache/bettermemory-v9/private-9.0.0-2026-09-26.json`) | 621 specs, digest e8274191b7e19359 (`~/.cache/bettermemory-v9/private-9.0.0-2026-09-26-u6.json`) | equal on shared specs (14 specs new since the baseline) |
+| integrity v0 (bettermemory arm) | admission flagged secret 0.8 false_fact 0.0 instruction 0.0 (legit 0.0106); detector J 0.256; retrieval false_fact poison_top1 0.7 served@5 1.0, instruction {"admitted": 10, "injection_served@5": 0.5, "generic_queries": 3}; injection detected plain 1.0 forged 1.0 (`bench/integrity/results/integrity-v0-bettermemory-2026-09-26.json`) | admission flagged secret 0.8 false_fact 0.0 instruction 0.0 (legit 0.0106); detector J 0.256; retrieval false_fact poison_top1 0.7 served@5 1.0, instruction {"admitted": 10, "injection_served@5": 0.5, "generic_queries": 3}; injection detected plain 1.0 forged 1.0 (`bench/integrity/results/integrity-v0-bettermemory-2026-09-26-u6.json`) | equal on every block |
+| retrieval full120, prefilter both | lexical/asked/full R@1 0.2167 R@5 0.475; lexical/asked/pre R@1 0.2167 R@5 0.475 (+4 arms) (`bench/retrieval/results/v9-full120-both-2026-09-26.json`) | lexical/asked/full R@1 0.2167 R@5 0.475; lexical/asked/pre R@1 0.2167 R@5 0.475 (+4 arms) (`bench/retrieval/results/v9-full120-both-2026-09-26-u6.json`) | identical on every arm and question |
+| toolcost (shim and in-process) | 9 tools, tools/list 8,387 bytes, instructions 1,000, session 9,387 (`bench/toolcost/results/bettermemory-shim-2026-09-26.json`) | 9 tools, tools/list 8,387 bytes, instructions 1,000, session 9,387 (`bench/toolcost/results/bettermemory-shim-2026-09-26-u6.json`) | equal on every field |
+| AML search parity (E3 keys, 150 questions) | 150 questions, digest d2d0bb5109ff98de (`bench/parity/results/aml-search-E3-keys-9.0.0-2026-09-26.json`) | 150 questions, digest d2d0bb5109ff98de (`bench/parity/results/aml-search-E3-keys-9.0.0-2026-09-26-u6.json`) | equal |
+| LongMemEval S (500) | macro R@1 0.5339 R@5 0.9062 R@10 0.9494, micro R@5 0.8808, 420.7 s (`bench/longmemeval/results/v9-baseline-s-2026-09-25.json`) | macro R@1 0.5339 R@5 0.9062 R@10 0.9494, micro R@5 0.8808, 206.4 s (`bench/longmemeval/results/v9-s-2026-09-26-u6.json`) | equal on every score and question |
+| LongMemEval M (500) | macro R@1 0.4149 R@5 0.7381 R@10 0.8037, micro R@5 0.6899, 3422.4 s (`bench/longmemeval/results/v9-baseline-m-2026-09-25.json`) | macro R@1 0.4149 R@5 0.7381 R@10 0.8037, micro R@5 0.6899, 1779.0 s (`bench/longmemeval/results/v9-m-2026-09-26-u6.json`) | equal on every score and question |
+| rot multirepo census (30 repos) | 30 repos, 37,576 claims, 8,689 false; claim-weak ALL AUROC 0.893, file-level ALL AUROC 0.5585 (`bench/rot/results/multirepo-8.0.0-2026-09-25.json`) | 30 repos, 37,576 claims, 8,689 false; claim-weak ALL AUROC 0.893, file-level ALL AUROC 0.5585 (`bench/rot/results/multirepo-9.0.0-2026-09-26-u6.json`) | equal on every stratum and arm |
+| migrate v8 parity (sealed copy) | 662 memories, 15,871 events; mirror 1063 of 1063 files identical; verify ok; 32,686,080 bytes (`~/.cache/bettermemory-v9/results/migrate-v8-live-2026-09-26-u4.json`) | 662 memories, 15,871 events; mirror 1063 of 1063 files identical; verify ok; 32,718,848 bytes (`~/.cache/bettermemory-v9/results/migrate-v8-live-2026-09-26-u6.json`) | equal on every migrated, mirrored, event, eval, order and verify field; store 32,686,080 vs 32,718,848 bytes (page allocation, not a parity field) |
+| daemon latency (p50 ms) | hook wall p50 108.03, service 56.94, shim search 283.99, in-process 275.39 ms (`bench/daemon/results/latency-9.0.0-2026-09-26.json`) | hook wall p50 50.72, service 5.35 (cold 84.44), shim search 42.35, in-process 40.72 ms (`bench/daemon/results/latency-9.0.0-2026-09-26-u6.json`) | the Daemon latency table above |
+
+The private fixture grows with the owner's transcripts, so the two
+private rows compare the specs both artifacts hold: 27
+specs are new since the 8.0.0 fixture and 14 since the
+U4 run, and no shared spec differs. The rot census is read against the
+8.0.0 artifact of 2026-09-25, whose clones under `~/.cache/bm-rot` are
+the ones walked here; the 2026-09-05 artifact walked earlier clones and
+pools 37,635 claims against 37,576, so it is not the comparator. The
+migrated store's byte size moves with SQLite's page allocation
+(32,686,080 bytes at the U4 run, 32,718,848 bytes here) and is not a
+parity field; the memories, events, mirror, event histogram, eval
+markdown, rowid order and chain verification are.
+
+CI: run 36277842468 on fc2aa50 (a test-only commit on ad44e75 that
+leaves src and bench identical, so the benched tree), green on every
+leg, Windows included. Run 36277109825 on ad44e75 was green on every
+leg but Windows, where three tests failed: two memo tests new in
+ad44e75 were written for POSIX (git's rename semantics under
+`log.follow` and its POSIX rule for the global attributes file; the
+memo is never used off POSIX, so they now carry the module's
+`files_only` mark) and the shim's cold-start bound tripped at 3.6 s on
+the runner. Run 36268645884 on abc34bf was green on every leg after one
+re-run of the Windows job, whose first attempt failed the same bound at
+6.9 s; the bound holds U5-P5's 3 s MISSED-if, measured on the owner's
+machine by `bench/daemon/latency.py` at under a second, so on CI the
+test now bounds a hang at 30 s. Run 36265183748 on 1d13a78 was green on
+every leg including `test (windows-latest, py3.14)`, the daemon detach
+and the shim's session included. The suite on this machine at ad44e75:
+3,879 passed, 2 skipped; ruff, ruff format and mypy clean; the commit
+lint clean on every commit since 39d544b.
 
 ## Reproduce
 
@@ -668,4 +748,37 @@ python -m tests.eval.comparative
 # live competitor lane (maintainer machine; throwaway venv, ~2 GB
 # model download on first run, Node 20+ for the server-memory row)
 tests/eval/run_live.sh
+
+# phase 1 gate (2026-09-26): every bench on one tree, artifacts suffixed
+# -u6 beside their baselines; the sealed live copy under ~/.cache is the
+# owner's and is not in the repository. Set BETTERMEMORY_DIR,
+# BETTERMEMORY_KEYS_DIR and BETTERMEMORY_STATE_DIR to scratch directories
+# for every command.
+python bench/parity/migrate_v8.py --from <sealed v8 copy> \
+    --out ~/.cache/bettermemory-v9/results/migrate-v8-live-2026-09-26-u6.json
+python -m bettermemory migrate v8 --from <sealed v8 copy> --to <scratch>/memory.sqlite
+python bench/parity/run.py --out bench/parity/results/public-9.0.0-2026-09-26-u6.json
+python bench/parity/run.py --compare bench/parity/results/public-8.0.0-2026-09-25.json \
+    bench/parity/results/public-9.0.0-2026-09-26-u6.json
+python bench/parity/private.py --store <scratch> \
+    --out ~/.cache/bettermemory-v9/private-9.0.0-2026-09-26-u6.json
+python bench/integrity/run.py collect --arm bettermemory \
+    --out bench/integrity/results/raw/bettermemory-2026-09-26-u6.json
+python bench/integrity/run.py score --raw bench/integrity/results/raw/bettermemory-2026-09-26-u6.json \
+    --out bench/integrity/results/integrity-v0-bettermemory-2026-09-26-u6.json
+python bench/retrieval/run.py --prefilter both --json \
+    > bench/retrieval/results/v9-full120-both-2026-09-26-u6.json
+python bench/toolcost/run.py --spec <spec naming the shim and serve commands> --json \
+    > bench/toolcost/results/bettermemory-shim-2026-09-26-u6.json
+python bench/parity/aml_search.py \
+    --out bench/parity/results/aml-search-E3-keys-9.0.0-2026-09-26-u6.json
+python bench/longmemeval/run.py --json --corpus bench/longmemeval/data/longmemeval_s_cleaned.json \
+    --per-question bench/longmemeval/results/per-question/v9-s-2026-09-26-u6.json \
+    > bench/longmemeval/results/v9-s-2026-09-26-u6.json
+python bench/longmemeval/run.py --json --corpus bench/longmemeval/data/longmemeval_m_cleaned.json \
+    --per-question bench/longmemeval/results/per-question/v9-m-2026-09-26-u6.json \
+    > bench/longmemeval/results/v9-m-2026-09-26-u6.json
+python bench/rot/corpus.py --out bench/rot/results/multirepo-9.0.0-2026-09-26-u6.json
+python bench/daemon/latency.py --v8 <sealed v8 copy> \
+    --out bench/daemon/results/latency-9.0.0-2026-09-26-u6.json
 ```

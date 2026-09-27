@@ -78,9 +78,18 @@ surfaces leave with them. An 8.x directory is imported once by
   and verify instant memoised (`_response.attach_commit_drift_counts`,
   `origin.commit_author_timestamps`); and the token streams of a memory
   per body and scopes (`search._memory_tokens`, a 5,000-entry LRU). A
-  warm search forks no git process; `_caches.clear_all` empties every
-  cache and the test suite calls it before each test. The numbers are
-  in `docs/eval-results.md` under Daemon latency.
+  warm search inside the origin cache's lifetime forks no git process.
+  A value computed while a git process failed is never kept, and a hit
+  with a governed claim keys on the attribute files its patch stream
+  reads (`.gitattributes` on the path, `info/attributes`, the global
+  attributes file and the repository's `config`), so an edit there is
+  read on the next search. A head or an attributes file that moves and
+  returns while a search runs leaves nothing memoised (the file stamps
+  carry ctime, inode and mode, and the recheck holds the directories),
+  and the reachable walks are keyed on the repository's `config` and
+  `.gitmodules`. `_caches.clear_all` empties every cache and the test
+  suite calls it before each test. The numbers are in
+  `docs/eval-results.md` under Daemon latency.
   (`src/bettermemory/githead.py`, `src/bettermemory/_caches.py`)
 - `bench/toolcost` records the served `instructions` block beside the
   descriptions and schemas (`instructions_bytes`, `instructions_chars`,
