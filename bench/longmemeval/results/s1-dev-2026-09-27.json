@@ -1,0 +1,2661 @@
+{
+ "unit": "S1",
+ "declaration": "memory 01M3HXRQXE9EX4QXGA3BH70J2S",
+ "provenance": {
+  "bettermemory_version": "8.0.0",
+  "commit": "4b8a650",
+  "tree_dirty": false,
+  "date": "2026-09-27"
+ },
+ "protocol": {
+  "dataset": {
+   "file": "bench/longmemeval/data/longmemeval_s_cleaned.json",
+   "sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442"
+  },
+  "split": "the dev 150 of aml_run.split",
+  "memory": {
+   "arm": "session-k200-fill_neighbors-trim_tail",
+   "budget_chars": 180000,
+   "store": "bench/aml/.stores/coverage-s0-dev (S0's)",
+   "service": "bench/aml/service.py MemoryService, C0 options with the arm's order, fill, trim and a 200-round pool"
+  },
+  "reading_prompt": "L1's: run_generation.py con at xiaowu0162/LongMemEval@9e0b455f4ef0e2ab8f2e582289761153549043fc, question dates",
+  "reader": {
+   "model": "claude-opus-5-5",
+   "harness": "Claude Code subagents (general-purpose)",
+   "batch_size": 4,
+   "batches": 38,
+   "template_sha256": "09b30dc4265b15f6482f71828445e34fd75b55db171980d4abc634febb8361c9",
+   "stated_chars": 181000,
+   "stated_lines": 2100
+  },
+  "grader": "one blinded pass over L1's and S1's dev answers, each question's two in different parts, Claude Opus 5.5 subagents under the reader-swap rules.txt (AML's accuracy rules), seed 20260929",
+  "no_api": "no API call; the official judges are not run on the dev"
+ },
+ "summary": {
+  "n": 150,
+  "s1_correct": 148,
+  "l1_correct_same_pass": 138,
+  "l1_continuity_recorded": 138,
+  "l1_recorded_vs_same_pass_agree": 150,
+  "paired": {
+   "l1_correct": 138,
+   "s1_correct": 148,
+   "both": 138,
+   "l1_only": [],
+   "s1_only": [
+    "2ce6a0f2",
+    "6e984302",
+    "7024f17c",
+    "75832dbd",
+    "92a0aa75",
+    "d682f1a2",
+    "gpt4_372c3eed",
+    "gpt4_4929293b",
+    "gpt4_8279ba03",
+    "gpt4_f2262a51"
+   ],
+   "neither": 2,
+   "gain": 10,
+   "mcnemar_exact_p": 0.001953
+  },
+  "by_type": {
+   "knowledge-update": {
+    "n": 23,
+    "l1": 23,
+    "s1": 23
+   },
+   "multi-session": {
+    "n": 40,
+    "l1": 32,
+    "s1": 38
+   },
+   "single-session-assistant": {
+    "n": 17,
+    "l1": 17,
+    "s1": 17
+   },
+   "single-session-preference": {
+    "n": 9,
+    "l1": 8,
+    "s1": 9
+   },
+   "single-session-user": {
+    "n": 21,
+    "l1": 21,
+    "s1": 21
+   },
+   "temporal-reasoning": {
+    "n": 40,
+    "l1": 37,
+    "s1": 40
+   }
+  },
+  "l1_gpt4o_dev_misses": {
+   "ids": [
+    "2ce6a0f2",
+    "6e984302",
+    "7024f17c",
+    "75832dbd",
+    "92a0aa75",
+    "a1cc6108",
+    "d682f1a2",
+    "gpt4_2ba83207",
+    "gpt4_372c3eed",
+    "gpt4_4929293b",
+    "gpt4_8279ba03",
+    "gpt4_f2262a51"
+   ],
+   "s1_correct": 10
+  },
+  "abstention": {
+   "n": 9,
+   "s1_correct": 9
+  },
+  "covered": {
+   "n": 142,
+   "s1_correct": 141
+  },
+  "uncovered": {
+   "ids": [
+    "a1cc6108"
+   ],
+   "s1_correct": 0
+  },
+  "unlabeled": [],
+  "s2_gate_open": true
+ },
+ "audit": {
+  "readers": {
+   "expected": 38,
+   "with_answers": 38,
+   "missing": [],
+   "clean": 38,
+   "not_clean": [],
+   "attempts": 38,
+   "attempts_stopped_by_safeguard": 0,
+   "models": [
+    "claude-opus-5-5"
+   ],
+   "violations": 0,
+   "files_not_read_to_end": 0,
+   "flagged_attachments": 0,
+   "tools": {
+    "Read": 463,
+    "SubagentHandback": 38,
+    "Write": 38
+   },
+   "usage": {
+    "input_tokens": 1048,
+    "cache_creation_input_tokens": 8893992,
+    "cache_read_input_tokens": 80500145,
+    "output_tokens": 34909
+   },
+   "usage_all_attempts": {
+    "input_tokens": 1048,
+    "cache_creation_input_tokens": 8893992,
+    "cache_read_input_tokens": 80500145,
+    "output_tokens": 34909
+   },
+   "role": "readers"
+  },
+  "graders": {
+   "expected": 2,
+   "with_answers": 2,
+   "missing": [],
+   "clean": 2,
+   "not_clean": [],
+   "attempts": 3,
+   "attempts_stopped_by_safeguard": 0,
+   "models": [
+    "claude-opus-5-5"
+   ],
+   "violations": 0,
+   "files_not_read_to_end": 0,
+   "flagged_attachments": 0,
+   "tools": {
+    "Read": 9,
+    "SubagentHandback": 2,
+    "Write": 2
+   },
+   "usage": {
+    "input_tokens": 26,
+    "cache_creation_input_tokens": 199261,
+    "cache_read_input_tokens": 1165300,
+    "output_tokens": 384
+   },
+   "usage_all_attempts": {
+    "input_tokens": 40,
+    "cache_creation_input_tokens": 295233,
+    "cache_read_input_tokens": 1821981,
+    "output_tokens": 451
+   },
+   "role": "graders"
+  }
+ },
+ "tokens": {
+  "readers_counted": 8929949,
+  "graders_counted": 199671,
+  "counted": 9129620,
+  "all_attempts": 9225673,
+  "stop": 12000000
+ },
+ "predictions": [
+  {
+   "id": "S1-P1",
+   "claim": "served contexts equal S0's cells, 150 of 150",
+   "got": {
+    "n": 150,
+    "equal": 150
+   },
+   "verdict": "HIT"
+  },
+  {
+   "id": "S1-P2",
+   "claim": "S1 correct on 143 to 148; MISSED at 140 or fewer",
+   "got": 148,
+   "verdict": "HIT"
+  },
+  {
+   "id": "S1-P3",
+   "claim": "paired gain +5 to +10; MISSED under +3",
+   "got": 10,
+   "verdict": "HIT"
+  },
+  {
+   "id": "S1-P4",
+   "claim": "at least 7 of L1's 12 dev GPT-4o misses correct; MISSED under 4",
+   "got": 10,
+   "verdict": "HIT"
+  },
+  {
+   "id": "S1-P5",
+   "claim": "at most 3 regressions; MISSED over 5",
+   "got": 0,
+   "verdict": "HIT"
+  },
+  {
+   "id": "S1-P6",
+   "claim": "7 of 7 abstentions; MISSED under 6",
+   "got": 9,
+   "verdict": "HIT"
+  },
+  {
+   "id": "S1-P7",
+   "claim": "every counted batch clean, at most 2 safeguard stops",
+   "got": {
+    "audit_ok": true,
+    "stops": 0
+   },
+   "verdict": "HIT"
+  },
+  {
+   "id": "S1-P8",
+   "claim": "counted tokens 8M to 11M; MISSED over 12M",
+   "got": 9129620,
+   "verdict": "HIT"
+  }
+ ],
+ "rows": [
+  {
+   "question_id": "c5e8278d",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 150,
+   "context_chars": 100773,
+   "prompt_sha256": "23e86776c644041cea668981f976dd4ab7e6afa39bc8161d503cd63f4fe9c3ad",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: In the chat on 2023/05/28, about updating your address with your health insurance provider, you said you had recently changed your last name: 'my old name was Johnson, but now it's Winters.' Later in that chat, updating your accounts was described as changing your name 'from Johnson to Winters.'\n\nStep 2 - Reasoning: Your current last name is Winters. The name you had before the change was Johnson.\n\nAnswer: Your last name before you changed it was Johnson."
+  },
+  {
+   "question_id": "6ade9755",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 149,
+   "context_chars": 97737,
+   "prompt_sha256": "c668a1dd9b098e02bcda3fa98320cb275188b7221837e4c9fac4d780505a9d4a",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: In the 2023/05/30 conversation you were planning a self-care day and asked for healthy brunch spots near Serenity Yoga. You then said you use the Down Dog app for your home practice, which helps 'especially on days when I can't make it to Serenity Yoga'. On the app you mostly do vinyasa flow classes. You also have a Sunday morning yoga-and-brunch routine with your best friend Sarah.\nStep 2 - Reasoning: The studio you go to in person is Serenity Yoga. Down Dog is what you use at home on days you can't get to the studio.\nAnswer: You take yoga classes at Serenity Yoga. On days you can't make it there, you practice at home with the Down Dog app."
+  },
+  {
+   "question_id": "6f9b354f",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 71,
+   "context_chars": 56562,
+   "prompt_sha256": "553ec2655c1a4e95dbe39d1791cbc66fa3c22f2122b5fc4d402910dab47561ab",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: In our conversation on 2023/05/27, while asking about ZZ Plant care, you mentioned that you had been redecorating and had recently repainted your bedroom walls a lighter shade of gray, adding that it made the room feel much brighter. No other conversation mentions a different color for the bedroom.\n\nStep 2 - Reasoning: That is the only mention of repainting the bedroom, so it answers the question directly.\n\nAnswer: You repainted your bedroom walls a lighter shade of gray."
+  },
+  {
+   "question_id": "58ef2f1c",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 177,
+   "context_chars": 129409,
+   "prompt_sha256": "4c2a6d17c8674ff6f0ed4b1bf65daa74e13a97df29bbc098773fcbe325412df5",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- In the 2023/04/02 conversation about upcoming LA charity events (you said you are passionate about animal welfare and children's health), you mentioned that you really enjoyed the 'Love is in the Air' fundraising dinner you volunteered at 'back in February'.\n- Later in the same conversation you referred to it again as the 'Love is in the Air' fundraising dinner you volunteered at 'back on Valentine's Day'.\n- This is the only fundraising dinner you mention volunteering at in the chat history. The history does not name the host organization outright, but it is the event the question refers to.\n\nStep 2 - Reasoning:\n- 'Back in February' plus 'Valentine's Day' pins the date to February 14.\n- The conversation took place on April 2, 2023, so this February is February 2023.\n\nAnswer: You volunteered at the fundraising dinner ('Love is in the Air') on Valentine's Day, February 14, 2023, about seven weeks before our April 2 conversation."
+  },
+  {
+   "question_id": "3b6f954b",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 94,
+   "context_chars": 96861,
+   "prompt_sha256": "3834cb082d9be2c3a8799c860fbb44c15356f1fb4aad9e691dcbedf3959ad4e7",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: In the 2023/05/23 conversation about planning a trip to the Great Ocean Road, you said you had been there before with friends 'during my study abroad program at the University of Melbourne', and you recommended the Kennett River Koala Walk.\nStep 2 - Reasoning: You named the institution directly, and it is in Melbourne, Australia.\nAnswer: You did your study abroad program at the University of Melbourne in Australia."
+  },
+  {
+   "question_id": "726462e0",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 165258,
+   "prompt_sha256": "5c7a15ec9e2c046eede56402fd10d8dad5a484f4b7e2ecd9678c95273a9a5b91",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: In the 2023/05/23 chat about promoting your freelance writing on Instagram and Twitter, you said: 'speaking of first purchases, I remember getting a 10% discount on my first purchase from that new clothing brand last month.' (The other 10% mention, a 10%-off coupon that saved about $8, was for a Target grocery order, not the clothing brand.)\nStep 2 - Reasoning: The only discount linked to your first purchase from the new clothing brand is the 10% one.\nAnswer: You got a 10% discount on your first purchase from the new clothing brand."
+  },
+  {
+   "question_id": "c8c3f81d",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 103,
+   "context_chars": 92985,
+   "prompt_sha256": "79eed5c7ab7f2bb7a658196e3462145c263ebe37f4b9400eea886d0b54e26cb3",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: In the May 29 chat about athletic wear, you said Nike has been your favourite brand so far for running shoes. You also said you use Nike running shoes for your daily 5K runs, and that you bought your current pair at the outlet mall in April at 20% off.\n\nStep 2 - Reasoning: You stated your favourite running-shoe brand directly, and nothing later contradicts it.\n\nAnswer: Nike."
+  },
+  {
+   "question_id": "21436231",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 174,
+   "context_chars": 119915,
+   "prompt_sha256": "a4ab5752aa768878b6811b0f3e773ce353a36b24fd365d84bc050ea0e6bd33d0",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: In the chat dated 2023/05/21, while planning a fishing trip to Lake Michigan with friends, you described your past experience fishing there: spinner lures worked better than live bait for trout, and you caught 12 largemouth bass on your last trip to Lake Michigan.\n\nStep 2 - No other chat gives a different number for that trip.\n\nAnswer: You caught 12 largemouth bass on your fishing trip to Lake Michigan."
+  },
+  {
+   "question_id": "95bcc1c8",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 129399,
+   "prompt_sha256": "790d4d3b4265fdce0c54f501abd1613e117e17b72e622095266933ab359d893d",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: On 2023/05/22 you asked for comedy writing tips for your stand-up class. In that chat you said you had recently gone to an open mic night and 'saw 10 amateur comedians perform', and that it was really inspiring. Later in the same chat you said you had a great time at that open mic night. No other number of performers appears anywhere else in the history.\nStep 2 - Reasoning: The only number given for the open mic night is 10 amateur comedians, and nothing later changes it.\nAnswer: You watched 10 amateur comedians perform at the open mic night."
+  },
+  {
+   "question_id": "0862e8bf",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 50,
+   "context_chars": 43042,
+   "prompt_sha256": "0e165c575a3970f25b54113e868ae586e80c7b86ebbf8941f562ca44562d9c1c",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1, relevant information: In the 2023/05/24 conversation about your cat's digestive health, probiotics, litter and microchipping, you said: 'By the way, my cat's name is Luna, and she's been such a sweetie throughout all the changes we've been making to her environment.' Step 2, reasoning: No other name for your cat appears anywhere else in the chat history, so this is the only and definitive answer. Answer: Your cat's name is Luna."
+  },
+  {
+   "question_id": "853b0a1d",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 65,
+   "context_chars": 54932,
+   "prompt_sha256": "0793ba7ee6a8ea59760aed3141c75602439d02260ab1e332831b406cbe438564",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: In the 2023/05/22 chat about organizing your jewelry collection, you said you would start with 'the silver necklace my grandma gave me on my 18th birthday' (the one you lost about two months ago at a friend's house during a sleepover).\n\nStep 2 - Reasoning: the necklace was a gift on your 18th birthday, so you were turning 18 at the time.\n\nAnswer: You were 18 years old."
+  },
+  {
+   "question_id": "a06e4cfe",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 73,
+   "context_chars": 58109,
+   "prompt_sha256": "b6b283e61aa870ba6430a2ea71f462e303c6b5dbf2d3d286064774d570c22b7d",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: In our cocktail conversation on 2023/05/22, you told me you had been experimenting with different gin-to-vermouth ratios in your classic martini recipe and had settled on a 3:1 ratio with a dash of citrus bitters, because you found it really brings out the flavors of the gin. You then asked me for vermouth brands to pair with your gin (I suggested options such as Dolin and Noilly Prat). (The separate '2:1 or 3:1' figure that came up earlier referred to gin-to-lime juice in a gimlet, not to your martini.)\n\nStep 2 - Reasoning: Nothing later in our chats changed this, so the 3:1 ratio is still your stated preference.\n\nAnswer: Your preferred ratio is 3:1, meaning three parts gin to one part vermouth, finished with a dash of citrus bitters."
+  },
+  {
+   "question_id": "37d43f65",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 153,
+   "context_chars": 100894,
+   "prompt_sha256": "46352a744a6b3ece1857f2c5636ce16a5d0a00464b0398b335d3450cb474bcec",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: In the 2023/05/28 session about your laptop's battery life, you said you had recently upgraded your laptop's RAM and that it gave a big performance boost. You described the laptop as a 2018 Dell Inspiron 15 5000 series and said: 'Before the RAM upgrade to 16GB, I was getting around 6-7 hours of battery life, but now I'm getting around 4-5 hours.'\nStep 2 - Reasoning: 'The RAM upgrade to 16GB' states the capacity you upgraded to. No other session gives a different figure.\nAnswer: You upgraded your laptop's RAM to 16GB."
+  },
+  {
+   "question_id": "25e5aa4f",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 104,
+   "context_chars": 82202,
+   "prompt_sha256": "29deb6886e2adcdd10cc49409ddc74e5bf9f4da6da68dc16d5db93f20200ae21",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: On 2023/05/29, while we were comparing Master's in Data Science programs at Stanford, Berkeley and Carnegie Mellon, you mentioned that you completed your undergrad in CS (computer science) at UCLA, noting that it has a great reputation in the industry. In the same conversation you said you were reaching out to your professors from UCLA for letters of recommendation.\n\nStep 2 - Reasoning: An undergraduate degree in CS is your Bachelor's degree in Computer Science, and the only school you named for it is UCLA.\n\nAnswer: You completed your Bachelor's degree in Computer Science at UCLA (the University of California, Los Angeles)."
+  },
+  {
+   "question_id": "86b68151",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 172,
+   "context_chars": 120224,
+   "prompt_sha256": "aef4339e90db435e7cb398f9172bc7c8137edd338851cc2603254244b31d113b",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- In the 2023/05/28 conversation about decluttering and organizing, you said you had rearranged your living room furniture (swapping the couch and armchair) and 'got a new bookshelf', which helped you declutter your book collection.\n- When I asked about it, you said: 'The new bookshelf is from IKEA, and I'm really happy with it. It's exactly what I needed to get my books organized.'\n\nStep 2 - Reasoning:\n- That is the only place the bookshelf's source is mentioned, and it names the store directly.\n\nAnswer: You bought your new bookshelf from IKEA."
+  },
+  {
+   "question_id": "577d4d32",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 177526,
+   "prompt_sha256": "ab762f5c9b3d38a794f68144414e89de1b58bc392ab0bcdc8f5367d1359e1c50",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- On 2023/05/29, while we were talking about evening reading and unwinding, you said you were trying to build a better evening routine. You said you stop work emails and messages by 7 pm to keep your work life and personal life separate, and that this has helped you relax.\n\nStep 2 - Reasoning:\nThat is the only time you gave for stopping work communications, and nothing later changed it.\n\nAnswer: You stop checking work emails and messages by 7 pm."
+  },
+  {
+   "question_id": "ec81a493",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 176,
+   "context_chars": 129091,
+   "prompt_sha256": "290ab7c0b115376899203d22153a5e7e56db493e782d43b5267b044db0d36c3d",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- On 2023/05/27 you mentioned a signed poster that came with your favorite artist's debut album.\n- In the same conversation you said the signed poster from your favorite artist's debut album is part of a limited edition of only 500 copies worldwide.\n\nStep 2 - Reasoning: The only release figure you gave for your favorite artist's debut album (the limited edition that came with the signed poster) is 500 copies worldwide.\n\nAnswer: 500 copies were released worldwide (a limited edition)."
+  },
+  {
+   "question_id": "19b5f2b3",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 94,
+   "context_chars": 67208,
+   "prompt_sha256": "168670dca0f3a23180fd290ff76aef077ebfca15f341663cc75f4da87b9fa066",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: While planning a trip to Asia (2023/05/30), you said you had already visited Fushimi Inari Shrine 'when I was in Japan a few months ago' and that you 'spent two weeks traveling solo around the country'. You stayed in small hostels and guesthouses and visited an onsen in the mountains during that trip.\n\nStep 2 - Reasoning: This is the only time the length of your Japan trip comes up, and it states the duration directly.\n\nAnswer: You were in Japan for two weeks, on a solo trip around the country a few months ago."
+  },
+  {
+   "question_id": "8e9d538c",
+   "question_type": "single-session-user",
+   "abstention": false,
+   "n_hits": 173,
+   "context_chars": 125720,
+   "prompt_sha256": "71d626d4d13e1f8e6cc1ca23fd856c2f271a7a97f30f955b8ca67b3affead8a8",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: On 2023/05/27, while asking about hook and yarn sizes for amigurumi toys, you said you wanted to use some of your worsted weight yarn. You described it as 'a stash of 17 skeins that I found recently', and the assistant replied 'With 17 skeins of worsted weight yarn...'. You also used some of this stash for the fingerless gloves you made for your sister's birthday.\n\nStep 2 - Reasoning: This is the only time the number comes up, and it directly states how many skeins you found.\n\nAnswer: You found 17 skeins of worsted weight yarn in your stash."
+  },
+  {
+   "question_id": "0862e8bf_abs",
+   "question_type": "single-session-user",
+   "abstention": true,
+   "n_hits": 44,
+   "context_chars": 23599,
+   "prompt_sha256": "6a976c679d23057ab5e18b16d5923ed1e7b153a12022d8338969c76714369c23",
+   "answer_turns": 0,
+   "covered": false,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- You never mention a hamster anywhere in our chat history.\n- The only pet you mention is your cat, Luna. That came up when you talked about her probiotic supplement, a new litter box and litter, washing her beds, and getting her microchipped.\n\nStep 2 - Reasoning:\nWithout any mention of a hamster, there is no name to report.\n\nAnswer: I can't answer that. You never told me about a hamster or its name. The only pet you've mentioned is your cat, Luna."
+  },
+  {
+   "question_id": "29f2956b_abs",
+   "question_type": "single-session-user",
+   "abstention": true,
+   "n_hits": 200,
+   "context_chars": 136974,
+   "prompt_sha256": "2c95a9f6948bca01b662b9b4e8b42d3c756e54216f029a40c631b1acfab9eaa9",
+   "answer_turns": 0,
+   "covered": false,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 – Relevant information from our chats:\n- On 2023/05/22 you said: 'I've been practicing guitar for 30 minutes daily.' In that chat you also talked about learning jazz saxophone, buying a diatonic harmonica, and recording jam sessions with your friend Alex.\n- None of our conversations mentions a violin or any violin practice.\n\nStep 2 – Reasoning: You're asking about daily violin practice. The only practice time you ever gave me is 30 minutes a day of guitar. Nothing in our chats says you play the violin or how long you'd practice it, so I can't give a violin figure.\n\nAnswer: I don't have that information. You never mentioned practicing the violin. The only daily practice you told me about was guitar, at 30 minutes a day. If you meant guitar, the answer is 30 minutes daily."
+  },
+  {
+   "question_id": "gpt4_59c863d7",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 188,
+   "context_chars": 150818,
+   "prompt_sha256": "161b1d333a633c8c42089d13ff0d6bad849173e18ccca94c52d8c7576434cda3",
+   "answer_turns": 5,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 – Relevant information from the chat history:\n- Revell F-15 Eagle: a simple kit you picked up on a whim at the hobby store in late April and finished.\n- Tamiya 1/48 scale Spitfire Mk.V: a kit you recently finished.\n- 1/72 scale B-29 bomber: bought at a model show (your next project).\n- 1/24 scale '69 Camaro: bought at the same model show.\n- 1/16 scale German Tiger I tank: you started working on a diorama featuring it.\n\nStep 2 – Count the distinct kits: F-15 Eagle + Spitfire Mk.V + B-29 bomber + '69 Camaro + Tiger I tank = 5.\n\nAnswer: You have worked on or bought 5 model kits."
+  },
+  {
+   "question_id": "aae3761f",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 193,
+   "context_chars": 135089,
+   "prompt_sha256": "779a860d85d8cc778d1f72c9637c620af7ee2c37757d57b65cbcfc75e08ea120",
+   "answer_turns": 3,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information (road trips you have already taken):\n- Outer Banks, North Carolina: you said it only took you four hours to drive there (May 21 chat).\n- The mountains in Tennessee: you said you drove for five hours to get there (May 21 camping chat).\n- Washington D.C.: you said you recently drove for six hours to get there (May 26 chat).\n(Tybee Island and the Yellowstone/Grand Teton loop were only planned trips, so they don't count.)\n\nStep 2 - Reasoning: 4 hours + 5 hours + 6 hours = 15 hours.\n\nAnswer: You spent 15 hours in total driving to your three road trip destinations."
+  },
+  {
+   "question_id": "gpt4_f2262a51",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 146146,
+   "prompt_sha256": "5d8052dbbc2418983f22ad9ba777708857b34510f24e8dad69dfb5a213bf5eb8",
+   "answer_turns": 5,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": false,
+    "l1_recorded": false
+   },
+   "hypothesis": "Step 1 - Relevant information from the chat history:\n1. Dr. Patel - an ENT specialist who diagnosed you with chronic sinusitis and prescribed a nasal spray.\n2. Dr. Lee - your dermatologist; you had a follow-up appointment with her/him for a biopsy on a suspicious mole on your back (it turned out benign).\n3. Dr. Smith - your primary care physician, who diagnosed your UTI and prescribed antibiotics.\n- Other mentions are not additional doctors: the colonoscopy was only something you were thinking about scheduling, and the planned follow-ups were with Dr. Patel and your primary care physician (Dr. Smith).\n\nStep 2 - Reasoning: The distinct doctors you actually visited are Dr. Patel (ENT), Dr. Lee (dermatologist) and Dr. Smith (primary care physician). No other named or distinct doctor visits appear.\n\nAnswer: You visited 3 different doctors - Dr. Patel (ENT specialist), Dr. Lee (dermatologist) and Dr. Smith (primary care physician)."
+  },
+  {
+   "question_id": "dd2973ad",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 164202,
+   "prompt_sha256": "5424060529f4663defb91eb206a14f92893b5ccd5af9eb40710970382a63021e",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: (1) You had a doctor's appointment at 10 AM on a Thursday, where you got your blood test results showing your cholesterol was a bit high. (2) In a later chat you said you didn't get to bed until 2 AM on Wednesday, which made Thursday morning a struggle.\n\nStep 2 - Reasoning: The day before your Thursday doctor's appointment was Wednesday, and that night you didn't get to bed until 2 AM.\n\nAnswer: You went to bed at 2 AM."
+  },
+  {
+   "question_id": "6cb6f249",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 166607,
+   "prompt_sha256": "e32bf8e2272f9fb312bb6684863226eed4594763e94fbdd3a0a23e8b656e3b3e",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- In one conversation you said you'd been cutting down on social media and had even taken a week-long break from it in mid-January -> 7 days.\n- In another conversation you said you had just got back from a 10-day break from social media in mid-February -> 10 days.\n- No other social media breaks were mentioned.\n\nStep 2 - Reasoning: 7 days + 10 days = 17 days.\n\nAnswer: You took 17 days of social media breaks in total: a week-long (7-day) break in mid-January and a 10-day break in mid-February."
+  },
+  {
+   "question_id": "46a3abf7",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 171320,
+   "prompt_sha256": "2fc4b1e5dc1030f67cc318e290578e3636ebffb06d621fb8b83a32803cf26d28",
+   "answer_turns": 3,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: (a) You have a 5-gallon tank, which you got from your cousin, with your solitary betta fish, Finley. (b) You set up a new 20-gallon freshwater community tank named Amazonia, with neon tetras, harlequin rasboras and platies. (c) You also take care of a small 1-gallon tank that you set up for a friend's kid, with a few guppies and some plants. Step 2 - Reasoning: 1 (the 5-gallon betta tank) + 1 (the 20-gallon Amazonia tank) + 1 (the 1-gallon tank for your friend's kid) = 3. Answer: 3 tanks."
+  },
+  {
+   "question_id": "d682f1a2",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 152297,
+   "prompt_sha256": "ab867552866c33874452b0cac6e94b4d4884e296719bad61655fcd21be49bf20",
+   "answer_turns": 3,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": false,
+    "l1_recorded": false
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- 2023/05/22: You said you had been relying on food delivery a lot and had Domino's Pizza three times the previous week.\n- 2023/05/27: You said your weekends had been all about Uber Eats lately and called it a lifesaver.\n- 2023/05/30: You mentioned a new delivery service you had found, Fresh Fusion, which offers pre-made meals.\n\nStep 2 - Reasoning: That makes three different services: Domino's Pizza, Uber Eats and Fresh Fusion. None of the other conversations mentions another one.\n\nAnswer: You have recently used 3 different food delivery services: Domino's Pizza, Uber Eats and Fresh Fusion."
+  },
+  {
+   "question_id": "7024f17c",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 186,
+   "context_chars": 130517,
+   "prompt_sha256": "ec2b518653f6d05ec63d4eaaef9c1d8ee82cf6d70d94c4edbec955c057b524a7",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": false,
+    "l1_recorded": false
+   },
+   "hypothesis": "Step 1 - Relevant information: (a) Jogging: in a chat on Saturday 2023/05/20 you asked me to help log a 30-minute jog around the neighborhood that you did on Saturday; no other jogs are mentioned. (b) Yoga: on 2023/05/22 you said you used to practice yoga three times a week for 2 hours each time, but had been slacking off for this month and were only trying to get back into it (you planned Mon/Wed/Fri 7:00 am sessions, and on 2023/05/23 said you hoped to restart with one or two sessions a week). No yoga session was actually reported as done.\nStep 2 - Reasoning: Jogging = 30 minutes = 0.5 hours. Yoga = 0 hours, since the 3 x 2-hour sessions were your former routine that you had stopped this month, not something you actually did recently. Total = 0.5 + 0 = 0.5 hours.\nAnswer: About 0.5 hours (30 minutes) in total, all of it from your 30-minute jog; you did no yoga, because you had been slacking off on it."
+  },
+  {
+   "question_id": "gpt4_2ba83207",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 150511,
+   "prompt_sha256": "94d131d7d498f3dd0d659612eb7239029e2277042d5ec3c706da48a10b19fa1b",
+   "answer_turns": 4,
+   "covered": true,
+   "verdicts": {
+    "s1": false,
+    "l1_same_pass": false,
+    "l1_recorded": false
+   },
+   "hypothesis": "Step 1 - Relevant information (current date: May 30, 2023):\n- Walmart: on the Saturday a week before the May 26 chat (about May 20), you spent around $120 on groceries, with a 10% off coupon on dairy.\n- Trader Joe's: the week before last (mid-May), you and your sister spent around $80 between the two of you (roughly $40 each).\n- Publix, through Instacart: last week you spent around $60, plus a $10 delivery fee.\n- Thrive Market: you spent around $150 on an online order, but you placed it 'last month' relative to May 26, which means April. That is outside the past month, and Thrive Market is an online retailer rather than a grocery store.\n\nStep 2 - Reasoning: Within the past month, Walmart ($120) is more than Trader Joe's ($80 shared) and Publix ($60, or $70 with delivery). The larger Thrive Market order happened before this window.\n\nAnswer: Walmart, where you spent about $120."
+  },
+  {
+   "question_id": "2318644b",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 150506,
+   "prompt_sha256": "d3b263321fd5aee0c34484ee18d754484daefb481a2f4f43f838abd8ca0beb52",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: (a) Tokyo: on your solo trip last January you stayed in a hostel in Tokyo that cost around $30 per night. (b) Hawaii: for your Maui trip you booked a luxurious resort that costs over $300 per night. Step 2 - Reasoning: $300 - $30 = $270. Answer: About $270 more per night in Hawaii. The Maui resort costs over $300 per night and the Tokyo hostel about $30, so the difference is at least $270 per night, roughly 10 times as much."
+  },
+  {
+   "question_id": "2ce6a0f2",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 174313,
+   "prompt_sha256": "d47873b9b2b0da9a1e70d0477d47fe9d44d56c0d9480c03894d8658bd2eb29a9",
+   "answer_turns": 4,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": false,
+    "l1_recorded": false
+   },
+   "hypothesis": "Step 1 - Relevant information (the current date is 2023/03/08, so the past month runs from about 2023/02/08 to today):\n- February 10: you attended the 'Women in Art' exhibition, where you discovered local artist Rachel Lee's work (the curator was Sarah Johnson).\n- February 17: you volunteered at the Children's Museum's 'Art Afternoon' event, where kids made artwork inspired by famous paintings.\n- February 24: you went on a guided tour at the History Museum, which sparked your interest in ancient history and art (you especially liked the ancient pottery section).\n- March 3: you attended the lecture 'The Evolution of Street Art' at the Art Gallery.\nThe other events in the chats either are not art-related (the 'Yoga for a Cause' charity yoga event, the 'Pedals for a Purpose' charity ride, Sunday mass at St. Mary's Church) or are only plans (visiting local art studios this weekend, future Modern Art Museum events, a possible street art workshop, a day at the Met).\nStep 2 - Reasoning: All four dated art events fall between February 8 and March 8, and each is a separate event: 1 exhibition + 1 volunteer art event + 1 museum tour + 1 lecture = 4.\nAnswer: You attended 4 different art-related events in the past month: the 'Women in Art' exhibition (Feb 10), the Children's Museum 'Art Afternoon' (Feb 17), the guided tour at the History Museum (Feb 24), and the 'Evolution of Street Art' lecture at the Art Gallery (Mar 3)."
+  },
+  {
+   "question_id": "gpt4_31ff4165",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 159579,
+   "prompt_sha256": "050585e917b7336842f35406d842b19cd11855e0f4d9692e1c124f0fa171954a",
+   "answer_turns": 6,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information (the health-related devices you mentioned):\n1. Accu-Chek Aviva Nano system: you test your blood sugar with it three times a day.\n2. Fitbit Versa 3: you wear it non-stop to track steps, activity and sleep, and you use it for a daily guided breathing session.\n3. Phonak behind-the-ear (BTE) hearing aids: you rely on them every day, and you were ordering size 13 replacement batteries for them.\n4. Nebulizer machine: you do inhalation treatments with it twice a day, and you planned to go up to three times a day.\nStep 2 - Reasoning: You use all four every day. The batteries are supplies for the hearing aids, so they don't count as a separate device.\nAnswer: You use 4 health-related devices each day: the Accu-Chek Aviva Nano blood glucose meter, the Fitbit Versa 3, your Phonak BTE hearing aids and your nebulizer."
+  },
+  {
+   "question_id": "a9f6b44c",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 140356,
+   "prompt_sha256": "43c4e929031e9076b0c4ad3d7afe4544233cc863673f7010ec01bf80a2337de4",
+   "answer_turns": 4,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information (all from chats on 2023/03/20; today is also 2023/03/20):\n- Road bike: you cleaned and lubricated the chain in March. You first gave the date as March 2nd and later as March 22nd. You also had the bike serviced at Pedal Power on March 10th, where they replaced the worn brake pads and cables.\n- Commuter bike (a regular hybrid): the front tire is worn and you got a flat on February 20th. You plan to replace the tire this month, before April, probably with a Continental Gatorskin.\n- Mountain bike: you only added a new water bottle cage a few weeks ago. That is a new accessory, not a service. The planned U-lock, bike computer and lights are also purchases, not servicing.\nStep 2 - Reasoning: Two bikes were serviced or are due for service in March: the road bike (chain cleaning plus the Pedal Power service) and the commuter bike (the planned tire replacement). The road bike counts once even though it had more than one maintenance job.\nAnswer: 2 bikes: your road bike (already serviced) and your commuter/hybrid bike (front tire replacement planned)."
+  },
+  {
+   "question_id": "edced276",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 172634,
+   "prompt_sha256": "7782270f99f07d6728c5c4cadf72bf3bdd847ae074f7c3a5830dca924ac40247",
+   "answer_turns": 3,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- On 2023/05/21 you said you had recently got back from a solo trip to New York City that lasted five days (you stayed in a hostel and ate at local cafes). So NYC = 5 days.\n- On 2023/05/24 you said you had just got back from an island-hopping trip to Hawaii with your family, and that the family had to plan everything for 'the 10-day' trip far in advance. So Hawaii = 10 days.\n\nStep 2 - Reasoning:\n5 days (New York City) + 10 days (Hawaii) = 15 days.\n\nAnswer: You spent 15 days in total traveling: 10 days in Hawaii and 5 days in New York City."
+  },
+  {
+   "question_id": "10d9b85a",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 153318,
+   "prompt_sha256": "67cfc5d54c2f63f0f2dc19a8a092da6d5a05f7b52e27e9a4ff18c89b56d9e66f",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: (a) You attended a 2-day machine learning workshop on April 17 and 18 (where Dr. Kim covered topics such as feature engineering), which is 2 days. (b) You attended a lecture on sustainable development at the public library on April 10, which is 1 day. (c) No conference in April appears in the chat history. The gaming event at your local game store was not a workshop, lecture or conference, so it is not counted. Step 2 - Reasoning: 2 days (workshop) + 1 day (lecture) = 3 days. Answer: You spent 3 days attending workshops, lectures and conferences in April."
+  },
+  {
+   "question_id": "2b8f3739",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 103,
+   "context_chars": 94796,
+   "prompt_sha256": "6229e7578d18baeafcce17d664330d5b947452508eaada2785c2daa5d6b269ef",
+   "answer_turns": 3,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information from the chat history:\n- Farmers' market on May 15th: you sold 12 bunches of fresh organic herbs from your backyard garden, earning a total of $120.\n- Homemade and Handmade Market on May 29th: you sold 15 jars of homemade jam, earning $225.\n- Summer Solstice Market: you sold 20 potted herb plants at $7.50 each, which is 20 x $7.50 = $150.\n\nStep 2 - Reasoning:\n$120 (herbs) + $225 (jam) + $150 (potted herb plants) = $495.\n\nAnswer: You earned a total of $495 from selling your products at the markets."
+  },
+  {
+   "question_id": "1a8a66a6",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 168,
+   "context_chars": 106224,
+   "prompt_sha256": "e54abc33a89f40a512ecfb95b1b2fe155bb0ec124d625fc6ccb40542fa2e1b0e",
+   "answer_turns": 3,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- The New Yorker: you subscribed in early February and said you are still enjoying the weekly issues, so this subscription is active.\n- Forbes: you said you canceled your Forbes subscription in early March because the articles weren't interesting, so it no longer counts.\n- Architectural Digest: while planning your living room redecoration you said you are 'also getting Architectural Digest', which you love for home decor inspiration, so this is an active subscription.\n- National Geographic: you mentioned buying your last issue on your way back from the gym on March 15th. That was a single-issue purchase, not a subscription.\n- The New York Times: you follow it on Twitter and listen to The Daily podcast. That is not a magazine subscription, and you never said you subscribe to it. Your book subscription box isn't a magazine either.\n\nStep 2 - Reasoning: Of the magazines you mentioned, The New Yorker and Architectural Digest are current subscriptions. Forbes was canceled, and National Geographic was bought as a single issue.\n\nAnswer: You currently have 2 magazine subscriptions: The New Yorker and Architectural Digest."
+  },
+  {
+   "question_id": "c2ac3c61",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 189,
+   "context_chars": 157922,
+   "prompt_sha256": "2e965afdd14c2340407b448cb20dde7c60807635fb68ef01180c03db95fcdf08",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- 2023/05/23 conversation (resources for NLP and deep learning): you first said you had 'already completed some courses on Coursera', and later specified: 'I've completed three courses on Coursera.'\n- 2023/05/30 conversation (online courses for data science, NLP and deep learning): you said: 'I've completed two courses on edX so far', which had helped you in your role as a software engineer, and you repeated that you had completed two courses on edX.\n- The other classes you mentioned (a pasta-making cooking class, weekly English classes at the refugee center, a trade show preparation workshop) are not described as completed online courses, so they are not counted.\n\nStep 2 - Reasoning:\n- The Coursera and edX courses are on different platforms, so they are separate courses and the counts add up: 3 (Coursera) + 2 (edX) = 5.\n\nAnswer: You have completed 5 online courses in total: 3 on Coursera and 2 on edX."
+  },
+  {
+   "question_id": "gpt4_372c3eed",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 175,
+   "context_chars": 141829,
+   "prompt_sha256": "23ac925ad425b94b5a82c1bf37b95646db5405fa70761a435a7eb0e5ef1c9e22",
+   "answer_turns": 3,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": false,
+    "l1_recorded": false
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- You attended Arcadia High School from 2010 to 2014 (4 years).\n- You earned an Associate's degree in Computer Science from Pasadena City College (PCC) in May 2016, before you started at UCLA (2014-2016, about 2 years).\n- You graduated from UCLA with a Bachelor's degree in Computer Science in 2020, which you said took four years (2016-2020).\n\nStep 2 - Reasoning: 4 years (high school) + 2 years (PCC) + 4 years (UCLA) = 10 years. This matches the full span from starting high school in 2010 to finishing your Bachelor's in 2020.\n\nAnswer: 10 years in total."
+  },
+  {
+   "question_id": "88432d0a_abs",
+   "question_type": "multi-session",
+   "abstention": true,
+   "n_hits": 195,
+   "context_chars": 180095,
+   "prompt_sha256": "02efe66700eb20d7eab51d981e0807b6323070ed7aebd1175e471dd5a78cd30e",
+   "answer_turns": 0,
+   "covered": false,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information from the chat history:\nThe baking you mentioned includes a chocolate cake for your sister's birthday party, a whole wheat baguette, a sourdough bread on a Tuesday that came out dense, and a batch of cookies using your oven's convection setting. You also planned a strawberry tart for a dinner party, a garlic and herb whole wheat focaccia, and a rustic Italian bread. Egg tarts are never mentioned in any of the conversations.\n\nStep 2 - Reasoning:\nBecause egg tarts never come up in the chat history, there is nothing to count, and the question cannot be answered from the information available.\n\nAnswer: I can't tell. You never mentioned baking egg tarts in our conversations, so there is no record of how many times you baked them in the past two weeks. (The only tart that came up was the strawberry tart you planned for a dinner party.)"
+  },
+  {
+   "question_id": "60bf93ed_abs",
+   "question_type": "multi-session",
+   "abstention": true,
+   "n_hits": 200,
+   "context_chars": 168168,
+   "prompt_sha256": "08a03692e9f7f82386c7e570b322f882196d12e352469ab0a4919ffbdc5a58a8",
+   "answer_turns": 0,
+   "covered": false,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- Nowhere in our chat history did you mention buying an iPad case, ordering one, or when one arrived.\n- The closest related purchase you mentioned is a laptop backpack: you said you bought it from Amazon on 1/15, and in another conversation that it arrived on 1/20 and has been great for carrying your work laptop.\n\nStep 2 - Reasoning: Since an iPad case never comes up, there is no purchase date or arrival date to compare, so the question can't be answered from the information available. (For the laptop backpack, 1/15 to 1/20 would be 5 days.)\n\nAnswer: I can't tell. You never mentioned an iPad case in our conversations, so I don't know when you bought it or when it arrived. If you were thinking of your laptop backpack, that took 5 days to arrive (bought on Amazon 1/15, arrived 1/20)."
+  },
+  {
+   "question_id": "edced276_abs",
+   "question_type": "multi-session",
+   "abstention": true,
+   "n_hits": 200,
+   "context_chars": 135675,
+   "prompt_sha256": "83dcc5dc603cf059b2840962f2c6ccf48a301ef5a59f70ca558e44a3182155c7",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- Hawaii: On 2023/05/23 you said you had just returned from an island-hopping trip to Hawaii with your family, and that it was a 10-day trip your family had to plan far in advance. So Hawaii = 10 days.\n- Seattle: There is no mention of a trip to Seattle anywhere in our chat history. The other trips you mentioned were a 5-day solo trip to New York City, a business flight from New York to Los Angeles, and planned (not yet taken) trips to Paris/Rome and Japan.\n\nStep 2 - Reasoning: A total would require the number of days you spent in Seattle, and that information was never provided, so the sum cannot be computed.\n\nAnswer: I can't determine the total. Your Hawaii trip was 10 days, but you never mentioned traveling to Seattle, so there is no information about any days spent there. (If you meant your 5-day solo trip to New York City, the combined total would be 15 days.)"
+  },
+  {
+   "question_id": "75832dbd",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "n_hits": 181,
+   "context_chars": 180127,
+   "prompt_sha256": "63fe3ef904def23c0bdb385b1c40446662f33b079b372b4b68dac04a331c85e4",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": false,
+    "l1_recorded": false
+   },
+   "hypothesis": "Step 1 - Relevant information: In our 2023/05/22 conversation you told me you work in deep learning for medical image analysis (you asked me to skip the basics), and you followed up on segmentation datasets, explainable AI for medical imaging (especially techniques for visualizing and interpreting models), multi-modal image fusion, transfer learning and domain adaptation.\n\nStep 2 - Reasoning: The most useful suggestions are therefore medical-imaging AI venues and recent work in those sub-areas, rather than general AI or unrelated topics.\n\nStep 3 - Recommendations\n\nConferences (upcoming as of late May 2023):\n- IPMI 2023 (June 18-23, Bariloche, Argentina): small, methods-focused.\n- CVPR 2023 (June 18-22, Vancouver): check its medical computer vision workshops.\n- MIDL 2023 (July 10-12, Nashville): the core medical imaging + deep learning venue.\n- MICCAI 2023 (Oct 8-12, Vancouver): the flagship; its recurring satellite workshops map straight onto your interests, e.g., iMIMIC (interpretability), DART (domain adaptation and representation transfer), UNSURE (uncertainty), FAIMI (fairness) and MLMI.\n- NeurIPS 2023 (December, New Orleans) with the ML4H symposium; RSNA 2023 (Nov 26-30, Chicago) for clinical translation; ISBI 2024 and SPIE Medical Imaging 2024 for upcoming submission deadlines.\n- Journals to follow: Medical Image Analysis, IEEE Transactions on Medical Imaging, Radiology: Artificial Intelligence, Nature Machine Intelligence, npj Digital Medicine.\n\nRecent publications:\nSegmentation and foundation models\n- Kirillov et al., Segment Anything (2023), and Ma & Wang, Segment Anything in Medical Images (MedSAM, 2023 preprint), plus the wave of evaluations of SAM on medical data.\n- Moor et al., Foundation models for generalist medical artificial intelligence (Nature, 2023).\n- Isensee et al., nnU-Net (Nature Methods, 2021) and Antonelli et al., The Medical Segmentation Decathlon (Nature Communications, 2022), still the baselines to beat; Hatamizadeh et al., Swin UNETR (2022) for transformer-based 3D segmentation.\nExplainability\n- van der Velden et al., Explainable AI in deep learning-based medical image analysis (Medical Image Analysis, 2022): a thorough survey.\n- Saporta et al., Benchmarking saliency methods for chest X-ray interpretation (Nature Machine Intelligence, 2022).\n- Ghassemi, Oakden-Rayner & Beam, The false hope of current approaches to explainable AI in health care (Lancet Digital Health, 2021): a useful critical counterpoint.\n- Koh et al., Concept Bottleneck Models (ICML 2020): concept-based explanations increasingly applied to imaging.\nTransfer learning, domain adaptation, self-supervision\n- Azizi et al., REMEDIS: Robust and Efficient Medical Imaging with Self-Supervision (2022 preprint).\n- Tiu et al., CheXzero (Nature Biomedical Engineering, 2022): zero-shot pathology detection learned from image-report pairs.\n- Guan & Liu, Domain Adaptation for Medical Image Analysis: A Survey (IEEE TBME, 2022).\n- Castro, Walker & Glocker, Causality matters in medical imaging (Nature Communications, 2020): a clear framing of dataset shift.\nMulti-modal and generative\n- Acosta et al., Multimodal biomedical AI (Nature Medicine, 2022).\n- Kazerouni et al., Diffusion Models in Medical Imaging: A Comprehensive Survey (Medical Image Analysis).\n\nTip: watch the MIDL 2023 and MICCAI 2023 accepted-paper lists and set arXiv alerts (eess.IV, cs.CV) for these topics. If you tell me your modality or task, I can narrow this list down."
+  },
+  {
+   "question_id": "195a1a1b",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 153962,
+   "prompt_sha256": "6359308fc71c76394a2077bde895cd1a8fdc0abdb4927ed80ffdd0c4b6bc8c46",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information from our past chats:\n- You said you like to be winding down by 9:30 pm so you get a good night's sleep. You also want a structured schedule with less procrastination and less social media. We talked about finishing work and other stimulating activities by about 8:30 pm and putting screens away 60-90 minutes before bed.\n- You asked for sleep meditations and planned to try the Headspace 'Sleep' guided meditation. You were also interested in guided imagery exercises done at the same time every day, for example right before bed.\n- Your hobbies: acrylic painting (a sunset cityscape using fabric stamping and drybrushing), knitting (you just finished a purple scarf and chose a beanie next), journaling (morning pages and poetry), yoga (about three times a week at the studio near your house), and gentle outdoor activities such as easy hikes.\n- Your 30-minute workout is in the morning, so your evenings can stay low-key.\n\nStep 2 - Reasoning: Good evening activities for you are calm, mostly screen-free, and done by 9:30 pm. Your creative hobbies fit the early evening. The last hour before bed is for winding down.\n\nStep 3 - Suggestions:\nEarly evening (after work until about 8:30 pm)\n1. Take a relaxed walk after dinner around your neighborhood or a park, or do a short, easy trail on a long summer evening.\n2. Do a gentle or restorative yoga class or a slow stretching session. Save the demanding inversions (handstands, forearm stands) and hard cardio for the morning.\n3. Paint for a while. For example, stamp the buildings of your sunset cityscape with fabric, then drybrush the windows, streetlights and trees.\n4. Start your first beanie. Knitting is repetitive and soothing, which makes it a good evening hobby.\n5. Cook a simple, healthy dinner and prep tomorrow's lunch or snacks.\n6. Spend 10 minutes planning tomorrow and put the hardest work in your 10 am-12 pm focus window. Having a plan makes it easier to stop working at night.\n\nWind-down (about 8:30 to 9:30 pm, screens off)\n7. Take a warm shower or bath, dim the lights and put on calm music.\n8. Read a physical book (not a phone or tablet) for 15-20 minutes.\n9. Write in your journal: a short poem, a gratitude list or a few lines about your day.\n10. End in bed with the Headspace 'Sleep' meditation (about 10 minutes), a guided imagery exercise or slow deep breathing.\n\nAvoid in the evening: scrolling social media, late work emails, intense workouts and caffeine. They all make it harder to fall asleep on time.\n\nSample evening: 6:30 walk, 7:00 dinner, 7:45 painting or knitting, 8:30 screens off and a warm shower, 8:50 reading and journaling, 9:15 Headspace Sleep meditation, then lights out."
+  },
+  {
+   "question_id": "caf03d32",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 147977,
+   "prompt_sha256": "c402daec9dc940a126c6a05eca8fe750c19cf204ae0491fc134bebfe9ae9d3b5",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - What I know from our earlier chats: you recently learned to use your slow cooker and made a delicious beef stew; you have been trying to eat more plant-based meals (lentil curry, black bean chili, chickpea curry and similar); and you wanted to make yogurt in the slow cooker, including a cashew-based vegan version.\n\nStep 2 - Advice tailored to that:\n\nGeneral fixes\n1. Use less liquid - almost nothing evaporates, so cut stovetop liquid by about a third and fill the crock 1/2 to 2/3 full.\n2. Build flavor first - just as you would brown beef for stew, saute onions, garlic, spices and a spoon of tomato paste before adding them. Blooming spices matters even more in plant-based dishes.\n3. Layer smartly - dense roots (potatoes, carrots, sweet potatoes) on the bottom, and cut everything to a similar size.\n4. Add delicate ingredients late - spinach, peas, zucchini, coconut milk, dairy and fresh herbs in the last 15-30 minutes.\n5. Do not lift the lid - each peek adds roughly 15-20 minutes.\n6. Finish before serving - taste, then adjust salt and add acid (lemon or vinegar) and fresh herbs. Thicken watery sauces with a cornstarch slurry or leave the lid off for the last 30 minutes.\n7. Know your cooker - many models run hot; if food is mushy or dry, shorten the time or use LOW.\n\nPlant-based specifics\n- Red lentils break down in about 3-4 hours on low; green or brown lentils hold their shape better. Do not overcook them.\n- Soak dried beans, and boil red kidney beans hard for at least 10 minutes first (a slow cooker does not get hot enough to destroy their natural toxin). If beans stay hard, add tomatoes and other acidic ingredients later.\n- Boost savory depth with miso, soy sauce, smoked paprika or mushrooms.\n\nYogurt\n- Use a thermometer: heat the milk to 180-185F, then cool it to 110-115F before adding the starter. Too hot kills the cultures; too cool gives runny yogurt.\n- Use fresh plain yogurt with live cultures (about 2 tbsp per quart), whisk gently, then incubate with the cooker off, wrapped in towels (or in the oven with the light on), undisturbed for 8-12 hours.\n- Too thin? Incubate longer, whisk a little milk powder in before heating, or strain it for Greek-style.\n\nCashew yogurt\n- Do not heat it to 180F like dairy; just warm it to about 110F and use a vegan starter or probiotic capsules.\n- Blend the soaked cashews until very smooth and use less water for a thicker result. Straining removes body, so only strain if it is grainy. It thickens more as it chills.\n\nStep 3 - If you tell me what is going wrong (watery, bland, mushy, tough meat or runny yogurt), I can pinpoint the fix."
+  },
+  {
+   "question_id": "09d032c9",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 150960,
+   "prompt_sha256": "f206776a600178546ea3fc5f38d386ec17f32ec3cfed6ef5cd357e2fecc8b49a",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant info from our past chats: you recently got a new portable power bank and a wireless charging pad (and asked about a travel pouch for them plus your Apple Watch, so you're most likely on an iPhone); you travel a lot (several flights a month plus a daily commute); and you do live streams on Instagram and YouTube, which are very battery-hungry.\n\nStep 2 - Tips tailored to that:\n\n1. Put your new power bank to work. Keep it charged and in your tech pouch with a short cable so you can top up on the commute, at the airport or mid-day, instead of letting the phone drop near 0%. If yours is a small 5,000 mAh unit and you have long travel days, a 10,000 mAh model gives roughly 2-3 full charges.\n2. Use the wireless charging pad smartly. It's great for frequent top-ups on your desk or nightstand, but it's slower and runs warmer than a cable. If the phone gets hot on the pad, take off a thick case and avoid heavy use while it charges. Turn on Optimized Battery Charging so it doesn't sit at 100% all night.\n3. Check battery health first. On iPhone: Settings > Battery > Battery Health & Charging. If Maximum Capacity is below about 80%, the battery itself is worn and a replacement is the real fix.\n4. Find what's draining it. Settings > Battery shows usage by app. Camera, streaming, social media, navigation and games are the usual culprits; restrict or close the worst offenders.\n5. Screen settings: use auto-brightness and lower brightness, turn on Dark Mode (helps a lot on OLED screens), shorten Auto-Lock to 30 seconds to 1 minute, and turn off Always-On Display if your model has it.\n6. Cut background activity: disable Background App Refresh for apps that don't need it, set Location Services to 'While Using' (or off) for most apps, trim notifications, and switch mail from Push to Fetch.\n7. Mind connectivity. A weak cell signal drains the battery fast, so use Wi-Fi when available and airplane mode on flights. Keep Bluetooth on for your Apple Watch, but disconnect accessories you're not using.\n8. Use Low Power Mode on travel days or once you're below about 30%.\n9. For live streams: stream while plugged into your power bank or wall power, use Wi-Fi rather than cellular, close other apps, and keep the phone out of direct sun so it doesn't overheat.\n10. Protect long-term battery health: avoid heat (hot cars, direct sun), avoid routinely running down to 0%, keep iOS and your apps updated, and restart the phone occasionally.\n\nIf battery health looks fine and it still drains quickly while idle, look for a rogue app or a pending update, or have Apple (or your phone's manufacturer) run a battery diagnostic."
+  },
+  {
+   "question_id": "95228167",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 176036,
+   "prompt_sha256": "ec890fa4309d9ad47682bacdd92e1ac115b611b168dd7eee73941d59b4bb47dd",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 – Relevant information from our previous chats:\n- You play a Fender Stratocaster and have been considering upgrading to a Gibson Les Paul. We compared them: the Les Paul has a thicker neck, a heavier mahogany body, humbuckers, a warmer/fuller tone and lots of sustain; the Strat is brighter and more versatile with single coils.\n- You asked what styles suit a Les Paul (classic/hard rock, blues, metal, etc.).\n- You want to play acoustic-like fingerpicking, such as the intro to 'Blackbird'.\n- You're exploring open D tuning (DADF#AD) and how to get a good sound from it on a Les Paul.\n- You liked the idea of a Les Paul with a coil-tap/coil-split feature for more tonal flexibility.\n\nStep 2 – Tips for your music store visit, based on that:\n1. Compare it head-to-head with a Strat. Play a Strat and a Les Paul through the same amp and settings (or bring your own Strat). Notice what you'd be trading: the Les Paul's shorter scale (about 24.75 in. vs 25.5 in.) and slinkier feel, heavier weight, chunkier neck and fatter humbucker tone.\n2. Prioritize coil-splitting. Ask staff which Les Paul models in stock (Gibson or Epiphone, new or used) have push-pull knobs to split the humbuckers. That gives you brighter, Strat-like tones for clean and fingerpicked parts plus the classic humbucker roar for rock, so you don't lose the versatility you're used to.\n3. Test it in open D. Bring a clip-on tuner and ask to retune to DADF#AD. Check that it holds tune, intonates reasonably up the neck and doesn't buzz on the slacker low strings; ask whether a setup or a slightly heavier string gauge would help if you plan to play in open D a lot.\n4. Try your fingerpicking. Play the 'Blackbird' intro or other fingerstyle pieces on a clean setting. Check string spacing, nut width and neck profile (chunky '50s-style vs slimmer '60s-style necks feel very different), and whether the neck pickup (split, with volume/tone eased back) sounds clear rather than muddy.\n5. Check playability and build quality: low but buzz-free action, smooth fret ends, a straight neck, stable tuners, and pots/switch that don't crackle. Let a chord ring out to judge sustain.\n6. Mind the weight. Play it standing with a strap for a while; Les Pauls are much heavier than Strats. If that's an issue, ask about weight-relieved or chambered versions.\n7. Try the full tonal range: every pickup position, clean and overdriven, so it covers both the rock sounds Les Pauls are known for and the gentler styles you're exploring.\n8. Practicalities: set a budget beforehand, compare Gibson vs Epiphone and used options, and ask about a free setup, included case, warranty and return policy. Don't let yourself be rushed.\n\nBottom line: look for a Les Paul whose neck and weight feel comfortable, that has coil-splitting, sounds clear when played clean for fingerpicking and stays stable in open D, and judge it side by side with your Strat."
+  },
+  {
+   "question_id": "75f70248",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 140696,
+   "prompt_sha256": "abd3ebaf210af0f4ff0438b9a82c907402c8611e3d55e6b256232509f524ab14",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information from our past chats:\n- You asked how to keep your living room dust-free, especially with a cat that sheds a lot.\n- You asked for vacuum cleaners that can handle a lot of cat hair.\n- You asked about air-purifying plants for a room with a heavily shedding cat, and decided on a spider plant or a snake plant in a planter with good drainage and well-draining potting mix.\n- The tips we discussed included decluttering and using a dehumidifier, since dust mites thrive in humid rooms.\n- You also care for Luna and Max, and it's now late May (spring pollen season).\n\nStep 2 - Reasoning: Your living room combines the classic sneeze triggers: hair and dander from a heavy-shedding cat, household dust, and dust mites. These settle in carpets, sofas, cushions and curtains and get stirred up whenever you sit or move around. So the living room is a very plausible culprit, although pollen coming in through open windows could add to it.\n\nAnswer: Quite possibly, yes. With a cat that sheds a lot, dander and dust building up in the living room are a likely cause. Things to try:\n1. Check the pattern: if you sneeze more in the living room or on the couch and less in other rooms or outdoors, the room is probably the trigger.\n2. Vacuum carpets and upholstery 2-3 times a week with a pet-hair vacuum, ideally one with a sealed HEPA filter. Use a rubber brush or lint roller on furniture.\n3. Wash throws, cushion covers, curtains and the cat's bedding weekly in hot water, and damp-dust surfaces instead of dry dusting, which just spreads particles into the air.\n4. Brush your cat regularly, preferably outside the living room, to catch loose fur before it spreads, and consider keeping the cat off the sofa.\n5. Run a HEPA air purifier in the living room, keep humidity around 30-50% with the dehumidifier, and replace your HVAC/furnace filter.\n6. On high-pollen days, keep the windows closed.\n7. About the new plant: a plant alone won't clean the air enough to fix this. Don't overwater it, because damp soil can grow mold, which is another sneeze trigger. Also, snake plants are mildly toxic to cats while spider plants are cat-safe, so the spider plant may be the better choice.\n8. If the sneezing continues despite these steps, or you also get itchy eyes, congestion or wheezing, see a doctor or allergist. An allergy test can tell you whether it's cat dander, dust mites or pollen, and they can suggest treatment such as antihistamines."
+  },
+  {
+   "question_id": "1da05512",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 134993,
+   "prompt_sha256": "287c82e663ac45e575aabd5675b918504cb88ffcf50a6aea6c3f38b1b0115821",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information from our past chats:\n- On 2023/05/29 you told me your home network is running out of storage and that you're new to NAS devices.\n- Right now you back up to a single external hard drive, and you want a NAS to be the central backup location for all your devices, including your laptop and your phone (your Samsung Galaxy S22 Ultra).\n- Security matters to you. You asked specifically for NAS models with strong encryption and access control. We discussed beginner 2-bay units (Synology DS218j, QNAP TS-231P, WD My Cloud EX2 Ultra, around $150) and 4-bay units with strong security features (Synology DS418play, QNAP TS-453D, Asustor AS6404T).\n- The same day you said you also plan to buy a new laptop soon, because your current one is about three years old and slowing down. You were comparing a MacBook Air M1 with Intel i5/i7 gaming laptops and asked when the next sales would be, so your budget is split between two purchases.\n\nStep 2 - Reasoning:\n- The storage problem is happening now. With only one external drive, a single drive failure could cost you your data, and waiting keeps that risk open.\n- NAS hardware changes slowly and prices don't fall much over time, so waiting gains you little except possibly a sale.\n- Setting up the NAS before the new laptop arrives is actually convenient. You can back up the new laptop to the NAS from day one (Time Machine, Windows Backup or Synology/QNAP backup tools) and move files off the old laptop easily.\n- The main reason to wait is paying for both at once. A 2-bay NAS with drives costs relatively little, though, and the laptop gains more from waiting for sales (summer or back-to-school deals, Black Friday).\n\nStep 3 - My recommendation: Buy the NAS now, or within a few weeks if you want to catch a sale on hard drives. Let the laptop be the purchase that waits for a sale.\n- For a beginner who wants good security, I'd lean toward Synology, whose DSM software is the easiest to use. A 2-bay model like the DS218j (or its current successor) is fine to start. If you expect your storage needs to grow, or you want RAID 5 later, the 4-bay DS418play or QNAP TS-453D is worth the extra money.\n- Use two NAS-rated drives (e.g., WD Red Plus or Seagate IronWolf) in RAID 1 so that one drive failing doesn't lose your data. To save money, start with smaller drives and upgrade later.\n- Turn on the security features you asked about: AES-256 encrypted shared folders, two-factor authentication, separate user accounts with permissions and automatic security updates. Also disable the default admin account.\n- Back up your phone with the Synology Photos or DS file app (Qfile for QNAP), and your laptop with Time Machine, Windows Backup or Synology Active Backup.\n- Keep your current external drive as a second copy, ideally stored somewhere else or updated regularly with Hyper Backup. RAID is not a backup, and this gives you a proper 3-2-1 setup.\n\nThe only time I'd say wait is if buying the NAS and the laptop together would strain your budget and your data already has a second copy. Otherwise the NAS fixes a problem you have now, so there's little reason to delay."
+  },
+  {
+   "question_id": "b6025781",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "n_hits": 194,
+   "context_chars": 180023,
+   "prompt_sha256": "4cca87ab76ed0f16bdfcd2bb2e76476bdf1a28ee91949640ae1d5f63d4522d52",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - What I know from our earlier chats:\n- Your meal prep is built around quinoa and roasted vegetables; you have already done grilled chicken and turkey breast and wanted new protein ideas.\n- You had never tried lentil or mushroom bolognese and got a lentil bolognese recipe.\n- You planned rosemary roasted sweet potatoes ('Classic Herbs' with your fresh rosemary) and a batch of homemade granola for snacks.\n- You have been craving Mexican-inspired dishes (chicken fajitas, homemade sweet potato fries with spicy mayo or chipotle ranch).\n- You grow basil and tomatoes, and you enjoy BBQ and smoking meat.\n\nStep 2 - New recipe ideas that fit your quinoa + roasted veg base:\n1. Lentil-mushroom bolognese bowls - if you have not made it yet, this is the one to try: spoon it over quinoa with roasted broccoli or zucchini and a little shaved Parmesan. Make a double batch and freeze half (keeps up to about 3 months).\n2. Chipotle black bean and sweet potato quinoa bowls - roast sweet potato cubes with chili powder, cumin and smoked paprika; add black beans, corn, pickled red onion and avocado, with a chipotle-lime yogurt or chipotle ranch drizzle. Your Mexican cravings in meal-prep form.\n3. Sesame-ginger tempeh or baked tofu - plant proteins from the list you have not tried yet. Roast alongside broccoli and carrots, add edamame, and finish with a soy-ginger or peanut dressing.\n4. Garlic-lemon shrimp or pan-seared salmon - quick-cooking proteins; pair with quinoa, roasted asparagus and a squeeze of lemon. Eat these in the first 2-3 days of the week.\n5. Basil pesto quinoa with crispy chickpeas - turn your garden basil into pesto (regular harvesting keeps the plant producing) and toss with quinoa, roasted cherry tomatoes, zucchini and oven-roasted chickpeas.\n6. Fajita leftovers as bowls - if you make chicken fajitas this weekend, cook extra, slice, and pack with quinoa, peppers, onions and salsa (marinate in lime, garlic and cumin; pound the breasts evenly so they stay tender).\n7. Sides and snacks - keep the rosemary sweet potatoes; for a fries fix that holds up better than deep-fried, bake wedges tossed with a little cornstarch at high heat. Make the homemade granola (for example cinnamon, pecans and dried cherries) for snacks.\n\nStep 3 - Prep tips: cook one big pot of quinoa (rinse first, 2:1 water, fluff with a fork) and two sheet pans of vegetables on prep day; roasted vegetables keep up to 5 days; store sauces and dressings separately so bowls do not get soggy.\n\nWant me to turn this into a day-by-day plan and a shopping list?"
+  },
+  {
+   "question_id": "1c0ddc50",
+   "question_type": "single-session-preference",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 177594,
+   "prompt_sha256": "f5215e3409753c470d1643688b0b519d3b3ef129ba84c0867b16e376674ab26f",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 – What I know about your commute from our chats:\n- It takes about 40 minutes each way.\n- You've been taking the 7:45 am bus, which is packed on Mondays, and planned to switch to biking the roughly 2.6-mile route on a hybrid bike.\n- You already listen to podcasts on your commute, mostly true crime and self-improvement plus 'How I Built This.' You said you want to branch out into other genres. History interested you most, with science as well.\n- You were interested in Jared Diamond's 'Guns, Germs, and Steel.'\n- You noticed you'd been wasting commute time checking email and social media.\n- You've been managing work stress and anxiety, and you planned to use Headspace.\n\nStep 2 – Suggestions tailored to that:\n\n1. Make history podcasts your main listen. It's the genre you wanted to explore, and 40 minutes is a good fit.\n- Dan Carlin's Hardcore History, starting with its 'Ghosts of the Ostfront' series on the WWII Eastern Front. Episodes are long, so one can cover several rides.\n- The Rest Is History, You're Dead to Me, or Mike Duncan's Revolutions have episodes that fit a one-way trip.\n- A serialized show gives you something to look forward to, because each ride picks up where the last one stopped.\n\n2. Rotate in science for variety: Radiolab, Science Vs, or Ologies.\n\n3. Listen to 'Guns, Germs, and Steel' as an audiobook. It's a dense 480-page book, and it's much easier to get through in 40-minute chunks. It also ties straight into your history interest.\n\n4. Keep a favorite in the mix. Leave 'How I Built This' in rotation, say on Fridays, so you're branching out without dropping what you enjoy. Save true crime for the ride home if you still want it.\n\n5. Replace the email and social-media habit:\n- Download episodes the night before so something is always queued.\n- Turn on a focus mode during your commute window.\n- Treat the phone as audio-only on the way in.\n\n6. Plan on the way in, unwind on the way home. Spend the first few minutes of the morning ride picking your top three tasks for the day. That helps with the deadlines you've been juggling. Use the evening ride to decompress instead of replaying work.\n\n7. Do a quick reset on bus days only. A 5–10 minute Headspace breathing or meditation session is a good anti-stress routine before work. Never do this while cycling.\n\nSafety on bike days: keep the volume low, or use one earbud or open-ear headphones so you can hear traffic. Queue everything before you set off, and save anything that needs your eyes for bus days.\n\nAnswer: Since you want to move beyond true crime and self-improvement, fill your roughly 40-minute commute with history podcasts, starting with Hardcore History's 'Ghosts of the Ostfront.' Add some science shows and 'Guns, Germs, and Steel' on audio, and keep 'How I Built This' in the rotation. Use the ride to plan or unwind instead of checking email, and keep the audio safe when you're biking."
+  },
+  {
+   "question_id": "1f2b8d4f",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 154444,
+   "prompt_sha256": "711f91421ef69fb86885d4c8931c0f295081db7363e29c9bd6c1b6c72d520c64",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: In the 2023/05/22 09:32 conversation you said you splurged $800 on a pair of luxury boots (black ankle boots with a heel). In the 2023/05/22 10:36 conversation you said you found similar boots at a budget store for $50.\nStep 2 - Reasoning: $800 (luxury boots) - $50 (budget-store pair) = $750.\nAnswer: The difference is $750. The luxury boots cost $800 and the similar budget pair cost $50."
+  },
+  {
+   "question_id": "e6041065",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 124,
+   "context_chars": 87332,
+   "prompt_sha256": "0fcc4bea76d5d21312cb4a2e44bb8e4b67b268c9dd90cb95cff20ccc563a107b",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - relevant information: (a) You said you packed a lot of shoes for your last trip but only ended up wearing two pairs: your sneakers and your sandals. (b) In another conversation you mentioned that on that last trip you packed 5 pairs of shoes. Step 2 - reasoning: 2 pairs worn / 5 pairs packed = 0.4 = 40%. Answer: You wore 40% of the shoes you packed on your last trip (2 out of 5 pairs)."
+  },
+  {
+   "question_id": "d905b33f",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 142862,
+   "prompt_sha256": "bebd151bc6a8fce8e4e3ba3d368b0521b0ad653048a0cafacb168e23f840c93b",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: (a) On 2023/05/23 you mentioned an impulse buy at a sale at your favorite bookstore, where you got the book for $24 after a discount. (b) On 2023/05/27 you said the book was the new release from your favorite author and that it was originally priced at $30. Step 2 - Reasoning: Discount amount = $30 - $24 = $6. Discount percentage = $6 / $30 = 0.20 = 20%. Answer: You got a 20% discount on the book ($30 reduced to $24)."
+  },
+  {
+   "question_id": "60036106",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 177,
+   "context_chars": 138332,
+   "prompt_sha256": "6aff843b1b9dafdd4e2ced8b73c3581a43173867d0cdc27c25b5da51d780344e",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- Facebook ad campaign: you said your previous Facebook ad campaign (which ran for five days on about a $100 budget) reached around 2,000 people and produced 50 clicks to your website.\n- Instagram influencer collaboration: you said you recently collaborated with an influencer who promoted your product to her 10,000 followers.\n\nStep 2 - Reasoning:\n2,000 (Facebook ad reach) + 10,000 (influencer's followers) = 12,000.\n\nAnswer: About 12,000 people in total: roughly 2,000 from the Facebook ad campaign plus the 10,000 followers reached through the influencer collaboration."
+  },
+  {
+   "question_id": "5025383b",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 176,
+   "context_chars": 130747,
+   "prompt_sha256": "97d43b27667b02a0cde704d934d836c7f8c48e184c4a0285cc47328681948d08",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information from the chat history:\n- 2023/05/29 (camera lens chat): You said you had been enjoying editing your photos in Lightroom and that the online communities you had joined were super helpful for learning new techniques and getting feedback on your work - this is your photography hobby.\n- 2023/05/30 (cooking chat): You said you had already joined a few online communities related to cooking, which led you to engage in discussions about recipe techniques and share your thoughts on food-related posts - this is your cooking hobby.\n\nStep 2 - Reasoning: These are the two hobbies you explicitly connected to joining online communities.\n\nAnswer: Cooking and photography (including editing your photos in Lightroom)."
+  },
+  {
+   "question_id": "a1cc6108",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 41,
+   "context_chars": 42625,
+   "prompt_sha256": "5790d4be482e042d827544f44f6f3df6cae51f9f5642b05a102eb266c9b33ae3",
+   "answer_turns": 2,
+   "covered": false,
+   "verdicts": {
+    "s1": false,
+    "l1_same_pass": false,
+    "l1_recorded": false
+   },
+   "hypothesis": "Step 1 - Relevant information: In our 2023/05/21 chat about mentoring your new intern Alex, you said he is 'just 21', and I tailored my tips for a 21-year-old intern. In the same chat you mentioned paying more into your 401(k), aiming to retire by 60, and your grandma recently turning 75. None of our conversations gives your own current age or birth year.\n\nStep 2 - Reasoning: Your age when Alex was born equals your current age minus Alex's age (21). Alex's age is known, but your age does not appear anywhere in our history, so the subtraction cannot be completed.\n\nAnswer: I can't give an exact number from our chats. They say only that Alex is 21, not how old you are. You were 21 years younger than you are now when he was born, so subtract 21 from your current age. If you tell me your age, I can work it out."
+  },
+  {
+   "question_id": "27016adc",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 149,
+   "context_chars": 133502,
+   "prompt_sha256": "c5089152ff8a4dbce6c1a6b82f42b5533fd37b3b0b5fd7fc61471be83df41e12",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- Renovations on your current house: on 2023/05/26 you said the renovations (adding a deck and a patio) will cost around $20,000.\n- Countryside property: on 2023/05/23 you said the 5-acre countryside property you're considering is listed at $200,000.\n\nStep 2 - Reasoning:\n$20,000 / $200,000 = 0.10, which is 10%.\n\nAnswer: The renovations you plan cost about 10% of the countryside property's $200,000 price."
+  },
+  {
+   "question_id": "92a0aa75",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 170184,
+   "prompt_sha256": "0f3a44028666b62ca48eb83adaffa861e6e8be79f554be0171061f3334ba3980",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": false,
+    "l1_recorded": false
+   },
+   "hypothesis": "Step 1 - Relevant information: (a) On 2023/05/27 you said you started as a Marketing Coordinator and were promoted to Senior Marketing Specialist after 2 years and 4 months. (b) On 2023/05/29 you mentioned your 3 years and 9 months of experience at the company, and that you are currently the Senior Marketing Specialist. Step 2 - Reasoning: Time in the current role = total time at the company minus the time before the promotion = 3 years 9 months - 2 years 4 months = 1 year 5 months. Answer: You have been in your current role as Senior Marketing Specialist for about 1 year and 5 months (17 months)."
+  },
+  {
+   "question_id": "0ea62687",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 199,
+   "context_chars": 179976,
+   "prompt_sha256": "7b1d5e2db60d8b105fc1cc88232ed41e13c9557bbc4979e195573ca2643969b0",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- 2023/05/20: When asking about a tune-up, you said your car was getting 30 miles per gallon in the city a few months ago.\n- 2023/05/24: When asking about a new air filter for your 2018 Honda Civic, you said you had been getting around 28 miles per gallon in the city lately. Later in that conversation you repeated that it is currently at 28 mpg in the city.\n\nStep 2 - Reasoning: 30 mpg (a few months ago) - 28 mpg (now) = 2 mpg.\n\nAnswer: A few months ago your car was getting 2 more miles per gallon than it is now: 30 mpg in the city then, compared with about 28 mpg now."
+  },
+  {
+   "question_id": "67e0d0f2",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 154639,
+   "prompt_sha256": "e661099251e518b85b7e08d1572e90887dcdaba4dcaae8f75b5d55b5fdb5619a",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 – Relevant information from our chats:\n- 2023/05/21 (preparing for a Master's in data science): you said you had a solid foundation in data analysis 'from my previous 8 edX courses.'\n- 2023/05/27 (building on your data analysis skills): you said 'I've already completed 12 courses on Coursera.'\n- The other course talk was about courses you were considering or about to start (Coursera recommendations, Andrew Ng's Machine Learning, DataCamp's Matplotlib/Seaborn course). Those aren't completed ones.\n\nStep 2 – Reasoning: The Coursera and edX courses are separate sets, so add them: 12 + 8 = 20.\n\nAnswer: You've completed 20 online courses in total: 12 on Coursera and 8 on edX."
+  },
+  {
+   "question_id": "60159905",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 146425,
+   "prompt_sha256": "9700dce42d2ddb747f872aadde63c38641d922284837847aa47376b129cefef4",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information (the current date is 2023/05/30, so the past month runs from about 2023/04/30):\n1. Sarah's place: on 2023/05/22 you said you attended a lovely Italian feast at Sarah's place 'last week' (around mid-May), followed by board games late into the night.\n2. Mike's place: on 2023/05/21 you mentioned a BBQ at Mike's place 'two weeks ago' (around 2023/05/07), where you all watched a football game.\n3. Alex's place: in the same 2023/05/21 conversation you described a low-key potluck dinner at Alex's place 'yesterday' (2023/05/20), where you tried cuisines from around the world.\n\nGatherings that do not count: the Super Bowl party was in February and you hosted it. The big BBQ with burgers, hot dogs and sausages was your own ('my last BBQ'). David's birthday party (laser tag and karaoke) and the family reunion at your aunt's house were not dinner parties. The Italian dinner party and the Global Street Food potluck are ones you are still planning to host.\n\nStep 2 - Reasoning:\nThe three dinner parties you attended as a guest (Sarah's, Mike's and Alex's) all fall within the past month.\n\nAnswer: You attended 3 dinner parties in the past month: the Italian feast at Sarah's, the BBQ at Mike's and the potluck at Alex's."
+  },
+  {
+   "question_id": "078150f1",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 178132,
+   "prompt_sha256": "4e266f5b079124039611ad9d9a96f6d0d070b4a77f332025b65030c498d7e52e",
+   "answer_turns": 3,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- On 2023/05/20 you mentioned that in the charity cycling event (for the local children's hospital) you initially aimed to raise $200 in donations.\n- On 2023/05/28 you said you raised $250 in donations at that charity cycling event.\n\nStep 2 - Reasoning: amount raised minus initial goal = $250 - $200 = $50.\n\nAnswer: You raised $50 more than your initial goal ($250 raised vs. a $200 target, i.e., 25% above the goal)."
+  },
+  {
+   "question_id": "8cf4d046",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 40,
+   "context_chars": 51887,
+   "prompt_sha256": "89a2c9c2f6d3df66a77e2df8570f89fdda15ef6f2a1b563aca7d1e08fbc84ec1",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: (1) Undergraduate: Computer Science at the University of Mumbai, graduated with First-Class distinction, 83% overall, which you said is equivalent to a GPA of 3.86 out of 4.0. (2) Graduate: Master's degree in Data Science from the University of Illinois at Urbana-Champaign, with a GPA of 3.8 out of 4.0.\n\nStep 2 - Reasoning: Average = (3.86 + 3.80) / 2 = 7.66 / 2 = 3.83.\n\nAnswer: The average GPA across your undergraduate and graduate studies is 3.83 (out of 4.0)."
+  },
+  {
+   "question_id": "a346bb18",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 156372,
+   "prompt_sha256": "360d0fbf12bae76d2c0bf7bc400f2d6d428ddea618c38aa037c5622af9ea27c2",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1, relevant information: (a) On 2023/05/20, while asking about triathlon training, you said your target time for the marathon was 4 hours and 10 minutes. (b) On 2023/05/25, you said you had just completed your first full marathon in 4h 22min. Step 2, reasoning: Actual time 4:22 = 262 minutes; target time 4:10 = 250 minutes; 262 - 250 = 12 minutes. Answer: You exceeded your marathon target time by 12 minutes (4h 22min actual vs. 4h 10min target)."
+  },
+  {
+   "question_id": "37f165cf",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 118,
+   "context_chars": 73435,
+   "prompt_sha256": "f8053128a32cc7e21c5ecb128b808de0c0395b229895dfd2b1e7b3ae9b0c20fe",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: (a) You told me you had finished 'The Nightingale' by Kristin Hannah, which had 440 pages. (b) In a later conversation you said you had just finished a 416-page novel. In that same conversation I referred to 'your previous 440-page novel', which places The Nightingale before the 416-page book. (c) In that later conversation you also mentioned 'The Power' by Naomi Alderman (341 pages). You said you read it in December, so it is not one of the January and March novels. Step 2 - Reasoning: Leaving out the December read, the two novels you finished are 'The Nightingale' (440 pages, the earlier one, so presumably January) and the 416-page novel (the later one, so presumably March). Our chats don't state the finishing months directly, so the month matching comes from the order of the books and the wording of your question. Answer: The two novels had 440 pages ('The Nightingale') and 416 pages, for a total of 856 pages."
+  },
+  {
+   "question_id": "21d02d0d",
+   "question_type": "multi-session",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 153379,
+   "prompt_sha256": "c3a67f7c1c39013de3fea2d13e41a26c3acf932700e3a505065a617d037bd293",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- In one chat you said you had been busy with work and missed a few events, including a 5K fun run on March 26th.\n- In another chat you said you went to most of the weekly 5K fun runs at the local park, except the one on March 5th, which you missed because of work commitments.\nStep 2 - Reasoning: Both runs were in March and you missed both because of work. They fell on different dates, so they are two separate runs.\nAnswer: You missed 2 fun runs in March because of work: the March 5th run and the March 26th run."
+  },
+  {
+   "question_id": "2311e44b_abs",
+   "question_type": "multi-session",
+   "abstention": true,
+   "n_hits": 161,
+   "context_chars": 112379,
+   "prompt_sha256": "727acfb59df3408192d44fdacdd08e18f99ff3cce50f82c0c6a413c6c3d314d9",
+   "answer_turns": 0,
+   "covered": false,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: In our chats you mentioned reading 'Sapiens' and finding it slow going, at a pace of about 10-20 pages a week. You never said how many pages 'Sapiens' has in total, or which page you are currently on. The only book you gave page details for was 'The Nightingale' (440 pages in total, and you were on page 250 as of May 22).\n\nStep 2 - Reasoning: Pages left = total pages - current page. Neither number is known for 'Sapiens', so the remaining pages cannot be calculated from the chat history.\n\nAnswer: I can't tell from the information you've shared. You mentioned your reading pace for 'Sapiens' (10-20 pages a week) but never its total page count or your current page. If you tell me those, I can work it out. (For reference, for 'The Nightingale' you had 440 - 250 = 190 pages left when you were on page 250.)"
+  },
+  {
+   "question_id": "a96c20ee_abs",
+   "question_type": "multi-session",
+   "abstention": true,
+   "n_hits": 156,
+   "context_chars": 114614,
+   "prompt_sha256": "15d0adad96fd7b46c64dfcfb1a29df61252d2d958a6fbdc17229fc16efec61d1",
+   "answer_turns": 0,
+   "covered": false,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: (a) On 2023/05/23 you said you presented a poster on your thesis research (AI-powered adaptive learning systems in education) at your first research conference over the summer. (b) On 2023/05/30 you mentioned going to Harvard University to attend your first research conference, where you saw projects on AI in education.\nStep 2 - Reasoning: The only poster you ever mentioned was for your thesis research. You never mentioned an undergrad course research project, or presenting a poster for one, so the chat history does not say where such a poster was presented.\nAnswer: I can't tell from our conversations, because you never mentioned presenting a poster for an undergrad course research project. The only poster you mentioned was for your thesis research, presented at your first research conference, which you attended at Harvard University."
+  },
+  {
+   "question_id": "gpt4_f49edff3",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 157411,
+   "prompt_sha256": "1f0de63d588c59b33f070160353000b2347af42c3fa366d6ac4c920d51d7561d",
+   "answer_turns": 3,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- Nursery: In the chat dated 2023/02/05 (Sunday), you said you had just helped your friend prepare a nursery that day, spending the whole Sunday afternoon shopping for baby supplies and decorations at Buy Buy Baby. Date: February 5, 2023.\n- Cousin's baby shower: In the chat dated 2023/02/10 (Friday), you said you had just helped your cousin pick out things for her baby shower (diapers, wipes and a baby monitor at Target). Date: about February 10, 2023.\n- Phone case: In the chat dated 2023/02/20 (Monday), you said you ordered a customized phone case for your friend's birthday that day. Date: February 20, 2023.\n\nStep 2 - Ordering the dates: February 5 comes before about February 10, which comes before February 20.\n\nAnswer: First, you helped your friend prepare the nursery (Feb 5, 2023). Second, you helped your cousin pick out stuff for her baby shower (around Feb 10, 2023). Last, you ordered the customized phone case for your friend's birthday (Feb 20, 2023)."
+  },
+  {
+   "question_id": "71017276",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 124371,
+   "prompt_sha256": "540203175ed49221c1eb98f69f2db9dfcc90556f18f6ef3e6fc968e3cfe3ea41",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information from the chat history:\n- In the conversation on Saturday, 2023/03/04, you said you got a stunning crystal chandelier from your aunt 'today'. It had belonged to your great-grandmother.\n- The current date is Saturday, 2023/04/01.\n\nStep 2 - Reasoning:\nFrom March 4 to April 1, 2023 is 27 remaining days in March plus 1 day in April, which is 28 days. 28 days / 7 = 4 weeks.\n\nAnswer: You met up with your aunt and received the crystal chandelier 4 weeks ago."
+  },
+  {
+   "question_id": "0bc8ad92",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 170,
+   "context_chars": 131404,
+   "prompt_sha256": "79ea967b1759c6d75da5e9592a27226e4613b216999bf7513227de8c92c05978",
+   "answer_turns": 3,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1, relevant information: (a) On 2022/10/22 the user took a behind-the-scenes tour of the Science Museum 'today' with a friend who is a chemistry professor. (b) On 2023/02/18 the user said they took a guided tour of the Natural History Museum 'yesterday' (2023/02/17), but that visit was with their dad, not a friend. (c) In January 2023 the user attended a lecture at the History Museum, with no friend mentioned. (d) The British Museum was only being planned, not visited. Step 2, reasoning: The most recent museum visit with a friend is therefore the Science Museum tour on 2022/10/22. From 2022/10/22 to the current date 2023/03/25 is 5 months (plus 3 days). Answer: about 5 months have passed since you last visited a museum with a friend (the Science Museum tour with your chemistry professor friend on October 22, 2022)."
+  },
+  {
+   "question_id": "af082822",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 140051,
+   "prompt_sha256": "789d642a5ac838ef08abfc8a920b3ded44435aec1e2315481dccd41f3860d776",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 – Relevant information from the chat history:\n- In a chat on Friday, 2022/11/18, you said: 'Yesterday, I attended a friends and family sale at Nordstrom' (you picked up dresses and tops at 20% off and got a $20 gift card). So the sale was on Thursday, 2022/11/17.\n- The current date is Thursday, 2022/12/01.\n\nStep 2 – Reasoning: From November 17 to December 1, 2022 is 14 days, which is 2 weeks.\n\nAnswer: You attended the Nordstrom friends and family sale 2 weeks ago."
+  },
+  {
+   "question_id": "gpt4_b5700ca9",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 143393,
+   "prompt_sha256": "f919f86c3900457aac4daf6acfe73bffe3a81316a452d3c5bf4cc0578c897b5d",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 – Relevant information from our chats:\n- In our conversation on Thursday, 2023/04/06, you said: 'I'm glad I got to attend the Maundy Thursday service at the Episcopal Church today.' So the service was on Thursday, April 6, 2023. That was Maundy Thursday that year, since Easter fell on April 9.\n- Today's date is Monday, April 10, 2023.\n\nStep 2 – Reasoning: Counting from April 6: April 7 (1), April 8 (2), April 9 (3), April 10 (4).\n\nAnswer: You attended the Maundy Thursday service 4 days ago, on Thursday, April 6, 2023."
+  },
+  {
+   "question_id": "gpt4_1d4ab0c9",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 169902,
+   "prompt_sha256": "de660271e112b3b95f47c04f0c719bb12b8ad340c10ea103bae33eac5e97fa4f",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Extract the relevant information:\n- In the session dated 2023/03/22 (Wed) you said: 'I started watering my herb garden every morning today.' So you started watering the herb garden on March 22, 2023.\n- In the session dated 2023/04/15 (Sat) you said: 'I just harvested my first batch of fresh herbs from the herb garden kit today.' So the first harvest was on April 15, 2023.\n\nStep 2 - Reason over the information:\n- March 22 to March 31 = 9 days\n- March 31 to April 15 = 15 days\n- Total = 9 + 15 = 24 days\n\nAnswer: 24 days passed between the day you started watering your herb garden (March 22, 2023) and the day you harvested your first batch of fresh herbs (April 15, 2023)."
+  },
+  {
+   "question_id": "gpt4_e072b769",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 157822,
+   "prompt_sha256": "67aab2759a81e053c224198709ca89598011c11840420af1327c00c756d94683",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- On 2023/04/16 (Sunday) you said you had just downloaded Ibotta, a cashback app that gives rebates on certain grocery items, and asked for help planning a grocery list to get the most out of it (starting with the egg rebate).\n- The current date is 2023/05/06 (Saturday).\n\nStep 2 - Reasoning:\nFrom April 16 to April 30 is 14 days. Adding the 6 days of May gives 20 days. 20 days / 7 = about 2.9 weeks, which rounds to about 3 weeks.\n\nAnswer: You started using Ibotta about 3 weeks ago (20 days, on April 16, 2023)."
+  },
+  {
+   "question_id": "0db4c65d",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 175812,
+   "prompt_sha256": "16fda2d3c3aff38602d4764c376db3f1d0c0ff60c749138339d8d1da216fbaa1",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: In the conversation dated 2022/12/28 you said you had just finished reading 'The Seven Husbands of Evelyn Hugo' by Taylor Jenkins Reid that day, after your online Facebook book club discussion. In the conversation dated 2023/01/15 you said you had attended the book reading event at the local library that day, where the author of 'The Silent Patient' discussed a new thriller.\nStep 2 - Reasoning: From December 28, 2022 to December 31, 2022 is 3 days. Adding the 15 days of January up to January 15, 2023 gives 3 + 15 = 18 days.\nAnswer: 18 days had passed."
+  },
+  {
+   "question_id": "gpt4_6dc9b45b",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 125990,
+   "prompt_sha256": "eea57b622424f9d75884f357d421a46adc2ae9a88f12031b50a5c405d6e5d598",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- In the chat dated 2021/06/01, you said you had just seen 'Coda' at the Seattle International Film Festival that day. You also said you attended SIFF for a week, watched 8 films and sat in on a panel about film distribution and marketing. So you attended SIFF in the week ending around June 1, 2021.\n- The current date is 2021/10/02.\n\nStep 2 - Calculation: From June 1, 2021 to October 2, 2021 is 4 months (June 1 to July 1, August 1, September 1 and October 1, plus one day).\n\nAnswer: You attended the Seattle International Film Festival about 4 months ago (around late May to June 1, 2021)."
+  },
+  {
+   "question_id": "gpt4_7a0daae1",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 164151,
+   "prompt_sha256": "e7367799411f4a7d369188c2849d502e8fedc3eae5de831295d4b48c3a67c74e",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 – Relevant information from the chat history:\n- On Friday, 2023/03/10, you said: 'I just bought a new tennis racket online today.'\n- On Friday, 2023/03/17, you said: 'I just received my new tennis racket today.'\n\nStep 2 – Reasoning: From March 10 to March 17, 2023 is 7 days, which is exactly 1 week.\n\nAnswer: 1 week passed between buying the racket (March 10) and receiving it (March 17)."
+  },
+  {
+   "question_id": "gpt4_468eb063",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 125347,
+   "prompt_sha256": "6977b312c69cb07bc4cac602df87130fbfca460c66898a22989c8adf120259a8",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- 2023/04/11 (earlier conversation): you said you had met a freelance writer at a coffee shop near your office 'last week' and swapped numbers so you could have lunch sometime. You didn't name her or give an exact date.\n- 2023/04/11 (later conversation): you said you caught up with Emma, a freelance writer, over lunch 'today', and that she is now a potential collaborator on a project you're working on.\n- Current date: 2023/04/20.\n\nStep 2 - Reasoning:\nYour meeting with Emma that has a date is the lunch on 2023/04/11. From 2023/04/11 to 2023/04/20 is 9 days. Your first chance meeting at the coffee shop was sometime the week before that, roughly two weeks ago, but you never gave its exact day.\n\nAnswer: You met Emma 9 days ago, for lunch on April 11, 2023."
+  },
+  {
+   "question_id": "4dfccbf7",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 161635,
+   "prompt_sha256": "cddfbfb997b104747d2cb92d1a2a26eb64b3830727897e557e548bc0e26f406a",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- 2023/02/01 (Wed): You said you had just started taking ukulele lessons with your friend Rachel that day. (In the same chat you also mentioned planning to take your Taylor GS Mini to Joe at Guitar Central by the end of the month.)\n- 2023/02/25 (Sat): You said you had just got back from Joe's shop, having decided to take your Taylor GS Mini acoustic guitar to the guitar tech for servicing that day because the action was too high.\n\nStep 2 - Reasoning: The ukulele lessons began on February 1, 2023, and the guitar went in for servicing on February 25, 2023. February 25 minus February 1 = 24 days.\n\nAnswer: 24 days had passed."
+  },
+  {
+   "question_id": "2ebe6c90",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 165358,
+   "prompt_sha256": "955fad3935e559f5abcd8618a65f71fa85be3004896e233e86f0d8b39ce5c082",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1, relevant information: (a) In the session dated 2023/01/10 (Tue), you said you had just started 'The Nightingale' by Kristin Hannah that day ('I just started The Nightingale by Kristin Hannah today'). (b) In the session dated 2023/01/31 (Tue), you said you had finished it that day ('I just finished a historical fiction novel, The Nightingale by Kristin Hannah, today'). Step 2, reasoning: Start date = January 10, 2023. Finish date = January 31, 2023. January 31 minus January 10 = 21 days. Answer: It took you 21 days to finish 'The Nightingale' (from January 10 to January 31, 2023)."
+  },
+  {
+   "question_id": "6e984301",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 169010,
+   "prompt_sha256": "242002de66808049c366df97a695b80c7264e9a9b36ede948904b4978eb7e559",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information from our chats:\n- On Saturday, February 11, 2023, you mentioned you had just started taking sculpting classes at a local art studio that day (Saturday mornings, 10 am to 1 pm).\n- On Saturday, March 4, 2023, you mentioned you got your own set of sculpting tools that day: a modeling tool set, a wire cutter and a sculpting mat.\n\nStep 2 - Reasoning: February 11 -> February 18 -> February 25 -> March 4 is 21 days, i.e. exactly 3 weeks. (Later in the February 11 chat there was a passing mention of 'about 6 weeks' of classes, but that contradicts your statement that you started that very day, so I'm going by the dated start.)\n\nAnswer: You had been taking sculpting classes for 3 weeks when you got your own set of sculpting tools."
+  },
+  {
+   "question_id": "bcbe585f",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 175,
+   "context_chars": 120564,
+   "prompt_sha256": "a613ce8f564093e9eff0869a902d75adf5cd2375bd6259d518760b8592aecc22",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Extract the relevant information:\n- In the session dated 2023/04/01 (Sat) you said: 'I just got back from a bird watching workshop at the local Audubon society today' (in the same chat you mentioned the Merlin Bird ID app that Sarah recommended at the workshop). So the workshop was on April 1, 2023.\n- The current date is 2023/05/01 (Mon).\n\nStep 2 - Reason over the information:\n- April 1, 2023 to May 1, 2023 = 30 days.\n- 30 days / 7 = about 4.3 weeks, i.e. 4 weeks and 2 days.\n\nAnswer: You attended the bird watching workshop at the local Audubon society about 4 weeks ago (on April 1, 2023)."
+  },
+  {
+   "question_id": "gpt4_21adecb5",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 166541,
+   "prompt_sha256": "eb611176f17d14e167c5bd6443e54471b9a6acd86cec538034cee5522d6cdfba",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information from the chat history:\n- 2022/11/17: 'By the way, I just completed my undergraduate degree in computer science.' So the undergraduate degree was completed around November 17, 2022.\n- 2023/05/15: 'I just submitted my master's thesis on computer science today.' So the master's thesis was submitted on May 15, 2023.\n\nStep 2 - Reasoning: From November 17, 2022 to May 15, 2023:\n- Nov 17 -> Dec 17 (1), Jan 17 (2), Feb 17 (3), Mar 17 (4), Apr 17 (5), and May 15 is just 2 days short of May 17 (6).\n- That is 5 months and about 28 days, which is essentially 6 months.\n\nAnswer: About 6 months passed between completing your undergraduate degree (mid-November 2022) and submitting your master's thesis (May 15, 2023)."
+  },
+  {
+   "question_id": "5e1b23de",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 187,
+   "context_chars": 137918,
+   "prompt_sha256": "1faecbdcfe1cc5f90f68ee02a962e229d753ece225eb1f4f2f83c41a043e57f0",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1, relevant information: In the session dated 2023/11/01 (Wed), you said: 'I went to a 3-day photography workshop in a nearby city today where I learned about different techniques and styles of photography.' The current date is 2024/02/01 (Thu). Step 2, reasoning: The workshop took place on (ended on) November 1, 2023. Counting from November 1, 2023: December 1, 2023 is 1 month, January 1, 2024 is 2 months, February 1, 2024 is 3 months. Answer: You attended the photography workshop 3 months ago (on November 1, 2023)."
+  },
+  {
+   "question_id": "eac54adc",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 171993,
+   "prompt_sha256": "09b62af194eacf869b923920a15ae38e04d6fbfd78952778f280277ac9de72f5",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1, relevant information: On 2023/02/10 you said you had just launched your website (and created a business plan outline). On 2023/03/01 you said you had signed a contract with your first client that day. Step 2, reasoning: From February 10 to February 28, 2023 is 18 days (2023 is not a leap year), plus 1 day to March 1, which gives 19 days. Answer: You launched your website 19 days before you signed the contract with your first client."
+  },
+  {
+   "question_id": "gpt4_e414231e",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 145464,
+   "prompt_sha256": "3b0d4a9e25e1adb00b62b6498e31866c78109dd8f53ba1c8173ae9d934ee234c",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- In the chat dated 2023/03/15 (Wednesday), you said you had finally fixed the flat tire on your mountain bike that day (replaced the inner tube and cleaned the chain). Date: March 15, 2023.\n- In the chat dated 2023/03/19 (Sunday), you said you had decided that day to upgrade your road bike's pedals to clipless pedals, specifically the Shimano Ultegra pedals. Date: March 19, 2023. (On March 15 you were still only considering and researching the upgrade.)\n\nStep 2 - Calculation: March 19 minus March 15 = 4 days.\n\nAnswer: 4 days passed between the day you fixed your mountain bike (March 15, 2023) and the day you decided to upgrade your road bike's pedals (March 19, 2023)."
+  },
+  {
+   "question_id": "gpt4_7bc6cf22",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 164967,
+   "prompt_sha256": "e2cf68dfee2bbdea7222906a5ba0425083af4eba82ccbf1f222f6576151a6a20",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: In the chat on 2023/03/20 (Monday) you said, 'I finally got around to reading the March 15th issue of The New Yorker today.' So you read that issue on March 20, 2023.\nStep 2 - Current date: 2023/04/01 (Saturday).\nStep 3 - Calculation: March 20 to March 31 is 11 days, and March 31 to April 1 is 1 more day, so 11 + 1 = 12 days.\nAnswer: You read the March 15th issue of The New Yorker 12 days ago, on March 20, 2023."
+  },
+  {
+   "question_id": "gpt4_e061b84g",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 198,
+   "context_chars": 132659,
+   "prompt_sha256": "7d4c9ba2f08e84f73218a7a56f92b96de4a40a92eef50667ea7297ce0bf2ad59",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: Today is 2023/07/01 (Sat), so two weeks ago was 2023/06/17 (Sat). In the conversation on 2023/06/17 you said: 'I will participate in the company's annual charity soccer tournament today.' You asked about injury prevention, shooting and dribbling drills, nutrition, hydration and electrolytes, and staying mentally focused for it. The other sports events you mentioned were at different times: the Spring Sprint Triathlon (completed 2023/06/02, about four weeks ago) and the Midsummer 5K Run with a personal best of 27:42 (2023/06/10, three weeks ago).\n\nStep 2 - Reasoning: The event that matches 'two weeks ago' is the one from June 17.\n\nAnswer: Your company's annual charity soccer tournament."
+  },
+  {
+   "question_id": "gpt4_e414231f",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 115,
+   "context_chars": 85814,
+   "prompt_sha256": "d8e812fd0f4dcd94903b83b28a3771c25c14a4cd768da79df2ecbbdb3550ad5c",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- The current date is Tuesday 2023/03/21, so 'the past weekend' is Saturday 3/18 to Sunday 3/19.\n- Wednesday 2023/03/15: you said you 'finally got around to fixing that flat tire on my mountain bike today'. You replaced the inner tube and cleaned the chain. That was a weekday, not the weekend.\n- Sunday 2023/03/19: you said 'I decided to upgrade my road bike's pedals to clipless pedals today, specifically the Shimano Ultegra pedals' and asked how to install them. In the same chat you were also planning a maintenance check for the road bike: its spongy brakes, brake pads, chain and gear skipping, tire pressure, and quick releases and bolts.\nStep 2 - Reasoning: The only bike work done during the past weekend (Sunday, March 19) was on the road bike. The mountain bike flat-tire repair happened earlier, on Wednesday, March 15.\nAnswer: Your road bike. On Sunday, March 19 you upgraded it with Shimano Ultegra clipless pedals, and you were also lining up a shop maintenance check for it. The mountain bike fix was the Wednesday before, not the weekend."
+  },
+  {
+   "question_id": "gpt4_4929293b",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 177109,
+   "prompt_sha256": "0b1771857b1ac95fa0683c7caf3d218459721ac44433bd44f6d19745b47cb153",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": false,
+    "l1_recorded": false
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- The current date is 2023/06/22, so 'a week ago' means about 2023/06/15.\n- In the 2023/06/15 conversation you said you 'recently walked down the aisle as a bridesmaid at my cousin's wedding.' You also said how much you loved the meaningful song she had played during the ceremony, and that it inspired ideas for your own wedding.\n- The other family events you mentioned don't fit 'a week ago'. Your niece's kindergarten graduation came up in an April conversation. You missed your nephew Jack's eighth-grade graduation. Your cousin Rachel's baby shower was in February. Michael's engagement party (early May) wasn't described as a relative's event.\n\nStep 2 - Reasoning:\nThe only relative's life event you took part in around a week ago is your cousin's wedding, where you were a bridesmaid.\n\nAnswer: Your cousin's wedding. You were a bridesmaid and walked down the aisle."
+  },
+  {
+   "question_id": "eac54add",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 159,
+   "context_chars": 114172,
+   "prompt_sha256": "236f56ba4a1b159bae88d35b10ad766d90417c82715840d06bdbf2fe8b803065",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: Today is 2023/03/28, so four weeks ago was around 2023/02/28 to 2023/03/01. In the conversation on 2023/03/01 you said: 'I just signed a contract with my first client today,' and asked for advice on writing a solid contract for your freelance clients. You then talked about QuickBooks, a lead magnet (a branding-project checklist) and Mailchimp. Other business events fall outside that window. You launched your website and outlined a business plan on 2023/02/10, about 6-7 weeks ago. On 2023/02/28 you only mentioned in passing an earlier influencer collaboration.\n\nStep 2 - Reasoning: The business milestone you explicitly announced about four weeks ago is landing your first client and signing their contract.\n\nAnswer: You had just signed a contract with your first (freelance) client."
+  },
+  {
+   "question_id": "6e984302",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 177,
+   "context_chars": 118077,
+   "prompt_sha256": "4afe969dbbfcbf308d503af5445433ccdf762a3786340be5ef11a686c96a1984",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": false,
+    "l1_recorded": false
+   },
+   "hypothesis": "Step 1 - Relevant information: The current date is 2023/04/01 (Sat), so four weeks earlier is 2023/03/04 (Sat). In the chat on 2023/03/04 you said you were thinking of entering a local art competition with a sculpture category. You added: 'I actually got my own set of sculpting tools, including a modeling tool set, a wire cutter, and a sculpting mat today.' Earlier, on 2023/02/11, you mentioned the competition and your new sculpting classes, but you did not say you had bought anything then.\nStep 2 - Reasoning: The purchase linked to the competition was made exactly four weeks ago, and it was the set of sculpting tools.\nAnswer: You bought your own set of sculpting tools: a modeling tool set, a wire cutter and a sculpting mat."
+  },
+  {
+   "question_id": "gpt4_8279ba03",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 173,
+   "context_chars": 116783,
+   "prompt_sha256": "97f8593537647680d7d120e7706e36ead647681155e0d01a906fcd2ac644e896",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": false,
+    "l1_recorded": false
+   },
+   "hypothesis": "Step 1 - Relevant information: Today is 2023/03/25, so 10 days ago was 2023/03/15. In a chat on 2023/03/15 about BBQ sauce recipes, you said you had just got a smoker that day and were excited to try different types of wood (hickory and apple) and meats with it. No other appliance purchase was mentioned for that date. Step 2 - Reasoning: The item you got on 2023/03/15, exactly 10 days before today, is the smoker. Answer: A smoker, for smoking meats and BBQ."
+  },
+  {
+   "question_id": "gpt4_2487a7cb",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 178898,
+   "prompt_sha256": "5145c34ae172ff10c18239cf8fb97b2ffd6054d2b9740c89181e39ba04247df3",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: (a) In a chat on 2023/05/24 you said you had participated in a webinar on 'Data Analysis using Python', organized by an online learning platform, two months earlier, i.e. around late March 2023. (b) In another chat on 2023/05/24 you said you attended the workshop on 'Effective Time Management' at the local community center last Saturday, i.e. Saturday 2023/05/20.\nStep 2 - Reasoning: Late March 2023 is about two months before May 20, 2023, so the webinar came first.\nAnswer: You attended the 'Data Analysis using Python' webinar first (about two months earlier, around late March 2023); the 'Effective Time Management' workshop came later (Saturday, May 20, 2023)."
+  },
+  {
+   "question_id": "gpt4_76048e76",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 198,
+   "context_chars": 142414,
+   "prompt_sha256": "27318084a6e845a934b2f5c3163fbb8dfdb9d8868bba17acc760e6531ec172fe",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- Bike: you said that in mid-February you had to take your bike in for repairs because the gears were acting up and you couldn't shift properly. The shop fixed it and it has run smoothly since.\n- Car: you said you washed your Toyota Corolla on Monday, February 27th, after not washing it for over a month (it was dirty after a snowstorm), and spent about $20 on detailing (vacuuming the interior, cleaning the wheels and tires).\n- The dealership check-up for the check-engine light happened in March, so it doesn't affect the February comparison.\n\nStep 2 - Reasoning: Mid-February (around Feb 15) comes before February 27, so the bike was taken care of first.\n\nAnswer: The bike. You had it repaired (the gear/shifting problem) in mid-February, before you washed and detailed your Corolla on February 27th."
+  },
+  {
+   "question_id": "gpt4_2312f94c",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 173,
+   "context_chars": 118489,
+   "prompt_sha256": "9566834c2da2646cb93aa1982f8cbfca110132c192eccabfe092cd4509d5ae4e",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information from our chats:\n- Dell XPS 13: you pre-ordered it on January 28th. It was originally expected on February 11th, but after a delay it finally arrived on February 25th.\n- Samsung Galaxy S22: you got it from the Best Buy store at the mall on February 20th. (This matches your other note that you bought your Anker PowerCore 20000 on February 13th, a week before you got the new phone.)\n\nStep 2 - Reasoning: You had the phone in hand on February 20th, while the laptop didn't arrive until February 25th. The laptop was ordered earlier, but you actually received it five days after the phone.\n\nAnswer: The Samsung Galaxy S22 came first - you got it on February 20th, five days before your Dell XPS 13 arrived on February 25th."
+  },
+  {
+   "question_id": "2a1811e2",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 151121,
+   "prompt_sha256": "e68d3c93083cc8eb5609bf091273b6663294ae11f2b7888e89efda4e40f5009b",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - relevant information: (a) You attended the Holi celebration at your local temple on February 26th (2023). (b) You attended Sunday mass at St. Mary's Church on March 19th (2023), where Father John's sermon inspired you. Step 2 - reasoning: February 2023 has 28 days, so February 26 to February 28 is 2 days, and February 28 to March 19 is 19 more days: 2 + 19 = 21. Answer: 21 days (three weeks) passed between Holi and the Sunday mass at St. Mary's Church."
+  },
+  {
+   "question_id": "gpt4_70e84552",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 155,
+   "context_chars": 109774,
+   "prompt_sha256": "f7c75b57f9c5070ca6fb41c5c12b75fc6924db99511d7976347dc23a354aae83",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- In a conversation on 2023/05/25 about planning a farm open house, you said you had trimmed the goats' hooves two weeks earlier, so around May 11, 2023.\n- In another conversation on 2023/05/25, you said you had fixed the broken fence on the east side of your property, where the goats graze, three weeks earlier, so around May 4, 2023.\n\nStep 2 - Reasoning: Both times were given relative to the same day, May 25. Three weeks ago is earlier than two weeks ago, so the fence repair came about a week before the hoof trimming.\n\nAnswer: You fixed the fence first, about three weeks earlier (around May 4). You trimmed the goats' hooves about a week later, around two weeks earlier (around May 11)."
+  },
+  {
+   "question_id": "gpt4_2d58bcd6",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 185,
+   "context_chars": 131253,
+   "prompt_sha256": "7a4d00546e0a124dd16b9e347e6be7b4fc544f2adbc7118416100cb81659dc31",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- The Hate U Give: On 2023/05/30 you said you had rushed to finish it for your book club meeting 'two weeks ago' and got it done 'a few days before' that meeting. That puts it around mid-May 2023, roughly May 12-14.\n- The Nightingale: On 2023/05/30 you said you finished it 'last weekend,' along with The Seven Husbands of Evelyn Hugo and The Silent Patient. Today is Tuesday, 2023/05/30, so last weekend was May 27-28, 2023.\n\nStep 2 - Reasoning: Mid-May comes before May 27-28, so The Hate U Give was finished about two weeks before The Nightingale.\n\nAnswer: You finished 'The Hate U Give' first."
+  },
+  {
+   "question_id": "b9cfe692",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 135072,
+   "prompt_sha256": "7844e1c89c644b689c584be0a4876d02d1ef486c7fcad5afa0353d6c4d81d106",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- 2023/05/24 (audiobook chat): you said you had just finished 'The Seven Husbands of Evelyn Hugo', which took you two and a half weeks.\n- 2023/05/24 (historical fiction chat): you said you had recently finished 'The Nightingale' by Kristin Hannah, which took you three weeks. Later in that chat you said again that it took 'about three weeks'.\nStep 2 - Reasoning: 2.5 weeks + 3 weeks = 5.5 weeks.\nAnswer: About 5.5 weeks (five and a half weeks) in total: 2.5 weeks for 'The Seven Husbands of Evelyn Hugo' plus 3 weeks for 'The Nightingale'."
+  },
+  {
+   "question_id": "gpt4_9a159967",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 141,
+   "context_chars": 105865,
+   "prompt_sha256": "8ca283333b588703456c852f5851a50d0524ca4786a8091035c7f445cea7c407",
+   "answer_turns": 3,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information (flights in March and April):\n- United Airlines: a business trip to Chicago in March, out on the 10th and back on the 12th, with two flights each way = 4 flights.\n- Southwest Airlines: a direct flight from your hometown to Las Vegas for a conference, March 15-18 = one flight each way, 2 flights at most.\n- American Airlines: the family vacation to Hawaii, April 20-27. You flew American from your hometown to Honolulu and then took a connecting flight to Maui = 2 flights mentioned (no return flights were described).\n- No airline was mentioned for the March 25-31 Orlando stay, and the San Francisco and Europe trips are future plans, so they don't count.\nStep 2 - Reasoning: United has 4 flight segments. Southwest has about 2, and American has the 2 you mentioned.\nAnswer: United Airlines. You flew with United the most in March and April, with four flights on your Chicago business trip."
+  },
+  {
+   "question_id": "gpt4_d9af6064",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 170470,
+   "prompt_sha256": "c1f10d88ac7c18b9e0a0be64efb563e453d6421afb7ff5768a3d6263ec1a03f8",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: (a) You said you 'finally set up my smart thermostat on 2/10' (February 10), after procrastinating for weeks. (b) You said you got your new router on January 15th, and it had already improved your Wi-Fi signal strength significantly (only its guest-network feature was still left to configure).\nStep 2 - Reasoning: January 15 is earlier than February 10, so the router was set up about four weeks before the thermostat.\nAnswer: The new router came first (January 15). You set up the smart thermostat later, on February 10."
+  },
+  {
+   "question_id": "gpt4_4cd9eba1",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 149204,
+   "prompt_sha256": "427d2539c48f2a02ecee68c41c76fe268456de5364991efe69eea44369a35af7",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information from the chat history:\n- You submitted your exchange program application on February 10th and were accepted on March 20th.\n- You have been attending pre-departure orientation sessions at your home university every Friday since 3/27 (March 27th).\n\nStep 2 - Reasoning: Acceptance date = March 20. First orientation session = March 27. March 27 - March 20 = 7 days = 1 week.\n\nAnswer: You had been accepted into the exchange program for 1 week when you started attending the pre-departure orientation sessions."
+  },
+  {
+   "question_id": "6613b389",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 146177,
+   "prompt_sha256": "7747c724bbceb43641cf6cd8b03a364329b73a49b4bfe644e403d71a76689da2",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1: The relevant information.\n- On 2023/07/07 you said your close friend Rachel got engaged 'last month on May 15th'.\n- In the same day's chats you said your wedding anniversary is coming up on July 22nd.\n\nStep 2: The reasoning. May 15 to July 15 is 2 months, and July 15 to July 22 adds 7 more days. That makes the gap about 2 months and 1 week, or 68 days.\n\nAnswer: Rachel got engaged about 2 months (just over two months) before your July 22nd anniversary."
+  },
+  {
+   "question_id": "gpt4_0a05b494",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 165,
+   "context_chars": 124797,
+   "prompt_sha256": "d2d5983aa0d14cc794ba993f89124b76018fa63b5c09826e29ba5f090e5966c3",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information (both from the 2023/05/23 chats):\n- Tourist from Australia: you met him 'last Thursday' on the subway on your way to work and helped him navigate the subway map. Counting from Tuesday, May 23, 2023, last Thursday was May 18, 2023.\n- Jam seller at the farmer's market: you had a lovely conversation with a jam maker at the farmer's market 'two weeks ago on a Saturday morning', i.e., a Saturday roughly two weeks before May 23 (around May 6-13, 2023). (Small note: in our chat you referred to the jam maker as 'he', but this is the only jam seller you mentioned.)\n\nStep 2 - Reasoning: a Saturday about two weeks before May 23 (May 13 at the latest) falls before Thursday, May 18.\n\nAnswer: You met the jam seller at the farmer's market first; you met the tourist from Australia later (last Thursday, roughly a week or more afterwards)."
+  },
+  {
+   "question_id": "8c18457d",
+   "question_type": "temporal-reasoning",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 157701,
+   "prompt_sha256": "96ff8c26d8a4025e097993da4fa325c522843cbdc694a7822ff8242f9b8d4b6f",
+   "answer_turns": 3,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - relevant information: (a) You said you got a wireless headphone for your brother as a graduation gift on 3/8, i.e. March 8, 2023. (b) You said you got a silver necklace with a tiny pendant for your best friend's 30th birthday on the 15th of March, i.e. March 15, 2023. Step 2 - reasoning: From March 8 to March 15 is 15 - 8 = 7 days. Answer: 7 days had passed (one week) between buying your brother's graduation gift and your best friend's birthday gift."
+  },
+  {
+   "question_id": "gpt4_70e84552_abs",
+   "question_type": "temporal-reasoning",
+   "abstention": true,
+   "n_hits": 200,
+   "context_chars": 131688,
+   "prompt_sha256": "9dc52781238e87f48511b080402e3f37f2a8ae0bc1e53a2db2c02fbf30412a01",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: (a) On May 21, 2023 you said you had fixed the broken fence on the east side of your property, where your goats graze, three weeks earlier. That puts it around the end of April 2023. (b) About cows, you only said you were thinking of getting a new cow (a Brown Swiss or a Jersey) to increase milk production. You had been researching online and talking to other farmers, and said you might be ready to make the investment soon. Step 2 - Reasoning: You never mentioned anyone named Peter or buying three cows from anyone in our conversations. The only cow purchase you brought up was a single cow you were still considering. Answer: I can't tell which task you completed first, because nothing in our chat history records you buying three cows from Peter. The only completed task on record is fixing the fence, about three weeks before May 21, 2023. If you tell me when you bought the cows from Peter, I can compare the two."
+  },
+  {
+   "question_id": "830ce83f",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 162,
+   "context_chars": 104113,
+   "prompt_sha256": "f38bb89bce96fa1f553cc689ac87158a4eb37375e86b967af5700a9f1fbe0a3c",
+   "answer_turns": 3,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- 2023/05/24: You mentioned visiting your friend Rachel, who 'recently moved to a new apartment in the city'. When asked which city, you said 'She moved to Chicago.'\n- 2023/05/27 (a later session): While planning a beach trip with friends, you said 'My friend Rachel actually just moved back to the suburbs again.'\nStep 2 - Reasoning: The move to a Chicago apartment is the earlier relocation. The later update says Rachel has since moved back to the suburbs, so that is her current situation. No specific suburb is named.\nAnswer: Rachel moved back to the suburbs. Her earlier move had been to a new apartment in Chicago."
+  },
+  {
+   "question_id": "d7c942c3",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 179,
+   "context_chars": 130659,
+   "prompt_sha256": "e22d267c1d833a92d65ee06b6356e99f79481594ad36d17336da83f221773424",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- 2023/03/11: You said you had started using a new grocery list app. You had been trying to get your mom to use it too, but she was 'still stuck on her old paper list.'\n- 2023/04/30: You said 'my mom is actually using the same grocery list app as me now,' so the two of you can share lists and keep track of what you need.\n\nStep 2 - Reasoning: The April 30 update is more recent than the March one, so it replaces it. By the latest information (today is 2023/05/14), your mom has moved from her paper list to the same app you use.\n\nAnswer: Yes. Your mom now uses the same grocery list app as you, having dropped her old paper list, so you can share lists."
+  },
+  {
+   "question_id": "ce6d2d27",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 181,
+   "context_chars": 128784,
+   "prompt_sha256": "68d7b5be3ef3e1ba1d0492bd82bf3f2d98f2d9b55ce88a2908b8a14eb3f4d174",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information from the chat history:\n- 2023/06/16 (dinner party chat): you mentioned, 'by the way, I have a cocktail-making class on Thursday.'\n- 2023/06/30 (tequila cocktail chat, the most recent mention): you said 'I have a cocktail-making class on Fridays, so maybe something I can experiment with then,' later repeated 'I have a cocktail-making class on Friday,' and planned to try the Paloma and the Tequila Sour 'during my class on Friday.'\n\nStep 2 - Reasoning: The two mentions conflict. The June 16 mention said Thursday, but the later June 30 conversation repeatedly and consistently says the class is on Fridays. The most recent information is the current state, so the class has moved to (or is now held on) Friday.\n\nAnswer: You take your cocktail-making class on Fridays. (Earlier, in mid-June, you had mentioned it being on a Thursday, but your latest update says Friday.)"
+  },
+  {
+   "question_id": "9ea5eabc",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 152816,
+   "prompt_sha256": "11f94b99a1e0bac7820c740206d2e3a80f3960551f9044059118888dbcb5b90b",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information (in chronological order):\n- 2023/05/26: You mentioned your recent family trip to Hawaii, where you all went snorkeling together, and said you wished you had set aside more time to explore Waikiki on your own.\n- 2023/05/27: You mentioned an earlier family trip to Japan that came right after 10 days of island-hopping in Hawaii.\n- 2023/05/28 (the latest mention): You said you were thinking of going to Paris and that you had just gone there as a family the previous month, i.e. around April 2023, and that your kids loved it. You then contrasted this recent family trip to Paris with a planned solo trip to Tokyo.\n- Other trips you mentioned (lost luggage on the way to Paris last October, a solo trip to Yosemite, a trip to Europe) are not described as your latest family trip.\n\nStep 2 - Reasoning: Hawaii was described as a 'recent' family trip on May 26, but two days later you said your family went to Paris just last month (April 2023). That is the most recent update and has the most specific timing, so it supersedes Hawaii as your latest family trip.\n\nAnswer: Your most recent family trip was to Paris, France (about a month before late May 2023, i.e. around April 2023)."
+  },
+  {
+   "question_id": "07741c44",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 166,
+   "context_chars": 130657,
+   "prompt_sha256": "f2a4d12db6d1bd428682d5c7f20dfe684f438b5c9f296575c34f8d1afd132759",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information from the chat history:\n- On 2023/08/11 you said you had been keeping your old sneakers under your bed for storage, and they were starting to smell.\n- Later, on 2023/11/30, you said you planned to organize your closet that weekend and store the old sneakers in a shoe rack there, because they were taking up space.\n\nStep 2 - Reasoning:\nThe question asks where you initially kept them. The earliest mention is under the bed; the shoe rack in the closet was the later plan.\n\nAnswer: You initially kept your old sneakers under your bed."
+  },
+  {
+   "question_id": "a1eacc2a",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 165669,
+   "prompt_sha256": "ba1e00fa0726210c87645e7aaa938d5832102b9a5436eb5aeeedefa0d65dd778",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: On 2023/05/23 you said you had written four short stories since you started writing regularly. On 2023/05/30 you said you had been writing regularly for three months and had completed 7 short stories since you started. On 2023/06/16 you mentioned a short story you had been working on for about a month, aiming for 500 words a week. That story was still in progress.\nStep 2 - Reasoning: The count went from 4 (May 23) to 7 (May 30), and the newer figure replaces the older one. The story you mentioned on June 16 was not finished yet, so it does not add to the completed total.\nAnswer: 7 short stories. The earlier figure of four is out of date, and you also have one more story in progress."
+  },
+  {
+   "question_id": "184da446",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 138303,
+   "prompt_sha256": "5d179c83e858c3222ad35bc03da079c763026bcf2509996ad1b5b1a8dff62d68",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: On 2023/05/20 you said you were on page 200 of 'A Short History of Nearly Everything'. On 2023/05/29, the most recent mention, you said you had just finished reading about the discovery of DNA's structure and were now on page 220.\n\nStep 2 - Reasoning: The later update (page 220) supersedes the earlier one (page 200), and there is no newer progress update after May 29.\n\nAnswer: You've read 220 pages so far (you're on page 220)."
+  },
+  {
+   "question_id": "4d6b87c8",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 162,
+   "context_chars": 105450,
+   "prompt_sha256": "1ac03802b8839ad04daa3ec31a136af08a699ac5d585b54924f27fabce3ec612",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: On 2023/05/20 you said your to-watch list had 20 titles. On 2023/05/22 you said the list was 'currently 25'. Later in that same conversation, after saying you would add 'Amistad' and 'Hotel Rwanda', you again said you had 25 titles on it right now and asked for help organizing it. No later update appears before today (2023/06/03).\n\nStep 2 - Reasoning: The most recent figure (25, from 2023/05/22) replaces the earlier count of 20.\n\nAnswer: 25 titles are currently on your to-watch list."
+  },
+  {
+   "question_id": "08e075c7",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 160180,
+   "prompt_sha256": "f65fcab642c8261cbda5d4fc4362eef92555a1ccb4457fb6b595adb746cefa5f",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: (a) In the chat of 2023/06/18 you said you had been using your Fitbit Charge 3 for 6 months. (b) In the chat of 2023/09/02 you said you had just realized you had been using your Fitbit Charge 3 for 9 months. Step 2 - Reasoning: The most recent statement (2023/09/02) is the up-to-date one, and it agrees with the earlier one (6 months in mid-June means about 9 months by early September, so you started around December 2022). Today is 2023/09/04, only two days after that statement. Answer: You have been using your Fitbit Charge 3 for about 9 months."
+  },
+  {
+   "question_id": "2698e78f",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 198,
+   "context_chars": 144086,
+   "prompt_sha256": "3de792ff9f572326139da9c0791e4f63581c570817f85d3c9492d2c24adf5669",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- 2023/04/03: you mentioned an upcoming therapy session with Dr. Smith and said the sessions are 'every two weeks'.\n- 2023/11/03 (most recent): you said you had a session with Dr. Smith 'this week' and stated 'I see Dr. Smith every week'. She has been helping you set healthy boundaries.\n\nStep 2 - Reasoning: The frequency changed over time. The more recent November statement (every week) replaces the April one (every two weeks), so it reflects your current schedule as of 2023/11/10.\n\nAnswer: You currently see Dr. Smith every week (weekly). Earlier in the year, in April 2023, you saw her every two weeks."
+  },
+  {
+   "question_id": "b6019101",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 148056,
+   "prompt_sha256": "fce4ba68204a94480194eb2903dfabd39a3b3786ff3bb49852eff74b36d9eaa7",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: (a) On 2023/05/20, while planning a family movie night, you said you had watched 4 MCU films in the last 3 months (you then picked Spider-Man: Homecoming). (b) Later, on 2023/05/29, while planning the long-weekend family movie marathon, you said you had watched 12 films in the last 3 months, including 5 MCU films. Step 2 - Reasoning: The count went up from 4 to 5 between the two conversations, so the more recent statement (May 29) is the current one. Answer: 5 MCU films (out of 12 films in total over the last 3 months)."
+  },
+  {
+   "question_id": "6071bd76",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 197,
+   "context_chars": 180047,
+   "prompt_sha256": "91729a8affac09c4d6bdea92b751220b7727367f22d1005338664dbf9a144818",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Extract the relevant information:\n- On 2023/02/11 you said you had found that 1 tablespoon of coffee for every 6 ounces of water was the perfect French press ratio for you.\n- On 2023/06/30 you said you had your French press ratio 'down to a science': 1 tablespoon of coffee for every 5 ounces of water.\n\nStep 2 - Reason over the information:\n- Earlier ratio: 6 oz of water per tablespoon of coffee.\n- Later ratio: 5 oz of water per tablespoon of coffee.\n- 5 oz is less than 6 oz, so each tablespoon of coffee now gets 1 ounce less water, which makes a stronger, more concentrated brew.\n\nAnswer: You switched to LESS water per tablespoon of coffee - from 6 ounces down to 5 ounces of water per tablespoon."
+  },
+  {
+   "question_id": "e493bb7c",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 52,
+   "context_chars": 47064,
+   "prompt_sha256": "17fd8a7abc26446f03ca0006fc5de8343e72025e4e7afe2c20968742a69fb0d1",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- 2023/07/11: you mentioned the 'Ethereal Dreams' painting was hanging above your living room sofa. You planned to leave it there for your art-themed party.\n- 2023/10/30 (a later update): you said 'I just moved the \"Ethereal Dreams\" painting to my bedroom' and 'I recently moved the \"Ethereal Dreams\" painting by Emma Taylor above my bed.'\n- Nothing between Oct 30 and the current date (2023/11/18) mentions moving it again.\nStep 2 - Reasoning: The latest information replaces the earlier one. The painting was moved from above the living room sofa to the bedroom, above the bed.\nAnswer: It is currently hanging in your bedroom, above your bed. It used to hang above your living room sofa."
+  },
+  {
+   "question_id": "72e3ee87",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 173,
+   "context_chars": 132212,
+   "prompt_sha256": "dbeddbea5363da7202bd865c62ec92db1683f09810e6059fe48bec8040654327",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1, relevant information: On 2023/05/24 you said you were 'currently on episode 10' of Crash Course's Science series. On 2023/05/29, the later conversation, you said you had just completed 50 episodes of the Science series. Step 2, reasoning: The later statement updates the earlier one, so your most recent count is 50. Answer: You have completed 50 episodes of Crash Course's Science series."
+  },
+  {
+   "question_id": "01493427",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 162387,
+   "prompt_sha256": "21c1a517134250710e3ef128a99380176c7ec3ff0a40a38fb81f3e2b08695d36",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- On 2023/08/11 you said you had added 17 new postcards since you started collecting again (and started a list of them: PC001, PC002, PC003 and so on).\n- On 2023/11/30 you mentioned you had just come back from a local antique shop with 8 more postcards.\n- Later in that same 2023/11/30 conversation you said you had added 25 new postcards to your collection since you started collecting again.\n\nStep 2 - Reasoning:\nThe most recent figure is the 25 you gave on 2023/11/30. It matches the earlier numbers: 17 (as of August) + 8 (from the antique shop trip) = 25. Nothing later in the history mentions any more postcards.\n\nAnswer: You have added 25 new postcards to your collection since you started collecting again."
+  },
+  {
+   "question_id": "b01defab",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 87,
+   "context_chars": 58658,
+   "prompt_sha256": "b53761f3a9ee7975bf50e94902b81d05c8db7d42e56ee19f78881239340497f8",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: On 2023/01/21 you said you had put 'The Nightingale' down for a while because it was getting too emotional. You planned to read 'The Poppy War' next and come back to 'The Nightingale' later. On 2023/03/30 you said you had 'recently finished' 'The Nightingale' by Kristin Hannah and that it was amazing. Later in that chat you said you loved it, that the ending was emotional but a perfect conclusion, and that the sisterly bond between Vianne and Isabelle resonated with you most.\nStep 2 - Reasoning: The pause in January was only temporary. The later chat, on 2023/03/30 (before today, 2023/04/12), says plainly that you finished the book and talks about its ending.\nAnswer: Yes. You stopped reading it in January because it was too emotional, then went back and finished it. On 2023/03/30 you said you had recently finished 'The Nightingale' and loved it."
+  },
+  {
+   "question_id": "603deb26",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 179,
+   "context_chars": 180122,
+   "prompt_sha256": "9042a0299a41f98ab4c02351bc546d65fbf6bd9266b5df9416686e135893ab51",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: (a) In our August 11, 2023 conversation you said you had tried making a Negroni at home 5 times since Emma taught you (you were using Hendrick's gin and Carpano Antica vermouth). (b) In our November 30, 2023 conversation, which is the most recent mention, you said several times that you had tried making it at home 10 times since your friend Emma showed you how. Step 2 - Reasoning: The count went from 5 in August to 10 by late November. Nothing later updates it before today (December 5, 2023), so the latest figure applies. Answer: You have tried making a Negroni at home 10 times since Emma showed you how."
+  },
+  {
+   "question_id": "0ddfec37",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 193,
+   "context_chars": 140593,
+   "prompt_sha256": "0a24fc863bad6113e7f9c0f38b815dc89b8f1e85045f7c98cd5eeebebaf7dc6f",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1: The relevant information.\n- On 2023/07/11 you said you had just got a signed Mike Trout baseball the week before, and that made '15 autographed baseballs since I started collecting three months ago!'\n- On 2023/12/30 you said you had added 20 autographed baseballs 'in the past few months'. That is a later figure over a longer stretch, not the first three months.\n\nStep 2: The reasoning. The question asks about the first three months of collecting. Your July 11 statement covers exactly that span, from when you started collecting (around April 2023) to July 2023, and gives 15. The later figure of 20 covers a longer period, so it does not answer this question.\n\nAnswer: You added 15 autographed baseballs in the first three months of collecting."
+  },
+  {
+   "question_id": "cf22b7bf",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 147,
+   "context_chars": 113686,
+   "prompt_sha256": "2b3c466afb2068afbfc6479d8350b53b29ab8fb21cc0a8f512cd3fcdee25f3b0",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- On 2023/05/21 you mentioned you had lost about 5 pounds in the past month (an earlier progress update).\n- On 2023/06/21 (your most recent update) you said you had just realized you've lost 10 pounds since you started going consistently to the gym 3 months ago.\n\nStep 2 - Reasoning: The question asks about the total weight lost since you began going to the gym consistently. Your latest statement answers that directly and supersedes the earlier one-month figure of 5 pounds.\n\nAnswer: You have lost 10 pounds since you started going to the gym consistently (about 3 months earlier)."
+  },
+  {
+   "question_id": "a2f3aa27",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 183,
+   "context_chars": 121627,
+   "prompt_sha256": "9479451b8789eb4a29afc53d53b2e3467e3a150ef6052ba102b4ec67a1b23e01",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- In a conversation on 2023/05/25 at 05:26 you said: 'I've got 1250 followers on Instagram now.'\n- Later the same day (2023/05/25 at 09:28) you said you were going to check your follower count and thought you were 'close to 1300 now.'\n- You didn't mention your follower count again before the current date (2023/06/15).\n\nStep 2 - Reasoning:\nThe later update replaces the earlier figure of 1,250, so the latest number you gave is about 1,300.\n\nAnswer: About 1,300 followers. That is up from the 1,250 you mentioned earlier. You haven't shared a newer count, so the exact number today may be different."
+  },
+  {
+   "question_id": "c6853660",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 159,
+   "context_chars": 118396,
+   "prompt_sha256": "917ecf10f99c10734561a9064d11092e9615b149a157bf6ea54de31ce05cf80d",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information from the chat history:\n- 2023/05/25: You said you had switched to a darker roast and cut back to just one cup of coffee in the morning (a decrease).\n- 2023/05/26 (the following day): You first said you were thinking of changing your morning coffee limit to two cups, and later in that same conversation you confirmed: 'I have increased the limit to two cups.'\n\nStep 2 - Reasoning: The 2023/05/26 change is the most recent one mentioned, and it raised your limit from one cup to two cups.\n\nAnswer: You most recently INCREASED the limit - from one cup to two cups of coffee in the morning."
+  },
+  {
+   "question_id": "0977f2af",
+   "question_type": "knowledge-update",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 156745,
+   "prompt_sha256": "46a261073ce5ff3148688b3964d6b0f626e135a0eb327c36fda6cdaf299e44db",
+   "answer_turns": 2,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1: The relevant information.\n- On 2023/05/21 at 22:54 you mentioned 'the Air Fryer I got yesterday' and planned to make sweet potato fries in it. That dates the Air Fryer to about May 20, 2023.\n- In an earlier chat that same day (2023/05/21, 05:48) you said you were thinking of 'using my new Instant Pot' for soups and stews, and asked for pressure-cooking recipes such as the Korean Chicken Stew.\n- No other new kitchen gadget was mentioned. The small fridge and coffee maker for your garage workstation were only ideas, not purchases.\n\nStep 2: The reasoning. The only other new kitchen gadget in our chats is the Instant Pot, and you mentioned it as new before the Air Fryer came up.\n\nAnswer: An Instant Pot, the pressure cooker you planned to use for soups and stews like the Korean Chicken Stew."
+  },
+  {
+   "question_id": "0ddfec37_abs",
+   "question_type": "knowledge-update",
+   "abstention": true,
+   "n_hits": 183,
+   "context_chars": 141095,
+   "prompt_sha256": "fce80c9e8634c1936c157bbb5d94bb41bd0316789806daec8c6090731e2eed79",
+   "answer_turns": 0,
+   "covered": false,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: In our chats you only talked about autographed baseballs, never footballs. On 2023/05/20 you said your newly signed Mike Trout baseball made it 15 autographed baseballs since you started collecting three months earlier, and on 2023/05/22 you said you had added 20 autographed baseballs over the past few months. Autographed footballs are not mentioned anywhere.\nStep 2 - Reasoning: Since the chat history contains no information about autographed footballs, there is no number I can give for them.\nAnswer: I can't answer that from our conversations, because you never mentioned collecting autographed footballs. What you did mention is autographed baseballs: 15 added in the first three months of collecting (and 20 by 2023/05/22)."
+  },
+  {
+   "question_id": "c4f10528",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 150085,
+   "prompt_sha256": "2e98a413836a10fcea2b1b2295eda48ae10b76558f9b15410639c22715cfdffa",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: In the 2023/05/30 conversation about shopping in Bandung, you said you would start with Cihampelas Walk (Ciwalk) to check out the denim street and asked for restaurants or cafes in the area. I suggested Miss Bee Providore, Bakery & Co, Raa Cha Suki & BBQ, Sumoboo, and Holycow! Steakhouse. You picked Miss Bee Providore and asked about its signature dishes. The first one I listed was Miss Bee's Nasi Goreng, their version of Indonesian fried rice served with prawn crackers and topped with a fried egg. You said you would order the Nasi Goreng and finish with the chocolate brownie.\n\nStep 2 - Reasoning: The Cihampelas Walk restaurant tied to the Nasi Goreng is the one you chose, Miss Bee Providore.\n\nAnswer: The restaurant is Miss Bee Providore, in the Cihampelas Walk area of Bandung. It serves Western and Indonesian food, and the dish is Miss Bee's Nasi Goreng. The warm chocolate brownie with vanilla ice cream is a good way to finish."
+  },
+  {
+   "question_id": "89527b6b",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 193,
+   "context_chars": 151512,
+   "prompt_sha256": "2fd783f5edb594ede67b46f2a4b791e54efffd6275966fdbe422799306b6cb0b",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: In the children's book 'The Amazing Adventures of Dinosaurs' (chat of 2023/05/23), Chapter 3 is 'The Swimming Plesiosaur.' Its image description says the Plesiosaur is swimming in the ocean with its long neck and flippers in motion, and that 'The Plesiosaur has a blue scaly body,' with colorful fish and bright sunshine in the background.\n\nStep 2 - Reasoning: The image description states the body color directly. For comparison, the T-Rex and the Pterodactyl had green scaly bodies and the Triceratops had a brown one.\n\nAnswer: The Plesiosaur's scaly body was blue."
+  },
+  {
+   "question_id": "7e00a6cb",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 159610,
+   "prompt_sha256": "5ba269239525aef6b2acda8a546da88910ba2d7bb728921ddd4db7bd2a3e41b4",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: When you asked for budget-friendly hostels in Amsterdam (2023/05/27), I suggested Stayokay Amsterdam Vondelpark, ClinkNOORD Hostel, The Bulldog Hostel Amsterdam, International Budget Hostel and Amsterdam Hostel Centre. The one described as situated near the famous Red Light District was the International Budget Hostel, which offers affordable dormitory-style and private rooms, a fully equipped kitchen and a lounge area.\nStep 2 - Reasoning: The hostel you are asking about, the one near the Red Light District, matches that recommendation.\nAnswer: It was the International Budget Hostel."
+  },
+  {
+   "question_id": "ceb54acb",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 166724,
+   "prompt_sha256": "81a0240fe1af808554939a3dccf3d2f3571d3bd7ffd71416531269aa8a960e16",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: In our chat on 2023/05/27, after you said an earlier suggestion was 'actually longer', I offered the shorter term 'sexual compulsions'. You then asked me to 'think in something better', and I replied with four other alternatives:\n1. Sexual fixations - implies a strong preoccupation with sexual thoughts or behaviors that may interfere with other areas of life.\n2. Problematic sexual behaviors - a straightforward phrase for behaviors that cause problems or difficulties in a person's life.\n3. Sexual impulsivity - emphasizes the impulsive or compulsive nature of certain sexual behaviors and the difficulty of controlling them.\n4. Compulsive sexuality - emphasizes the compulsive nature of the behaviors and the difficulty of breaking free from them.\n\nStep 2 - Reasoning: 'Sexual compulsions' came first on its own. The follow-up list contained exactly four more options.\n\nAnswer: The other four options were (1) sexual fixations, (2) problematic sexual behaviors, (3) sexual impulsivity and (4) compulsive sexuality."
+  },
+  {
+   "question_id": "dc439ea3",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 167342,
+   "prompt_sha256": "553c9c8b91f66370768a8102715f6958062086a3e75e59ceb0b29e8388a7a39c",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: In our conversation about Native American powwows (May 23, 2023), I listed seven traditional games and events: the Stick Game, Hand Games, Drum and Dance Competitions, Indian Relay, Lacrosse, Double Ball, and the Hoop Dance. Step 2 - Reasoning: The only one I described as often performed by skilled dancers at powwows was the last on the list. I described it as a traditional dance with intricate movements using multiple hoops. Answer: The Hoop Dance."
+  },
+  {
+   "question_id": "18dcd5a5",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 128895,
+   "prompt_sha256": "eac5aab106e6980832550f2061bfb5f12a20431ce6c7bf4f69f4b771c9cef134",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - relevant information: In the 'Lost Temple of the Djinn' one-shot for level 8 PCs, the enemy stat blocks were listed as: Mummies (4), Construct Guardians (2) and Skeletal Warriors (6). Step 2 - reasoning: The mummy stat block (AC 11, 45 HP, Curse of the Pharaohs, Mummy Rot) is labeled with a count of 4. Answer: The party will face 4 mummies in the temple."
+  },
+  {
+   "question_id": "58470ed2",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 195,
+   "context_chars": 135671,
+   "prompt_sha256": "b2f165480d467d52b339cd28cf54c70c01b451ed23901131a9b24719875ad047",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: In our 2023/05/28 conversation, I wrote you an essay on Jorge Luis Borges's short story 'The Library of Babel'. In section A (the structure of the library and its impact on language), the essay cited Borges (1941) describing the Library as a sphere \"whose exact center is any one of its hexagons,\" and added that its circumference is inaccessible.\n\nStep 2 - Reasoning/context: The essay used this line to show that the library has no privileged center and no reachable outer boundary. That mirrors the boundless potential of language, but the same lack of limits and organization creates a paradox: the potential for meaning is vast while the ability to actually create meaning is limited.\n\nAnswer: Borges said the Library is a sphere in which any one of its hexagons can be its exact center, while its circumference can never be reached (it is inaccessible)."
+  },
+  {
+   "question_id": "8cf51dda",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 186,
+   "context_chars": 142395,
+   "prompt_sha256": "68812ca8dc1bdcd8052c3a7d348fbc7fa8b1a28cb9a568ce67d7d18bd77d4651",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\nOn 2023/05/29 you asked for a grants aim page on molecular subtypes and endometrial cancer. The overall aim was to identify and characterize molecular subtypes of endometrial cancer and to study their clinical and biological significance. The page listed three objectives.\n\nStep 2 - The three objectives:\n1. To identify molecular subtypes of endometrial cancer using a combination of genomic and transcriptomic approaches.\n2. To investigate the clinical and biological significance of the identified molecular subtypes, including their association with patient outcomes and response to therapy.\n3. To develop biomarkers for the early detection and prognosis of endometrial cancer based on the identified molecular subtypes.\n\nThe methods supporting these were: next-generation sequencing of tumor samples; unsupervised and supervised machine learning to define the subtypes; validation in an independent cohort; and functional plus bioinformatic analyses.\n\nAnswer: The three objectives were (1) identify molecular subtypes of endometrial cancer using genomic and transcriptomic approaches, (2) investigate the clinical and biological significance of those subtypes, including links to patient outcomes and response to therapy, and (3) develop subtype-based biomarkers for early detection and prognosis of endometrial cancer."
+  },
+  {
+   "question_id": "1d4da289",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 178428,
+   "prompt_sha256": "7540b2dd2189c3242ec29221becd5fb729d9057ab1ad84253f5676a05e020edd",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information:\n- In our 2023/05/23 conversation about the steps companies take to ensure data privacy and security, point 3 was two-factor authentication: requiring two-factor authentication, 'such as biometric authentication or one-time passwords (OTP)', enhances security by ensuring that only authorized users can access sensitive data.\n- Later in that same conversation, when you said the extra steps felt like a hassle, I added that many companies are adopting easier measures such as fingerprint or facial recognition along with two-factor authentication, which simplify access without sacrificing security.\n\nStep 2 - Reasoning:\n- The two-factor authentication methods I named explicitly were biometric authentication and one-time passwords. The fingerprint and facial recognition examples are forms of biometric authentication.\n\nAnswer: I was referring to two kinds of two-factor authentication: (1) biometric authentication, such as fingerprint or facial recognition, and (2) one-time passwords (OTPs), temporary single-use codes entered in addition to your regular password."
+  },
+  {
+   "question_id": "1b9b7252",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 131,
+   "context_chars": 180108,
+   "prompt_sha256": "10a72ac1b550b36aa400d9d55697906c68f3c09149024193ed8c4d7bb32d47e9",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1, relevant information: In our 2023/05/25 conversation about mindfulness techniques for people who can't do strenuous physical activity, I listed guided imagery resources: the Headspace app, Mindful.org, the UCLA Mindful Awareness Research Center, Mindfulness Exercises, and YouTube. Step 2, reasoning: The resource I described as a website with free guided imagery exercises such as 'The Mountain Meditation' and 'The Body Scan Meditation' was Mindful.org. Answer: The website was Mindful.org."
+  },
+  {
+   "question_id": "1568498a",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 146209,
+   "prompt_sha256": "132e7beea319b093ad2db89f6c847aecb50a2924c1b8c19e080b1a81b0f509d5",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Extract the relevant information (our chess game on 2023/05/21, where I was playing White):\n- You posted the position ending 26. hxg4 Rh8 and asked me to make a legal move; I replied '27. Kg2 Bd5+'.\n- You re-posted the game including 27. Kg2 Bd5+ (pointing out I already had a pawn on d4), and I answered: '28. Kg3 would be my move.'\n- You then replied Be6 (28...Be6), and after that I played 29. Rd3 (written as '29. Rd3 Rh4').\n\nStep 2 - Reason over the information:\nAfter 27. Kg2 Bd5+, White's king was in check, and the move I made in response was to step the king to g3.\n\nAnswer: My move after 27. Kg2 Bd5+ was 28. Kg3 (you then answered 28...Be6)."
+  },
+  {
+   "question_id": "6222b6eb",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 178610,
+   "prompt_sha256": "7bcc831e54a87f91395d5d39f0e2552f8d8632da132d3df1d40866caf4bc04bc",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: In our 2023/05/27 conversation about atmospheric correction, I compared 6S, MAJA and Sen2Cor. I said that 6S (Second Simulation of a Satellite Signal in the Solar Spectrum), a radiative transfer model, is implemented in the SIAC_GEE (Sentinel-2 Image Atmospheric Correction in Google Earth Engine) tool. MAJA is implemented in the MAJA software from the French space agency CNES, and Sen2Cor is implemented in ESA's Sen2Cor software. Earlier in the same chat, when I compared SIAC_GEE with Sen2Cor, I also said that SIAC_GEE uses the 6S radiative transfer model for atmospheric correction.\n\nStep 2 - Reasoning: Both statements agree. Of the three algorithms, 6S is the one tied to SIAC_GEE.\n\nAnswer: 6S, the Second Simulation of a Satellite Signal in the Solar Spectrum radiative transfer model, is the one implemented in the SIAC_GEE tool."
+  },
+  {
+   "question_id": "d596882b",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 195,
+   "context_chars": 180021,
+   "prompt_sha256": "91db5f62c4c3a3dbc5e95913b12a02d71d9c066ff0e19b7a250919e1806400b1",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: In our 2023/05/25 conversation about eating in New York City, you asked for vegan/vegetarian options and I recommended: (1) By Chloe - a popular plant-based eatery with multiple locations throughout the city, serving vegan burgers, salads, pastas and baked goods; (2) Candle 79 on the Upper East Side (upscale vegan); (3) Superiority Burger in the East Village; (4) juice bars such as Juice Generation and Pure Green; (5) Peacefood Cafe.\n\nStep 2 - Reasoning: The only one I described as a plant-based eatery with multiple locations throughout the city was By Chloe. The others were single spots or juice bars.\n\nAnswer: It was By Chloe, the plant-based eatery with several locations around NYC, known for its vegan burgers, salads, pastas and baked goods."
+  },
+  {
+   "question_id": "3e321797",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 153384,
+   "prompt_sha256": "e181f79d87fb2480e10eda174b9f41733ec484edc05e9ddb6fc7f41fca370587",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: In our 2023/05/28 conversation about natural remedies for dark circles, remedy #3 was to apply tomato juice mixed with lemon juice to the under-eye area and wash it off with cold water after 10 minutes, to help lighten dark circles.\n\nStep 2 - Reasoning: That is the only instruction I gave for the tomato and lemon remedy, and it says 10 minutes.\n\nAnswer: Leave it on for about 10 minutes, then rinse it off with cold water. Lemon juice can sting the thin skin under the eyes, so keep the mixture out of your eyes, and check with your doctor as you planned, especially if your skin is sensitive."
+  },
+  {
+   "question_id": "8b9d4367",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 143099,
+   "prompt_sha256": "2c2c4b13c7ae386ef9c0cdb6a30d4f20f630a73324e61972adda6f97a412c895",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1: The relevant information. On 2023/05/29 we talked about how private sector businesses have helped reduce poverty and unemployment in Chaudhary. The examples I gave were:\n- Jaipur Rugs: employs over 40,000 people in the rug-manufacturing industry, and trains and employs rural women so they can become self-employed and improve their living standards.\n- Dabur: runs a farmers' training centre.\n- Mahindra & Mahindra: has a tractor manufacturing unit.\n- Bajaj Auto: has a plant with about 1,500 employees.\n- ITC: runs a social forestry program.\n\nStep 2: The reasoning. The company described as employing over 40,000 people in rug manufacturing was Jaipur Rugs.\n\nAnswer: Jaipur Rugs. It employs over 40,000 people in rug manufacturing, mainly by training and employing rural women."
+  },
+  {
+   "question_id": "41275add",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 138994,
+   "prompt_sha256": "aaab846a4523d87d6c664b2c52d8d20a23f408e26ae37952a241266f8edb8f03",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: In our 2023/05/23 conversation you asked for YouTube videos about workplace posture that you could share with your staff. I listed four: (1) 'How to Sit Properly at a Desk to Avoid Back Pain' by the Mayo Clinic (https://www.youtube.com/watch?v=UfOvNlX9Hh0); (2) '5 Tips for Better Posture at Your Desk' by Harvard Health Publishing; (3) 'Office Ergonomics - Computer Workstation Ergonomics' by Ohio State University Wexner Medical Center; (4) '10 Easy Ways to Improve Your Posture at Work' by Healthline.\n\nStep 2 - Reasoning: Only the first video on that list was attributed to the Mayo Clinic.\n\nAnswer: The Mayo Clinic video I recommended was 'How to Sit Properly at a Desk to Avoid Back Pain', at https://www.youtube.com/watch?v=UfOvNlX9Hh0. Open the link before sharing it to check that it is still available."
+  },
+  {
+   "question_id": "4baee567",
+   "question_type": "single-session-assistant",
+   "abstention": false,
+   "n_hits": 200,
+   "context_chars": 178415,
+   "prompt_sha256": "a145c5de9b22a4d5b78512d3887b888435751ca8e2b1202a4b556a24e3c96a5a",
+   "answer_turns": 1,
+   "covered": true,
+   "verdicts": {
+    "s1": true,
+    "l1_same_pass": true,
+    "l1_recorded": true
+   },
+   "hypothesis": "Step 1 - Relevant information: In our 2023/05/28 chat about NFL history, I said the Kansas City Chiefs and the Jacksonville Jaguars had played each other 23 times (regular season only, as of my 2021 knowledge cutoff). When you asked how many of those were played in Kansas, I answered that 12 games were played at Arrowhead Stadium in Kansas City, Missouri, the Chiefs' home stadium, and the other 11 at TIAA Bank Field in Jacksonville. When you then asked about those 12 games, I said the Chiefs won 10 and the Jaguars won 2.\nStep 2 - Reasoning: The question asks how many of the matchups were at Arrowhead Stadium. That is the 12-game figure (12 + 11 = 23 total).\nAnswer: According to that chat, the Chiefs played the Jaguars 12 times at Arrowhead Stadium, winning 10 of those games and losing 2. That figure covered regular-season games only, based on data up to 2021."
+  }
+ ]
+}
