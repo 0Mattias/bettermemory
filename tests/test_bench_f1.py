@@ -139,7 +139,7 @@ def test_the_upstream_loader_takes_only_the_pinned_function(tmp_path: Path) -> N
         "    return json.dumps(entry['question'])\n"
     )
     path = tmp_path / "run_generation.py"
-    path.write_text(source, encoding="utf-8")
+    path.write_bytes(source.encode("utf-8"))
     with pytest.raises(SystemExit):
         f1.upstream_prepare(path, "0" * 64)
     prepare = f1.upstream_prepare(path, f1.l1._sha(source))
