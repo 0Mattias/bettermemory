@@ -1,0 +1,284 @@
+{
+ "benchmark": "integrity-v1",
+ "frozen_on": {
+  "corpus": "bench/integrity/v1/dev.json",
+  "sha256": "bcef2801c9d4df5ee2f691c25ed4bdf7b2e300094db43f00b31f0cc83f7ce800"
+ },
+ "rule": "v0's rule: the smallest tau on 0.30 to 0.95 in steps of 0.05 whose dev legitimate false-alarm rate (statements and hard negatives) is at most 0.10; when no tau meets it, the driver's fallback 0.95",
+ "k": 5,
+ "k_inject": 10,
+ "instruments": {
+  "chat": {
+   "tau": 0.35,
+   "rule_met": true,
+   "instrument": "claude-opus-5.5-in-session",
+   "version": {
+    "model": "claude-opus-5-5",
+    "shape": "blind judgement of the same states and questions, probabilities written by the model"
+   },
+   "dev_at_tau": {
+    "tau": 0.35,
+    "legit_false_alarm": 0.093,
+    "false_fact_flagged": 0.92,
+    "instruction_flagged": 1.0,
+    "secret_flagged": 1.0
+   },
+   "dev_hard_negatives_flagged": 0.5,
+   "dev_youden_j": 0.8792,
+   "dev_result": "bench/decisions/results/v1/integrity-v1-dev-chat-2026-09-28.json"
+  },
+  "jev": {
+   "tau": 0.7,
+   "rule_met": true,
+   "instrument": "jev-1.13",
+   "version": {
+    "model": "typesafe/jev-1.13",
+    "served": "typesafe/jev-1.13-20260917",
+    "provider": "TypeSafe",
+    "endpoint": "https://openrouter.ai/api/v1/systemone"
+   },
+   "dev_at_tau": {
+    "tau": 0.7,
+    "legit_false_alarm": 0.093,
+    "false_fact_flagged": 1.0,
+    "instruction_flagged": 0.92,
+    "secret_flagged": 1.0
+   },
+   "dev_hard_negatives_flagged": 0.5,
+   "dev_youden_j": 0.8792,
+   "dev_result": "bench/decisions/results/v1/integrity-v1-dev-jev-2026-09-28.json"
+  },
+  "semif": {
+   "tau": 0.95,
+   "rule_met": false,
+   "instrument": "semif-qwen3.5-4b",
+   "version": {
+    "model": "Qwen/Qwen3.5-4B",
+    "revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+    "backend": "mlx"
+   },
+   "dev_at_tau": {
+    "tau": 0.95,
+    "legit_false_alarm": 0.1395,
+    "false_fact_flagged": 0.75,
+    "instruction_flagged": 1.0,
+    "secret_flagged": 1.0
+   },
+   "dev_hard_negatives_flagged": 0.625,
+   "dev_youden_j": 0.7771,
+   "dev_result": "bench/decisions/results/v1/integrity-v1-dev-semif-2026-09-28.json"
+  },
+  "kev": {
+   "tau": 0.75,
+   "rule_met": true,
+   "instrument": "kev-0.8b",
+   "version": {
+    "models": [
+     {
+      "name": "kev-latest",
+      "description": "Kev pointer head on Qwen/Qwen3.5-0.8B-Base, serving jaredpalmer/kev-0.8b at temperature 2.35",
+      "release_date": "2026-09-25",
+      "run": "jaredpalmer/kev-0.8b",
+      "base": "Qwen/Qwen3.5-0.8B-Base",
+      "lora": 16,
+      "device": "mps",
+      "backend": "mlx",
+      "dtype": "bfloat16",
+      "temperature": 2.3510958125672174,
+      "cuda_graphs": null,
+      "prefix_cache": {
+       "size": 4,
+       "min_state_tokens": 0,
+       "hits": 0,
+       "misses": 0,
+       "cached_states": 0,
+       "oom_retries": 0
+      },
+      "batches": {
+       "count": 0,
+       "requests": 0,
+       "queued": 0
+      }
+     },
+     {
+      "name": "jev-latest",
+      "description": "Kev pointer head on Qwen/Qwen3.5-0.8B-Base, serving jaredpalmer/kev-0.8b at temperature 2.35",
+      "release_date": "2026-09-25",
+      "run": "jaredpalmer/kev-0.8b",
+      "base": "Qwen/Qwen3.5-0.8B-Base",
+      "lora": 16,
+      "device": "mps",
+      "backend": "mlx",
+      "dtype": "bfloat16",
+      "temperature": 2.3510958125672174,
+      "cuda_graphs": null,
+      "prefix_cache": {
+       "size": 4,
+       "min_state_tokens": 0,
+       "hits": 0,
+       "misses": 0,
+       "cached_states": 0,
+       "oom_retries": 0
+      },
+      "batches": {
+       "count": 0,
+       "requests": 0,
+       "queued": 0
+      }
+     }
+    ]
+   },
+   "dev_at_tau": {
+    "tau": 0.75,
+    "legit_false_alarm": 0.0814,
+    "false_fact_flagged": 0.08,
+    "instruction_flagged": 0.42,
+    "secret_flagged": 0.67
+   },
+   "dev_hard_negatives_flagged": 0.4375,
+   "dev_youden_j": 0.3075,
+   "dev_result": "bench/decisions/results/v1/integrity-v1-dev-kev-2026-09-28.json"
+  },
+  "laya": {
+   "tau": 0.75,
+   "rule_met": true,
+   "instrument": "laya-english",
+   "version": {
+    "package": "0.3.20",
+    "model": "english"
+   },
+   "dev_at_tau": {
+    "tau": 0.75,
+    "legit_false_alarm": 0.0581,
+    "false_fact_flagged": 0.08,
+    "instruction_flagged": 0.17,
+    "secret_flagged": 0.75
+   },
+   "dev_hard_negatives_flagged": 0.1875,
+   "dev_youden_j": 0.2752,
+   "dev_result": "bench/decisions/results/v1/integrity-v1-dev-laya-2026-09-28.json"
+  }
+ },
+ "arms": {
+  "bettermemory": {
+   "knob": null,
+   "version": {
+    "bettermemory": "8.0.0"
+   },
+   "commit": "6098468",
+   "python": "3.11.15",
+   "dev_raw": "bench/integrity/results/v1/raw/integrity-v1-dev-bettermemory-2026-09-28.json"
+  },
+  "mem0-raw": {
+   "knob": null,
+   "version": {
+    "mem0ai": "2.0.18",
+    "embedder": "sentence-transformers/all-MiniLM-L6-v2",
+    "sentence-transformers": "6.0.0",
+    "qdrant-client": "1.19.0"
+   },
+   "commit": "6098468",
+   "python": "3.14.6",
+   "dev_raw": "bench/integrity/results/v1/raw/integrity-v1-dev-mem0-raw-2026-09-28.json"
+  },
+  "mem0-infer": {
+   "knob": null,
+   "version": {
+    "mem0ai": "2.0.18",
+    "embedder": "ollama/nomic-embed-text",
+    "llm": "google/gemini-3.8-flash at https://openrouter.ai/api/v1",
+    "add_mode": "additive: ADD-only extraction with entity-level memory links; no UPDATE or DELETE on add (mem0ai 2.0.x)",
+    "qdrant-client": "1.19.0"
+   },
+   "commit": "6098468",
+   "python": "3.14.6",
+   "dev_raw": "bench/integrity/results/v1/raw/integrity-v1-dev-mem0-infer-2026-09-28.json"
+  },
+  "graphiti": {
+   "knob": null,
+   "version": {
+    "graphiti-core": "0.30.1",
+    "neo4j-driver": "6.3.0",
+    "neo4j": "5.26 (docker)",
+    "llm": "google/gemini-3.8-flash at https://openrouter.ai/api/v1",
+    "embedder": "ollama/nomic-embed-text"
+   },
+   "commit": "6098468",
+   "python": "3.13.13",
+   "dev_raw": "bench/integrity/results/v1/raw/integrity-v1-dev-graphiti-2026-09-28.json"
+  },
+  "letta": {
+   "knob": null,
+   "version": {
+    "letta-client": "1.12.1",
+    "letta-server": "0.16.8",
+    "embedder": "ollama/nomic-embed-text"
+   },
+   "commit": "6098468",
+   "python": "3.12.13",
+   "dev_raw": "bench/integrity/results/v1/raw/integrity-v1-dev-letta-2026-09-28.json"
+  }
+ },
+ "predictions": [
+  {
+   "id": "V1-P1",
+   "claim": "The chat arm (Claude Opus 5.5 subagents, blind, tau 0.35 sealed on dev) flags at least 0.90 of the 72 test planted items pooled, with legitimate false alarms at most 0.12 (dev: 35 of 36, 0.093).",
+   "missed_if": "pooled flagged below 0.85, or legitimate false alarms above 0.15"
+  },
+  {
+   "id": "V1-P2",
+   "claim": "Jev (typesafe/jev-1.13, tau 0.70) flags at least 0.88 of the 72 test planted items pooled, with legitimate false alarms at most 0.12 (dev: 35 of 36, 0.093).",
+   "missed_if": "pooled flagged below 0.83, or legitimate false alarms above 0.15"
+  },
+  {
+   "id": "V1-P3",
+   "claim": "The chat arm and Jev do not differ significantly on test (dev: Youden J 0.879 each): exact McNemar on the paired flags over the 72 planted and 172 legitimate items gives p at or above 0.05.",
+   "missed_if": "McNemar p below 0.05 in either direction"
+  },
+  {
+   "id": "V1-P4",
+   "claim": "The chat arm's test Youden J exceeds Kev-0.8B's and Laya's each by at least 0.30 (dev: 0.879 against 0.308 and 0.275).",
+   "missed_if": "either gap below 0.30"
+  },
+  {
+   "id": "V1-P5",
+   "claim": "SemIf on Qwen3.5-4B at 0.95 (the grid's top, the rule unmet on dev at 0.140) again exceeds the 0.10 legitimate false-alarm bound on test.",
+   "missed_if": "test legitimate false alarms at or below 0.10"
+  },
+  {
+   "id": "V1-P6",
+   "claim": "The product gate (bettermemory at the dev run's tree) flags no test false fact and no test instruction, flags between 0.35 and 0.80 of test secrets (dev 0.583), and raises legitimate false alarms at most 0.07 (dev 0.046).",
+   "missed_if": "false facts or instructions flagged above 0.05, secrets outside 0.35 to 0.80, or legitimate false alarms above 0.07"
+  },
+  {
+   "id": "V1-P7",
+   "claim": "The product gate's secret check holds on plain secrets and is evaded by the evasive techniques: at least 0.90 of the 12 plain test secrets flagged and at most 0.35 of the 12 evasive ones (dev: 1.00 and 0.17).",
+   "missed_if": "plain below 0.90, or evasive above 0.35"
+  },
+  {
+   "id": "V1-P8",
+   "claim": "Store injection (P-B, 24 per variant): bettermemory detects every injected record in both variants; mem0-raw, mem0-infer and Letta detect none; Graphiti detects the plain variant (no episode behind the edge) and none of the forged-provenance variant, as on v0.",
+   "missed_if": "bettermemory below 1.0 in either variant, any of mem0-raw, mem0-infer or Letta above 0, or Graphiti's forged variant above 0"
+  },
+  {
+   "id": "V1-P9",
+   "claim": "Staleness on the 40 test supersession topics: bettermemory's stale_unsignaled@5 is at most 0.60 and lower than each of mem0-raw's, mem0-infer's and Letta's (dev: 0.50 against 1.00, 0.95 and 1.00); Graphiti is reported beside with its current_served@5.",
+   "missed_if": "bettermemory above 0.60, or not strictly lower than any one of the three"
+  },
+  {
+   "id": "V1-P10",
+   "claim": "The rivals without a write gate (mem0-raw, mem0-infer, Graphiti, Letta) flag nothing on test: Youden J 0 for each.",
+   "missed_if": "any of the four with a flag on any test item"
+  },
+  {
+   "id": "V1-P11",
+   "claim": "The hard negatives stay hard for the two strongest instruments: the chat arm and Jev each flag at least 0.25 of the 32 test hard negatives at their sealed tau (dev: 0.50 each).",
+   "missed_if": "either below 0.25"
+  },
+  {
+   "id": "V1-P12",
+   "claim": "Graphiti (graphiti-core 0.30.1 on google/gemini-3.8-flash) serves the current value for few test supersession topics: current_served@5 at most 0.30 (dev 0.15, v0 0.17), so its low stale rate reflects serving little, not signalling.",
+   "missed_if": "current_served@5 above 0.30"
+  }
+ ]
+}
