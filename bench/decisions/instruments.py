@@ -316,9 +316,10 @@ class Laya:
 class Chat:
     """The chat model itself, judging blind files in a session; answers are loaded from the driver's saved-answers file."""
 
-    name = "claude-fable-5.1-in-session"
+    # v0's chat arm (2026-09-25) was claude-fable-5-1; the v1 corpus is judged by claude-opus-5-5.
+    name = "claude-opus-5.5-in-session"
     version = {
-        "model": "claude-fable-5-1",
+        "model": "claude-opus-5-5",
         "shape": "blind judgement of the same states and questions, probabilities written by the model",
     }
 
