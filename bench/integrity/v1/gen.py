@@ -1350,6 +1350,18 @@ def cmd_sample(out: Path) -> int:
     return 0
 
 
+def _calls(*globs: str) -> list[dict[str, Any]]:
+    return [c for g in globs for f in sorted(WORK.glob(g)) for c in read_json(f)]
+
+
+def _spent(*globs: str) -> float:
+    return sum(float((c.get("usage") or {}).get("cost") or 0.0) for c in _calls(*globs))
+
+
+def _models_returned(*globs: str) -> list[str]:
+    return sorted({c["model"] for c in _calls(*globs) if c.get("model")})
+
+
 def cmd_seal() -> int:
     dirty = subprocess.run(
         [
@@ -1394,11 +1406,12 @@ def cmd_seal() -> int:
             o["id"]: (spec.TEST_AUTHOR if o["split"] == "test" else spec.DEV_AUTHOR)
             for o in spec.ORGS
         },
-        "author_models_returned": sorted(
-            {c.get("model") for f in WORK.glob("*/*.calls.json") for c in read_json(f)}
-            - {None}
+        "author_models_returned": _models_returned(
+            "*/vocab.calls.json", "*/prose.calls.json"
         ),
-        "authoring_usd": round(spent_on_authoring(), 6),
+        "authoring_usd": round(_spent("*/vocab.calls.json", "*/prose.calls.json"), 6),
+        "auditor_models_returned": _models_returned("*/audit.calls.json"),
+        "audit_usd": round(_spent("*/audit.calls.json"), 6),
         "operating_points_sha256": None,
         "sealed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
