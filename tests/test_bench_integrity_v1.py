@@ -926,7 +926,7 @@ def test_the_v1_commands_take_the_corpus_and_refuse_the_wrong_one(
 def sealed(tmp_path: Path) -> SimpleNamespace:
     """Fixture seals over the two fixture splits and an operating-points file."""
     points = tmp_path / "operating_points.json"
-    points.write_text('{"tau": 0.5}\n', encoding="utf-8")
+    points.write_text('{"instruments": {"chat": {"tau": 0.42}}}\n', encoding="utf-8")
     seals = tmp_path / "SEALS.json"
     seals.write_text(
         json.dumps(
@@ -1236,9 +1236,11 @@ def test_the_decision_driver_on_the_test_split_is_guarded(
 
     assert run(first) == 2 and not first.exists()
     assert run(first, *points) == 0
-    assert json.loads(first.read_text(encoding="utf-8"))["test_guard"]["seals"][
-        "sha256"
-    ] == guard.file_sha256(sealed.seals)
+    result = json.loads(first.read_text(encoding="utf-8"))
+    assert result["test_guard"]["seals"]["sha256"] == guard.file_sha256(sealed.seals)
+    # the test split applies the tau frozen on dev (off the 0.05 grid, so
+    # it cannot come from a selection on the split itself)
+    assert result["tau"] == 0.42 and "sealed operating points" in result["tau_source"]
     assert run(second, *points) == 2 and not second.exists()
     assert run(second, *points, "--rerun-reason", "re-judged after the map fix") == 0
     assert json.loads(second.read_text(encoding="utf-8"))["test_guard"]["rerun"][
