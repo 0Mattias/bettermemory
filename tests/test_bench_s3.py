@@ -422,12 +422,15 @@ def test_the_s3a_predictions_follow_their_declared_bounds() -> None:
 
 
 def test_the_briefing_is_l1s_wording_with_three_spans_changed() -> None:
-    text = s3.reader_instructions(Path("/w/b.txt"), Path("/w/a.json"), 181_000, 2_300)
+    # The briefing names the files in the machine's own path form, since
+    # the reader on that machine opens them; on Windows that is `\w\b.txt`.
+    prompt, answers = Path("/w/b.txt"), Path("/w/a.json")
+    text = s3.reader_instructions(prompt, answers, 181_000, 2_300)
     assert "it lists one prompt file path." in text
     assert "up to about 181,000 characters and 2,300 lines" in text
     assert "open with the answer itself in one plain sentence" in text
     assert "that first sentence says so" in text
-    assert "/w/b.txt" in text and "/w/a.json" in text
+    assert str(prompt) in text and str(answers) in text
     base = s3.l1.READER_INSTRUCTIONS
     for span in (s3._L1_BATCH, s3._L1_SIZE, s3._L1_FORM):
         base = base.replace(span, "")
