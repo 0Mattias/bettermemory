@@ -880,11 +880,13 @@ def test_snippet_anchors_on_cjk_run() -> None:
 def test_snippet_scan_tokenize_cost_is_bounded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The scan's price, measured rather than assumed. `tokenize` is
-    uncached, so windowing costs one `_tokenize_impl` call per RAW body
-    token — bounded because it is paid per emitted hit (at most
-    `max_results`, after the trim), never per candidate. Pinning the
-    number is what stops that cost drifting silently:
+    """The scan's price, measured rather than assumed. Cold, windowing
+    costs one `_tokenize_impl` call per DISTINCT raw body token, the
+    surfaces of a raw token being interned across scans
+    (`_token_surfaces`) — bounded because it is paid per emitted hit (at
+    most `max_results`, after the trim), never per candidate. Warm, the
+    body's scan is memoised (`_snippet_tokens`) and costs nothing. Pinning
+    the numbers is what stops that cost drifting silently:
     `test_search_tokenizes_each_candidate_once` cannot see it, because its
     fixture bodies are 46 characters and exit at the short-body return
     before the scan."""
@@ -909,16 +911,25 @@ def test_snippet_scan_tokenize_cost_is_bounded(
         return real_impl(text, stem=stem)
 
     monkeypatch.setattr(search_module, "_tokenize_impl", counting)
-    # The ranking's share of the count is the cold one; an earlier search
-    # in this process may have cached the body (`_memory_tokens`).
+    # The count is the cold one; an earlier search in this process may
+    # have cached the body (`_memory_tokens`) and its scan.
     search_module.clear_token_cache()
+    search_module.clear_snippet_caches()
     hits = search([_memory(body, created=now)], "staging database", now=now)
 
     assert hits[0].snippet.startswith("...")  # the scan really ran
     # 1 query + 1 body + 1 scope for the ranking (the property
     # `test_search_tokenizes_each_candidate_once` pins), then exactly one
-    # call per raw token of the single emitted hit's body.
-    assert calls["n"] == 3 + len(raw_tokens)
+    # call per distinct raw token of the single emitted hit's body.
+    assert len(set(raw_tokens)) == 11
+    assert calls["n"] == 3 + len(set(raw_tokens))
+
+    # Warm, only the query is tokenized: the ranking reads the token cache
+    # and the window reads the memoised scan.
+    calls["n"] = 0
+    again = search([_memory(body, created=now)], "staging database", now=now)
+    assert again[0].snippet == hits[0].snippet
+    assert calls["n"] == 1
 
     # The `not matched` half of the early return is a COST guard, not a
     # correctness one: without it a browse hit still falls through to

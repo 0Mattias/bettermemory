@@ -573,7 +573,10 @@ async def memory_search(
     # the cost off searches that produce no hits. Window-aware read
     # (`iter_events_window`), so the annotation doesn't lose a
     # just-archived negative outcome to a rotation. This is the one
-    # event read a search pays.
+    # event read a search pays, and the store's event window memo serves
+    # it: the lookback only moves forward, so a search reads the rows
+    # appended since the last one rather than the whole log
+    # (`Store.events_since(..., memoised=True)`).
     if out:
         from datetime import timedelta
 
@@ -581,7 +584,7 @@ async def memory_search(
 
         recent_events = list(
             deps.store.events_since(
-                now - timedelta(seconds=ATTRIBUTION_LOOKBACK_SECONDS)
+                now - timedelta(seconds=ATTRIBUTION_LOOKBACK_SECONDS), memoised=True
             )
         )
         deps.responses.attach_recent_negative_outcomes(

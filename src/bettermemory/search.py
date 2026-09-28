@@ -2899,11 +2899,90 @@ def candidate_admitted(
 _SNIPPET_LEAD_CHARS = 40
 
 # Hard bound on how far into a body the anchor scan walks. The scan is one
-# `_TOKEN_RE` pass plus one uncached `tokenize` per raw token — cheap per
-# token, but linear in body length and paid once per RETURNED hit, so a
-# pathological body degrades to head-of-body past this point rather than
-# to a stall.
+# `_TOKEN_RE` pass plus one `tokenize` per distinct raw token — cheap per
+# token, but linear in body length and paid the first time a body is a
+# RETURNED hit, so a pathological body degrades to head-of-body past this
+# point rather than to a stall.
 _SNIPPET_SCAN_CHARS = 8000
+
+
+class _SnippetTokens(NamedTuple):
+    """The anchor scan of one body, the part of `_query_biased_snippet`
+    that depends on the body alone: where each `_TOKEN_RE` match in its
+    first `_SNIPPET_SCAN_CHARS` stripped characters starts, and the
+    normalised surfaces of each, `frozenset(_expand_kebab(tokenize(raw)))`,
+    index-aligned."""
+
+    starts: tuple[int, ...]
+    surfaces: tuple[frozenset[str], ...]
+
+
+# The snippet path's two memos. The scan of a body is memoised on the body
+# (`_snippet_tokens`), so a hit shown again tokenizes nothing; and the
+# surfaces of a raw token are interned across every body the path scans
+# (`_token_surfaces`), so a body shown for the first time tokenizes only
+# the raw tokens no earlier scan met. Both memoise pure functions of their
+# keys (the tokenizer reads only module constants), so what they return is
+# what the uncached scan computes and a snippet served from them is the
+# uncached one, character for character. Each is a bounded LRU whose lock
+# makes a look-up-and-touch and an insert-and-evict atomic; the tokenizing
+# runs outside it. The values are tuples and frozensets that no reader can
+# change. Registered with `_caches`, which empties both before each test.
+SNIPPET_TOKEN_ENTRIES = 5000
+TOKEN_SURFACE_ENTRIES = 20_000
+
+_SNIPPET_TOKENS: OrderedDict[str, _SnippetTokens] = OrderedDict()
+_SNIPPET_TOKENS_LOCK = threading.Lock()
+_TOKEN_SURFACES: OrderedDict[str, frozenset[str]] = OrderedDict()
+_TOKEN_SURFACES_LOCK = threading.Lock()
+
+
+def clear_snippet_caches() -> None:
+    """Drop every scanned body and every interned raw token."""
+    with _SNIPPET_TOKENS_LOCK:
+        _SNIPPET_TOKENS.clear()
+    with _TOKEN_SURFACES_LOCK:
+        _TOKEN_SURFACES.clear()
+
+
+_caches.register(clear_snippet_caches)
+
+
+def _token_surfaces(raw: str) -> frozenset[str]:
+    """`frozenset(_expand_kebab(tokenize(raw)))` for one raw token, interned
+    across the bodies the snippet path scans."""
+    with _TOKEN_SURFACES_LOCK:
+        surfaces = _TOKEN_SURFACES.get(raw)
+        if surfaces is not None:
+            _TOKEN_SURFACES.move_to_end(raw)
+            return surfaces
+    surfaces = frozenset(_expand_kebab(tokenize(raw)))
+    with _TOKEN_SURFACES_LOCK:
+        _TOKEN_SURFACES[raw] = surfaces
+        while len(_TOKEN_SURFACES) > TOKEN_SURFACE_ENTRIES:
+            _TOKEN_SURFACES.popitem(last=False)
+    return surfaces
+
+
+def _snippet_tokens(body: str) -> _SnippetTokens:
+    """The anchor scan of `body`, or the one an earlier call made of an
+    equal body."""
+    with _SNIPPET_TOKENS_LOCK:
+        cached = _SNIPPET_TOKENS.get(body)
+        if cached is not None:
+            _SNIPPET_TOKENS.move_to_end(body)
+            return cached
+    starts: list[int] = []
+    surfaces: list[frozenset[str]] = []
+    for m in _TOKEN_RE.finditer(body.strip()[:_SNIPPET_SCAN_CHARS]):
+        starts.append(m.start())
+        surfaces.append(_token_surfaces(m.group()))
+    tokens = _SnippetTokens(starts=tuple(starts), surfaces=tuple(surfaces))
+    with _SNIPPET_TOKENS_LOCK:
+        _SNIPPET_TOKENS[body] = tokens
+        while len(_SNIPPET_TOKENS) > SNIPPET_TOKEN_ENTRIES:
+            _SNIPPET_TOKENS.popitem(last=False)
+    return tokens
 
 
 def _query_biased_snippet(body: str, matched: list[str], max_chars: int = 200) -> str:
@@ -2929,15 +3008,20 @@ def _query_biased_snippet(body: str, matched: list[str], max_chars: int = 200) -
     it, whenever biasing is impossible or pointless: short body, no
     matched terms, no anchor found in the body, or an anchor already
     inside the head window.
+
+    The scan of the body is the query-independent half and comes from
+    `_snippet_tokens`, memoised per body with each raw token's surfaces
+    interned across bodies; only the membership tests against this
+    query's terms run per call.
     """
     text = body.strip()
-    # This must stay the FIRST statement. `tokenize` is uncached, so the
-    # scan below costs one `_tokenize_impl` call per raw body token, and
-    # `test_search_tokenizes_each_candidate_once` pins the per-search
-    # call count. Its fixtures are 46-char bodies, so they exit here and
-    # the count is unchanged; hoisting the scan above this line breaks
-    # that test — and, more to the point, would spend the calls on every
-    # hit whose body already fits whole.
+    # This must stay the FIRST statement. The scan below costs one
+    # `_tokenize_impl` call per raw body token the snippet memos have not
+    # met, and `test_search_tokenizes_each_candidate_once` pins the
+    # per-search call count. Its fixtures are 46-char bodies, so they exit
+    # here and the count is unchanged; hoisting the scan above this line
+    # breaks that test — and, more to the point, would spend the calls on
+    # every hit whose body already fits whole.
     #
     # The `not matched` half covers the two populations that legitimately
     # carry no literal terms: browse mode (`_build_hit(..., matched=[])`)
@@ -2957,16 +3041,15 @@ def _query_biased_snippet(body: str, matched: list[str], max_chars: int = 200) -
     part_terms = {p for tok in matched for p in _kebab_parts(tok)} - primary_terms
 
     scan = text[:_SNIPPET_SCAN_CHARS]
-    starts: list[int] = []
+    scanned = _snippet_tokens(body)
+    starts: list[int] = list(scanned.starts)
     primary: list[int] = []
     secondary: list[int] = []
-    for m in _TOKEN_RE.finditer(scan):
-        starts.append(m.start())
-        surfaces = set(_expand_kebab(tokenize(m.group())))
-        if surfaces & primary_terms:
-            primary.append(m.start())
-        elif surfaces & part_terms:
-            secondary.append(m.start())
+    for start, surfaces in zip(scanned.starts, scanned.surfaces):
+        if not surfaces.isdisjoint(primary_terms):
+            primary.append(start)
+        elif not surfaces.isdisjoint(part_terms):
+            secondary.append(start)
 
     # Symbol-aliased terms are invisible to the token scan above and can
     # only be found by re-running their own patterns — see
@@ -3038,10 +3121,12 @@ def _build_hit(
     rather than corpus size.
 
     `_query_biased_snippet` adds a second regex pass over the body plus
-    one uncached `tokenize` per raw token — but only for bodies longer
-    than the snippet budget, and bounded by `_SNIPPET_SCAN_CHARS`. Both
-    passes are per-HIT, not per-candidate: `_build_hit` runs at most
-    `max_results` times (default 5), after the ranking has been trimmed.
+    one `tokenize` per raw token no earlier scan met — but only for
+    bodies longer than the snippet budget, bounded by
+    `_SNIPPET_SCAN_CHARS`, and once per body while the snippet memos hold
+    it. Both passes are per-HIT, not per-candidate: `_build_hit` runs at
+    most `max_results` times (default 5), after the ranking has been
+    trimmed.
     """
     drift = detect_path_drift(
         memory.body,

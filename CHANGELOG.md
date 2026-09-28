@@ -66,9 +66,9 @@ surfaces leave with them. An 8.x directory is imported once by
   used to.
 - **`exclude_scopes` on `memory_search`**: the scopes to drop, applied
   before ranking like the session's disabled set.
-- **The warm daemon's caches.** Three memoisations that keep every
-  answer bit-identical and remove the git processes and the
-  re-tokenising a warm `memory_search` paid: the origin captured per
+- **The warm daemon's caches.** Memoisations that keep every answer
+  bit-identical and remove the git processes, the re-tokenising and the
+  log scans a warm `memory_search` paid: the origin captured per
   directory for two seconds, validated on every lookup against the
   repository's HEAD bytes, config stat and environment
   (`origin.capture`); the commit-drift work keyed on the repository
@@ -77,7 +77,13 @@ surfaces leave with them. An 8.x directory is imported once by
   dates per head and the per-hit resolution per head, anchors, claims
   and verify instant memoised (`_response.attach_commit_drift_counts`,
   `origin.commit_author_timestamps`); and the token streams of a memory
-  per body and scopes (`search._memory_tokens`, a 5,000-entry LRU). A
+  per body and scopes (`search._memory_tokens`, a 5,000-entry LRU). The
+  snippet window's scan of a hit's body is kept per body and each raw
+  token's normalised surfaces are interned across bodies
+  (`search._snippet_tokens`, `search._token_surfaces`), and the telemetry
+  rows of `memory_search`'s lookback window are kept per store and
+  extended from the log's head, checked by its MAC, instead of read by a
+  scan of the whole log (`Store.events_since(..., memoised=True)`). A
   warm search inside the origin cache's lifetime forks no git process.
   A value computed while a git process failed is never kept, and a hit
   with a governed claim keys on the attribute files its patch stream

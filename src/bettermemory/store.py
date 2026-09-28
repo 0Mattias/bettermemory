@@ -41,6 +41,8 @@ import logging
 import os
 import secrets
 import sqlite3
+import threading
+from collections import OrderedDict
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -49,6 +51,7 @@ from typing import Any, NamedTuple, Protocol
 
 from pydantic import ValidationError
 
+from . import _caches
 from ._fsutil import ensure_owner_only_dir
 from .events import _redact_event_fields
 from .identity import Actor
@@ -1071,6 +1074,88 @@ def _key_label(table: str, key: tuple[Any, ...]) -> Any:
 
 
 _ROW_COLUMNS = ("ts", "session", "kind")
+
+
+class _WindowRow(NamedTuple):
+    """One telemetry row of an event window, as the log holds it: its
+    stamp's first nineteen characters (the window's cut compares on
+    them), its columns, and its payload text, parsed again for each
+    read so no reader holds another's event."""
+
+    cut: str
+    ts: str
+    session: str | None
+    kind: str
+    payload: str
+
+
+@dataclass(frozen=True)
+class _EventWindow:
+    """The rows `Store.events_since` read for one store's window: every
+    telemetry row whose stamp's first nineteen characters are at or after
+    `cut`, in log order, among the rows up to `head_seq`, the log's last
+    row when they were read, whose MAC was `head_mac`."""
+
+    cut: str
+    head_seq: int
+    head_mac: str
+    rows: tuple[_WindowRow, ...]
+
+
+# The event window memo of `Store.events_since(since, memoised=True)`, the
+# read `memory_search` makes on every search that returns a hit. The
+# uncached read filters the whole log on `substr(ts, 1, 19)`, which no
+# index serves, for the few rows inside the window. The log only grows:
+# a row is appended at the next sequence number under the write lock and
+# never changed, and each row's MAC covers the MAC of the row before it.
+# So the memo keeps, per store, the window's rows up to the log's head as
+# it read it, keyed on that head: a later read whose cut is at or after the
+# memo's checks that the row at the head's sequence number still carries
+# the head's MAC, drops the kept rows the new cut excludes, and reads only
+# the rows past the head, the new cut applied in SQL. A cut before the
+# memo's, a head row gone or rewritten (the tail removed, a row appended
+# at its number) or a read inside an open transaction reads the whole log
+# as the uncached code does. A row below the head edited outside the store
+# with its MAC left as it was (the chain then fails `bettermemory log
+# verify`) is not seen. Keyed by the store file and its id, so two
+# connections to one store share it; bounded to the most recently read
+# stores; the lock guards each look-up and each store, the reads run
+# outside it. Registered with `_caches`, which empties it before each test.
+EVENT_WINDOW_STORES = 8
+
+_EVENT_WINDOWS: OrderedDict[tuple[str, str], _EventWindow] = OrderedDict()
+_EVENT_WINDOWS_LOCK = threading.Lock()
+
+
+@_caches.register
+def _clear_event_windows() -> None:
+    with _EVENT_WINDOWS_LOCK:
+        _EVENT_WINDOWS.clear()
+
+
+def _event_from_columns(
+    ts: str, session: str | None, kind: str, payload: str
+) -> dict[str, Any] | None:
+    """A telemetry row's columns in the v8 event shape: ``ts``,
+    ``session`` (when the row has one), ``kind``, then the payload's
+    fields. None for a mutation or control row, and for a payload that is
+    not a JSON object."""
+    if kind in MUTATION_KINDS or kind in CONTROL_KINDS:
+        return None
+    try:
+        fields = json.loads(payload)
+    except ValueError:
+        return None
+    if not isinstance(fields, dict):
+        return None
+    event: dict[str, Any] = {"ts": ts}
+    if session is not None:
+        event["session"] = session
+    event["kind"] = kind
+    for key, value in fields.items():
+        if key not in _ROW_COLUMNS:
+            event[key] = value
+    return event
 
 
 def event_import_payload(
@@ -2866,13 +2951,28 @@ class Store:
 
     # -- the event reads --------------------------------------------------------
 
-    def events_since(self, since: datetime) -> Iterator[dict[str, Any]]:
+    def events_since(
+        self, since: datetime, *, memoised: bool = False
+    ) -> Iterator[dict[str, Any]]:
         """The telemetry rows stamped at or after `since`, in log order:
-        what a window read wants. The `ts` index serves the cut."""
+        what a window read wants. The cut compares the stamp's first
+        nineteen characters, which no index serves, so this reads the
+        whole log. With `memoised`, the rows come from the store's event
+        window memo (`_EVENT_WINDOWS`), which reads only the rows past the
+        log's head as it last read it; the answer is the same, and each
+        call gets events of its own. For a caller whose `since` only moves
+        forward, as `memory_search`'s lookback does; a `since` earlier than
+        the last memoised one reads the whole log again."""
         cut = _iso(since.astimezone(timezone.utc)).replace("+00:00", "Z")
         # Both spellings sort correctly against an ISO instant to the
         # second; a `Z` sorts after `+`, so the cut compares on the prefix.
         prefix = cut[:19]
+        if memoised:
+            for row in self._window_rows(prefix):
+                event = _event_from_columns(row.ts, row.session, row.kind, row.payload)
+                if event is not None:
+                    yield event
+            return
         for raw in self._conn.execute(
             "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log "
             "WHERE substr(ts, 1, 19) >= ? ORDER BY seq",
@@ -2881,6 +2981,78 @@ class Store:
             event = self._event_from_raw(raw)
             if event is not None:
                 yield event
+
+    def _window_rows(self, prefix: str) -> tuple[_WindowRow, ...]:
+        """The telemetry rows whose stamp's first nineteen characters are at
+        or after `prefix`, in log order, through the event window memo."""
+        key = (str(self._path), self._store_id)
+        in_transaction = self._in_batch or self._conn.in_transaction
+        with _EVENT_WINDOWS_LOCK:
+            window = _EVENT_WINDOWS.get(key)
+            if window is not None:
+                _EVENT_WINDOWS.move_to_end(key)
+        rows: list[_WindowRow] | None = None
+        head_seq, head_mac = 0, ""
+        if window is not None and window.cut <= prefix and not in_transaction:
+            head = self._conn.execute(
+                "SELECT mac FROM log WHERE seq = ?", (window.head_seq,)
+            ).fetchone()
+            if head is not None and str(head["mac"]) == window.head_mac:
+                rows = [row for row in window.rows if row.cut >= prefix]
+                head_seq, head_mac = window.head_seq, window.head_mac
+                # Past the head, the cut is applied by SQLite, as the
+                # uncached read applies it.
+                read = self._conn.execute(
+                    "SELECT seq, ts, session, kind, payload, mac, "
+                    "substr(ts, 1, 19) AS cut, substr(ts, 1, 19) >= ? AS inside "
+                    "FROM log WHERE seq > ? ORDER BY seq",
+                    (prefix, head_seq),
+                )
+                head_seq, head_mac = self._gather_window(read, rows, head_seq, head_mac)
+        if rows is None:
+            rows = []
+            # The window's rows and the log's last row, in one statement so
+            # the head is the last row of the same snapshot.
+            read = self._conn.execute(
+                "SELECT seq, ts, session, kind, payload, mac, "
+                "substr(ts, 1, 19) AS cut, substr(ts, 1, 19) >= ? AS inside "
+                "FROM log WHERE substr(ts, 1, 19) >= ? "
+                "OR seq = (SELECT MAX(seq) FROM log) ORDER BY seq",
+                (prefix, prefix),
+            )
+            head_seq, head_mac = self._gather_window(read, rows, 0, "")
+        kept = tuple(rows)
+        if not in_transaction and all(isinstance(row.cut, str) for row in kept):
+            with _EVENT_WINDOWS_LOCK:
+                _EVENT_WINDOWS[key] = _EventWindow(
+                    cut=prefix, head_seq=head_seq, head_mac=head_mac, rows=kept
+                )
+                _EVENT_WINDOWS.move_to_end(key)
+                while len(_EVENT_WINDOWS) > EVENT_WINDOW_STORES:
+                    _EVENT_WINDOWS.popitem(last=False)
+        return kept
+
+    @staticmethod
+    def _gather_window(
+        read: sqlite3.Cursor, rows: list[_WindowRow], head_seq: int, head_mac: str
+    ) -> tuple[int, str]:
+        """Append the in-window telemetry rows of `read` to `rows`; return
+        the last row's sequence number and MAC, the new head."""
+        for raw in read:
+            head_seq, head_mac = int(raw["seq"]), str(raw["mac"])
+            kind = str(raw["kind"])
+            if not raw["inside"] or kind in MUTATION_KINDS or kind in CONTROL_KINDS:
+                continue
+            rows.append(
+                _WindowRow(
+                    cut=raw["cut"],
+                    ts=str(raw["ts"]),
+                    session=None if raw["session"] is None else str(raw["session"]),
+                    kind=kind,
+                    payload=raw["payload"],
+                )
+            )
+        return head_seq, head_mac
 
     def iter_events_backward(self) -> Iterator[dict[str, Any]]:
         """The telemetry rows newest first."""
@@ -2893,23 +3065,12 @@ class Store:
                 yield event
 
     def _event_from_raw(self, raw: sqlite3.Row) -> dict[str, Any] | None:
-        kind = str(raw["kind"])
-        if kind in MUTATION_KINDS or kind in CONTROL_KINDS:
-            return None
-        try:
-            payload = json.loads(raw["payload"])
-        except ValueError:
-            return None
-        if not isinstance(payload, dict):
-            return None
-        event: dict[str, Any] = {"ts": str(raw["ts"])}
-        if raw["session"] is not None:
-            event["session"] = str(raw["session"])
-        event["kind"] = kind
-        for key, value in payload.items():
-            if key not in _ROW_COLUMNS:
-                event[key] = value
-        return event
+        return _event_from_columns(
+            str(raw["ts"]),
+            None if raw["session"] is None else str(raw["session"]),
+            str(raw["kind"]),
+            raw["payload"],
+        )
 
     # -- the journal ------------------------------------------------------------
 
