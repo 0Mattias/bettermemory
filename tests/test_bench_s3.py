@@ -494,3 +494,71 @@ def test_gate3_counts_each_judges_target() -> None:
     got = s3.gate3(rows, v)
     assert got["record"]["correct"] == 2 and got["record"]["misses"] == ["c"]
     assert got["standard"]["correct"] == 2 and got["standard"]["misses"] == ["b"]
+
+
+# ---------------------------------------------------------------- the report
+
+
+def test_gate4_needs_a_strict_lead_and_the_whole_f1_sample() -> None:
+    rows = _rows(["a", "b", "c", "d"])
+    target = {name: {"correct": 2} for name in s3.JUDGES}
+    sample = ["c", "d"]
+    every = {name: dict.fromkeys("abcd", True) for name in s3.JUDGES}
+    got = s3.gate4(rows, every, target, sample)
+    assert got["passed"] is True and got["standard"]["lead"] == 2
+    sample_miss = {name: {**every[name], "d": False} for name in s3.JUDGES}
+    got = s3.gate4(rows, sample_miss, target, sample)
+    assert got["passed"] is False and got["record"]["f1_sample"]["correct"] == 1
+    tied = {name: {"correct": 4} for name in s3.JUDGES}
+    assert s3.gate4(rows, every, tied, sample)["passed"] is False  # a tie is a loss
+    unjudged = {**every, "standard": {**every["standard"], "a": None}}
+    got = s3.gate4(rows, unjudged, {n: {"correct": 3} for n in s3.JUDGES}, sample)
+    assert got["record"]["passed"] is True and got["standard"]["passed"] is False
+    assert got["standard"]["misses"] == ["a"] and got["passed"] is False
+
+
+def test_the_outcome_predictions_follow_their_declared_bounds() -> None:
+    def graded(**n: Any) -> dict[str, str]:
+        base = {
+            "dev": {"record": 150, "standard": 150},
+            "dev_regressed": [],
+            "target": {"record": 495, "standard": 495},
+            "bettermemory": {"record": 498, "standard": 498},
+            "lead": {"record": 3, "standard": 3},
+            "f1_sample": {"record": 150, "standard": 150},
+            "f1_sample_n": 150,
+            "holdout_covered": 336,
+            "holdout_labelled": 336,
+            "reader_tokens": 70_000_000,
+            "judge_usd": 1.5,
+        }
+        return {p["id"]: p["verdict"] for p in s3.outcome_predictions({**base, **n})}
+
+    assert set(graded().values()) == {"HIT"}
+    assert graded(dev={"record": 149, "standard": 150})["S3-P4"] == "HIT"
+    assert graded(dev={"record": 150, "standard": 148})["S3-P4"] == "MISSED"
+    assert graded(dev_regressed=["q"])["S3-P4"] == "MISSED"
+    assert graded(target={"record": 498, "standard": 495})["S3-P5"] == "MISSED"
+    assert graded(target={"record": 494, "standard": 495})["S3-P5"] not in (
+        "HIT",
+        "MISSED",
+    )
+    assert graded(bettermemory={"record": 500, "standard": 499})["S3-P6"] == "HIT"
+    assert graded(bettermemory={"record": 497, "standard": 498})["S3-P6"] not in (
+        "HIT",
+        "MISSED",
+    )
+    assert graded(bettermemory={"record": 498, "standard": 496})["S3-P6"] == "MISSED"
+    assert graded(lead={"record": 1, "standard": 0})["S3-P7"] == "MISSED"
+    assert graded(f1_sample={"record": 150, "standard": 149})["S3-P8"] == "MISSED"
+    assert graded(holdout_covered=335)["S3-P9"] not in ("HIT", "MISSED")
+    assert graded(holdout_covered=334)["S3-P9"] == "MISSED"
+    assert graded(reader_tokens=80_000_001)["S3-P10"] == "MISSED"
+    assert graded(judge_usd=2.01)["S3-P10"] == "MISSED"
+
+
+def test_flagged_names_the_questions_of_unclean_readers(tmp_path: Path) -> None:
+    summary = {"summary": {"not_clean": ["batch_01"]}}
+    (tmp_path / "audit-readers.json").write_text(json.dumps(summary), encoding="utf-8")
+    meta = {"batches": [["q0"], ["q1"], ["q2"]]}
+    assert s3.flagged(tmp_path, meta) == ["q1"]

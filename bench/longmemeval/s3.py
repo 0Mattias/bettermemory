@@ -90,6 +90,7 @@ import h1  # noqa: E402
 import l1  # noqa: E402
 import s0  # noqa: E402
 import s1  # noqa: E402
+import s2  # noqa: E402
 from aml import run as aml_run  # noqa: E402
 from aml.service import SESSION_FILLS, MemoryService, _fmt_ts, _text  # noqa: E402
 
@@ -1064,6 +1065,378 @@ def cmd_gate3(args: argparse.Namespace) -> None:
     print(json.dumps(got, indent=1))
 
 
+# ---------------------------------------------------------------- the report
+#
+# G4, the strike, and the unit's outcome: bettermemory's 500 (S3b's dev 150
+# and S3d's holdout 350 under the chosen arm) against Hindsight's context
+# read under the same briefing (S3c), under both judges, and the
+# declaration's predictions graded on them.
+
+REPORT_OUT = l1.RESULTS / "s3-2026-09-28.json"
+DECLARATION = "memory 01M3JFG6T3KF5R2TY4HQNCJ8NW"
+APPROVAL = "memory 01M3JX4NE38YYABSY4DRWMS4SJ"
+DECLARED_TOKENS = 80_000_000
+APPROVED_TOKENS = 115_000_000
+DECLARED_JUDGE_USD = 2.0
+
+
+def gate4(
+    rows: list[dict[str, Any]],
+    verdicts: dict[str, dict[str, bool | None]],
+    target: dict[str, dict[str, Any]],
+    f1_sample: list[str],
+) -> dict[str, Any]:
+    """G4 under each judge: all 500 above the target T and 150 of 150 on
+    F1's sample. A missing verdict is a wrong answer."""
+    out: dict[str, Any] = {}
+    for name in JUDGES:
+        ok = {
+            r["question_id"]: verdicts[name].get(r["question_id"]) is True for r in rows
+        }
+        correct, t = sum(ok.values()), target[name]["correct"]
+        sample = sum(ok[q] for q in f1_sample)
+        out[name] = {
+            "correct": correct,
+            "n": len(rows),
+            "target": t,
+            "lead": correct - t,
+            "misses": sorted(q for q, v in ok.items() if not v),
+            "f1_sample": {"n": len(f1_sample), "correct": sample},
+            "passed": correct > t and sample == len(f1_sample),
+        }
+    out["passed"] = all(out[name]["passed"] for name in JUDGES)
+    return out
+
+
+def outcome_predictions(n: dict[str, Any]) -> list[dict[str, Any]]:
+    """The declaration's S3-P4 to S3-P10 graded on the reads; S3-P1 to
+    S3-P3 were graded at G1. Each figure is a {judge: value} map but the
+    coverage and the spend."""
+    v = l1._verdict
+    dev, t, bm = n["dev"], n["target"], n["bettermemory"]
+    lead, sample, sample_n = n["lead"], n["f1_sample"], n["f1_sample_n"]
+    cov, labelled = n["holdout_covered"], n["holdout_labelled"]
+    tokens, usd = n["reader_tokens"], n["judge_usd"]
+    lost = n["dev_regressed"]
+    over = tokens > DECLARED_TOKENS or usd > DECLARED_JUDGE_USD
+    return [
+        {
+            "id": "S3-P4",
+            "claim": "G2: the dev read 150 or 149; MISSED at 148 or under, or on "
+            "any regression",
+            "got": {"correct": dev, "regressed": lost},
+            "verdict": v(
+                min(dev.values()) >= 149 and not lost,
+                min(dev.values()) <= 148 or bool(lost),
+            ),
+        },
+        {
+            "id": "S3-P5",
+            "claim": "G3: Hindsight's context under the briefing 495 to 497 under "
+            "each judge; MISSED at 498 or above",
+            "got": t,
+            "verdict": v(
+                all(495 <= c <= 497 for c in t.values()),
+                any(c >= 498 for c in t.values()),
+            ),
+        },
+        {
+            "id": "S3-P6",
+            "claim": "G4: all 500 at 498 under both judges (holdout 348 or above); "
+            "MISSED under 497 under either judge",
+            "got": bm,
+            "verdict": v(
+                all(c >= 498 for c in bm.values()), any(c < 497 for c in bm.values())
+            ),
+        },
+        {
+            "id": "S3-P7",
+            "claim": "paired against Hindsight's context under the briefing, "
+            "bettermemory ahead by at least 1 under both judges; MISSED if tied "
+            "or behind under either",
+            "got": lead,
+            "verdict": v(
+                all(x >= 1 for x in lead.values()), any(x <= 0 for x in lead.values())
+            ),
+        },
+        {
+            "id": "S3-P8",
+            "claim": "F1's sample 150 of 150; MISSED on any miss",
+            "got": sample,
+            "verdict": v(
+                all(c == sample_n for c in sample.values()),
+                any(c < sample_n for c in sample.values()),
+            ),
+        },
+        {
+            "id": "S3-P9",
+            "claim": "holdout answer-turn coverage 336 of 336 labelled, reported "
+            "and never tuned on; MISSED under 335",
+            "got": {"covered": cov, "labelled": labelled},
+            "verdict": v(cov == labelled, cov < 335),
+        },
+        {
+            "id": "S3-P10",
+            "claim": "within 80M subagent tokens and $2 of judges; MISSED if over",
+            "got": {"reader_tokens": tokens, "judge_usd": usd},
+            "verdict": v(not over, over),
+        },
+    ]
+
+
+def flagged(work: Path, meta: dict[str, Any]) -> list[str]:
+    """The questions whose counted answer the audit did not pass clean: a
+    reader stopped by a safeguard, rerun once and counted flagged."""
+    summary = l1._load_json(work / "audit-readers.json")["summary"]
+    return sorted(
+        q for name in summary["not_clean"] for q in meta["batches"][int(name[6:])]
+    )
+
+
+def _hypotheses(work: Path) -> dict[str, str]:
+    return {
+        h["question_id"]: h["hypothesis"] for h in l1._jsonl(work / "hypotheses.jsonl")
+    }
+
+
+def _judge_cost(work: Path) -> dict[str, Any]:
+    judged = l1._load_json(work / "judgments.json")
+    return {
+        "usd": {JUDGES[n]: judged[n]["spent_usd"] for n in JUDGES},
+        "calls": {JUDGES[n]: judged[n]["calls"] for n in JUDGES},
+        "errors": {JUDGES[n]: judged[n]["errors"] for n in JUDGES},
+    }
+
+
+def cmd_report(args: argparse.Namespace) -> None:
+    works = {
+        "dev": Path(args.dev).resolve(),
+        "hindsight": Path(args.hindsight).resolve(),
+        "holdout": Path(args.holdout).resolve(),
+    }
+    metas = {k: l1._load_json(w / "meta.json") for k, w in works.items()}
+    verdicts = {k: verdicts_of(w) for k, w in works.items()}
+    answers = {k: _hypotheses(w) for k, w in works.items()}
+    rows = metas["dev"]["rows"] + metas["holdout"]["rows"]
+    qids = [r["question_id"] for r in rows]
+    hs_rows = {r["question_id"]: r for r in metas["hindsight"]["rows"]}
+    if len(set(qids)) != len(qids) or set(qids) != set(hs_rows):
+        raise SystemExit("the dev and holdout reads are not Hindsight's 500")
+    bm = {name: verdicts["dev"][name] | verdicts["holdout"][name] for name in JUDGES}
+    hs = verdicts["hindsight"]
+    target = l1._load_json(works["hindsight"] / "gate3.json")
+    if gate3(metas["hindsight"]["rows"], hs) != target:
+        raise SystemExit("the recorded target differs from Hindsight's verdicts")
+    gate2_got = l1._load_json(works["dev"] / "gate2.json")
+    coverage = l1._load_json(Path(args.coverage))
+    f1_sample = [
+        r["question_id"] for r in l1._load_json(Path(args.f1_artifact))["rows"]
+    ]
+    holdout_ids = {r["question_id"] for r in metas["holdout"]["rows"]}
+    if not set(f1_sample) <= holdout_ids:
+        raise SystemExit("F1's sample is not in the holdout")
+    g4 = gate4(rows, bm, target, f1_sample)
+    pair = {name: h1.paired(bm[name], hs[name], qids) for name in JUDGES}
+    differ = h1._disagreements(rows, bm)
+    audits = {
+        k: l1._load_json(w / "audit-readers.json")["summary"] for k, w in works.items()
+    }
+    tokens = {
+        k: {
+            "counted": s1.counted_tokens(a["usage"]),
+            "all_attempts": s1.counted_tokens(a["usage_all_attempts"]),
+        }
+        for k, a in audits.items()
+    }
+    tokens_all = sum(t["all_attempts"] for t in tokens.values())
+    judges = {k: _judge_cost(w) for k, w in works.items()}
+    judge_usd = round(sum(sum(j["usd"].values()) for j in judges.values()), 6)
+    labelled = [r for r in metas["holdout"]["rows"] if r["answer_turns"]]
+    marked = {k: flagged(works[k], metas[k]) for k in works}
+    graded = [
+        p for p in coverage["predictions"] if p["id"] in ("S3-P1", "S3-P2", "S3-P3")
+    ] + outcome_predictions(
+        {
+            "dev": {n: gate2_got[n]["correct"] for n in JUDGES},
+            "dev_regressed": sorted(
+                {q for n in JUDGES for q in gate2_got[n]["regressed_vs_s1"]}
+            ),
+            "target": {n: target[n]["correct"] for n in JUDGES},
+            "bettermemory": {n: g4[n]["correct"] for n in JUDGES},
+            "lead": {n: pair[n]["lead"] for n in JUDGES},
+            "f1_sample": {n: g4[n]["f1_sample"]["correct"] for n in JUDGES},
+            "f1_sample_n": len(f1_sample),
+            "holdout_covered": sum(r["covered"] for r in labelled),
+            "holdout_labelled": len(labelled),
+            "reader_tokens": tokens_all,
+            "judge_usd": judge_usd,
+        }
+    )
+
+    def mean_chars(rs: list[dict[str, Any]]) -> int:
+        return round(statistics.fmean(r["context_chars"] for r in rs))
+
+    served: dict[str, Any] = {
+        "bettermemory_mean_chars": mean_chars(rows),
+        "bettermemory_dev_mean_chars": mean_chars(metas["dev"]["rows"]),
+        "bettermemory_holdout_mean_chars": mean_chars(metas["holdout"]["rows"]),
+        "hindsight_mean_chars": mean_chars(metas["hindsight"]["rows"]),
+    }
+    served["ratio"] = round(
+        served["bettermemory_mean_chars"] / served["hindsight_mean_chars"], 4
+    )
+    s2_art = l1._load_json(Path(args.s2_artifact))
+    price = l1._load_json(works["holdout"] / "price.json")
+    l1._write_json(
+        Path(args.out),
+        {
+            "unit": "S3",
+            "declaration": DECLARATION,
+            "approval": APPROVAL,
+            "provenance": l1._provenance(),
+            "protocol": {
+                "dataset": {
+                    "file": str(l1.CORPUS.relative_to(_BENCH.parent)),
+                    "sha256": l1.CORPUS_SHA256,
+                },
+                "split": f"aml_run.split (SPLIT_SEED {aml_run.SPLIT_SEED}): the dev "
+                "150 read in S3b, the holdout 350 in S3d, each once",
+                "arm": metas["holdout"]["arm"],
+                "budget_chars": metas["holdout"]["budget"],
+                "reader": {
+                    "model": l1.READER_MODEL,
+                    "harness": "Claude Code subagents (general-purpose), one "
+                    "question to a reader",
+                    "template_sha256": metas["holdout"]["reader_template_sha256"],
+                    "stated": {
+                        k: {
+                            "chars": metas[k]["stated_chars"],
+                            "lines": metas[k]["stated_lines"],
+                        }
+                        for k in works
+                    },
+                },
+                "judges": s2_art["protocol"]["judges"],
+                "comparator": "Hindsight's published served context (H1's run "
+                "file), all 500, read by the same reader under the same briefing "
+                "(S3c) and graded by the same judges",
+            },
+            "gates": {
+                "g1": coverage["g1"],
+                "g2": gate2_got,
+                "g3": target,
+                "g4": g4,
+            },
+            "summary": {
+                "won": g4["passed"],
+                "scores": {
+                    "bettermemory": {n: s2.score(rows, bm[n]) for n in JUDGES},
+                    "bettermemory_holdout": {
+                        n: s2.score(metas["holdout"]["rows"], bm[n]) for n in JUDGES
+                    },
+                    "bettermemory_dev": {
+                        n: s2.score(metas["dev"]["rows"], bm[n]) for n in JUDGES
+                    },
+                    "hindsight": {
+                        n: s2.score(metas["hindsight"]["rows"], hs[n]) for n in JUDGES
+                    },
+                },
+                "paired_bettermemory_vs_hindsight": pair,
+                "agreement": {
+                    "n": len(rows),
+                    "agree": len(rows) - len(differ),
+                    "rate": round((len(rows) - len(differ)) / len(rows), 4),
+                },
+                "served": served,
+                "holdout_coverage": {
+                    "labelled": len(labelled),
+                    "covered": sum(r["covered"] for r in labelled),
+                    "s2_parity": metas["holdout"]["s2_parity"],
+                },
+                "flagged": marked,
+            },
+            "disagreements": [
+                {"question_id": q, **{JUDGES[n]: bm[n].get(q) for n in JUDGES}}
+                for q in differ
+            ],
+            "audit": {"readers": audits},
+            "cost": {
+                "judges": judges,
+                "judges_usd": judge_usd,
+                "price_check": {
+                    k: val for k, val in price.items() if k not in l1.ACCOUNT_FIELDS
+                },
+                "reader_tokens": {
+                    **tokens,
+                    "all_attempts_total": tokens_all,
+                    "declared": DECLARED_TOKENS,
+                    "approved": APPROVED_TOKENS,
+                },
+            },
+            "predictions": graded,
+            "rows": [
+                {
+                    **{
+                        k: r[k]
+                        for k in (
+                            "question_id",
+                            "question_type",
+                            "abstention",
+                            "split",
+                            "context_chars",
+                            "covered",
+                            "prompt_sha256",
+                        )
+                    },
+                    "hindsight_context_chars": hs_rows[r["question_id"]][
+                        "context_chars"
+                    ],
+                    "verdicts": {
+                        "bettermemory": {
+                            JUDGES[n]: bm[n].get(r["question_id"]) for n in JUDGES
+                        },
+                        "hindsight": {
+                            JUDGES[n]: hs[n].get(r["question_id"]) for n in JUDGES
+                        },
+                    },
+                    "hypothesis": (answers["dev"] | answers["holdout"]).get(
+                        r["question_id"]
+                    ),
+                    "hindsight_hypothesis": answers["hindsight"].get(r["question_id"]),
+                }
+                for r in rows
+            ],
+        },
+    )
+    print(
+        json.dumps(
+            {
+                "won": g4["passed"],
+                "g4": {
+                    n: {
+                        k: g4[n][k]
+                        for k in ("correct", "target", "lead", "misses", "f1_sample")
+                    }
+                    for n in JUDGES
+                },
+                "paired": {
+                    n: {
+                        k: pair[n][k]
+                        for k in ("a_only", "b_only", "lead", "mcnemar_exact_p")
+                    }
+                    for n in JUDGES
+                },
+                "served": served,
+                "flagged": marked,
+                "reader_tokens": tokens_all,
+                "judge_usd": judge_usd,
+                "predictions": [(p["id"], p["got"], p["verdict"]) for p in graded],
+            },
+            indent=1,
+        )
+    )
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -1110,6 +1483,15 @@ def main() -> None:
     s = sub.add_parser("gate3")
     s.add_argument("--work", default=str(WORK_HINDSIGHT))
     s.set_defaults(fn=cmd_gate3)
+    s = sub.add_parser("report")
+    s.add_argument("--dev", default=str(WORK_DEV))
+    s.add_argument("--hindsight", default=str(WORK_HINDSIGHT))
+    s.add_argument("--holdout", default=str(WORK_HOLDOUT))
+    s.add_argument("--coverage", default=str(OUT))
+    s.add_argument("--s2-artifact", default=str(S2_ARTIFACT))
+    s.add_argument("--f1-artifact", default=str(F1_ARTIFACT))
+    s.add_argument("--out", default=str(REPORT_OUT))
+    s.set_defaults(fn=cmd_report)
     args = p.parse_args()
     args.fn(args)
 
