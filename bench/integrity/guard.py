@@ -64,9 +64,12 @@ def _rel(path: Path) -> str:
     return resolved.as_posix()
 
 
-def read_seals(seals: Path = SEALS) -> dict[str, str]:
+def read_seals(
+    seals: Path = SEALS, fields: tuple[str, ...] | None = None
+) -> dict[str, str]:
     """The seal fields, each checked to be a sha256; raises Refused when
-    the file is missing, unreadable or lacks one."""
+    the file is missing, unreadable or lacks one. `fields` narrows the
+    fields required (by default all three: a test run needs them all)."""
     if not Path(seals).is_file():
         raise Refused(f"no seals file at {_rel(seals)}: the test split is not sealed")
     try:
@@ -76,7 +79,7 @@ def read_seals(seals: Path = SEALS) -> dict[str, str]:
     if not isinstance(doc, dict):
         raise Refused(f"seals file {_rel(seals)} is not a JSON object")
     out: dict[str, str] = {}
-    for field in (*SEAL_FIELDS.values(), OPERATING_POINTS_FIELD):
+    for field in fields or (*SEAL_FIELDS.values(), OPERATING_POINTS_FIELD):
         value = doc.get(field)
         if not isinstance(value, str) or not _SHA256.match(value):
             raise Refused(f"seals file {_rel(seals)} has no valid {field}")
@@ -86,12 +89,15 @@ def read_seals(seals: Path = SEALS) -> dict[str, str]:
 
 def seal_status(corpus: dict[str, Any], sha: str, seals: Path = SEALS) -> list[str]:
     """For `check`: the problem when a v1 split's sha differs from its
-    seal. Nothing before the seals file exists, and nothing for v0."""
+    seal. Nothing before the seals file exists, and nothing for v0. Only
+    the split's own field is required: the corpus is sealed before any arm
+    runs, and the operating points' sha joins the seals after the dev
+    runs."""
     field = SEAL_FIELDS.get(str(corpus.get("version")))
     if field is None or not Path(seals).is_file():
         return []
     try:
-        sealed = read_seals(seals)[field]
+        sealed = read_seals(seals, fields=(field,))[field]
     except Refused as exc:
         return [str(exc)]
     if sealed != sha:

@@ -440,6 +440,29 @@ def test_check_reports_a_split_that_differs_from_its_seal(
     assert "v1-test sha" not in out
 
 
+def test_a_split_sealed_before_its_operating_points_checks_clean(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # the corpus is sealed before any arm runs; the operating points' sha
+    # joins the seals only after the dev runs, and until then `check` holds
+    # each split to its own seal while a test run is still refused
+    seals = tmp_path / "SEALS.json"
+    seals.write_text(
+        json.dumps(
+            {
+                "dev_sha256": guard.file_sha256(DEV),
+                "test_sha256": guard.file_sha256(TEST),
+                "operating_points_sha256": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert runner.cmd_check([DEV, TEST], seals=seals) == 0
+    capsys.readouterr()
+    with pytest.raises(guard.Refused, match="operating_points_sha256"):
+        _guard(TEST, seals=seals)
+
+
 # ---------------------------------------------------------------------------
 # scoring a split
 # ---------------------------------------------------------------------------
