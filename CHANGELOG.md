@@ -86,9 +86,11 @@ surfaces leave with them. An 8.x directory is imported once by
   read on the next search. A head or an attributes file that moves and
   returns while a search runs leaves nothing memoised (the file stamps
   carry ctime, inode and mode, and the recheck holds the directories),
-  and the reachable walks are keyed on the repository's `config` and
-  `.gitmodules`. `_caches.clear_all` empties every cache and the test
-  suite calls it before each test. The numbers are in
+  and the reachable walks are keyed on the repository's `config`, its
+  `.gitmodules` and, where the working tree has none, the index, whose
+  copy git reads then. A config keeps governed hits out of the memo only
+  where it sets `log.follow`. `_caches.clear_all` empties every cache
+  and the test suite calls it before each test. The numbers are in
   `docs/eval-results.md` under Daemon latency.
   (`src/bettermemory/githead.py`, `src/bettermemory/_caches.py`)
 - `bench/toolcost` records the served `instructions` block beside the

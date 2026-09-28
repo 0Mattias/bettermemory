@@ -1244,29 +1244,33 @@ class ReachableWalk:
 
 # The reachable walk is memoised per process, keyed on (root, anchor,
 # head) and the stamps of the files beside the history that decide what
-# its listing shows (`walk_files_signature`: the repository's config and
-# the working tree's .gitmodules). The walk names both ends
-# (`_walk_reachable` runs to the key's head, not to whatever HEAD names by
-# then), and the range between two named commits never changes, so an
-# entry is never stale while those files read as they did; the key's
-# `head` is what lets a long-lived server stop reusing a walk the moment a
-# commit lands, and the stamps what stops it once log.showRoot or a
-# submodule's ignore setting is written. A walk is kept only when those
-# files and the root directory read the same after it as before it, so a
-# .gitmodules created and removed while git ran is not kept either. Where
-# the stamps cannot be read (`githead` declines: off POSIX, under
-# GIT_DIR), no walk is kept. What the stamps do not see (git's
-# configuration outside the repository's config file, config.worktree, a
-# history rewritten under an unchanged head) reads the memoised walk until
-# the head moves. Bounded so a store with many distinct anchors cannot
-# grow it without limit. Only a walk is stored, never a None: a None is
-# also what a git process that failed yields (an object briefly
-# unreadable, a timeout), and the fallback taken on a failure must not
-# outlive the call that met it. A caller that resolves many memories in
-# one pass keeps the Nones for that pass, and the walks no memo keeps, in
-# its `walked` mapping (`commits_since_anchor`). The lock makes each
-# look-up-and-touch and each insert-and-evict atomic; the walk runs outside
-# it. Registered with `_caches`, which empties it before each test.
+# its listing shows (`walk_files_signature`: the repository's config, the
+# working tree's .gitmodules, and the index where the working tree has
+# none). The walk names both ends (`_walk_reachable` runs to the key's
+# head, not to whatever HEAD names by then), and the range between two
+# named commits never changes, so an entry is never stale while those
+# files read as they did; the key's `head` is what lets a long-lived
+# server stop reusing a walk the moment a commit lands, and the stamps
+# what stops it once log.showRoot or a submodule's ignore setting is
+# written, in the working tree's .gitmodules or the index's copy. A walk
+# is kept only when those files and the root directory read the same after
+# it as before it, so a .gitmodules created and removed while git ran is
+# not kept either. Where the stamps cannot be read (`githead` declines:
+# off POSIX, under GIT_DIR), no walk is kept. What the stamps do not see
+# (git's configuration outside the repository's config file,
+# config.worktree, a history rewritten under an unchanged head, and the
+# two changes undone mid-walk `walk_files_signature` names) reads the
+# memoised walk until the head moves; while files are created and removed
+# in the root steadily, no walk is kept (`_hold_directory`). Bounded so a
+# store with many distinct anchors cannot grow it without limit. Only a
+# walk is stored, never a None: a None is also what a git process that
+# failed yields (an object briefly unreadable, a timeout), and the
+# fallback taken on a failure must not outlive the call that met it. A
+# caller that resolves many memories in one pass keeps the Nones for that
+# pass, and the walks no memo keeps, in its `walked` mapping
+# (`commits_since_anchor`). The lock makes each look-up-and-touch and each
+# insert-and-evict atomic; the walk runs outside it. Registered with
+# `_caches`, which empties it before each test.
 _WALK_MEMO_CAP = 128
 _WalkKey: TypeAlias = tuple[str, str, str, tuple[object, ...]]
 _WALK_MEMO: OrderedDict[_WalkKey, ReachableWalk] = OrderedDict()
@@ -2043,7 +2047,16 @@ def _hold_directory(path: str | Path, held: dict[str, tuple[int, int]]) -> None:
     directory already in `held` is not read again and keeps the stamp
     first recorded for it, which is the one the check must compare with.
     Raises OSError or ValueError where a stat fails for any reason but
-    absence."""
+    absence.
+
+    The cost is that of any change to such a directory, related or not.
+    While something creates and removes files in a held directory steadily
+    (an editor's swap files in the repository's root or in a governed
+    file's directory; the global attributes file's nearest existing
+    ancestor where its own directory does not exist, which is the home
+    directory itself where ``~/.config`` does not exist either), a search or
+    walk that held it keeps nothing it computed, and each one pays what an
+    uncached one pays."""
     current = os.fspath(path)
     while current not in held:
         try:
@@ -2091,6 +2104,155 @@ def _global_attributes_path(root: Path) -> str | None:
     return os.path.join(root, candidate)
 
 
+# git's isspace (sane_ctype in ctype.c), the letters a variable's name
+# starts with, the characters it continues with (iskeychar), and the
+# escapes a value may hold. ASCII only, as git's are.
+_CONFIG_SPACE = frozenset(b" \t\n\r")
+_CONFIG_ALPHA = frozenset(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+_CONFIG_KEYCHAR = _CONFIG_ALPHA | frozenset(b"0123456789-")
+_CONFIG_ESCAPES = frozenset(b'tbn\\"')
+_UTF8_BOM = b"\xef\xbb\xbf"
+
+
+def _config_variable_names(data: bytes) -> set[bytes] | None:
+    """The names of the variables the config file `data` sets, as git's own
+    parser reads the file (``git_parse_source`` in config.c) and ``git
+    config --list --name-only`` prints them: ``section.key`` or
+    ``section.subsection.key``, the section and the key in lower case, a
+    quoted subsection as written. A section header wherever a key may
+    start, a key with or without a value, comments, quoted and escaped
+    values, a value continued onto the next line by a backslash outside a
+    comment, CRLF line ends and a leading byte order mark are read as git
+    reads them, so ``log.follow`` is named in any case or layout git
+    accepts and a ``follow`` inside a value, a comment, a subsection or a
+    longer key is not. None where git refuses the file ("bad config
+    line"). Values are read only to find where they end."""
+    text = data.replace(b"\r\n", b"\n")
+    end = len(text)
+    pos = 0
+    if text[:1] == _UTF8_BOM[:1]:
+        if not text.startswith(_UTF8_BOM):
+            return None
+        pos = len(_UTF8_BOM)
+    names: set[bytes] = set()
+    section = b""
+    comment = False
+    while pos < end:
+        c = text[pos]
+        pos += 1
+        if c == 0x0A:
+            comment = False
+        elif comment or c in _CONFIG_SPACE:
+            continue
+        elif c in b"#;":
+            comment = True
+        elif c == 0x5B:  # "["
+            header = _config_section(text, pos)
+            if header is None:
+                return None
+            section, pos = header
+        elif c in _CONFIG_ALPHA:
+            start = pos - 1
+            while pos < end and text[pos] in _CONFIG_KEYCHAR:
+                pos += 1
+            key = text[start:pos].lower()
+            while pos < end and text[pos] in b" \t":
+                pos += 1
+            if pos < end:
+                c = text[pos]
+                pos += 1
+                if c == 0x3D:  # "="
+                    after = _config_value_end(text, pos)
+                    if after is None:
+                        return None
+                    pos = after
+                elif c != 0x0A:
+                    return None
+            names.add(section + b"." + key if section else key)
+        else:
+            return None
+    return names
+
+
+def _config_section(text: bytes, pos: int) -> tuple[bytes, int] | None:
+    """The name a section header gives the keys under it, and the position
+    after its ``]``, for a header whose ``[`` ends at `pos`; None where git
+    refuses the header (``get_base_var`` and ``get_extended_base_var`` in
+    config.c). ``[name]`` and the older ``[name.sub]`` are lower-cased
+    whole; ``[name "sub"]`` keeps the subsection as written, each
+    backslash escape read as the character it escapes."""
+    end = len(text)
+    name = bytearray()
+    while True:
+        if pos >= end:
+            return None
+        c = text[pos]
+        pos += 1
+        if c == 0x5D:  # "]"
+            return (bytes(name), pos) if name else None
+        if c in _CONFIG_SPACE:
+            break
+        if c not in _CONFIG_KEYCHAR and c != 0x2E:  # "."
+            return None
+        name.append(c + 32 if 0x41 <= c <= 0x5A else c)
+    while True:
+        if c == 0x0A or pos >= end:
+            return None
+        c = text[pos]
+        pos += 1
+        if c not in _CONFIG_SPACE:
+            break
+    if c != 0x22:  # a quoted subsection must follow
+        return None
+    name.append(0x2E)
+    while True:
+        if pos >= end:
+            return None
+        c = text[pos]
+        pos += 1
+        if c == 0x0A:
+            return None
+        if c == 0x22:
+            break
+        if c == 0x5C:  # a backslash escapes the next character
+            if pos >= end or text[pos] == 0x0A:
+                return None
+            c = text[pos]
+            pos += 1
+        name.append(c)
+    if pos >= end or text[pos] != 0x5D:
+        return None
+    return bytes(name), pos + 1
+
+
+def _config_value_end(text: bytes, pos: int) -> int | None:
+    """Where the value that starts at `pos` ends: past the newline that
+    ends its line, or a later one where a backslash outside a comment
+    continues it. None where git refuses the value (``parse_value`` in
+    config.c): a quote still open at its end, or an escape git does not
+    know."""
+    end = len(text)
+    quote = False
+    comment = False
+    while pos < end:
+        c = text[pos]
+        pos += 1
+        if c == 0x0A:
+            return None if quote else pos
+        if comment or (c in _CONFIG_SPACE and not quote):
+            continue
+        if c in b"#;" and not quote:
+            comment = True
+        elif c == 0x5C:
+            if pos < end:
+                if text[pos] != 0x0A and text[pos] not in _CONFIG_ESCAPES:
+                    return None
+                pos += 1
+        elif c == 0x22:
+            quote = not quote
+    return None if quote else pos
+
+
 def attribute_files_signature(
     cwd: Path,
     root: Path,
@@ -2116,14 +2278,17 @@ def attribute_files_signature(
     repository `githead` does not read, a ``config`` that cannot be read,
     one that mentions ``attributesfile`` or an ``[attr`` section (a
     ``core.attributesFile`` or ``attr.tree`` there sends git to a file or a
-    tree these stats do not cover), one that mentions ``follow`` (a
-    ``log.follow`` there makes the single-pathspec patch stream follow a
-    claimed file across a rename and diff the renaming commit with the
-    attributes of the rename source's path, which no chain of the claimed
-    path covers), and a stat that fails for any reason but absence. A
-    ``log.follow`` set outside the repository's config (the global and
-    system files, an include) is not seen. `root` is the root `cwd`'s
-    repository names."""
+    tree these stats do not cover), one that sets ``log.follow`` (it makes
+    the single-pathspec patch stream follow a claimed file across a rename
+    and diff the renaming commit with the attributes of the rename source's
+    path, which no chain of the claimed path covers), one git refuses, and
+    a stat that fails for any reason but absence. Whether the file sets
+    ``log.follow`` is read as git reads it (`_config_variable_names`), in
+    any case or layout, so ``push.followTags``, a branch or a remote whose
+    name holds ``follow``, or the word in a value or a comment, keys the
+    files like any other config. A ``log.follow`` set outside the
+    repository's config (the global and system files, an include) is not
+    seen. `root` is the root `cwd`'s repository names."""
     gd = githead.find_gitdir(cwd)
     if gd is None:
         return None
@@ -2132,8 +2297,14 @@ def attribute_files_signature(
     if text is None or len(text) > _CONFIG_LIMIT:
         return None
     lowered = text.lower()
-    if b"attributesfile" in lowered or b"[attr" in lowered or b"follow" in lowered:
+    if b"attributesfile" in lowered or b"[attr" in lowered:
         return None
+    if b"follow" in lowered:
+        # Only a file that holds the word can set log.follow: a key's name
+        # is read literally, with no escape and no continued line.
+        names = _config_variable_names(text)
+        if names is None or b"log.follow" in names:
+            return None
     global_file = _global_attributes_path(root)
     try:
         if directories is not None:
@@ -2212,11 +2383,16 @@ def walk_files_signature(
     common directory (``log.showRoot`` there drops a root commit's paths
     from the reachable walk's ``--name-only``, ``diff.ignoreSubmodules`` a
     gitlink's, and ``log.follow`` makes a log over one path follow it
-    across renames) and the working tree's ``.gitmodules`` at the root
+    across renames), the working tree's ``.gitmodules`` at the root
     (``submodule.<name>.ignore`` there drops a gitlink's changes from the
-    walk). Each is its `_stamp`, or None while it does not exist. The walk
-    memo (`commits_since_anchor`) and the per-hit drift memo key on it.
-    `directories`, when given, receives the root's stamp
+    walk), and the index while the working tree has no ``.gitmodules``:
+    git then reads the index's copy, and HEAD's where the index has none,
+    which the key's head already names. Each is its `_stamp`, or None
+    while it does not exist; the index's slot is None while a
+    ``.gitmodules`` exists, since git reads no other copy then. Where it is
+    stamped, every write to the index is a new key, whatever the write
+    changed. The walk memo (`commits_since_anchor`) and the per-hit drift
+    memo key on it. `directories`, when given, receives the root's stamp
     (`_hold_directory`), for a caller that checks at the end of its work
     that no ``.gitmodules`` was created and removed meanwhile.
 
@@ -2224,18 +2400,30 @@ def walk_files_signature(
     `root` holds its ``.git`` entry, so a root git names elsewhere
     (``core.worktree``) is never stamped against an enclosing repository.
     None where `githead` declines (off POSIX, under GIT_DIR and the other
-    variables that move discovery, a root that holds no ``.git`` entry)
-    and where a stat fails for any reason but absence; what would key on
-    it is then not memoised. The configuration git reads outside that file
-    (the global and system files, an include, ``config.worktree``) is not
-    seen."""
+    variables that move discovery, a root that holds no ``.git`` entry),
+    where the index is read and GIT_INDEX_FILE names another, and where a
+    stat fails for any reason but absence; what would key on it is then
+    not memoised. The configuration git reads outside that file (the
+    global and system files, an include, ``config.worktree``) is not seen.
+    Nor are two changes undone while a walk runs that leave every stamp as
+    it was: a ``config`` or an index created and removed in a repository
+    that has none (the directory that would hold it is not held, only the
+    root), and a ``config`` that is a symbolic link whose target's
+    directory is swapped for another and back (the stamp follows the link
+    to the file it named before, with its old stamp)."""
     gd = githead.gitdir_at(root)
     if gd is None:
         return None
     try:
         if directories is not None:
             _hold_directory(root, directories)
-        return (_stamp(gd.commondir / "config"), _stamp(root / ".gitmodules"))
+        gitmodules = _stamp(root / ".gitmodules")
+        index: githead.Stamp | None = None
+        if gitmodules is None:
+            if "GIT_INDEX_FILE" in os.environ:
+                return None
+            index = _stamp(gd.gitdir / "index")
+        return (_stamp(gd.commondir / "config"), gitmodules, index)
     except (OSError, ValueError):
         return None
 

@@ -1582,7 +1582,7 @@ def test_a_permission_change_to_an_attribute_file_is_a_new_key(
 
 
 @files_only
-def test_a_repository_config_that_mentions_follow_keeps_the_hit_out_of_the_memo(
+def test_a_repository_config_that_sets_log_follow_keeps_the_hit_out_of_the_memo(
     git_config_home: Path,
     memory_dir: Path,
     tmp_path: Path,
@@ -1592,9 +1592,9 @@ def test_a_repository_config_that_mentions_follow_keeps_the_hit_out_of_the_memo(
     single-pathspec `git log -p` follows the claimed file across a rename,
     and the commit that renamed it takes the diff attribute of the rename
     source's path, from a .gitattributes no chain of the claimed path
-    covers. A config that mentions `follow` keeps the hit out of the memo,
-    so an untracked lib/.gitattributes written between two attaches is read
-    by both."""
+    covers. A config that sets log.follow keeps the hit out of the memo, so
+    an untracked lib/.gitattributes written between two attaches is read by
+    both."""
     repo = _repo(tmp_path)
     _git(repo, "config", "log.follow", "true")
     anchor = _commit(
@@ -1652,6 +1652,198 @@ def test_a_repository_config_that_mentions_follow_keeps_the_hit_out_of_the_memo(
     assert cached == uncached
     assert calls, "the second attach resolved through git again"
     assert len(_response._DRIFT_MEMO) == 0
+
+
+# Config files, and what git reads from each: the variables `git config
+# --file <file> --list --name-only` names, or None where git refuses the
+# file. The attribute files decline where git reads log.follow and nowhere
+# else, so the reader must name exactly git's variables, whatever the case,
+# the spacing, the comments, the quoting and the continued values.
+_CONFIG_TEXTS = [
+    pytest.param(b"[log]\n\tfollow = true\n", id="log.follow"),
+    pytest.param(b"[LOG]\n\tFOLLOW\n", id="upper case without a value"),
+    pytest.param(b"[log] follow = true\n", id="key on the header line"),
+    pytest.param(b"[Log]\nFollow=yes\n", id="mixed case without spaces"),
+    pytest.param(b"[core] [log] follow", id="two headers and no newline"),
+    pytest.param(b"\xef\xbb\xbf[log]\n\tfollow = 1\n", id="byte order mark"),
+    pytest.param(b"[log]\r\n\tfollow = true\r\n", id="CRLF"),
+    pytest.param(
+        b"[log]\n  # c\n  ; c\n\n\tfollow\t=\ttrue # c\n", id="comments and tabs"
+    ),
+    pytest.param(b"[log]\n\tdate = iso\n\tfollow\n", id="second key"),
+    pytest.param(b"[log]\n\tdate = x \\\n\n\tfollow\n", id="continued into a blank"),
+    pytest.param(b"[log]\n\tdate = iso \\\n\tfollow = true\n", id="continued value"),
+    pytest.param(
+        b"[log]\n\tdate = iso # \\\n\tfollow = true\n", id="backslash in a comment"
+    ),
+    pytest.param(
+        b'[log]\n\tdate = "iso # \\\n\tfollow = true"\n', id="continued quoted value"
+    ),
+    pytest.param(b'[log "follow"]\n\tx = 1\n', id="subsection named follow"),
+    pytest.param(b"[Log.Follow]\n\tx = 1\n", id="dotted subsection"),
+    pytest.param(b"[push]\n\tfollowTags = true\n", id="push.followTags"),
+    pytest.param(
+        b'[branch "follow-up"]\n\tremote = origin\n\tmerge = refs/heads/follow-up\n',
+        id="branch follow-up",
+    ),
+    pytest.param(
+        b'[remote "follower"]\n\turl = git@example.com:me/follow.git\n'
+        b"\tfetch = +refs/heads/*:refs/remotes/follower/*\n",
+        id="remote follower",
+    ),
+    pytest.param(b"[alias]\n\tfollow = log --follow\n", id="alias.follow"),
+    pytest.param(b"# log.follow = true\n[core]\n\tbare = false\n", id="commented out"),
+    pytest.param(b"[log]\n\tfollow-up = true\n\tfollows\n", id="longer keys"),
+    pytest.param(b'[sect "x"] key = 1 [log] follow\n', id="header inside a value"),
+    pytest.param(b'[sect "a\\"b"]\n\tkey\n', id="escaped quote in a subsection"),
+    pytest.param(b"[log]\n\tfollow # c\n", id="comment after a bare key"),
+    pytest.param(b"[log\n\tfollow\n", id="unclosed header"),
+    pytest.param(b"[log ]\n\tfollow\n", id="space before the bracket"),
+    pytest.param(b'[log]\n\tfollow = "open\n', id="unclosed quote"),
+    pytest.param(b"[log]\n\tfollow = a \\q\n", id="unknown escape"),
+    pytest.param(b"\xef\xbb[log]\n\tfollow\n", id="partial byte order mark"),
+    pytest.param(b"[log]\n\tfollow\r= true\n", id="carriage return after the key"),
+    pytest.param(b"", id="empty"),
+]
+
+
+def _git_variable_names(text: bytes, tmp_path: Path) -> set[bytes] | None:
+    """The variables git reads from a config file holding `text`, or None
+    when git refuses the file."""
+    path = tmp_path / "config-under-test"
+    path.write_bytes(text)
+    result = subprocess.run(
+        ["git", "config", "--file", str(path), "--list", "--name-only"],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return {line for line in result.stdout.split(b"\n") if line}
+
+
+@pytest.mark.parametrize("text", _CONFIG_TEXTS)
+def test_the_config_reader_names_the_variables_git_reads(
+    text: bytes, tmp_path: Path
+) -> None:
+    """`origin._config_variable_names` reads a config file as git's parser
+    does (config.c): sections and their quoted or dotted subsections, keys
+    with or without a value, comments, quoted and continued values, CRLF
+    and a byte order mark, and it refuses the files git refuses."""
+    assert origin._config_variable_names(text) == _git_variable_names(text, tmp_path)
+
+
+@files_only
+@pytest.mark.parametrize("text", _CONFIG_TEXTS)
+def test_the_attribute_files_decline_where_git_reads_log_follow(
+    text: bytes, git_config_home: Path, tmp_path: Path
+) -> None:
+    """The repository's config keeps the attribute files unkeyed exactly
+    where git reads log.follow from it, in whatever case, spacing or
+    layout git accepts; push.followTags, a branch, remote or subsection
+    named with `follow`, a value or a comment holding it key them. A file
+    git refuses keys nothing either."""
+    names = _git_variable_names(text, tmp_path)
+    repo = _repo(tmp_path)
+    _commit(repo, "c0", when=_T0, files={"a.txt": "a\n"})
+    (repo / ".git" / "config").write_bytes(text)
+    signature = origin.attribute_files_signature(repo, repo)
+    if names is None or b"log.follow" in names:
+        assert signature is None
+    else:
+        assert signature is not None
+
+
+@files_only
+@pytest.mark.parametrize(
+    "commands",
+    [
+        pytest.param([("config", "push.followTags", "true")], id="push.followTags"),
+        pytest.param(
+            [
+                ("config", "branch.follow-up.remote", "origin"),
+                ("config", "branch.follow-up.merge", "refs/heads/follow-up"),
+            ],
+            id="branch follow-up",
+        ),
+        pytest.param(
+            [("remote", "add", "follower", "git@example.com:me/follow.git")],
+            id="remote follower",
+        ),
+    ],
+)
+def test_a_config_that_names_follow_without_log_follow_keeps_the_memo(
+    commands: list[tuple[str, ...]],
+    git_config_home: Path,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """push.followTags, or a branch or a remote whose name holds `follow`,
+    sets no log.follow, so the patch stream reads the attributes it reads
+    without them. The governed hits are memoised: the warm attach forks
+    nothing and answers as the cold one, and an attributes file written
+    afterwards is read by the next attach."""
+    repo, caller, memories, ids = _claimed(
+        tmp_path, memory_dir, monkeypatch, claim="src/app.py::handler"
+    )
+    for command in commands:
+        _git(repo, *command)
+    for _ in range(2):
+        before, calls = _attach(memories, caller, monkeypatch)
+    assert _counts(before, ids) == [0, 0]
+    assert calls == [], "the memo answers"
+
+    (repo / ".gitattributes").write_text("*.py -diff\n", encoding="utf-8")
+    cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
+    assert _counts(uncached, ids) == [2, 2], "premise: the attribute moved git"
+    assert cached == uncached
+
+
+def test_an_attributes_file_created_with_its_directory_during_the_attach_stores_nothing(
+    git_config_home: Path,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Where the global attributes file's directory does not exist, the
+    check holds its nearest existing ancestor. A directory and an
+    attributes file in it created before one hit's patch stream and removed
+    with the directory once the stream returns leave the file, and the
+    directory, absent at the start of the attach and at its end: only the
+    ancestor's (mtime, ctime) moved, and nothing is kept."""
+    config_home = tmp_path / "xdg-without-git"
+    config_home.mkdir()
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    repo, caller, memories, ids = _claimed(
+        tmp_path, memory_dir, monkeypatch, claim="src/app.py::handler"
+    )
+    attributes = config_home / "git" / "attributes"
+    real_stream = origin.commit_patch_stream
+    created: list[Path] = []
+
+    def create_read_remove(*args: Any, **kwargs: Any) -> Any:
+        if created:
+            return real_stream(*args, **kwargs)
+        attributes.parent.mkdir()
+        attributes.write_text("*.py -diff\n", encoding="utf-8")
+        created.append(attributes)
+        try:
+            return real_stream(*args, **kwargs)
+        finally:
+            shutil.rmtree(attributes.parent)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(verify, "commit_patch_stream", create_read_remove)
+        during, _ = _attach(memories, caller, monkeypatch)
+    assert created and not attributes.parent.exists(), "premise: created and removed"
+    assert sorted(_counts(during, ids)) == [0, 2], (
+        "premise: one hit's stream read the attribute, the other's did not"
+    )
+
+    cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
+    assert _counts(uncached, ids) == [0, 0]
+    assert cached == uncached
 
 
 def test_a_plain_hit_is_keyed_on_the_repository_config(
@@ -1916,18 +2108,13 @@ def test_the_walk_is_keyed_on_the_repository_config(
         assert cached == uncached
 
 
-def test_the_walk_is_keyed_on_the_working_trees_gitmodules(
-    git_config_home: Path,
-    memory_dir: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """submodule.<name>.ignore = all in the working tree's .gitmodules drops
-    the gitlink's changes from the walk's --name-only listing, while the
-    path-limited log still lists them: a hit attested on the submodule's
-    path, verified before it was added, counts 0 with the setting and 2
-    without it, under an unchanged head. The walk memo and the per-hit key
-    carry the .gitmodules stamp."""
+def _pinned_submodule(
+    tmp_path: Path, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, Origin, list[Any], str]:
+    """A superproject whose submodule `sub` was added and then moved after
+    the stamp, and one memory attested on `sub`, verified at the commit
+    before the submodule was added: its walk lists the gitlink's two
+    changes unless `submodule.sub.ignore` drops them."""
     source = _repo(tmp_path, "source")
     _commit(source, "s1", when=_day(0), files={"a.txt": "a\n"})
     _commit(source, "s2", when=_day(1), files={"a.txt": "b\n"})
@@ -1958,7 +2145,24 @@ def test_the_walk_is_keyed_on_the_working_trees_gitmodules(
         verified_head=anchor,
         verified_paths=["sub"],
     )
-    memories = store.load_all()
+    return repo, caller, store.load_all(), memory_id
+
+
+def test_the_walk_is_keyed_on_the_working_trees_gitmodules(
+    git_config_home: Path,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """submodule.<name>.ignore = all in the working tree's .gitmodules drops
+    the gitlink's changes from the walk's --name-only listing, while the
+    path-limited log still lists them: a hit attested on the submodule's
+    path, verified before it was added, counts 0 with the setting and 2
+    without it, under an unchanged head. The walk memo and the per-hit key
+    carry the .gitmodules stamp."""
+    repo, caller, memories, memory_id = _pinned_submodule(
+        tmp_path, memory_dir, monkeypatch
+    )
     ignore = ("config", "-f", ".gitmodules", "submodule.sub.ignore")
     _git(repo, *ignore, "all")
     for _ in range(2):
@@ -1975,6 +2179,79 @@ def test_the_walk_is_keyed_on_the_working_trees_gitmodules(
             "premise: the setting moved the walk"
         )
         assert cached == uncached
+
+
+def test_the_walk_is_keyed_on_the_indexs_gitmodules_where_the_working_tree_has_none(
+    git_config_home: Path,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Where the working tree has no .gitmodules, git reads the index's
+    copy, then HEAD's, for submodule.<name>.ignore. The index's copy sets
+    ignore = all and the working tree's is removed; then the index's copy
+    is reset to HEAD's, which sets none, and later set again. Only the
+    index changes each time, under an unchanged head, and the warm attach
+    answers as the cold one after each change."""
+    repo, caller, memories, memory_id = _pinned_submodule(
+        tmp_path, memory_dir, monkeypatch
+    )
+    ignore = ("config", "-f", ".gitmodules", "submodule.sub.ignore", "all")
+
+    def stage_ignore() -> None:
+        _git(repo, "checkout", "-q", "--", ".gitmodules")
+        _git(repo, *ignore)
+        _git(repo, "add", ".gitmodules")
+        (repo / ".gitmodules").unlink()
+
+    def reset_index() -> None:
+        _git(repo, "reset", "-q", "--", ".gitmodules")
+
+    stage_ignore()
+    for _ in range(2):
+        before, _ = _attach(memories, caller, monkeypatch)
+    assert _drift(before, memory_id) == (0, "reachability")
+
+    for change, expected in ((reset_index, 2), (stage_ignore, 0)):
+        change()
+        assert not (repo / ".gitmodules").exists()
+        cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
+        assert _drift(uncached, memory_id) == (expected, "reachability"), (
+            "premise: the index's copy moved the walk"
+        )
+        assert cached == uncached
+
+
+@files_only
+def test_the_walk_files_hold_the_index_only_where_the_working_tree_has_no_gitmodules(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The signature carries the index's stamp where the working tree has
+    no .gitmodules, the one case git reads the index's copy: a write to the
+    index moves it there, and leaves it as it was where the working tree
+    holds a .gitmodules. An index named by GIT_INDEX_FILE is one these
+    stamps do not read, so nothing is keyed under it."""
+    repo = _repo(tmp_path)
+    _commit(repo, "c0", when=_T0, files={"a.txt": "a\n"})
+    root = repo.resolve()
+
+    absent = origin.walk_files_signature(root)
+    assert absent is not None
+    (repo / "b.txt").write_text("b\n", encoding="utf-8")
+    _git(repo, "add", "b.txt")
+    assert origin.walk_files_signature(root) != absent, "the index was written"
+
+    (repo / ".gitmodules").write_text("", encoding="utf-8")
+    present = origin.walk_files_signature(root)
+    assert present is not None
+    (repo / "c.txt").write_text("c\n", encoding="utf-8")
+    _git(repo, "add", "c.txt")
+    assert origin.walk_files_signature(root) == present, "git reads no index copy"
+
+    monkeypatch.setenv("GIT_INDEX_FILE", str(tmp_path / "other-index"))
+    assert origin.walk_files_signature(root) == present
+    (repo / ".gitmodules").unlink()
+    assert origin.walk_files_signature(root) is None
 
 
 def test_a_walk_whose_files_cannot_be_read_is_kept_for_the_pass_only(

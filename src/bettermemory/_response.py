@@ -114,24 +114,25 @@ NEGATIVE_OUTCOME_WINDOW_DAYS = 30
 # `origin.gitattributes_signature`; None for every other hit, which reads
 # none), and the files beside the history its git reads
 # (`origin.walk_files_signature`: the repository's config, whose
-# log.follow reaches a single-pathspec log and log.showRoot the walk, and
-# the working tree's .gitmodules, whose ignore settings reach the walk);
+# log.follow reaches a single-pathspec log and log.showRoot the walk, the
+# working tree's .gitmodules, whose ignore settings reach the walk, and
+# where the working tree has none the index, whose copy git reads then);
 # the value is the resolved count, basis and claim detail, or None for a
 # hit whose count is omitted. A commit moves the head and so every key; a
 # new stamp, a rewritten body, a changed claim or an edited attributes file
-# changes its own row's, and an edited config or .gitmodules every row's. A
-# value computed while a git process failed is never stored
-# (`origin.failed_git_calls`), and a search during which the head or a
-# keyed file moved, even to move back, stores nothing (`_files_held`,
-# `githead.signature`). What the key does not see (git's configuration
-# outside the repository's config file, a history rewritten under an
-# unchanged head, a change within one tick of the filesystem's clock that
-# reuses an inode number, and the rest) is listed on
-# `ResponseBuilder.attach_commit_drift_counts`. The values are frozen, so a
-# hit can share one without a later hit's edit reaching it. Bounded LRU;
-# the lock makes each look-up-and-touch and each merge-and-evict atomic,
-# and the resolution runs outside it. Registered with `_caches`, which
-# empties it before each test.
+# changes its own row's, and an edited config or .gitmodules, or a write to
+# the index where it is read, every row's. A value computed while a git
+# process failed is never stored (`origin.failed_git_calls`), and a search
+# during which the head or a keyed file moved, even to move back, stores
+# nothing (`_files_held`, `githead.signature`). What the key does not see
+# (git's configuration outside the repository's config file, a history
+# rewritten under an unchanged head, a change within one tick of the
+# filesystem's clock that reuses an inode number, and the rest) is listed
+# on `ResponseBuilder.attach_commit_drift_counts`. The values are frozen,
+# so a hit can share one without a later hit's edit reaching it. Bounded
+# LRU; the lock makes each look-up-and-touch and each merge-and-evict
+# atomic, and the resolution runs outside it. Registered with `_caches`,
+# which empties it before each test.
 _DRIFT_MEMO_CAP = 5000
 _DriftKey: TypeAlias = tuple[
     str,
@@ -830,18 +831,22 @@ class ResponseBuilder:
         file and the repository's ``config``); and for every hit, the files
         beside the history its git reads (`origin.walk_files_signature`: the
         repository's ``config``, where ``log.follow`` reaches a
-        single-pathspec log and ``log.showRoot`` the walk, and the working
+        single-pathspec log and ``log.showRoot`` the walk, the working
         tree's ``.gitmodules``, where a submodule's ``ignore`` reaches the
-        walk; the walk memo keys on them too). A file is keyed on its mtime,
-        ctime, size, inode and mode, or its absence, so a write, a
-        replacement, a creation, a removal or a chmod changes the key. A
+        walk, and, where the working tree has none, the index, whose copy
+        git then reads; the walk memo keys on them too). A file is keyed on
+        its mtime, ctime, size, inode and mode, or its absence, so a write,
+        a replacement, a creation, a removal or a chmod changes the key. A
         governed path that is a directory or a pattern, a ``config`` that
-        names an attributes file or tree or mentions ``follow`` (the patch
-        stream would read the attributes of a rename source's path), and a
-        file that cannot be stamped keep a hit out of the memo. A commit
-        moves the head and so every key; a new stamp, a rewritten body, a
-        changed claim or an edited attributes file changes its own row's,
-        and an edited ``config`` or ``.gitmodules`` every row's.
+        names an attributes file or tree or sets ``log.follow`` (the patch
+        stream would read the attributes of a rename source's path; the
+        file is read as git reads it, so ``push.followTags`` or a branch
+        named ``follow-up`` is no such config), and a file that cannot be
+        stamped keep a hit out of the memo. A commit moves the head and so
+        every key; a new stamp, a rewritten body, a changed claim or an
+        edited attributes file changes its own row's, and an edited
+        ``config`` or ``.gitmodules`` every row's, as does every write to the
+        index where it is keyed.
 
         A failure is never memoised, at a cost. A value is not kept when
         any git process its resolution ran failed, whether git exited
@@ -887,11 +892,20 @@ class ResponseBuilder:
         program a textconv runs); the system attributes file; a history
         rewritten under an unchanged head (a deepened shallow clone, a
         replace ref, a graft); and a change that leaves every stamped field
-        as it was, which takes a file rewritten, or a head moved and moved
-        back, within one tick of the filesystem's clock with the inode
-        number reused. A repository whose refs `githead` cannot read (the
-        reftable format) is not settled from the files, so no per-hit memo
-        is used there.
+        and every held directory as it was: a file rewritten, or a head
+        moved and moved back, within one tick of the filesystem's clock
+        with the inode number reused; a ``config`` or an index created and
+        removed during a search in a repository that has none, whose
+        directory no check holds; and a ``config`` that is a symbolic link
+        whose target's directory is swapped for another and back during a
+        search, which leaves the file the link names with its old stamp. A
+        repository whose refs `githead` cannot read (the reftable format)
+        is not settled from the files, so no per-hit memo is used there.
+        While files are created and removed steadily in a held directory
+        (the root, a keyed ``.gitattributes`` chain's directories, the
+        global attributes file's nearest existing ancestor), the search
+        that held it keeps nothing, and every such search pays its cold
+        cost (`origin._hold_directory`).
         ``tests/test_server_commit_drift.py::test_commit_drift_count_git_cost_shape``,
         its quiescent sibling and its reachability sibling pin that
         arithmetic, cold and warm; ``tests/test_commit_drift_cache.py``
