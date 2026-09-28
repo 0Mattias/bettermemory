@@ -952,9 +952,11 @@ def spent_on_authoring() -> float:
     return total
 
 
-def call_author(messages: list[dict[str, str]]) -> tuple[str, dict[str, Any]]:
+def call_author(
+    messages: list[dict[str, str]], model: str = spec.TEST_AUTHOR
+) -> tuple[str, dict[str, Any]]:
     body = {
-        "model": spec.TEST_AUTHOR,
+        "model": model,
         "messages": messages,
         "response_format": {"type": "json_object"},
         "max_tokens": 32000,
@@ -980,7 +982,7 @@ def call_author(messages: list[dict[str, str]]) -> tuple[str, dict[str, Any]]:
             time.sleep(10)
     choice = data["choices"][0]
     record = {
-        "requested_model": spec.TEST_AUTHOR,
+        "requested_model": model,
         "model": data.get("model"),
         "id": data.get("id"),
         "provider": data.get("provider"),
@@ -1058,7 +1060,7 @@ def cmd_prompt(oid: str, stage: str) -> int:
     return 0
 
 
-def cmd_author(oid: str, stage: str, repair: bool) -> int:
+def cmd_author(oid: str, stage: str, repair: bool, review: bool = False) -> int:
     if not is_test(oid):
         raise SystemExit(f"{oid} is a dev organisation: Claude authors it in files")
     if spent_on_authoring() >= AUTHORING_CAP_USD:
@@ -1069,7 +1071,12 @@ def cmd_author(oid: str, stage: str, repair: bool) -> int:
     tpath = WORK / oid / f"{stage}.transcript.json"
     cpath = WORK / oid / f"{stage}.calls.json"
     calls = read_json(cpath) if cpath.exists() else []
-    if repair:
+    if review:
+        # A reviewer asked for fixes: the author re-reads every item of its
+        # own answer against the criteria and rewrites what falls short.
+        messages = read_json(tpath)
+        messages.append({"role": "user", "content": spec.REVIEW_PROMPT})
+    elif repair:
         messages = read_json(tpath)
         problems = read_json(WORK / oid / f"{stage}.problems.json")
         if len([m for m in messages if m["role"] == "user"]) > MAX_REPAIRS:
@@ -1107,11 +1114,98 @@ def cmd_author(oid: str, stage: str, repair: bool) -> int:
         )
         print(f"{oid} {stage}: the answer is not valid JSON")
         return 1
+    if review and isinstance(answer, dict):
+        changed = answer.pop("changed", None)
+        n = len([m for m in messages if m["role"] == "user"])
+        write_json(WORK / oid / f"{stage}.review-{n}.json", changed)
+        print(
+            f"{oid} {stage} review: {len(changed or [])} item(s) rewritten (list withheld: test organisation)"
+        )
     write_json(WORK / oid / f"{stage}.json", answer)
     problems = stage_check(oid, stage)
     write_json(WORK / oid / f"{stage}.problems.json", problems)
     say(oid, f"{stage} check", problems)
     return 1 if problems else 0
+
+
+def cmd_audit(oid: str) -> int:
+    """The independent audit the owner asked for before sealing: the
+    auditor judges every item of a test organisation's prose against the
+    review criteria. Its flags become the problems of one repair round;
+    only their counts are printed."""
+    if not is_test(oid):
+        raise SystemExit(
+            f"{oid} is a dev organisation; the audit covers the test split"
+        )
+    if spent_on_authoring() >= AUTHORING_CAP_USD:
+        raise SystemExit(
+            f"authoring spend has reached ${AUTHORING_CAP_USD}; stop and report"
+        )
+    task = spec.prose_prompt(org_by_id(oid), read_json(WORK / oid / "skeleton.json"))
+    answer = read_json(WORK / oid / "prose.json")
+    messages = [
+        {"role": "system", "content": spec.AUDIT_SYSTEM},
+        {"role": "user", "content": spec.audit_prompt(task, answer)},
+    ]
+    content, record = call_author(messages, model=spec.AUDITOR)
+    cpath = WORK / oid / "audit.calls.json"
+    calls = read_json(cpath) if cpath.exists() else []
+    calls.append(record)
+    write_json(cpath, calls)
+    usage = record.get("usage") or {}
+    print(
+        f"{oid} audit: {record['model']} finish {record['finish_reason']}, "
+        f"{usage.get('prompt_tokens')} in / {usage.get('completion_tokens')} out, "
+        f"${usage.get('cost')}, {record['seconds']} s; authoring total ${spent_on_authoring():.4f}"
+    )
+    try:
+        verdict = parse_json(content)
+        flagged = list(verdict.get("flagged") or [])
+    except (json.JSONDecodeError, IndexError, AttributeError):
+        write_json(WORK / oid / "prose.audit.raw.json", {"content": content})
+        print(f"{oid} audit: the answer is not valid JSON")
+        return 1
+    write_json(WORK / oid / "prose.audit.json", verdict)
+    problems = [f"{f.get('id')}: {f.get('reason')}" for f in flagged]
+    write_json(WORK / oid / "prose.problems.json", problems)
+    by_criterion = {
+        c: sum(1 for f in flagged if f.get("criterion") == c) for c in (1, 2, 3, 4)
+    }
+    print(
+        f"{oid} audit: {verdict.get('reviewed')} items judged, {len(flagged)} flagged, "
+        f"by criterion {by_criterion} (ids and reasons withheld: test organisation)"
+    )
+    return 0
+
+
+def cmd_audit_report(out: Path) -> int:
+    """Every flagged id with its reason, for the owner only; nothing of it
+    is printed."""
+    lines = [
+        "# v1 test split: the independent audit",
+        "",
+        f"Auditor {spec.AUDITOR}; every flagged item went back to {spec.TEST_AUTHOR} for one rewrite.",
+        "",
+    ]
+    for org in spec.ORGS:
+        path = WORK / org["id"] / "prose.audit.json"
+        if org["split"] != "test" or not path.exists():
+            continue
+        v = read_json(path)
+        flagged = v.get("flagged") or []
+        lines += [
+            f"## {org['id']} {org['name']}: {v.get('reviewed')} judged, {len(flagged)} flagged",
+            "",
+        ]
+        lines += [
+            f"- {f.get('id')} (criterion {f.get('criterion')}): {f.get('reason')}"
+            for f in flagged
+        ]
+        lines.append("")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(lines), encoding="utf-8")
+    print(f"audit report written: {out}; not printed")
+    return 0
 
 
 def cmd_check(oid: str, stage: str) -> int:
@@ -1158,7 +1252,11 @@ def cmd_assemble() -> int:
     DEV_PATH.write_text(canonical(dev), encoding="utf-8")
     TEST_PATH.write_text(canonical(test), encoding="utf-8")
     for name, corpus, path in (("dev", dev, DEV_PATH), ("test", test, TEST_PATH)):
-        problems = score.corpus_checks(corpus)
+        try:
+            problems = score.corpus_checks(corpus)
+        except Exception as exc:  # noqa: BLE001 - a scorer without v1 support
+            # The exception's text could quote the corpus; only its type is shown.
+            problems = [f"score.corpus_checks raised {type(exc).__name__}"]
         d = corpus["declared"]
         print(
             f"{name}: {len(corpus['topics'])} topics {d['topic_kinds']}, "
@@ -1325,6 +1423,15 @@ def main() -> int:
     )
     a.add_argument("--stage", required=True, choices=["vocab", "prose"])
     a.add_argument("--repair", action="store_true")
+    a.add_argument("--review", action="store_true")
+    au = sub.add_parser("audit")
+    au.add_argument(
+        "--org",
+        required=True,
+        choices=[o["id"] for o in spec.ORGS if o["split"] == "test"],
+    )
+    ar = sub.add_parser("audit-report")
+    ar.add_argument("--out", required=True, type=Path)
     sub.add_parser("draw")
     sub.add_parser("assemble")
     s = sub.add_parser("sample")
@@ -1338,7 +1445,11 @@ def main() -> int:
     if args.cmd == "check":
         return cmd_check(args.org, args.stage)
     if args.cmd == "author":
-        return cmd_author(args.org, args.stage, args.repair)
+        return cmd_author(args.org, args.stage, args.repair, args.review)
+    if args.cmd == "audit":
+        return cmd_audit(args.org)
+    if args.cmd == "audit-report":
+        return cmd_audit_report(args.out)
     if args.cmd == "draw":
         return cmd_draw()
     if args.cmd == "assemble":
