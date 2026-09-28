@@ -223,10 +223,19 @@ class _UserStore:
     # distilled units (declaration E1): id -> {"ts", "kind", "round"}
     unit_meta: dict[str, dict[str, Any]] = field(default_factory=dict)
     unit_memories: list[Memory] | None = None
+    # the session log's entries, one per Add, parsed; dropped with `memories`
+    sessions: list[dict[str, Any]] | None = None
 
     @property
     def sidecar(self) -> Path:
         return self.root / "aml-sidecar.json"
+
+    @property
+    def session_log(self) -> Path:
+        """One JSON line per Add: its session id, source timestamp, the
+        rounds it wrote and its messages as they arrived. Append-only, so
+        a large store is never rewritten to record one more session."""
+        return self.root / SESSION_LOG
 
     @property
     def units_root(self) -> Path:
@@ -263,13 +272,24 @@ class _UserStore:
         tmp.replace(self.sidecar)
 
 
-FILLS = ("none", "neighbors", "neighbors-recent")
+FILLS = ("none", "neighbors", "neighbors-recent", "tiered", "dry")
 ORDERS = ("rank", "chronological", "session")
 ANNOTATIONS = ("none", "age")
 TRIMS = ("none", "assistant", "tail")
 SHEETS = ("none", "units", "units-age")
 UNIT_SOURCES = ("regex", "claude")
 EXPANDS = ("none", "keys", "keys-inline")
+SERVE_UNITS = ("rounds", "sessions")
+SESSION_FILLS = ("none", "adjacent")
+SESSION_LOG = "sessions.jsonl"
+# The history block of LongMemEval's session retrievers (run_generation.py
+# prepare_prompt at xiaowu0162/LongMemEval 9e0b455, json format): the
+# session number in served order, its date, then the session as
+# json.dumps renders its turns.
+SESSION_BLOCK = "\n### Session {}:\nSession Date: {}\nSession Content:\n{}\n"
+# The session number a block is costed at before the served order fixes
+# it: three digits, so a block's cost is never below its rendered size.
+_COST_NUMBER = 999
 _UNIT_STAMP = re.compile(r"^\[[^\]]*\]\s*")
 TRIM_KEEP_WHOLE = 10
 # Reciprocal-rank fusion constant for `expand`, the value the engine's own
@@ -290,6 +310,44 @@ def _with_notes(content: str, notes: list[str]) -> str:
         if sep:
             return f"{head}\n{block}\n{rest}"
     return f"{block}\n{content}"
+
+
+def _rounds_by_session(
+    by_id: dict[str, Any], session_of: dict[str, str], seq: dict[str, int]
+) -> dict[str, list[str]]:
+    """Each session's rounds in source order, sessions in the order their
+    first round was written."""
+    out: dict[str, list[str]] = {}
+    for mid in sorted(seq, key=seq.__getitem__):
+        if mid in by_id:
+            out.setdefault(session_of.get(mid, ""), []).append(mid)
+    return out
+
+
+def session_block(number: int, entry: dict[str, Any]) -> str:
+    """One logged session as LongMemEval renders a retrieved session: its
+    date as `_fmt_ts` writes a source time (the dataset's own format) and
+    its messages as json.dumps renders them."""
+    return SESSION_BLOCK.format(
+        number, _fmt_ts(entry["ts"]) or "", "\n" + json.dumps(entry["messages"])
+    )
+
+
+def adjacent_sessions(log: list[dict[str, Any]], hit: list[int]) -> list[int]:
+    """Every session not in `hit`, nearest in time to a hit session first,
+    the later of two equally near first. With no hit session to be near,
+    the latest first."""
+    hit_ts = [log[n]["ts"] for n in hit if log[n]["ts"] is not None]
+    taken = set(hit)
+
+    def key(n: int) -> tuple[float, int, int]:
+        ts = log[n]["ts"]
+        if ts is None:
+            return (float("inf"), 0, n)
+        near = min((abs(ts - h) for h in hit_ts), default=0)
+        return (near, -ts, n)
+
+    return sorted((n for n in range(len(log)) if n not in taken), key=key)
 
 
 def query_terms(query: str) -> set[str]:
@@ -383,6 +441,21 @@ class MemoryService:
                                nearest the best-ranked hits first
              neighbors-recent  then pad what is still free with the most
                                recent rounds
+             tiered            unit S3's levers 1 and 2 (`_tiers`): the
+                               neighbors fill's rounds, in `order`, then
+                               the engine's further hits in rank order,
+                               then every other round, whole sessions
+                               nearest in time to a hit session first.
+                               The later tiers only follow, so the budget
+                               serves them into what the first leaves
+                               unused and nothing the first serves is
+                               displaced; a question whose words the
+                               evidence never uses no longer leaves the
+                               hits dry far under the budget
+             dry               the tiered fill's third tier after the
+                               first, and only when the first ran dry
+                               (the hits and their neighbors came to fewer
+                               than the pool): lever 2 alone
       order  rank              engine order
              chronological     source time, oldest first
              session           sessions in order of their best hit,
@@ -434,6 +507,33 @@ class MemoryService:
               keys-inline  the same, and each served round also carries its
                            own units, so a dated fact sits beside its
                            evidence instead of spending a separate budget
+
+    Sessions are the conversation-shaped serving of unit S3 (S plan v3,
+    memory 01M3JEGGAYJVF3X6T7SN7B767V): whole sessions in place of
+    trimmed rounds, in LongMemEval's own history format.
+
+      keep_sessions  Add also appends its messages to the store's session
+                     log (SESSION_LOG), which `unit="sessions"` serves from
+      unit     rounds    the rounds, as above
+               sessions  the engine ranks rounds; each Add's session is
+                         ranked by its best round among the first `serve`
+                         hits and served whole while it fits the budget
+                         (the first always, a session too long for what is
+                         left skipped for a later one that fits); the
+                         served sessions are then put in date order and
+                         rendered as SESSION_BLOCKs, which is what
+                         LongMemEval's flat-session retriever feeds its
+                         reader. `fill`, `order`, `trim` and `annotate`
+                         apply to rounds only
+      session_fill  none      only sessions the engine hit
+                    adjacent  when the hit sessions leave budget unused,
+                              fill it with whole unhit sessions nearest in
+                              time to a hit session, later ones first: a
+                              conversation's context lives around its hits,
+                              and a question whose words the evidence never
+                              uses leaves the hits dry far under the budget
+      rescue_expansion  passed to the engine's search (`search.search`'s
+                        opt-in rescue lane); off is the engine's default
     """
 
     def __init__(
@@ -460,7 +560,19 @@ class MemoryService:
         extractor: Extractor | None = None,
         expand: str = "none",
         expand_units: int = 100,
+        keep_sessions: bool = False,
+        unit: str = "rounds",
+        session_fill: str = "none",
+        rescue_expansion: bool = False,
     ) -> None:
+        if unit not in SERVE_UNITS:
+            raise ValueError(f"unit {unit!r}")
+        if session_fill not in SESSION_FILLS:
+            raise ValueError(f"session_fill {session_fill!r}")
+        self.keep_sessions = keep_sessions
+        self.unit = unit
+        self.session_fill = session_fill
+        self.rescue_expansion = rescue_expansion
         if units not in UNIT_SOURCES:
             raise ValueError(f"units {units!r}")
         if units == "claude" and extractor is None:
@@ -569,12 +681,40 @@ class MemoryService:
                 self._write_units(
                     us, messages, request_messages, spans, round_ids, merged_tail
                 )
+            if self.keep_sessions:
+                self._log_session(us, session_id, request_messages, round_ids)
             us.done_requests.add(request_id)
             us.save()
             us.memories = None
             us.unit_memories = None
+            us.sessions = None
             us.tokens = {}
             return n
+
+    def _log_session(
+        self,
+        us: _UserStore,
+        session_id: str,
+        messages: list[dict[str, Any]],
+        round_ids: list[str],
+    ) -> None:
+        """Append one Add to the session log: the messages as they arrived,
+        less the timestamp, which the entry carries once as the session's
+        (its first message's) source time."""
+        stamps = [m.get("timestamp") for m in messages]
+        ts = next((t for t in stamps if isinstance(t, (int, float))), None)
+        entry = {
+            "session_id": session_id,
+            "ts": int(ts) if ts is not None else None,
+            "round_ids": round_ids,
+            "messages": [
+                {k: v for k, v in m.items() if k != "timestamp"} for m in messages
+            ],
+        }
+        # ASCII-escaped, so no line break but the record's own can occur in
+        # it (U+2028 inside a message would split a line for splitlines)
+        with us.session_log.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
 
     def _write_units(
         self,
@@ -653,18 +793,24 @@ class MemoryService:
             else None
         )
         top_k = min(top_k, self.serve)
+        tiered = self.unit == "rounds" and self.fill in ("tiered", "dry")
         _adapter_call.tokens = tokens if self.cache_tokens else None
         try:
             hits = run_search(
                 memories,
                 query,
-                max_results=top_k,
+                # the later tiers need every hit; the engine ranks the same
+                # either way and only trims its list to max_results
+                max_results=len(memories) if tiered else top_k,
                 mode="hybrid",
                 conversational=self.conversational,
                 now=now,
+                rescue_expansion=self.rescue_expansion,
             )
         finally:
             _adapter_call.tokens = None
+        if self.unit == "sessions":
+            return self._serve_sessions(us, [(h.id, float(h.score)) for h in hits])
         by_id = {m.id: m for m in memories}
         chosen = [h.id for h in hits if h.id in by_id]
         scores = {h.id: float(h.score) for h in hits}
@@ -673,8 +819,13 @@ class MemoryService:
             chosen, scores, notes = self._expand(
                 us, query, now, tokens, chosen, by_id, top_k
             )
-        chosen = self._fill(chosen, top_k, by_id, event_ts, session_of, seq)
-        chosen = self._order(chosen, event_ts, session_of, seq)
+        if tiered:
+            chosen = self._tiers(
+                chosen, top_k, by_id, event_ts, session_of, seq, self.fill == "dry"
+            )
+        else:
+            chosen = self._fill(chosen, top_k, by_id, event_ts, session_of, seq)
+            chosen = self._order(chosen, event_ts, session_of, seq)
         latest = max(event_ts.values()) if event_ts else None
         terms = query_terms(query) if self.trim != "none" else set()
         out: list[dict[str, Any]] = []
@@ -714,6 +865,77 @@ class MemoryService:
         if sheet is not None and self.sheet_last:
             # nearest the question, where a reader weighs context most
             out.append(sheet)
+        return out
+
+    def _sessions(self, us: _UserStore) -> list[dict[str, Any]]:
+        with us.lock:
+            if us.sessions is None:
+                path = us.session_log
+                if not path.exists():
+                    raise ValueError(
+                        f"{us.root} has no session log; unit='sessions' serves "
+                        "stores written with keep_sessions=True"
+                    )
+                text = path.read_text(encoding="utf-8")
+                us.sessions = [json.loads(x) for x in text.split("\n") if x]
+            return us.sessions
+
+    def _serve_sessions(
+        self, us: _UserStore, ranked_rounds: list[tuple[str, float]]
+    ) -> list[dict[str, Any]]:
+        """Whole sessions for the engine's ranked rounds: see the class
+        docstring's `unit` and `session_fill`."""
+        log = self._sessions(us)
+        session_of = {rid: n for n, e in enumerate(log) for rid in e["round_ids"]}
+        ranked: list[int] = []
+        score: dict[int, float] = {}
+        for rid, s in ranked_rounds:
+            n = session_of.get(rid)
+            if n is not None and n not in score:
+                score[n] = s
+                ranked.append(n)
+        cost: dict[int, int] = {}
+
+        def size(n: int) -> int:
+            if n not in cost:
+                cost[n] = len(session_block(_COST_NUMBER, log[n]))
+            return cost[n]
+
+        chosen: list[int] = []
+        used = 0
+        candidates = list(ranked)
+        if self.session_fill == "adjacent":
+            candidates += adjacent_sessions(log, ranked)
+        for n in candidates:
+            if self.budget and chosen and used + size(n) > self.budget:
+                continue
+            chosen.append(n)
+            used += size(n)
+        # LongMemEval sorts the retrieved sessions by their date strings, a
+        # stable sort over the retrieval order; the minute-precision source
+        # time orders them the same way
+        chosen.sort(key=lambda n: log[n]["ts"] or 0)
+        out: list[dict[str, Any]] = []
+        for i, n in enumerate(chosen, start=1):
+            ts = log[n]["ts"]
+            out.append(
+                {
+                    "id": f"session:{n}",
+                    "session": log[n]["session_id"],
+                    "content": session_block(i, log[n]),
+                    "score": score.get(n, 0.0),
+                    "filled": n not in score,
+                    **(
+                        {
+                            "created_at": datetime.fromtimestamp(
+                                ts / 1000, tz=timezone.utc
+                            ).isoformat()
+                        }
+                        if ts is not None
+                        else {}
+                    ),
+                }
+            )
         return out
 
     def _units(self, us: _UserStore) -> tuple[list[Memory], dict[str, dict[str, Any]]]:
@@ -892,6 +1114,7 @@ class MemoryService:
                 if evicted is not None:
                     evicted.memories = None
                     evicted.unit_memories = None
+                    evicted.sessions = None
                     evicted.tokens = {}
 
     def _fill(
@@ -902,15 +1125,14 @@ class MemoryService:
         event_ts: dict[str, int],
         session_of: dict[str, str],
         seq: dict[str, int],
+        fill: str | None = None,
     ) -> list[str]:
-        if self.fill == "none" or len(chosen) >= top_k or not seq:
+        fill = fill or self.fill
+        if fill == "none" or len(chosen) >= top_k or not seq:
             return chosen
         taken = set(chosen)
         out = list(chosen)
-        order_in_session: dict[str, list[str]] = {}
-        for mid in sorted(seq, key=seq.__getitem__):
-            if mid in by_id:
-                order_in_session.setdefault(session_of.get(mid, ""), []).append(mid)
+        order_in_session = _rounds_by_session(by_id, session_of, seq)
         position = {
             mid: i
             for rounds in order_in_session.values()
@@ -935,7 +1157,7 @@ class MemoryService:
                             return out
             if not grew:
                 break
-        if self.fill == "neighbors-recent":
+        if fill == "neighbors-recent":
             rest = sorted(
                 (mid for mid in by_id if mid not in taken),
                 key=lambda mid: (event_ts.get(mid, 0), seq.get(mid, 0)),
@@ -943,6 +1165,52 @@ class MemoryService:
             )
             out.extend(rest[: top_k - len(out)])
         return out
+
+    def _tiers(
+        self,
+        ranked: list[str],
+        top_k: int,
+        by_id: dict[str, Memory],
+        event_ts: dict[str, int],
+        session_of: dict[str, str],
+        seq: dict[str, int],
+        dry_only: bool = False,
+    ) -> list[str]:
+        """The tiered fill's served order over every round of the store.
+
+        Tier 1 is exactly what the neighbors fill serves: the first `top_k`
+        hits padded with their neighbors to `top_k` rounds, in `order`.
+        Tier 2 is the engine's further hits in rank order: a pool that
+        filled before the budget did stops cutting evidence the engine
+        ranked (lever 1). Tier 3 is every other round, the hit sessions'
+        first, then whole unhit sessions nearest in time to a hit session,
+        the later of two equally near first: a conversation's context lives
+        around its hits (lever 2). A round later tiers bring is never put
+        in an earlier tier's session group, so the budget cannot spend on
+        it what tier 1 would have served. With `dry_only` tier 2 is left
+        out, and tier 3 follows only when tier 1 ran dry: its hits and
+        their neighbors came to fewer than `top_k` rounds."""
+        first = self._fill(
+            ranked[:top_k], top_k, by_id, event_ts, session_of, seq, "neighbors"
+        )
+        tier1 = self._order(first, event_ts, session_of, seq)
+        if dry_only and len(first) >= top_k:
+            return tier1
+        taken = set(tier1)
+        tier2 = [] if dry_only else [mid for mid in ranked[top_k:] if mid not in taken]
+        taken.update(tier2)
+        rounds = _rounds_by_session(by_id, session_of, seq)
+        names = list(rounds)
+        hit = {session_of.get(mid, "") for mid in ranked}
+        hit_n = [n for n, s in enumerate(names) if s in hit]
+        log = [{"ts": event_ts.get(rounds[s][0])} for s in names]
+        tier3 = [
+            mid
+            for n in hit_n + adjacent_sessions(log, hit_n)
+            for mid in rounds[names[n]]
+            if mid not in taken
+        ]
+        return tier1 + tier2 + tier3
 
     def _order(
         self,
