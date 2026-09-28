@@ -187,7 +187,10 @@ def capture(cwd: Path | None = None, *, source: str | None = None) -> Origin:
     same before and after them, which a HEAD moved away and back while
     they ran does not (git rewrote HEAD). A first probe that ran and
     exited non-zero is an answer, "not a repository", and is kept for the
-    lifetime like any other.
+    lifetime like any other. The lifetime is ten minutes, so what the
+    signature does not see (a remote changed outside the repository's
+    config file, among the rest `ORIGIN_CACHE_SECONDS` lists) can be
+    answered from a capture up to ten minutes old.
     """
     if cwd is None:
         declared = identity.workspace_declaration()
@@ -274,8 +277,22 @@ def capture(cwd: Path | None = None, *, source: str | None = None) -> Origin:
 # ---------------------------------------------------------------------------
 
 #: How long a capture answers for its directory, in seconds from the moment
-#: it began.
-ORIGIN_CACHE_SECONDS = 2.0
+#: it began: ten minutes, so a session-start hook that fires alone, long
+#: after the burst of calls before it, reuses the capture instead of paying
+#: the four probes. Every lookup still checks the directory's
+#: `githead.signature`, so a branch switch, a commit, a remote set in the
+#: repository's config, a repository created or removed on the path or a
+#: change to GIT_DIR, GIT_WORK_TREE or GIT_CEILING_DIRECTORIES is answered
+#: on the next call as before. The cost is what the signature does not
+#: see, which is now served for up to ten minutes where it was served for
+#: two seconds: a remote or its URL changed outside the repository's config
+#: file (a `url.<base>.insteadOf` rule in the global config, a legacy
+#: `.git/remotes` or `.git/branches` file, a file an `include.path` names),
+#: a tag created with the checked-out branch's name (the branch then reads
+#: `heads/<name>`), whether git can run, and a capture whose first probe
+#: ran and exited non-zero, kept as "not a repository" after a failure that
+#: clears on its own.
+ORIGIN_CACHE_SECONDS = 600.0
 
 # The most directories the cache holds; past it the oldest capture goes.
 _ORIGIN_CACHE_CAP = 256
@@ -310,12 +327,12 @@ class _OriginEntry:
 # settle what git would find, the signature equals no other and every
 # capture asks git. What the signature does not see (whether git can run,
 # configuration outside the repository's config file, a tag named like the
-# checked-out branch) holds for at most the lifetime, and so does a capture
-# whose first probe ran and exited non-zero: `_probe_worktree_root` reads
-# that exit as "not a repository", an answer, and a failure that clears
-# (an unreadable file, a lock) exits non-zero as well. Keyed by directory,
-# never by process. The lock serialises the store, the eviction and the
-# clear; a lookup is one dict read.
+# checked-out branch) holds for at most the lifetime, ten minutes, and so
+# does a capture whose first probe ran and exited non-zero:
+# `_probe_worktree_root` reads that exit as "not a repository", an answer,
+# and a failure that clears (an unreadable file, a lock) exits non-zero as
+# well. Keyed by directory, never by process. The lock serialises the
+# store, the eviction and the clear; a lookup is one dict read.
 _ORIGIN_CACHE: dict[str, _OriginEntry] = {}
 _ORIGIN_CACHE_LOCK = threading.Lock()
 

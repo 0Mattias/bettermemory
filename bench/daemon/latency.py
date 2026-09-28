@@ -10,10 +10,14 @@ Phase 1's P5 in numbers, each with its method:
   hook_service       the same endpoint called from a warm client in this
                      process (`_daemon_client.post`), so the daemon's own
                      answer time without the interpreter's start.
-  hook_service_cold  hook_service with the daemon's origin cache expired
-                     before each call: N_cold calls (default 10), each after
-                     sleeping ORIGIN_CACHE_SECONDS plus 0.2 s, so every call
-                     pays the origin probes.
+  hook_service_cold  hook_service after an idle gap: N_cold calls (default
+                     10), each after sleeping a fixed COLD_IDLE_SECONDS (2.2
+                     s) with nothing else sent to the daemon, the shape of a
+                     session-start hook firing alone. The gap is fixed, not
+                     tied to ORIGIN_CACHE_SECONDS: at 9.0.0's ten minutes the
+                     origin capture outlives it and is reused, where under
+                     the two-second lifetime the call paid the four probes.
+                     Both numbers are written into the artifact.
   shim_search        memory_search through one stdio shim process (the SDK
                      client speaking stdio to `bettermemory`, which forwards
                      to the daemon); N queries, p50 and p95 per call, measured
@@ -65,9 +69,10 @@ ROOT = Path(__file__).resolve().parents[2]
 QUESTIONS = ROOT / "bench" / "retrieval" / "questions.jsonl"
 PYTHON = sys.executable
 
-# How far past the origin cache's lifetime `hook_service_cold` sleeps
-# before each call.
-COLD_MARGIN_SECONDS = 0.2
+# The idle gap `hook_service_cold` sleeps before each call: a lone hook
+# call after the daemon and the machine sat idle. Fixed, so the number
+# measures the same thing whatever the origin cache's lifetime is.
+COLD_IDLE_SECONDS = 2.2
 
 
 def _pct(values: list[float], pct: float) -> float:
@@ -277,12 +282,10 @@ def hook_service(scratch: Path, n: int, cwd: Path) -> list[float]:
 
 
 def hook_service_cold(scratch: Path, n: int, cwd: Path) -> list[float]:
-    """`hook_service` with the origin cache expired before every call: the
-    same endpoint from the same warm client, each call after sleeping
-    ORIGIN_CACHE_SECONDS plus COLD_MARGIN_SECONDS, so each call pays the
-    probes `origin.capture` runs."""
+    """`hook_service` for a lone call: the same endpoint from the same warm
+    client, each call after sleeping COLD_IDLE_SECONDS with nothing else
+    sent to the daemon."""
     from bettermemory._daemon_client import post, read_state
-    from bettermemory.origin import ORIGIN_CACHE_SECONDS
 
     state = read_state(scratch / "state", scratch / "store" / "memory.sqlite")
     if state is None:
@@ -290,7 +293,7 @@ def hook_service_cold(scratch: Path, n: int, cwd: Path) -> list[float]:
     payload = {"cwd": str(cwd)}
     times: list[float] = []
     for _ in range(n):
-        time.sleep(ORIGIN_CACHE_SECONDS + COLD_MARGIN_SECONDS)
+        time.sleep(COLD_IDLE_SECONDS)
         started = time.perf_counter()
         post(
             state["port"],
@@ -409,11 +412,18 @@ def main() -> None:
             "hook_wall": "subprocess.run of `python -m bettermemory hook session-start`, wall time",
             "hook_service": "_daemon_client.post to /api/v1/hook/session-start from a warm client",
             "cold_n": args.cold_n,
+            "cold_idle_seconds": COLD_IDLE_SECONDS,
+            "origin_cache_seconds": ORIGIN_CACHE_SECONDS,
             "hook_service_cold": (
                 "_daemon_client.post to /api/v1/hook/session-start from a warm client, "
-                f"each of cold_n calls after sleeping ORIGIN_CACHE_SECONDS ({ORIGIN_CACHE_SECONDS} s) "
-                f"plus {COLD_MARGIN_SECONDS} s, so the origin cache has expired and the call "
-                "pays the origin probes"
+                f"each of cold_n calls after a fixed idle gap of {COLD_IDLE_SECONDS} s "
+                "with nothing else sent to the daemon: a lone session-start hook. "
+                f"ORIGIN_CACHE_SECONDS is {ORIGIN_CACHE_SECONDS} s, so the call "
+                + (
+                    "reuses the origin capture"
+                    if ORIGIN_CACHE_SECONDS > COLD_IDLE_SECONDS
+                    else "pays the origin probes"
+                )
             ),
             "shim_search": (
                 "one stdio shim process, SDK ClientSession.call_tool memory_search, "

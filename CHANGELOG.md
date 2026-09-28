@@ -66,12 +66,17 @@ surfaces leave with them. An 8.x directory is imported once by
   used to.
 - **`exclude_scopes` on `memory_search`**: the scopes to drop, applied
   before ranking like the session's disabled set.
-- **The warm daemon's caches.** Memoisations that keep every answer
-  bit-identical and remove the git processes, the re-tokenising and the
-  log scans a warm `memory_search` paid: the origin captured per
-  directory for two seconds, validated on every lookup against the
-  repository's HEAD bytes, config stat and environment
-  (`origin.capture`); the commit-drift work keyed on the repository
+- **The warm daemon's caches.** Memoisations that remove the git
+  processes, the re-tokenising and the log scans a warm `memory_search`
+  paid. Each answers as the uncached code does for the inputs it is
+  keyed on, and names beside it what its key does not see. They are: the
+  origin captured per directory for ten minutes, validated on every
+  lookup against the repository's HEAD bytes, config stat and
+  environment (`origin.capture`), so a lone session-start hook reuses
+  it, while a remote changed outside the repository's config file (a
+  global `url.<base>.insteadOf`, a legacy `.git/remotes` file, an
+  included file) is read from the capture for up to those ten minutes;
+  the commit-drift work keyed on the repository
   root and the commit HEAD names, read from the repository files by
   `githead.py` without a git process, with the whole-history author
   dates per head and the per-hit resolution per head, anchors, claims
@@ -96,8 +101,8 @@ surfaces leave with them. An 8.x directory is imported once by
   `.gitmodules` and, where the working tree has none, the index, whose
   copy git reads then. A config keeps governed hits out of the memo only
   where it sets `log.follow`. `_caches.clear_all` empties every cache
-  and the test suite calls it before each test. The numbers are in
-  `docs/eval-results.md` under Daemon latency.
+  and the test suite calls it before each test. The phase 1 gate's
+  numbers are in `bench/daemon/results/latency-9.0.0-2026-09-26-u6.json`.
   (`src/bettermemory/githead.py`, `src/bettermemory/_caches.py`)
 - `bench/toolcost` records the served `instructions` block beside the
   descriptions and schemas (`instructions_bytes`, `instructions_chars`,

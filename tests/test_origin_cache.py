@@ -160,8 +160,62 @@ def _uncached(directory: Path, **kwargs: Any) -> Origin:
 # ---------------------------------------------------------------------------
 
 
-def test_the_lifetime_is_two_seconds() -> None:
-    assert origin.ORIGIN_CACHE_SECONDS == 2.0
+def test_the_lifetime_is_ten_minutes() -> None:
+    assert origin.ORIGIN_CACHE_SECONDS == 600.0
+
+
+@posix_only
+def test_a_capture_after_a_lone_hooks_idle_gap_runs_no_git(
+    tmp_path: Path, probes: list[tuple[str, ...]], clock: _Clock
+) -> None:
+    """A session-start hook fires alone, seconds or minutes after the
+    capture before it: 2.2 s is the idle gap bench/daemon/latency.py
+    measures a lone call after, and ten minutes less a millisecond the
+    last instant the capture answers. Both run no git and answer as the
+    uncached capture; at ten minutes the probes run again."""
+    repo = _repo(tmp_path / "repo")
+    began = clock.now
+    first = capture(repo)
+    for gap in (2.2, origin.ORIGIN_CACHE_SECONDS - 0.001):
+        probes.clear()
+        clock.now = began + gap
+        got = capture(repo)
+        assert probes == [], gap
+        _same(got, first)
+        _same(got, _uncached(repo))
+    probes.clear()
+    clock.now = began + origin.ORIGIN_CACHE_SECONDS
+    _same(capture(repo), first)
+    assert probes == _PROBES
+
+
+@posix_only
+def test_a_lone_session_start_block_after_idle_reuses_the_capture(
+    tmp_path: Path, probes: list[tuple[str, ...]], clock: _Clock
+) -> None:
+    """The daemon's session-start endpoint builds its block with
+    `hook.session_start_block`, which captures the caller's origin. Two
+    session starts 2.2 s apart, the shape of a session-start firing alone,
+    run the four probes once, and read the same block."""
+    from bettermemory import hook
+    from bettermemory.store import Store
+
+    repo = _repo(tmp_path / "repo")
+    with Store(tmp_path / "store") as store:
+        store.write(
+            content="the release checklist lives in docs",
+            scopes=["tools"],
+            origin=capture(repo),
+        )
+        _caches.clear_all()
+        probes.clear()
+        first = hook.session_start_block(store, cwd=repo)
+        assert probes == _PROBES
+        assert first[0] is not None
+        probes.clear()
+        clock.advance(2.2)
+        assert hook.session_start_block(store, cwd=repo) == first
+        assert probes == []
 
 
 @posix_only
