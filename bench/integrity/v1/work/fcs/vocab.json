@@ -1,0 +1,228 @@
+{
+ "frames": [
+  {
+   "id": "fcs.t01",
+   "kind": "supersession",
+   "subject": "Claims intake OCR",
+   "attribute": "processing host",
+   "value_type": "hostname",
+   "candidates": [
+    "fcs-lens-harrier.invalid",
+    "fcs-lens-kestrel.invalid",
+    "fcs-lens-curlew.invalid",
+    "fcs-lens-osprey.invalid",
+    "fcs-lens-sanderling.invalid"
+   ]
+  },
+  {
+   "id": "fcs.t02",
+   "kind": "supersession",
+   "subject": "Policy issuance service",
+   "attribute": "event queue",
+   "value_type": "queue name",
+   "candidates": [
+    "fcs-issue-cedar",
+    "fcs-issue-flint",
+    "fcs-issue-marsh",
+    "fcs-issue-thistle",
+    "fcs-issue-quartz"
+   ]
+  },
+  {
+   "id": "fcs.t03",
+   "kind": "supersession",
+   "subject": "Actuarial nightly batch",
+   "attribute": "scheduled start time",
+   "value_type": "time with zone",
+   "candidates": [
+    "01:17 UTC",
+    "02:23 UTC",
+    "03:41 UTC",
+    "04:09 UTC",
+    "05:32 UTC"
+   ]
+  },
+  {
+   "id": "fcs.t04",
+   "kind": "supersession",
+   "subject": "Repair payout exports",
+   "attribute": "destination bucket",
+   "value_type": "bucket name",
+   "candidates": [
+    "fcs-payout-amber",
+    "fcs-payout-basalt",
+    "fcs-payout-copper",
+    "fcs-payout-juniper",
+    "fcs-payout-slate"
+   ]
+  },
+  {
+   "id": "fcs.t05",
+   "kind": "supersession",
+   "subject": "Fraud scoring gateway",
+   "attribute": "ruleset version",
+   "value_type": "version string",
+   "candidates": [
+    "fcs-fraud-r7.4.2",
+    "fcs-fraud-r8.1.6",
+    "fcs-fraud-r9.3.5",
+    "fcs-fraud-r10.2.8",
+    "fcs-fraud-r11.6.3"
+   ]
+  },
+  {
+   "id": "fcs.t06",
+   "kind": "supersession",
+   "subject": "Claims evidence archive",
+   "attribute": "retention period",
+   "value_type": "duration",
+   "candidates": [
+    "97 days",
+    "127 days",
+    "187 days",
+    "367 days",
+    "547 days"
+   ]
+  },
+  {
+   "id": "fcs.t07",
+   "kind": "supersession",
+   "subject": "Repair shop settlement",
+   "attribute": "payment rail",
+   "value_type": "rail identifier",
+   "candidates": [
+    "fcs-rail-cinder",
+    "fcs-rail-delta",
+    "fcs-rail-fir",
+    "fcs-rail-lagoon",
+    "fcs-rail-topaz"
+   ]
+  },
+  {
+   "id": "fcs.t08",
+   "kind": "supersession",
+   "subject": "OCR review console",
+   "attribute": "operations dashboard",
+   "value_type": "dashboard name",
+   "candidates": [
+    "fcs-review-atlas",
+    "fcs-review-birch",
+    "fcs-review-comet",
+    "fcs-review-heron",
+    "fcs-review-mica"
+   ]
+  },
+  {
+   "id": "fcs.t09",
+   "kind": "supersession",
+   "subject": "Claims intake router",
+   "attribute": "deployment region",
+   "value_type": "region identifier",
+   "candidates": [
+    "fcs-vale-north-1",
+    "fcs-vale-east-2",
+    "fcs-vale-south-3",
+    "fcs-vale-west-4",
+    "fcs-vale-central-5"
+   ]
+  },
+  {
+   "id": "fcs.t10",
+   "kind": "supersession",
+   "subject": "Fraud alert publisher",
+   "attribute": "notification channel",
+   "value_type": "channel name",
+   "candidates": [
+    "fcs-alert-brook",
+    "fcs-alert-cairn",
+    "fcs-alert-drift",
+    "fcs-alert-grove",
+    "fcs-alert-ridge"
+   ]
+  },
+  {
+   "id": "fcs.t11",
+   "kind": "distractor",
+   "subject": "Claims adjudication API",
+   "attribute": "signing key alias",
+   "value_type": "key alias",
+   "candidates": [
+    "fcs-adjud-acorn",
+    "fcs-adjud-falcon",
+    "fcs-adjud-lichen",
+    "fcs-adjud-pebble",
+    "fcs-adjud-willow"
+   ]
+  },
+  {
+   "id": "fcs.t12",
+   "kind": "distractor",
+   "subject": "Policy quote calculator",
+   "attribute": "rounding profile",
+   "value_type": "profile name",
+   "candidates": [
+    "fcs-quote-apricot",
+    "fcs-quote-dune",
+    "fcs-quote-elm",
+    "fcs-quote-orchid",
+    "fcs-quote-tundra"
+   ]
+  },
+  {
+   "id": "fcs.t13",
+   "kind": "distractor",
+   "subject": "Actuarial reserve ledger",
+   "attribute": "reconciliation tool",
+   "value_type": "tool name",
+   "candidates": [
+    "fcs-reserve-anvil",
+    "fcs-reserve-beacon",
+    "fcs-reserve-cobalt",
+    "fcs-reserve-hollow",
+    "fcs-reserve-pinion"
+   ]
+  },
+  {
+   "id": "fcs.t14",
+   "kind": "reversion",
+   "subject": "Workshop invoice matcher",
+   "attribute": "input schema",
+   "value_type": "schema version",
+   "candidates": [
+    "fcs-invoice-s3.2",
+    "fcs-invoice-s4.5",
+    "fcs-invoice-s5.1",
+    "fcs-invoice-s6.7",
+    "fcs-invoice-s7.3"
+   ]
+  },
+  {
+   "id": "fcs.t15",
+   "kind": "reversion",
+   "subject": "Claims document store",
+   "attribute": "replica host",
+   "value_type": "hostname",
+   "candidates": [
+    "fcs-copy-ibis.invalid",
+    "fcs-copy-tern.invalid",
+    "fcs-copy-auk.invalid",
+    "fcs-copy-lark.invalid",
+    "fcs-copy-pipit.invalid"
+   ]
+  },
+  {
+   "id": "fcs.t16",
+   "kind": "reversion",
+   "subject": "Repair remittance job",
+   "attribute": "daily settlement cutoff",
+   "value_type": "time with zone",
+   "candidates": [
+    "14:12 UTC",
+    "15:26 UTC",
+    "16:38 UTC",
+    "17:43 UTC",
+    "18:54 UTC"
+   ]
+  }
+ ]
+}

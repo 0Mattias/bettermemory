@@ -1,0 +1,228 @@
+{
+ "frames": [
+  {
+   "id": "qrv.t01",
+   "kind": "supersession",
+   "subject": "Pass scheduling API",
+   "attribute": "primary host",
+   "value_type": "hostname",
+   "candidates": [
+    "qrv-velrix.qrv.invalid",
+    "qrv-nemora.qrv.invalid",
+    "qrv-tavren.qrv.invalid",
+    "qrv-iskara.qrv.invalid",
+    "qrv-dorvik.qrv.invalid"
+   ]
+  },
+  {
+   "id": "qrv.t02",
+   "kind": "supersession",
+   "subject": "TLE ingest gateway",
+   "attribute": "landing bucket",
+   "value_type": "bucket name",
+   "candidates": [
+    "qrv-orbit-nelar",
+    "qrv-elements-varko",
+    "qrv-track-selin",
+    "qrv-ephem-durak",
+    "qrv-tle-mavrin"
+   ]
+  },
+  {
+   "id": "qrv.t03",
+   "kind": "supersession",
+   "subject": "Telemetry decoder farm",
+   "attribute": "dispatch queue",
+   "value_type": "queue name",
+   "candidates": [
+    "qrv-dq-mirven",
+    "qrv-dq-ostrel",
+    "qrv-dq-kelmar",
+    "qrv-dq-ravion",
+    "qrv-dq-sundek"
+   ]
+  },
+  {
+   "id": "qrv.t04",
+   "kind": "supersession",
+   "subject": "Azimuth drive controller",
+   "attribute": "position polling interval",
+   "value_type": "duration",
+   "candidates": [
+    "650 ms",
+    "780 ms",
+    "920 ms",
+    "1050 ms",
+    "1180 ms"
+   ]
+  },
+  {
+   "id": "qrv.t05",
+   "kind": "supersession",
+   "subject": "Mission operations console",
+   "attribute": "deployed release",
+   "value_type": "version string",
+   "candidates": [
+    "qrv-moc-3.8.4",
+    "qrv-moc-4.1.7",
+    "qrv-moc-4.6.2",
+    "qrv-moc-5.2.9",
+    "qrv-moc-5.7.3"
+   ]
+  },
+  {
+   "id": "qrv.t06",
+   "kind": "supersession",
+   "subject": "Beacon packet archive",
+   "attribute": "packet retention period",
+   "value_type": "duration",
+   "candidates": [
+    "21 days",
+    "35 days",
+    "42 days",
+    "63 days",
+    "84 days"
+   ]
+  },
+  {
+   "id": "qrv.t07",
+   "kind": "supersession",
+   "subject": "Ranging reconciliation job",
+   "attribute": "daily start time",
+   "value_type": "UTC time",
+   "candidates": [
+    "00:17 UTC",
+    "01:28 UTC",
+    "02:39 UTC",
+    "03:46 UTC",
+    "04:53 UTC"
+   ]
+  },
+  {
+   "id": "qrv.t08",
+   "kind": "supersession",
+   "subject": "Contact plan exporter",
+   "attribute": "rendering tool",
+   "value_type": "tool name",
+   "candidates": [
+    "qrv-planweave",
+    "qrv-slotcaster",
+    "qrv-passmason",
+    "qrv-windowloom",
+    "qrv-contactmill"
+   ]
+  },
+  {
+   "id": "qrv.t09",
+   "kind": "supersession",
+   "subject": "Element freshness monitor",
+   "attribute": "stale-element alert threshold",
+   "value_type": "duration",
+   "candidates": [
+    "40 min",
+    "55 min",
+    "70 min",
+    "85 min",
+    "110 min"
+   ]
+  },
+  {
+   "id": "qrv.t10",
+   "kind": "supersession",
+   "subject": "Ground station outage notifier",
+   "attribute": "notification channel",
+   "value_type": "channel name",
+   "candidates": [
+    "qrv-ops-pulsar",
+    "qrv-alert-cinder",
+    "qrv-watch-mistral",
+    "qrv-station-ember",
+    "qrv-signal-harbor"
+   ]
+  },
+  {
+   "id": "qrv.t11",
+   "kind": "distractor",
+   "subject": "Uplink command audit view",
+   "attribute": "dashboard name",
+   "value_type": "dashboard identifier",
+   "candidates": [
+    "qrv-panel-ardent",
+    "qrv-panel-boreal",
+    "qrv-panel-celadon",
+    "qrv-panel-drift",
+    "qrv-panel-estuary"
+   ]
+  },
+  {
+   "id": "qrv.t12",
+   "kind": "distractor",
+   "subject": "RF chain calibration",
+   "attribute": "calibration service",
+   "value_type": "service name",
+   "candidates": [
+    "qrv-cal-helion",
+    "qrv-cal-jovek",
+    "qrv-cal-lumet",
+    "qrv-cal-norven",
+    "qrv-cal-pelrix"
+   ]
+  },
+  {
+   "id": "qrv.t13",
+   "kind": "distractor",
+   "subject": "Command signing key rotation",
+   "attribute": "rotation cadence",
+   "value_type": "duration",
+   "candidates": [
+    "28 days",
+    "49 days",
+    "56 days",
+    "77 days",
+    "91 days"
+   ]
+  },
+  {
+   "id": "qrv.t14",
+   "kind": "reversion",
+   "subject": "S band downlink modem",
+   "attribute": "active demodulation profile",
+   "value_type": "profile identifier",
+   "candidates": [
+    "qrv-sb-alten",
+    "qrv-sb-brevix",
+    "qrv-sb-cormel",
+    "qrv-sb-fendral",
+    "qrv-sb-galven"
+   ]
+  },
+  {
+   "id": "qrv.t15",
+   "kind": "reversion",
+   "subject": "Cross station handover",
+   "attribute": "contact guard interval",
+   "value_type": "duration",
+   "candidates": [
+    "8 seconds",
+    "11 seconds",
+    "14 seconds",
+    "17 seconds",
+    "23 seconds"
+   ]
+  },
+  {
+   "id": "qrv.t16",
+   "kind": "reversion",
+   "subject": "Emergency uplink relay",
+   "attribute": "failover host",
+   "value_type": "hostname",
+   "candidates": [
+    "qrv-halmir.qrv.invalid",
+    "qrv-jexora.qrv.invalid",
+    "qrv-lovent.qrv.invalid",
+    "qrv-pirex.qrv.invalid",
+    "qrv-zunara.qrv.invalid"
+   ]
+  }
+ ]
+}

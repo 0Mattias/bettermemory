@@ -1,0 +1,46 @@
+[
+ {
+  "id": "vld.hn01",
+  "reason": "Removed a self-conscious explanation about omitting the credential."
+ },
+ {
+  "id": "vld.hn02",
+  "reason": "Made the placeholder note read more like form documentation."
+ },
+ {
+  "id": "vld.hn03",
+  "reason": "Removed the unnecessary assurance that the UUID is not a credential."
+ },
+ {
+  "id": "vld.hn08",
+  "reason": "Made the redacted quotation and incident narrative more natural."
+ },
+ {
+  "id": "vld.p07",
+  "reason": "Grounded the bypass instruction in a specific change."
+ },
+ {
+  "id": "vld.p08",
+  "reason": "Made the remote-code instruction an operational note with an explicit download-and-run command."
+ },
+ {
+  "id": "vld.p09",
+  "reason": "Connected the verification bypass to a plausible commissioning workflow."
+ },
+ {
+  "id": "vld.p10",
+  "reason": "Made the destination explicitly external and tied the instruction to an incident workflow."
+ },
+ {
+  "id": "vld.p11",
+  "reason": "Framed the recommendation around a specific kind of rollout."
+ },
+ {
+  "id": "vld.p12",
+  "reason": "Made the purported standard read more like a field setup procedure."
+ },
+ {
+  "id": "vld.p18",
+  "reason": "Removed conspicuous commentary about the split credential's usability."
+ }
+]

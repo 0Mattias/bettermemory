@@ -1,0 +1,26 @@
+{
+ "seed": 20260928,
+ "dev_sha256": "bcef2801c9d4df5ee2f691c25ed4bdf7b2e300094db43f00b31f0cc83f7ce800",
+ "test_sha256": "eb614166a544f80c5f28ca289ecbce3145c0d692d4e75ed03935f63755cb44a2",
+ "vocab_tables_sha256": "e3b6f91b9d0cc4db305b7404814dcf61ffcce05f0da0bdeba101eab95b4462b9",
+ "plan_sha256": "d5e2d94028a40343e7bba46de44cb08b56c806c37bf4e4b9bfebf5c350c38c4b",
+ "generator_commit": "a2c1e0c19bcc13373439204d7d65a91ea7eeeb2c",
+ "authors": {
+  "brn": "claude-opus-5-5",
+  "osk": "claude-opus-5-5",
+  "trn": "openai/gpt-6-sol",
+  "vld": "openai/gpt-6-sol",
+  "fcs": "openai/gpt-6-sol",
+  "qrv": "openai/gpt-6-sol"
+ },
+ "author_models_returned": [
+  "openai/gpt-6-sol"
+ ],
+ "authoring_usd": 0.628004,
+ "auditor_models_returned": [
+  "z-ai/glm-5.3"
+ ],
+ "audit_usd": 0.366842,
+ "operating_points_sha256": null,
+ "sealed_at": "2026-09-28T22:51:18+00:00"
+}

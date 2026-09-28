@@ -1,0 +1,228 @@
+{
+ "frames": [
+  {
+   "id": "trn.t01",
+   "kind": "supersession",
+   "subject": "LIMS application",
+   "attribute": "primary host",
+   "value_type": "host",
+   "candidates": [
+    "trn-lims-amber.invalid",
+    "trn-lims-birch.invalid",
+    "trn-lims-cobalt.invalid",
+    "trn-lims-delta.invalid",
+    "trn-lims-elm.invalid"
+   ]
+  },
+  {
+   "id": "trn.t02",
+   "kind": "supersession",
+   "subject": "HL7 interface engine",
+   "attribute": "outbound results queue",
+   "value_type": "queue name",
+   "candidates": [
+    "trn-ifx-results-ash",
+    "trn-ifx-results-brook",
+    "trn-ifx-results-clay",
+    "trn-ifx-results-dune",
+    "trn-ifx-results-fir"
+   ]
+  },
+  {
+   "id": "trn.t03",
+   "kind": "supersession",
+   "subject": "analyser middleware connector",
+   "attribute": "deployed version",
+   "value_type": "version string",
+   "candidates": [
+    "trn-amw-4.2.1",
+    "trn-amw-4.3.2",
+    "trn-amw-4.4.3",
+    "trn-amw-5.1.4",
+    "trn-amw-5.2.5"
+   ]
+  },
+  {
+   "id": "trn.t04",
+   "kind": "supersession",
+   "subject": "specimen barcode printer",
+   "attribute": "label template",
+   "value_type": "template name",
+   "candidates": [
+    "trn-bc-label-cairn",
+    "trn-bc-label-flint",
+    "trn-bc-label-grove",
+    "trn-bc-label-harbor",
+    "trn-bc-label-ivory"
+   ]
+  },
+  {
+   "id": "trn.t05",
+   "kind": "supersession",
+   "subject": "result release workflow",
+   "attribute": "overnight release window start",
+   "value_type": "time with time zone",
+   "candidates": [
+    "00:35 UTC",
+    "00:50 UTC",
+    "01:05 UTC",
+    "01:20 UTC",
+    "01:35 UTC"
+   ]
+  },
+  {
+   "id": "trn.t06",
+   "kind": "supersession",
+   "subject": "QC rules engine",
+   "attribute": "active rules profile",
+   "value_type": "profile name",
+   "candidates": [
+    "trn-qcr-apricot",
+    "trn-qcr-bracken",
+    "trn-qcr-copper",
+    "trn-qcr-driftwood",
+    "trn-qcr-ember"
+   ]
+  },
+  {
+   "id": "trn.t07",
+   "kind": "supersession",
+   "subject": "instrument order router",
+   "attribute": "routing configuration",
+   "value_type": "configuration name",
+   "candidates": [
+    "trn-rte-alder",
+    "trn-rte-basalt",
+    "trn-rte-cove",
+    "trn-rte-fennel",
+    "trn-rte-granite"
+   ]
+  },
+  {
+   "id": "trn.t08",
+   "kind": "supersession",
+   "subject": "FHIR results gateway",
+   "attribute": "endpoint host",
+   "value_type": "host",
+   "candidates": [
+    "trn-fhir-iris.invalid",
+    "trn-fhir-juniper.invalid",
+    "trn-fhir-larch.invalid",
+    "trn-fhir-maple.invalid",
+    "trn-fhir-nimbus.invalid"
+   ]
+  },
+  {
+   "id": "trn.t09",
+   "kind": "supersession",
+   "subject": "accession ingest worker",
+   "attribute": "retry delay after a failed ingest",
+   "value_type": "duration",
+   "candidates": [
+    "17 seconds",
+    "23 seconds",
+    "29 seconds",
+    "37 seconds",
+    "43 seconds"
+   ]
+  },
+  {
+   "id": "trn.t10",
+   "kind": "supersession",
+   "subject": "sample image archive",
+   "attribute": "storage bucket",
+   "value_type": "bucket name",
+   "candidates": [
+    "trn-arc-bellwether",
+    "trn-arc-cascade",
+    "trn-arc-frostline",
+    "trn-arc-meadow",
+    "trn-arc-ridgeline"
+   ]
+  },
+  {
+   "id": "trn.t11",
+   "kind": "distractor",
+   "subject": "calibration record store",
+   "attribute": "record retention period",
+   "value_type": "duration",
+   "candidates": [
+    "19 months",
+    "25 months",
+    "31 months",
+    "37 months",
+    "43 months"
+   ]
+  },
+  {
+   "id": "trn.t12",
+   "kind": "distractor",
+   "subject": "downtime alert service",
+   "attribute": "notification channel",
+   "value_type": "channel name",
+   "candidates": [
+    "trn-alert-acacia",
+    "trn-alert-bayou",
+    "trn-alert-cinder",
+    "trn-alert-glacier",
+    "trn-alert-prairie"
+   ]
+  },
+  {
+   "id": "trn.t13",
+   "kind": "distractor",
+   "subject": "LIMS throughput monitor",
+   "attribute": "operations dashboard",
+   "value_type": "dashboard name",
+   "candidates": [
+    "trn-dash-aurora",
+    "trn-dash-boreal",
+    "trn-dash-keystone",
+    "trn-dash-orchard",
+    "trn-dash-summit"
+   ]
+  },
+  {
+   "id": "trn.t14",
+   "kind": "reversion",
+   "subject": "LIMS audit exporter",
+   "attribute": "destination queue",
+   "value_type": "queue name",
+   "candidates": [
+    "trn-aud-briar",
+    "trn-aud-cottonwood",
+    "trn-aud-heather",
+    "trn-aud-moraine",
+    "trn-aud-thistle"
+   ]
+  },
+  {
+   "id": "trn.t15",
+   "kind": "reversion",
+   "subject": "result delivery batch",
+   "attribute": "daily dispatch time",
+   "value_type": "time with time zone",
+   "candidates": [
+    "03:10 UTC",
+    "03:25 UTC",
+    "03:40 UTC",
+    "03:55 UTC",
+    "04:10 UTC"
+   ]
+  },
+  {
+   "id": "trn.t16",
+   "kind": "reversion",
+   "subject": "ward sample scan service",
+   "attribute": "intake host",
+   "value_type": "host",
+   "candidates": [
+    "trn-scan-aster.invalid",
+    "trn-scan-banyan.invalid",
+    "trn-scan-dogwood.invalid",
+    "trn-scan-hazel.invalid",
+    "trn-scan-willow.invalid"
+   ]
+  }
+ ]
+}

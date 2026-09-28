@@ -1,0 +1,228 @@
+{
+ "frames": [
+  {
+   "id": "osk.t01",
+   "kind": "supersession",
+   "subject": "build farm coordinator",
+   "attribute": "coordinator host",
+   "value_type": "host",
+   "candidates": [
+    "osk-farmctl-03",
+    "osk-farmctl-07",
+    "osk-farmctl-11",
+    "osk-farmctl-16",
+    "osk-farmctl-22"
+   ]
+  },
+  {
+   "id": "osk.t02",
+   "kind": "supersession",
+   "subject": "patch CDN origin storage",
+   "attribute": "origin bucket",
+   "value_type": "bucket name",
+   "candidates": [
+    "osk-patch-origin-fra",
+    "osk-patchcdn-live2",
+    "osk-patches-prod-b",
+    "osk-cdnorigin-b2",
+    "osk-cdnsrc-patches"
+   ]
+  },
+  {
+   "id": "osk.t03",
+   "kind": "supersession",
+   "subject": "ranked solo matchmaking",
+   "attribute": "matchmaking queue",
+   "value_type": "queue name",
+   "candidates": [
+    "osk.mm.tickets.rsolo",
+    "osk.mm.rsolo.intake",
+    "osk.mmq.solo-ranked",
+    "osk.mm.ladder-solo",
+    "osk.mm.pool.rsolo-a"
+   ]
+  },
+  {
+   "id": "osk.t04",
+   "kind": "supersession",
+   "subject": "dedicated-server game traffic",
+   "attribute": "UDP port range",
+   "value_type": "port range",
+   "candidates": [
+    "UDP 27110-27160",
+    "UDP 28400-28480",
+    "UDP 30200-30299",
+    "UDP 31750-31820",
+    "UDP 26900-26980"
+   ]
+  },
+  {
+   "id": "osk.t05",
+   "kind": "supersession",
+   "subject": "crash dump symbolication",
+   "attribute": "symbol store bucket",
+   "value_type": "bucket name",
+   "candidates": [
+    "osk-symbols-win64",
+    "osk-symstore-main",
+    "osk-pdbarc-01",
+    "osk-crashsym-eu",
+    "osk-symsrv-cold"
+   ]
+  },
+  {
+   "id": "osk.t06",
+   "kind": "supersession",
+   "subject": "launcher configuration service",
+   "attribute": "config endpoint host",
+   "value_type": "host",
+   "candidates": [
+    "osk-lcfg-api1",
+    "osk-lcfg-api2",
+    "osk-lcfg-edge1",
+    "osk-lcfg-edge4",
+    "osk-lcfg-core3"
+   ]
+  },
+  {
+   "id": "osk.t07",
+   "kind": "supersession",
+   "subject": "nightly full build",
+   "attribute": "scheduled start time",
+   "value_type": "time with time zone",
+   "candidates": [
+    "23:40 CET",
+    "00:15 CET",
+    "01:05 CET",
+    "01:50 CET",
+    "02:35 CET"
+   ]
+  },
+  {
+   "id": "osk.t08",
+   "kind": "supersession",
+   "subject": "depot upload pipeline",
+   "attribute": "uploader tool",
+   "value_type": "tool name",
+   "candidates": [
+    "osk-depotctl",
+    "osk-depotsync2",
+    "osk-uplinker",
+    "osk-chunkpush",
+    "osk-shiprelay"
+   ]
+  },
+  {
+   "id": "osk.t09",
+   "kind": "supersession",
+   "subject": "EU dedicated-server fleet",
+   "attribute": "primary hosting region",
+   "value_type": "region code",
+   "candidates": [
+    "osk-euw-fra2",
+    "osk-euw-ams1",
+    "osk-euc-waw1",
+    "osk-eun-sto3",
+    "osk-euw-par2"
+   ]
+  },
+  {
+   "id": "osk.t10",
+   "kind": "supersession",
+   "subject": "match replay storage",
+   "attribute": "retention period",
+   "value_type": "duration",
+   "candidates": [
+    "42 days",
+    "63 days",
+    "84 days",
+    "182 days",
+    "364 days"
+   ]
+  },
+  {
+   "id": "osk.t11",
+   "kind": "distractor",
+   "subject": "casual matchmaking backfill",
+   "attribute": "maximum MMR spread",
+   "value_type": "MMR threshold",
+   "candidates": [
+    "350 MMR",
+    "420 MMR",
+    "480 MMR",
+    "550 MMR",
+    "625 MMR"
+   ]
+  },
+  {
+   "id": "osk.t12",
+   "kind": "distractor",
+   "subject": "build farm paging",
+   "attribute": "alert channel",
+   "value_type": "chat channel",
+   "candidates": [
+    "osk-bf-alerts",
+    "osk-buildcop",
+    "osk-redbuild-watch",
+    "osk-bf-pager",
+    "osk-bldbreak-p1"
+   ]
+  },
+  {
+   "id": "osk.t13",
+   "kind": "distractor",
+   "subject": "live-ops monitoring",
+   "attribute": "primary on-call dashboard",
+   "value_type": "dashboard slug",
+   "candidates": [
+    "osk-liveops-ccu",
+    "osk-ccu-geo",
+    "osk-lobbymon-v2",
+    "osk-fleet-pulse",
+    "osk-qwait-p95"
+   ]
+  },
+  {
+   "id": "osk.t14",
+   "kind": "reversion",
+   "subject": "matchmaking ruleset",
+   "attribute": "active ruleset revision",
+   "value_type": "config revision",
+   "candidates": [
+    "mmcfg-r212",
+    "mmcfg-r219",
+    "mmcfg-r224",
+    "mmcfg-r231",
+    "mmcfg-r236"
+   ]
+  },
+  {
+   "id": "osk.t15",
+   "kind": "reversion",
+   "subject": "anti-cheat ban waves",
+   "attribute": "weekly ban-wave slot",
+   "value_type": "weekday and time",
+   "candidates": [
+    "Thu 16:00 CET",
+    "Tue 15:30 CET",
+    "Wed 17:45 CET",
+    "Mon 14:10 CET",
+    "Fri 11:20 CET"
+   ]
+  },
+  {
+   "id": "osk.t16",
+   "kind": "reversion",
+   "subject": "anti-cheat client module",
+   "attribute": "pinned client version",
+   "value_type": "version string",
+   "candidates": [
+    "oskguard-3.8.1",
+    "oskguard-3.9.4",
+    "oskguard-4.0.2",
+    "oskguard-4.1.0",
+    "oskguard-4.2.7"
+   ]
+  }
+ ]
+}

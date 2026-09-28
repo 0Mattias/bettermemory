@@ -1,0 +1,228 @@
+{
+ "frames": [
+  {
+   "id": "brn.t01",
+   "kind": "supersession",
+   "subject": "SCADA historian primary server",
+   "attribute": "hostname",
+   "value_type": "host",
+   "candidates": [
+    "brn-hist-tnh01",
+    "brn-hist-tnh03",
+    "brn-hist-cdh02",
+    "brn-hist-cdh04",
+    "brn-hist-tnh06"
+   ]
+  },
+  {
+   "id": "brn.t02",
+   "kind": "supersession",
+   "subject": "final water chlorine residual alarm",
+   "attribute": "low-alarm setpoint",
+   "value_type": "concentration",
+   "candidates": [
+    "0.35 mg/L",
+    "0.42 mg/L",
+    "0.48 mg/L",
+    "0.55 mg/L",
+    "0.61 mg/L"
+   ]
+  },
+  {
+   "id": "brn.t03",
+   "kind": "supersession",
+   "subject": "telemetry radio scanning network",
+   "attribute": "licensed UHF channel",
+   "value_type": "frequency",
+   "candidates": [
+    "457.1625 MHz",
+    "457.8875 MHz",
+    "458.3125 MHz",
+    "458.6375 MHz",
+    "459.0125 MHz"
+   ]
+  },
+  {
+   "id": "brn.t04",
+   "kind": "supersession",
+   "subject": "control room HMI consoles",
+   "attribute": "operator access group",
+   "value_type": "directory group",
+   "candidates": [
+    "BRN-SG-HMI-Operators",
+    "BRN-SG-CRShift-Ops",
+    "BRN-SG-HMI-Tier1",
+    "BRN-SG-OTCR-Users",
+    "BRN-SG-ConsoleOps"
+   ]
+  },
+  {
+   "id": "brn.t05",
+   "kind": "supersession",
+   "subject": "reservoir level reconciliation job",
+   "attribute": "nightly run time",
+   "value_type": "time with time zone",
+   "candidates": [
+    "01:40 GMT",
+    "02:25 GMT",
+    "03:10 GMT",
+    "03:55 GMT",
+    "04:35 GMT"
+   ]
+  },
+  {
+   "id": "brn.t06",
+   "kind": "supersession",
+   "subject": "field work order dispatch",
+   "attribute": "outbound dispatch queue",
+   "value_type": "queue name",
+   "candidates": [
+    "brn.wo.field.jobs",
+    "brn.wo.mobile.push",
+    "brn.wo.crewjobs.out",
+    "brn.wo.assign.fsm",
+    "brn.wo.tasking.tablet"
+   ]
+  },
+  {
+   "id": "brn.t07",
+   "kind": "supersession",
+   "subject": "booster station cellular fallback",
+   "attribute": "cellular APN",
+   "value_type": "APN",
+   "candidates": [
+    "brnwater.m2m",
+    "brn-telem.priv",
+    "brnrtu.apn",
+    "ot.brnwa.m2m",
+    "brn-bps.gprs"
+   ]
+  },
+  {
+   "id": "brn.t08",
+   "kind": "supersession",
+   "subject": "PLC and RTU program backups",
+   "attribute": "backup bucket",
+   "value_type": "bucket name",
+   "candidates": [
+    "brn-plcbak-primary",
+    "brn-plc-backups-2",
+    "brn-ctrlprog-vault",
+    "brn-logicarc-offsite",
+    "brn-plcsnap-nightly"
+   ]
+  },
+  {
+   "id": "brn.t09",
+   "kind": "supersession",
+   "subject": "SCADA alarm callout",
+   "attribute": "on-call chat channel",
+   "value_type": "chat channel",
+   "candidates": [
+    "brn-otalarms-crit",
+    "brn-callout-ctl",
+    "brn-sby-escalate",
+    "brn-crdesk-page",
+    "brn-dutyeng-p1"
+   ]
+  },
+  {
+   "id": "brn.t10",
+   "kind": "supersession",
+   "subject": "historian raw sample tier",
+   "attribute": "retention period",
+   "value_type": "duration",
+   "candidates": [
+    "390 days",
+    "425 days",
+    "548 days",
+    "731 days",
+    "1096 days"
+   ]
+  },
+  {
+   "id": "brn.t11",
+   "kind": "distractor",
+   "subject": "pressure zone monitoring",
+   "attribute": "control room dashboard",
+   "value_type": "dashboard slug",
+   "candidates": [
+    "brn-pz-overview",
+    "brn-pzm-live",
+    "brn-dmap-board",
+    "brn-zonepress-v4",
+    "brn-pz-heatmap"
+   ]
+  },
+  {
+   "id": "brn.t12",
+   "kind": "distractor",
+   "subject": "standby generator test runs",
+   "attribute": "weekly test slot",
+   "value_type": "weekday and time",
+   "candidates": [
+    "Tue 10:15 GMT",
+    "Wed 09:45 GMT",
+    "Thu 13:20 GMT",
+    "Mon 11:05 GMT",
+    "Fri 08:50 GMT"
+   ]
+  },
+  {
+   "id": "brn.t13",
+   "kind": "distractor",
+   "subject": "filtered water turbidity monitors",
+   "attribute": "high-turbidity alarm threshold",
+   "value_type": "turbidity",
+   "candidates": [
+    "0.25 NTU",
+    "0.30 NTU",
+    "0.40 NTU",
+    "0.50 NTU",
+    "0.75 NTU"
+   ]
+  },
+  {
+   "id": "brn.t14",
+   "kind": "reversion",
+   "subject": "telemetry front-end processor",
+   "attribute": "active host",
+   "value_type": "host",
+   "candidates": [
+    "brn-fep-tnh1",
+    "brn-fep-tnh2",
+    "brn-fep-cdh1",
+    "brn-fep-cdh2",
+    "brn-fep-mrw1"
+   ]
+  },
+  {
+   "id": "brn.t15",
+   "kind": "reversion",
+   "subject": "Coldhythe hypochlorite dosing pumps",
+   "attribute": "duty pump",
+   "value_type": "asset tag",
+   "candidates": [
+    "CDH-DP-01A",
+    "CDH-DP-01B",
+    "CDH-DP-02A",
+    "CDH-DP-02B",
+    "CDH-DP-03A"
+   ]
+  },
+  {
+   "id": "brn.t16",
+   "kind": "reversion",
+   "subject": "outstation RTU software",
+   "attribute": "software release",
+   "value_type": "firmware version",
+   "candidates": [
+    "rtufw-9.2.14",
+    "rtufw-9.3.02",
+    "rtufw-9.4.1",
+    "rtufw-10.0.3",
+    "rtufw-10.1.7"
+   ]
+  }
+ ]
+}

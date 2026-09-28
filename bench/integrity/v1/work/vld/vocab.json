@@ -1,0 +1,228 @@
+{
+ "frames": [
+  {
+   "id": "vld.t01",
+   "kind": "supersession",
+   "subject": "LoRaWAN gateway uplink",
+   "attribute": "ingest host",
+   "value_type": "hostname",
+   "candidates": [
+    "gw-ingest-cedar.vld.invalid",
+    "gw-ingest-marl.vld.invalid",
+    "gw-ingest-thistle.vld.invalid",
+    "gw-ingest-kestrel.vld.invalid",
+    "gw-ingest-basin.vld.invalid"
+   ]
+  },
+  {
+   "id": "vld.t02",
+   "kind": "supersession",
+   "subject": "Soil probe calibration archive",
+   "attribute": "storage bucket",
+   "value_type": "bucket name",
+   "candidates": [
+    "vld-calvault-ochre",
+    "vld-calvault-flint",
+    "vld-calvault-reed",
+    "vld-calvault-copper",
+    "vld-calvault-lichen"
+   ]
+  },
+  {
+   "id": "vld.t03",
+   "kind": "supersession",
+   "subject": "Drone orthomosaic worker",
+   "attribute": "job queue",
+   "value_type": "queue name",
+   "candidates": [
+    "vld-ortho-q-harrier",
+    "vld-ortho-q-sable",
+    "vld-ortho-q-delta",
+    "vld-ortho-q-briar",
+    "vld-ortho-q-shale"
+   ]
+  },
+  {
+   "id": "vld.t04",
+   "kind": "supersession",
+   "subject": "Irrigation controller dispatcher",
+   "attribute": "command timeout",
+   "value_type": "duration",
+   "candidates": [
+    "37 sec",
+    "43 sec",
+    "59 sec",
+    "71 sec",
+    "83 sec"
+   ]
+  },
+  {
+   "id": "vld.t05",
+   "kind": "supersession",
+   "subject": "Edge firmware rollout",
+   "attribute": "OTA release channel",
+   "value_type": "channel name",
+   "candidates": [
+    "vld-ota-willow",
+    "vld-ota-ridge",
+    "vld-ota-furrow",
+    "vld-ota-cairn",
+    "vld-ota-meadow"
+   ]
+  },
+  {
+   "id": "vld.t06",
+   "kind": "supersession",
+   "subject": "Field telemetry compactor",
+   "attribute": "daily start time",
+   "value_type": "UTC time",
+   "candidates": [
+    "01:17 UTC",
+    "02:23 UTC",
+    "03:29 UTC",
+    "04:41 UTC",
+    "05:53 UTC"
+   ]
+  },
+  {
+   "id": "vld.t07",
+   "kind": "supersession",
+   "subject": "Gateway fleet alerting",
+   "attribute": "operations dashboard",
+   "value_type": "dashboard ID",
+   "candidates": [
+    "vld-gwboard-elm",
+    "vld-gwboard-quartz",
+    "vld-gwboard-heron",
+    "vld-gwboard-sedge",
+    "vld-gwboard-runnel"
+   ]
+  },
+  {
+   "id": "vld.t08",
+   "kind": "supersession",
+   "subject": "Soil moisture quality gate",
+   "attribute": "minimum valid reading threshold",
+   "value_type": "percentage",
+   "candidates": [
+    "12.0%",
+    "16.0%",
+    "21.0%",
+    "27.0%",
+    "34.0%"
+   ]
+  },
+  {
+   "id": "vld.t09",
+   "kind": "supersession",
+   "subject": "Drone imagery tile cache",
+   "attribute": "tile retention period",
+   "value_type": "duration",
+   "candidates": [
+    "11 days",
+    "13 days",
+    "19 days",
+    "26 days",
+    "38 days"
+   ]
+  },
+  {
+   "id": "vld.t10",
+   "kind": "supersession",
+   "subject": "Irrigation valve audit stream",
+   "attribute": "event topic",
+   "value_type": "topic name",
+   "candidates": [
+    "vld-valve-audit-pebble",
+    "vld-valve-audit-aspen",
+    "vld-valve-audit-cobalt",
+    "vld-valve-audit-prairie",
+    "vld-valve-audit-orchard"
+   ]
+  },
+  {
+   "id": "vld.t11",
+   "kind": "distractor",
+   "subject": "Gateway certificate rotation",
+   "attribute": "renewal lead time",
+   "value_type": "duration",
+   "candidates": [
+    "22 hours",
+    "30 hours",
+    "46 hours",
+    "58 hours",
+    "76 hours"
+   ]
+  },
+  {
+   "id": "vld.t12",
+   "kind": "distractor",
+   "subject": "Soil probe diagnostics",
+   "attribute": "diagnostic exporter",
+   "value_type": "tool name",
+   "candidates": [
+    "vld-probescout",
+    "vld-rootmeter",
+    "vld-claytrace",
+    "vld-horizoncheck",
+    "vld-sensorloom"
+   ]
+  },
+  {
+   "id": "vld.t13",
+   "kind": "distractor",
+   "subject": "Drone flight manifest",
+   "attribute": "schema version",
+   "value_type": "version string",
+   "candidates": [
+    "vld-flight-r13",
+    "vld-flight-r24",
+    "vld-flight-r35",
+    "vld-flight-r46",
+    "vld-flight-r57"
+   ]
+  },
+  {
+   "id": "vld.t14",
+   "kind": "reversion",
+   "subject": "Firmware signing service",
+   "attribute": "signing region",
+   "value_type": "region ID",
+   "candidates": [
+    "vld-sign-fallow-1",
+    "vld-sign-tarn-2",
+    "vld-sign-mesa-3",
+    "vld-sign-copse-4",
+    "vld-sign-bogland-5"
+   ]
+  },
+  {
+   "id": "vld.t15",
+   "kind": "reversion",
+   "subject": "Irrigation safety controller",
+   "attribute": "valve fail-safe mode",
+   "value_type": "mode name",
+   "candidates": [
+    "vld-safe-holdsealed",
+    "vld-safe-drainlatched",
+    "vld-safe-pulsegated",
+    "vld-safe-manualpark",
+    "vld-safe-springclosed"
+   ]
+  },
+  {
+   "id": "vld.t16",
+   "kind": "reversion",
+   "subject": "LoRaWAN downlink scheduler",
+   "attribute": "delivery retry cap",
+   "value_type": "retry count",
+   "candidates": [
+    "3 attempts",
+    "4 attempts",
+    "5 attempts",
+    "6 attempts",
+    "7 attempts"
+   ]
+  }
+ ]
+}
