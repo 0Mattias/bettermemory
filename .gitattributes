@@ -18,6 +18,18 @@ bench/rot/frame/*.json -text
 # a corpus hash that is allowed to differ per platform is not an anchor.
 bench/retrieval/*.jsonl -text
 
+# The integrity benchmark's corpora, same rule. Every raw file, result and
+# summary pins its corpus by sha256 (`corpus_sha256`), `run.py score` refuses
+# a raw file whose sha is not the corpus file's, and the v1 splits and their
+# operating points are sealed by sha256 in bench/integrity/v1/SEALS.json. A
+# CRLF checkout of corpus.json would make every committed raw file refuse on
+# Windows, and the v0 re-score test runs there. The rot artifact the
+# integrity summaries carry is pinned the same way, by `world_grounded.sha256`
+# in every committed summary.
+bench/integrity/corpus.json -text
+bench/integrity/v1/*.json -text
+bench/rot/results/multirepo-anchored-2026-07-30.json -text
+
 # The golden v8 fixture, byte for byte. `tests/test_export_mirror.py` pins
 # the mirror's renderers by comparing their output with every memory,
 # tombstone and episode file under it, and the migration tests compare the

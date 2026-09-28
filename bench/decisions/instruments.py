@@ -25,7 +25,10 @@ from pathlib import Path
 JEV_MODEL = "typesafe/jev-1.13"
 JEV_URL = "https://openrouter.ai/api/v1/systemone"
 JEV_USD_PER_INPUT_TOKEN = 0.042 / 1_000_000  # OpenRouter's listed price; output is free
-JEV_TOKENS_PER_CHAR = 0.6  # the one fictional probe read 505 tokens for about 870 chars
+# Measured on the v0 integrity run (results/integrity-jev-1.13.json): Jev's responses reported
+# 81,818 input tokens over the 124 calls, whose states and questions come to 205,500 characters
+# (decisions_integrity.py --estimate), 0.398 a character. The first value, 0.6, came from one probe.
+JEV_TOKENS_PER_CHAR = 0.4
 
 
 def uniform(questions: dict, answers: dict) -> dict:

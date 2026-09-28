@@ -26,16 +26,35 @@ unavailable with the blocker, never with a fabricated number.
 
 The bettermemory adapter imports the package lazily so the rival arms
 can be collected from a venv that does not carry it.
+
+LLM usage. The two arms that call an LLM through an OpenAI-compatible
+endpoint, mem0-infer and graphiti, carry an `LLMUsage` (`llm_usage`):
+every chat completion their own OpenAI clients make is observed at
+`chat.completions.create`, which returns the SDK's response unchanged,
+and its prompt and completion tokens (and `cost`, when the endpoint
+returns one) are attributed to the phase `collect` is in. When the
+endpoint is OpenRouter's, `collect` also reads the key's usage from
+https://openrouter.ai/api/v1/key before and after the run
+(`openrouter_key_usage`). The key is read from BM_INTEGRITY_LLM_API_KEY
+at that call, sent in the Authorization header and nowhere else: it is
+never stored, returned, printed or logged.
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import importlib.metadata
+import inspect
 import json
 import os
 import shutil
+import threading
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -141,6 +160,218 @@ def _json_safe(value: Any) -> Any:
         return value
     except TypeError:
         return json.loads(json.dumps(value, default=str))
+
+
+# ---------------------------------------------------------------------------
+# LLM usage
+# ---------------------------------------------------------------------------
+
+OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
+LLM_KEY_ENV = "BM_INTEGRITY_LLM_API_KEY"
+
+
+def _bucket() -> dict[str, Any]:
+    return {
+        "calls": 0,
+        "failed": 0,
+        "without_usage": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "cost": None,
+        "calls_with_cost": 0,
+    }
+
+
+def _field_of(obj: Any, name: str) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(name)
+    return getattr(obj, name, None)
+
+
+def _number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+class LLMUsage:
+    """The chat completions an arm's own OpenAI clients make, observed and
+    never altered, attributed to the phase `collect` names (`attribute`):
+    reset (the arm's self-test), add (per statement), search, inject, or
+    unattributed. `report()` is what the raw file carries."""
+
+    def __init__(self, endpoint: str) -> None:
+        self.endpoint = endpoint
+        self.clients: dict[str, str] = {}
+        self.reason: str | None = None
+        self.notes: list[str] = []
+        self._phase: tuple[str, str | None] = ("unattributed", None)
+        self._lock = threading.Lock()
+        self._models: dict[str, int] = {}
+        self._totals = _bucket()
+        self._by_phase: dict[str, dict[str, Any]] = {}
+        self._per_add: dict[str, dict[str, Any]] = {}
+
+    @property
+    def observed(self) -> bool:
+        return bool(self.clients)
+
+    def unobserved(self, reason: str) -> None:
+        """Record why no client is observed; the report says so."""
+        self.reason = reason
+
+    @contextlib.contextmanager
+    def attribute(self, phase: str, key: str | None = None) -> Iterator[None]:
+        """Attribute the calls made inside the block to `phase` (and, for
+        an add, to the statement `key`)."""
+        previous = self._phase
+        self._phase = (phase, key)
+        if phase == "add" and key is not None:
+            with self._lock:
+                self._per_add.setdefault(key, _bucket())
+        try:
+            yield
+        finally:
+            self._phase = previous
+
+    def observe(self, client: Any, label: str) -> None:
+        """Wrap `client.chat.completions.create` on this client instance.
+        The wrapper calls the SDK's own method with the same arguments and
+        returns its result (or its awaitable, for an async client) as it
+        came; it only reads the response's `usage` and `model`."""
+        completions = client.chat.completions
+        original = completions.create
+        usage = self
+
+        def create(*args: Any, **kwargs: Any) -> Any:
+            phase = usage._phase
+            try:
+                result = original(*args, **kwargs)
+            except Exception:
+                usage._record(phase, None, failed=True)
+                raise
+            if inspect.isawaitable(result):
+                return usage._finish(phase, result)
+            usage._record(phase, result)
+            return result
+
+        completions.create = create
+        self.clients[label] = str(getattr(client, "base_url", "") or self.endpoint)
+
+    async def _finish(self, phase: tuple[str, str | None], pending: Any) -> Any:
+        try:
+            response = await pending
+        except Exception:
+            self._record(phase, None, failed=True)
+            raise
+        self._record(phase, response)
+        return response
+
+    def _record(
+        self, phase: tuple[str, str | None], response: Any, failed: bool = False
+    ) -> None:
+        usage = None if response is None else _field_of(response, "usage")
+        prompt = (
+            _number(_field_of(usage, "prompt_tokens")) if usage is not None else None
+        )
+        completion = (
+            _number(_field_of(usage, "completion_tokens"))
+            if usage is not None
+            else None
+        )
+        total = _number(_field_of(usage, "total_tokens")) if usage is not None else None
+        cost = _number(_field_of(usage, "cost")) if usage is not None else None
+        model = None if response is None else _field_of(response, "model")
+        name, key = phase
+        with self._lock:
+            buckets = [self._totals, self._by_phase.setdefault(name, _bucket())]
+            if name == "add" and key is not None:
+                buckets.append(self._per_add.setdefault(key, _bucket()))
+            for bucket in buckets:
+                bucket["calls"] += 1
+                if failed:
+                    bucket["failed"] += 1
+                    continue
+                if prompt is None and completion is None:
+                    bucket["without_usage"] += 1
+                bucket["prompt_tokens"] += int(prompt or 0)
+                bucket["completion_tokens"] += int(completion or 0)
+                bucket["total_tokens"] += int(
+                    total if total is not None else (prompt or 0) + (completion or 0)
+                )
+                if cost is not None:
+                    bucket["cost"] = round((bucket["cost"] or 0.0) + cost, 10)
+                    bucket["calls_with_cost"] += 1
+            if model is not None:
+                self._models[str(model)] = self._models.get(str(model), 0) + 1
+
+    def report(self) -> dict[str, Any]:
+        with self._lock:
+            out: dict[str, Any] = {
+                "observed": self.observed,
+                "endpoint": self.endpoint,
+                "clients": dict(self.clients),
+            }
+            if not self.observed:
+                out["reason"] = self.reason or "no client was observed"
+            if self.notes:
+                out["notes"] = list(self.notes)
+            out["how"] = (
+                "chat.completions.create observed on the arm's own OpenAI clients; "
+                "tokens and cost as each response's usage reports them"
+            )
+            out["totals"] = {**self._totals, "models": dict(self._models)}
+            out["by_phase"] = {k: dict(v) for k, v in self._by_phase.items()}
+            out["per_add"] = {k: dict(v) for k, v in self._per_add.items()}
+            return out
+
+
+def is_openrouter(base_url: str) -> bool:
+    host = urllib.parse.urlparse(base_url).hostname or ""
+    return host == "openrouter.ai" or host.endswith(".openrouter.ai")
+
+
+def openrouter_key_usage(timeout: float = 30.0) -> dict[str, Any]:
+    """The key's cumulative usage as OpenRouter's GET /api/v1/key reports
+    it (`data.usage`, in OpenRouter credits): {"usage": x} or {"error":
+    ...}. The key is read from BM_INTEGRITY_LLM_API_KEY here and sent in
+    the Authorization header only. Only that one number is kept from the
+    response, and an error keeps its type or HTTP status, never a message
+    or a body."""
+    key = os.environ.get(LLM_KEY_ENV, "").strip()
+    if not key:
+        return {"error": f"{LLM_KEY_ENV} is not set"}
+    request = urllib.request.Request(
+        OPENROUTER_KEY_URL, headers={"Authorization": f"Bearer {key}"}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        return {"error": f"HTTP {exc.code}"}
+    except Exception as exc:  # noqa: BLE001 - recorded, the run goes on
+        return {"error": type(exc).__name__}
+    data = body.get("data") if isinstance(body, dict) else None
+    usage = _number(data.get("usage")) if isinstance(data, dict) else None
+    if usage is None:
+        return {"error": "the key response carries no numeric data.usage"}
+    return {"usage": usage}
+
+
+def key_usage_delta(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    """The run's spend on the key, from two `openrouter_key_usage` reads:
+    what OpenRouter had counted by the second read, less the first. Any
+    other use of the key in between counts too; the per-call costs are
+    the call-by-call record."""
+    out: dict[str, Any] = {
+        "source": OPENROUTER_KEY_URL,
+        "before": before,
+        "after": after,
+    }
+    if "usage" in before and "usage" in after:
+        out["delta"] = round(after["usage"] - before["usage"], 10)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -439,6 +670,9 @@ class Mem0Adapter:
         self.root = self.scratch / "store"
         self._memory: Any = None
         self._clock = datetime.now(timezone.utc) - timedelta(days=1)
+        self.llm_usage: LLMUsage | None = (
+            LLMUsage(LLM_BASE_URL) if mode == "infer" else None
+        )
 
     def _config(self) -> dict[str, Any]:
         if self.mode == "raw":
@@ -510,8 +744,33 @@ class Mem0Adapter:
         if self.mode == "infer":
             _require_ollama()
         self._memory = Memory.from_config(self._config())
+        if self.llm_usage is not None:
+            self._observe_llm(self.llm_usage)
         if self.mode == "infer":
             self._self_test()
+
+    def _observe_llm(self, usage: LLMUsage) -> None:
+        """Observe mem0's own OpenAI client (`Memory.llm.client`) when the
+        LLM sits behind an OpenAI-compatible endpoint."""
+        if not REMOTE_LLM:
+            usage.unobserved(
+                "the LLM is the local ollama daemon through mem0's ollama provider, "
+                "which calls ollama's native API, not an OpenAI-compatible endpoint"
+            )
+            return
+        client = getattr(getattr(self._memory, "llm", None), "client", None)
+        if client is None or not hasattr(getattr(client, "chat", None), "completions"):
+            usage.unobserved("mem0's LLM carries no OpenAI client at llm.client")
+            return
+        usage.observe(client, "mem0 llm")
+        if os.environ.get("OPENROUTER_API_KEY"):
+            usage.notes.append(
+                "OPENROUTER_API_KEY is set, and with it set mem0's OpenAI LLM (as read "
+                "at mem0ai 2.0.18) sends with that key to OpenRouter in place of the "
+                "configured key and endpoint. `clients` names the endpoint the client "
+                f"was built with; a key-usage delta read with {LLM_KEY_ENV} covers "
+                "mem0's calls only if the two keys are one"
+            )
 
     def _self_test(self) -> None:
         """A fact and then its direct contradiction through add(infer=True)
@@ -679,6 +938,7 @@ class GraphitiAdapter:
         self._loop: Any = None
         self._clock = datetime.now(timezone.utc) - timedelta(days=1)
         self._episode_uuids: list[str] = []
+        self.llm_usage = LLMUsage(LLM_BASE_URL)
 
     def reset(self) -> None:
         import asyncio
@@ -724,12 +984,30 @@ class GraphitiAdapter:
             ),
             cross_encoder=OpenAIRerankerClient(config=llm_config),
         )
+        self._observe_llm(self.llm_usage)
         try:
             self._run(self._wipe())
             self._run(self._g.build_indices_and_constraints())
         except Exception as exc:  # noqa: BLE001 - published as the blocker
             raise SystemUnavailable(f"neo4j at {self.uri} not usable: {exc}") from exc
         self._self_test()
+
+    def _observe_llm(self, usage: LLMUsage) -> None:
+        """Observe the two OpenAI clients graphiti builds on the LLM
+        endpoint: the extraction LLM's (`llm_client.client`) and the
+        reranker's (`cross_encoder.client`). The embedder calls ollama's
+        embeddings endpoint, not a chat completion, and is not counted."""
+        for label, owner in (
+            ("graphiti llm", getattr(self._g, "llm_client", None)),
+            ("graphiti reranker", getattr(self._g, "cross_encoder", None)),
+        ):
+            client = getattr(owner, "client", None)
+            if client is not None and hasattr(
+                getattr(client, "chat", None), "completions"
+            ):
+                usage.observe(client, label)
+        if not usage.observed:
+            usage.unobserved("graphiti carries no OpenAI client at llm_client.client")
 
     def _self_test(self) -> None:
         """One canonical statement through add_episode. An extractor that

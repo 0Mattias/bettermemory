@@ -35,6 +35,7 @@ import json
 import re
 import statistics
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -49,6 +50,73 @@ POISON_CLASSES = ("false_fact", "instruction", "secret")
 TOPIC_KINDS = ("supersession", "distractor", "reversion")
 REFERENCES = ("serve_all_unsignaled", "recency_top1", "oracle_replica")
 
+# The v0 corpus declares nothing; its counts are the ones its
+# declaration pinned, and a corpus without a `declared` block is held
+# to them exactly.
+V0_BENCHMARK = "integrity-v0"
+V0_TOPIC_KINDS = {"supersession": 24, "distractor": 8, "reversion": 8}
+V0_POISON_CLASSES = {"false_fact": 10, "instruction": 10, "secret": 10}
+V0_HARD_NEGATIVES = 6
+
+# The v1 format (bench/integrity/v1/dev.json and test.json).
+V1_VERSIONS = ("v1-dev", "v1-test")
+POISON_VARIANTS = ("plain", "evasive")
+TECHNIQUES: dict[tuple[str, str], tuple[str, ...]] = {
+    ("false_fact", "plain"): ("flat_assertion",),
+    ("false_fact", "evasive"): (
+        "dated_update",
+        "embedded_true",
+        "paraphrase",
+        "attributed",
+        "split",
+    ),
+    ("instruction", "plain"): ("imperative",),
+    ("instruction", "evasive"): (
+        "advice",
+        "policy_id",
+        "descriptive_norm",
+        "embedded_step",
+        "agent_conditional",
+    ),
+    ("secret", "plain"): ("plain_shape",),
+    ("secret", "evasive"): (
+        "separator_split",
+        "split",
+        "encoded",
+        "reversed_or_spelled",
+        "url_userinfo",
+        "env_export_fenced",
+        "yaml_json_snippet",
+    ),
+}
+SPLIT = "split"
+HARD_NEGATIVE_CATEGORIES = (
+    "vault_path",
+    "redacted_credential",
+    "high_entropy_nonsecret",
+    "procedure_imperative",
+    "policy_with_id",
+    "legit_correction",
+    "prohibition",
+    "incident_redacted",
+)
+ROLES = {
+    "supersession": ["f1", "f2"],
+    "distractor": ["f1", "d"],
+    "reversion": ["f1", "f2", "f3"],
+}
+CURRENT = {"supersession": "new", "distractor": "old", "reversion": "old"}
+ORGANISATION_FIELDS = ("id", "name", "domain", "note", "author")
+DECLARED_FIELDS = (
+    "topic_kinds",
+    "poison_classes",
+    "poison_variants",
+    "hard_negatives",
+    "hard_negative_categories",
+    "generic_queries",
+    "max_split_groups",
+)
+
 _NORM_STRIP = re.compile(r"[\s\-_.`'\"]+")
 
 
@@ -62,6 +130,46 @@ def carries(text: str, value: str) -> bool:
 
 def corpus_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def benchmark_name(corpus: dict[str, Any]) -> str:
+    """The corpus's own benchmark name; the v0 corpus names none."""
+    return str(corpus.get("benchmark") or V0_BENCHMARK)
+
+
+def repo_path(path: Path) -> str:
+    """A path as the new stamps record it: relative to the repo when it
+    lies inside it, absolute otherwise, with forward slashes on every
+    platform."""
+    resolved = Path(path).resolve()
+    if resolved.is_relative_to(_ROOT):
+        return resolved.relative_to(_ROOT).as_posix()
+    return resolved.as_posix()
+
+
+def corpus_identity(path: Path, corpus: dict[str, Any]) -> dict[str, Any]:
+    """What an artifact records about the corpus it was made on."""
+    return {
+        "path": repo_path(path),
+        "sha256": corpus_sha256(path),
+        "benchmark": benchmark_name(corpus),
+    }
+
+
+def planted_items(
+    ids: list[str], payloads: dict[str, dict[str, Any]]
+) -> list[tuple[str, list[str]]]:
+    """The planted items among the poison ids, in order: (item id, part
+    ids). A payload outside a split is an item of its own, named by its
+    id; the parts of a split (the payloads sharing a `group`) are one
+    item, named by the group and placed where its first part stands.
+    The v0 corpus has no `group`, so there every payload is an item."""
+    items: dict[tuple[str, str], list[str]] = {}
+    for pid in ids:
+        group = payloads[pid].get("group")
+        key = ("group", str(group)) if group else ("payload", pid)
+        items.setdefault(key, []).append(pid)
+    return [(key[1], parts) for key, parts in items.items()]
 
 
 def _rot() -> ModuleType:
@@ -134,13 +242,88 @@ def ingestion_plan(corpus: dict[str, Any]) -> list[dict[str, Any]]:
     return plan
 
 
-def corpus_checks(corpus: dict[str, Any]) -> list[str]:
-    """The sanity gates the declaration names. Returns the violations."""
+def corpus_checks(corpus: dict[str, Any], *, counts: bool = True) -> list[str]:
+    """The sanity gates the declaration names. Returns the violations.
+
+    A corpus with a `declared` block (v1) reads every expected count from
+    it and passes the v1 checks too (`v1_checks`); a corpus without one
+    (v0) is held to v0's own counts, 24 / 8 / 8 topics, 10 / 10 / 10
+    payloads and 6 hard negatives. Poison is counted in planted items: a
+    split's two parts are one item. `counts=False` skips every count
+    gate, for a smoke slice (`run.py collect --limit-topics`), which keeps
+    a subset by design."""
+    problems: list[str] = []
+    v1 = "declared" in corpus
+    topics = corpus["topics"]
+    if counts:
+        kinds = {
+            kind: sum(1 for t in topics if t["kind"] == kind) for kind in TOPIC_KINDS
+        }
+        want_kinds = (
+            _declared_counts(corpus, "topic_kinds", TOPIC_KINDS)
+            if v1
+            else V0_TOPIC_KINDS
+        )
+        if kinds != want_kinds:
+            problems.append(f"topic kind counts {kinds}")
+    problems.extend(value_checks(corpus))
+    if counts:
+        payloads = {p["id"]: p for p in corpus["poison"]}
+        items = planted_items(list(payloads), payloads)
+        by_class = {
+            c: sum(1 for _, parts in items if payloads[parts[0]]["class"] == c)
+            for c in POISON_CLASSES
+        }
+        want_classes = (
+            _declared_counts(corpus, "poison_classes", POISON_CLASSES)
+            if v1
+            else V0_POISON_CLASSES
+        )
+        if by_class != want_classes:
+            problems.append(f"poison class counts {by_class}")
+        if not v1 and len(corpus["hard_negatives"]) != V0_HARD_NEGATIVES:
+            problems.append("hard negatives != 6")
+    if v1:
+        problems.extend(v1_checks(corpus, counts=counts))
+    return problems
+
+
+def _declared(corpus: dict[str, Any], key: str) -> dict[str, Any]:
+    """One object of the corpus's `declared` block, {} when it is absent
+    or not an object (`v1_checks` reports that)."""
+    declared = corpus.get("declared")
+    block = declared.get(key) if isinstance(declared, dict) else None
+    return block if isinstance(block, dict) else {}
+
+
+def _declared_counts(
+    corpus: dict[str, Any], key: str, names: tuple[str, ...]
+) -> dict[str, Any]:
+    """A declared {name: count} block over `names`, a name it omits read
+    as zero, so it compares with a counted dict (`v1_checks` reports a
+    name outside `names`)."""
+    block = _declared(corpus, key)
+    return {name: block.get(name, 0) for name in names}
+
+
+def value_checks(corpus: dict[str, Any], *, strict: bool | None = None) -> list[str]:
+    """The value gates: every value long enough and unique, no value
+    inside another, every statement carrying exactly the values its role
+    asserts, no query, other topic or hard negative carrying a topic's
+    values, each false fact carrying its own value and targeting a
+    supersession topic, each instruction carrying its marker. These are
+    v0's gates, in v0's order; the part of a false-fact split that
+    carries no value (part a) is exempt from carrying one.
+
+    `strict` (the default for a corpus with a `declared` block) adds the
+    served-text gates the scoring rule leans on and v0 never checked: no
+    text but the false fact's own carries a false-fact value, and no text
+    but the instruction's own carries an instruction marker (the retrieval
+    table credits a served hit by value and by marker)."""
+    if strict is None:
+        strict = "declared" in corpus
     problems: list[str] = []
     topics = corpus["topics"]
-    counts = {kind: sum(1 for t in topics if t["kind"] == kind) for kind in TOPIC_KINDS}
-    if counts != {"supersession": 24, "distractor": 8, "reversion": 8}:
-        problems.append(f"topic kind counts {counts}")
     all_values: dict[str, str] = {}
     for topic in topics:
         for key, value in topic["values"].items():
@@ -148,7 +331,7 @@ def corpus_checks(corpus: dict[str, Any]) -> list[str]:
                 problems.append(f"{topic['id']}.{key} value shorter than 4 chars")
             all_values[f"{topic['id']}.{key}"] = value
     for payload in corpus["poison"]:
-        if payload["class"] == "false_fact":
+        if payload["class"] == "false_fact" and "value" in payload:
             all_values[payload["id"]] = payload["value"]
     # every value unique and no value a substring of another
     normed = {k: norm(v) for k, v in all_values.items()}
@@ -201,25 +384,359 @@ def corpus_checks(corpus: dict[str, Any]) -> list[str]:
                     )
     for payload in corpus["poison"]:
         if payload["class"] == "false_fact":
-            if not carries(payload["text"], payload["value"]):
-                problems.append(f"{payload['id']} does not carry its own value")
-            target = next(t for t in topics if t["id"] == payload["target_topic"])
-            if target["kind"] != "supersession":
+            if "value" in payload:
+                if not carries(payload["text"], payload["value"]):
+                    problems.append(f"{payload['id']} does not carry its own value")
+            elif not payload.get("group"):
+                problems.append(f"{payload['id']} has no value")
+            target = next(
+                (t for t in topics if t["id"] == payload.get("target_topic")), None
+            )
+            if target is None:
+                problems.append(f"{payload['id']} targets no topic of the corpus")
+            elif target["kind"] != "supersession":
                 problems.append(f"{payload['id']} targets a non-supersession topic")
         if payload["class"] == "instruction" and not payload.get("marker"):
             problems.append(f"{payload['id']} has no marker")
-        if payload["class"] == "instruction" and not carries(
+        elif payload["class"] == "instruction" and not carries(
             payload["text"], payload["marker"]
         ):
             problems.append(f"{payload['id']} does not carry its marker")
-    by_class = {
-        c: sum(1 for p in corpus["poison"] if p["class"] == c) for c in POISON_CLASSES
-    }
-    if by_class != {"false_fact": 10, "instruction": 10, "secret": 10}:
-        problems.append(f"poison class counts {by_class}")
-    if len(corpus["hard_negatives"]) != 6:
-        problems.append("hard negatives != 6")
+    if strict:
+        problems.extend(_served_text_checks(corpus))
     return problems
+
+
+def _served_text_checks(corpus: dict[str, Any]) -> list[str]:
+    """No text but a false fact's own (and its split sibling's, which
+    `v1_checks` grades) carries its value; no text but an instruction's
+    own carries its marker; no marker inside another."""
+    problems: list[str] = []
+    texts: list[tuple[str, str]] = []
+    for topic in corpus["topics"]:
+        texts.extend((s["id"], s["text"]) for s in topic["statements"])
+        texts.append((f"{topic['id']} query", topic["query"]))
+    texts.extend((hn["id"], hn["text"]) for hn in corpus["hard_negatives"])
+    texts.extend((p["id"], p["text"]) for p in corpus["poison"])
+    texts.extend((gq["id"], gq["text"]) for gq in corpus.get("generic_queries", []))
+    group_of = {p["id"]: p.get("group") for p in corpus["poison"]}
+    markers: dict[str, str] = {}
+    for payload in corpus["poison"]:
+        own = {payload["id"]}
+        if payload.get("group"):
+            own |= {pid for pid, g in group_of.items() if g == payload["group"]}
+        if payload["class"] == "false_fact" and payload.get("value"):
+            for tid, text in texts:
+                if tid not in own and carries(text, payload["value"]):
+                    problems.append(
+                        f"{tid} carries {payload['id']} value {payload['value']!r}"
+                    )
+        if payload["class"] == "instruction" and payload.get("marker"):
+            markers[payload["id"]] = payload["marker"]
+            for tid, text in texts:
+                if tid not in own and carries(text, payload["marker"]):
+                    problems.append(
+                        f"{tid} carries {payload['id']} marker {payload['marker']!r}"
+                    )
+    normed = {pid: norm(m) for pid, m in markers.items()}
+    for a, na in normed.items():
+        for b, nb in normed.items():
+            if a != b and na in nb:
+                problems.append(f"marker of {a} ({na}) is contained in marker of {b}")
+    return problems
+
+
+def v1_checks(corpus: dict[str, Any], *, counts: bool = True) -> list[str]:
+    """The v1 format's own gates, for a corpus with a `declared` block.
+
+    Structure: `version` is v1-dev or v1-test and `benchmark` is
+    integrity-<version>; `declared` names every field it must; each
+    organisation carries id, name, domain, note and author; every topic,
+    hard negative, poison item and generic query names a declared `org`
+    and an `author`, and its id opens with "<org>."; a statement's id
+    opens with "<topic id>."; no id is used twice; a topic's statement
+    roles and `current` fit its kind.
+
+    Poison: `variant` is plain or evasive and `technique` is one its
+    class and variant allow (a plain_shape secret names its `shape`); a
+    false fact targets a topic of its own organisation (`value_checks`
+    holds it to a supersession topic) and no topic is targeted by two
+    planted false facts. Splits: technique "split" and a `group` go
+    together; a group is a false fact or a secret of exactly two parts,
+    <group>a then <group>b in corpus order, with one class, variant and
+    technique; a false-fact split's parts share their target, part b
+    alone carries `value`, and part a neither carries the field nor
+    carries the value in its text (no topic value either, which
+    `value_checks` holds every payload to); at most `max_split_groups`
+    groups. Hard negatives: `category` is one of the eight.
+
+    With `counts`, every count equals its declaration: poison per class
+    and variant (planted items, a split counting once), hard negatives in
+    total and per category, generic queries (topic kinds and poison
+    classes are compared in `corpus_checks`).
+    """
+    problems: list[str] = []
+    declared = corpus.get("declared")
+    if not isinstance(declared, dict):
+        return ["declared is not an object"]
+    for key in DECLARED_FIELDS:
+        if key not in declared:
+            problems.append(f"declared has no {key}")
+    for key, names in (
+        ("topic_kinds", TOPIC_KINDS),
+        ("poison_classes", POISON_CLASSES),
+    ):
+        extra = sorted(set(_declared(corpus, key)) - set(names))
+        if extra:
+            problems.append(f"declared {key} names {extra}")
+    version = corpus.get("version")
+    if version not in V1_VERSIONS:
+        problems.append(f"version {version!r} is not one of {', '.join(V1_VERSIONS)}")
+    elif corpus.get("benchmark") != f"integrity-{version}":
+        problems.append(
+            f"benchmark {corpus.get('benchmark')!r} is not 'integrity-{version}'"
+        )
+
+    orgs: set[str] = set()
+    for org in corpus.get("organisations") or []:
+        missing = [f for f in ORGANISATION_FIELDS if not org.get(f)]
+        if missing:
+            problems.append(
+                f"organisation {org.get('id')!r} has no {', '.join(missing)}"
+            )
+        if org.get("id") in orgs:
+            problems.append(f"organisation {org['id']} is declared twice")
+        if org.get("id"):
+            orgs.add(str(org["id"]))
+    if not orgs:
+        problems.append("no organisations declared")
+
+    seen: dict[str, int] = {}
+
+    def owned(kind: str, item: dict[str, Any]) -> None:
+        iid, org, author = str(item.get("id", "")), item.get("org"), item.get("author")
+        seen[iid] = seen.get(iid, 0) + 1
+        if not org:
+            problems.append(f"{kind} {iid} has no org")
+        elif org not in orgs:
+            problems.append(f"{kind} {iid} names undeclared org {org!r}")
+        elif not iid.startswith(f"{org}."):
+            problems.append(f"{kind} {iid} is not prefixed by {org}.")
+        if not isinstance(author, str) or not author:
+            problems.append(f"{kind} {iid} has no author")
+
+    topics = {t["id"]: t for t in corpus["topics"]}
+    for topic in corpus["topics"]:
+        owned("topic", topic)
+        kind = topic["kind"]
+        roles = [s["role"] for s in topic["statements"]]
+        # one statement per role; the ingestion plan orders them by role
+        if kind in ROLES and sorted(roles) != sorted(ROLES[kind]):
+            problems.append(
+                f"{topic['id']} ({kind}) has roles {roles}, not {ROLES[kind]}"
+            )
+        if kind in CURRENT and topic.get("current") != CURRENT[kind]:
+            problems.append(
+                f"{topic['id']} ({kind}) current is {topic.get('current')!r}, "
+                f"not {CURRENT[kind]!r}"
+            )
+        for stmt in topic["statements"]:
+            seen[stmt["id"]] = seen.get(stmt["id"], 0) + 1
+            if not stmt["id"].startswith(f"{topic['id']}."):
+                problems.append(f"{stmt['id']} is not prefixed by {topic['id']}.")
+    for hn in corpus["hard_negatives"]:
+        owned("hard negative", hn)
+        if hn.get("category") not in HARD_NEGATIVE_CATEGORIES:
+            problems.append(
+                f"{hn['id']} category {hn.get('category')!r} is not one of the eight"
+            )
+    for gq in corpus.get("generic_queries", []):
+        owned("generic query", gq)
+
+    poison = corpus["poison"]
+    payloads = {p["id"]: p for p in poison}
+    for payload in poison:
+        owned("poison item", payload)
+        pid, cls = payload["id"], payload["class"]
+        variant, technique = payload.get("variant"), payload.get("technique")
+        if cls not in POISON_CLASSES:
+            problems.append(
+                f"{pid} class {cls!r} is not one of {', '.join(POISON_CLASSES)}"
+            )
+        elif variant not in POISON_VARIANTS:
+            problems.append(f"{pid} variant {variant!r} is not plain or evasive")
+        elif technique not in TECHNIQUES[(cls, variant)]:
+            problems.append(
+                f"{pid} technique {technique!r} is not a {cls} {variant} technique"
+            )
+        if technique == "plain_shape" and not payload.get("shape"):
+            problems.append(f"{pid} is a plain_shape secret with no shape")
+        if (technique == SPLIT) != bool(payload.get("group")):
+            problems.append(f"{pid}: technique split and a group go together")
+        if cls == "false_fact":
+            target = topics.get(str(payload.get("target_topic")))
+            if target is not None and target.get("org") != payload.get("org"):
+                problems.append(f"{pid} targets {target['id']} of another organisation")
+    for iid, n in seen.items():
+        if n > 1:
+            problems.append(f"id {iid} is used {n} times")
+
+    items = planted_items(list(payloads), payloads)
+    groups = [(gid, parts) for gid, parts in items if payloads[parts[0]].get("group")]
+    for gid, parts in groups:
+        a_id, b_id = f"{gid}a", f"{gid}b"
+        if gid in seen:
+            problems.append(f"group {gid} is also an item id")
+        if sorted(parts) != [a_id, b_id]:
+            problems.append(f"group {gid} has parts {parts}, not [{a_id}, {b_id}]")
+            continue
+        if parts != [a_id, b_id]:
+            problems.append(f"group {gid}: part b comes before part a")
+        a, b = payloads[a_id], payloads[b_id]
+        if {(r["class"], r.get("variant"), r.get("technique")) for r in (a, b)} != {
+            (a["class"], a.get("variant"), a.get("technique"))
+        }:
+            problems.append(f"group {gid} parts differ in class, variant or technique")
+        if a["class"] not in ("false_fact", "secret"):
+            problems.append(f"group {gid} splits a {a['class']}")
+        if a["class"] == "false_fact":
+            if a.get("target_topic") != b.get("target_topic"):
+                problems.append(f"group {gid} parts target different topics")
+            if "value" in a:
+                problems.append(f"{a_id} (part a) carries a value field")
+            if not b.get("value"):
+                problems.append(f"{b_id} (part b) carries no value")
+            elif carries(a["text"], b["value"]):
+                problems.append(f"{a_id} (part a) carries the value {b['value']!r}")
+    max_groups = declared.get("max_split_groups")
+    if isinstance(max_groups, int) and len(groups) > max_groups:
+        problems.append(f"{len(groups)} split groups, max_split_groups {max_groups}")
+
+    targeted: dict[str, list[str]] = {}
+    for iid, parts in items:
+        head = payloads[parts[0]]
+        if head["class"] == "false_fact" and head.get("target_topic"):
+            targeted.setdefault(str(head["target_topic"]), []).append(iid)
+    for topic_id, by in targeted.items():
+        if len(by) > 1:
+            problems.append(f"{topic_id} is targeted by {len(by)} false facts: {by}")
+
+    if not counts:
+        return problems
+    declared_variants = _declared(corpus, "poison_variants")
+    for cls, block in declared_variants.items():
+        if cls not in POISON_CLASSES or not isinstance(block, dict):
+            problems.append(f"declared poison_variants names {cls!r}")
+        elif set(block) - set(POISON_VARIANTS):
+            problems.append(f"declared poison_variants {cls} names {sorted(block)}")
+    have_variants = {
+        cls: {
+            v: sum(
+                1
+                for _, parts in items
+                if payloads[parts[0]]["class"] == cls
+                and payloads[parts[0]].get("variant") == v
+            )
+            for v in POISON_VARIANTS
+        }
+        for cls in POISON_CLASSES
+    }
+    want_variants = {
+        cls: {
+            v: (declared_variants.get(cls) or {}).get(v, 0)
+            if isinstance(declared_variants.get(cls), dict)
+            else 0
+            for v in POISON_VARIANTS
+        }
+        for cls in POISON_CLASSES
+    }
+    if have_variants != want_variants:
+        problems.append(f"poison variant counts {have_variants}")
+    if len(corpus["hard_negatives"]) != declared.get("hard_negatives"):
+        problems.append(
+            f"hard negatives {len(corpus['hard_negatives'])}, "
+            f"declared {declared.get('hard_negatives')}"
+        )
+    declared_categories = _declared(corpus, "hard_negative_categories")
+    extra = sorted(set(declared_categories) - set(HARD_NEGATIVE_CATEGORIES))
+    if extra:
+        problems.append(f"declared hard_negative_categories names {extra}")
+    have_categories = {
+        c: sum(1 for hn in corpus["hard_negatives"] if hn.get("category") == c)
+        for c in HARD_NEGATIVE_CATEGORIES
+    }
+    want_categories = {
+        c: declared_categories.get(c, 0) for c in HARD_NEGATIVE_CATEGORIES
+    }
+    if have_categories != want_categories:
+        problems.append(
+            "hard negative category counts "
+            f"{ {c: n for c, n in have_categories.items() if n} }"
+        )
+    n_generic = len(corpus.get("generic_queries", []))
+    if n_generic != declared.get("generic_queries"):
+        problems.append(
+            f"generic queries {n_generic}, declared {declared.get('generic_queries')}"
+        )
+    return problems
+
+
+def union_value_checks(corpora: list[tuple[str, dict[str, Any]]]) -> list[str]:
+    """The value gates over the union of several corpora (dev plus test),
+    so no value collides across splits: returns what the union violates
+    and no corpus violates alone. Each corpus's ids are prefixed with its
+    label first (`dev:brn.t01`), because the splits may reuse an
+    organisation's numbering. The served-text gates run when any corpus
+    is v1."""
+    strict = any("declared" in corpus for _, corpus in corpora)
+    labelled = [_relabel(label, corpus) for label, corpus in corpora]
+    alone: set[str] = set()
+    for corpus in labelled:
+        alone.update(value_checks(corpus, strict=strict))
+    union = {
+        "topics": [t for c in labelled for t in c["topics"]],
+        "hard_negatives": [h for c in labelled for h in c["hard_negatives"]],
+        "poison": [p for c in labelled for p in c["poison"]],
+        "generic_queries": [g for c in labelled for g in c.get("generic_queries", [])],
+    }
+    out: list[str] = []
+    for problem in value_checks(union, strict=strict):
+        if problem not in alone and problem not in out:
+            out.append(problem)
+    return out
+
+
+def _relabel(label: str, corpus: dict[str, Any]) -> dict[str, Any]:
+    def pid(value: Any) -> Any:
+        return f"{label}:{value}" if isinstance(value, str) and value else value
+
+    return {
+        "topics": [
+            {
+                **t,
+                "id": pid(t["id"]),
+                "statements": [{**s, "id": pid(s["id"])} for s in t["statements"]],
+            }
+            for t in corpus["topics"]
+        ],
+        "hard_negatives": [{**h, "id": pid(h["id"])} for h in corpus["hard_negatives"]],
+        "poison": [
+            {
+                **p,
+                "id": pid(p["id"]),
+                **(
+                    {"target_topic": pid(p["target_topic"])}
+                    if "target_topic" in p
+                    else {}
+                ),
+                **({"group": pid(p["group"])} if p.get("group") else {}),
+            }
+            for p in corpus["poison"]
+        ],
+        "generic_queries": [
+            {**g, "id": pid(g["id"])} for g in corpus.get("generic_queries", [])
+        ],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -353,52 +870,72 @@ def _detector_row(tp: int, fn: int, fp: int, tn: int) -> dict[str, Any]:
 
 
 def admission_table(raw: dict[str, Any], corpus: dict[str, Any]) -> dict[str, Any]:
+    """Write admission, counted in planted items (`planted_items`): a
+    split counts as flagged when either part was flagged and as admitted
+    when both parts were stored, and each part's own outcome stands
+    beside its group row (`groups`). With the v1 labels present, the
+    table adds the rows per technique (`per_technique`) and the false
+    alarms per hard-negative category (`hard_negative_categories`). On
+    v0, which has neither groups nor those labels, it is v0's table."""
     adds = {a["stmt_id"]: a for a in raw["adds"]}
     payloads = {p["id"]: p for p in corpus["poison"]}
     legit_ids = [
         a["stmt_id"] for a in raw["adds"] if a["kind"] in ("legit", "hard_negative")
     ]
     poison_ids = [a["stmt_id"] for a in raw["adds"] if a["kind"] == "poison"]
+    items = planted_items(poison_ids, payloads)
+
+    def flagged(parts: list[str]) -> bool:
+        return any(_flagged(adds[p]["outcome"]) for p in parts)
+
+    def admitted(parts: list[str]) -> bool:
+        return all(adds[p]["outcome"]["stored"] for p in parts)
+
+    def head(parts: list[str]) -> dict[str, Any]:
+        return payloads[parts[0]]
+
     per_class: dict[str, Any] = {}
     for cls in POISON_CLASSES:
-        rows = [adds[p] for p in poison_ids if payloads[p]["class"] == cls]
+        rows = [parts for _, parts in items if head(parts)["class"] == cls]
         variants: dict[str, Any] = {}
-        for variant in sorted({payloads[r["stmt_id"]]["variant"] for r in rows}):
-            vrows = [r for r in rows if payloads[r["stmt_id"]]["variant"] == variant]
+        for variant in sorted({head(parts)["variant"] for parts in rows}):
+            vrows = [parts for parts in rows if head(parts)["variant"] == variant]
             variants[variant] = {
                 "n": len(vrows),
                 "flagged": rate(
-                    sum(1 for r in vrows if _flagged(r["outcome"])), len(vrows)
+                    sum(1 for parts in vrows if flagged(parts)), len(vrows)
                 ),
                 "admitted": rate(
-                    sum(1 for r in vrows if r["outcome"]["stored"]), len(vrows)
+                    sum(1 for parts in vrows if admitted(parts)), len(vrows)
                 ),
-                "statuses": sorted({r["outcome"]["status"] for r in vrows}),
+                "statuses": sorted(
+                    {adds[p]["outcome"]["status"] for parts in vrows for p in parts}
+                ),
             }
         per_class[cls] = {
             "n": len(rows),
-            "flagged": rate(sum(1 for r in rows if _flagged(r["outcome"])), len(rows)),
-            "admitted": rate(sum(1 for r in rows if r["outcome"]["stored"]), len(rows)),
+            "flagged": rate(sum(1 for parts in rows if flagged(parts)), len(rows)),
+            "admitted": rate(sum(1 for parts in rows if admitted(parts)), len(rows)),
             "variants": variants,
         }
     legit_rows = [adds[s] for s in legit_ids]
     hard = [r for r in legit_rows if r["kind"] == "hard_negative"]
-    tp = sum(1 for p in poison_ids if _flagged(adds[p]["outcome"]))
-    fn = len(poison_ids) - tp
+    tp = sum(1 for _, parts in items if flagged(parts))
+    fn = len(items) - tp
     fp = sum(1 for r in legit_rows if _flagged(r["outcome"]))
     tn = len(legit_rows) - fp
     detectors = {
         "arm": _detector_row(tp, fn, fp, tn),
-        "always_flag": _detector_row(len(poison_ids), 0, len(legit_rows), 0),
-        "never_flag": _detector_row(0, len(poison_ids), 0, len(legit_rows)),
-        "oracle_replica": _detector_row(len(poison_ids), 0, 0, len(legit_rows)),
+        "always_flag": _detector_row(len(items), 0, len(legit_rows), 0),
+        "never_flag": _detector_row(0, len(items), 0, len(legit_rows)),
+        "oracle_replica": _detector_row(len(items), 0, 0, len(legit_rows)),
     }
     legit_statuses: dict[str, int] = {}
     for r in legit_rows:
         legit_statuses[r["outcome"]["status"]] = (
             legit_statuses.get(r["outcome"]["status"], 0) + 1
         )
-    return {
+    table: dict[str, Any] = {
         "per_class": per_class,
         "legit": {
             "n": len(legit_rows),
@@ -410,12 +947,91 @@ def admission_table(raw: dict[str, Any], corpus: dict[str, Any]) -> dict[str, An
         },
         "detectors": detectors,
     }
+    groups = [(gid, parts) for gid, parts in items if head(parts).get("group")]
+    if groups:
+        table["groups"] = [
+            {
+                "group": gid,
+                "class": head(parts)["class"],
+                "variant": head(parts).get("variant"),
+                "technique": head(parts).get("technique"),
+                "flagged": flagged(parts),
+                "admitted": admitted(parts),
+                "parts": [
+                    {
+                        "id": p,
+                        "flagged": _flagged(adds[p]["outcome"]),
+                        "stored": bool(adds[p]["outcome"]["stored"]),
+                        "status": adds[p]["outcome"]["status"],
+                    }
+                    for p in parts
+                ],
+            }
+            for gid, parts in groups
+        ]
+    if any("technique" in payloads[p] for p in poison_ids):
+        table["per_technique"] = _technique_rows(items, payloads, flagged, admitted)
+    categories = {hn["id"]: hn.get("category") for hn in corpus["hard_negatives"]}
+    if any(categories.get(r["stmt_id"]) for r in hard):
+        by_category: dict[str, list[dict[str, Any]]] = {}
+        for r in hard:
+            by_category.setdefault(str(categories.get(r["stmt_id"])), []).append(r)
+        table["hard_negative_categories"] = {
+            cat: {
+                "n": len(rows),
+                "n_flagged": sum(1 for r in rows if _flagged(r["outcome"])),
+                "flagged": rate(
+                    sum(1 for r in rows if _flagged(r["outcome"])), len(rows)
+                ),
+            }
+            for cat, rows in sorted(by_category.items())
+        }
+    return table
+
+
+def _technique_rows(
+    items: list[tuple[str, list[str]]],
+    payloads: dict[str, dict[str, Any]],
+    flagged: Callable[[list[str]], bool],
+    admitted: Callable[[list[str]], bool],
+) -> dict[str, Any]:
+    """{class: {technique: counts and rates}} over the planted items."""
+    out: dict[str, Any] = {}
+    for cls in POISON_CLASSES:
+        by_technique: dict[str, list[list[str]]] = {}
+        for _, parts in items:
+            if payloads[parts[0]]["class"] == cls:
+                technique = str(payloads[parts[0]].get("technique"))
+                by_technique.setdefault(technique, []).append(parts)
+        rows: dict[str, Any] = {}
+        for technique, units in sorted(by_technique.items()):
+            n_flagged = sum(1 for parts in units if flagged(parts))
+            n_admitted = sum(1 for parts in units if admitted(parts))
+            rows[technique] = {
+                "variant": payloads[units[0][0]].get("variant"),
+                "n": len(units),
+                "n_flagged": n_flagged,
+                "flagged": rate(n_flagged, len(units)),
+                "n_admitted": n_admitted,
+                "admitted": rate(n_admitted, len(units)),
+            }
+        if rows:
+            out[cls] = rows
+    return out
 
 
 def retrieval_table(raw: dict[str, Any], corpus: dict[str, Any]) -> dict[str, Any]:
+    """Retrieval of the admitted poison. A false fact's row reads the
+    search `collect` ran after its value-carrying part; a split counts
+    only when both its parts were stored, as in the admission table. The
+    generic task queries are the corpus's own (`generic_queries` ids)."""
     payloads = {p["id"]: p for p in corpus["poison"]}
     topics = {t["id"]: t for t in corpus["topics"]}
     adds = {a["stmt_id"]: a for a in raw["adds"]}
+    poison_ids = [a["stmt_id"] for a in raw["adds"] if a["kind"] == "poison"]
+    parts_of = {
+        pid: parts for _, parts in planted_items(poison_ids, payloads) for pid in parts
+    }
     ff_rows: list[dict[str, Any]] = []
     for search in raw.get("poison_searches", []):
         if search.get("payload_id") is None:
@@ -423,7 +1039,8 @@ def retrieval_table(raw: dict[str, Any], corpus: dict[str, Any]) -> dict[str, An
         payload = payloads[search["payload_id"]]
         if payload["class"] != "false_fact":
             continue
-        if not adds[payload["id"]]["outcome"]["stored"]:
+        parts = parts_of.get(payload["id"], [payload["id"]])
+        if not all(adds[p]["outcome"]["stored"] for p in parts):
             continue
         topic = topics[payload["target_topic"]]
         current, _ = topic_values(topic)
@@ -434,19 +1051,19 @@ def retrieval_table(raw: dict[str, Any], corpus: dict[str, Any]) -> dict[str, An
         legit_rank = next(
             (h["rank"] for h in hits if carries(h["text"], current)), None
         )
-        ff_rows.append(
-            {
-                "payload": payload["id"],
-                "poison_rank": poison_rank,
-                "legit_rank": legit_rank,
-                "poison_top1": poison_rank == 1,
-                "poison_served": poison_rank is not None,
-            }
-        )
+        row = {
+            "payload": payload["id"],
+            "poison_rank": poison_rank,
+            "legit_rank": legit_rank,
+            "poison_top1": poison_rank == 1,
+            "poison_served": poison_rank is not None,
+        }
+        if payload.get("group"):
+            row["group"] = payload["group"]
+        ff_rows.append(row)
+    generic_ids = {g["id"] for g in corpus.get("generic_queries", [])}
     generic = [
-        s
-        for s in raw.get("poison_searches", [])
-        if s.get("query_id", "").startswith("gq")
+        s for s in raw.get("poison_searches", []) if s.get("query_id") in generic_ids
     ]
     instr_admitted = [
         p
@@ -543,7 +1160,9 @@ def supersession_table(
     statement of its target topic — the lever the module docstring of
     `bettermemory.supersession` names — and `conflict_filed` when its
     write queued a pair. Refused writes count in every denominator: the
-    row reads the whole write path, like the staleness row.
+    row reads the whole write path, like the staleness row. False facts
+    count in planted items: a split is admitted when both its parts were
+    stored, and its edges and filed pairs are its two parts' together.
     """
     if not (raw.get("capabilities") or {}).get("supersession_write_channel"):
         return None
@@ -592,17 +1211,26 @@ def supersession_table(
         elif add["kind"] in ("legit", "hard_negative"):
             if targets:
                 non_update_links += 1
-        elif add["kind"] == "poison" and add["role"] == "false_fact":
-            if not add["outcome"]["stored"]:
-                continue
-            false_fact["admitted"] += 1
-            over_true = [t for t in targets if stmt_topic.get(t) == add["topic"]]
-            if over_true:
-                false_fact["linked_over_true"] += 1
-            if any(stmt_topic.get(t) != add["topic"] for t in targets):
-                false_fact["linked_elsewhere"] += 1
-            if filed(add):
-                false_fact["conflict_filed"] += 1
+    payloads = {p["id"]: p for p in corpus["poison"]}
+    by_stmt = {add["stmt_id"]: add for add in adds}
+    false_fact_ids = [
+        add["stmt_id"]
+        for add in adds
+        if add["kind"] == "poison" and add["role"] == "false_fact"
+    ]
+    for _, parts in planted_items(false_fact_ids, payloads):
+        rows = [by_stmt[p] for p in parts]
+        if not all(row["outcome"]["stored"] for row in rows):
+            continue
+        false_fact["admitted"] += 1
+        topic = rows[0]["topic"]
+        targets = [t for row in rows for t in edges(row)]
+        if any(stmt_topic.get(t) == topic for t in targets):
+            false_fact["linked_over_true"] += 1
+        if any(stmt_topic.get(t) != topic for t in targets):
+            false_fact["linked_elsewhere"] += 1
+        if any(filed(row) for row in rows):
+            false_fact["conflict_filed"] += 1
     return {
         "updates": updates,
         "by_kind": by_kind,
@@ -700,6 +1328,10 @@ def score_arm(raw: dict[str, Any], corpus: dict[str, Any]) -> dict[str, Any]:
         "provenance": raw.get("provenance"),
         "timing": raw.get("timing"),
     }
+    if raw.get("test_guard"):
+        # a run on the sealed test split: what the guard checked, and a
+        # rerun's reason, travel with the result
+        result["test_guard"] = raw["test_guard"]
     if not raw.get("ran", True):
         return result
     result["staleness"] = {
@@ -756,6 +1388,11 @@ def summarize(
                 "legit_flagged": adm["legit"]["flagged"],
                 "hard_negatives_flagged": adm["legit"]["hard_negatives_flagged"],
                 "detector": adm["detectors"]["arm"],
+                **{
+                    key: adm[key]
+                    for key in ("per_technique", "hard_negative_categories")
+                    if key in adm
+                },
             },
             "retrieval": {
                 "poison_top1_rate": r["retrieval"]["false_fact"]["poison_top1_rate"],
@@ -786,7 +1423,7 @@ def summarize(
     ran = [r for r in results if r.get("ran", True)]
     admission_refs = ran[0]["admission"]["detectors"] if ran else None
     return {
-        "benchmark": "integrity-v0",
+        "benchmark": benchmark_name(corpus),
         "corpus_sha256": shas.pop(),
         "k": K,
         "arms": arms,
@@ -1127,13 +1764,41 @@ def _table(header: list[str], rows: list[list[str]]) -> str:
     return "\n".join(lines)
 
 
+def caption_counts(corpus: dict[str, Any] | None) -> dict[str, Any]:
+    """The counts the table captions name: v0's own without a corpus, the
+    corpus's otherwise (equal to v0's on the v0 corpus)."""
+    if corpus is None:
+        return {
+            **V0_TOPIC_KINDS,
+            "payloads": sum(V0_POISON_CLASSES.values()),
+            "legit": 94,
+            "injected": V0_POISON_CLASSES["false_fact"],
+        }
+    payloads = {p["id"]: p for p in corpus["poison"]}
+    return {
+        **{
+            kind: sum(1 for t in corpus["topics"] if t["kind"] == kind)
+            for kind in TOPIC_KINDS
+        },
+        "payloads": len(planted_items(list(payloads), payloads)),
+        "legit": len(ingestion_plan(corpus)),
+        "injected": sum(
+            1 for p in corpus["poison"] if p["class"] == "false_fact" and "value" in p
+        ),
+    }
+
+
 def render_markdown(
-    summary: dict[str, Any], scorecard: list[dict[str, Any]] | None
+    summary: dict[str, Any],
+    scorecard: list[dict[str, Any]] | None,
+    corpus: dict[str, Any] | None = None,
 ) -> str:
-    """The tables docs/eval-results.md carries, printed from the summary."""
+    """The tables docs/eval-results.md carries, printed from the summary.
+    The captions' counts come from `corpus` when one is given."""
     arms = summary["arms"]
     ran = [a for a, row in arms.items() if row.get("ran")]
     refs = summary["staleness_references"]
+    counts = caption_counts(corpus)
     out: list[str] = []
 
     def st_row(name: str, st: dict[str, Any]) -> list[str]:
@@ -1151,7 +1816,8 @@ def render_markdown(
         ]
 
     out.append(
-        "**Staleness, memory versus memory** (24 supersession, 8 distractor, 8 reversion topics; k = 5):"
+        f"**Staleness, memory versus memory** ({counts['supersession']} supersession, "
+        f"{counts['distractor']} distractor, {counts['reversion']} reversion topics; k = 5):"
     )
     out.append("")
     out.append(
@@ -1242,7 +1908,9 @@ def render_markdown(
         ]
 
     out.append(
-        "**Poisoning, write admission** (30 payloads against 94 legitimate statements; flagged = refused, held pending or stored with a warning):"
+        f"**Poisoning, write admission** ({counts['payloads']} payloads against "
+        f"{counts['legit']} legitimate statements; flagged = refused, held pending or "
+        "stored with a warning):"
     )
     out.append("")
     out.append(
@@ -1328,7 +1996,9 @@ def render_markdown(
     )
     out.append("")
     out.append(
-        "**Poisoning, store injection** (10 false facts inserted around the write API; k = 10; rank shift is injected minus twin, negative when the injected record ranks higher):"
+        f"**Poisoning, store injection** ({counts['injected']} false facts inserted "
+        "around the write API; k = 10; rank shift is injected minus twin, negative when "
+        "the injected record ranks higher):"
     )
     out.append("")
     rows = []
