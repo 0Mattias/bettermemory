@@ -1115,9 +1115,11 @@ class _EventWindow:
 # the rows past the head, the new cut applied in SQL. A cut before the
 # memo's, a head row gone or carrying another MAC (the tail removed, a row
 # appended at its number) or a read inside an open transaction reads the
-# whole log as the uncached code does. A row edited outside the store with
-# its MAC left as it was, the head row included (the chain then fails
-# `bettermemory log verify`), is not seen. Keyed by the store file and its
+# whole log as the uncached code does. An edit outside the store that
+# leaves the head row's MAC as it was is not seen: a row below the head
+# edited with its MAC kept or deleted, and the head row edited with its MAC
+# kept (the chain then fails `bettermemory log verify` in each case); the
+# memo serves the rows it read. Keyed by the store file and its
 # id, so two connections to one store share it; bounded to the most
 # recently read stores, not in rows: a store's entry keeps every row in the
 # window, its payload text and four short strings, about 1.3 KB a row for

@@ -124,7 +124,13 @@ surfaces leave with them. An 8.x directory is imported once by
   git refuses, and its variables are parsed once per state of the file;
   the files answer the root unless the config sets `core.worktree` or a
   true `core.bare`, where a branch or remote whose name held the word
-  `worktree` used to send every search to git.
+  `worktree` used to send every search to git; and where the config sets
+  `extensions.worktreeConfig` (as `git sparse-checkout set` does in a
+  linked worktree), `config.worktree` is read as git reads it after the
+  common config: `log.follow` or `core.attributesFile` there keeps
+  governed hits out of the memo, and its stamp is in every walk key, so
+  `diff.ignoreSubmodules` or `log.showRoot` written there is read on the
+  next search.
   `_caches.clear_all` empties every cache
   and the test suite calls it before each test. The phase 1 gate's
   numbers are in `bench/daemon/results/latency-9.0.0-2026-09-26-u6.json`.

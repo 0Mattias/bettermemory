@@ -113,8 +113,9 @@ NEGATIVE_OUTCOME_WINDOW_DAYS = 30
 # reads (`origin.attribute_files_signature` and
 # `origin.gitattributes_signature`; None for every other hit, which reads
 # none), and the files beside the history its git reads
-# (`origin.walk_files_signature`: the repository's config, whose
-# log.follow reaches a single-pathspec log and log.showRoot the walk, the
+# (`origin.walk_files_signature`: the repository's config and, under
+# extensions.worktreeConfig, its config.worktree, whose log.follow reaches
+# a single-pathspec log and log.showRoot the walk, the
 # working tree's .gitmodules, whose ignore settings reach the walk, and the
 # index's .gitmodules entry where git reads it: unmerged, or the working
 # tree has none); the value is the resolved count, basis and claim detail,
@@ -832,7 +833,8 @@ class ResponseBuilder:
         governed file's path, ``info/attributes``, the global attributes
         file and the repository's ``config``); and for every hit, the files
         beside the history its git reads (`origin.walk_files_signature`: the
-        repository's ``config``, where ``log.follow`` reaches a
+        repository's ``config`` and, under ``extensions.worktreeConfig``,
+        its ``config.worktree``, where ``log.follow`` reaches a
         single-pathspec log and ``log.showRoot`` the walk, the working
         tree's ``.gitmodules``, where a submodule's ``ignore`` reaches the
         walk, and the index's ``.gitmodules`` entry where git reads it,
@@ -896,8 +898,8 @@ class ResponseBuilder:
         the head moves: the working tree's symbolic links on an anchor's
         path and the home directory ``~`` expands to
         (`origin.resolve_repo_pathspecs` reads both); git's configuration
-        outside the repository's ``config`` (the global and system files, a
-        file an include names, ``config.worktree``, the environment, and
+        outside the repository's ``config`` and ``config.worktree`` (the
+        global and system files, a file an include names, the environment, and
         what they set: a ``core.attributesFile`` naming a file other than
         the default, ``log.follow``, ``log.showRoot``, a diff driver, the
         program a textconv runs); the system attributes file; a history

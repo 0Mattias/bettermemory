@@ -2037,6 +2037,201 @@ def test_the_repository_config_is_parsed_once_per_stamp(
     assert parsed.count(config_size) == 1, parsed
 
 
+def _worktree_config(repo: Path, text: str) -> None:
+    """Turn extensions.worktreeConfig on and write `text` as the
+    repository's config.worktree, which git then reads after the common
+    config."""
+    _git(repo, "config", "extensions.worktreeConfig", "true")
+    (repo / ".git" / "config.worktree").write_text(text, encoding="utf-8")
+
+
+def _renamed_claim(
+    tmp_path: Path, memory_dir: Path, monkeypatch: pytest.MonkeyPatch, repo: Path
+) -> tuple[Origin, list[Any], list[str]]:
+    """The claimed module renamed after the stamp (lib/app.py to
+    src/app.py), so a patch stream that follows renames diffs the renaming
+    commit with the attributes of the rename source's path, and two
+    memories claiming src/app.py::handler, one counted from an anchor and
+    one on author date: each counts 1 unless lib/.gitattributes turns the
+    diff off."""
+    anchor = _commit(
+        repo,
+        "c1",
+        when=_day(0),
+        files={"lib/app.py": _MODULE, "src/keep.txt": "k\n"},
+    )
+    _git(repo, "mv", "lib/app.py", "src/app.py")
+    renamed = _MODULE.replace("def handler():", "def handler(x=None):")
+    _commit(repo, "c2", when=_day(20), files={"src/app.py": renamed})
+    _commit(
+        repo,
+        "c3",
+        when=_day(30),
+        files={
+            "src/app.py": renamed.replace(
+                "def other():\n    return 1", "def other():\n    return 3"
+            )
+        },
+    )
+    store = Store(memory_dir)
+    caller = _caller(repo)
+    body = "the handler is declared in the app module"
+    ids = [
+        _write(
+            store,
+            caller,
+            monkeypatch,
+            f"widget rule a: {body}",
+            at=_day(10),
+            claims=["src/app.py::handler"],
+            verified_head=anchor,
+        ),
+        _write(
+            store,
+            caller,
+            monkeypatch,
+            f"widget rule b: {body}",
+            at=_day(10),
+            claims=["src/app.py::handler"],
+        ),
+    ]
+    return caller, store.load_all(), ids
+
+
+@files_only
+def test_log_follow_in_config_worktree_keeps_the_hit_out_of_the_memo(
+    git_config_home: Path,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under extensions.worktreeConfig git reads config.worktree after the
+    common config, so log.follow set there makes the patch stream follow
+    the claimed file across its rename as it does from the common config:
+    the attribute files decline, and an untracked lib/.gitattributes
+    written between two attaches is read by both."""
+    repo = _repo(tmp_path)
+    _worktree_config(repo, "[log]\n\tfollow = true\n")
+    assert _git(repo, "config", "--bool", "--get", "log.follow") == "true", (
+        "premise: git reads config.worktree"
+    )
+    caller, memories, ids = _renamed_claim(tmp_path, memory_dir, monkeypatch, repo)
+    assert origin.attribute_files_signature(repo, repo) is None
+    for _ in range(2):
+        before, _ = _attach(memories, caller, monkeypatch)
+    assert _counts(before, ids) == [1, 1]
+
+    (repo / "lib").mkdir(exist_ok=True)
+    (repo / "lib" / ".gitattributes").write_text("*.py -diff\n", encoding="utf-8")
+    cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
+    assert _counts(uncached, ids) != [1, 1], (
+        "premise: the rename source's attributes moved git"
+    )
+    assert cached == uncached
+
+
+@files_only
+def test_core_attributesfile_in_config_worktree_keeps_the_hit_out_of_the_memo(
+    git_config_home: Path,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """core.attributesFile set in config.worktree sends git to a file the
+    attribute files do not stamp, as it does from the common config: the
+    hits with governed claims stay out of the memo, so an edit of that file
+    between two attaches is read by both."""
+    repo, caller, memories, ids = _claimed(
+        tmp_path, memory_dir, monkeypatch, claim="src/app.py::handler"
+    )
+    attributes = tmp_path / "attributes-elsewhere"
+    attributes.write_text("", encoding="utf-8")
+    _worktree_config(repo, f"[core]\n\tattributesFile = {attributes}\n")
+    assert _git(repo, "config", "--get", "core.attributesFile") == str(attributes), (
+        "premise: git reads config.worktree"
+    )
+    assert origin.attribute_files_signature(repo, repo) is None
+    for _ in range(2):
+        before, _ = _attach(memories, caller, monkeypatch)
+    assert _counts(before, ids) == [0, 0]
+
+    attributes.write_text("*.py -diff\n", encoding="utf-8")
+    cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
+    assert _counts(uncached, ids) == [2, 2], "premise: the attributes file moved git"
+    assert cached == uncached
+
+
+@files_only
+def test_config_worktree_is_read_only_where_the_extension_is_on(
+    git_config_home: Path, tmp_path: Path
+) -> None:
+    """Without extensions.worktreeConfig git does not read config.worktree,
+    and neither signature stamps it: log.follow written there keys the
+    attribute files like any other repository, and a rewrite moves no walk
+    key. With the extension on, the attribute files decline on the
+    log.follow it sets and a rewrite is a new walk key."""
+    repo = _repo(tmp_path)
+    _commit(repo, "c0", when=_T0, files={"a.txt": "a\n"})
+    root = repo.resolve()
+    worktree_config = repo / ".git" / "config.worktree"
+    walk = origin.walk_files_signature(root)
+    attributes = origin.attribute_files_signature(repo, repo)
+    assert walk is not None and attributes is not None
+
+    worktree_config.write_text("[log]\n\tfollow = true\n", encoding="utf-8")
+    unread = subprocess.run(
+        ["git", "config", "--bool", "--get", "log.follow"],
+        cwd=repo,
+        capture_output=True,
+        check=False,
+    )
+    assert unread.returncode == 1, "premise: git reads no config.worktree"
+    assert origin.walk_files_signature(root) == walk
+    assert origin.attribute_files_signature(repo, repo) == attributes
+
+    _git(repo, "config", "extensions.worktreeConfig", "true")
+    assert origin.attribute_files_signature(repo, repo) is None
+    keyed = origin.walk_files_signature(root)
+    assert keyed is not None
+    worktree_config.write_text(
+        "[log]\n\tfollow = true\n\tshowRoot = false\n", encoding="utf-8"
+    )
+    assert origin.walk_files_signature(root) != keyed
+    worktree_config.write_text("", encoding="utf-8")
+    assert origin.attribute_files_signature(repo, repo) is not None
+
+
+@files_only
+def test_the_linked_worktrees_own_config_worktree_is_the_one_read(
+    git_config_home: Path, tmp_path: Path
+) -> None:
+    """`git sparse-checkout set` in a linked worktree turns
+    extensions.worktreeConfig on and writes that worktree's own
+    config.worktree, under .git/worktrees/<name>. The signatures read the
+    file of the worktree they are asked about: log.follow written there
+    declines the linked worktree's attribute files and leaves the primary
+    checkout's keyed."""
+    repo = _repo(tmp_path)
+    _commit(repo, "c0", when=_T0, files={"a/x.txt": "x\n", "b/y.txt": "y\n"})
+    linked = tmp_path / "linked"
+    _git(repo, "worktree", "add", "-q", "--detach", str(linked), "main")
+    _git(linked, "sparse-checkout", "set", "--cone", "a")
+    assert _git(repo, "config", "--get", "extensions.worktreeConfig") == "true", (
+        "premise: sparse-checkout turned the extension on"
+    )
+    gitdir = Path(_git(linked, "rev-parse", "--absolute-git-dir"))
+    worktree_config = gitdir / "config.worktree"
+    assert worktree_config.is_file(), "premise: the worktree's own config"
+    assert origin.attribute_files_signature(linked, linked) is not None
+    worktree_config.write_text(
+        worktree_config.read_text(encoding="utf-8") + "[log]\n\tfollow = true\n",
+        encoding="utf-8",
+    )
+    assert _git(linked, "config", "--bool", "--get", "log.follow") == "true"
+    assert origin.attribute_files_signature(linked, linked) is None
+    assert origin.attribute_files_signature(repo, repo) is not None
+
+
 def test_an_attributes_file_created_with_its_directory_during_the_attach_stores_nothing(
     git_config_home: Path,
     memory_dir: Path,
@@ -2411,6 +2606,36 @@ def test_the_walk_is_keyed_on_the_working_trees_gitmodules(
         ((*ignore, "all"), 0),
     ):
         _git(repo, *command)
+        cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
+        assert _drift(uncached, memory_id) == (expected, "reachability"), (
+            "premise: the setting moved the walk"
+        )
+        assert cached == uncached
+
+
+def test_the_walk_is_keyed_on_config_worktree(
+    git_config_home: Path,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """diff.ignoreSubmodules = all in config.worktree, which git reads under
+    extensions.worktreeConfig, drops the gitlink's changes from the walk's
+    --name-only listing as it does from the common config: a hit attested
+    on the submodule's path counts 0 with the setting and 2 without it,
+    under an unchanged head. The walk memo and the per-hit key carry
+    config.worktree's stamp."""
+    repo, caller, memories, memory_id = _pinned_submodule(
+        tmp_path, memory_dir, monkeypatch
+    )
+    _git(repo, "config", "extensions.worktreeConfig", "true")
+    for _ in range(2):
+        before, _ = _attach(memories, caller, monkeypatch)
+    assert _drift(before, memory_id) == (2, "reachability")
+
+    worktree_config = repo / ".git" / "config.worktree"
+    for text, expected in (("[diff]\n\tignoreSubmodules = all\n", 0), ("", 2)):
+        worktree_config.write_text(text, encoding="utf-8")
         cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
         assert _drift(uncached, memory_id) == (expected, "reachability"), (
             "premise: the setting moved the walk"
