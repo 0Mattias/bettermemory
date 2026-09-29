@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import tomllib
 from collections.abc import Iterator
 from pathlib import Path
@@ -25,6 +26,7 @@ from bettermemory import _daemon_client, config
 from bettermemory._daemon_client import write_state
 from bettermemory.store import Store
 
+from .conftest import shielded_child_env
 from .test_daemon_lifecycle import _cli, _env, _wait_running
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -373,3 +375,181 @@ def test_the_hook_replaces_a_daemon_of_another_version_and_keeps_its_own(
     finally:
         stale.shutdown()
         stale.server_close()
+
+
+def _malformed_config(tmp_path: Path, env: dict[str, str]) -> dict[str, str]:
+    """`env` with HOME and XDG_CONFIG_HOME under `tmp_path` and the config
+    file there written so that it does not parse."""
+    home = tmp_path / "home"
+    home.mkdir()
+    env = dict(env)
+    env["HOME"] = str(home)
+    env["XDG_CONFIG_HOME"] = str(home / ".config")
+    where = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from bettermemory.config import default_config_path; "
+            "print(default_config_path())",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    config_path = Path(where.stdout.strip())
+    assert config_path.is_relative_to(home)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("[behavior\n", encoding="utf-8")
+    return env
+
+
+@pytest.mark.skipif(
+    os.name != "posix", reason="the child's config directory follows HOME on POSIX"
+)
+def test_a_daemon_that_exits_at_start_fails_the_hook_at_once_with_its_error(
+    tmp_path: Path, daemon_env: dict[str, str]
+) -> None:
+    """No daemon runs, so the hook starts one, and the malformed config
+    stops that daemon at start. The hook sees its child exit and reports
+    the error the daemon logged, at once, where it used to wait out
+    START_TIMEOUT_SECONDS and name no cause."""
+    env = _malformed_config(tmp_path, daemon_env)
+    started = time.monotonic()
+    result = _hook(["hook", "session-start"], env, {"cwd": str(tmp_path)})
+    elapsed = time.monotonic() - started
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert "Expected ']' at the end of a table declaration" in result.stderr, (
+        result.stderr
+    )
+    assert elapsed < _daemon_client.START_TIMEOUT_SECONDS / 2, elapsed
+
+
+@pytest.mark.skipif(
+    os.name != "posix", reason="the child's config directory follows HOME on POSIX"
+)
+def test_up_reports_the_error_of_a_daemon_that_exits_at_start(
+    tmp_path: Path, daemon_env: dict[str, str]
+) -> None:
+    """`bettermemory up` fails with exit 1 as soon as the daemon it started
+    exits, and names the daemon's error and its log file."""
+    env = _malformed_config(tmp_path, daemon_env)
+    started = time.monotonic()
+    result = _cli(["up", "--port", "0"], env)
+    elapsed = time.monotonic() - started
+    assert result.returncode == 1
+    assert "Expected ']' at the end of a table declaration" in result.stderr, (
+        result.stderr
+    )
+    assert "daemon-" in result.stderr and ".log" in result.stderr, result.stderr
+    assert elapsed < _daemon_client.START_TIMEOUT_SECONDS / 2, elapsed
+
+
+def test_the_wait_ends_when_the_started_child_exits(tmp_path: Path) -> None:
+    """`wait_for_daemon` given the child it started stops polling when the
+    child exits with no daemon answering, and raises `DaemonExited` with the
+    child's exit status and the last line the child wrote to its log since
+    it was started (earlier runs' lines are not its)."""
+    from bettermemory._daemon_client import DaemonExited, Started
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    store_path = tmp_path / "store" / "memory.sqlite"
+    log_path = _daemon_client.log_file_for(state_dir, store_path)
+    log_path.write_text("an earlier run's last line\n", encoding="utf-8")
+    offset = log_path.stat().st_size
+    with log_path.open("ab") as log:
+        child = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import sys; print('starting', flush=True); "
+                "sys.stderr.write('ValueError: the reason it stopped\\n'); sys.exit(3)",
+            ],
+            stdout=log,
+            stderr=subprocess.STDOUT,
+        )
+    started = time.monotonic()
+    with pytest.raises(DaemonExited) as raised:
+        _daemon_client.wait_for_daemon(
+            state_dir,
+            store_path,
+            timeout=_daemon_client.START_TIMEOUT_SECONDS,
+            started=Started(child=child, log=log_path, log_offset=offset),
+        )
+    assert time.monotonic() - started < _daemon_client.START_TIMEOUT_SECONDS / 2
+    assert raised.value.status == 3
+    assert raised.value.error == "ValueError: the reason it stopped"
+    assert str(log_path) in str(raised.value)
+
+
+def test_the_wait_returns_a_daemon_that_answers_though_the_child_exited(
+    tmp_path: Path,
+) -> None:
+    """A daemon that answers is the answer, whatever became of the child:
+    here the child writes the state file of a server that answers /health
+    and exits, and the wait returns that state rather than raising."""
+    from bettermemory._daemon_client import Started
+
+    state_dir = tmp_path / "state"
+    store_path = tmp_path / "store" / "memory.sqlite"
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _AnsweringHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    state = {
+        "pid": os.getpid(),
+        "port": server.server_address[1],
+        "token": "t" * 64,
+        "version": _daemon_client.package_version(),
+        "store": str(store_path),
+        "started": "2026-01-01T00:00:00Z",
+    }
+    code = (
+        "import json, sys; from pathlib import Path; "
+        "from bettermemory._daemon_client import write_state; "
+        f"write_state(Path({str(state_dir)!r}), json.loads({json.dumps(state)!r}))"
+    )
+    try:
+        state_dir.mkdir()
+        log_path = _daemon_client.log_file_for(state_dir, store_path)
+        with log_path.open("ab") as log:
+            child = subprocess.Popen(
+                [sys.executable, "-c", code],
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                env=shielded_child_env(),
+            )
+        child.wait(timeout=30)
+        assert child.returncode == 0
+        answered = _daemon_client.wait_for_daemon(
+            state_dir,
+            store_path,
+            timeout=_daemon_client.START_TIMEOUT_SECONDS,
+            started=Started(child=child, log=log_path, log_offset=0),
+        )
+        assert answered is not None and answered["port"] == state["port"]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+class _AnsweringHandler(http.server.BaseHTTPRequestHandler):
+    """A daemon of this package's version that answers /health."""
+
+    def log_message(self, *args: object) -> None:
+        return
+
+    def do_GET(self) -> None:  # noqa: N802
+        body = json.dumps(
+            {
+                "status": "ok",
+                "version": _daemon_client.package_version(),
+                "store": "x",
+                "pid": 1,
+            }
+        ).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(body)

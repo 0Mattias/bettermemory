@@ -53,6 +53,7 @@ def add_status(
 
 def run_up(args: argparse.Namespace) -> None:
     from .._daemon_client import (
+        DaemonExited,
         daemon_env_for,
         ensure_daemon,
         package_version,
@@ -64,13 +65,17 @@ def run_up(args: argparse.Namespace) -> None:
         _run_foreground(args.port)
         return
     store_path = resolved_store_path()
-    state = ensure_daemon(
-        resolve_state_dir(),
-        store_path,
-        version=package_version(),
-        port=args.port,
-        env=daemon_env_for(store_path),
-    )
+    try:
+        state = ensure_daemon(
+            resolve_state_dir(),
+            store_path,
+            version=package_version(),
+            port=args.port,
+            env=daemon_env_for(store_path),
+        )
+    except DaemonExited as exc:
+        print(f"bettermemory: {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
     if state is None:
         print(
             f"bettermemory: no daemon could be started for {store_path}",

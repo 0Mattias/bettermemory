@@ -139,8 +139,12 @@ surfaces leave with them. An 8.x directory is imported once by
   with `BETTERMEMORY_DIR` set it names the store from the variable
   without loading the config, so a malformed config no longer stops it,
   or `up`, `down` and `status`, before they reach a running daemon.
-  With none running, the daemon they start still refuses that config,
-  and they give up after the eight-second start timeout.
+  With none running, the daemon they start still refuses that config.
+  A client that starts a daemon watches it: when it exits before any
+  daemon answers, the hook, `up` and the shim stop waiting at once and
+  report its exit status and the last line of its log
+  (`DaemonExited`), where they used to wait out the eight-second start
+  timeout and name no cause.
   `session-start`, `audit-turn` and `prompt-recall` stay as aliases of
   it, and the plugin's `hooks.json` names the new commands.
   (`src/bettermemory/daemon.py`, `shim.py`, `_daemon_client.py`,

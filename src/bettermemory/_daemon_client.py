@@ -31,7 +31,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 STATE_DIR_ENV = "BETTERMEMORY_STATE_DIR"
 DEFAULT_PORT = 7397
@@ -212,6 +212,56 @@ def post(
     return body if isinstance(body, dict) else {}
 
 
+class Started(NamedTuple):
+    """A daemon process this client spawned: the child, the log file its
+    output goes to, and the size that log had before the child started, the
+    offset at which the child's own lines begin."""
+
+    child: subprocess.Popen[Any]
+    log: Path
+    log_offset: int
+
+
+class DaemonExited(RuntimeError):
+    """The daemon a client started exited before any daemon answered: a
+    config that does not parse, a store that cannot be opened, anything
+    that stops `bettermemory up --foreground` at start. `status` is its
+    exit status, `error` the last line it wrote to its log (None when it
+    wrote none), `log` that file."""
+
+    def __init__(
+        self, store_path: Path | str, status: int, error: str | None, log: Path
+    ) -> None:
+        self.status = status
+        self.error = error
+        self.log = log
+        reason = f": {error}" if error else ""
+        super().__init__(
+            f"the daemon started for {store_path} exited with status {status} "
+            f"before it answered{reason} (log {log})"
+        )
+
+
+# The most of a child's log read back for its last line.
+_LOG_TAIL_BYTES = 1 << 16
+
+
+def _last_log_line(started: Started) -> str | None:
+    """The last non-empty line the child wrote to its log, None when it
+    wrote none or the log cannot be read."""
+    try:
+        with open(started.log, "rb") as handle:
+            size = os.fstat(handle.fileno()).st_size
+            handle.seek(max(started.log_offset, size - _LOG_TAIL_BYTES))
+            tail = handle.read()
+    except OSError:
+        return None
+    for line in reversed(tail.decode("utf-8", errors="replace").splitlines()):
+        if line.strip():
+            return line.strip()[:500]
+    return None
+
+
 def start_daemon(
     state_dir: Path,
     store_path: Path | str,
@@ -222,10 +272,21 @@ def start_daemon(
     """Spawn `bettermemory up --foreground` detached from this process and
     return the pid of the process spawned. That need not be the daemon's: a
     Windows venv's python.exe is a launcher that runs the interpreter as its
-    child, and the daemon writes its own pid to the state file, which is the
-    one to act on. The child inherits `env` (default: this environment)
-    with the state directory pinned, so it writes the state file where the
-    caller will look for it."""
+    child and waits for it, and the daemon writes its own pid to the state
+    file, which is the one to act on. The child inherits `env` (default:
+    this environment) with the state directory pinned, so it writes the
+    state file where the caller will look for it."""
+    return _spawn(state_dir, store_path, port=port, env=env).child.pid
+
+
+def _spawn(
+    state_dir: Path,
+    store_path: Path | str,
+    *,
+    port: int | None,
+    env: dict[str, str] | None,
+) -> Started:
+    """`start_daemon`, returning the child itself and where its log begins."""
     state_dir = Path(state_dir)
     state_dir.mkdir(parents=True, exist_ok=True)
     child_env = dict(os.environ if env is None else env)
@@ -236,6 +297,7 @@ def start_daemon(
     log_path = log_file_for(state_dir, store_path)
     log_handle = open(log_path, "ab")  # noqa: SIM115 - handed to the child
     try:
+        offset = os.fstat(log_handle.fileno()).st_size
         kwargs: dict[str, Any] = {
             "stdin": subprocess.DEVNULL,
             "stdout": log_handle,
@@ -252,18 +314,46 @@ def start_daemon(
         child = subprocess.Popen(command, **kwargs)
     finally:
         log_handle.close()
-    return child.pid
+    return Started(child=child, log=log_path, log_offset=offset)
+
+
+def _answering(state_dir: Path, store_path: Path | str) -> dict[str, Any] | None:
+    """The state of a daemon for `store_path` that answers /health."""
+    state = read_state(state_dir, store_path)
+    if state is not None and health(state["port"], timeout=0.5) is not None:
+        return state
+    return None
 
 
 def wait_for_daemon(
-    state_dir: Path, store_path: Path | str, *, timeout: float
+    state_dir: Path,
+    store_path: Path | str,
+    *,
+    timeout: float,
+    started: Started | None = None,
 ) -> dict[str, Any] | None:
-    """Poll the state file and /health until a daemon answers or `timeout`."""
+    """Poll the state file and /health until a daemon answers or `timeout`.
+
+    With `started`, the child this client spawned is watched too: once it
+    has exited and still no daemon answers (another client's daemon may
+    have come up meanwhile, and is then the answer), the wait ends at once
+    with `DaemonExited`, which carries the child's exit status and the
+    last line of its log, instead of running out the timeout."""
     deadline = time.monotonic() + timeout
     while True:
-        state = read_state(state_dir, store_path)
-        if state is not None and health(state["port"], timeout=0.5) is not None:
+        state = _answering(state_dir, store_path)
+        if state is not None:
             return state
+        if started is not None and started.child.poll() is not None:
+            state = _answering(state_dir, store_path)
+            if state is not None:
+                return state
+            raise DaemonExited(
+                store_path,
+                started.child.returncode,
+                _last_log_line(started),
+                started.log,
+            )
         if time.monotonic() >= deadline:
             return None
         time.sleep(_POLL_SECONDS)
@@ -327,7 +417,9 @@ def ensure_daemon(
     """The state of a running daemon of `version` for `store_path`,
     starting one when `start` and none answers. A daemon of another
     version is stopped and replaced; a stale state file is removed. None
-    when no daemon can be reached or started."""
+    when no daemon can be reached, or none answers within `timeout` of the
+    start. Raises `DaemonExited` when the daemon it started exited before
+    any answered, naming that daemon's error."""
     state = read_state(state_dir, store_path)
     if state is not None:
         answer = health(state["port"], timeout=0.5)
@@ -339,10 +431,10 @@ def ensure_daemon(
     if not start:
         return None
     try:
-        start_daemon(state_dir, store_path, port=port, env=env)
+        started = _spawn(state_dir, store_path, port=port, env=env)
     except OSError:
         return None
-    return wait_for_daemon(state_dir, store_path, timeout=timeout)
+    return wait_for_daemon(state_dir, store_path, timeout=timeout, started=started)
 
 
 def resolved_store_path() -> Path:
@@ -362,8 +454,9 @@ def resolved_store_path() -> Path:
     the config and creates it), and the config's notices, a store under a
     system directory or a key a release removed, are not logged here (that
     daemon logs them to its log file). A malformed config still stops a
-    daemon from starting, so where none is running the hook and `up` wait
-    out `START_TIMEOUT_SECONDS` for one before they give up."""
+    daemon from starting, so where none is running the daemon the hook or
+    `up` starts exits at once, and they report its error from its log
+    (`DaemonExited`)."""
     named = os.environ.get("BETTERMEMORY_DIR")
     if named:
         return Path(named).expanduser().resolve() / STORE_FILENAME
@@ -513,11 +606,13 @@ def hook_main(argv: list[str]) -> int:
 
 __all__ = [
     "DEFAULT_PORT",
+    "DaemonExited",
     "HOOK_EVENTS",
     "HOOK_WORDS",
     "HOST",
     "STATE_DIR_ENV",
     "STORE_FILENAME",
+    "Started",
     "daemon_env_for",
     "ensure_daemon",
     "health",
