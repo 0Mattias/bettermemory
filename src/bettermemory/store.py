@@ -1113,14 +1113,19 @@ class _EventWindow:
 # memo's checks that the row at the head's sequence number still carries
 # the head's MAC, drops the kept rows the new cut excludes, and reads only
 # the rows past the head, the new cut applied in SQL. A cut before the
-# memo's, a head row gone or rewritten (the tail removed, a row appended
-# at its number) or a read inside an open transaction reads the whole log
-# as the uncached code does. A row below the head edited outside the store
-# with its MAC left as it was (the chain then fails `bettermemory log
-# verify`) is not seen. Keyed by the store file and its id, so two
-# connections to one store share it; bounded to the most recently read
-# stores; the lock guards each look-up and each store, the reads run
-# outside it. Registered with `_caches`, which empties it before each test.
+# memo's, a head row gone or carrying another MAC (the tail removed, a row
+# appended at its number) or a read inside an open transaction reads the
+# whole log as the uncached code does. A row edited outside the store with
+# its MAC left as it was, the head row included (the chain then fails
+# `bettermemory log verify`), is not seen. Keyed by the store file and its
+# id, so two connections to one store share it; bounded to the most
+# recently read stores, not in rows: a store's entry keeps every row in the
+# window, its payload text and four short strings, about 1.3 KB a row for
+# payloads of about 1 KB (26 MB for a window of 20,000 such rows, measured
+# with tracemalloc on Python 3.13), and a window holds whatever the
+# lookback's span logged. The lock guards each look-up and each store, the
+# reads run outside it. Registered with `_caches`, which empties it before
+# each test.
 EVENT_WINDOW_STORES = 8
 
 _EVENT_WINDOWS: OrderedDict[tuple[str, str], _EventWindow] = OrderedDict()

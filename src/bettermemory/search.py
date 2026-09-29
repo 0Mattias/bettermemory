@@ -2917,17 +2917,28 @@ class _SnippetTokens(NamedTuple):
     surfaces: tuple[frozenset[str], ...]
 
 
-# The snippet path's two memos. The scan of a body is memoised on the body
-# (`_snippet_tokens`), so a hit shown again tokenizes nothing; and the
-# surfaces of a raw token are interned across every body the path scans
-# (`_token_surfaces`), so a body shown for the first time tokenizes only
-# the raw tokens no earlier scan met. Both memoise pure functions of their
-# keys (the tokenizer reads only module constants), so what they return is
-# what the uncached scan computes and a snippet served from them is the
-# uncached one, character for character. Each is a bounded LRU whose lock
-# makes a look-up-and-touch and an insert-and-evict atomic; the tokenizing
-# runs outside it. The values are tuples and frozensets that no reader can
-# change. Registered with `_caches`, which empties both before each test.
+# The snippet path's two memos. The scan of a body is memoised on the slice
+# of it the scan reads, its first `_SNIPPET_SCAN_CHARS` stripped characters
+# (`_snippet_tokens`), so a hit shown again tokenizes nothing and a body of
+# any length keeps a key of at most that many characters; and the surfaces
+# of a raw token are interned across every body the path scans
+# (`_token_surfaces`), so a body shown for the first time tokenizes only the
+# raw tokens no earlier scan met. Both memoise pure functions of their keys
+# (the tokenizer reads only module constants), so what they return is what
+# the uncached scan computes and a snippet served from them is the uncached
+# one, character for character. Each is an LRU bounded in entries, not in
+# bytes. Measured with tracemalloc on Python 3.13 (the bytes each memo
+# releases when cleared): the scan memo holds about 8.6 KB an entry for the
+# public corpus's bodies (bench/retrieval/corpus.jsonl) and the interned
+# surfaces about 390 bytes a raw token, 13.6 MB together for those 1,080
+# bodies and 52 MB at the 5,000-entry bound for bodies of that shape. The
+# densest scan, a slice of one-letter tokens, holds about 186 KB an entry
+# (about 930 MB at the bound), and a raw token as long as the scan about
+# 25 KB with its body's entry (about 490 MB for 20,000 such tokens, the
+# interning bound). Their lock makes a look-up-and-touch and an
+# insert-and-evict atomic; the tokenizing runs outside it. The values are
+# tuples and frozensets that no reader can change. Registered with
+# `_caches`, which empties both before each test.
 SNIPPET_TOKEN_ENTRIES = 5000
 TOKEN_SURFACE_ENTRIES = 20_000
 
@@ -2964,22 +2975,23 @@ def _token_surfaces(raw: str) -> frozenset[str]:
     return surfaces
 
 
-def _snippet_tokens(body: str) -> _SnippetTokens:
-    """The anchor scan of `body`, or the one an earlier call made of an
-    equal body."""
+def _snippet_tokens(scan: str) -> _SnippetTokens:
+    """The anchor scan of `scan`, the first `_SNIPPET_SCAN_CHARS` stripped
+    characters of a body (the caller slices it, and the slice is the memo's
+    key), or the one an earlier call made of an equal slice."""
     with _SNIPPET_TOKENS_LOCK:
-        cached = _SNIPPET_TOKENS.get(body)
+        cached = _SNIPPET_TOKENS.get(scan)
         if cached is not None:
-            _SNIPPET_TOKENS.move_to_end(body)
+            _SNIPPET_TOKENS.move_to_end(scan)
             return cached
     starts: list[int] = []
     surfaces: list[frozenset[str]] = []
-    for m in _TOKEN_RE.finditer(body.strip()[:_SNIPPET_SCAN_CHARS]):
+    for m in _TOKEN_RE.finditer(scan):
         starts.append(m.start())
         surfaces.append(_token_surfaces(m.group()))
     tokens = _SnippetTokens(starts=tuple(starts), surfaces=tuple(surfaces))
     with _SNIPPET_TOKENS_LOCK:
-        _SNIPPET_TOKENS[body] = tokens
+        _SNIPPET_TOKENS[scan] = tokens
         while len(_SNIPPET_TOKENS) > SNIPPET_TOKEN_ENTRIES:
             _SNIPPET_TOKENS.popitem(last=False)
     return tokens
@@ -3041,7 +3053,7 @@ def _query_biased_snippet(body: str, matched: list[str], max_chars: int = 200) -
     part_terms = {p for tok in matched for p in _kebab_parts(tok)} - primary_terms
 
     scan = text[:_SNIPPET_SCAN_CHARS]
-    scanned = _snippet_tokens(body)
+    scanned = _snippet_tokens(scan)
     starts: list[int] = list(scanned.starts)
     primary: list[int] = []
     secondary: list[int] = []

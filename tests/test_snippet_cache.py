@@ -296,11 +296,34 @@ def test_the_snippet_memos_are_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
     bodies = [f"{'word ' * 50}needle{i} " + "tail " * 10 for i in range(4)]
     for i, body in enumerate(bodies):
         search_module._query_biased_snippet(body, [f"needle{i}"])
-    assert list(search_module._SNIPPET_TOKENS) == bodies[2:]
+    assert list(search_module._SNIPPET_TOKENS) == [
+        body.strip()[: search_module._SNIPPET_SCAN_CHARS] for body in bodies[2:]
+    ]
     interned = list(search_module._TOKEN_SURFACES)
     assert len(interned) == 5
     assert "needle0" not in interned
     assert {"needle3", "tail"} <= set(interned)
+
+
+def test_the_snippet_memo_keys_on_the_scanned_prefix() -> None:
+    """The scan reads the first `_SNIPPET_SCAN_CHARS` characters of the
+    stripped body and nothing past them, and the memo keys on exactly that
+    slice: two bodies that share it share one entry and are served as the
+    uncached code serves them, and a body of a megabyte keeps a key of the
+    slice's length, not of its own."""
+    head = "\n  " + "alpha beta gamma delta " * 400
+    big = head + "zeta " * 200_000
+    other = head + "eta theta"
+    assert len(big) > 1_000_000
+    assert len(head.strip()) > search_module._SNIPPET_SCAN_CHARS
+    _caches.clear_all()
+    for body in (big, other, big):
+        assert search_module._query_biased_snippet(body, ["delta"]) == (
+            _reference_snippet(body, ["delta"])
+        )
+    assert list(search_module._SNIPPET_TOKENS) == [
+        big.strip()[: search_module._SNIPPET_SCAN_CHARS]
+    ]
 
 
 def test_the_snippet_memos_are_registered_with_the_cache_registry() -> None:

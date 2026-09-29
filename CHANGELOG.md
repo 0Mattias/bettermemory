@@ -83,12 +83,17 @@ surfaces leave with them. An 8.x directory is imported once by
   and verify instant memoised (`_response.attach_commit_drift_counts`,
   `origin.commit_author_timestamps`); and the token streams of a memory
   per body and scopes (`search._memory_tokens`, a 5,000-entry LRU). The
-  snippet window's scan of a hit's body is kept per body and each raw
-  token's normalised surfaces are interned across bodies
+  snippet window's scan of a hit's body is kept per scanned slice (the
+  first 8,000 characters of the stripped body, all the scan reads) and
+  each raw token's normalised surfaces are interned across bodies
   (`search._snippet_tokens`, `search._token_surfaces`), and the telemetry
   rows of `memory_search`'s lookback window are kept per store and
   extended from the log's head, checked by its MAC, instead of read by a
-  scan of the whole log (`Store.events_since(..., memoised=True)`). A
+  scan of the whole log (`Store.events_since(..., memoised=True)`). These
+  are bounded in entries, not bytes; the docstrings give the bytes
+  measured: 13.6 MB for the snippet memos over the public corpus's 1,080
+  bodies (52 MB at their bound for bodies of that shape, about 930 MB for
+  scans of one-letter tokens), and about 1.3 KB a row the window keeps. A
   search whose hits the memos hold forks no git process while nothing
   their keys read has moved: no commit, no edit to the repository's
   `config`, a `.gitmodules` or an attributes file, and the origin capture
