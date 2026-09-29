@@ -93,6 +93,18 @@ def _git(repo: Path, *args: str, when: datetime | None = None) -> str:
     ).stdout.strip()
 
 
+def _git_input(repo: Path, text: str, *args: str) -> str:
+    """`_git` with `text` on git's standard input."""
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+        input=text,
+    ).stdout.strip()
+
+
 def _repo(tmp_path: Path, name: str = "repo") -> Path:
     repo = tmp_path / name
     repo.mkdir()
@@ -834,6 +846,88 @@ def test_the_files_decline_where_git_names_another_working_tree(
     assert origin.repo_toplevel_and_head(repo) is None, "git: no working tree"
     _git(repo, "config", "core.bare", "false")
     assert origin.toplevel_and_head_from_files(repo) == (repo.resolve(), head)
+
+
+@files_only
+@pytest.mark.parametrize(
+    "commands",
+    [
+        pytest.param(
+            [("config", "branch.worktree-agent-a1.remote", "origin")],
+            id="a branch named for a worktree",
+        ),
+        pytest.param(
+            [("remote", "add", "worktrees", "git@example.com:me/worktree.git")],
+            id="a remote named worktrees",
+        ),
+        pytest.param(
+            [("config", "extensions.worktreeConfig", "true")],
+            id="worktreeConfig and no config.worktree",
+        ),
+        pytest.param(
+            [
+                ("config", "extensions.worktreeConfig", "true"),
+                ("config", "--worktree", "user.name", "someone"),
+            ],
+            id="a config.worktree that moves nothing",
+        ),
+    ],
+)
+def test_the_files_answer_where_the_config_only_mentions_worktree(
+    commands: list[tuple[str, ...]], tmp_path: Path
+) -> None:
+    """The configuration is read as git reads it: `core.worktree` set in
+    the common config or in config.worktree moves the root, and a branch,
+    a remote or `extensions.worktreeConfig` whose name holds the word does
+    not, so the files answer there as git does."""
+    repo = _repo(tmp_path)
+    head = _commit(repo, "seed", when=_T0)
+    for command in commands:
+        _git(repo, *command)
+    git_root = Path(_git(repo, "rev-parse", "--show-toplevel")).resolve()
+    assert git_root == repo.resolve(), "premise: git names the checkout"
+    assert origin.toplevel_and_head_from_files(repo) == (git_root, head)
+
+
+@files_only
+def test_the_files_decline_where_config_worktree_moves_the_root(tmp_path: Path) -> None:
+    """Under extensions.worktreeConfig, `core.worktree` in config.worktree
+    moves the root git names, as it does in the common config."""
+    repo = _repo(tmp_path)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    head = _commit(repo, "seed", when=_T0)
+    _git(repo, "config", "extensions.worktreeConfig", "true")
+    _git(repo, "config", "--worktree", "core.worktree", str(elsewhere))
+    assert origin.toplevel_and_head_from_files(repo) is None
+    assert origin.repo_toplevel_and_head(repo) == (elsewhere.resolve(), head)
+
+
+@files_only
+@pytest.mark.parametrize(
+    "tail",
+    [
+        pytest.param(b'[core "worktre\\e\x00"]\n\tx = {elsewhere}\n', id="escaped"),
+        pytest.param(b'[core "worktree\x00"]\n\tx = {elsewhere}\n', id="literal"),
+    ],
+)
+def test_the_files_decline_where_a_nul_byte_names_core_worktree(
+    tail: bytes, tmp_path: Path
+) -> None:
+    """Git ends a variable's name at a NUL byte, so a quoted subsection
+    `worktree\\0` (or an escaped spelling of it) sets core.worktree. A
+    config holding a NUL byte declines."""
+    repo = _repo(tmp_path)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    _commit(repo, "seed", when=_T0)
+    config = repo / ".git" / "config"
+    config.write_bytes(
+        config.read_bytes() + tail.replace(b"{elsewhere}", os.fsencode(elsewhere))
+    )
+    git_root = Path(_git(repo, "rev-parse", "--show-toplevel")).resolve()
+    assert git_root == elsewhere.resolve(), "premise: git reads core.worktree"
+    assert origin.toplevel_and_head_from_files(repo) is None
 
 
 @pytest.mark.skipif(
@@ -1800,6 +1894,149 @@ def test_a_config_that_names_follow_without_log_follow_keeps_the_memo(
     assert cached == uncached
 
 
+# Config texts that set a variable through a NUL byte, which ends the name
+# git keeps: `[log "follow\0"] x` is log.follow to git, and an escaped
+# letter spells the word without its literal bytes.
+_NUL_TEXTS = [
+    pytest.param(b'[log "follow\x00"]\n\tx = true\n', id="log.follow"),
+    pytest.param(b'[log "fo\\llow\x00"]\n\tx = true\n', id="log.follow escaped"),
+    pytest.param(b'[core "attributesfil\\e\x00"]\n\tx = {file}\n', id="attributesfile"),
+    pytest.param(
+        b"[core]\n\tbare = false\n# a comment \x00 holding a NUL\n", id="comment"
+    ),
+]
+
+
+@pytest.mark.parametrize("text", _NUL_TEXTS)
+def test_the_config_reader_declines_a_file_holding_a_nul_byte(text: bytes) -> None:
+    """Git keeps a variable's name only up to a NUL byte in it, which the
+    reader does not model: a config holding one is read as none git could
+    be shown to agree with, and every caller declines."""
+    assert origin._config_variable_names(text) is None
+
+
+@files_only
+@pytest.mark.parametrize("text", _NUL_TEXTS)
+def test_the_attribute_files_decline_where_the_config_holds_a_nul_byte(
+    text: bytes, git_config_home: Path, tmp_path: Path
+) -> None:
+    repo = _repo(tmp_path)
+    _commit(repo, "c0", when=_T0, files={"a.txt": "a\n"})
+    config = repo / ".git" / "config"
+    elsewhere = os.fsencode(tmp_path / "attributes-elsewhere")
+    config.write_bytes(config.read_bytes() + text.replace(b"{file}", elsewhere))
+    assert origin.attribute_files_signature(repo, repo) is None
+
+
+@files_only
+def test_log_follow_set_through_a_nul_byte_keeps_the_hit_out_of_the_memo(
+    git_config_home: Path,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`[log "follow\\0"] x = true` makes git read log.follow = true, so
+    the patch stream follows the claimed file across its rename, as in
+    test_a_repository_config_that_sets_log_follow_keeps_the_hit_out_of_the_memo:
+    an untracked lib/.gitattributes written between two attaches is read
+    by both."""
+    repo = _repo(tmp_path)
+    config = repo / ".git" / "config"
+    config.write_bytes(config.read_bytes() + b'[log "follow\x00"]\n\tx = true\n')
+    assert _git(repo, "config", "--bool", "--get", "log.follow") == "true", (
+        "premise: git reads log.follow"
+    )
+    anchor = _commit(
+        repo,
+        "c1",
+        when=_day(0),
+        files={"lib/app.py": _MODULE, "src/keep.txt": "k\n"},
+    )
+    _git(repo, "mv", "lib/app.py", "src/app.py")
+    renamed = _MODULE.replace("def handler():", "def handler(x=None):")
+    _commit(repo, "c2", when=_day(20), files={"src/app.py": renamed})
+    _commit(
+        repo,
+        "c3",
+        when=_day(30),
+        files={
+            "src/app.py": renamed.replace(
+                "def other():\n    return 1", "def other():\n    return 3"
+            )
+        },
+    )
+    store = Store(memory_dir)
+    caller = _caller(repo)
+    body = "the handler is declared in the app module"
+    ids = [
+        _write(
+            store,
+            caller,
+            monkeypatch,
+            f"widget rule a: {body}",
+            at=_day(10),
+            claims=["src/app.py::handler"],
+            verified_head=anchor,
+        ),
+        _write(
+            store,
+            caller,
+            monkeypatch,
+            f"widget rule b: {body}",
+            at=_day(10),
+            claims=["src/app.py::handler"],
+        ),
+    ]
+    memories = store.load_all()
+    for _ in range(2):
+        before, _ = _attach(memories, caller, monkeypatch)
+    assert _counts(before, ids) == [1, 1]
+
+    (repo / "lib").mkdir(exist_ok=True)
+    (repo / "lib" / ".gitattributes").write_text("*.py -diff\n", encoding="utf-8")
+    cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
+    assert _counts(uncached, ids) != [1, 1], (
+        "premise: the rename source's attributes moved git"
+    )
+    assert cached == uncached
+
+
+@files_only
+def test_the_repository_config_is_parsed_once_per_stamp(
+    git_config_home: Path,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The config's variables are read once per state of the file (its
+    stamp), not on every search: a large config that holds the word
+    `follow` would otherwise be parsed again by each warm search. A
+    rewrite of the file is read once more."""
+    repo, caller, memories, ids = _claimed(
+        tmp_path, memory_dir, monkeypatch, claim="src/app.py::handler"
+    )
+    _git(repo, "config", "push.followTags", "true")
+    parsed: list[int] = []
+    real = origin._config_variable_names
+
+    def counted(data: bytes) -> set[bytes] | None:
+        parsed.append(len(data))
+        return real(data)
+
+    monkeypatch.setattr(origin, "_config_variable_names", counted)
+    for _ in range(3):
+        out, _ = _attach(memories, caller, monkeypatch)
+    assert _counts(out, ids) == [0, 0]
+    config_size = (repo / ".git" / "config").stat().st_size
+    assert parsed.count(config_size) == 1, parsed
+
+    _git(repo, "config", "push.default", "simple")
+    for _ in range(2):
+        _attach(memories, caller, monkeypatch)
+    config_size = (repo / ".git" / "config").stat().st_size
+    assert parsed.count(config_size) == 1, parsed
+
+
 def test_an_attributes_file_created_with_its_directory_during_the_attach_stores_nothing(
     git_config_home: Path,
     memory_dir: Path,
@@ -2222,15 +2459,173 @@ def test_the_walk_is_keyed_on_the_indexs_gitmodules_where_the_working_tree_has_n
         assert cached == uncached
 
 
+def _unmerge(repo: Path, path: str = ".gitmodules") -> None:
+    """Replace the index's stage-0 entry for `path` with stages 1 to 3 of
+    the same blob, the shape a conflicted merge leaves, with the working
+    tree untouched."""
+    blob = _git(repo, "rev-parse", f":{path}")
+    _git_input(repo, f"0 {'0' * 40}\t{path}\n", "update-index", "--index-info")
+    _git_input(
+        repo,
+        "".join(f"100644 {blob} {stage}\t{path}\n" for stage in (1, 2, 3)),
+        "update-index",
+        "--index-info",
+    )
+
+
+def test_an_unmerged_gitmodules_in_the_index_is_keyed_while_the_working_tree_has_one(
+    git_config_home: Path,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """git's repo_read_gitmodules reads the index first, and while the index
+    holds .gitmodules unmerged it reads no .gitmodules at all, the working
+    tree's included. With ignore = all committed and in the working tree,
+    the index's copy goes unmerged (the walk lists the gitlink's two
+    changes) and `git add` then resolves it (none): the working tree's file
+    is untouched both times, and the warm attach answers as the cold one."""
+    repo, caller, memories, memory_id = _pinned_submodule(
+        tmp_path, memory_dir, monkeypatch
+    )
+    _git(repo, "config", "-f", ".gitmodules", "submodule.sub.ignore", "all")
+    _git(repo, "add", ".gitmodules")
+    _git(repo, "commit", "-q", "-m", "ignore sub", when=_day(35))
+    for _ in range(2):
+        before, _ = _attach(memories, caller, monkeypatch)
+    assert _drift(before, memory_id) == (0, "reachability")
+    working_tree_copy = githead.stamp(repo / ".gitmodules")
+
+    for change, expected in (
+        (lambda: _unmerge(repo), 2),
+        (lambda: _git(repo, "add", ".gitmodules"), 0),
+    ):
+        change()
+        assert githead.stamp(repo / ".gitmodules") == working_tree_copy
+        cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
+        assert _drift(uncached, memory_id) == (expected, "reachability"), (
+            "premise: the index moved the walk"
+        )
+        assert cached == uncached
+
+
+def test_a_merge_conflict_on_gitmodules_resolved_by_git_add_reads_as_git(
+    git_config_home: Path,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The flow that reaches it: a merge conflicts on .gitmodules, the user
+    writes a resolution that sets ignore = all into the working tree, a
+    search runs (git reads no .gitmodules while the conflict stands), and
+    `git add .gitmodules` then resolves it (git reads the working tree's).
+    Only the index moves between the two searches."""
+    repo, caller, memories, memory_id = _pinned_submodule(
+        tmp_path, memory_dir, monkeypatch
+    )
+    _git(repo, "checkout", "-q", "-b", "side")
+    _git(repo, "config", "-f", ".gitmodules", "submodule.sub.branch", "side")
+    _git(repo, "commit", "-q", "-am", "side gitmodules", when=_day(31))
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "config", "-f", ".gitmodules", "submodule.sub.branch", "trunk")
+    _git(repo, "commit", "-q", "-am", "main gitmodules", when=_day(32))
+    env = os.environ.copy()
+    env.update(
+        GIT_AUTHOR_NAME="Test",
+        GIT_AUTHOR_EMAIL="test@example.com",
+        GIT_COMMITTER_NAME="Test",
+        GIT_COMMITTER_EMAIL="test@example.com",
+    )
+    merged = subprocess.run(
+        ["git", "merge", "side"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    assert _git(repo, "ls-files", "-u", "--", ".gitmodules"), (
+        f"premise: a conflict: {merged.stdout} {merged.stderr}"
+    )
+    (repo / ".gitmodules").write_text(
+        '[submodule "sub"]\n\tpath = sub\n'
+        f"\turl = {tmp_path / 'source'}\n\tbranch = trunk\n\tignore = all\n",
+        encoding="utf-8",
+    )
+    for _ in range(2):
+        before, _ = _attach(memories, caller, monkeypatch)
+    assert _drift(before, memory_id) == (2, "reachability")
+    working_tree_copy = githead.stamp(repo / ".gitmodules")
+
+    _git(repo, "add", ".gitmodules")
+    assert githead.stamp(repo / ".gitmodules") == working_tree_copy
+    cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
+    assert _drift(uncached, memory_id) == (0, "reachability"), (
+        "premise: the resolution moved the walk"
+    )
+    assert cached == uncached
+
+
+def _edit_and_write_index(repo: Path, write: str, n: int) -> None:
+    """A write to the index that leaves .gitmodules as it was: `git add` of
+    an edited file, or `git status` refreshing the index after a file was
+    rewritten with its own bytes and a new mtime."""
+    target = repo / "src" / "app.py"
+    if write == "add":
+        target.write_text(_MODULE + f"\n# edit {n}\n", encoding="utf-8")
+        _git(repo, "add", "src/app.py")
+    else:
+        target.write_bytes(target.read_bytes())
+        ahead = time.time() + 10 * (n + 1)
+        os.utime(target, (ahead, ahead))
+        _git(repo, "status", "--porcelain")
+
+
 @files_only
-def test_the_walk_files_hold_the_index_only_where_the_working_tree_has_no_gitmodules(
+@pytest.mark.parametrize("write", ["add", "refresh"])
+def test_an_index_write_that_leaves_gitmodules_alone_keeps_the_memo(
+    write: str,
+    git_config_home: Path,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """In a repository with no .gitmodules anywhere, git reads HEAD's copy
+    for the walk, which the key's head names, so a write to the index that
+    adds no .gitmodules entry changes nothing git reads. The attach after it
+    is answered by the memo, forks nothing and answers as the cold one, and
+    the walk memo gains no entry."""
+    repo, caller, memories, memory_id = _root_in_range(
+        tmp_path, memory_dir, monkeypatch, claim=False
+    )
+    for _ in range(2):
+        before, _ = _attach(memories, caller, monkeypatch)
+    assert _drift(before, memory_id) == (1, "reachability")
+    walks = len(origin._WALK_MEMO)
+    index = repo / ".git" / "index"
+    for n in range(3):
+        stamped = githead.stamp(index)
+        _edit_and_write_index(repo, write, n)
+        assert githead.stamp(index) != stamped, "premise: git wrote the index"
+        warm, calls = _attach(memories, caller, monkeypatch)
+        assert calls == [], "the memo answers"
+        assert warm == before
+    assert len(origin._WALK_MEMO) == walks
+    _caches.clear_all()
+    cold, _ = _attach(memories, caller, monkeypatch)
+    assert cold == before
+
+
+@files_only
+def test_the_walk_files_carry_the_indexs_gitmodules_entry_and_not_its_stamp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The signature carries the index's stamp where the working tree has
-    no .gitmodules, the one case git reads the index's copy: a write to the
-    index moves it there, and leaves it as it was where the working tree
-    holds a .gitmodules. An index named by GIT_INDEX_FILE is one these
-    stamps do not read, so nothing is keyed under it."""
+    """What the signature holds for the index is what git reads there: the
+    stage-0 .gitmodules entry (its mode and object) while the working tree
+    has none, and whether the entry is unmerged whatever the working tree
+    holds. A write to the index that leaves the entry as it was leaves the
+    signature as it was. GIT_INDEX_FILE names an index these reads do not
+    open, so nothing is keyed while it is set."""
     repo = _repo(tmp_path)
     _commit(repo, "c0", when=_T0, files={"a.txt": "a\n"})
     root = repo.resolve()
@@ -2239,19 +2634,147 @@ def test_the_walk_files_hold_the_index_only_where_the_working_tree_has_no_gitmod
     assert absent is not None
     (repo / "b.txt").write_text("b\n", encoding="utf-8")
     _git(repo, "add", "b.txt")
-    assert origin.walk_files_signature(root) != absent, "the index was written"
+    assert origin.walk_files_signature(root) == absent, "no .gitmodules entry"
 
-    (repo / ".gitmodules").write_text("", encoding="utf-8")
-    present = origin.walk_files_signature(root)
-    assert present is not None
+    (repo / ".gitmodules").write_text('[submodule "x"]\n\tpath = x\n', encoding="utf-8")
+    _git(repo, "add", ".gitmodules")
+    (repo / ".gitmodules").unlink()
+    staged = origin.walk_files_signature(root)
+    assert staged is not None and staged != absent
     (repo / "c.txt").write_text("c\n", encoding="utf-8")
     _git(repo, "add", "c.txt")
-    assert origin.walk_files_signature(root) == present, "git reads no index copy"
+    assert origin.walk_files_signature(root) == staged, "the entry is unchanged"
 
-    monkeypatch.setenv("GIT_INDEX_FILE", str(tmp_path / "other-index"))
-    assert origin.walk_files_signature(root) == present
-    (repo / ".gitmodules").unlink()
+    _git(repo, "checkout", "-q", "--", ".gitmodules")
+    present = origin.walk_files_signature(root)
+    assert present is not None and present != staged
+    _unmerge(repo)
+    unmerged = origin.walk_files_signature(root)
+    assert unmerged is not None and unmerged != present
+
+    monkeypatch.setenv("GIT_INDEX_FILE", str(repo / ".git" / "index"))
     assert origin.walk_files_signature(root) is None
+
+
+@files_only
+@pytest.mark.parametrize("version", [2, 3, 4])
+def test_the_index_reader_finds_gitmodules_as_git_lists_it(
+    version: int, tmp_path: Path
+) -> None:
+    """The index is read in-process up to its .gitmodules entry, in each
+    format git writes: version 2, version 3 with the extended flags a
+    skip-worktree or intent-to-add entry needs, and version 4's
+    prefix-compressed names; with names of 4,095 bytes and more (whose
+    length the entry's flags do not hold) and dotted names that sort
+    before it."""
+    repo = _repo(tmp_path)
+    _commit(
+        repo,
+        "c0",
+        when=_T0,
+        files={
+            ".a": "a\n",
+            ".gitattributes": "* text\n",
+            ".github/workflows/ci.yml": "ci\n",
+            "zz.txt": "z\n",
+        },
+    )
+    blob = _git(repo, "rev-parse", "HEAD:.a")
+    long_name = ".a-dir/" + "/".join(["n" * 200] * 24) + "/long.txt"
+    assert len(long_name.encode()) > 4095
+    _git(repo, "update-index", "--add", "--cacheinfo", f"100644,{blob},{long_name}")
+    _git(repo, "update-index", f"--index-version={version}")
+    if version == 3:
+        _git(repo, "update-index", "--skip-worktree", ".a")
+    gd = githead.gitdir_at(repo.resolve())
+    assert gd is not None
+    assert origin._index_gitmodules(gd) is None
+
+    (repo / ".gitmodules").write_text('[submodule "x"]\n\tpath = x\n', encoding="utf-8")
+    _git(repo, "add", ".gitmodules")
+    if version == 3:
+        _git(repo, "update-index", "--skip-worktree", ".gitmodules")
+    listed = _git(repo, "ls-files", "-s", "--", ".gitmodules").split()
+    assert origin._index_gitmodules(gd) == (int(listed[0], 8), listed[1])
+    _unmerge(repo)
+    assert origin._index_gitmodules(gd) == origin._INDEX_UNMERGED
+
+
+@files_only
+def test_the_index_reader_reads_an_intent_to_add_entry(tmp_path: Path) -> None:
+    """`git add -N` leaves an entry with the intent-to-add flag and the
+    empty blob, the object git then reads as the index's .gitmodules."""
+    repo = _repo(tmp_path)
+    _commit(repo, "c0", when=_T0, files={"a.txt": "a\n"})
+    (repo / ".gitmodules").write_text('[submodule "x"]\n\tpath = x\n', encoding="utf-8")
+    _git(repo, "add", "-N", ".gitmodules")
+    gd = githead.gitdir_at(repo.resolve())
+    assert gd is not None
+    listed = _git(repo, "ls-files", "-s", "--", ".gitmodules").split()
+    assert origin._index_gitmodules(gd) == (int(listed[0], 8), listed[1])
+
+
+@files_only
+@pytest.mark.parametrize("shape", ["split index", "unknown version", "sha256"])
+def test_an_index_the_reader_cannot_settle_keys_nothing(
+    shape: str, tmp_path: Path
+) -> None:
+    """A split index keeps entries in a shared index the reader does not
+    open, an index of a version it does not know may lay entries out
+    otherwise, and a SHA-256 repository's entries are wider: the walk files
+    decline, and what would key on them is not memoised."""
+    repo = _repo(tmp_path)
+    _commit(repo, "c0", when=_T0, files={"a.txt": "a\n"})
+    root = repo.resolve()
+    assert origin.walk_files_signature(root) is not None
+    if shape == "split index":
+        _git(repo, "config", "core.splitIndex", "true")
+        _git(repo, "update-index", "--split-index")
+    elif shape == "unknown version":
+        index = repo / ".git" / "index"
+        data = bytearray(index.read_bytes())
+        data[4:8] = (5).to_bytes(4, "big")
+        index.write_bytes(bytes(data))
+    else:
+        _git(repo, "config", "extensions.objectFormat", "sha256")
+    assert origin.walk_files_signature(root) is None
+
+
+@files_only
+def test_a_split_index_answers_as_git(
+    git_config_home: Path,
+    memory_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under a split index the walk files decline, so a change to the
+    index's .gitmodules, which may live in the shared index, is read by
+    every search as git reads it."""
+    repo, caller, memories, memory_id = _pinned_submodule(
+        tmp_path, memory_dir, monkeypatch
+    )
+    _git(repo, "config", "core.splitIndex", "true")
+    _git(repo, "update-index", "--split-index")
+    ignore = ("config", "-f", ".gitmodules", "submodule.sub.ignore", "all")
+
+    def stage_ignore() -> None:
+        _git(repo, "checkout", "-q", "--", ".gitmodules")
+        _git(repo, *ignore)
+        _git(repo, "add", ".gitmodules")
+        (repo / ".gitmodules").unlink()
+
+    def reset_index() -> None:
+        _git(repo, "reset", "-q", "--", ".gitmodules")
+
+    stage_ignore()
+    for _ in range(2):
+        before, _ = _attach(memories, caller, monkeypatch)
+    assert _drift(before, memory_id) == (0, "reachability")
+    for change, expected in ((reset_index, 2), (stage_ignore, 0)):
+        change()
+        cached, uncached = _cached_and_uncached(memories, caller, monkeypatch)
+        assert _drift(uncached, memory_id) == (expected, "reachability")
+        assert cached == uncached
 
 
 def test_a_walk_whose_files_cannot_be_read_is_kept_for_the_pass_only(

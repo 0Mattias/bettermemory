@@ -115,16 +115,18 @@ NEGATIVE_OUTCOME_WINDOW_DAYS = 30
 # none), and the files beside the history its git reads
 # (`origin.walk_files_signature`: the repository's config, whose
 # log.follow reaches a single-pathspec log and log.showRoot the walk, the
-# working tree's .gitmodules, whose ignore settings reach the walk, and
-# where the working tree has none the index, whose copy git reads then);
-# the value is the resolved count, basis and claim detail, or None for a
-# hit whose count is omitted. A commit moves the head and so every key; a
-# new stamp, a rewritten body, a changed claim or an edited attributes file
-# changes its own row's, and an edited config or .gitmodules, or a write to
-# the index where it is read, every row's. A value computed while a git
-# process failed is never stored (`origin.failed_git_calls`), and a search
-# during which the head or a keyed file moved, even to move back, stores
-# nothing (`_files_held`, `githead.signature`). What the key does not see
+# working tree's .gitmodules, whose ignore settings reach the walk, and the
+# index's .gitmodules entry where git reads it: unmerged, or the working
+# tree has none); the value is the resolved count, basis and claim detail,
+# or None for a hit whose count is omitted. A commit moves the head and so
+# every key; a new stamp, a rewritten body, a changed claim or an edited
+# attributes file changes its own row's, and an edited config or
+# .gitmodules, in the working tree or the index where git reads it, every
+# row's; a write to the index that leaves .gitmodules as it was changes
+# none. A value computed while a git process failed is never stored
+# (`origin.failed_git_calls`), and a search during which the head, a keyed
+# file or the index moved, even to move back, stores nothing
+# (`_files_held`, `githead.signature`). What the key does not see
 # (git's configuration outside the repository's config file, a history
 # rewritten under an unchanged head, a change within one tick of the
 # filesystem's clock that reuses an inode number, and the rest) is listed
@@ -833,20 +835,27 @@ class ResponseBuilder:
         repository's ``config``, where ``log.follow`` reaches a
         single-pathspec log and ``log.showRoot`` the walk, the working
         tree's ``.gitmodules``, where a submodule's ``ignore`` reaches the
-        walk, and, where the working tree has none, the index, whose copy
-        git then reads; the walk memo keys on them too). A file is keyed on
-        its mtime, ctime, size, inode and mode, or its absence, so a write,
-        a replacement, a creation, a removal or a chmod changes the key. A
+        walk, and the index's ``.gitmodules`` entry where git reads it,
+        unmerged or where the working tree has none; the walk memo keys on
+        them too). A file is keyed on its mtime, ctime, size, inode and
+        mode, or its absence, so a write, a replacement, a creation, a
+        removal or a chmod changes the key; the index's entry is keyed on
+        its mode and object, read from the index in-process
+        (`origin._index_gitmodules`, once per state of the index). A
         governed path that is a directory or a pattern, a ``config`` that
-        names an attributes file or tree or sets ``log.follow`` (the patch
+        names an attributes file or tree, sets ``log.follow`` (the patch
         stream would read the attributes of a rename source's path; the
         file is read as git reads it, so ``push.followTags`` or a branch
-        named ``follow-up`` is no such config), and a file that cannot be
-        stamped keep a hit out of the memo. A commit moves the head and so
-        every key; a new stamp, a rewritten body, a changed claim or an
-        edited attributes file changes its own row's, and an edited
-        ``config`` or ``.gitmodules`` every row's, as does every write to the
-        index where it is keyed.
+        named ``follow-up`` is no such config), holds a NUL byte or is
+        refused by git, an index the reader does not read exactly (split, of
+        an unknown version, a SHA-256 repository's, or GIT_INDEX_FILE set),
+        and a file that cannot be stamped keep a hit out of the memo. A
+        commit moves the head and so every key; a new stamp, a rewritten
+        body, a changed claim or an edited attributes file changes its own
+        row's, and an edited ``config`` or ``.gitmodules`` every row's, in
+        the working tree or in the index where git reads it. A write to the
+        index that leaves ``.gitmodules`` as it was (``git add`` of another
+        file, a ``git status`` that refreshes the index) changes no key.
 
         A failure is never memoised, at a cost. A value is not kept when
         any git process its resolution ran failed, whether git exited
@@ -870,16 +879,18 @@ class ResponseBuilder:
         ``packed-refs`` and ``config``, which git rewrites through a lock
         file and a rename, leaving a new inode and ctime) must read as it
         did before the first resolution; the keyed files are stamped again;
-        and the directories that hold them (each directory of a keyed
+        the directories that hold them (each directory of a keyed
         ``.gitattributes`` chain, ``info`` in the common directory, the
         global attributes file's directory, the root) must keep the (mtime,
         ctime) read when their files were keyed, which a file created and
-        removed meanwhile moves. Where the files do not settle the root and
-        the head, ``git rev-parse --show-toplevel HEAD`` answers them and
-        neither memo is used: that shape pays ``2 + ...`` on every search,
-        with the walks memoised as before where `githead` reads the
-        repository at the root, and kept for the one search where it does
-        not (off POSIX, under GIT_DIR).
+        removed meanwhile moves; and so must the index file, so a search
+        during which git wrote the index, which could move its
+        ``.gitmodules`` entry and back, keeps nothing. Where the files do
+        not settle the root and the head, ``git rev-parse --show-toplevel
+        HEAD`` answers them and neither memo is used: that shape pays ``2 +
+        ...`` on every search, with the walks memoised as before where
+        `githead` reads the repository at the root, and kept for the one
+        search where it does not (off POSIX, under GIT_DIR).
 
         What the key and the checks do not see, read from the memo until
         the head moves: the working tree's symbolic links on an anchor's
@@ -894,9 +905,9 @@ class ResponseBuilder:
         replace ref, a graft); and a change that leaves every stamped field
         and every held directory as it was: a file rewritten, or a head
         moved and moved back, within one tick of the filesystem's clock
-        with the inode number reused; a ``config`` or an index created and
-        removed during a search in a repository that has none, whose
-        directory no check holds; and a ``config`` that is a symbolic link
+        with the inode number reused; a ``config`` created and removed
+        during a search in a repository that has none, whose directory no
+        check holds; and a ``config`` that is a symbolic link
         whose target's directory is swapped for another and back during a
         search, which leaves the file the link names with its old stamp. A
         repository whose refs `githead` cannot read (the reftable format)

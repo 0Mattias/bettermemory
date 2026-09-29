@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import errno
 import logging
+import mmap
 import os
 import re
 import stat
@@ -1075,9 +1076,12 @@ def toplevel_and_head_from_files(cwd: Path | None) -> tuple[Path, str] | None:
     both from ``config`` in the common directory and, under
     ``extensions.worktreeConfig``, from ``config.worktree`` in the git
     directory, and from no other file (a global or ``include.path`` file
-    and a ``-c`` do not move a discovered repository's working tree). A
-    mention of either key in those files declines (`_config_moves_
-    worktree`), and so does everything `githead` declines.
+    and a ``-c`` do not move a discovered repository's working tree).
+    ``core.worktree`` set in either file, read as git reads it
+    (`_config_variable_names`), a line naming ``bare`` with anything but a
+    plain false, and a file git refuses, that holds a NUL byte or that
+    cannot be read decline (`_config_moves_worktree`), and so does
+    everything `githead` declines.
 
     The root is spelled the way git prints it (`_spelled_as_git`), which
     is the spelling the pathspec resolution needs: an absolute anchor is
@@ -1097,53 +1101,141 @@ def toplevel_and_head_from_files(cwd: Path | None) -> tuple[Path, str] | None:
     return root, head
 
 
-def _read_small(path: Path, limit: int) -> bytes | None:
-    """Up to ``limit + 1`` bytes of the regular file `path`, b"" when it
-    does not exist, None when it cannot be read or is not a regular file.
-    The open does not block, so a FIFO fails instead of waiting."""
+@dataclass(frozen=True)
+class _ConfigFacts:
+    """What the callers read from one configuration file: the variables it
+    sets as git reads them (`_config_variable_names`; None where git
+    refuses the file or it holds a NUL byte), whether it names an
+    attributes file or an attribute tree (``attributesfile`` or ``[attr``
+    anywhere in it, in any case), and whether a line names ``bare`` with
+    anything but a plain false."""
+
+    names: frozenset[bytes] | None
+    attributes_elsewhere: bool
+    bare_moves: bool
+
+
+_NO_CONFIG = _ConfigFacts(
+    names=frozenset(), attributes_elsewhere=False, bare_moves=False
+)
+
+
+def _facts_of(data: bytes) -> _ConfigFacts:
+    names = _config_variable_names(data)
+    lowered = data.lower()
+    return _ConfigFacts(
+        names=None if names is None else frozenset(names),
+        attributes_elsewhere=b"attributesfile" in lowered or b"[attr" in lowered,
+        bare_moves=any(
+            b"bare" in line and _BARE_FALSE.fullmatch(line) is None
+            for line in lowered.split(b"\n")
+        ),
+    )
+
+
+# The facts of each configuration file read, memoised on the file's
+# `githead.stamp`: the repository's config and config.worktree are read on
+# every search (`toplevel_and_head_from_files`) and for every hit with a
+# governed claim (`attribute_files_signature`), and a large file would
+# otherwise be parsed again each time. A file is parsed once per stamp, the
+# stamp taken from the open file before and after the read, and the facts
+# are kept only where the two agree, so what is kept is what that state of
+# the file holds; a rewrite in place at the same size within one tick of
+# the filesystem's clock keeps its stamp and is the one change missed, as
+# for every stamp. Bounded; registered with `_caches`.
+_CONFIG_MEMO_CAP = 64
+_CONFIG_MEMO: OrderedDict[str, tuple[githead.Stamp, _ConfigFacts]] = OrderedDict()
+_CONFIG_MEMO_LOCK = threading.Lock()
+
+
+@_caches.register
+def _clear_config_memo() -> None:
+    with _CONFIG_MEMO_LOCK:
+        _CONFIG_MEMO.clear()
+
+
+def _fd_stamp(fd: int) -> githead.Stamp:
+    status = os.fstat(fd)
+    return (
+        status.st_mtime_ns,
+        status.st_ctime_ns,
+        status.st_size,
+        status.st_ino,
+        status.st_mode,
+    )
+
+
+def _config_facts(path: Path) -> tuple[githead.Stamp | None, _ConfigFacts] | None:
+    """``(stamp, facts)`` of the configuration file `path`: its `githead.
+    stamp`, None when it does not exist (and then facts that set nothing),
+    and what it holds. None when it cannot be read, is not a regular file
+    or is larger than `_CONFIG_LIMIT`. The open does not block, so a FIFO
+    fails instead of waiting."""
+    key = os.fspath(path)
+    try:
+        current = githead.stamp(path)
+    except (OSError, ValueError):
+        return None
+    if current is None:
+        return None, _NO_CONFIG
+    with _CONFIG_MEMO_LOCK:
+        kept = _CONFIG_MEMO.get(key)
+        if kept is not None and kept[0] == current:
+            _CONFIG_MEMO.move_to_end(key)
+            return kept
     flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
     try:
         fd = os.open(path, flags)
     except FileNotFoundError:
-        return b""
+        return None, _NO_CONFIG
     except OSError:
         return None
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
+        before = _fd_stamp(fd)
+        if not stat.S_ISREG(before[4]):
             return None
         chunks: list[bytes] = []
         size = 0
-        while size <= limit:
-            chunk = os.read(fd, limit + 1 - size)
+        while size <= _CONFIG_LIMIT:
+            chunk = os.read(fd, _CONFIG_LIMIT + 1 - size)
             if not chunk:
                 break
             chunks.append(chunk)
             size += len(chunk)
-        return b"".join(chunks)
+        after = _fd_stamp(fd)
     except OSError:
         return None
     finally:
         os.close(fd)
+    if size > _CONFIG_LIMIT:
+        return None
+    read = (before, _facts_of(b"".join(chunks)))
+    if before == after:
+        with _CONFIG_MEMO_LOCK:
+            _CONFIG_MEMO[key] = read
+            _CONFIG_MEMO.move_to_end(key)
+            while len(_CONFIG_MEMO) > _CONFIG_MEMO_CAP:
+                _CONFIG_MEMO.popitem(last=False)
+    return read
 
 
 def _config_moves_worktree(gd: githead.GitDir) -> bool:
     """Whether the repository's own configuration could make git name a
-    working tree other than the directory holding ``.git``. Any mention of
-    ``worktree`` (the key, ``extensions.worktreeConfig``, a name that
-    merely contains the word) reads as yes; so does a line naming
-    ``bare`` with anything but a plain false, and a file that cannot be
-    read. The answer only decides whether the files or git answer, so a
-    false yes costs one process and a false no would be a wrong root."""
+    working tree other than the directory holding ``.git``: ``core.worktree``
+    set in the common config or in config.worktree, read as git reads the
+    files (a branch, a remote or ``extensions.worktreeConfig`` that merely
+    holds the word sets nothing), a line naming ``bare`` with anything but
+    a plain false, and a file git refuses, that holds a NUL byte or that
+    cannot be read. The answer only decides whether the files or git
+    answer, so a false yes costs one process and a false no would be a
+    wrong root."""
     for path in (gd.commondir / "config", gd.gitdir / "config.worktree"):
-        data = _read_small(path, _CONFIG_LIMIT)
-        if data is None or len(data) > _CONFIG_LIMIT:
+        read = _config_facts(path)
+        if read is None:
             return True
-        text = data.lower()
-        if b"worktree" in text:
+        facts = read[1]
+        if facts.names is None or b"core.worktree" in facts.names or facts.bare_moves:
             return True
-        for line in text.split(b"\n"):
-            if b"bare" in line and _BARE_FALSE.fullmatch(line) is None:
-                return True
     return False
 
 
@@ -1260,20 +1352,24 @@ class ReachableWalk:
 
 
 # The reachable walk is memoised per process, keyed on (root, anchor,
-# head) and the stamps of the files beside the history that decide what
-# its listing shows (`walk_files_signature`: the repository's config, the
-# working tree's .gitmodules, and the index where the working tree has
-# none). The walk names both ends (`_walk_reachable` runs to the key's
+# head) and the files beside the history that decide what its listing
+# shows (`walk_files_signature`: the repository's config, the working
+# tree's .gitmodules, and the index's .gitmodules entry where git reads
+# it). The walk names both ends (`_walk_reachable` runs to the key's
 # head, not to whatever HEAD names by then), and the range between two
 # named commits never changes, so an entry is never stale while those
 # files read as they did; the key's `head` is what lets a long-lived
-# server stop reusing a walk the moment a commit lands, and the stamps
+# server stop reusing a walk the moment a commit lands, and the rest
 # what stops it once log.showRoot or a submodule's ignore setting is
-# written, in the working tree's .gitmodules or the index's copy. A walk
-# is kept only when those files and the root directory read the same after
-# it as before it, so a .gitmodules created and removed while git ran is
-# not kept either. Where the stamps cannot be read (`githead` declines:
-# off POSIX, under GIT_DIR), no walk is kept. What the stamps do not see
+# written, in the working tree's .gitmodules or the index's copy, or the
+# index's copy goes unmerged. A write to the index that leaves its
+# .gitmodules entry as it was keys no new walk. A walk is kept only when
+# those files read the same after it as before it and neither the root
+# directory nor the index file moved meanwhile, so a .gitmodules created
+# and removed while git ran is not kept, nor is a walk during which the
+# index was written. Where they cannot be read (`githead` declines: off
+# POSIX, under GIT_DIR; GIT_INDEX_FILE is set; the index is split), no
+# walk is kept. What the stamps do not see
 # (git's configuration outside the repository's config file,
 # config.worktree, a history rewritten under an unchanged head, and the
 # two changes undone mid-walk `walk_files_signature` names) reads the
@@ -2064,7 +2160,9 @@ def _hold_directory(path: str | Path, held: dict[str, tuple[int, int]]) -> None:
     directory already in `held` is not read again and keeps the stamp
     first recorded for it, which is the one the check must compare with.
     Raises OSError or ValueError where a stat fails for any reason but
-    absence.
+    absence. A file is held the same way (`walk_files_signature` holds the
+    index): a write to it, or its replacement through a rename, moves the
+    pair.
 
     The cost is that of any change to such a directory, related or not.
     While something creates and removes files in a held directory steadily
@@ -2143,7 +2241,14 @@ def _config_variable_names(data: bytes) -> set[bytes] | None:
     reads them, so ``log.follow`` is named in any case or layout git
     accepts and a ``follow`` inside a value, a comment, a subsection or a
     longer key is not. None where git refuses the file ("bad config
-    line"). Values are read only to find where they end."""
+    line"), and None for any file holding a NUL byte: git keeps a name only
+    up to a NUL in it, so ``[log "follow\\0"] x`` sets ``log.follow`` to git
+    (and an escaped letter spells the word without its bytes), which this
+    reader does not model. Past those, the names are the ones git lists,
+    pinned against git on the texts of tests/test_commit_drift_cache.py.
+    Values are read only to find where they end."""
+    if b"\0" in data:
+        return None
     text = data.replace(b"\r\n", b"\n")
     end = len(text)
     pos = 0
@@ -2298,30 +2403,30 @@ def attribute_files_signature(
     tree these stats do not cover), one that sets ``log.follow`` (it makes
     the single-pathspec patch stream follow a claimed file across a rename
     and diff the renaming commit with the attributes of the rename source's
-    path, which no chain of the claimed path covers), one git refuses, and
-    a stat that fails for any reason but absence. Whether the file sets
-    ``log.follow`` is read as git reads it (`_config_variable_names`), in
-    any case or layout, so ``push.followTags``, a branch or a remote whose
-    name holds ``follow``, or the word in a value or a comment, keys the
-    files like any other config. A ``log.follow`` set outside the
-    repository's config (the global and system files, an include) is not
-    seen. `root` is the root `cwd`'s repository names."""
+    path, which no chain of the claimed path covers), one git refuses, one
+    that holds a NUL byte (git ends a variable's name at it, so a quoted
+    subsection can set ``log.follow`` or ``core.attributesFile`` without
+    the words' bytes), and a stat that fails for any reason but absence.
+    Whether the file sets ``log.follow`` is read as git reads it
+    (`_config_variable_names`, memoised per state of the file in
+    `_config_facts`), in any case or layout, so ``push.followTags``, a
+    branch or a remote whose name holds ``follow``, or the word in a value
+    or a comment, keys the files like any other config. A ``log.follow``
+    set outside the repository's config (the global and system files, an
+    include) is not seen. `root` is the root `cwd`'s repository names."""
     gd = githead.find_gitdir(cwd)
     if gd is None:
         return None
-    config = gd.commondir / "config"
-    text = _read_small(config, _CONFIG_LIMIT)
-    if text is None or len(text) > _CONFIG_LIMIT:
+    read = _config_facts(gd.commondir / "config")
+    if read is None:
         return None
-    lowered = text.lower()
-    if b"attributesfile" in lowered or b"[attr" in lowered:
+    config_stamp, facts = read
+    if (
+        facts.names is None
+        or facts.attributes_elsewhere
+        or b"log.follow" in facts.names
+    ):
         return None
-    if b"follow" in lowered:
-        # Only a file that holds the word can set log.follow: a key's name
-        # is read literally, with no escape and no continued line.
-        names = _config_variable_names(text)
-        if names is None or b"log.follow" in names:
-            return None
     global_file = _global_attributes_path(root)
     try:
         if directories is not None:
@@ -2329,7 +2434,7 @@ def attribute_files_signature(
             if global_file is not None:
                 _hold_directory(os.path.dirname(global_file), directories)
         return (
-            _stamp(config),
+            config_stamp,
             _stamp(gd.commondir / "info" / "attributes"),
             global_file,
             None if global_file is None else _stamp(global_file),
@@ -2392,6 +2497,189 @@ def gitattributes_signature(
         return None
 
 
+# The index's .gitmodules entry, read in-process the way git's
+# repo_read_gitmodules consults it (submodule-config.c): git reads the index
+# first, reads no .gitmodules at all while the index holds it unmerged
+# (is_gitmodules_unmerged), then the working tree's file where it exists,
+# the index's stage-0 blob where it does not, and HEAD's last. What the
+# drift readers' walk lists depends on the index only through that entry, so
+# the walk files key on the entry, not on the index's stamp, and a write to
+# the index that leaves .gitmodules as it was keys nothing new.
+
+#: `_index_gitmodules` for an index that holds .gitmodules only at stages 1
+#: to 3, as a conflicted merge leaves it: git then reads no .gitmodules.
+_INDEX_UNMERGED: tuple[str] = ("unmerged",)
+
+_GITMODULES = b".gitmodules"
+
+# Extended flags git writes and reads in a version 3 or 4 entry: CE_SKIP_
+# WORKTREE and CE_INTENT_TO_ADD, in the second flags word. Any other bit
+# makes git refuse the index ("unknown index entry format").
+_EXTENDED_FLAGS = 0x4000 | 0x2000
+
+
+class _IndexUnsettled(Exception):
+    """The index is not one `_index_gitmodules` reads exactly."""
+
+
+# The entry each index held, memoised on the index's stamp: the index is
+# rewritten by most git commands (git add, a refreshing git status), and a
+# search reads the entry at its start and end. Read once per stamp from the
+# open file, kept only where its stamp before and after the read agree.
+# Bounded; registered with `_caches`.
+_INDEX_MEMO_CAP = 64
+_INDEX_MEMO: OrderedDict[str, tuple[githead.Stamp, tuple[object, ...] | None]] = (
+    OrderedDict()
+)
+_INDEX_MEMO_LOCK = threading.Lock()
+
+
+@_caches.register
+def _clear_index_memo() -> None:
+    with _INDEX_MEMO_LOCK:
+        _INDEX_MEMO.clear()
+
+
+def _decode_varint(data: bytes | mmap.mmap, pos: int) -> tuple[int, int]:
+    """git's ``decode_varint`` (varint.c): the value at `pos` and the
+    position after it."""
+    if pos >= len(data):
+        raise _IndexUnsettled
+    byte = data[pos]
+    pos += 1
+    value = byte & 0x7F
+    while byte & 0x80:
+        value += 1
+        if pos >= len(data) or value >> 57:
+            raise _IndexUnsettled
+        byte = data[pos]
+        pos += 1
+        value = (value << 7) + (byte & 0x7F)
+    return value, pos
+
+
+def _gitmodules_entries(data: bytes | mmap.mmap) -> list[tuple[int, int, bytes]]:
+    """``(stage, mode, object id)`` of each entry named ``.gitmodules`` in
+    the index `data`, a SHA-1 repository's, read from the first entry up to
+    the first name that sorts after it (git keeps entries in name order,
+    then stage). Versions 2 and 3 pad each entry to a multiple of eight
+    bytes, version 4 compresses each name against the one before it; a name
+    of 4,095 bytes or more is found by its terminating NUL. Anything else
+    git would refuse, or lay out otherwise, raises `_IndexUnsettled`."""
+    if len(data) < 12 or data[:4] != b"DIRC":
+        raise _IndexUnsettled
+    version = int.from_bytes(data[4:8], "big")
+    if version not in (2, 3, 4):
+        raise _IndexUnsettled
+    count = int.from_bytes(data[8:12], "big")
+    found: list[tuple[int, int, bytes]] = []
+    pos = 12
+    previous = b""
+    for _ in range(count):
+        start = pos
+        flags_at = start + 40 + 20
+        if flags_at + 2 > len(data):
+            raise _IndexUnsettled
+        mode = int.from_bytes(data[start + 24 : start + 28], "big")
+        oid = data[start + 40 : flags_at]
+        flags = int.from_bytes(data[flags_at : flags_at + 2], "big")
+        name_at = flags_at + 2
+        if flags & 0x4000:
+            if version < 3 or name_at + 2 > len(data):
+                raise _IndexUnsettled
+            if int.from_bytes(data[name_at : name_at + 2], "big") & ~_EXTENDED_FLAGS:
+                raise _IndexUnsettled
+            name_at += 2
+        stage = (flags >> 12) & 0x3
+        length = flags & 0x0FFF
+        if version == 4:
+            strip, name_at = _decode_varint(data, name_at)
+            if strip > len(previous):
+                raise _IndexUnsettled
+            end = data.find(b"\0", name_at)
+            if end < 0:
+                raise _IndexUnsettled
+            name = previous[: len(previous) - strip] + data[name_at:end]
+            if length != 0x0FFF and len(name) != length:
+                raise _IndexUnsettled
+            pos = end + 1
+        else:
+            if length == 0x0FFF:
+                end = data.find(b"\0", name_at)
+                if end < 0:
+                    raise _IndexUnsettled
+                length = end - name_at
+            name = data[name_at : name_at + length]
+            if len(name) != length:
+                raise _IndexUnsettled
+            pos = start + ((name_at - start + length + 8) & ~7)
+        if name == _GITMODULES:
+            found.append((stage, mode, oid))
+        elif name > _GITMODULES:
+            break
+        previous = name
+    return found
+
+
+def _index_gitmodules(gd: githead.GitDir) -> tuple[object, ...] | None:
+    """What the index at `gd` holds for ``.gitmodules``: None when no entry
+    (or no index), `_INDEX_UNMERGED` when only stages 1 to 3, and the
+    stage-0 entry's ``(mode, object id in hex)`` otherwise, memoised on the
+    index's stamp. Raises `_IndexUnsettled` where the index is not read
+    exactly: a split index (a ``sharedindex.*`` file in the git directory,
+    whose entries this does not open), an index version other than 2, 3 or
+    4 or a layout git refuses, a SHA-256 repository (its config sets
+    ``extensions.objectFormat``, or cannot be read), and an index rewritten
+    in place while it was read; and OSError where a read fails."""
+    config = _config_facts(gd.commondir / "config")
+    if (
+        config is None
+        or config[1].names is None
+        or b"extensions.objectformat" in config[1].names
+    ):
+        raise _IndexUnsettled
+    path = gd.gitdir / "index"
+    key = os.fspath(path)
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(path, flags)
+    except FileNotFoundError:
+        return None
+    try:
+        before = _fd_stamp(fd)
+        if not stat.S_ISREG(before[4]):
+            raise _IndexUnsettled
+        with _INDEX_MEMO_LOCK:
+            kept = _INDEX_MEMO.get(key)
+            if kept is not None and kept[0] == before:
+                _INDEX_MEMO.move_to_end(key)
+                return kept[1]
+        if any(name.startswith("sharedindex.") for name in os.listdir(gd.gitdir)):
+            raise _IndexUnsettled
+        if before[2] == 0:
+            raise _IndexUnsettled
+        # Mapped, not read: the entries up to .gitmodules are near the
+        # start, and only the pages the scan touches are read.
+        with mmap.mmap(fd, 0, access=mmap.ACCESS_READ) as data:
+            entries = _gitmodules_entries(data)
+        if _fd_stamp(fd) != before:
+            raise _IndexUnsettled
+    finally:
+        os.close(fd)
+    entry: tuple[object, ...] | None = None
+    for stage, mode, oid in entries:
+        if stage == 0:
+            entry = (mode, oid.hex())
+    if entry is None and entries:
+        entry = _INDEX_UNMERGED
+    with _INDEX_MEMO_LOCK:
+        _INDEX_MEMO[key] = (before, entry)
+        _INDEX_MEMO.move_to_end(key)
+        while len(_INDEX_MEMO) > _INDEX_MEMO_CAP:
+            _INDEX_MEMO.popitem(last=False)
+    return entry
+
+
 def walk_files_signature(
     root: Path, *, directories: dict[str, tuple[int, int]] | None = None
 ) -> tuple[object, ...] | None:
@@ -2402,46 +2690,59 @@ def walk_files_signature(
     gitlink's, and ``log.follow`` makes a log over one path follow it
     across renames), the working tree's ``.gitmodules`` at the root
     (``submodule.<name>.ignore`` there drops a gitlink's changes from the
-    walk), and the index while the working tree has no ``.gitmodules``:
-    git then reads the index's copy, and HEAD's where the index has none,
-    which the key's head already names. Each is its `_stamp`, or None
-    while it does not exist; the index's slot is None while a
-    ``.gitmodules`` exists, since git reads no other copy then. Where it is
-    stamped, every write to the index is a new key, whatever the write
-    changed. The walk memo (`commits_since_anchor`) and the per-hit drift
-    memo key on it. `directories`, when given, receives the root's stamp
-    (`_hold_directory`), for a caller that checks at the end of its work
-    that no ``.gitmodules`` was created and removed meanwhile.
+    walk), and what the index holds for ``.gitmodules`` where git reads it
+    (`_index_gitmodules`). Git reads the index first: while it holds
+    ``.gitmodules`` unmerged, git reads no ``.gitmodules`` at all, and the
+    slot is `_INDEX_UNMERGED` whatever the working tree holds; otherwise the
+    working tree's file where it exists, and the slot is None; and where it
+    does not, the index's stage-0 entry, its mode and object, which is the
+    slot, None where the index has none and git reads HEAD's copy, which
+    the key's head names. A write to the index that leaves ``.gitmodules``
+    as it was (``git add`` of another file, a ``git status`` that refreshes
+    the index) is no new key. The config and the working tree's file are
+    each their `_stamp`, or None while they do not exist. The walk memo
+    (`commits_since_anchor`) and the per-hit drift memo key on it.
+    `directories`, when given, receives the stamps of the root and of the
+    index file (`_hold_directory`), for a caller that checks at the end of
+    its work that no ``.gitmodules`` was created and removed meanwhile and
+    that the index was not written, which leaves nothing kept from a search
+    during which the index's entry moved and moved back.
 
     Read through `githead.gitdir_at`, which reads the repository only when
     `root` holds its ``.git`` entry, so a root git names elsewhere
     (``core.worktree``) is never stamped against an enclosing repository.
-    None where `githead` declines (off POSIX, under GIT_DIR and the other
-    variables that move discovery, a root that holds no ``.git`` entry),
-    where the index is read and GIT_INDEX_FILE names another, and where a
-    stat fails for any reason but absence; what would key on it is then
-    not memoised. The configuration git reads outside that file (the
-    global and system files, an include, ``config.worktree``) is not seen.
-    Nor are two changes undone while a walk runs that leave every stamp as
-    it was: a ``config`` or an index created and removed in a repository
-    that has none (the directory that would hold it is not held, only the
-    root), and a ``config`` that is a symbolic link whose target's
-    directory is swapped for another and back (the stamp follows the link
-    to the file it named before, with its old stamp)."""
+    None whenever GIT_INDEX_FILE is set (git reads the index it names), where
+    `githead` declines (off POSIX, under GIT_DIR and the other variables
+    that move discovery, a root that holds no ``.git`` entry), where the
+    index is not one `_index_gitmodules` reads exactly (a split index, an
+    unknown version, a SHA-256 repository), and where a stat or a read fails
+    for any reason but absence; what would key on it is then not memoised.
+    The configuration git reads outside that file (the global and system
+    files, an include, ``config.worktree``) is not seen. Nor are two
+    changes undone while a walk runs that leave every stamp as it was: a
+    ``config`` created and removed in a repository that has none (the
+    directory that would hold it is not held, only the root; a missing
+    index is held through the git directory), and a ``config`` that is a
+    symbolic link whose target's directory is swapped for another and back
+    (the stamp follows the link to the file it named before, with its old
+    stamp)."""
+    if "GIT_INDEX_FILE" in os.environ:
+        return None
     gd = githead.gitdir_at(root)
     if gd is None:
         return None
     try:
         if directories is not None:
             _hold_directory(root, directories)
+            _hold_directory(gd.gitdir / "index", directories)
         gitmodules = _stamp(root / ".gitmodules")
-        index: githead.Stamp | None = None
-        if gitmodules is None:
-            if "GIT_INDEX_FILE" in os.environ:
-                return None
-            index = _stamp(gd.gitdir / "index")
+        entry = _index_gitmodules(gd)
+        if entry == _INDEX_UNMERGED or gitmodules is None:
+            index = entry
+        else:
+            index = None
         return (_stamp(gd.commondir / "config"), gitmodules, index)
-    except (OSError, ValueError):
+    except (OSError, ValueError, _IndexUnsettled):
         return None
 
 

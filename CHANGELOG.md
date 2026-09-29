@@ -89,7 +89,12 @@ surfaces leave with them. An 8.x directory is imported once by
   rows of `memory_search`'s lookback window are kept per store and
   extended from the log's head, checked by its MAC, instead of read by a
   scan of the whole log (`Store.events_since(..., memoised=True)`). A
-  warm search inside the origin cache's lifetime forks no git process.
+  search whose hits the memos hold forks no git process while nothing
+  their keys read has moved: no commit, no edit to the repository's
+  `config`, a `.gitmodules` or an attributes file, and the origin capture
+  inside its lifetime. A repository the files do not settle (a split
+  index, `GIT_DIR` or `GIT_INDEX_FILE` set, the reftable format) is
+  resolved through git on every search, as before the memos.
   A value computed while a git process failed is never kept, and a hit
   with a governed claim keys on the attribute files its patch stream
   reads (`.gitattributes` on the path, `info/attributes`, the global
@@ -98,9 +103,17 @@ surfaces leave with them. An 8.x directory is imported once by
   returns while a search runs leaves nothing memoised (the file stamps
   carry ctime, inode and mode, and the recheck holds the directories),
   and the reachable walks are keyed on the repository's `config`, its
-  `.gitmodules` and, where the working tree has none, the index, whose
-  copy git reads then. A config keeps governed hits out of the memo only
-  where it sets `log.follow`. `_caches.clear_all` empties every cache
+  `.gitmodules`, and the index's `.gitmodules` entry where git reads it
+  (while it is unmerged, when git reads none, and where the working tree
+  has none), read from the index in-process once per state of the index:
+  a `git add` of another file, or a `git status` that refreshes the index,
+  keys nothing new. A config keeps governed hits out of the memo where it
+  sets `log.follow`, holds a NUL byte (git ends a name at one) or is one
+  git refuses, and its variables are parsed once per state of the file;
+  the files answer the root unless the config sets `core.worktree` or a
+  true `core.bare`, where a branch or remote whose name held the word
+  `worktree` used to send every search to git.
+  `_caches.clear_all` empties every cache
   and the test suite calls it before each test. The phase 1 gate's
   numbers are in `bench/daemon/results/latency-9.0.0-2026-09-26-u6.json`.
   (`src/bettermemory/githead.py`, `src/bettermemory/_caches.py`)
