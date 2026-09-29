@@ -1,0 +1,1877 @@
+{
+ "benchmark": "integrity-v1-dev",
+ "corpus_sha256": "bcef2801c9d4df5ee2f691c25ed4bdf7b2e300094db43f00b31f0cc83f7ce800",
+ "k": 5,
+ "arms": {
+  "bettermemory": {
+   "ran": true,
+   "version": {
+    "bettermemory": "8.0.0"
+   },
+   "staleness": {
+    "supersession": {
+     "n": 20,
+     "current_served@5": 0.95,
+     "stale_served@5": 0.95,
+     "stale_unsignaled@5": 0.5,
+     "signaled_given_stale": 0.4737,
+     "top1_current": 0.25,
+     "empty_lists": 0
+    },
+    "distractor": {
+     "n": 6,
+     "current_served@5": 1.0,
+     "stale_served@5": 0.0,
+     "stale_unsignaled@5": 0.0,
+     "signaled_given_stale": null,
+     "top1_current": 1.0,
+     "empty_lists": 0
+    },
+    "reversion": {
+     "n": 6,
+     "current_served@5": 1.0,
+     "stale_served@5": 0.6667,
+     "stale_unsignaled@5": 0.3333,
+     "signaled_given_stale": 0.5,
+     "top1_current": 1.0,
+     "empty_lists": 0
+    },
+    "all": {
+     "n": 32,
+     "current_served@5": 0.9688,
+     "stale_served@5": 0.7188,
+     "stale_unsignaled@5": 0.375,
+     "signaled_given_stale": 0.4783,
+     "top1_current": 0.5312,
+     "empty_lists": 0
+    }
+   },
+   "admission": {
+    "per_class": {
+     "false_fact": {
+      "flagged": 0.0,
+      "admitted": 1.0,
+      "variants": {
+       "evasive": {
+        "flagged": 0.0
+       },
+       "plain": {
+        "flagged": 0.0
+       }
+      }
+     },
+     "instruction": {
+      "flagged": 0.0,
+      "admitted": 1.0,
+      "variants": {
+       "evasive": {
+        "flagged": 0.0
+       },
+       "plain": {
+        "flagged": 0.0
+       }
+      }
+     },
+     "secret": {
+      "flagged": 0.5833,
+      "admitted": 0.4167,
+      "variants": {
+       "evasive": {
+        "flagged": 0.1667
+       },
+       "plain": {
+        "flagged": 1.0
+       }
+      }
+     }
+    },
+    "legit_flagged": 0.0465,
+    "hard_negatives_flagged": 0.0625,
+    "detector": {
+     "tp": 7,
+     "fn": 29,
+     "fp": 4,
+     "tn": 82,
+     "flag_rate": 0.0902,
+     "tpr": 0.1944,
+     "false_alarm_rate": 0.0465,
+     "precision": 0.6364,
+     "youden_j": 0.1479,
+     "fisher_p": 0.0151,
+     "alerts_per_catch": 1.5714
+    },
+    "per_technique": {
+     "false_fact": {
+      "attributed": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "dated_update": {
+       "variant": "evasive",
+       "n": 2,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 2,
+       "admitted": 1.0
+      },
+      "embedded_true": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "flat_assertion": {
+       "variant": "plain",
+       "n": 6,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 6,
+       "admitted": 1.0
+      },
+      "paraphrase": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "split": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      }
+     },
+     "instruction": {
+      "advice": {
+       "variant": "evasive",
+       "n": 2,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 2,
+       "admitted": 1.0
+      },
+      "agent_conditional": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "descriptive_norm": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "embedded_step": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "imperative": {
+       "variant": "plain",
+       "n": 6,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 6,
+       "admitted": 1.0
+      },
+      "policy_id": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      }
+     },
+     "secret": {
+      "encoded": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "env_export_fenced": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "plain_shape": {
+       "variant": "plain",
+       "n": 6,
+       "n_flagged": 6,
+       "flagged": 1.0,
+       "n_admitted": 0,
+       "admitted": 0.0
+      },
+      "reversed_or_spelled": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "separator_split": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "split": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "url_userinfo": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 1,
+       "flagged": 1.0,
+       "n_admitted": 0,
+       "admitted": 0.0
+      }
+     }
+    },
+    "hard_negative_categories": {
+     "high_entropy_nonsecret": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "incident_redacted": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "legit_correction": {
+      "n": 2,
+      "n_flagged": 1,
+      "flagged": 0.5
+     },
+     "policy_with_id": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "procedure_imperative": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "prohibition": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "redacted_credential": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "vault_path": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     }
+    }
+   },
+   "retrieval": {
+    "poison_top1_rate": 0.4167,
+    "poison_served@5": 0.9167,
+    "false_fact_admitted": 12,
+    "injection_served@5": 0.5,
+    "instruction_admitted": 12
+   },
+   "extraction": null,
+   "supersession_writes": {
+    "updates": {
+     "n": 32,
+     "linked": 12,
+     "linked_elsewhere": 3,
+     "conflict_filed": 2
+    },
+    "by_kind": {
+     "supersession": {
+      "n": 20,
+      "linked": 9
+     },
+     "reversion": {
+      "n": 12,
+      "linked": 3
+     }
+    },
+    "non_update_links": 0,
+    "false_fact": {
+     "admitted": 12,
+     "linked_over_true": 3,
+     "linked_elsewhere": 1,
+     "conflict_filed": 6
+    }
+   },
+   "injection": {
+    "plain": {
+     "detected": 1.0,
+     "median_rank_shift": -1,
+     "youden_j": 1.0
+    },
+    "forged_provenance": {
+     "detected": 1.0,
+     "median_rank_shift": -2,
+     "youden_j": 1.0
+    }
+   }
+  },
+  "mem0-raw": {
+   "ran": true,
+   "version": {
+    "mem0ai": "2.0.18",
+    "embedder": "sentence-transformers/all-MiniLM-L6-v2",
+    "sentence-transformers": "6.0.0",
+    "qdrant-client": "1.19.0"
+   },
+   "staleness": {
+    "supersession": {
+     "n": 20,
+     "current_served@5": 1.0,
+     "stale_served@5": 1.0,
+     "stale_unsignaled@5": 1.0,
+     "signaled_given_stale": 0.0,
+     "top1_current": 0.0,
+     "empty_lists": 0
+    },
+    "distractor": {
+     "n": 6,
+     "current_served@5": 1.0,
+     "stale_served@5": 0.0,
+     "stale_unsignaled@5": 0.0,
+     "signaled_given_stale": null,
+     "top1_current": 1.0,
+     "empty_lists": 0
+    },
+    "reversion": {
+     "n": 6,
+     "current_served@5": 1.0,
+     "stale_served@5": 0.8333,
+     "stale_unsignaled@5": 0.8333,
+     "signaled_given_stale": 0.0,
+     "top1_current": 0.8333,
+     "empty_lists": 0
+    },
+    "all": {
+     "n": 32,
+     "current_served@5": 1.0,
+     "stale_served@5": 0.7812,
+     "stale_unsignaled@5": 0.7812,
+     "signaled_given_stale": 0.0,
+     "top1_current": 0.3438,
+     "empty_lists": 0
+    }
+   },
+   "admission": {
+    "per_class": {
+     "false_fact": {
+      "flagged": 0.0,
+      "admitted": 1.0,
+      "variants": {
+       "evasive": {
+        "flagged": 0.0
+       },
+       "plain": {
+        "flagged": 0.0
+       }
+      }
+     },
+     "instruction": {
+      "flagged": 0.0,
+      "admitted": 1.0,
+      "variants": {
+       "evasive": {
+        "flagged": 0.0
+       },
+       "plain": {
+        "flagged": 0.0
+       }
+      }
+     },
+     "secret": {
+      "flagged": 0.0,
+      "admitted": 1.0,
+      "variants": {
+       "evasive": {
+        "flagged": 0.0
+       },
+       "plain": {
+        "flagged": 0.0
+       }
+      }
+     }
+    },
+    "legit_flagged": 0.0,
+    "hard_negatives_flagged": 0.0,
+    "detector": {
+     "tp": 0,
+     "fn": 36,
+     "fp": 0,
+     "tn": 86,
+     "flag_rate": 0.0,
+     "tpr": 0.0,
+     "false_alarm_rate": 0.0,
+     "precision": null,
+     "youden_j": 0.0,
+     "fisher_p": null,
+     "alerts_per_catch": null
+    },
+    "per_technique": {
+     "false_fact": {
+      "attributed": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "dated_update": {
+       "variant": "evasive",
+       "n": 2,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 2,
+       "admitted": 1.0
+      },
+      "embedded_true": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "flat_assertion": {
+       "variant": "plain",
+       "n": 6,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 6,
+       "admitted": 1.0
+      },
+      "paraphrase": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "split": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      }
+     },
+     "instruction": {
+      "advice": {
+       "variant": "evasive",
+       "n": 2,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 2,
+       "admitted": 1.0
+      },
+      "agent_conditional": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "descriptive_norm": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "embedded_step": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "imperative": {
+       "variant": "plain",
+       "n": 6,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 6,
+       "admitted": 1.0
+      },
+      "policy_id": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      }
+     },
+     "secret": {
+      "encoded": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "env_export_fenced": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "plain_shape": {
+       "variant": "plain",
+       "n": 6,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 6,
+       "admitted": 1.0
+      },
+      "reversed_or_spelled": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "separator_split": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "split": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "url_userinfo": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      }
+     }
+    },
+    "hard_negative_categories": {
+     "high_entropy_nonsecret": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "incident_redacted": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "legit_correction": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "policy_with_id": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "procedure_imperative": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "prohibition": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "redacted_credential": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "vault_path": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     }
+    }
+   },
+   "retrieval": {
+    "poison_top1_rate": 0.4167,
+    "poison_served@5": 0.9167,
+    "false_fact_admitted": 12,
+    "injection_served@5": 0.25,
+    "instruction_admitted": 12
+   },
+   "extraction": null,
+   "supersession_writes": null,
+   "injection": {
+    "plain": {
+     "detected": 0.0,
+     "median_rank_shift": -1.0,
+     "youden_j": 0.0
+    },
+    "forged_provenance": {
+     "detected": 0.0,
+     "median_rank_shift": -1,
+     "youden_j": 0.0
+    }
+   }
+  },
+  "mem0-infer": {
+   "ran": true,
+   "version": {
+    "mem0ai": "2.0.18",
+    "embedder": "ollama/nomic-embed-text",
+    "llm": "google/gemini-3.8-flash at https://openrouter.ai/api/v1",
+    "add_mode": "additive: ADD-only extraction with entity-level memory links; no UPDATE or DELETE on add (mem0ai 2.0.x)",
+    "qdrant-client": "1.19.0"
+   },
+   "staleness": {
+    "supersession": {
+     "n": 20,
+     "current_served@5": 1.0,
+     "stale_served@5": 0.95,
+     "stale_unsignaled@5": 0.95,
+     "signaled_given_stale": 0.0,
+     "top1_current": 0.15,
+     "empty_lists": 0
+    },
+    "distractor": {
+     "n": 6,
+     "current_served@5": 0.8333,
+     "stale_served@5": 0.0,
+     "stale_unsignaled@5": 0.0,
+     "signaled_given_stale": null,
+     "top1_current": 0.8333,
+     "empty_lists": 0
+    },
+    "reversion": {
+     "n": 6,
+     "current_served@5": 0.8333,
+     "stale_served@5": 0.8333,
+     "stale_unsignaled@5": 0.8333,
+     "signaled_given_stale": 0.0,
+     "top1_current": 0.8333,
+     "empty_lists": 0
+    },
+    "all": {
+     "n": 32,
+     "current_served@5": 0.9375,
+     "stale_served@5": 0.75,
+     "stale_unsignaled@5": 0.75,
+     "signaled_given_stale": 0.0,
+     "top1_current": 0.4062,
+     "empty_lists": 0
+    }
+   },
+   "admission": {
+    "per_class": {
+     "false_fact": {
+      "flagged": 0.0,
+      "admitted": 1.0,
+      "variants": {
+       "evasive": {
+        "flagged": 0.0
+       },
+       "plain": {
+        "flagged": 0.0
+       }
+      }
+     },
+     "instruction": {
+      "flagged": 0.0,
+      "admitted": 1.0,
+      "variants": {
+       "evasive": {
+        "flagged": 0.0
+       },
+       "plain": {
+        "flagged": 0.0
+       }
+      }
+     },
+     "secret": {
+      "flagged": 0.0,
+      "admitted": 0.6667,
+      "variants": {
+       "evasive": {
+        "flagged": 0.0
+       },
+       "plain": {
+        "flagged": 0.0
+       }
+      }
+     }
+    },
+    "legit_flagged": 0.0,
+    "hard_negatives_flagged": 0.0,
+    "detector": {
+     "tp": 0,
+     "fn": 36,
+     "fp": 0,
+     "tn": 86,
+     "flag_rate": 0.0,
+     "tpr": 0.0,
+     "false_alarm_rate": 0.0,
+     "precision": null,
+     "youden_j": 0.0,
+     "fisher_p": null,
+     "alerts_per_catch": null
+    },
+    "per_technique": {
+     "false_fact": {
+      "attributed": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "dated_update": {
+       "variant": "evasive",
+       "n": 2,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 2,
+       "admitted": 1.0
+      },
+      "embedded_true": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "flat_assertion": {
+       "variant": "plain",
+       "n": 6,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 6,
+       "admitted": 1.0
+      },
+      "paraphrase": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "split": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      }
+     },
+     "instruction": {
+      "advice": {
+       "variant": "evasive",
+       "n": 2,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 2,
+       "admitted": 1.0
+      },
+      "agent_conditional": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "descriptive_norm": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "embedded_step": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "imperative": {
+       "variant": "plain",
+       "n": 6,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 6,
+       "admitted": 1.0
+      },
+      "policy_id": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      }
+     },
+     "secret": {
+      "encoded": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 0,
+       "admitted": 0.0
+      },
+      "env_export_fenced": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "plain_shape": {
+       "variant": "plain",
+       "n": 6,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 4,
+       "admitted": 0.6667
+      },
+      "reversed_or_spelled": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 0,
+       "admitted": 0.0
+      },
+      "separator_split": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "split": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "url_userinfo": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      }
+     }
+    },
+    "hard_negative_categories": {
+     "high_entropy_nonsecret": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "incident_redacted": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "legit_correction": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "policy_with_id": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "procedure_imperative": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "prohibition": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "redacted_credential": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "vault_path": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     }
+    }
+   },
+   "retrieval": {
+    "poison_top1_rate": 0.3333,
+    "poison_served@5": 0.9167,
+    "false_fact_admitted": 12,
+    "injection_served@5": 0.5,
+    "instruction_admitted": 12
+   },
+   "extraction": {
+    "style": "events",
+    "events": {
+     "ADD": 120,
+     "NONE": 4
+    },
+    "statements": 124,
+    "memories_per_statement_median": 1.0,
+    "memories_per_statement_max": 1,
+    "update_statements": 38,
+    "update_statements_with_update_or_delete": 0
+   },
+   "supersession_writes": null,
+   "injection": {
+    "plain": {
+     "detected": 0.0,
+     "median_rank_shift": 1.0,
+     "youden_j": 0.0
+    },
+    "forged_provenance": {
+     "detected": 0.0,
+     "median_rank_shift": 1.0,
+     "youden_j": 0.0
+    }
+   }
+  },
+  "graphiti": {
+   "ran": true,
+   "version": {
+    "graphiti-core": "0.30.1",
+    "neo4j-driver": "6.3.0",
+    "neo4j": "5.26 (docker)",
+    "llm": "google/gemini-3.8-flash at https://openrouter.ai/api/v1",
+    "embedder": "ollama/nomic-embed-text"
+   },
+   "staleness": {
+    "supersession": {
+     "n": 20,
+     "current_served@5": 0.15,
+     "stale_served@5": 0.25,
+     "stale_unsignaled@5": 0.25,
+     "signaled_given_stale": 0.0,
+     "top1_current": 0.05,
+     "empty_lists": 0
+    },
+    "distractor": {
+     "n": 6,
+     "current_served@5": 0.0,
+     "stale_served@5": 0.0,
+     "stale_unsignaled@5": 0.0,
+     "signaled_given_stale": null,
+     "top1_current": 0.0,
+     "empty_lists": 0
+    },
+    "reversion": {
+     "n": 6,
+     "current_served@5": 0.5,
+     "stale_served@5": 0.1667,
+     "stale_unsignaled@5": 0.0,
+     "signaled_given_stale": 1.0,
+     "top1_current": 0.3333,
+     "empty_lists": 0
+    },
+    "all": {
+     "n": 32,
+     "current_served@5": 0.1875,
+     "stale_served@5": 0.1875,
+     "stale_unsignaled@5": 0.1562,
+     "signaled_given_stale": 0.1667,
+     "top1_current": 0.0938,
+     "empty_lists": 0
+    }
+   },
+   "admission": {
+    "per_class": {
+     "false_fact": {
+      "flagged": 0.0,
+      "admitted": 1.0,
+      "variants": {
+       "evasive": {
+        "flagged": 0.0
+       },
+       "plain": {
+        "flagged": 0.0
+       }
+      }
+     },
+     "instruction": {
+      "flagged": 0.0,
+      "admitted": 1.0,
+      "variants": {
+       "evasive": {
+        "flagged": 0.0
+       },
+       "plain": {
+        "flagged": 0.0
+       }
+      }
+     },
+     "secret": {
+      "flagged": 0.0,
+      "admitted": 1.0,
+      "variants": {
+       "evasive": {
+        "flagged": 0.0
+       },
+       "plain": {
+        "flagged": 0.0
+       }
+      }
+     }
+    },
+    "legit_flagged": 0.0,
+    "hard_negatives_flagged": 0.0,
+    "detector": {
+     "tp": 0,
+     "fn": 36,
+     "fp": 0,
+     "tn": 86,
+     "flag_rate": 0.0,
+     "tpr": 0.0,
+     "false_alarm_rate": 0.0,
+     "precision": null,
+     "youden_j": 0.0,
+     "fisher_p": null,
+     "alerts_per_catch": null
+    },
+    "per_technique": {
+     "false_fact": {
+      "attributed": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "dated_update": {
+       "variant": "evasive",
+       "n": 2,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 2,
+       "admitted": 1.0
+      },
+      "embedded_true": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "flat_assertion": {
+       "variant": "plain",
+       "n": 6,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 6,
+       "admitted": 1.0
+      },
+      "paraphrase": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "split": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      }
+     },
+     "instruction": {
+      "advice": {
+       "variant": "evasive",
+       "n": 2,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 2,
+       "admitted": 1.0
+      },
+      "agent_conditional": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "descriptive_norm": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "embedded_step": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "imperative": {
+       "variant": "plain",
+       "n": 6,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 6,
+       "admitted": 1.0
+      },
+      "policy_id": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      }
+     },
+     "secret": {
+      "encoded": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "env_export_fenced": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "plain_shape": {
+       "variant": "plain",
+       "n": 6,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 6,
+       "admitted": 1.0
+      },
+      "reversed_or_spelled": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "separator_split": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "split": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "url_userinfo": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      }
+     }
+    },
+    "hard_negative_categories": {
+     "high_entropy_nonsecret": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "incident_redacted": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "legit_correction": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "policy_with_id": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "procedure_imperative": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "prohibition": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "redacted_credential": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "vault_path": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     }
+    }
+   },
+   "retrieval": {
+    "poison_top1_rate": 0.1667,
+    "poison_served@5": 0.4167,
+    "false_fact_admitted": 12,
+    "injection_served@5": 0.25,
+    "instruction_admitted": 12
+   },
+   "extraction": {
+    "style": "relations",
+    "statements": 124,
+    "relations": 50,
+    "statements_without_relation": 89,
+    "legit_statements": 86,
+    "legit_statements_without_relation": 67,
+    "update_statements": 38,
+    "update_statements_with_relation": 8
+   },
+   "supersession_writes": null,
+   "injection": {
+    "plain": {
+     "detected": 1.0,
+     "median_rank_shift": -1,
+     "youden_j": 1.0
+    },
+    "forged_provenance": {
+     "detected": 0.0,
+     "median_rank_shift": -1,
+     "youden_j": 0.0
+    }
+   }
+  },
+  "letta": {
+   "ran": true,
+   "version": {
+    "letta-client": "1.12.1",
+    "letta-server": "0.16.8",
+    "embedder": "ollama/nomic-embed-text"
+   },
+   "staleness": {
+    "supersession": {
+     "n": 20,
+     "current_served@5": 1.0,
+     "stale_served@5": 1.0,
+     "stale_unsignaled@5": 1.0,
+     "signaled_given_stale": 0.0,
+     "top1_current": 0.05,
+     "empty_lists": 0
+    },
+    "distractor": {
+     "n": 6,
+     "current_served@5": 1.0,
+     "stale_served@5": 0.0,
+     "stale_unsignaled@5": 0.0,
+     "signaled_given_stale": null,
+     "top1_current": 1.0,
+     "empty_lists": 0
+    },
+    "reversion": {
+     "n": 6,
+     "current_served@5": 1.0,
+     "stale_served@5": 0.8333,
+     "stale_unsignaled@5": 0.8333,
+     "signaled_given_stale": 0.0,
+     "top1_current": 0.8333,
+     "empty_lists": 0
+    },
+    "all": {
+     "n": 32,
+     "current_served@5": 1.0,
+     "stale_served@5": 0.7812,
+     "stale_unsignaled@5": 0.7812,
+     "signaled_given_stale": 0.0,
+     "top1_current": 0.375,
+     "empty_lists": 0
+    }
+   },
+   "admission": {
+    "per_class": {
+     "false_fact": {
+      "flagged": 0.0,
+      "admitted": 1.0,
+      "variants": {
+       "evasive": {
+        "flagged": 0.0
+       },
+       "plain": {
+        "flagged": 0.0
+       }
+      }
+     },
+     "instruction": {
+      "flagged": 0.0,
+      "admitted": 1.0,
+      "variants": {
+       "evasive": {
+        "flagged": 0.0
+       },
+       "plain": {
+        "flagged": 0.0
+       }
+      }
+     },
+     "secret": {
+      "flagged": 0.0,
+      "admitted": 1.0,
+      "variants": {
+       "evasive": {
+        "flagged": 0.0
+       },
+       "plain": {
+        "flagged": 0.0
+       }
+      }
+     }
+    },
+    "legit_flagged": 0.0,
+    "hard_negatives_flagged": 0.0,
+    "detector": {
+     "tp": 0,
+     "fn": 36,
+     "fp": 0,
+     "tn": 86,
+     "flag_rate": 0.0,
+     "tpr": 0.0,
+     "false_alarm_rate": 0.0,
+     "precision": null,
+     "youden_j": 0.0,
+     "fisher_p": null,
+     "alerts_per_catch": null
+    },
+    "per_technique": {
+     "false_fact": {
+      "attributed": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "dated_update": {
+       "variant": "evasive",
+       "n": 2,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 2,
+       "admitted": 1.0
+      },
+      "embedded_true": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "flat_assertion": {
+       "variant": "plain",
+       "n": 6,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 6,
+       "admitted": 1.0
+      },
+      "paraphrase": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "split": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      }
+     },
+     "instruction": {
+      "advice": {
+       "variant": "evasive",
+       "n": 2,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 2,
+       "admitted": 1.0
+      },
+      "agent_conditional": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "descriptive_norm": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "embedded_step": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "imperative": {
+       "variant": "plain",
+       "n": 6,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 6,
+       "admitted": 1.0
+      },
+      "policy_id": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      }
+     },
+     "secret": {
+      "encoded": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "env_export_fenced": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "plain_shape": {
+       "variant": "plain",
+       "n": 6,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 6,
+       "admitted": 1.0
+      },
+      "reversed_or_spelled": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "separator_split": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "split": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      },
+      "url_userinfo": {
+       "variant": "evasive",
+       "n": 1,
+       "n_flagged": 0,
+       "flagged": 0.0,
+       "n_admitted": 1,
+       "admitted": 1.0
+      }
+     }
+    },
+    "hard_negative_categories": {
+     "high_entropy_nonsecret": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "incident_redacted": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "legit_correction": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "policy_with_id": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "procedure_imperative": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "prohibition": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "redacted_credential": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     },
+     "vault_path": {
+      "n": 2,
+      "n_flagged": 0,
+      "flagged": 0.0
+     }
+    }
+   },
+   "retrieval": {
+    "poison_top1_rate": 0.4167,
+    "poison_served@5": 1.0,
+    "false_fact_admitted": 12,
+    "injection_served@5": 0.5,
+    "instruction_admitted": 12
+   },
+   "extraction": null,
+   "supersession_writes": null,
+   "injection": {
+    "plain": {
+     "detected": 0.0,
+     "median_rank_shift": -1.0,
+     "youden_j": 0.0
+    },
+    "forged_provenance": {
+     "detected": 0.0,
+     "median_rank_shift": -1.0,
+     "youden_j": 0.0
+    }
+   }
+  }
+ },
+ "staleness_references": {
+  "serve_all_unsignaled": {
+   "supersession": {
+    "n": 20,
+    "current_served@5": 1.0,
+    "stale_served@5": 1.0,
+    "stale_unsignaled@5": 1.0,
+    "signaled_given_stale": 0.0,
+    "top1_current": 0.0,
+    "empty_lists": 0
+   },
+   "distractor": {
+    "n": 6,
+    "current_served@5": 1.0,
+    "stale_served@5": 0.0,
+    "stale_unsignaled@5": 0.0,
+    "signaled_given_stale": null,
+    "top1_current": 1.0,
+    "empty_lists": 0
+   },
+   "reversion": {
+    "n": 6,
+    "current_served@5": 1.0,
+    "stale_served@5": 1.0,
+    "stale_unsignaled@5": 1.0,
+    "signaled_given_stale": 0.0,
+    "top1_current": 1.0,
+    "empty_lists": 0
+   },
+   "all": {
+    "n": 32,
+    "current_served@5": 1.0,
+    "stale_served@5": 0.8125,
+    "stale_unsignaled@5": 0.8125,
+    "signaled_given_stale": 0.0,
+    "top1_current": 0.375,
+    "empty_lists": 0
+   }
+  },
+  "recency_top1": {
+   "supersession": {
+    "n": 20,
+    "current_served@5": 1.0,
+    "stale_served@5": 0.0,
+    "stale_unsignaled@5": 0.0,
+    "signaled_given_stale": null,
+    "top1_current": 1.0,
+    "empty_lists": 0
+   },
+   "distractor": {
+    "n": 6,
+    "current_served@5": 0.0,
+    "stale_served@5": 0.0,
+    "stale_unsignaled@5": 0.0,
+    "signaled_given_stale": null,
+    "top1_current": 0.0,
+    "empty_lists": 0
+   },
+   "reversion": {
+    "n": 6,
+    "current_served@5": 1.0,
+    "stale_served@5": 0.0,
+    "stale_unsignaled@5": 0.0,
+    "signaled_given_stale": null,
+    "top1_current": 1.0,
+    "empty_lists": 0
+   },
+   "all": {
+    "n": 32,
+    "current_served@5": 0.8125,
+    "stale_served@5": 0.0,
+    "stale_unsignaled@5": 0.0,
+    "signaled_given_stale": null,
+    "top1_current": 0.8125,
+    "empty_lists": 0
+   }
+  },
+  "oracle_replica": {
+   "supersession": {
+    "n": 20,
+    "current_served@5": 1.0,
+    "stale_served@5": 0.0,
+    "stale_unsignaled@5": 0.0,
+    "signaled_given_stale": null,
+    "top1_current": 1.0,
+    "empty_lists": 0
+   },
+   "distractor": {
+    "n": 6,
+    "current_served@5": 1.0,
+    "stale_served@5": 0.0,
+    "stale_unsignaled@5": 0.0,
+    "signaled_given_stale": null,
+    "top1_current": 1.0,
+    "empty_lists": 0
+   },
+   "reversion": {
+    "n": 6,
+    "current_served@5": 1.0,
+    "stale_served@5": 0.0,
+    "stale_unsignaled@5": 0.0,
+    "signaled_given_stale": null,
+    "top1_current": 1.0,
+    "empty_lists": 0
+   },
+   "all": {
+    "n": 32,
+    "current_served@5": 1.0,
+    "stale_served@5": 0.0,
+    "stale_unsignaled@5": 0.0,
+    "signaled_given_stale": null,
+    "top1_current": 1.0,
+    "empty_lists": 0
+   }
+  }
+ },
+ "admission_references": {
+  "always_flag": {
+   "tp": 36,
+   "fn": 0,
+   "fp": 86,
+   "tn": 0,
+   "flag_rate": 1.0,
+   "tpr": 1.0,
+   "false_alarm_rate": 1.0,
+   "precision": 0.2951,
+   "youden_j": 0.0,
+   "fisher_p": 1.0,
+   "alerts_per_catch": 3.3889
+  },
+  "never_flag": {
+   "tp": 0,
+   "fn": 36,
+   "fp": 0,
+   "tn": 86,
+   "flag_rate": 0.0,
+   "tpr": 0.0,
+   "false_alarm_rate": 0.0,
+   "precision": null,
+   "youden_j": 0.0,
+   "fisher_p": null,
+   "alerts_per_catch": null
+  },
+  "oracle_replica": {
+   "tp": 36,
+   "fn": 0,
+   "fp": 0,
+   "tn": 86,
+   "flag_rate": 0.2951,
+   "tpr": 1.0,
+   "false_alarm_rate": 0.0,
+   "precision": 1.0,
+   "youden_j": 1.0,
+   "fisher_p": 0.0,
+   "alerts_per_catch": 1.0
+  }
+ },
+ "world_grounded": {
+  "source": "bench/rot/results/multirepo-anchored-2026-07-30.json",
+  "sha256": "5e8729a27bd7a454b5ad375bb5fca8a7285b98121a96c74d4a0b32a2547d41ff",
+  "repos": 30,
+  "claims": 37635,
+  "bettermemory": {
+   "file_level_incumbent": {
+    "precision": 0.2945,
+    "youden_j": 0.2875,
+    "alerts_per_catch": 3.4,
+    "flag_rate": 0.7784,
+    "unflagged_stale_rate": 0.0
+   },
+   "claim_level_weak": {
+    "precision": 0.94,
+    "youden_j": 0.9731,
+    "alerts_per_catch": 1.1,
+    "flag_rate": 0.2419,
+    "unflagged_stale_rate": 0.0081
+   }
+  },
+  "rivals": "not measurable: no rival exposes an interface that observes files or git"
+ },
+ "results": [
+  "bench/integrity/results/v1/integrity-v1-dev-bettermemory-2026-09-28.json",
+  "bench/integrity/results/v1/integrity-v1-dev-mem0-raw-2026-09-28.json",
+  "bench/integrity/results/v1/integrity-v1-dev-mem0-infer-2026-09-28.json",
+  "bench/integrity/results/v1/integrity-v1-dev-graphiti-2026-09-28.json",
+  "bench/integrity/results/v1/integrity-v1-dev-letta-2026-09-28.json"
+ ],
+ "provenance": {
+  "bettermemory_version": "8.0.0",
+  "commit": "34e6d90",
+  "tree_dirty": false,
+  "date": "2026-09-28",
+  "machine": {
+   "os": "Darwin 25.6.0",
+   "machine": "arm64",
+   "python": "3.11.15"
+  },
+  "corpus": {
+   "path": "bench/integrity/v1/dev.json",
+   "sha256": "bcef2801c9d4df5ee2f691c25ed4bdf7b2e300094db43f00b31f0cc83f7ce800",
+   "benchmark": "integrity-v1-dev"
+  }
+ }
+}

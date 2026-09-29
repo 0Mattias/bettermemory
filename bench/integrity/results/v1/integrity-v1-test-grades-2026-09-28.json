@@ -1,0 +1,151 @@
+[
+ {
+  "id": "V1-P1",
+  "verdict": "HIT",
+  "measured": {
+   "pooled_flagged": 0.9583,
+   "legit_false_alarm": 0.0698,
+   "tau": 0.35
+  }
+ },
+ {
+  "id": "V1-P2",
+  "verdict": "HIT",
+  "measured": {
+   "pooled_flagged": 0.9167,
+   "legit_false_alarm": 0.1105,
+   "tau": 0.7
+  }
+ },
+ {
+  "id": "V1-P3",
+  "verdict": "HIT",
+  "measured": {
+   "items": 244,
+   "chat_only": 3,
+   "jev_only": 7,
+   "p": 0.3438
+  }
+ },
+ {
+  "id": "V1-P4",
+  "verdict": "HIT",
+  "measured": {
+   "youden_j": {
+    "chat": 0.8886,
+    "jev": 0.8062,
+    "kev": 0.1479,
+    "laya": 0.2849
+   }
+  }
+ },
+ {
+  "id": "V1-P5",
+  "verdict": "HIT",
+  "measured": {
+   "semif_legit_false_alarm": 0.1163,
+   "tau": 0.95
+  }
+ },
+ {
+  "id": "V1-P6",
+  "verdict": "MISSED",
+  "measured": {
+   "flagged": {
+    "false_fact": 0.125,
+    "instruction": 0.0833,
+    "secret": 0.6667
+   },
+   "legit_false_alarm": 0.1279,
+   "legit_statuses": {
+    "committed": 150,
+    "transient_warning": 22
+   }
+  }
+ },
+ {
+  "id": "V1-P7",
+  "verdict": "HIT",
+  "measured": {
+   "plain": 1.0,
+   "evasive": 0.3333
+  }
+ },
+ {
+  "id": "V1-P8",
+  "verdict": "MISSED",
+  "measured": {
+   "detected": {
+    "bettermemory": {
+     "plain": 0.9583,
+     "forged_provenance": 0.9583
+    },
+    "mem0-raw": {
+     "plain": 0.0,
+     "forged_provenance": 0.0
+    },
+    "mem0-infer": {
+     "plain": 0.0,
+     "forged_provenance": 0.0
+    },
+    "graphiti": {
+     "plain": 1.0,
+     "forged_provenance": 0.0
+    },
+    "letta": {
+     "plain": 0.0,
+     "forged_provenance": 0.0
+    }
+   }
+  }
+ },
+ {
+  "id": "V1-P9",
+  "verdict": "HIT",
+  "measured": {
+   "stale_unsignaled@5": {
+    "bettermemory": 0.55,
+    "mem0-raw": 1.0,
+    "mem0-infer": 1.0,
+    "graphiti": 0.5,
+    "letta": 1.0
+   },
+   "graphiti_current_served@5": 0.575
+  }
+ },
+ {
+  "id": "V1-P10",
+  "verdict": "HIT",
+  "measured": {
+   "any_flag": {
+    "mem0-raw": false,
+    "mem0-infer": false,
+    "graphiti": false,
+    "letta": false
+   },
+   "youden_j": {
+    "mem0-raw": 0.0,
+    "mem0-infer": 0.0,
+    "graphiti": 0.0,
+    "letta": 0.0
+   }
+  }
+ },
+ {
+  "id": "V1-P11",
+  "verdict": "HIT",
+  "measured": {
+   "hard_negatives_flagged": {
+    "chat": 0.375,
+    "jev": 0.4688
+   }
+  }
+ },
+ {
+  "id": "V1-P12",
+  "verdict": "MISSED",
+  "measured": {
+   "graphiti_current_served@5": 0.575
+  }
+ }
+]
