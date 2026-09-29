@@ -19,6 +19,7 @@ import random
 import re
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -451,6 +452,90 @@ def test_a_stash_on_a_branch_named_stash_is_seen(tmp_path: Path) -> None:
     uncached = _uncached(repo)
     assert uncached.branch == "heads/stash", "premise: git shortens it so"
     _same(after, uncached)
+
+
+def _rename_only_in_spelling(
+    tmp_path: Path, shape: str
+) -> tuple[Path, Path, Path] | None:
+    """A repository whose directory, or one above it, can be renamed so
+    that only the case or the Unicode normalisation of its name changes:
+    ``(the repository as first named, the path to rename, its new name)``,
+    or None where the filesystem holds one spelling per name and the old
+    name would stop resolving."""
+    import unicodedata
+
+    if shape == "normalisation":
+        old = unicodedata.normalize("NFC", "café")
+        new = unicodedata.normalize("NFD", "café")
+        repo = _repo(tmp_path / old)
+        if not (tmp_path / new).exists():
+            return None
+        return repo, tmp_path / old, tmp_path / new
+    probe = tmp_path / "CaseProbe"
+    probe.mkdir()
+    if not (tmp_path / "caseprobe").exists():
+        return None
+    if shape == "repository":
+        repo = _repo(tmp_path / "Repo")
+        return repo, tmp_path / "Repo", tmp_path / "repo"
+    repo = _repo(tmp_path / "Projects" / "r")
+    return repo, tmp_path / "Projects", tmp_path / "projects"
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin", reason="the kernel's spelling is read on macOS"
+)
+@pytest.mark.parametrize("gap", [0.0, 2.5])
+@pytest.mark.parametrize("shape", ["repository", "ancestor", "normalisation"])
+def test_a_rename_that_changes_only_the_spelling_is_seen(
+    shape: str, gap: float, tmp_path: Path, clock: _Clock
+) -> None:
+    """On a filesystem that ignores case or Unicode normalisation (macOS's
+    default), a rename of the repository's directory, or of one above it,
+    that changes only the spelling of its name leaves the caller's old
+    spelling resolving to the same files, while `git rev-parse
+    --show-toplevel` prints the new one. The signature carries the kernel's
+    spelling of the root (`_spelled_as_git`), so the next capture, at once
+    or after the idle gap of a lone hook, runs the probes and records the
+    root git prints."""
+    made = _rename_only_in_spelling(tmp_path, shape)
+    if made is None:
+        pytest.skip("the filesystem holds one spelling per name")
+    repo, old, new = made
+    _commit(repo)
+    first = capture(repo)
+    assert first.worktree_root == _key(repo)
+    os.rename(old, new)
+    clock.advance(gap)
+    after = capture(repo)
+    uncached = _uncached(repo)
+    assert uncached.worktree_root != first.worktree_root, (
+        "premise: git prints the new spelling"
+    )
+    _same(after, uncached)
+
+
+@posix_only
+def test_the_signature_carries_the_kernels_spelling_of_the_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The capture's signature holds the root spelled as git prints it
+    (`_spelled_as_git`: the kernel's path on macOS, the resolved path
+    elsewhere), and equals no other signature where that spelling cannot
+    be read, so such a directory's capture is never kept."""
+    repo = _repo(tmp_path / "repo")
+    _commit(repo)
+    signature = origin._capture_signature(repo)
+    assert signature == origin._capture_signature(repo)
+    spelled = origin._spelled_as_git(repo.resolve())
+    assert spelled is not None
+    extra = signature[-1]
+    assert isinstance(extra, tuple) and str(spelled) in extra
+    monkeypatch.setattr(origin, "_spelled_as_git", lambda root: None)
+    unreadable = origin._capture_signature(repo)
+    assert unreadable != origin._capture_signature(repo)
+    capture(repo)
+    assert _key(repo) not in origin._ORIGIN_CACHE
 
 
 @posix_only

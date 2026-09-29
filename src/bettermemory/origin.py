@@ -291,19 +291,22 @@ def capture(cwd: Path | None = None, *, source: str | None = None) -> Origin:
 #: commit, a remote set in the repository's config, core.worktree set in
 #: config.worktree, a ref that changes the branch's short name (a tag or a
 #: ref named like the branch, refs/stash on a branch named stash), a
-#: repository created or removed on the path or a change to GIT_DIR,
-#: GIT_WORK_TREE or GIT_CEILING_DIRECTORIES is answered on the next call as
-#: before. The cost is what the signature does not see, which is now served
-#: for up to ten minutes where it was served for two seconds: a remote or
-#: its URL changed outside the repository's config file (a
-#: `url.<base>.insteadOf` rule in the global config, a legacy
-#: `.git/remotes` or `.git/branches` file, a file an `include.path` names);
-#: a rename of the repository's directory or one above it that changes
-#: only the case or the Unicode normalisation of its name, which a
-#: filesystem that ignores both (macOS's default) still resolves under the
-#: old spelling while git prints the new one; whether git can run; and a
-#: capture whose first probe ran and exited non-zero, kept as "not a
-#: repository" after a failure that clears on its own.
+#: repository created or removed on the path, a rename of the root or a
+#: directory above it that changes only the case or the Unicode
+#: normalisation of a name (seen through the kernel's spelling of the root
+#: on macOS, whose default filesystem ignores both and still resolves the
+#: old spelling), or a change to GIT_DIR, GIT_WORK_TREE or
+#: GIT_CEILING_DIRECTORIES is answered on the next call as before. The
+#: cost is what the signature does not see, which is now served for up to
+#: ten minutes where it was served for two seconds: a remote or its URL
+#: changed outside the repository's config file (a `url.<base>.insteadOf`
+#: rule in the global config, a legacy `.git/remotes` or `.git/branches`
+#: file, a file an `include.path` names); such a rename on a platform
+#: other than macOS whose filesystem ignores case or normalisation (the
+#: signature then holds the resolved path, which keeps the caller's
+#: spelling); whether git can run; and a capture whose first probe ran and
+#: exited non-zero, kept as "not a repository" after a failure that clears
+#: on its own.
 ORIGIN_CACHE_SECONDS = 600.0
 
 # The most directories the cache holds; past it the oldest capture goes.
@@ -370,18 +373,25 @@ def _capture_signature(start: Path) -> githead.Signature:
     directory's `githead.signature` (the git directory, HEAD, the loose refs
     HEAD's chain reads, packed-refs, config and the variables that move
     discovery), with the stamp of config.worktree, where git reads
-    core.worktree under extensions.worktreeConfig, and the stamp of each
-    ref file that decides the branch's short name (`_shortening_refs`), in
-    the git directory and in the common directory. Where `githead` does not
-    settle the repository, the githead signature already equals no other;
-    where a stamp cannot be read, a new object makes this one equal no
-    other either."""
+    core.worktree under extensions.worktreeConfig; the root spelled as git
+    prints it (`_spelled_as_git`: the kernel's path on macOS, so a rename
+    of the root or a directory above it that changes only the case or the
+    Unicode normalisation of a name, under which the caller's old spelling
+    still resolves, is seen; the resolved path elsewhere, which keeps the
+    caller's spelling); and the stamp of each ref file that decides the
+    branch's short name (`_shortening_refs`), in the git directory and in
+    the common directory. Where `githead` does not settle the repository,
+    the githead signature already equals no other; where a stamp or the
+    spelling cannot be read, a new object makes this one equal no other
+    either."""
     base = githead.signature(start)
     gd = githead.find_gitdir(start)
     if gd is None:
         return base
     try:
         extra: list[object] = [githead.stamp(gd.gitdir / "config.worktree")]
+        spelled = _spelled_as_git(gd.worktree_root)
+        extra.append(object() if spelled is None else str(spelled))
         ref = githead.head_ref(gd)
         if ref is not None:
             directories = dict.fromkeys((gd.gitdir, gd.commondir))
@@ -400,24 +410,25 @@ def _capture_signature(start: Path) -> githead.Signature:
 # directory the walk from the directory reaches, the bytes of its HEAD, the
 # stamps of its config, of config.worktree, of HEAD itself, of the loose
 # refs HEAD's chain reads, of packed-refs and of the ref files that decide
-# the branch's short name, and the GIT_DIR, GIT_WORK_TREE and
-# GIT_CEILING_DIRECTORIES values, so a branch switch, a remote changed in
-# the repository's config, core.worktree set in config.worktree, a tag or
-# ref named like the branch, a repository created or removed on the path,
-# or a change to one of those variables is never answered from an entry,
-# and no capture is kept whose probes ran while HEAD moved to another
-# branch and back (git rewrites HEAD through a rename, which leaves a new
-# inode and ctime); where the files do not settle what git would find, the
-# signature equals no other and every capture asks git. What the signature
-# does not see (whether git can run, configuration outside the repository's
-# config files, a case-only or normalisation-only rename of the
-# repository's directory or one above it) holds for at most the lifetime,
-# ten minutes, and so does a capture whose first probe ran and exited
-# non-zero: `_probe_worktree_root` reads that exit as "not a repository",
-# an answer, and a failure that clears (an unreadable file, a lock) exits
-# non-zero as well. Keyed by directory, never by process. The lock
-# serialises the store, the eviction and the clear; a lookup is one dict
-# read.
+# the branch's short name, the root spelled as git prints it, and the
+# GIT_DIR, GIT_WORK_TREE and GIT_CEILING_DIRECTORIES values, so a branch
+# switch, a remote changed in the repository's config, core.worktree set in
+# config.worktree, a tag or ref named like the branch, a repository created
+# or removed on the path, a rename that changes only a name's case or
+# normalisation (on macOS), or a change to one of those variables is never
+# answered from an entry, and no capture is kept whose probes ran while
+# HEAD moved to another branch and back (git rewrites HEAD through a
+# rename, which leaves a new inode and ctime); where the files do not
+# settle what git would find, the signature equals no other and every
+# capture asks git. What the signature does not see (whether git can run,
+# configuration outside the repository's config files, such a rename on
+# another platform's case-ignoring filesystem) holds for at most the
+# lifetime, ten minutes, and so does a capture whose first probe ran and
+# exited non-zero: `_probe_worktree_root` reads that exit as "not a
+# repository", an answer, and a failure that clears (an unreadable file, a
+# lock) exits non-zero as well. Keyed by directory, never by process. The
+# lock serialises the store, the eviction and the clear; a lookup is one
+# dict read.
 _ORIGIN_CACHE: dict[str, _OriginEntry] = {}
 _ORIGIN_CACHE_LOCK = threading.Lock()
 

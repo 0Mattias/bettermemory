@@ -74,13 +74,15 @@ surfaces leave with them. An 8.x directory is imported once by
   the wall clock both, validated on every lookup against the
   repository's HEAD bytes, the stamps of its config, config.worktree and
   the ref files that decide the branch's short name (a tag or a ref named
-  like the branch), and the environment (`origin.capture`), so a lone
-  session-start hook reuses it, while a remote changed outside the
-  repository's config file (a global `url.<base>.insteadOf`, a legacy
-  `.git/remotes` file, an included file), and a rename of the
-  repository's directory or one above it that changes only the case or
-  the Unicode normalisation of its name, are read from the capture for up
-  to those ten minutes;
+  like the branch), the root spelled as git prints it (the kernel's
+  spelling on macOS, so a rename that changes only the case or the
+  Unicode normalisation of the repository's name or a parent's is seen),
+  and the environment (`origin.capture`), so a lone session-start hook
+  reuses it, while a remote changed outside the repository's config file
+  (a global `url.<base>.insteadOf`, a legacy `.git/remotes` file, an
+  included file), and such a rename on another platform's filesystem
+  that ignores case, are read from the capture for up to those ten
+  minutes;
   the commit-drift work keyed on the repository
   root and the commit HEAD names, read from the repository files by
   `githead.py` without a git process, with the whole-history author
