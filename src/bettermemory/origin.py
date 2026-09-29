@@ -179,19 +179,20 @@ def capture(cwd: Path | None = None, *, source: str | None = None) -> Origin:
 
     Once the directory is resolved, the probes' answers come from the
     origin cache (`_ORIGIN_CACHE`) when a capture of the same directory
-    began less than `ORIGIN_CACHE_SECONDS` ago and the directory's
-    `githead.signature` reads as it did then; no git runs. The Origin is
-    built from them as from fresh answers, with this call's `source`, and
-    the remote's alternates are registered the same way, so the result is
-    the uncached one field for field, private attributes included. A
-    capture is kept only when every probe ran and the signature read the
-    same before and after them, which a HEAD moved away and back while
-    they ran does not (git rewrote HEAD). A first probe that ran and
-    exited non-zero is an answer, "not a repository", and is kept for the
-    lifetime like any other. The lifetime is ten minutes, so what the
-    signature does not see (a remote changed outside the repository's
-    config file, among the rest `ORIGIN_CACHE_SECONDS` lists) can be
-    answered from a capture up to ten minutes old.
+    began less than `ORIGIN_CACHE_SECONDS` ago, by the monotonic clock and
+    by the wall clock, and the directory's `_capture_signature` reads as it
+    did then; no git runs. The Origin is built from them as from fresh
+    answers, with this call's `source`, and the remote's alternates are
+    registered the same way, so the result is the uncached one field for
+    field, private attributes included. A capture is kept only when every
+    probe ran and the signature read the same before and after them, which
+    a HEAD moved away and back while they ran does not (git rewrote HEAD).
+    A first probe that ran and exited non-zero is an answer, "not a
+    repository", and is kept for the lifetime like any other. The lifetime
+    is ten minutes, so what the signature does not see (a remote changed
+    outside the repository's config file, among the rest
+    `ORIGIN_CACHE_SECONDS` lists) can be answered from a capture up to ten
+    minutes old.
     """
     if cwd is None:
         declared = identity.workspace_declaration()
@@ -209,7 +210,8 @@ def capture(cwd: Path | None = None, *, source: str | None = None) -> Origin:
     cwd_str = str(resolved)
 
     started = time.monotonic()
-    signature = githead.signature(resolved)
+    started_wall = time.time()
+    signature = _capture_signature(resolved)
     entry = _ORIGIN_CACHE.get(cwd_str)
     keep = False
     repo_url: str | None
@@ -217,6 +219,7 @@ def capture(cwd: Path | None = None, *, source: str | None = None) -> Origin:
     if (
         entry is not None
         and 0.0 <= started - entry.captured_at < ORIGIN_CACHE_SECONDS
+        and 0.0 <= started_wall - entry.captured_wall < ORIGIN_CACHE_SECONDS
         and entry.signature == signature
     ):
         cached = entry.origin
@@ -238,7 +241,7 @@ def capture(cwd: Path | None = None, *, source: str | None = None) -> Origin:
         keep = (
             not indeterminate
             and _UNANSWERED.count == unanswered
-            and githead.signature(resolved) == signature
+            and _capture_signature(resolved) == signature
         )
 
     origin = Origin(
@@ -268,6 +271,7 @@ def capture(cwd: Path | None = None, *, source: str | None = None) -> Origin:
                 alternates=repo_url_alternates,
                 signature=signature,
                 captured_at=started,
+                captured_wall=started_wall,
             ),
         )
     return origin
@@ -280,19 +284,27 @@ def capture(cwd: Path | None = None, *, source: str | None = None) -> Origin:
 #: How long a capture answers for its directory, in seconds from the moment
 #: it began: ten minutes, so a session-start hook that fires alone, long
 #: after the burst of calls before it, reuses the capture instead of paying
-#: the four probes. Every lookup still checks the directory's
-#: `githead.signature`, so a branch switch, a commit, a remote set in the
-#: repository's config, a repository created or removed on the path or a
-#: change to GIT_DIR, GIT_WORK_TREE or GIT_CEILING_DIRECTORIES is answered
-#: on the next call as before. The cost is what the signature does not
-#: see, which is now served for up to ten minutes where it was served for
-#: two seconds: a remote or its URL changed outside the repository's config
-#: file (a `url.<base>.insteadOf` rule in the global config, a legacy
-#: `.git/remotes` or `.git/branches` file, a file an `include.path` names),
-#: a tag created with the checked-out branch's name (the branch then reads
-#: `heads/<name>`), whether git can run, and a capture whose first probe
-#: ran and exited non-zero, kept as "not a repository" after a failure that
-#: clears on its own.
+#: the four probes. The ten minutes run on both clocks: `time.monotonic`,
+#: which stands still while the machine sleeps, and `time.time`, so a
+#: capture expires when either says they have passed, and when the wall
+#: clock reads before the capture began. Every lookup still checks the
+#: directory's signature (`_capture_signature`), so a branch switch, a
+#: commit, a remote set in the repository's config, core.worktree set in
+#: config.worktree, a ref that changes the branch's short name (a tag or a
+#: ref named like the branch, refs/stash on a branch named stash), a
+#: repository created or removed on the path or a change to GIT_DIR,
+#: GIT_WORK_TREE or GIT_CEILING_DIRECTORIES is answered on the next call as
+#: before. The cost is what the signature does not see, which is now served
+#: for up to ten minutes where it was served for two seconds: a remote or
+#: its URL changed outside the repository's config file (a
+#: `url.<base>.insteadOf` rule in the global config, a legacy
+#: `.git/remotes` or `.git/branches` file, a file an `include.path` names);
+#: a rename of the repository's directory or one above it that changes
+#: only the case or the Unicode normalisation of its name, which a
+#: filesystem that ignores both (macOS's default) still resolves under the
+#: old spelling while git prints the new one; whether git can run; and a
+#: capture whose first probe ran and exited non-zero, kept as "not a
+#: repository" after a failure that clears on its own.
 ORIGIN_CACHE_SECONDS = 600.0
 
 # The most directories the cache holds; past it the oldest capture goes.
@@ -303,37 +315,110 @@ _ORIGIN_CACHE_CAP = 256
 class _OriginEntry:
     """One capture, kept for the directory it was taken in: the Origin the
     probes returned (a copy no caller holds), the alternates registered for
-    its remote, the directory's `githead.signature` as read before and after
-    the probes, and the `time.monotonic` reading at which the capture
-    began."""
+    its remote, the directory's `_capture_signature` as read before and
+    after the probes, and the `time.monotonic` and `time.time` readings at
+    which the capture began."""
 
     origin: Origin
     alternates: tuple[str, ...]
     signature: githead.Signature
     captured_at: float
+    captured_wall: float
+
+
+# git's ref_rev_parse_rules (refs.c), in order: the names `git
+# symbolic-ref --short HEAD` tries a short name against.
+_REV_PARSE_RULES = (
+    "{}",
+    "refs/{}",
+    "refs/tags/{}",
+    "refs/heads/{}",
+    "refs/remotes/{}",
+    "refs/remotes/{}/HEAD",
+)
+
+
+def _shortening_refs(refname: str) -> list[str]:
+    """The refs whose existence decides how `git symbolic-ref --short
+    HEAD` shortens `refname` (``refs_shorten_unambiguous_ref``): for each
+    rule after the first that `refname` matches, the short name it gives
+    spelled under every other rule. Git keeps a short name only while none
+    of the refs it tries for it exists, and it tries a subset of these (the
+    rules before the matched one, not strict); for ``refs/heads/<b>`` it
+    tries ``<b>``, ``refs/<b>`` and ``refs/tags/<b>``, then ``heads/<b>``,
+    and ``refs/remotes/<b>`` and ``refs/remotes/<b>/HEAD`` are in the set
+    too."""
+    names: list[str] = []
+    for index in range(len(_REV_PARSE_RULES) - 1, 0, -1):
+        prefix, _, suffix = _REV_PARSE_RULES[index].partition("{}")
+        if not (
+            refname.startswith(prefix)
+            and refname.endswith(suffix)
+            and len(refname) > len(prefix) + len(suffix)
+        ):
+            continue
+        short = refname[len(prefix) : len(refname) - len(suffix)]
+        names.extend(
+            rule.format(short)
+            for other, rule in enumerate(_REV_PARSE_RULES)
+            if other != index
+        )
+    return list(dict.fromkeys(names))
+
+
+def _capture_signature(start: Path) -> githead.Signature:
+    """The change detector a capture of `start` is kept against: the
+    directory's `githead.signature` (the git directory, HEAD, the loose refs
+    HEAD's chain reads, packed-refs, config and the variables that move
+    discovery), with the stamp of config.worktree, where git reads
+    core.worktree under extensions.worktreeConfig, and the stamp of each
+    ref file that decides the branch's short name (`_shortening_refs`), in
+    the git directory and in the common directory. Where `githead` does not
+    settle the repository, the githead signature already equals no other;
+    where a stamp cannot be read, a new object makes this one equal no
+    other either."""
+    base = githead.signature(start)
+    gd = githead.find_gitdir(start)
+    if gd is None:
+        return base
+    try:
+        extra: list[object] = [githead.stamp(gd.gitdir / "config.worktree")]
+        ref = githead.head_ref(gd)
+        if ref is not None:
+            directories = dict.fromkeys((gd.gitdir, gd.commondir))
+            for name in _shortening_refs(ref):
+                for directory in directories:
+                    extra.append(githead.stamp(directory / name, follow=False))
+    except (OSError, ValueError):
+        extra = [object()]
+    return (*base, tuple(extra))
 
 
 # One entry per resolved directory, keyed by its string and ordered by when
 # the capture began. `capture` answers from an entry while it is younger
-# than ORIGIN_CACHE_SECONDS and the directory's signature equals the
-# entry's. The signature holds the git directory the walk from the
-# directory reaches, the bytes of its HEAD, the stamps of its config, of
-# HEAD itself, of the loose refs HEAD's chain reads and of packed-refs, and
-# the GIT_DIR, GIT_WORK_TREE and GIT_CEILING_DIRECTORIES values, so a branch
-# switch, a remote changed in the repository's config, a repository created
-# or removed on the path, or a change to one of those variables is never
-# answered from an entry, and no capture is kept whose probes ran while
-# HEAD moved to another branch and back (git rewrites HEAD through a
-# rename, which leaves a new inode and ctime); where the files do not
-# settle what git would find, the signature equals no other and every
-# capture asks git. What the signature does not see (whether git can run,
-# configuration outside the repository's config file, a tag named like the
-# checked-out branch) holds for at most the lifetime, ten minutes, and so
-# does a capture whose first probe ran and exited non-zero:
-# `_probe_worktree_root` reads that exit as "not a repository", an answer,
-# and a failure that clears (an unreadable file, a lock) exits non-zero as
-# well. Keyed by directory, never by process. The lock serialises the
-# store, the eviction and the clear; a lookup is one dict read.
+# than ORIGIN_CACHE_SECONDS on both clocks and the directory's signature
+# equals the entry's. The signature (`_capture_signature`) holds the git
+# directory the walk from the directory reaches, the bytes of its HEAD, the
+# stamps of its config, of config.worktree, of HEAD itself, of the loose
+# refs HEAD's chain reads, of packed-refs and of the ref files that decide
+# the branch's short name, and the GIT_DIR, GIT_WORK_TREE and
+# GIT_CEILING_DIRECTORIES values, so a branch switch, a remote changed in
+# the repository's config, core.worktree set in config.worktree, a tag or
+# ref named like the branch, a repository created or removed on the path,
+# or a change to one of those variables is never answered from an entry,
+# and no capture is kept whose probes ran while HEAD moved to another
+# branch and back (git rewrites HEAD through a rename, which leaves a new
+# inode and ctime); where the files do not settle what git would find, the
+# signature equals no other and every capture asks git. What the signature
+# does not see (whether git can run, configuration outside the repository's
+# config files, a case-only or normalisation-only rename of the
+# repository's directory or one above it) holds for at most the lifetime,
+# ten minutes, and so does a capture whose first probe ran and exited
+# non-zero: `_probe_worktree_root` reads that exit as "not a repository",
+# an answer, and a failure that clears (an unreadable file, a lock) exits
+# non-zero as well. Keyed by directory, never by process. The lock
+# serialises the store, the eviction and the clear; a lookup is one dict
+# read.
 _ORIGIN_CACHE: dict[str, _OriginEntry] = {}
 _ORIGIN_CACHE_LOCK = threading.Lock()
 

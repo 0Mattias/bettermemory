@@ -10,7 +10,7 @@ Phase 1's P5 in numbers, each with its method:
   hook_service       the same endpoint called from a warm client in this
                      process (`_daemon_client.post`), so the daemon's own
                      answer time without the interpreter's start.
-  hook_service_cold  hook_service after an idle gap: N_cold calls (default
+  hook_service_idle  hook_service after an idle gap: N_cold calls (default
                      10), each after sleeping a fixed COLD_IDLE_SECONDS (2.2
                      s) with nothing else sent to the daemon, the shape of a
                      session-start hook firing alone. The gap is fixed, not
@@ -18,6 +18,12 @@ Phase 1's P5 in numbers, each with its method:
                      origin capture outlives it and is reused, where under
                      the two-second lifetime the call paid the four probes.
                      Both numbers are written into the artifact.
+  hook_service_cold  hook_service_idle with the capture made stale before
+                     each call: after the same gap, the ctime of the
+                     repository's HEAD is moved (its bytes and its mtime
+                     left as they were), so the daemon's capture signature
+                     no longer matches and the call pays the four origin
+                     probes, the path every lone hook paid before 9.0.0.
   shim_search        memory_search through one stdio shim process (the SDK
                      client speaking stdio to `bettermemory`, which forwards
                      to the daemon); N queries, p50 and p95 per call, measured
@@ -69,9 +75,10 @@ ROOT = Path(__file__).resolve().parents[2]
 QUESTIONS = ROOT / "bench" / "retrieval" / "questions.jsonl"
 PYTHON = sys.executable
 
-# The idle gap `hook_service_cold` sleeps before each call: a lone hook
-# call after the daemon and the machine sat idle. Fixed, so the number
-# measures the same thing whatever the origin cache's lifetime is.
+# The idle gap `hook_service_idle` and `hook_service_cold` sleep before each
+# call: a lone hook call after the daemon and the machine sat idle. Fixed,
+# so the numbers measure the same thing whatever the origin cache's
+# lifetime is.
 COLD_IDLE_SECONDS = 2.2
 
 
@@ -281,10 +288,26 @@ def hook_service(scratch: Path, n: int, cwd: Path) -> list[float]:
     return times
 
 
-def hook_service_cold(scratch: Path, n: int, cwd: Path) -> list[float]:
+def _make_capture_stale(cwd: Path) -> None:
+    """Move the ctime of the HEAD of `cwd`'s repository and nothing else:
+    its bytes and its mtime stay as they were, so git reads the repository
+    as before, while the daemon's capture signature, which stamps HEAD,
+    no longer matches the cached capture of `cwd`."""
+    from bettermemory import githead
+
+    gd = githead.find_gitdir(cwd)
+    if gd is None:
+        raise SystemExit(f"hook_service_cold: no repository the files settle at {cwd}")
+    head = gd.gitdir / "HEAD"
+    status = os.stat(head, follow_symlinks=False)
+    os.utime(head, ns=(status.st_atime_ns, status.st_mtime_ns), follow_symlinks=False)
+
+
+def hook_service_lone(scratch: Path, n: int, cwd: Path, *, stale: bool) -> list[float]:
     """`hook_service` for a lone call: the same endpoint from the same warm
     client, each call after sleeping COLD_IDLE_SECONDS with nothing else
-    sent to the daemon."""
+    sent to the daemon; with `stale`, the capture of `cwd` made stale
+    before each call (`_make_capture_stale`)."""
     from bettermemory._daemon_client import post, read_state
 
     state = read_state(scratch / "state", scratch / "store" / "memory.sqlite")
@@ -294,6 +317,8 @@ def hook_service_cold(scratch: Path, n: int, cwd: Path) -> list[float]:
     times: list[float] = []
     for _ in range(n):
         time.sleep(COLD_IDLE_SECONDS)
+        if stale:
+            _make_capture_stale(cwd)
         started = time.perf_counter()
         post(
             state["port"],
@@ -322,7 +347,11 @@ def main() -> None:
         "--cold-n",
         type=int,
         default=10,
-        help="calls in hook_service_cold, each after the origin cache expires",
+        help=(
+            "calls in hook_service_idle and in hook_service_cold, each after "
+            f"a fixed idle gap of {COLD_IDLE_SECONDS} s; the cold ones with the "
+            "origin capture made stale first"
+        ),
     )
     parser.add_argument(
         "--scratch",
@@ -357,8 +386,12 @@ def main() -> None:
     print(f"hook wall {results['hook_wall']}", file=sys.stderr)
     results["hook_service"] = _summary(hook_service(scratch, args.n, ROOT))
     print(f"hook service {results['hook_service']}", file=sys.stderr)
+    results["hook_service_idle"] = _summary(
+        hook_service_lone(scratch, args.cold_n, ROOT, stale=False)
+    )
+    print(f"hook service idle {results['hook_service_idle']}", file=sys.stderr)
     results["hook_service_cold"] = _summary(
-        hook_service_cold(scratch, args.cold_n, ROOT)
+        hook_service_lone(scratch, args.cold_n, ROOT, stale=True)
     )
     print(f"hook service cold {results['hook_service_cold']}", file=sys.stderr)
     shim_first, shim_warm = asyncio.run(shim_search(env, qs))
@@ -414,7 +447,7 @@ def main() -> None:
             "cold_n": args.cold_n,
             "cold_idle_seconds": COLD_IDLE_SECONDS,
             "origin_cache_seconds": ORIGIN_CACHE_SECONDS,
-            "hook_service_cold": (
+            "hook_service_idle": (
                 "_daemon_client.post to /api/v1/hook/session-start from a warm client, "
                 f"each of cold_n calls after a fixed idle gap of {COLD_IDLE_SECONDS} s "
                 "with nothing else sent to the daemon: a lone session-start hook. "
@@ -424,6 +457,12 @@ def main() -> None:
                     if ORIGIN_CACHE_SECONDS > COLD_IDLE_SECONDS
                     else "pays the origin probes"
                 )
+            ),
+            "hook_service_cold": (
+                "hook_service_idle with the origin capture made stale before each "
+                "call: after the gap, the ctime of the repository's HEAD is moved "
+                "(its bytes and mtime unchanged), so the capture signature no "
+                "longer matches and the call pays the four origin probes"
             ),
             "shim_search": (
                 "one stdio shim process, SDK ClientSession.call_tool memory_search, "

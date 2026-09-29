@@ -70,12 +70,17 @@ surfaces leave with them. An 8.x directory is imported once by
   processes, the re-tokenising and the log scans a warm `memory_search`
   paid. Each answers as the uncached code does for the inputs it is
   keyed on, and names beside it what its key does not see. They are: the
-  origin captured per directory for ten minutes, validated on every
-  lookup against the repository's HEAD bytes, config stat and
-  environment (`origin.capture`), so a lone session-start hook reuses
-  it, while a remote changed outside the repository's config file (a
-  global `url.<base>.insteadOf`, a legacy `.git/remotes` file, an
-  included file) is read from the capture for up to those ten minutes;
+  origin captured per directory for ten minutes, by the monotonic and
+  the wall clock both, validated on every lookup against the
+  repository's HEAD bytes, the stamps of its config, config.worktree and
+  the ref files that decide the branch's short name (a tag or a ref named
+  like the branch), and the environment (`origin.capture`), so a lone
+  session-start hook reuses it, while a remote changed outside the
+  repository's config file (a global `url.<base>.insteadOf`, a legacy
+  `.git/remotes` file, an included file), and a rename of the
+  repository's directory or one above it that changes only the case or
+  the Unicode normalisation of its name, are read from the capture for up
+  to those ten minutes;
   the commit-drift work keyed on the repository
   root and the commit HEAD names, read from the repository files by
   `githead.py` without a git process, with the whole-history author
@@ -125,6 +130,11 @@ surfaces leave with them. An 8.x directory is imported once by
 - `bench/toolcost` records the served `instructions` block beside the
   descriptions and schemas (`instructions_bytes`, `instructions_chars`,
   `session_bytes`).
+- `bench/daemon/latency.py` measures a lone session-start hook both ways:
+  `hook_service_idle`, each call after a fixed 2.2 s idle gap with the
+  origin capture reused, and `hook_service_cold`, the same with the
+  capture made stale before each call (the ctime of the repository's
+  HEAD moved), the path every lone hook paid before 9.0.0.
 
 - **The local daemon, the stdio shim and the hook client.** `bettermemory
   up` starts one daemon per store on 127.0.0.1 (`[daemon] port`, default

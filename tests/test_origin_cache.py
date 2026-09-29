@@ -369,6 +369,148 @@ def test_a_changed_ceiling_inside_the_lifetime_is_a_miss(
     assert probes == _PROBES
 
 
+@posix_only
+def test_core_worktree_in_config_worktree_inside_the_lifetime_is_seen(
+    tmp_path: Path,
+) -> None:
+    """Under extensions.worktreeConfig, git reads core.worktree from
+    config.worktree in the git directory, which moves the root the capture
+    records; its stamp is in the capture's signature."""
+    repo = _repo(tmp_path / "repo")
+    _commit(repo)
+    _run(repo, "config", "extensions.worktreeConfig", "true")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    assert capture(repo).worktree_root == _key(repo)
+    (repo / ".git" / "config.worktree").write_text(
+        f"[core]\n\tworktree = {elsewhere}\n", encoding="utf-8"
+    )
+    after = capture(repo)
+    uncached = _uncached(repo)
+    assert uncached.worktree_root == _key(elsewhere), "premise: git moved the root"
+    _same(after, uncached)
+
+
+def _ambiguous(repo: Path, change: str) -> None:
+    """Make the branch's short name ambiguous to `git symbolic-ref --short
+    HEAD`, which then prints `heads/<branch>` (or the full name), with no
+    file the signature stamped before touched."""
+    head = _run(repo, "rev-parse", "HEAD")
+    if change == "refs/<b>":
+        _run(repo, "update-ref", "refs/main", head)
+    elif change == "tag":
+        _run(repo, "tag", "main")
+    elif change == "<gitdir>/<b>":
+        (repo / ".git" / "main").write_text(head + "\n", encoding="utf-8")
+    elif change == "heads/<b> behind refs/<b>":
+        _run(repo, "update-ref", "refs/main", head)
+        assert _uncached(repo).branch == "heads/main"
+        (repo / ".git" / "heads").mkdir()
+        (repo / ".git" / "heads" / "main").write_text(head + "\n", encoding="utf-8")
+    else:
+        raise AssertionError(change)
+
+
+@posix_only
+@pytest.mark.parametrize(
+    "change", ["refs/<b>", "tag", "<gitdir>/<b>", "heads/<b> behind refs/<b>"]
+)
+def test_a_ref_that_changes_the_branchs_short_name_is_seen(
+    change: str, tmp_path: Path
+) -> None:
+    """`git symbolic-ref --short HEAD` shortens refs/heads/<b> to <b> only
+    while no ref it tries first resolves the same short name: <b> itself (a
+    file in the git directory), refs/<b> and refs/tags/<b>, then heads/<b>
+    for the next shortening. The capture's signature stamps each ref file
+    that decides the name, so a ref created there inside the lifetime is
+    read by the next capture."""
+    repo = _repo(tmp_path / "repo")
+    _commit(repo)
+    before = capture(repo)
+    assert before.branch == "main"
+    _ambiguous(repo, change)
+    after = capture(repo)
+    uncached = _uncached(repo)
+    assert uncached.branch != "main", "premise: git shortens the name otherwise"
+    _same(after, uncached)
+
+
+@posix_only
+def test_a_stash_on_a_branch_named_stash_is_seen(tmp_path: Path) -> None:
+    """On a branch named stash, `git stash` writes refs/stash, and the
+    branch's short name turns to heads/stash."""
+    repo = _repo(tmp_path / "repo")
+    (repo / "f.txt").write_text("x\n", encoding="utf-8")
+    _run(repo, "add", "f.txt")
+    _commit(repo)
+    _run(repo, "checkout", "--quiet", "-b", "stash")
+    assert capture(repo).branch == "stash"
+    (repo / "f.txt").write_text("changed\n", encoding="utf-8")
+    _run(repo, "stash", "--quiet")
+    after = capture(repo)
+    uncached = _uncached(repo)
+    assert uncached.branch == "heads/stash", "premise: git shortens it so"
+    _same(after, uncached)
+
+
+@posix_only
+@pytest.mark.parametrize("moved", [600.0, -1.0], ids=["forward", "back"])
+def test_the_lifetime_runs_on_the_wall_clock_too(
+    moved: float,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    probes: list[tuple[str, ...]],
+    clock: _Clock,
+) -> None:
+    """The monotonic clock does not run while the machine sleeps, so a
+    capture could outlive ten minutes of wall time by any length of sleep.
+    It expires when either clock says the lifetime has passed, and when the
+    wall clock reads before the capture began."""
+    wall = [5_000_000.0]
+    monkeypatch.setattr(time, "time", lambda: wall[0])
+    repo = _repo(tmp_path / "repo")
+    first = capture(repo)
+    probes.clear()
+    clock.advance(1.0)
+    wall[0] += moved
+    _same(capture(repo), first)
+    assert probes == _PROBES
+
+
+@posix_only
+def test_the_latency_benchs_cold_call_makes_the_capture_stale_and_only_that(
+    tmp_path: Path, probes: list[tuple[str, ...]]
+) -> None:
+    """bench/daemon/latency.py's hook_service_cold moves the ctime of the
+    repository's HEAD before each call: HEAD's bytes and mtime are as they
+    were, so git reads the repository as before, and the next capture runs
+    the four probes and answers as the uncached one."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "latency_bench",
+        Path(__file__).resolve().parents[1] / "bench" / "daemon" / "latency.py",
+    )
+    assert spec is not None and spec.loader is not None
+    bench = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bench)
+
+    repo = _repo(tmp_path / "repo")
+    _commit(repo)
+    first = capture(repo)
+    head = repo / ".git" / "HEAD"
+    before = os.stat(head)
+    content = head.read_bytes()
+    probes.clear()
+    bench._make_capture_stale(repo)
+    after = os.stat(head)
+    assert head.read_bytes() == content
+    assert after.st_mtime_ns == before.st_mtime_ns
+    assert after.st_ctime_ns != before.st_ctime_ns
+    _same(capture(repo), first)
+    assert probes == _PROBES
+
+
 def test_where_the_signature_cannot_settle_every_capture_runs_git(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, probes: list[tuple[str, ...]]
 ) -> None:
