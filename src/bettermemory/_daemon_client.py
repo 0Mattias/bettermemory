@@ -53,6 +53,11 @@ _ALIASES = {
     "prompt-recall": "prompt",
 }
 
+#: The store's file name, `config.STORE_FILENAME` spelled here so a hook
+#: can name the store without importing the config module;
+#: tests/test_hook_client.py pins the two equal.
+STORE_FILENAME = "memory.sqlite"
+
 START_TIMEOUT_SECONDS = 8.0
 HOOK_TIMEOUT_SECONDS = 15.0
 SHUTDOWN_TIMEOUT_SECONDS = 5.0
@@ -341,8 +346,28 @@ def ensure_daemon(
 
 
 def resolved_store_path() -> Path:
-    """The store the CLI would open from here, by the config's own rule."""
-    from .config import STORE_FILENAME, load_config
+    """The store the CLI would open from here, by the config's own rule.
+
+    BETTERMEMORY_DIR, when set and not empty, decides the directory before
+    anything in the config file can (`Config.resolved_directory`), so it
+    is read here directly, expanded and resolved as the config reads it,
+    and no config is loaded: a hook run with it set imports neither the
+    config module nor what it imports. The variable unset, the config is
+    loaded and its rule decides, exactly as before.
+
+    With the variable set, what a config load did here no longer happens.
+    A malformed config no longer stops a hook, or `bettermemory up`,
+    `down` or `status`, before they reach a running daemon. The default
+    config file is not created here (a daemon a hook or `up` starts loads
+    the config and creates it), and the config's notices, a store under a
+    system directory or a key a release removed, are not logged here (that
+    daemon logs them to its log file). A malformed config still stops a
+    daemon from starting, so where none is running the hook and `up` wait
+    out `START_TIMEOUT_SECONDS` for one before they give up."""
+    named = os.environ.get("BETTERMEMORY_DIR")
+    if named:
+        return Path(named).expanduser().resolve() / STORE_FILENAME
+    from .config import load_config
 
     return load_config().resolved_directory() / STORE_FILENAME
 
@@ -356,12 +381,15 @@ def daemon_env_for(store_path: Path | str) -> dict[str, str]:
 
 
 def package_version() -> str:
-    from importlib.metadata import PackageNotFoundError, version
+    """This package's version, as `bettermemory.__version__` reads it: from
+    the `_version.py` the build wrote, with no `importlib.metadata`, which
+    is the fallback only where that file is absent. The daemon reports the
+    same attribute (`daemon._version`), so a daemon this install started
+    answers /health with the version this compares it against, and one an
+    older install started does not and is replaced."""
+    from . import __version__
 
-    try:
-        return version("bettermemory")
-    except PackageNotFoundError:
-        return "0+unknown"
+    return __version__
 
 
 # ---------------------------------------------------------------------------
@@ -489,6 +517,7 @@ __all__ = [
     "HOOK_WORDS",
     "HOST",
     "STATE_DIR_ENV",
+    "STORE_FILENAME",
     "daemon_env_for",
     "ensure_daemon",
     "health",

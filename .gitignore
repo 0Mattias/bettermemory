@@ -5,6 +5,11 @@ __pycache__/
 dist/
 build/
 
+# Written by hatchling's version build hook at every build and editable
+# install ([tool.hatch.build.hooks.version] in pyproject.toml, the one
+# source of the version); shipped in the wheel and sdist as an artifact.
+src/bettermemory/_version.py
+
 # Virtualenvs (.venv is often an absolute symlink -> venv on this repo's
 # dev machines; match it without a trailing slash so the symlink form is
 # ignored too and can never be committed as a machine-specific path)

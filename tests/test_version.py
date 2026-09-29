@@ -1,8 +1,11 @@
 """Tests for the package version surface.
 
-`bettermemory.__version__` is sourced from `importlib.metadata` so it
-always matches `pyproject.toml`. The original 0.x-era code hard-coded a
-literal that drifted past 1.0 — this guard prevents the same regression.
+`bettermemory.__version__` is read from `bettermemory/_version.py`, which
+hatchling's version build hook writes from `pyproject.toml` at every build
+and editable install, and from `importlib.metadata` only where that file
+is absent (a source tree nothing installed). Either way it matches
+`pyproject.toml`. The original 0.x-era code hard-coded a literal that
+drifted past 1.0 — this guard prevents the same regression.
 
 The argparse `--version` flag (registered in `server.main()`) reads the
 same `__version__`, so the assertions on bare equality below cover both
@@ -46,12 +49,24 @@ def _pyproject_version() -> str:
 
 
 def test_dunder_version_matches_installed_metadata() -> None:
-    """`bettermemory.__version__` reads from `importlib.metadata` so it
-    can never drift from `pyproject.toml`. The fallback path
-    (`0+unknown`) only fires when the package isn't installed at all,
-    which never happens during the test suite — `pip install -e .` (or
-    the editable install uv leaves behind) always registers metadata."""
+    """`bettermemory.__version__` reads the version file the build wrote,
+    and the same build wrote the installed metadata, so the two agree. The
+    fallback path (`0+unknown`) only fires when the package isn't installed
+    at all, which never happens during the test suite — `pip install -e .`
+    (or the editable install uv leaves behind) always registers metadata
+    and writes the version file."""
     assert bettermemory.__version__ == pkg_version("bettermemory")
+
+
+def test_the_version_file_matches_pyproject() -> None:
+    """`src/bettermemory/_version.py` is written by hatchling's version
+    build hook (`[tool.hatch.build.hooks.version]`) from `pyproject.toml`
+    at every build and editable install, and is not tracked. It must carry
+    pyproject's version: a stale one means the install predates a version
+    bump, and `uv sync` (or `pip install -e .`) writes it again."""
+    from bettermemory import _version
+
+    assert _version.__version__ == _pyproject_version()
 
 
 def test_dunder_version_looks_like_a_pep440_version() -> None:
@@ -63,7 +78,8 @@ def test_dunder_version_looks_like_a_pep440_version() -> None:
     assert v, "__version__ is empty"
     assert v != "0.1.0", (
         "__version__ matches the legacy hard-coded literal — the "
-        "importlib.metadata source-of-truth was bypassed."
+        "pyproject.toml source of truth (the version file the build "
+        "writes, the installed metadata behind it) was bypassed."
     )
     # Permissive PEP 440 shape: digits, dots, optional pre-release /
     # local-version markers. The fallback "0+unknown" matches too,
@@ -117,6 +133,56 @@ def test_version_flag_prints_dunder_version() -> None:
     )
 
 
+def _probe(code: str) -> str:
+    """What a fresh interpreter running `code` prints."""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=shielded_child_env(),
+    )
+    return result.stdout.strip()
+
+
+@pytest.mark.skipif(
+    not _PACKAGE_IMPORTABLE_IN_SUBPROCESS,
+    reason=(
+        "subprocess Python can't import bettermemory — "
+        "run `pip install -e .` (or `uv sync`) locally"
+    ),
+)
+def test_dunder_version_reads_the_version_file_without_the_metadata() -> None:
+    """Importing the package and reading `__version__` imports
+    `bettermemory._version` and never `importlib.metadata`, the largest
+    import a hook process paid before 9.0.0."""
+    out = _probe(
+        "import sys, bettermemory; v = bettermemory.__version__; "
+        "print(v, 'importlib.metadata' in sys.modules, "
+        "'bettermemory._version' in sys.modules)"
+    )
+    assert out.split() == [_pyproject_version(), "False", "True"]
+
+
+@pytest.mark.skipif(
+    not _PACKAGE_IMPORTABLE_IN_SUBPROCESS,
+    reason=(
+        "subprocess Python can't import bettermemory — "
+        "run `pip install -e .` (or `uv sync`) locally"
+    ),
+)
+def test_dunder_version_falls_back_to_the_metadata_without_the_version_file() -> None:
+    """Where the version file is absent (a source tree nothing installed),
+    `__version__` is what `importlib.metadata` reports, as before 9.0.0.
+    The file's absence is simulated by blocking its import."""
+    out = _probe(
+        "import sys; sys.modules['bettermemory._version'] = None; "
+        "import importlib.metadata, bettermemory; "
+        "print(bettermemory.__version__ == importlib.metadata.version('bettermemory'))"
+    )
+    assert out == "True"
+
+
 # ---------------------------------------------------------------------------
 # H12 — version skew across ALL the surfaces a release tag has to keep
 # in lockstep. Each source pinned to pyproject.toml so a release with
@@ -125,12 +191,13 @@ def test_version_flag_prints_dunder_version() -> None:
 
 
 def test_pyproject_version_matches_dunder_version() -> None:
-    """`importlib.metadata` reads the installed wheel's metadata, which
-    derives from pyproject at build time. A drift between this and
-    pyproject means the local install is stale — `pip install -e .` (or
-    `uv sync`) fixes it. The CI gate fires when the editable install on
-    a release-tagged commit happens to be stale, so the audit-pass
-    finding from 2.7.x can't repeat against a published wheel."""
+    """`__version__` reads the version file the build wrote from pyproject
+    (the installed metadata, also written at build time, where the file is
+    absent). A drift between this and pyproject means the local install is
+    stale — `pip install -e .` (or `uv sync`) fixes it. The CI gate fires
+    when the editable install on a release-tagged commit happens to be
+    stale, so the audit-pass finding from 2.7.x can't repeat against a
+    published wheel."""
     pyproject_v = _pyproject_version()
     assert bettermemory.__version__ == pyproject_v, (
         f"bettermemory.__version__ ({bettermemory.__version__!r}) != "

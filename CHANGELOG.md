@@ -131,9 +131,18 @@ surfaces leave with them. An 8.x directory is imported once by
   `-client-version` and `-workspace` headers unless the environment
   declared them. `bettermemory hook session-start|stop|prompt` reads
   the hook's stdin JSON, posts it to the daemon and prints the answer,
-  through a path that imports nothing from the SDK; `session-start`,
-  `audit-turn` and `prompt-recall` stay as aliases of it, and the
-  plugin's `hooks.json` names the new commands.
+  through a path that imports nothing from the SDK. It reads the version
+  a running daemon's must match from `bettermemory/_version.py`, which
+  hatchling's version build hook writes from `pyproject.toml` at every
+  build and editable install, without `importlib.metadata` (the
+  installed metadata answers only where no build wrote the file); and
+  with `BETTERMEMORY_DIR` set it names the store from the variable
+  without loading the config, so a malformed config no longer stops it,
+  or `up`, `down` and `status`, before they reach a running daemon.
+  With none running, the daemon they start still refuses that config,
+  and they give up after the eight-second start timeout.
+  `session-start`, `audit-turn` and `prompt-recall` stay as aliases of
+  it, and the plugin's `hooks.json` names the new commands.
   (`src/bettermemory/daemon.py`, `shim.py`, `_daemon_client.py`,
   `cli/daemon_cmd.py`)
 - **`Store.open_or_create` refuses to create an empty store beside an
@@ -162,12 +171,17 @@ surfaces leave with them. An 8.x directory is imported once by
   `verifications` row written by `memory_verify`. Query text is always
   redacted in the log.
 - The session-start hint, the Stop hook and the recall hook are one HTTP
-  round trip to the daemon each; the daemon reads the store for them.
+  request to the daemon each, after a `/health` check of the daemon the
+  state file names; the daemon reads the store for them.
   The `bettermemory` console script now enters through
-  `bettermemory._entry:main`, and importing the package no longer
-  imports the MCP SDK: `build_server`, `main` and
-  `SYSTEM_PROMPT_ADDENDUM` resolve on first use, so a hook process pays
-  the interpreter and the standard library and nothing else.
+  `bettermemory._entry:main`, and importing the package imports neither
+  the MCP SDK nor `importlib.metadata`: `build_server`, `main`,
+  `SYSTEM_PROMPT_ADDENDUM` and `__version__` resolve on first use. A
+  hook process with `BETTERMEMORY_DIR` and `BETTERMEMORY_STATE_DIR` set
+  pays the interpreter, the standard library and four modules of this
+  package (`bettermemory`, `_entry`, `_daemon_client`, `_version`);
+  without the first it loads the config as well, and without the second
+  it imports `platformdirs` for the state directory.
 - The plugin's SessionEnd hook is gone with session capture; the Stop,
   SessionStart and UserPromptSubmit hooks stay.
 - A config file that still sets a removed key or section loads with one

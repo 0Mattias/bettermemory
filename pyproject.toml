@@ -106,6 +106,23 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/bettermemory"]
 
+# The installed version, written from `[project] version` above by
+# hatchling's version build hook at every build and editable install, so
+# `bettermemory.__version__` and the hook client read it without importing
+# `importlib.metadata` (the largest import a hook paid before 9.0.0). This
+# file stays the one source: `_version.py` is generated, gitignored, and
+# shipped in the wheel and the sdist as a build artifact;
+# `tests/test_version.py` pins it to the version above. A source tree no
+# build has touched has no `_version.py`, and `__version__` then falls back
+# to `importlib.metadata`.
+[tool.hatch.build.hooks.version]
+path = "src/bettermemory/_version.py"
+template = '''# Written by hatchling's version build hook from pyproject.toml's
+# [project] version at every build and editable install. Not tracked:
+# edit the version in pyproject.toml and build (or `uv sync`) again.
+__version__ = {version!r}
+'''
+
 [tool.hatch.build.targets.sdist]
 # Explicit exclude — two entry classes. Most are untracked dev/test
 # caches: hatch defaults to `git ls-files` when in a repo, but a
