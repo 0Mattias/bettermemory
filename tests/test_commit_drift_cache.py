@@ -2701,6 +2701,39 @@ def test_the_index_reader_finds_gitmodules_as_git_lists_it(
 
 
 @files_only
+@pytest.mark.parametrize("version", [2, 3, 4])
+def test_the_index_reader_reads_on_past_its_first_read(
+    version: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reader reads the index's first bytes and reads further, four
+    times as far each time, while the scan has not reached .gitmodules; so
+    an index whose entries before .gitmodules outrun the first read is read
+    as git lists it. The first read is shrunk to 64 bytes here, and 3,000
+    dotted names sort before .gitmodules."""
+    monkeypatch.setattr(origin, "_INDEX_FIRST_READ", 64)
+    repo = _repo(tmp_path)
+    _commit(repo, "c0", when=_T0, files={"a.txt": "a\n"})
+    blob = _git(repo, "rev-parse", "HEAD:a.txt")
+    _git_input(
+        repo,
+        "".join(f"100644 {blob}\t.a/{n:05d}.txt\n" for n in range(3000)),
+        "update-index",
+        "--add",
+        "--index-info",
+    )
+    (repo / ".gitmodules").write_text('[submodule "x"]\n\tpath = x\n', encoding="utf-8")
+    _git(repo, "add", ".gitmodules")
+    _git(repo, "update-index", f"--index-version={version}")
+    if version == 3:
+        _git(repo, "update-index", "--skip-worktree", ".gitmodules")
+    gd = githead.gitdir_at(repo.resolve())
+    assert gd is not None
+    assert (repo / ".git" / "index").stat().st_size > 64 * 4**3
+    listed = _git(repo, "ls-files", "-s", "--", ".gitmodules").split()
+    assert origin._index_gitmodules(gd) == (int(listed[0], 8), listed[1])
+
+
+@files_only
 def test_the_index_reader_reads_an_intent_to_add_entry(tmp_path: Path) -> None:
     """`git add -N` leaves an entry with the intent-to-add flag and the
     empty blob, the object git then reads as the index's .gitmodules."""

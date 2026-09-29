@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import errno
 import logging
-import mmap
 import os
 import re
 import stat
@@ -2607,6 +2606,16 @@ class _IndexUnsettled(Exception):
     """The index is not one `_index_gitmodules` reads exactly."""
 
 
+class _IndexShort(Exception):
+    """The prefix of the index read so far ends before the scan does."""
+
+
+# The first read of an index, and the factor each further read grows by
+# while the scan runs past what was read.
+_INDEX_FIRST_READ = 1 << 16
+_INDEX_READ_GROWTH = 4
+
+
 # The entry each index held, memoised on the index's stamp: the index is
 # rewritten by most git commands (git add, a refreshing git status), and a
 # search reads the entry at its start and end. Read once per stamp from the
@@ -2625,33 +2634,41 @@ def _clear_index_memo() -> None:
         _INDEX_MEMO.clear()
 
 
-def _decode_varint(data: bytes | mmap.mmap, pos: int) -> tuple[int, int]:
+def _decode_varint(data: bytes, pos: int, *, complete: bool) -> tuple[int, int]:
     """git's ``decode_varint`` (varint.c): the value at `pos` and the
     position after it."""
+    ends = _IndexUnsettled if complete else _IndexShort
     if pos >= len(data):
-        raise _IndexUnsettled
+        raise ends
     byte = data[pos]
     pos += 1
     value = byte & 0x7F
     while byte & 0x80:
         value += 1
-        if pos >= len(data) or value >> 57:
+        if value >> 57:
             raise _IndexUnsettled
+        if pos >= len(data):
+            raise ends
         byte = data[pos]
         pos += 1
         value = (value << 7) + (byte & 0x7F)
     return value, pos
 
 
-def _gitmodules_entries(data: bytes | mmap.mmap) -> list[tuple[int, int, bytes]]:
+def _gitmodules_entries(data: bytes, *, complete: bool) -> list[tuple[int, int, bytes]]:
     """``(stage, mode, object id)`` of each entry named ``.gitmodules`` in
     the index `data`, a SHA-1 repository's, read from the first entry up to
     the first name that sorts after it (git keeps entries in name order,
     then stage). Versions 2 and 3 pad each entry to a multiple of eight
     bytes, version 4 compresses each name against the one before it; a name
-    of 4,095 bytes or more is found by its terminating NUL. Anything else
+    of 4,095 bytes or more is found by its terminating NUL. `data` is the
+    whole index when `complete`, and otherwise a prefix of it, past whose
+    end a scan that has not finished raises `_IndexShort`. Anything else
     git would refuse, or lay out otherwise, raises `_IndexUnsettled`."""
-    if len(data) < 12 or data[:4] != b"DIRC":
+    ends = _IndexUnsettled if complete else _IndexShort
+    if len(data) < 12:
+        raise ends
+    if data[:4] != b"DIRC":
         raise _IndexUnsettled
     version = int.from_bytes(data[4:8], "big")
     if version not in (2, 3, 4):
@@ -2664,26 +2681,28 @@ def _gitmodules_entries(data: bytes | mmap.mmap) -> list[tuple[int, int, bytes]]
         start = pos
         flags_at = start + 40 + 20
         if flags_at + 2 > len(data):
-            raise _IndexUnsettled
+            raise ends
         mode = int.from_bytes(data[start + 24 : start + 28], "big")
         oid = data[start + 40 : flags_at]
         flags = int.from_bytes(data[flags_at : flags_at + 2], "big")
         name_at = flags_at + 2
         if flags & 0x4000:
-            if version < 3 or name_at + 2 > len(data):
+            if version < 3:
                 raise _IndexUnsettled
+            if name_at + 2 > len(data):
+                raise ends
             if int.from_bytes(data[name_at : name_at + 2], "big") & ~_EXTENDED_FLAGS:
                 raise _IndexUnsettled
             name_at += 2
         stage = (flags >> 12) & 0x3
         length = flags & 0x0FFF
         if version == 4:
-            strip, name_at = _decode_varint(data, name_at)
+            strip, name_at = _decode_varint(data, name_at, complete=complete)
             if strip > len(previous):
                 raise _IndexUnsettled
             end = data.find(b"\0", name_at)
             if end < 0:
-                raise _IndexUnsettled
+                raise ends
             name = previous[: len(previous) - strip] + data[name_at:end]
             if length != 0x0FFF and len(name) != length:
                 raise _IndexUnsettled
@@ -2692,11 +2711,11 @@ def _gitmodules_entries(data: bytes | mmap.mmap) -> list[tuple[int, int, bytes]]
             if length == 0x0FFF:
                 end = data.find(b"\0", name_at)
                 if end < 0:
-                    raise _IndexUnsettled
+                    raise ends
                 length = end - name_at
             name = data[name_at : name_at + length]
             if len(name) != length:
-                raise _IndexUnsettled
+                raise ends
             pos = start + ((name_at - start + length + 8) & ~7)
         if name == _GITMODULES:
             found.append((stage, mode, oid))
@@ -2704,6 +2723,21 @@ def _gitmodules_entries(data: bytes | mmap.mmap) -> list[tuple[int, int, bytes]]
             break
         previous = name
     return found
+
+
+def _read_prefix(fd: int, length: int) -> bytes:
+    """The first `length` bytes of the open file `fd`, fewer where it ends
+    first."""
+    os.lseek(fd, 0, os.SEEK_SET)
+    chunks: list[bytes] = []
+    size = 0
+    while size < length:
+        chunk = os.read(fd, length - size)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        size += len(chunk)
+    return b"".join(chunks)
 
 
 def _index_gitmodules(gd: githead.GitDir) -> tuple[object, ...] | None:
@@ -2741,12 +2775,20 @@ def _index_gitmodules(gd: githead.GitDir) -> tuple[object, ...] | None:
                 return kept[1]
         if any(name.startswith("sharedindex.") for name in os.listdir(gd.gitdir)):
             raise _IndexUnsettled
-        if before[2] == 0:
-            raise _IndexUnsettled
-        # Mapped, not read: the entries up to .gitmodules are near the
-        # start, and only the pages the scan touches are read.
-        with mmap.mmap(fd, 0, access=mmap.ACCESS_READ) as data:
-            entries = _gitmodules_entries(data)
+        # Read, not mapped (macOS maps a file git has just rewritten in about
+        # 5 ms), and only as far as the scan goes: the entries up to
+        # .gitmodules are near the start.
+        size = before[2]
+        want = _INDEX_FIRST_READ
+        while True:
+            data = _read_prefix(fd, min(want, size))
+            try:
+                entries = _gitmodules_entries(data, complete=len(data) >= size)
+                break
+            except _IndexShort:
+                if want >= size:
+                    raise _IndexUnsettled from None
+                want *= _INDEX_READ_GROWTH
         if _fd_stamp(fd) != before:
             raise _IndexUnsettled
     finally:
