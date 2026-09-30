@@ -119,6 +119,14 @@ def canonical(obj: Any) -> str:
     )
 
 
+def write_canonical(path: Path, obj: Any) -> None:
+    """Write a split as its canonical bytes. SEALS.json seals the sha256 of
+    the file's bytes, and a text-mode write on Windows ends the file in CRLF
+    where canonical() ends it in LF, so the split is written in bytes and
+    hashes the same on every platform."""
+    path.write_bytes(canonical(obj).encode("utf-8"))
+
+
 def read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -1249,8 +1257,8 @@ def cmd_assemble() -> int:
         return 1
     dev = build_split("dev", skeletons, proses)
     test = build_split("test", skeletons, proses)
-    DEV_PATH.write_text(canonical(dev), encoding="utf-8")
-    TEST_PATH.write_text(canonical(test), encoding="utf-8")
+    write_canonical(DEV_PATH, dev)
+    write_canonical(TEST_PATH, test)
     for name, corpus, path in (("dev", dev, DEV_PATH), ("test", test, TEST_PATH)):
         try:
             problems = score.corpus_checks(corpus)

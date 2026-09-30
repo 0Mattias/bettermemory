@@ -353,7 +353,7 @@ def test_build_split_is_canonical_and_declares_its_counts(
         == 24
     )
     path = tmp_path / "test.json"
-    path.write_text(gen.canonical(test), encoding="utf-8")
+    gen.write_canonical(path, test)
     assert json.loads(path.read_text(encoding="utf-8")) == test
     assert (
         score.corpus_sha256(path)
