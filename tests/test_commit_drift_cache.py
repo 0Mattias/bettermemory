@@ -94,15 +94,20 @@ def _git(repo: Path, *args: str, when: datetime | None = None) -> str:
 
 
 def _git_input(repo: Path, text: str, *args: str) -> str:
-    """`_git` with `text` on git's standard input."""
-    return subprocess.run(
-        ["git", *args],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-        text=True,
-        input=text,
-    ).stdout.strip()
+    """`_git` with `text` on git's standard input, sent as UTF-8 bytes: a
+    text-mode pipe on Windows ends each line in CRLF, and --index-info
+    reads the CR as the last byte of the path."""
+    return (
+        subprocess.run(
+            ["git", *args],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            input=text.encode("utf-8"),
+        )
+        .stdout.decode("utf-8")
+        .strip()
+    )
 
 
 def _repo(tmp_path: Path, name: str = "repo") -> Path:
@@ -2772,9 +2777,13 @@ def test_a_merge_conflict_on_gitmodules_resolved_by_git_add_reads_as_git(
     assert _git(repo, "ls-files", "-u", "--", ".gitmodules"), (
         f"premise: a conflict: {merged.stdout} {merged.stderr}"
     )
+    # git reads a backslash in a config value as an escape and refuses the
+    # file at an unknown one (a Windows path's \U), so the URL is written
+    # with forward slashes.
     (repo / ".gitmodules").write_text(
         '[submodule "sub"]\n\tpath = sub\n'
-        f"\turl = {tmp_path / 'source'}\n\tbranch = trunk\n\tignore = all\n",
+        f"\turl = {(tmp_path / 'source').as_posix()}\n"
+        "\tbranch = trunk\n\tignore = all\n",
         encoding="utf-8",
     )
     for _ in range(2):
