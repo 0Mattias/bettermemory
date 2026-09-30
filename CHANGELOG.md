@@ -263,6 +263,12 @@ surfaces leave with them. An 8.x directory is imported once by
   and the `doctor`, `reindex`, `sync`, `consolidate`, `ingest`,
   `capture`, `session-end` and `proposals` commands. Session capture
   returns in a later release from its own design.
+- **The groundedness gate.** `memory_write` loses `groundedness_check`,
+  `source_transcript` and `acknowledge_ungrounded`, and the
+  `groundedness` module and the `"ungrounded"` status go with them. The
+  opt-in gate had refused one write on the owner's store and was never
+  switched on in his retained Claude Code transcripts, and its three
+  parameters cost 250 characters of the served surface every session.
 - The ratchet-test genre (`test_doc_claims`, `test_symbol_citations`,
   `test_resident_footprint`, `test_changelog` and their siblings) and
   the tests of the removed modules.

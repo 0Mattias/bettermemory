@@ -63,8 +63,7 @@ validated ships as declared claims on `memory_write` / `memory_verify`.
   refused until it is relabelled.
 - Write gates instead of trust: durability check (rejects transient
   state), credential check (rejects secret-shaped tokens), duplicate
-  and tombstone dedup, scope-mismatch check, optional groundedness
-  check against the source transcript.
+  and tombstone dedup, scope-mismatch check.
 - Write-time supersession (`supersession.py`): a claim-sized write that
   carries a change cue and diverges on a value from a stored claim about
   the same subject gets a `supersedes` link to it, so the stale hit
@@ -166,15 +165,15 @@ per-client `SessionState` for the request (disabled scopes, use
 tokens), keyed on that caller, and `_response.py` shapes what goes back
 on the wire. `_decorators.py` and `time_utils.py` are cross-cutting.
 
-**Write path.** `handlers/write.py` runs the gate chain: `credentials.py`
-(secret-shaped strings), `durability.py` (structural durability),
-`scope_match.py` (scope mismatch against the caller's repo),
-`groundedness.py` (transcript overlap), `claims.py` (declared claims
-checked against the worktree), `supersession.py` (does this replace a
-stored statement), `conflicts.py` (contradiction candidates). A write
-that passes lands in `store.py` as one signed log row and one table
-row in one transaction, with `log.py` signing the row and keeping the
-chain. `origin.py` stamps where the write happened.
+**Write path.** `handlers/write.py` runs the gate chain:
+`credentials.py` (secret-shaped strings), `durability.py` (structural
+durability), `scope_match.py` (scope mismatch against the caller's
+repo), `claims.py` (declared claims checked against the worktree),
+`supersession.py` (does this replace a stored statement),
+`conflicts.py` (contradiction candidates). A write that passes lands
+in `store.py` as one signed log row and one table row in one
+transaction, with `log.py` signing the row and keeping the chain.
+`origin.py` stamps where the write happened.
 
 **Read path.** `handlers/search.py` and `handlers/show.py` read the
 store's candidate query (the FTS5 prefilter above the index threshold)

@@ -3543,19 +3543,17 @@ async def test_dedup_match_carries_metadata(server: Any) -> None:
 # comment at `handlers/write.py:474-481` explicitly documents the
 # rationale: transient before dedup so a transient parent doesn't route
 # the writer to `memory_update`; scope-mismatch before dedup so a write
-# tagged for a different scope doesn't get a duplicate hit; groundedness
-# before dedup because (the comment's load-bearing example) a
-# hallucinated write being reported as a "duplicate" of a real one is
-# misleading; the two dedup gates last because everything before them
-# rejects on the body alone.
+# tagged for a different scope doesn't get a duplicate hit; the two
+# dedup gates last because everything before them rejects on the body
+# alone.
 #
 # This is the HIGH-HAZARD pin in the closed-protocol audit-loop sweep.
 # Hazard surface: a silent reorder violates the security / correctness
 # invariant the source comment documents — specifically:
-#   * dedup-before-groundedness lets a hallucinated write masquerade as
-#     a duplicate of a real one (the comment's literal example);
-#   * dropping `GroundednessGate` from the tuple silently lets
-#     ungrounded writes through (the gate fires only because it's in
+#   * dedup-before-transient routes the writer to `memory_update` on a
+#     transient parent;
+#   * dropping `CredentialGate` from the tuple silently lets
+#     secret-shaped writes through (the gate fires only because it's in
 #     the chain);
 #   * any reorder changes which gate fires first when multiple would
 #     reject, changing the user-visible response.
@@ -3575,16 +3573,16 @@ async def test_dedup_match_carries_metadata(server: Any) -> None:
 # gate, or deleting one) must update both the source tuple AND this
 # expected tuple in the same commit. Treat any drift as a deliberate
 # security/correctness decision that requires re-reading the
-# write.py:474-481 rationale: would the new ordering still bounce a
-# hallucinated write before reporting it as a duplicate? Still bounce
-# a transient-parent write before routing the writer to update? If
+# write.py:474-481 rationale: would the new ordering still refuse a
+# secret before any other gate records the body? Still bounce a
+# transient-parent write before routing the writer to update? If
 # yes, update both. If unsure, don't reorder.
 #
-# Negative-control: swapping `DedupActiveGate` and `GroundednessGate`
+# Negative-control: swapping `DedupActiveGate` and `ScopeMismatchGate`
 # in `_WRITE_GATES` (a plausible "performance" reorder that puts
 # cheaper checks first) fails
 # `test_write_gates_match_expected_types_in_order` (tuple inequality
-# — sequences differ at index 4 / 5). Revert restores green.
+# — sequences differ at index 3 / 4). Revert restores green.
 def test_write_gates_match_expected_types_in_order() -> None:
     """Guard so additions, deletions, AND reorders of ``_WRITE_GATES``
     (the ordered WriteGate strategy chain orchestrated by
@@ -3594,12 +3592,10 @@ def test_write_gates_match_expected_types_in_order() -> None:
     The comment at ``handlers/write.py:474-481`` documents the
     invariant: ``CredentialGate`` fires FIRST so a secret is refused
     before any later gate records body-derived data alongside it in
-    the event log; transient/user-claim/scope-mismatch/groundedness
-    gates fire BEFORE dedup so (a) a hallucinated write can't
-    masquerade as a duplicate of a real one, (b) a transient-parent
-    write isn't routed to ``memory_update``, (c) a scope-mismatched
-    write doesn't get a misleading duplicate hit, (d) a body
-    re-categorized as ``user-inference`` isn't routed to
+    the event log; transient/user-claim/scope-mismatch gates fire
+    BEFORE dedup so (a) a transient-parent write isn't routed to
+    ``memory_update``, (b) a scope-mismatched write doesn't get a
+    misleading duplicate hit, (c) a body re-categorized as ``user-inference`` isn't routed to
     ``memory_update`` on a mis-filed parent; the two dedup gates last,
     active before tombstone, because everything before them rejects on
     the body alone. A silent reorder breaks the security/correctness
@@ -3608,14 +3604,13 @@ def test_write_gates_match_expected_types_in_order() -> None:
     A future contributor reordering this tuple for performance must
     update both the source AND this expected tuple in the same
     commit, AND re-read the write.py:474-481 rationale to confirm
-    the new ordering still preserves: hallucinated-before-dedup,
+    the new ordering still preserves: credential-first,
     transient-before-dedup, user-claim-before-dedup,
     scope-before-dedup, and dedup-last."""
     from bettermemory.handlers.write import (
         CredentialGate,
         DedupActiveGate,
         DedupTombstoneGate,
-        GroundednessGate,
         ScopeMismatchGate,
         TransientGate,
         UserClaimGate,
@@ -3627,7 +3622,6 @@ def test_write_gates_match_expected_types_in_order() -> None:
         TransientGate,
         UserClaimGate,
         ScopeMismatchGate,
-        GroundednessGate,
         DedupActiveGate,
         DedupTombstoneGate,
     )
@@ -3645,26 +3639,23 @@ def test_write_gates_match_expected_types_in_order() -> None:
 # acknowledge_user_claim is ONE gate's escape hatch, not a chain bypass
 #
 # Written because of the blast radius the flag acquired the moment
-# `UserClaimGate` landed: ten pre-existing fixtures across
-# test_server_groundedness.py / test_server_v12_features.py /
-# test_server_negative_outcomes.py had bodies that are genuinely claims
-# about the user, and each had to start passing
-# `acknowledge_user_claim=True` to keep testing its own axis. Those ten
+# `UserClaimGate` landed: pre-existing fixtures across
+# test_server_v12_features.py / test_server_negative_outcomes.py had
+# bodies that are genuinely claims about the user, and each had to
+# start passing
+# `acknowledge_user_claim=True` to keep testing its own axis. Those
 # call sites now assume, without saying so, that the flag opens exactly
 # one gate. If a later refactor widened it — the plausible shape is a
 # GateContext change that lets one acknowledge_* field satisfy several
 # gates, or a "skip the body gates when the caller already vouched for
-# the body" shortcut — all ten would stay green while a credential-
+# the body" shortcut — all of them would stay green while a credential-
 # bearing body sailed through. Nothing else pins the narrowness: the
 # per-gate tests in test_server_user_claims.py drive UserClaimGate with
 # clean bodies, and the other gates' tests never set this flag.
 #
-# The four gates are chosen to straddle the chain position:
+# The three gates are chosen to straddle the chain position:
 # credential (index 0) and transient (index 1) come BEFORE UserClaimGate
-# (index 2), scope-mismatch (index 3) comes after, and groundedness
-# (index 4) is covered by test_server_groundedness.py's
-# `test_ungrounded_body_blocks_write`, which passes only this flag and
-# still gets `ungrounded`.
+# (index 2), and scope-mismatch (index 3) comes after.
 # ---------------------------------------------------------------------------
 
 

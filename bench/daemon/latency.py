@@ -537,11 +537,8 @@ def check_workload(store: Any, config: Any, bodies: list[str]) -> dict[str, Any]
         "force": False,
         "acknowledge_transient": False,
         "acknowledge_scope_mismatch": False,
-        "acknowledge_ungrounded": False,
         "acknowledge_credential": False,
         "acknowledge_user_claim": False,
-        "groundedness_check": False,
-        "source_transcript": None,
     }
     behavior = config.behavior
     problems: list[str] = []

@@ -88,8 +88,7 @@ The gates do the policing, so writing freely is safe:
 - the credential gate refuses secret-shaped tokens; describe the secret instead, or pass `acknowledge_credential=True` (logged, kind only);
 - the user-claim gate refuses a first-person claim filed as `fact`; re-file it as `user-inference`;
 - dedup against the active set and the tombstones catches paraphrases; `memory_update` the matched id, or `memory_admin(action="restore", id=...)` when the matching tombstone's reason no longer holds. A duplicate credits the matched memory a corroboration: evidence the claim still holds, so do not force-write around it;
-- the scope-mismatch gate asks for a re-scope when the body cites a project the declared scopes do not cover;
-- with `groundedness_check=True` and `source_transcript`, sentences under 30 percent token overlap with the transcript come back as `ungrounded`; `acknowledge_ungrounded=True` when the grounding came from outside the transcript.
+- the scope-mismatch gate asks for a re-scope when the body cites a project the declared scopes do not cover.
 
 Declare `claims` (`path`, `path::symbol`, `path::NAME=literal`, `!path` for absent) when the body cites code: they are checked at write time and watched for drift afterwards. `supersedes` links this write to the ids it replaces; the stale hit then carries `superseded_by`. A write that diverges from a stored claim without a change cue is filed as a conflict for `memory_admin(action="conflicts")`.
 

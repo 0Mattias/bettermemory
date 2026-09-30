@@ -1,8 +1,8 @@
 """memory_write MCP tool — orchestrator + WriteGate strategy.
 
-Pre-Round-2 ``memory_write`` was a 356-line method with six sequential
-guard blocks inline (durability / scope-mismatch / groundedness /
-dedup-active / dedup-tombstone). Each block built a
+Pre-Round-2 ``memory_write`` was a 356-line method with sequential
+guard blocks inline (durability / scope-mismatch / dedup-active /
+dedup-tombstone). Each block built a
 short-circuit response dict and recorded its own event before
 returning. The function read as a single long ladder; understanding any
 one gate required scrolling past the others.
@@ -102,8 +102,7 @@ DESC_MEMORY_WRITE = (
     "(projects:<name>, tools), never general. `category`: fact, "
     "user-inference (about the user) or ambient (context, never cited). "
     "Gates refuse transient state, secrets, user claims filed as fact, "
-    "scope mismatch, duplicates and, under groundedness_check, sentences "
-    "absent from source_transcript; each names its acknowledge flag. "
+    "scope mismatch and duplicates; each names its acknowledge flag. "
     "`claims`: path or path::symbol bindings watched for drift. "
     "`supersedes`: ids this replaces."
 )
@@ -132,10 +131,7 @@ class GateContext:
     force: bool
     acknowledge_transient: bool
     acknowledge_scope_mismatch: bool
-    acknowledge_ungrounded: bool
     acknowledge_credential: bool
-    groundedness_check: bool
-    source_transcript: str | None
     acknowledge_user_claim: bool = False
     # Outputs the gates accumulate as they pass — read by later gates
     # or the final commit step.
@@ -516,51 +512,6 @@ class ScopeMismatchGate(WriteGate):
         )
 
 
-class GroundednessGate(WriteGate):
-    """Sentence-level overlap against `source_transcript` — fires only
-    when `groundedness_check=True` and a transcript is provided.
-
-    The HaluMem-style write-time grounding check: sentences that
-    don't anchor to the conversation come back as "ungrounded". Closes
-    the hallucinate-at-write-time failure mode common to systems that
-    auto-extract memories from conversation.
-    """
-
-    def evaluate(self, deps: GateDeps, gc: GateContext) -> GateResult:
-        if not gc.groundedness_check:
-            return Continue()
-        if gc.source_transcript is None or gc.acknowledge_ungrounded:
-            return Continue()
-        from ..groundedness import check_groundedness
-
-        ungrounded = check_groundedness(gc.payload["content"], gc.source_transcript)
-        if not ungrounded:
-            return Continue()
-        return Reject(
-            response={
-                "status": "ungrounded",
-                "claims": [c.to_dict() for c in ungrounded],
-                "hint": (
-                    "The body contains sentences that don't share enough "
-                    "vocabulary with the source transcript to count as "
-                    "grounded — the model may have hallucinated them, "
-                    "or paraphrased so heavily that the audit trail is "
-                    "lost. Either rephrase to keep the load-bearing "
-                    "tokens close to the transcript, or pass "
-                    "`acknowledge_ungrounded=True` if you have other "
-                    "grounding sources (a file read, a tool result) "
-                    "that aren't represented in this transcript."
-                ),
-            },
-            event_kwargs={
-                "status": "ungrounded",
-                "scopes": gc.payload["scopes"],
-                "forced": False,
-                "ungrounded_count": len(ungrounded),
-            },
-        )
-
-
 class DedupActiveGate(WriteGate):
     """Content dedup against the active set. High overlap → reject as
     duplicate (the right move is memory_update on the matched id);
@@ -654,15 +605,12 @@ class DedupTombstoneGate(WriteGate):
 # BODY, and before dedup for the same reason transient is (a re-categorized
 # re-issue must not be routed to memory_update on a mis-filed parent);
 # scope-mismatch before dedup so the writer doesn't get a
-# duplicate hit on a memory tagged for a different scope; groundedness
-# before dedup because a hallucinated write being a "duplicate" of a real
-# one is misleading.
+# duplicate hit on a memory tagged for a different scope.
 _WRITE_GATES: tuple[WriteGate, ...] = (
     CredentialGate(),
     TransientGate(),
     UserClaimGate(),
     ScopeMismatchGate(),
-    GroundednessGate(),
     DedupActiveGate(),
     DedupTombstoneGate(),
 )
@@ -811,12 +759,9 @@ async def memory_write(
     force: bool = False,
     acknowledge_transient: bool = False,
     acknowledge_scope_mismatch: bool = False,
-    acknowledge_ungrounded: bool = False,
     acknowledge_credential: bool = False,
     acknowledge_user_claim: bool = False,
     category: str = "fact",
-    groundedness_check: bool = False,
-    source_transcript: str | None = None,
     claims: list[str] | None = None,
     supersedes: list[str] | None = None,
     ctx: Context | None = None,
@@ -879,10 +824,7 @@ async def memory_write(
         force=force,
         acknowledge_transient=acknowledge_transient,
         acknowledge_scope_mismatch=acknowledge_scope_mismatch,
-        acknowledge_ungrounded=acknowledge_ungrounded,
         acknowledge_credential=acknowledge_credential,
-        groundedness_check=groundedness_check,
-        source_transcript=source_transcript,
         acknowledge_user_claim=acknowledge_user_claim,
     )
 

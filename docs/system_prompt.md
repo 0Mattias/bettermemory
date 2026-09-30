@@ -118,11 +118,7 @@ The gates do the policing, so writing freely is safe:
   the matching tombstone's reason no longer holds. A duplicate credits
   the matched memory a corroboration, which is evidence it still holds;
 - the scope-mismatch gate asks for a re-scope when the body cites a
-  project the declared scopes do not cover;
-- with groundedness_check=True and source_transcript, sentences under
-  30 percent token overlap with the transcript come back as
-  ungrounded; acknowledge_ungrounded=True when the grounding came from
-  outside the transcript.
+  project the declared scopes do not cover.
 
 Declare `claims` (path, path::symbol, path::NAME=literal, !path for
 absent) when the body cites code: they are checked at write time and

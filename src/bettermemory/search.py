@@ -240,9 +240,9 @@ _STOPWORDS_EN = frozenset(
 # Non-English function-word lists (tokenizer v2). Same philosophy as the
 # English list — short, high-frequency grammatical filler only — covering
 # the languages that show up in real stores (this user's sessions are
-# partly Swedish; the groundedness gate's stopword defence was previously
-# English-only, so a hallucinated non-English claim could anchor on pure
-# filler like 'vill'/'att'/'på'). Two ground rules:
+# partly Swedish; a stopword defence that is English-only lets
+# non-English text match on pure filler like 'vill'/'att'/'på'). Two
+# ground rules:
 #
 # - Entries are spelled in their POST-`_fold_diacritics` form ('på' → 'pa',
 #   'är' → 'ar', 'où' → 'ou'): membership tests run on folded tokens, so
@@ -775,12 +775,9 @@ def tokenize(text: str) -> list[str]:
 def _tokenize_unstemmed(text: str) -> list[str]:
     """`tokenize` minus the plural stemmer — same folds, contraction
     strips, symbol aliases, and CJK bigrams, but tokens keep their
-    surface spelling. Consumed by groundedness's alias-anchor rescue,
-    which reasons about SPELLING relations (substring / subsequence):
-    stems shorten words below that rescue's particle length gate
-    ('code' → 'cod' falls under `_ALIAS_MIN_TOKEN_LEN`), so that one
-    path compares surface forms. Everything that SCORES uses
-    `tokenize`."""
+    surface spelling. Consumed by the audit's user-message
+    acknowledgement check (`audit.py`), which compares surface forms.
+    Everything that SCORES uses `tokenize`."""
     return _tokenize_impl(text, stem=False)
 
 

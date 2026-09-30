@@ -370,10 +370,7 @@ def test_gate_context_user_claim_flag_defaults_false() -> None:
         force=False,
         acknowledge_transient=False,
         acknowledge_scope_mismatch=False,
-        acknowledge_ungrounded=False,
         acknowledge_credential=False,
-        groundedness_check=False,
-        source_transcript=None,
     )
     assert gc.acknowledge_user_claim is False
     assert gc.user_claim_hits == []

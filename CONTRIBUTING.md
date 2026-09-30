@@ -103,9 +103,9 @@ Stable within the current major (9.x):
 
 - Tool names. `memory_search` will not be renamed to `mem_search`.
 - Required parameter names and positions. `memory_remove(id, reason)` will not flip to `(reason, id)`.
-- Default values for optional parameters. `memory_search.expand_top` defaults to `False`; `memory_search.mode` defaults to `"hybrid"` (since 2.6.8); `memory_write.groundedness_check` defaults to `False` (since 2.0).
+- Default values for optional parameters. `memory_search.expand_top` defaults to `False`; `memory_search.mode` defaults to `"hybrid"` (since 2.6.8).
 - Closed-set string values for enum-typed parameters. `confidence` is `"low"` / `"medium"` / `"high"`; `outcome` is `"applied"` / `"ignored"` / `"contradicted"` / `"corrected"`; `category` is `"fact"` / `"user-inference"` / `"ambient"`; `mode` is `"keyword"` / `"bm25"` / `"hybrid"` (the pre-4.0 `"semantic"` value went out with the embedding lane); `link.type` is `"supersedes"` / `"contradicts"` / `"extends"` / `"depends_on"`.
-- Return-shape keys for the same status. A `memory_write` response with `status="duplicate"` will continue to carry a `matches` list; the `status="ungrounded"` value (from the optional groundedness gate) will continue to carry `claims`.
+- Return-shape keys for the same status. A `memory_write` response with `status="duplicate"` will continue to carry a `matches` list.
 
 Permitted within a major:
 

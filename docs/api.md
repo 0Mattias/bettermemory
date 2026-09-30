@@ -52,7 +52,7 @@ Full return shape: `{id, scopes, confidence, source, category, created, updated,
 
 ## Writing
 
-### `memory_write(content, scopes, confidence?, source?, force?, acknowledge_transient?, acknowledge_scope_mismatch?, acknowledge_ungrounded?, acknowledge_credential?, acknowledge_user_claim?, category?, groundedness_check?, source_transcript?, claims?, supersedes?)`
+### `memory_write(content, scopes, confidence?, source?, force?, acknowledge_transient?, acknowledge_scope_mismatch?, acknowledge_credential?, acknowledge_user_claim?, category?, claims?, supersedes?)`
 
 In MCP every argument is keyword-only at the wire, so positional order is only consequential for Python callers reading this as a spec.
 
@@ -63,12 +63,9 @@ In MCP every argument is keyword-only at the wire, so positional order is only c
 - `force: bool = False`. Bypass content dedup and tombstone dedup.
 - `acknowledge_transient: bool = False`. Bypass the durability marker check. Logged as an override.
 - `acknowledge_scope_mismatch: bool = False`. Bypass the scope-mismatch warning when a cross-project reference is intentional.
-- `acknowledge_ungrounded: bool = False`. Override the groundedness gate when grounding sources (file reads, tool results) are not represented in the transcript.
 - `acknowledge_credential: bool = False`. Bypass the credential-shaped-token check. Use only for a documented public or example value. Logged as an override, the detector `kind` only, never the value.
 - `acknowledge_user_claim: bool = False`. Bypass the user-claim gate, which fires when the body predicates something about a person while `category` is not `"user-inference"`. Pass it when the subject is someone or something other than the user (a teammate, or a tool that "prefers" a setting). Otherwise re-issue as `category="user-inference"`, which is the remedy the gate's own hint names. Logged as an override, carrying the matched phrases.
 - `category: str = "fact"`. One of `"fact"`, `"user-inference"`, `"ambient"`. `"user-inference"` is a claim about the user; it commits exactly as `"fact"` does, and the label is what keeps a stored inference distinguishable from an established fact, and correctable. `"ambient"` commits like `"fact"` but is excluded from the dead-weight curation rule (long bodies over 500 words attach a non-blocking `ambient_body_long` warning).
-- `groundedness_check: bool = False`. Opt-in. When True and `source_transcript` is provided, the server walks the proposed body sentence by sentence and flags any whose content tokens overlap the transcript by less than 30%.
-- `source_transcript: str | None = None`. The conversation turns that motivated this write. Required for the gate to fire.
 - `claims: list[str] | None = None`. Structured claims the body makes about the current repo, in the four-shape syntax under [Structured claims](#structured-claims): `path`, `path::symbol`, `path::NAME=literal`, `!path`. Each claim is checked against the origin worktree at declaration and the write is refused, with a raised error naming each failing claim and what the tree says, when any claim is false. There is deliberately no `acknowledge_*` escape: the read side's trust in claims rests on every stored claim having been true at declaration. Declaring requires a worktree; the canonical rendered forms are what gets persisted, deduplicated, capped at 64 entries.
 - `supersedes: list[str] | None = None`. Ids of active memories this write replaces. Each becomes a `supersedes` link on the new record (note `declared at write time`), which `memory_search` renders as `superseded_by` on the stale hit. Refused with a raised error when an id is not a ULID or names a memory that is not active; at most 16, deduplicated.
 
@@ -83,7 +80,6 @@ Result statuses:
 - `"previously_removed"`: tombstone dedup fired; `removed_matches` listed with their original `removed_reason`. Either drop the write or restore the tombstone through `memory_admin(action="restore")`.
 - `"scope_mismatch"`: body cites a known `projects:<name>` scope's name (or a path under another project's tree) and that scope is not declared. `suggested_scopes` and `matches` returned.
 - `"user_claim_warning"`: the body reads as a claim about the user (an "I prefer…" / "the user always…" / "`<Name>` prefers…" shape) while `category` is `"fact"` or `"ambient"`. `markers: [{phrase, sentence}, ...]` returned; nothing is persisted. The remedy is to re-issue with `category="user-inference"`. In the chain it sits after the credential and durability gates and ahead of both dedup gates.
-- `"ungrounded"`: groundedness gate fired. `claims: [{sentence, overlap_ratio}, ...]` returned. No commit.
 
 ### `memory_update(id, content?, scopes?, confidence?, category?, links?, acknowledge_credential?, acknowledge_transient?, acknowledge_user_claim?, acknowledge_truncation?)`
 

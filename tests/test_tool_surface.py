@@ -34,9 +34,17 @@ NINE = {
 # The ceiling a regression trips. The bettermemory 9 declaration predicted
 # 7,400 characters and set 8,000 as its miss line; the surface measured
 # 8,241 at U4a with the descriptions at the floor of meaning and the
-# schema envelope at 4,591. The ceiling sits above that so prose growth
-# is caught, and the measured number is what the outcome record reports.
-SESSION_BUDGET_CHARS = 8_500
+# schema envelope at 4,591. D1 removed the groundedness parameters from
+# memory_write (design item 8, owner ruling 2026-09-30), which took the
+# surface to 7,991, so the ceiling is the declared 8,000.
+SESSION_BUDGET_CHARS = 8_000
+
+# The parameters D1 removed with the groundedness gate. None may return.
+REMOVED_WRITE_PARAMETERS = {
+    "groundedness_check",
+    "source_transcript",
+    "acknowledge_ungrounded",
+}
 
 
 async def _server(tmp_path: Path) -> Any:
@@ -44,7 +52,8 @@ async def _server(tmp_path: Path) -> Any:
     return build_server(config=cfg, store=Store(tmp_path), state=SessionState())
 
 
-async def test_exactly_nine_tools(tmp_path: Path) -> None:
+async def test_nine_tools(tmp_path: Path) -> None:
+    """The U4 ruling: nine tools, always, with no gated surface."""
     mcp = await _server(tmp_path)
     names = {tool.name for tool in await mcp.list_tools()}
     assert names == NINE
@@ -78,6 +87,19 @@ async def test_session_surface_under_budget(tmp_path: Path) -> None:
         f"schemas {schemas}, instructions {len(INSTRUCTIONS)}); "
         f"the ceiling is {SESSION_BUDGET_CHARS}"
     )
+
+
+async def test_memory_write_schema_has_no_groundedness_parameters(
+    tmp_path: Path,
+) -> None:
+    mcp = await _server(tmp_path)
+    by_name = {t.name: t for t in await mcp.list_tools()}
+    write = by_name["memory_write"]
+    properties = set(write.input_schema["properties"])
+    assert properties.isdisjoint(REMOVED_WRITE_PARAMETERS), properties
+    blob = json.dumps(write.input_schema).lower() + (write.description or "").lower()
+    assert "grounded" not in blob
+    assert "transcript" not in blob
 
 
 def test_instructions_fit_claude_code() -> None:
