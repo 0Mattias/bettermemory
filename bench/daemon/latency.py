@@ -53,20 +53,54 @@ under the user's directories is read or written.
 
     python bench/daemon/latency.py --v8 ~/.cache/bettermemory-v9/live-copy \\
         --out bench/daemon/results/latency-9.0.0-2026-09-26.json
+
+The write arm (`--arm write`, unit D1's P10) is a separate run with its own
+file:
+
+  memory_write       a single memory_write through `build_server(...)`'s
+                     `call_tool` in this process (the daemon's own answer
+                     time, no HTTP hop), for each of WRITE_N workload bodies
+                     after WRITE_WARM_UPS untimed writes; p50 and p95 in ms.
+  reviewed_write     the same, for a write the daemon answers with a
+                     review: the arm re-sends the same call with every
+                     related id answered "unrelated", unsafe 0 and secret 0,
+                     and the time covers both calls together. Recorded only
+                     when a review was issued, so one arm gives the baseline
+                     before the review exists and the review-era file after.
+
+The workload is WRITE_N synthetic bodies from a fixed seed
+(`write_workload`): made-up nouns in durable, factual sentences, each
+distinct from the others by the dedup measure. Before any timed call every
+body must pass the write gates on the scratch copy and overlap nothing
+active or removed there (`check_workload`); a body that does not stops the
+run. The store is imported from the sealed tarball (`--tgz`), whose
+sha256 must equal the `.sha256` file beside it, into a scratch directory;
+the arm refuses a scratch directory that is, or sits inside, the live
+store (`~/.bettermemory`, `~/.claude-memory` or `$BETTERMEMORY_DIR`).
+
+    python bench/daemon/latency.py --arm write \\
+        --tgz ~/.cache/bettermemory-v9/live-copy-2026-09-25.tgz \\
+        --out bench/daemon/results/latency-9.0.0-2026-09-30-write-baseline.json
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
+import hashlib
 import json
 import os
 import platform
+import random
 import statistics
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
+from collections import Counter
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -331,15 +365,597 @@ def hook_service_lone(scratch: Path, n: int, cwd: Path, *, stale: bool) -> list[
     return times
 
 
+# ---------------------------------------------------------------------------
+# The write arm (unit D1, P10)
+# ---------------------------------------------------------------------------
+
+#: The workload: its seed, the timed count and the untimed warm-ups before
+#: it. Fixed, so the baseline, the cache run and the review-era run time
+#: the same bodies; each file records the workload's sha256 beside them.
+WRITE_SEED = 20260930
+WRITE_N = 50
+WRITE_WARM_UPS = 3
+WRITE_SCOPES: tuple[str, ...] = ("bench:daemon-write",)
+#: Calls one write may take: the first, the answer to its review, and one
+#: follow-up review should the store move between the two. A write still
+#: under review after that stops the run.
+MAX_WRITE_CALLS = 3
+#: The answer the arm gives every related id of a review, with unsafe and
+#: secret 0: the cost of the round trip, not of any decision.
+REVIEW_LABEL = "unrelated"
+#: The live store's directory names under the home directory: the v9 store
+#: and the v8 default (`config.GLOBAL_DIR_NAME`). `$BETTERMEMORY_DIR` is
+#: read at call time.
+LIVE_STORE_NAMES = (".bettermemory", ".claude-memory")
+
+# The workload's made-up nouns are built from these syllables, so a body
+# shares next to no content word with a real memory and names no project
+# scope, and no word spells a transient marker or a secret's shape.
+_ONSETS = (
+    "b", "d", "f", "g", "k", "l", "m", "n", "p", "r", "s", "t", "v", "z",
+    "br", "dr", "gr", "kl", "pl", "st", "tr", "vl",
+)  # fmt: skip
+_VOWELS = ("a", "e", "i", "o", "u")
+_CODAS = ("", "", "", "n", "r", "l", "k", "s")
+
+# Factual sentences in the register of a stored memory: no state, no dates,
+# no numbers, no claim about a person, no path. Each sentence holds four
+# made-up nouns and one real verb, and every other word is a stopword, so
+# at most one content token in five can be shared with any stored body:
+# a body stays under the dedup medium line (0.40) against the longest
+# memory, whose vocabulary the containment score otherwise matches.
+_TEMPLATES = (
+    "{A} forwards {b} to {c} and {d}.",
+    "{A} stores {b} in {c} by {d}.",
+    "{A} drains {b} into {c} for {d}.",
+    "{A} pins {b} to {c} of {d}.",
+    "{A} retries {b} with {c} and then {d}.",
+    "{A} reads {b} from {c} and {d}.",
+    "{A} shares {b} with {c} and {d}.",
+    "{A} exports {b} to {c} as {d}.",
+    "{A} tags {b} with {c} from {d}.",
+    "{A} skips {b} and {c} for {d}.",
+    "{A} signs {b} for {c} with {d}.",
+    "{A} rebuilds {b} from {c} and {d}.",
+    "{A} listens to {b} on {c} by {d}.",
+    "{A} writes {b} to {c} in {d}.",
+    "{A} caches {b} in {c} for {d}.",
+    "{A} depends on {b}, {c} and {d}.",
+    "{A} compresses {b} with {c} for {d}.",
+    "{A} routes {b} from {c} to {d}.",
+    "{A} validates {b} with {c} and {d}.",
+    "{A} batches {b} into {c} for {d}.",
+    "{A} mirrors {b} to {c} and {d}.",
+    "{A} hashes {b} with {c} and {d}.",
+    "{A} spawns {b} for {c} and {d}.",
+    "{A} serves {b} from {c} to {d}.",
+)
+_SENTENCES_PER_BODY = 6
+
+#: `call(name, arguments)` -> the tool's JSON object.
+ToolCall = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
+
+
+def _noun(rng: random.Random, used: set[str]) -> str:
+    while True:
+        word = "".join(
+            rng.choice(_ONSETS) + rng.choice(_VOWELS) + rng.choice(_CODAS)
+            for _ in range(rng.choice((2, 3)))
+        )
+        if len(word) >= 5 and word not in used:
+            used.add(word)
+            return word
+
+
+def _candidate(rng: random.Random, used: set[str]) -> str:
+    sentences: list[str] = []
+    for template in rng.sample(_TEMPLATES, _SENTENCES_PER_BODY):
+        sentences.append(
+            template.format(
+                A=_noun(rng, used).capitalize(),
+                b=_noun(rng, used),
+                c=_noun(rng, used),
+                d=_noun(rng, used),
+            )
+        )
+    return " ".join(sentences)
+
+
+def _as_memory(body: str) -> Any:
+    from bettermemory.models import Confidence, Memory, Source, generate_ulid
+
+    when = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    return Memory(
+        id=generate_ulid(),
+        created=when,
+        updated=when,
+        scopes=list(WRITE_SCOPES),
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+        body=body,
+    )
+
+
+def write_workload(seed: int = WRITE_SEED, count: int = WRITE_N) -> list[str]:
+    """`count` bodies from `seed`, each distinct from the others by the
+    dedup measure (`search.find_similar` returns nothing against the ones
+    before it). Sequential, so `write_workload(seed, n)` is a prefix of
+    `write_workload(seed, n + k)`, and a function of the seed alone: no
+    store is read. Whether the bodies are new to a store is
+    `check_workload`'s question."""
+    from bettermemory.search import find_similar
+
+    rng = random.Random(seed)
+    used: set[str] = set()
+    bodies: list[str] = []
+    accepted: list[Any] = []
+    while len(bodies) < count:
+        body = _candidate(rng, used)
+        if find_similar(body, accepted):
+            continue
+        bodies.append(body)
+        accepted.append(_as_memory(body))
+    return bodies
+
+
+def workload_sha256(bodies: list[str]) -> str:
+    return hashlib.sha256(
+        json.dumps(bodies, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _write_arguments(body: str) -> dict[str, Any]:
+    return {"content": body, "scopes": list(WRITE_SCOPES)}
+
+
+def check_workload(store: Any, config: Any, bodies: list[str]) -> dict[str, Any]:
+    """Every body passes the write gates on `store` and overlaps nothing
+    active or removed there, nor any other body, before a timed call.
+
+    The gates are `handlers.write._WRITE_GATES`, run through
+    `apply_write_gates` with every acknowledge flag off and `force` off,
+    as the timed call will run them. A decision of status "review" counts
+    as passing, because the review sits after the gates. Overlap is the
+    dedup measure at its medium line (`find_similar` and
+    `find_similar_tombstones` return nothing), stricter than the gates'
+    high line, so a body is new and not merely not a duplicate. Raises
+    SystemExit naming each failing body by index and status only."""
+    from bettermemory.handlers._shared import _validate_write_payload
+    from bettermemory.handlers.write import (
+        _WRITE_GATES,
+        GateBundle,
+        GateContext,
+        apply_write_gates,
+    )
+    from bettermemory.search import find_similar, find_similar_tombstones
+
+    deps = GateBundle.for_store(store, config)
+    active = store.load_all()
+    removed = store.load_tombstones()
+    known = {f.name for f in dataclasses.fields(GateContext)}
+    flags: dict[str, Any] = {
+        "force": False,
+        "acknowledge_transient": False,
+        "acknowledge_scope_mismatch": False,
+        "acknowledge_ungrounded": False,
+        "acknowledge_credential": False,
+        "acknowledge_user_claim": False,
+        "groundedness_check": False,
+        "source_transcript": None,
+    }
+    behavior = config.behavior
+    problems: list[str] = []
+    counts = Counter[str]()
+    for index, body in enumerate(bodies):
+        payload = _validate_write_payload(
+            content=body,
+            scopes=list(WRITE_SCOPES),
+            confidence="medium",
+            source="explicit-statement",
+            allowed_scopes=config.scopes.allowed,
+            category="fact",
+            max_content_bytes=behavior.max_content_bytes,
+            min_content_tokens=behavior.min_content_tokens,
+            max_scopes_per_write=behavior.max_scopes_per_write,
+        )
+        gc = GateContext(
+            payload=payload, **{k: v for k, v in flags.items() if k in known}
+        )
+        decision = apply_write_gates(deps, gc)
+        status = None if decision is None else decision.response.get("status")
+        if decision is not None and status != "review":
+            counts["refused"] += 1
+            problems.append(f"body {index} refused as {status}")
+        if find_similar(body, active):
+            counts["overlapping_active"] += 1
+            problems.append(f"body {index} overlaps an active memory")
+        if find_similar_tombstones(body, removed):
+            counts["overlapping_removed"] += 1
+            problems.append(f"body {index} overlaps a removed memory")
+        others = [_as_memory(b) for j, b in enumerate(bodies) if j != index]
+        if find_similar(body, others):
+            counts["overlapping_each_other"] += 1
+            problems.append(f"body {index} overlaps another workload body")
+    if problems:
+        raise SystemExit(
+            "the write workload is not gate-clean on this store: " + "; ".join(problems)
+        )
+    return {
+        "gates": [type(gate).__name__ for gate in _WRITE_GATES],
+        "bodies": len(bodies),
+        "active_in_store": len(active),
+        "removed_in_store": len(removed),
+        "refused": counts["refused"],
+        "overlapping_active": counts["overlapping_active"],
+        "overlapping_removed": counts["overlapping_removed"],
+        "overlapping_each_other": counts["overlapping_each_other"],
+    }
+
+
+def review_answer(response: dict[str, Any]) -> dict[str, Any]:
+    """The arm's answer to a review response: every related id
+    "unrelated", unsafe 0, secret 0, and the review_id when one was
+    given."""
+    review = response.get("review") or {}
+    related = review.get("related") or []
+    ids = [entry["id"] if isinstance(entry, dict) else entry for entry in related]
+    answer: dict[str, Any] = {
+        "relation": {str(i): REVIEW_LABEL for i in ids},
+        "unsafe": 0,
+        "secret": 0,
+    }
+    if review.get("review_id"):
+        answer["review_id"] = review["review_id"]
+    return answer
+
+
+async def time_writes(
+    call: ToolCall,
+    bodies: list[str],
+    *,
+    clock: Callable[[], float] = time.perf_counter,
+) -> dict[str, Any]:
+    """One memory_write per body, timed from the first call to the
+    decision. A write answered with status "review" is re-sent as the
+    same call plus `review_answer`, and its time covers every call; it
+    lands in `reviewed_write`, a write decided in one call in
+    `memory_write`. Every write must end committed."""
+    single: list[float] = []
+    reviewed: list[float] = []
+    statuses = Counter[str]()
+    calls = Counter[int]()
+    for index, body in enumerate(bodies):
+        arguments = _write_arguments(body)
+        started = clock()
+        response = await call("memory_write", arguments)
+        made = 1
+        while response.get("status") == "review":
+            if made >= MAX_WRITE_CALLS:
+                raise SystemExit(f"write {index} still under review after {made} calls")
+            response = await call(
+                "memory_write", {**arguments, "review": review_answer(response)}
+            )
+            made += 1
+        elapsed = clock() - started
+        status = response.get("status")
+        if status != "committed":
+            raise SystemExit(f"write {index} ended {status!r}, not committed")
+        (reviewed if made > 1 else single).append(elapsed)
+        statuses[str(status)] += 1
+        calls[made] += 1
+    return {
+        "memory_write": single,
+        "reviewed_write": reviewed,
+        "statuses": dict(statuses),
+        "calls_per_write": {str(k): v for k, v in sorted(calls.items())},
+    }
+
+
+def server_call(server: Any) -> ToolCall:
+    """`ToolCall` over `build_server(...)`'s `call_tool`, in this process."""
+
+    async def call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        result = await server.call_tool(name, arguments)
+        if getattr(result, "is_error", False):
+            raise SystemExit(f"{name} returned an error in process")
+        structured = getattr(result, "structured_content", None)
+        if isinstance(structured, dict):
+            return structured
+        content = getattr(result, "content", None)
+        if content and hasattr(content[0], "text"):
+            parsed = json.loads(content[0].text)
+            if isinstance(parsed, dict):
+                return parsed
+        raise SystemExit(f"{name} returned no JSON object")
+
+    return call
+
+
+def live_store_dirs() -> list[Path]:
+    """The directories the arm never writes under: the live store in the
+    home directory, under both names, and `$BETTERMEMORY_DIR` when set."""
+    from bettermemory.config import ENV_DIR_OVERRIDE
+
+    dirs = [Path.home() / name for name in LIVE_STORE_NAMES]
+    override = os.environ.get(ENV_DIR_OVERRIDE)
+    if override:
+        dirs.append(Path(override).expanduser())
+    return dirs
+
+
+def refuse_live_store(path: Path) -> None:
+    """SystemExit when `path` is a live store directory or inside one."""
+    target = path.expanduser().resolve()
+    for live in live_store_dirs():
+        resolved = live.resolve()
+        if target == resolved or target.is_relative_to(resolved):
+            raise SystemExit(
+                f"refusing {path}: the write arm runs on a scratch copy only, "
+                f"and this is the live store at {live} or inside it"
+            )
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def verify_tgz(tgz: Path) -> str:
+    """The tarball's sha256, after checking it against the `.sha256` file
+    beside it; SystemExit when that file is missing or disagrees."""
+    sidecar = tgz.with_name(tgz.name + ".sha256")
+    if not sidecar.is_file():
+        raise SystemExit(f"no {sidecar.name} beside {tgz}")
+    fields = sidecar.read_bytes().decode("utf-8").split()
+    recorded = fields[0].lower() if fields else ""
+    digest = file_sha256(tgz)
+    if recorded != digest:
+        raise SystemExit(
+            f"{tgz.name} hashes to {digest}, not the {recorded or 'nothing'} "
+            f"its {sidecar.name} records"
+        )
+    return digest
+
+
+def extract_copy(tgz: Path, dest: Path) -> Path:
+    """Unpack `tgz` under `dest` with the data filter and return the v8
+    directory: the archive's single top directory, or `dest` itself.
+
+    AppleDouble members (a basename starting "._") are skipped. macOS tar
+    writes one beside every entry to carry extended attributes; they are
+    no part of the store, and the sealed copy holds one per file. Its
+    unpacked twin at ~/.cache/bettermemory-v9/live-copy, which the read
+    arm's runs migrated, has none, so skipping them imports what those
+    runs imported."""
+    dest.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(tgz, "r:gz") as archive:
+        members = [
+            member
+            for member in archive.getmembers()
+            if not Path(member.name).name.startswith("._")
+        ]
+        archive.extractall(dest, members=members, filter="data")
+    entries = list(dest.iterdir())
+    if len(entries) == 1 and entries[0].is_dir():
+        return entries[0]
+    return dest
+
+
+def import_copy(v8_root: Path, store_dir: Path) -> dict[str, Any]:
+    """`migrate_v8.migrate` in this process, into `store_dir`."""
+    from bettermemory.migrate_v8 import migrate as migrate_v8
+    from bettermemory.store import STORE_FILENAME
+
+    store_dir.mkdir(parents=True, exist_ok=True)
+    started = time.perf_counter()
+    report = migrate_v8(v8_root, store_dir / STORE_FILENAME).to_dict()
+    report["seconds"] = round(time.perf_counter() - started, 2)
+    return report
+
+
+def _git(*args: str) -> str | None:
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(ROOT), *args],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def _machine() -> dict[str, Any]:
+    return {
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "python": platform.python_version(),
+        "cpu_count": os.cpu_count(),
+    }
+
+
+async def _write_pass(
+    call: ToolCall,
+    warm: list[str],
+    timed: list[str],
+    clock: Callable[[], float],
+) -> dict[str, Any]:
+    await time_writes(call, warm, clock=clock)
+    return await time_writes(call, timed, clock=clock)
+
+
+def run_write_arm(
+    *,
+    tgz: Path,
+    scratch: Path,
+    n: int = WRITE_N,
+    seed: int = WRITE_SEED,
+    warm_ups: int = WRITE_WARM_UPS,
+    note: str | None = None,
+    clock: Callable[[], float] = time.perf_counter,
+) -> dict[str, Any]:
+    """Import `tgz` into a scratch store under `scratch`, check the
+    workload there, write `warm_ups` bodies untimed and time `n`, and
+    return the artifact. Refuses a live store before any file is read."""
+    from bettermemory import __version__
+    from bettermemory.config import (
+        KEYS_DIR_ENV,
+        BehaviorConfig,
+        Config,
+        ScopesConfig,
+        StorageConfig,
+    )
+    from bettermemory.server import build_server
+    from bettermemory.session import SessionState
+    from bettermemory.store import Store
+
+    refuse_live_store(scratch)
+    store_dir = scratch / "store"
+    refuse_live_store(store_dir)
+    digest = verify_tgz(tgz)
+    bodies = write_workload(seed, n + warm_ups)
+    timed, warm = bodies[:n], bodies[n:]
+
+    previous_keys = os.environ.get(KEYS_DIR_ENV)
+    os.environ[KEYS_DIR_ENV] = str(scratch / "keys")
+    store = None
+    try:
+        v8_root = extract_copy(tgz, scratch / "copy")
+        report = import_copy(v8_root, store_dir)
+        if not report.get("memories", {}).get("found"):
+            raise SystemExit(f"the copy in {tgz.name} imported no memories")
+        config = Config(
+            storage=StorageConfig(directory=str(store_dir)),
+            behavior=BehaviorConfig(),
+            scopes=ScopesConfig(),
+        )
+        store = Store(store_dir)
+        server = build_server(config=config, store=store, state=SessionState())
+        gate_check = check_workload(store, config, bodies)
+        timings = asyncio.run(_write_pass(server_call(server), warm, timed, clock))
+    finally:
+        if store is not None:
+            store.close()
+        if previous_keys is None:
+            os.environ.pop(KEYS_DIR_ENV, None)
+        else:
+            os.environ[KEYS_DIR_ENV] = previous_keys
+
+    results: dict[str, Any] = {}
+    if timings["memory_write"]:
+        results["memory_write"] = _summary(timings["memory_write"])
+    if timings["reviewed_write"]:
+        results["reviewed_write"] = _summary(timings["reviewed_write"])
+    lengths = [len(body) for body in timed]
+    commit = _git("rev-parse", "HEAD")
+    return {
+        "kind": "daemon-latency-write",
+        "version": __version__,
+        "commit": commit,
+        "run_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "machine": _machine(),
+        "provenance": {
+            "commit": commit,
+            "src_tree": _git("rev-parse", "HEAD:src"),
+            "src_clean": _git("status", "--porcelain", "--", "src") == "",
+            "note": note,
+        },
+        "store": {
+            "source": str(tgz),
+            "tgz_sha256": digest,
+            "memories_imported": report.get("memories", {}),
+            "tombstones_imported": report.get("tombstones", {}),
+            "events_imported": report.get("events", {}),
+            "import_seconds": report["seconds"],
+        },
+        "workload": {
+            "seed": seed,
+            "count": n,
+            "warm_ups": warm_ups,
+            "sha256": workload_sha256(timed),
+            "generator": "write_workload in bench/daemon/latency.py",
+            "arguments": {"scopes": list(WRITE_SCOPES)},
+            "chars": {
+                "min": min(lengths) if lengths else 0,
+                "p50": statistics.median(lengths) if lengths else 0,
+                "max": max(lengths) if lengths else 0,
+            },
+        },
+        "gate_check": gate_check,
+        "method": {
+            "memory_write": (
+                "build_server(...).call_tool memory_write in this process, from "
+                "the first call to the decision, one call per write; each body "
+                "commits, so the store grows by one per write"
+            ),
+            "reviewed_write": (
+                "the same for a write answered with status review: the same "
+                "call re-sent with review {review_id, relation: every related "
+                f"id {REVIEW_LABEL!r}, unsafe 0, secret 0}}, both calls timed "
+                "together; absent when no review was issued"
+            ),
+            "warm_ups": (
+                f"{warm_ups} further workload bodies written untimed first, "
+                "through the same server"
+            ),
+            "gate_check": (
+                "before any timed call, every body passed the write gates on "
+                "the scratch copy with every acknowledge flag off, and "
+                "overlapped nothing active or removed there nor another body "
+                "at the dedup medium line"
+            ),
+        },
+        "outcomes": {
+            "statuses": timings["statuses"],
+            "calls_per_write": timings["calls_per_write"],
+        },
+        "results": results,
+    }
+
+
+def write_artifact(out: Path, artifact: dict[str, Any]) -> None:
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(
+        (json.dumps(artifact, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
+        "--arm",
+        choices=("read", "write"),
+        default="read",
+        help=(
+            "read: the hook and memory_search arms (the default); write: the "
+            "memory_write arm on a copy imported from --tgz"
+        ),
+    )
+    parser.add_argument(
         "--v8",
         type=Path,
-        required=True,
-        help="the v8 store directory to migrate into the scratch store",
+        default=None,
+        help="the v8 store directory to migrate into the scratch store (read arm)",
+    )
+    parser.add_argument(
+        "--tgz",
+        type=Path,
+        default=None,
+        help="the sealed store tarball, its .sha256 beside it (write arm)",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=WRITE_SEED, help="the write arm's workload seed"
+    )
+    parser.add_argument(
+        "--note",
+        default=None,
+        help="a provenance note written into the write arm's file",
     )
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--n", type=int, default=50)
@@ -360,6 +976,25 @@ def main() -> None:
         help="scratch directory (default: a fresh temp dir)",
     )
     args = parser.parse_args()
+
+    if args.arm == "write":
+        if args.tgz is None:
+            parser.error("--arm write needs --tgz")
+        scratch = args.scratch or Path(
+            tempfile.mkdtemp(prefix="bettermemory-daemon-write-bench-")
+        )
+        artifact = run_write_arm(
+            tgz=args.tgz,
+            scratch=scratch,
+            n=args.n,
+            seed=args.seed,
+            note=args.note,
+        )
+        write_artifact(args.out, artifact)
+        print(f"wrote {args.out}", file=sys.stderr)
+        return
+    if args.v8 is None:
+        parser.error("the read arm needs --v8")
 
     scratch = args.scratch or Path(
         tempfile.mkdtemp(prefix="bettermemory-daemon-bench-")
@@ -482,10 +1117,7 @@ def main() -> None:
         },
         "results": results,
     }
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(
-        json.dumps(artifact, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    write_artifact(args.out, artifact)
     print(f"wrote {args.out}", file=sys.stderr)
 
 

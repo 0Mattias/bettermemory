@@ -1,0 +1,102 @@
+{
+  "commit": "1426463836aa90d30aefaaf6d72c32d2ca6af01c",
+  "gate_check": {
+    "active_in_store": 662,
+    "bodies": 53,
+    "gates": [
+      "CredentialGate",
+      "TransientGate",
+      "UserClaimGate",
+      "ScopeMismatchGate",
+      "GroundednessGate",
+      "DedupActiveGate",
+      "DedupTombstoneGate"
+    ],
+    "overlapping_active": 0,
+    "overlapping_each_other": 0,
+    "overlapping_removed": 0,
+    "refused": 0,
+    "removed_in_store": 52
+  },
+  "kind": "daemon-latency-write",
+  "machine": {
+    "cpu_count": 12,
+    "machine": "arm64",
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "python": "3.11.15"
+  },
+  "method": {
+    "gate_check": "before any timed call, every body passed the write gates on the scratch copy with every acknowledge flag off, and overlapped nothing active or removed there nor another body at the dedup medium line",
+    "memory_write": "build_server(...).call_tool memory_write in this process, from the first call to the decision, one call per write; each body commits, so the store grows by one per write",
+    "reviewed_write": "the same for a write answered with status review: the same call re-sent with review {review_id, relation: every related id 'unrelated', unsafe 0, secret 0}, both calls timed together; absent when no review was issued",
+    "warm_ups": "3 further workload bodies written untimed first, through the same server"
+  },
+  "outcomes": {
+    "calls_per_write": {
+      "1": 50
+    },
+    "statuses": {
+      "committed": 50
+    }
+  },
+  "provenance": {
+    "commit": "1426463836aa90d30aefaaf6d72c32d2ca6af01c",
+    "note": "Run on 1426463836aa90d30aefaaf6d72c32d2ca6af01c, whose src/ tree (src_tree) is the tree of a7a3017f82eac2886a256ef623813081db91e160, the baseline product D1 names for P10: memory_write without the raw token-set cache and without the review.",
+    "src_clean": true,
+    "src_tree": "e94819770b555e02a665f0118f4de17861a019b6"
+  },
+  "results": {
+    "memory_write": {
+      "max_ms": 698.07,
+      "min_ms": 667.75,
+      "n": 50,
+      "p50_ms": 673.77,
+      "p95_ms": 692.69
+    }
+  },
+  "run_at": "2026-09-30T06:34:05.798778Z",
+  "store": {
+    "events_imported": {
+      "found": 15871,
+      "imported": 15871,
+      "malformed": 0,
+      "present": 0,
+      "redacted": 123,
+      "unstamped": 0
+    },
+    "import_seconds": 2.16,
+    "memories_imported": {
+      "found": 662,
+      "imported": 662,
+      "present": 0,
+      "unparseable": 0
+    },
+    "source": "/Users/mattias/.cache/bettermemory-v9/live-copy-2026-09-25.tgz",
+    "tgz_sha256": "311495f19008736d0643d2dd256b8ade30f891d1ac72aaa557b119c9f723e526",
+    "tombstones_imported": {
+      "found": 52,
+      "imported": 52,
+      "legacy_names": 7,
+      "present": 0,
+      "unparseable": 0
+    }
+  },
+  "version": "8.0.0",
+  "workload": {
+    "arguments": {
+      "scopes": [
+        "bench:daemon-write"
+      ]
+    },
+    "chars": {
+      "max": 341,
+      "min": 286,
+      "p50": 306.0
+    },
+    "count": 50,
+    "generator": "write_workload in bench/daemon/latency.py",
+    "seed": 20260930,
+    "sha256": "d0d4b51b4114168c3375cbcc18e6bbd92d33b46e8ed1b0bde8181ff4719c30b8",
+    "warm_ups": 3
+  }
+}
