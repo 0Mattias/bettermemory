@@ -21,7 +21,8 @@ direction nothing may (the code is the model):
 their per-mode scorers so callers can wire the rankers directly
 without going through `search()`. The dedup path (`find_similar`)
 uses Jaccard over `_raw_content_token_set` token sets with
-pairwise-aware kebab expansion (`_pairwise_content_jaccard`).
+pairwise-aware kebab expansion (`_pairwise_content_jaccard`), each set
+served from a bounded body-keyed cache (`raw_content_tokens`).
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ import threading
 import unicodedata
 from bisect import bisect_left
 from collections import OrderedDict
+from collections.abc import Set as AbstractSet
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Any, Callable, Literal, NamedTuple
@@ -3943,7 +3945,64 @@ def _raw_content_token_set(text: str) -> set[str]:
     return set(_strip_stopwords(tokenize(text)))
 
 
-def _pairwise_content_jaccard(raw_a: set[str], raw_b: set[str]) -> float:
+# The raw token-set cache. `find_similar` (and the tombstone scan through
+# the same scorer) and `supersession.detect_supersession` tokenise every
+# active body on each write, the new body several times over; unit D1
+# measured about nine tenths of a write on the owner's 662-memory copy in
+# that tokenisation. `raw_content_tokens` memoises `_raw_content_token_set`
+# on the one input it reads: the text. The tokenizer reads only module
+# constants (the stopword lists, the stemmer's exceptions, the alias
+# table), so the text is the whole key and a hit is the value a recompute
+# builds. The key is the text and never an id or an `updated` stamp: a
+# body rewritten in place is a different string and misses, so an edited
+# record is tokenised again and its old entry ages out of the LRU. The
+# U5b cache above (`_memory_tokens`) keeps a different stream, the
+# kebab-expanded one with stopwords, so it cannot serve this one. Values
+# are frozensets, so no caller can change an entry another caller reads.
+# The detector keys a body with its provenance stamp stripped, which is
+# the body itself for an unstamped one, so one entry serves both callers
+# for most records. The bound holds every active and removed body of a
+# store of up to 5,000 unstamped records, the same bound as U5b's; past
+# it the least recently used entry goes. The lock makes a look-up-and-touch
+# and an insert-and-evict atomic; the tokenising runs outside it.
+# Registered with `_caches`, which empties it before each test.
+RAW_TOKEN_SET_ENTRIES = 5000
+
+_RAW_TOKEN_SETS: OrderedDict[str, frozenset[str]] = OrderedDict()
+_RAW_TOKEN_SETS_LOCK = threading.Lock()
+
+
+def clear_raw_token_set_cache() -> None:
+    """Drop every entry of `raw_content_tokens`' cache, so the next call
+    for any text tokenises it again."""
+    with _RAW_TOKEN_SETS_LOCK:
+        _RAW_TOKEN_SETS.clear()
+
+
+_caches.register(clear_raw_token_set_cache)
+
+
+def raw_content_tokens(text: str) -> frozenset[str]:
+    """`frozenset(_raw_content_token_set(text))`, or the entry an earlier
+    call built for an equal text. The dedup scorer and the supersession
+    detector read their token sets through this; see the comment on
+    `RAW_TOKEN_SET_ENTRIES` for the key and the bound."""
+    with _RAW_TOKEN_SETS_LOCK:
+        cached = _RAW_TOKEN_SETS.get(text)
+        if cached is not None:
+            _RAW_TOKEN_SETS.move_to_end(text)
+            return cached
+    tokens = frozenset(_raw_content_token_set(text))
+    with _RAW_TOKEN_SETS_LOCK:
+        _RAW_TOKEN_SETS[text] = tokens
+        while len(_RAW_TOKEN_SETS) > RAW_TOKEN_SET_ENTRIES:
+            _RAW_TOKEN_SETS.popitem(last=False)
+    return tokens
+
+
+def _pairwise_content_jaccard(
+    raw_a: AbstractSet[str], raw_b: AbstractSet[str]
+) -> float:
     """Jaccard similarity with pairwise-aware kebab expansion.
 
     A kebab/snake compound is expanded into its parts (`_kebab_parts`,
@@ -4098,14 +4157,14 @@ def _score_similar_jaccard(
 
     Token sets are RAW (no kebab expansion); `_pairwise_content_jaccard`
     expands compounds per pair so a compound both sides share can't
-    inflate the score."""
-    new_tokens = _raw_content_token_set(new_body)
+    inflate the score. Each set comes from `raw_content_tokens`' cache."""
+    new_tokens = raw_content_tokens(new_body)
     if not new_tokens:
         return []
 
     hits: list[SimilarHit] = []
     for memory in existing:
-        existing_tokens = _raw_content_token_set(memory.body)
+        existing_tokens = raw_content_tokens(memory.body)
         if not existing_tokens:
             continue
 

@@ -86,6 +86,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Iterable
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 
 from .models import Memory, snippet_for
@@ -93,7 +94,7 @@ from .search import (
     _STOPWORDS,
     _kebab_parts,
     _pairwise_content_jaccard,
-    _raw_content_token_set,
+    raw_content_tokens,
     tokenize,
 )
 
@@ -303,7 +304,7 @@ def claim_sized(body: str) -> bool:
     break). Semicolons and colons do not end a sentence here — a claim
     with two clauses is still one claim."""
     stripped = _strip_provenance(body)
-    tokens = _raw_content_token_set(stripped)
+    tokens = raw_content_tokens(stripped)
     sentences = [s for s in _SENTENCE_RE.split(stripped) if s.strip()]
     return 0 < len(tokens) <= MAX_CLAIM_TOKENS and len(sentences) <= MAX_CLAIM_SENTENCES
 
@@ -366,7 +367,7 @@ def _proper_nouns(body: str) -> set[str]:
     return out
 
 
-def value_tokens(body: str, raw_tokens: set[str]) -> set[str]:
+def value_tokens(body: str, raw_tokens: AbstractSet[str]) -> set[str]:
     """Question 2's value-shaped tokens of a body: digit-bearing tokens
     (`_numeric_token_set`, length-capped so identifiers do
     not count), joined compounds, and proper nouns — each intersected
@@ -377,7 +378,7 @@ def value_tokens(body: str, raw_tokens: set[str]) -> set[str]:
     return values
 
 
-def anchor_tokens(body: str, raw_tokens: set[str]) -> set[str]:
+def anchor_tokens(body: str, raw_tokens: AbstractSet[str]) -> set[str]:
     """The subset of `value_tokens` strong enough to anchor a reference
     on their own: numbers, proper nouns, and compounds that carry a digit
     or have three or more parts (`billing-db-green`, `prod-hlx-2`). A
@@ -474,7 +475,7 @@ def detect_supersession(
     body = _strip_provenance(new_body)
     if not claim_sized(body):
         return SupersessionReport(eligible=False, supersedes=[], conflicts=[])
-    new_raw = _raw_content_token_set(body)
+    new_raw = raw_content_tokens(body)
     cues = change_cues(body)
     new_values_all = value_tokens(body, new_raw)
     if cues:
@@ -491,7 +492,7 @@ def detect_supersession(
         old_body = _strip_provenance(memory.body)
         if not claim_sized(old_body):
             continue
-        old_raw = _raw_content_token_set(old_body)
+        old_raw = raw_content_tokens(old_body)
         similarity = _pairwise_content_jaccard(new_raw, old_raw)
         if similarity < MIN_JACCARD:
             continue

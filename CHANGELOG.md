@@ -135,6 +135,15 @@ surfaces leave with them. An 8.x directory is imported once by
   and the test suite calls it before each test. The phase 1 gate's
   numbers are in `bench/daemon/results/latency-9.0.0-2026-09-26-u6.json`.
   (`src/bettermemory/githead.py`, `src/bettermemory/_caches.py`)
+- `memory_write`'s dedup scans (`find_similar`, `find_similar_tombstones`)
+  and the supersession detector read each body's raw content-token set
+  from a cache keyed on the text (`search.raw_content_tokens`, a
+  5,000-entry LRU registered with `_caches`) instead of tokenising every
+  active body on every write. An edited body is a new key and is
+  tokenised again. On the 662-memory copy of the write arm, a write's p50
+  went from 673.77 ms to 109.27 ms
+  (`bench/daemon/results/latency-9.0.0-2026-09-30-write-baseline.json`,
+  `latency-9.0.0-2026-09-30-write-cache.json`).
 - `bench/toolcost` records the served `instructions` block beside the
   descriptions and schemas (`instructions_bytes`, `instructions_chars`,
   `session_bytes`).
