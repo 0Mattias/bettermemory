@@ -17,7 +17,7 @@ from __future__ import annotations
 import bisect
 import threading
 from collections import OrderedDict
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TypeAlias
@@ -105,7 +105,9 @@ NEGATIVE_OUTCOME_WINDOW_DAYS = 30
 
 # The per-hit commit-drift memo of
 # `ResponseBuilder.attach_commit_drift_counts`: one hit's resolution, keyed
-# on every input of it. The key is the repository root and the commit HEAD
+# on every input of it. `memory_show` and the session brief read and fill
+# it too (`verdict`), through the same pass (`_DriftPass`) and so the same
+# key. The key is the repository root and the commit HEAD
 # names as the repository's files give them, the caller's directory, the
 # memory's anchors (derived from its body and verified_paths) and its
 # declared claims as stored, the verify instant, the stamp's recorded head,
@@ -209,6 +211,241 @@ def _files_held(
         chain is None or gitattributes_signature(root, specs) == chain
         for specs, chain in chains.items()
     )
+
+
+class _DriftPass:
+    """One pass of per-hit commit-drift resolution against one caller
+    directory: the state a pass over many memories keeps between rows, and
+    the one way a row's resolution is keyed, recalled from `_DRIFT_MEMO`,
+    resolved and stored.
+
+    `ResponseBuilder.attach_commit_drift_counts` runs one per search and
+    `verdict.resolve_verdicts` / `verdict.memoised_verdicts` one per call,
+    so `memory_search`'s hits, `memory_show` and the session brief read
+    one memo through one key. The cost and the key's coverage are the
+    search's, set out on `attach_commit_drift_counts`.
+
+    `caller_repo` is the caller's `origin.repo`; `cwd` its directory. The
+    repo root and the head are read from the repository's files as the
+    pass opens (no process). The head's whole history (`timestamps`) and
+    the root and head from git where the files decline (`located`) are
+    read on first use, so a pass the memo answers whole runs no git
+    process. What the pass resolves is kept by `store`, at its end, only
+    while what it was keyed on still reads as it did.
+
+    Not shared between threads: each caller opens its own. The memo it
+    reads and merges into is lock-guarded, and every other memo the
+    resolution reaches (the whole-history log, the walks, the config and
+    index readers) is too, so passes on several threads, a search's and a
+    worker thread's, can run at once.
+    """
+
+    def __init__(self, cwd: Path, caller_repo: str) -> None:
+        self.cwd = cwd
+        self.caller_repo = caller_repo
+        self.settled = toplevel_and_head_from_files(cwd)
+        self._timestamps: list[datetime] | None = None
+        self._located: tuple[Path, str] | None = None
+        self._located_read = False
+        # What this pass resolved, stored at the end if nothing it is keyed
+        # on moved while it ran.
+        self._resolved: dict[_DriftKey, ResolvedCommitDrift | None] = {}
+        # The walks of this pass no memo keeps: several hits at one dead
+        # anchor fork one walk, and so do several at one anchor where the
+        # walk memo cannot key the walk (`commits_since_anchor`).
+        self._walked: dict[tuple[str, str, str], ReachableWalk | bool] = {}
+        # The files the hits key on: the repository's attribute files read
+        # once per pass, the working tree's once per set of governed
+        # files, the files beside the walk once per pass; and the stamps
+        # of the directories that hold them, for the check at the end.
+        self._repository_attributes: object = _UNREAD
+        self._attribute_chains: dict[tuple[str, ...], tuple[object, ...] | None] = {}
+        self._walk_files: tuple[object, ...] | None = None
+        self._walk_files_read = False
+        self._held_directories: dict[str, tuple[int, int]] = {}
+        # The signature of the files that name the head, read before the
+        # first resolution and again at the end: a head moved away and back
+        # meanwhile reads as the same head, but leaves HEAD or its ref
+        # rewritten. No git process that reads HEAD runs before the first
+        # resolution, and a pass the memo answers whole stores nothing, so
+        # it reads none.
+        self._signature: githead.Signature | None = None
+
+    def timestamps(self) -> list[datetime] | None:
+        """The head's whole history (`commit_author_timestamps`, memoised
+        per root and head), read on first use and kept once it answers. A
+        read that failed is made again by the next row that needs it, as
+        the uncached `verify.compute_commit_drift` makes it per show."""
+        if self._timestamps is None:
+            self._timestamps = commit_author_timestamps(self.cwd, located=self.settled)
+        return self._timestamps
+
+    def located(self) -> tuple[Path, str] | None:
+        """The repo root and the head: the files' where they settled them,
+        from one ``git rev-parse`` otherwise, read once per pass."""
+        if not self._located_read:
+            self._located = (
+                self.settled
+                if self.settled is not None
+                else repo_toplevel_and_head(self.cwd)
+            )
+            self._located_read = True
+        return self._located
+
+    def lookup(
+        self, record: Any, last_verified_at: datetime | None, *, resolve: bool = True
+    ) -> tuple[bool, ResolvedCommitDrift | None]:
+        """One row's commit drift: whether it is answered, and the
+        resolution (None where the count is omitted).
+
+        Answered without git where the signal does not apply (never
+        verified, no `origin.repo`, another repository than the caller's,
+        no anchor and no declared claim), and where the memo, or this
+        pass, holds the row's key. Otherwise the row is resolved, with
+        whatever git that takes, and kept for `store`; with `resolve`
+        False it is left unanswered, ``(False, None)``, and no process
+        runs. `last_verified_at` is the stamp the row is counted from (a
+        hit's, which `attach_commit_drift_counts` reads, or the record's).
+        """
+        if last_verified_at is None:
+            return True, None
+        origin_repo = record.origin.repo if record.origin else None
+        if origin_repo is None:
+            return True, None
+        if not repos_match(origin_repo, self.caller_repo):
+            return True, None
+        # Claim-anchored gate: a memory with no cited/attested path
+        # anchors AND no declared claims is exempt — a bare repo-wide
+        # commit count carries no information about a preference or
+        # lesson that merely ORIGINATED in this repo (measured 100%
+        # false-positive on the dogfood store). A memory whose ONLY
+        # anchors are its declared claims is fully governed — the
+        # declaration is the anchor (`verify._resolve_with_claims`) —
+        # so the gate is two-term, the same condition
+        # `verify.compute_commit_drift` and both health rollups apply.
+        # Anchor derivation and stored-claim parsing are pure CPU
+        # (bounded regex; lenient parse).
+        anchors = commit_drift_anchor_paths(record.body, record.verified_paths)
+        parsed_claims = load_claims(record.claims) if record.claims else []
+        if not anchors and not parsed_claims:
+            return True, None
+        since = last_verified_at
+        if since.tzinfo is None:
+            since = since.replace(tzinfo=timezone.utc)
+        key = self._key(record, anchors, parsed_claims, since)
+        if key is not None:
+            found, resolved = _recall_drift(key)
+            if found:
+                return True, resolved
+            if key in self._resolved:
+                return True, self._resolved[key]
+        if not resolve:
+            return False, None
+        # Kept only when every git process the resolution ran answered: a
+        # fallback taken on a failure is what the uncached code serves on
+        # this call and not on the next.
+        if self.settled is not None and self._signature is None:
+            self._signature = githead.signature(self.cwd)
+        failed = failed_git_calls()
+        located = self.located()
+        resolved = _resolve_hit_drift(
+            cwd=self.cwd,
+            toplevel=located[0] if located is not None else None,
+            head=located[1] if located is not None else None,
+            timestamps=self.timestamps,
+            anchors=anchors,
+            claims=parsed_claims,
+            since=since,
+            verified_head=record.verified_head,
+            walked=self._walked,
+        )
+        if key is not None and failed_git_calls() == failed:
+            self._resolved[key] = resolved
+        return True, resolved
+
+    def _key(
+        self,
+        record: Any,
+        anchors: tuple[str, ...],
+        parsed_claims: list[Claim],
+        since: datetime,
+    ) -> _DriftKey | None:
+        """The row's `_DRIFT_MEMO` key, from stats of files alone, or None
+        where the files do not settle one and the row runs uncached.
+
+        Keyed on every input `_resolve_hit_drift` reads (the head's
+        history, `timestamps`, is read under the same root and head). Only
+        where the files settled the root and the head: `store` reads the
+        head from them again, and the git path runs uncached, as before
+        the memo. A governed claim's patch stream also reads the attribute
+        files, so its row keys on them, and runs uncached where they do
+        not settle it; no other row reads them. Every row keys on the
+        files beside the history its git reads: the repository's config
+        (log.follow there reaches a single-pathspec log, log.showRoot the
+        walk) and the working tree's .gitmodules (a submodule's ignore
+        setting reaches the walk), read once per pass; where they cannot
+        be read, the row runs uncached."""
+        if self.settled is None:
+            return None
+        root = self.settled[0]
+        governed = tuple(governed_claim_paths(parsed_claims))
+        attributes: tuple[object, ...] | None = None
+        if governed:
+            if self._repository_attributes is _UNREAD:
+                self._repository_attributes = attribute_files_signature(
+                    self.cwd, root, directories=self._held_directories
+                )
+            if governed not in self._attribute_chains:
+                self._attribute_chains[governed] = gitattributes_signature(
+                    root, governed, directories=self._held_directories
+                )
+            chain = self._attribute_chains[governed]
+            if self._repository_attributes is not None and chain is not None:
+                attributes = (self._repository_attributes, chain)
+        if not self._walk_files_read:
+            self._walk_files = walk_files_signature(
+                root, directories=self._held_directories
+            )
+            self._walk_files_read = True
+        if self._walk_files is None or (governed and attributes is None):
+            return None
+        return (
+            str(root),
+            self.settled[1],
+            str(self.cwd),
+            anchors,
+            tuple(record.claims),
+            since,
+            record.verified_head,
+            attributes,
+            self._walk_files,
+        )
+
+    def store(self) -> None:
+        """Merge this pass's resolutions into `_DRIFT_MEMO`, while what
+        they are keyed on reads as it did.
+
+        The path-filtered logs read HEAD as they run, the patch stream the
+        attribute files and the walk the config and .gitmodules, so a
+        commit landing or a file changing mid-pass would otherwise store
+        the next state's answer under this one's key. The signature and
+        the directories' stamps also catch a change undone before the end:
+        a head moved away and back, a file created and removed."""
+        if (
+            self._resolved
+            and self.settled is not None
+            and toplevel_and_head_from_files(self.cwd) == self.settled
+            and githead.signature(self.cwd) == self._signature
+            and _files_held(
+                self.cwd,
+                self.settled[0],
+                self._repository_attributes,
+                self._attribute_chains,
+                self._walk_files,
+                self._held_directories,
+            )
+        ):
+            _remember_drift(self._resolved)
 
 
 class ResponseBuilder:
@@ -990,25 +1227,21 @@ class ResponseBuilder:
         """
         if caller_origin.repo is None or caller_origin.cwd is None:
             return
-        cwd_path = Path(caller_origin.cwd)
-        # The repo root and the head, from the repository's files. They key
-        # the whole-history log and the per-hit memo; where the files do not
-        # settle them, both run uncached, from git.
-        settled = toplevel_and_head_from_files(cwd_path)
-        timestamps = commit_author_timestamps(cwd_path, located=settled)
-        if timestamps is None:
+        # The repo root and the head, from the repository's files (the
+        # pass reads them as it opens). They key the whole-history log and
+        # the per-hit memo; where the files do not settle them, both run
+        # uncached, from git.
+        drift = _DriftPass(Path(caller_origin.cwd), caller_origin.repo)
+        if drift.timestamps() is None:
             return
         # Resolve the repo root ONCE for the whole search (the per-hit
-        # anchor resolution below would otherwise pay a `git rev-parse`
-        # fork+exec per hit) and the head with it: the reachable walks
-        # are keyed on it. From git where the files did not settle them.
-        # None is tolerated (the resolver re-derives; a hit with an anchor
-        # then counts in author-date space), but with
-        # `commit_author_timestamps` having just answered, git is
-        # demonstrably reachable here.
-        located = settled if settled is not None else repo_toplevel_and_head(cwd_path)
-        toplevel = located[0] if located is not None else None
-        head = located[1] if located is not None else None
+        # anchor resolution would otherwise pay a `git rev-parse` fork+exec
+        # per hit) and the head with it: the reachable walks are keyed on
+        # it. From git where the files did not settle them. None is
+        # tolerated (the resolver re-derives; a hit with an anchor then
+        # counts in author-date space), but with `commit_author_timestamps`
+        # having just answered, git is demonstrably reachable here.
+        drift.located()
         # Build the id → memory side-map from the in-memory `memories`
         # list (already loaded by the caller for the search itself),
         # avoiding a second store round-trip per hit. The full record is
@@ -1019,131 +1252,20 @@ class ResponseBuilder:
         # memory memory_show reads as fresh — defeating the policy on
         # its highest-traffic surface.
         memory_by_id = {m.id: m for m in memories}
-        # What this search resolved, stored at the end if nothing it is
-        # keyed on moved while it ran.
-        resolved_here: dict[_DriftKey, ResolvedCommitDrift | None] = {}
-        # The walks of this search no memo keeps: several hits at one dead
-        # anchor fork one walk, and so do several at one anchor where the
-        # walk memo cannot key the walk (`commits_since_anchor`).
-        walked_here: dict[tuple[str, str, str], ReachableWalk | bool] = {}
-        # The files the hits key on: the repository's attribute files read
-        # once per search, the working tree's once per set of governed
-        # files, the files beside the walk once per search; and the stamps
-        # of the directories that hold them, for the check at the end.
-        repository_attributes: object = _UNREAD
-        attribute_chains: dict[tuple[str, ...], tuple[object, ...] | None] = {}
-        walk_files: tuple[object, ...] | None = None
-        walk_files_read = False
-        held_directories: dict[str, tuple[int, int]] = {}
-        # The signature of the files that name the head, read before the
-        # first resolution and again at the end: a head moved away and back
-        # meanwhile reads as the same head, but leaves HEAD or its ref
-        # rewritten. No git process that reads HEAD runs before the first
-        # resolution, and a search the memo answers whole stores nothing,
-        # so it reads none.
-        signature: githead.Signature | None = None
         for hit_dict, hit in zip(out, hits):
             if hit.last_verified_at is None:
                 continue
             record = memory_by_id.get(hit.id)
-            origin_repo = (
-                record.origin.repo if record is not None and record.origin else None
-            )
-            if origin_repo is None:
+            if record is None:
                 continue
-            if not repos_match(origin_repo, caller_origin.repo):
-                continue
-            assert record is not None  # origin_repo non-None implies record
-            # Claim-anchored gate: a memory with no cited/attested path
-            # anchors AND no declared claims is exempt — a bare repo-wide
-            # commit count carries no information about a preference or
-            # lesson that merely ORIGINATED in this repo (measured 100%
-            # false-positive on the dogfood store). A memory whose ONLY
-            # anchors are its declared claims is fully governed — the
-            # declaration is the anchor (`verify._resolve_with_claims`) —
-            # so the gate is two-term, the same condition
-            # `verify.compute_commit_drift` and both health rollups apply.
-            # Anchor derivation and stored-claim parsing are pure CPU
-            # (bounded regex; lenient parse).
-            anchors = commit_drift_anchor_paths(record.body, record.verified_paths)
-            parsed_claims = load_claims(record.claims) if record.claims else []
-            if not anchors and not parsed_claims:
-                continue
-            since = hit.last_verified_at
-            if since.tzinfo is None:
-                since = since.replace(tzinfo=timezone.utc)
-            # The per-hit memo, keyed on every input `_resolve_hit_drift`
-            # reads (the head's history, `timestamps`, is read under the
-            # same root and head). Only where the files settled the root and
-            # the head: the check after the loop reads the head from them
-            # again, and the git path runs uncached, as before the memo. A
-            # governed claim's patch stream also reads the attribute files,
-            # so its hit keys on them, and runs uncached where they do not
-            # settle it; no other hit reads them. Every hit keys on the
-            # files beside the history its git reads: the repository's
-            # config (log.follow there reaches a single-pathspec log,
-            # log.showRoot the walk) and the working tree's .gitmodules (a
-            # submodule's ignore setting reaches the walk), read once per
-            # search; where they cannot be read, the hit runs uncached.
-            key: _DriftKey | None = None
-            if settled is not None:
-                governed = tuple(governed_claim_paths(parsed_claims))
-                attributes: tuple[object, ...] | None = None
-                if governed:
-                    if repository_attributes is _UNREAD:
-                        repository_attributes = attribute_files_signature(
-                            cwd_path, settled[0], directories=held_directories
-                        )
-                    if governed not in attribute_chains:
-                        attribute_chains[governed] = gitattributes_signature(
-                            settled[0], governed, directories=held_directories
-                        )
-                    chain = attribute_chains[governed]
-                    if repository_attributes is not None and chain is not None:
-                        attributes = (repository_attributes, chain)
-                if not walk_files_read:
-                    walk_files = walk_files_signature(
-                        settled[0], directories=held_directories
-                    )
-                    walk_files_read = True
-                if walk_files is not None and (not governed or attributes is not None):
-                    key = (
-                        str(settled[0]),
-                        settled[1],
-                        str(cwd_path),
-                        anchors,
-                        tuple(record.claims),
-                        since,
-                        record.verified_head,
-                        attributes,
-                        walk_files,
-                    )
-            found, resolved = (False, None) if key is None else _recall_drift(key)
-            if not found and key is not None and key in resolved_here:
-                resolved = resolved_here[key]
-            elif not found:
-                # Kept only when every git process the resolution ran
-                # answered: a fallback taken on a failure is what the
-                # uncached code serves on this call and not on the next.
-                if settled is not None and signature is None:
-                    signature = githead.signature(cwd_path)
-                failed = failed_git_calls()
-                resolved = _resolve_hit_drift(
-                    cwd=cwd_path,
-                    toplevel=toplevel,
-                    head=head,
-                    timestamps=timestamps,
-                    anchors=anchors,
-                    claims=parsed_claims,
-                    since=since,
-                    verified_head=record.verified_head,
-                    walked=walked_here,
-                )
-                if key is not None and failed_git_calls() == failed:
-                    resolved_here[key] = resolved
+            # The gates, the key, the memo and the resolution are the
+            # pass's (`_DriftPass.lookup`), shared with `memory_show`
+            # through `verdict.resolve_verdicts`.
+            _, resolved = drift.lookup(record, hit.last_verified_at)
             if resolved is None:
-                # The anchors all escape this repo or are phantoms: the
-                # signal is not applicable; omit the field entirely.
+                # Not applicable: no repo, another repo, no anchor, or the
+                # anchors all escape this repo or are phantoms. Omit the
+                # field entirely.
                 continue
             # Additive, claim-carrying hits only; mirrors
             # `CommitDriftStatus.to_dict`'s claim_drift block so both
@@ -1187,29 +1309,7 @@ class ResponseBuilder:
                 path_drift_missing=len(hit.path_drift_claim_anchored_missing_paths),
                 commit_drift_count=count,
             )
-        # Keep this search's resolutions only while what they are keyed on
-        # reads as it did: the path-filtered logs read HEAD as they run, the
-        # patch stream the attribute files and the walk the config and
-        # .gitmodules, so a commit landing or a file changing mid-search
-        # would otherwise store the next state's answer under this one's
-        # key. The signature and the directories' stamps also catch a
-        # change undone before the end: a head moved away and back, a file
-        # created and removed.
-        if (
-            resolved_here
-            and settled is not None
-            and toplevel_and_head_from_files(cwd_path) == settled
-            and githead.signature(cwd_path) == signature
-            and _files_held(
-                cwd_path,
-                settled[0],
-                repository_attributes,
-                attribute_chains,
-                walk_files,
-                held_directories,
-            )
-        ):
-            _remember_drift(resolved_here)
+        drift.store()
 
     def attach_depends_on_resolved(  # type: ignore[no-untyped-def]
         self,
@@ -1703,7 +1803,7 @@ def _resolve_hit_drift(
     cwd: Path,
     toplevel: Path | None,
     head: str | None,
-    timestamps: list[datetime],
+    timestamps: Callable[[], list[datetime] | None],
     anchors: tuple[str, ...],
     claims: Sequence[Claim],
     since: datetime,
@@ -1712,12 +1812,15 @@ def _resolve_hit_drift(
 ) -> ResolvedCommitDrift | None:
     """One hit's commit drift as `ResponseBuilder.attach_commit_drift_
     counts` stamps it: the count, the basis it was measured on and the
-    claim detail, or None when the count is omitted. `timestamps` is the
-    head's whole history; everything else read here is an argument, and
-    all of it is in the per-hit memo's key (`_DRIFT_MEMO`), with the
-    attribute files a governed claim's patch stream reads and the files
-    beside the history the walk reads. `walked` is the search's record of
-    the walks no memo keeps (`origin.commits_since_anchor`)."""
+    claim detail, or None when the count is omitted. `timestamps` reads
+    the head's whole history (`_DriftPass.timestamps`), called only on the
+    author-date basis, as `verify.compute_commit_drift` reads it; a None
+    there omits the count, as it does on that function. Everything else
+    read here is an argument, and all of it is in the per-hit memo's key
+    (`_DRIFT_MEMO`), with the attribute files a governed claim's patch
+    stream reads and the files beside the history the walk reads.
+    `walked` is the pass's record of the walks no memo keeps
+    (`origin.commits_since_anchor`)."""
     # The basis, per hit, by the rule `verify.compute_commit_drift`
     # applies: the reachable walk from the stamp's recorded HEAD when the
     # record carries one and HEAD still descends from it, the author-date
@@ -1735,9 +1838,14 @@ def _resolve_hit_drift(
         # strictly greater than `since`; len - idx is the count of
         # commits strictly after the verify timestamp.
         # Equal-timestamp commits are not counted as drift,
-        # matching the health rollup's semantics.
-        idx = bisect.bisect_right(timestamps, since)
-        count = len(timestamps) - idx
+        # matching the health rollup's semantics. The search read the
+        # history before its first hit and stopped where it failed, so
+        # only a pass that reads it here can meet the None.
+        history = timestamps()
+        if history is None:
+            return None
+        idx = bisect.bisect_right(history, since)
+        count = len(history) - idx
         basis = BASIS_AUTHOR_DATE
     # Narrow to commits that touched an anchor (mirrors memory_show
     # / the expand_top block), so stable-claim memories don't nag

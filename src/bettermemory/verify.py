@@ -2657,8 +2657,9 @@ def resolve_commit_drift_count(
     what runs without one.
 
     The shared policy step behind all four commit-drift surfaces
-    (memory_show via `compute_commit_drift`, the memory_search top-hit
-    fold in `_response.attach_commit_drift_counts`, and the two
+    (memory_search's expanded top hit via `compute_commit_drift`, the
+    per-hit fold in `_response.attach_commit_drift_counts`, which
+    memory_show reads too through `verdict.memory_verdict`, and the two
     memory_health rollups). Keeping the decision in one function is what
     keeps the surfaces in lockstep — the historical failure mode here is
     one surface learning a policy refinement the others didn't. That is
@@ -3037,8 +3038,8 @@ def compute_commit_drift(
         # through — anchor resolution (`resolve_repo_pathspecs`) and the
         # path-filtered log (`commit_author_timestamps_touching_
         # pathspecs`) would otherwise EACH pay a `git rev-parse
-        # --show-toplevel` fork+exec on the hottest read path (every
-        # memory_show). Mirrors the batch surfaces
+        # --show-toplevel` fork+exec on a hot read path (every expanded
+        # search top hit). Mirrors the batch surfaces
         # (`health._compute_commit_drift_debt`,
         # `_response.attach_commit_drift_counts`), which already thread
         # a once-resolved toplevel. None is tolerated (the resolvers
@@ -3074,27 +3075,49 @@ def compute_commit_drift(
         # must read the same not-applicable here as it does the moment
         # one unrelated commit lands.
         return None
-    if count == 0:
+    return commit_drift_status(
+        ResolvedCommitDrift(
+            count,
+            claims_checked=claims_checked,
+            claims_drifted=claims_drifted,
+            basis=basis,
+        )
+    )
+
+
+def commit_drift_status(resolved: ResolvedCommitDrift) -> CommitDriftStatus:
+    """The `memory_show` block for a resolved measurement: ``clean`` at a
+    zero count, ``drift`` with its recommendation otherwise.
+
+    The one place a `ResolvedCommitDrift` becomes a `CommitDriftStatus`,
+    so `compute_commit_drift` and the per-hit memo's readers
+    (`verdict.resolve_verdicts`, which serves `memory_show` from
+    `_response._DRIFT_MEMO`) emit the same block for the same
+    measurement: every field of it is a function of the count, the
+    basis and the claim detail the memo stores. A clean block names no
+    drifted claim, whatever the resolution carried.
+    """
+    if resolved.count == 0:
         return CommitDriftStatus(
             status="clean",
             commits_since_verify=0,
             recommendation=None,
-            claims_checked=claims_checked,
+            claims_checked=resolved.claims_checked,
             claims_drifted=(),
-            basis=basis,
+            basis=resolved.basis,
         )
     recommendation = (
-        _claim_drift_recommendation(count, claims_drifted)
-        if claims_drifted
-        else _drift_recommendation(count)
+        _claim_drift_recommendation(resolved.count, resolved.claims_drifted)
+        if resolved.claims_drifted
+        else _drift_recommendation(resolved.count)
     )
     return CommitDriftStatus(
         status="drift",
-        commits_since_verify=count,
+        commits_since_verify=resolved.count,
         recommendation=recommendation,
-        claims_checked=claims_checked,
-        claims_drifted=claims_drifted,
-        basis=basis,
+        claims_checked=resolved.claims_checked,
+        claims_drifted=resolved.claims_drifted,
+        basis=resolved.basis,
     )
 
 
@@ -3417,6 +3440,7 @@ __all__ = [
     "ResolvedCommitDrift",
     "VerificationStatus",
     "commit_drift_anchor_paths",
+    "commit_drift_status",
     "compute_commit_drift",
     "compute_staleness_verdict",
     "compute_verification_status",

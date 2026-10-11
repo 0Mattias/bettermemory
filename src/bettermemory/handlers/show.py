@@ -13,12 +13,7 @@ from typing import TYPE_CHECKING, Any
 from .._response import isoformat, isoformat_optional
 from ..models import utcnow
 from ..store import MemoryNotFoundError, TombstonedError
-from ..verify import (
-    compute_commit_drift,
-    compute_staleness_verdict,
-    compute_verification_status,
-    detect_path_drift,
-)
+from ..verdict import memory_verdict
 from ._shared import Context, _advance_turn
 
 if TYPE_CHECKING:
@@ -46,7 +41,13 @@ async def memory_show(
         raise ValueError(str(exc)) from exc
     except MemoryNotFoundError as exc:
         raise ValueError(str(exc)) from exc
-    # Path-drift runs against the full body. We surface `path_drift`
+    # One verdict for show and search (`verdict.memory_verdict`): the
+    # calendar status, path drift and the commit leg, rolled up into
+    # `staleness_verdict`, with the commit leg read through the search's
+    # per-hit memo, so a show of a row nothing has moved under forks no
+    # git process.
+    #
+    # Path drift runs against the full body. We surface `path_drift`
     # only when there's something actionable: a memory with no path
     # claims (or all-healthy paths) returns the field as null so the
     # consumer can branch on `if path_drift is not None`. Without
@@ -55,22 +56,13 @@ async def memory_show(
     # mattered. `verified_paths` is threaded in so a path the user
     # has previously attested gets surfaced in `path_drift.verified`
     # even when no other claims drift.
-    drift = detect_path_drift(
-        memory.body,
-        verified_paths=memory.verified_paths,
-        absent_paths=memory.verified_absent_paths,
-        worktree_root=memory.origin.worktree_root if memory.origin else None,
-    )
+    #
     # Verification staleness is structurally always present — emitted
     # even for "fresh" memories — because consistent shape means the
     # consumer can branch on `verification.status` without an
     # existence check. The recommendation field is null on fresh,
     # populated otherwise; that's the actionable handle.
-    verification = compute_verification_status(
-        memory.last_verified_at,
-        now=utcnow(),
-        stale_after_days=deps.config.behavior.verification_stale_days,
-    )
+    #
     # Commit-drift is the cwd-aware sibling of verification: when the
     # caller is currently inside a checkout of the same repo the
     # memory came from, count commits authored since the last verify.
@@ -84,29 +76,23 @@ async def memory_show(
     # `/etc/foo` didn't), and not applicable at all — None — for a
     # memory whose body cites no paths this repo's commits could
     # invalidate (`body` feeds the anchor derivation).
-    commit_drift = compute_commit_drift(
-        memory.last_verified_at,
-        memory.origin.repo if memory.origin else None,
+    #
+    # The verdict escalates on the claim-anchored path subset only:
+    # attested paths that vanished, and citations resolved against this
+    # memory's own recorded worktree. The full `missing` list is still
+    # emitted below in the `path_drift` block — prose absences stay
+    # visible as evidence, they just no longer raise the tier. Rationale
+    # and the 15-vs-3 measurement live on `verdict_from_signals`.
+    shown = memory_verdict(
+        memory,
         caller_origin=_h.capture_origin(),
-        verified_paths=memory.verified_paths,
-        body=memory.body,
-        claims=memory.claims,
-        verified_head=memory.verified_head,
+        now=utcnow(),
+        stale_after_days=deps.config.behavior.verification_stale_days,
     )
-    commit_drift_count_for_verdict: int | None = (
-        commit_drift.commits_since_verify if commit_drift is not None else None
-    )
-    verdict = compute_staleness_verdict(
-        verification=verification,
-        # Claim-anchored subset only: attested paths that vanished, and
-        # citations resolved against this memory's own recorded
-        # worktree. The full `missing` list is still emitted below in
-        # the `path_drift` block — prose absences stay visible as
-        # evidence, they just no longer raise the tier. Rationale and
-        # the 15-vs-3 measurement live on `verdict_from_signals`.
-        path_drift_missing=len(drift.claim_anchored_missing),
-        commit_drift_count=commit_drift_count_for_verdict,
-    )
+    drift = shown.path_drift
+    verification = shown.verification
+    commit_drift = shown.commit_drift
+    verdict = shown.staleness_verdict
     # The links payload carries `provenance` too: how the record entered
     # the store, from the index (schema v7) and never from the file,
     # since a hand-written frontmatter field cannot supply it. Null
