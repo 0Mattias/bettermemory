@@ -67,6 +67,14 @@ guarded the same way, takes the sealed operating points, writes into
 bench/integrity/results/v1/ where a later read finds it, and records its
 own guard record with the collection's under `test_guard.collected`.
 
+v1b (bench/integrity/v1b/test.json, version v1b-test) is a second test
+split under the same guard, against its own seals file
+(bench/integrity/v1b/SEALS.json) and v1's sealed operating points. Its
+results live apart from v1's: raws in bench/integrity/results/v1b/raw/,
+and a table-2 score is written into bench/integrity/results/v1b/
+(`results_dir_for`), named integrity-v1b-test-<arm>-<date>[-table-2].json
+as v1's are named integrity-v1-test-<arm>-<date>[-table-2].json.
+
 THE GATE-ONLY MODE (unit D1). `collect --arm bettermemory --gate-only`
 runs the shipped gates with default flags and the write review on, its
 tau passed explicitly at 0.95; every review is answered with no opinion
@@ -133,9 +141,25 @@ import guard  # noqa: E402 - the path above makes the sibling importable
 
 CORPUS = _HERE / "corpus.json"
 RESULTS_V1 = _HERE / "results" / "v1"
+RESULTS_V1B = _HERE / "results" / "v1b"
+# Where a table-2 score of each test split is written, by corpus version.
+TEST_RESULTS: dict[str, Path] = {
+    guard.TEST_VERSION: RESULTS_V1,
+    "v1b-test": RESULTS_V1B,
+}
 ROT_ARTIFACT = (
     _ROOT / "bench" / "rot" / "results" / "multirepo-anchored-2026-07-30.json"
 )
+
+
+def results_dir_for(version: Any) -> Path:
+    """The directory a table-2 score of a test split is written into, where
+    a later read's guard finds it: v1b's own, v1's for every other."""
+    return (
+        TEST_RESULTS.get(version, RESULTS_V1)
+        if isinstance(version, str)
+        else RESULTS_V1
+    )
 
 
 def _load_corpus(path: Path = CORPUS) -> dict[str, Any]:
@@ -209,7 +233,7 @@ def collect(
     corpus_path: Path = CORPUS,
     operating_points: Path | None = None,
     rerun_reason: str | None = None,
-    seals: Path = guard.SEALS,
+    seals: Path | None = None,
     gate_only: bool = False,
 ) -> int:
     import adapters as arms
@@ -221,9 +245,11 @@ def collect(
     if problems:
         print("corpus checks failed:", *problems, sep="\n  ")
         return 2
-    if gate_only and (arm != "bettermemory" or corpus.get("version") == "v1-test"):
+    if gate_only and (
+        arm != "bettermemory" or guard.is_test_version(corpus.get("version"))
+    ):
         # The gate-only arm is deterministic and runs on v0 and v1 dev only:
-        # a run on the test split would be a read the owner did not approve.
+        # a run on a test split would be a read the owner did not approve.
         print(f"{arm}: refused: the gate-only mode is the bettermemory arm's, off test")
         return 2
     sha = score.corpus_sha256(corpus_path)
@@ -592,7 +618,9 @@ REFERENCE_EXPECTATIONS = {
 }
 
 
-def _check_one(path: Path, seals: Path) -> tuple[dict[str, Any], list[str]]:
+def _check_one(
+    path: Path, seals: Path | None = None
+) -> tuple[dict[str, Any], list[str]]:
     """One corpus's gates, the reference arithmetic and, for a v1 split,
     its seal; prints what it read."""
     import score
@@ -623,7 +651,7 @@ def _check_one(path: Path, seals: Path) -> tuple[dict[str, Any], list[str]]:
     return corpus, problems
 
 
-def cmd_check(corpus_paths: list[Path] | None = None, seals: Path = guard.SEALS) -> int:
+def cmd_check(corpus_paths: list[Path] | None = None, seals: Path | None = None) -> int:
     """Check each corpus; with more than one, also the value checks over
     their union (score.union_value_checks), so no value collides across
     the splits."""
@@ -673,12 +701,13 @@ def cmd_score(
     scoring_table: int = 1,
     operating_points: Path | None = None,
     rerun_reason: str | None = None,
-    seals: Path = guard.SEALS,
-    results_dir: Path = RESULTS_V1,
+    seals: Path | None = None,
+    results_dir: Path | None = None,
 ) -> int:
     """Score a raw file under `scoring_table`. Table 1 re-scores what is
-    committed and runs unguarded; table 2 on the test split is a read of
-    it, held to the guard (module docstring)."""
+    committed and runs unguarded; table 2 on a test split is a read of it,
+    held to the guard (module docstring) and written into `results_dir`,
+    by default the split's own (`results_dir_for`)."""
     import score
 
     raw = json.loads(raw_path.read_text(encoding="utf-8"))
@@ -699,9 +728,11 @@ def cmd_score(
         if Path(out).exists():
             print(f"{_rel(out)} exists; a table-2 score writes a new file; refusing")
             return 2
+        version = corpus.get("version")
+        results_dir = Path(results_dir or results_dir_for(version))
         if (
-            corpus.get("version") == guard.TEST_VERSION
-            and Path(out).resolve().parent != Path(results_dir).resolve()
+            guard.is_test_version(version)
+            and Path(out).resolve().parent != results_dir.resolve()
         ):
             print(
                 f"a table-2 score of the test split is written into {_rel(results_dir)}, "
