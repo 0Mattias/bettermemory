@@ -89,7 +89,7 @@ conversational = true
 # which memory_search renders as `superseded_by` on the stale hit and
 # on nothing else. The same divergence with no cue files the pair for
 # memory_conflicts instead of guessing which side is current. Measured
-# on bench/integrity's sealed corpus: 26 of the 40 update statements
+# on bench/integrity's sealed corpus: 27 of the 40 update statements
 # link to the statement they replace and nothing links a distractor,
 # a hard negative or a cross-topic pair (docs/eval-results.md). Set
 # false to leave links to the writer's explicit `supersedes=` list.

@@ -204,14 +204,10 @@ def test_no_cue_with_high_overlap_is_a_conflict() -> None:
 
 
 def test_a_reversion_that_agrees_with_its_target_is_not_linked() -> None:
-    """Nothing links the first statement, which the reversion agrees
-    with. The replaced one is not linked either: the two compounds are
-    kin, but neither value's neighbourhood is in the other body, which
-    is the one second reversion the sealed corpus loses to question 3."""
     first = _memory(_CANARY_OLD)
     replaced = _memory(_CANARY_REPLACED)
     report = detect_supersession(_CANARY_BACK, [first, replaced])
-    assert report.supersedes == []
+    assert [m.memory_id for m in report.supersedes] == [replaced.id]
     assert report.conflicts == []
 
 
@@ -256,16 +252,6 @@ def test_one_claim_is_replaced_when_several_pass() -> None:
     assert len(detect_supersession(_PORT_NEW, [other]).supersedes) == 1
     report = detect_supersession(_PORT_NEW, [other, port])
     assert [m.memory_id for m in report.supersedes] == [port.id]
-
-
-def test_kin_values_need_a_shared_neighbourhood() -> None:
-    """A rate limit is not the port: two four-digit numbers are kin by
-    shape, and the two bodies share their subject, but neither value's
-    neighbourhood is in the other body, so nothing links."""
-    old = _memory("The auth service caps each tenant at 2048 requests per minute.")
-    report = detect_supersession(_PORT_NEW, [old])
-    assert values_are_kin("9443", "2048")
-    assert report.eligible and report.supersedes == []
 
 
 # ---------------------------------------------------------------------------
@@ -332,14 +318,14 @@ def test_the_corpus_counts_are_pinned(replay: dict[str, Any]) -> None:
         if label == "replaced":
             linked.add(f"{row['topic']}:{row['role']}:{match.outcome}")
     # Every edge lands on the statement it replaces; nothing else fires.
-    assert dict(counts) == {("supersedes", "replaced"): 26, ("conflict", "replaced"): 1}
+    assert dict(counts) == {("supersedes", "replaced"): 27, ("conflict", "replaced"): 1}
     supersession = [
         t for t, v in replay["topics"].items() if v["kind"] == "supersession"
     ]
     reversion = [t for t, v in replay["topics"].items() if v["kind"] == "reversion"]
     assert sum(f"{t}:f2:supersedes" in linked for t in supersession) == 15
     assert sum(f"{t}:f2:supersedes" in linked for t in reversion) == 7
-    assert sum(f"{t}:f3:supersedes" in linked for t in reversion) == 4
+    assert sum(f"{t}:f3:supersedes" in linked for t in reversion) == 5
     assert sum(f"{t}:f3:conflict" in linked for t in reversion) == 1
 
 

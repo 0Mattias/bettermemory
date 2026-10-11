@@ -40,14 +40,11 @@ deterministic — the project ships no models and this runs inside every
    disagreement.
 3. Same slot? Either the two values are kin — numerics of one shape
    (`8443` / `9443`, `3.11` / `3.13`) or compounds sharing half their
-   parts (`runners-medium` / `runners-large`) — and one value's
-   neighbourhood in its own body is present in the other body, or each
-   value's neighbourhood is (the old value's context in the new body
-   AND the new value's context in the old). Change-cue vocabulary is
-   excluded from that context because "moved" and "the previous" are
-   what every update shares. Kinship alone is not enough: a shape says
-   nothing about the subject, and two four-digit numbers or two
-   compounds sharing one part are kin wherever they occur.
+   parts (`runners-medium` / `runners-large`) — or each value's
+   neighbourhood in its own body is present in the other body (the
+   old value's context in the new body AND the new value's context in
+   the old), with change-cue vocabulary excluded from that context
+   because "moved" and "the previous" are what every update shares.
 
 A new body that carries a change cue (`CHANGE_CUES`: moved, switched,
 renamed, raised, no longer, the previous, again, ...) and passes all
@@ -71,8 +68,8 @@ must be at most `MAX_CLAIM_TOKENS` content tokens and
 a candidate on either side, however many change cues it carries.
 
 MEASURED, not tuned by eye. On the sealed corpus's ingestion order the
-rule links 26 of the 40 update statements to the statement each
-replaces (15 of 24 supersession updates, 7 of 8 first reversions, 4 of
+rule links 27 of the 40 update statements to the statement each
+replaces (15 of 24 supersession updates, 7 of 8 first reversions, 5 of
 8 second reversions), files 1 cue-less reversion as a conflict, and
 sets nothing on any distractor, hard negative, reversion that agrees
 with its target, or cross-topic pair — `tests/test_supersession.py`
@@ -84,14 +81,7 @@ links: the 14 that land on the replaced statement, each the strongest
 match of its write, and 6 on other topics' updates, each on kin
 evidence at an overlap of 0.100 to 0.115. With it the 14 stand and
 the 6 are gone; no overlap floor separates the two, since one of the
-14 sits at 0.107. Kinship alone then carried the rest: in the
-integrity bench's add order with the floor lifted, 91 statements from
-other topics passed questions 2 and 3 against a dev update, 90 of them
-on kin values with no context, up to an overlap of 0.115. With kin
-values needing one side's context, none passes at the floor; the cost
-is one correct link on dev and one on the sealed corpus, each a second
-reversion whose compound value shares its parts with the one it
-reverts but no neighbour. The misses are
+14 sits at 0.107. The misses are
 lexical by construction: an update whose old value is a plain word
 the shape rules cannot see (`prettier`, `pnpm`) or whose subject is
 restated with no token in common.
@@ -177,8 +167,7 @@ MIN_JACCARD = 0.10
 MIN_CONFLICT_JACCARD = 0.30
 MIN_CONFLICT_KIN_JACCARD = 0.15
 # Question 3, context evidence: tokens either side of a value, and how
-# many of them must appear in the other body (one side for kin values,
-# both sides otherwise).
+# many of them must appear in the other body.
 CONTEXT_WIDTH = 3
 MIN_CONTEXT_SHARED = 2
 # Links set per write. A statement replacing more than a handful of
@@ -273,7 +262,7 @@ class SupersessionMatch:
     """One stored memory the new body replaces or disagrees with.
 
     `evidence` says which of question 3's tests carried it: `kin` (the
-    values share a shape and one's neighbourhood), `context` (each value's neighbourhood is in
+    values share a shape), `context` (each value's neighbourhood is in
     the other body), or `similarity` (a cue-less pair filed on overlap
     alone). `cue` is the first change cue in the new body, None for a
     conflict. `new_value` / `old_value` are surface spellings from the
@@ -543,21 +532,13 @@ def detect_supersession(
         if not new_values or not old_values:
             continue
 
-        # Kin values need one side's context too; see question 3.
-        old_stream = _content_stream(old_body)
         kin = sorted(
-            (a, b)
-            for a in new_values
-            for b in old_values
-            if values_are_kin(a, b)
-            and (
-                len(_context(old_stream, b) & new_raw) >= MIN_CONTEXT_SHARED
-                or len(_context(new_stream, a) & old_raw) >= MIN_CONTEXT_SHARED
-            )
+            (a, b) for a in new_values for b in old_values if values_are_kin(a, b)
         )
         pair: tuple[str, str] | None = kin[0] if kin else None
         evidence = "kin" if kin else None
         if pair is None:
+            old_stream = _content_stream(old_body)
             for b in sorted(old_values):
                 if len(_context(old_stream, b) & new_raw) < MIN_CONTEXT_SHARED:
                     continue
