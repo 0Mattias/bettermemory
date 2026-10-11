@@ -53,6 +53,14 @@ conflict when the overlap is high (`MIN_CONFLICT_JACCARD`) or the
 values are kin; below that it is two statements about the same
 subject, which every store holds by the hundred.
 
+ONE CLAIM REPLACED. When several stored memories pass with a cue, the
+new body links the one with the highest overlap, and any other only
+when it carries that one's old value (the same claim stored twice).
+The three questions are lexical floors: an update with a cue passes
+them against another topic's update on a value that merely shares a
+shape, so the strongest match is what the cue replaces and the rest
+are not.
+
 CLAIM-SIZED ONLY. A `supersedes` link says "prefer this record over
 that one", which is only coherent between single claims. Both bodies
 must be at most `MAX_CLAIM_TOKENS` content tokens and
@@ -66,15 +74,23 @@ replaces (15 of 24 supersession updates, 7 of 8 first reversions, 5 of
 sets nothing on any distractor, hard negative, reversion that agrees
 with its target, or cross-topic pair — `tests/test_supersession.py`
 pins those counts. Replayed over the maintainer's live store (339
-memories, four of them claim-sized) it fires nothing. The misses are
+memories, four of them claim-sized) it fires nothing. On the v1
+integrity corpus's dev split, its legitimate statements in the review
+bench's plan order, the rule without the one-claim restriction set 20
+links: the 14 that land on the replaced statement, each the strongest
+match of its write, and 6 on other topics' updates, each on kin
+evidence at an overlap of 0.100 to 0.115. With it the 14 stand and
+the 6 are gone; no overlap floor separates the two, since one of the
+14 sits at 0.107. The misses are
 lexical by construction: an update whose old value is a plain word
 the shape rules cannot see (`prettier`, `pnpm`) or whose subject is
 restated with no token in common.
 
 THE LEVER. Anything admitted through the write API can carry a change
 cue, so a false statement about a stored subject can earn a
-`supersedes` link over the true one — the corpus's `p01` does. The
-link note names the cue and both values so the reader can judge, the
+`supersedes` link over the true one — the corpus's `p01` does, over
+t01's first statement (before the one-claim restriction it linked
+over the current one as well). The link note names the cue and both values so the reader can judge, the
 event log records every link the detector set, and the arrangement is
 still the better trade: without it the false fact and the true one
 sit side by side unsignaled, which the benchmark shows on every arm.
@@ -457,6 +473,20 @@ def _surface_forms(body: str) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
+def _one_claim_replaced(matches: list[SupersessionMatch]) -> list[SupersessionMatch]:
+    """The strongest match, plus each other match whose old value is the
+    strongest one's. A claim with a change cue replaces one stored value;
+    a second stored memory is the same claim only when it carries that
+    value too. The rest pass the three questions on a floor-level overlap
+    and a value that merely shares a shape (two 2-digit numbers, two
+    compounds sharing a part), which is how an update earned links to
+    other topics' updates. `matches` arrive ordered by similarity."""
+    if not matches:
+        return matches
+    replaced = matches[0].old_value.lower()
+    return [matches[0]] + [m for m in matches[1:] if m.old_value.lower() == replaced]
+
+
 def detect_supersession(
     new_body: str,
     existing: Iterable[Memory],
@@ -469,7 +499,8 @@ def detect_supersession(
 
     `exclude_ids` drops memories the caller has already ruled on (a
     target the writer declared explicitly). Matches are ordered by
-    similarity, then id, and each list is capped at
+    similarity, then id; `supersedes` keeps one replaced claim
+    (`_one_claim_replaced`), and each list is capped at
     `MAX_LINKS_PER_WRITE`.
     """
     body = _strip_provenance(new_body)
@@ -551,6 +582,7 @@ def detect_supersession(
 
     supersedes.sort(key=_order)
     conflicts.sort(key=_order)
+    supersedes = _one_claim_replaced(supersedes)
     return SupersessionReport(
         eligible=True,
         supersedes=supersedes[:MAX_LINKS_PER_WRITE],

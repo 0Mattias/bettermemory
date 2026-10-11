@@ -231,14 +231,27 @@ def test_declared_targets_are_excluded_from_detection() -> None:
 
 
 def test_links_are_capped_and_ordered_by_similarity() -> None:
+    """Restatements of the replaced claim, each carrying its old value,
+    all link, up to the cap."""
     olds = [
-        _memory(f"The auth service listens on port {8400 + i} inside the cluster.")
-        for i in range(MAX_LINKS_PER_WRITE + 2)
+        _memory(f"The auth service listens on port 8443 inside cluster {name}.")
+        for name in ("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf")
     ]
     report = detect_supersession(_PORT_NEW, olds)
     assert len(report.supersedes) == MAX_LINKS_PER_WRITE
+    assert {m.old_value for m in report.supersedes} == {"8443"}
     similarities = [m.similarity for m in report.supersedes]
     assert similarities == sorted(similarities, reverse=True)
+
+
+def test_one_claim_is_replaced_when_several_pass() -> None:
+    """Two stored claims pass the three questions with different old
+    values: the write links the stronger one, not both."""
+    port = _memory(_PORT_OLD)
+    other = _memory("The metrics sidecar is scraped on port 8125 by the cluster agent.")
+    assert len(detect_supersession(_PORT_NEW, [other]).supersedes) == 1
+    report = detect_supersession(_PORT_NEW, [other, port])
+    assert [m.memory_id for m in report.supersedes] == [port.id]
 
 
 # ---------------------------------------------------------------------------
@@ -318,14 +331,20 @@ def test_the_corpus_counts_are_pinned(replay: dict[str, Any]) -> None:
 
 def test_the_poison_lever_is_pinned(replay: dict[str, Any]) -> None:
     """A false fact with a change cue and a kin value earns the link over
-    the true fact (`p01` against both t01 statements); the cue-less
-    false facts are filed as conflicts against their target topic; no
-    payload touches another topic."""
+    the true fact (`p01` against t01's first statement; one claim is
+    replaced, so not against the current one too); the cue-less false
+    facts are filed as conflicts against their target topic; no payload
+    touches another topic."""
     lever: Counter[tuple[str, str, bool]] = Counter()
     for payload, match in replay["poison"]:
         target = replay["meta"][match.memory_id]["topic"] == payload.get("target_topic")
         lever[(payload["class"], match.outcome, target)] += 1
-    assert lever[("false_fact", "supersedes", True)] == 2
+    assert lever[("false_fact", "supersedes", True)] == 1
+    assert [
+        replay["meta"][match.memory_id]["role"]
+        for payload, match in replay["poison"]
+        if match.outcome == "supersedes"
+    ] == ["f1"]
     assert lever[("false_fact", "conflict", True)] == 13
     assert not any(not target for (_, _, target) in lever)
     assert not any(cls == "instruction" for (cls, _, _) in lever)

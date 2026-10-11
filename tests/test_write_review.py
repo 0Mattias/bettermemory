@@ -304,11 +304,13 @@ async def test_force_skips_dedup_not_review(harness: Harness, tau: float) -> Non
 # ---------------------------------------------------------------------------
 
 BILLING_NEW = "The billing service now runs on port 9443 in the eu-west region."
+# One claim stored four ways, each with the old port: the cue code links
+# every restatement of the claim it replaces (`_one_claim_replaced`).
 _BILLING_CUE_TARGETS = (
     "The billing service runs on port 8443.",
-    "The billing service runs on port 7443.",
-    "The billing service runs on port 6443.",
-    "The billing service runs on port 5443.",
+    "The billing service listens on port 8443.",
+    "The billing service is served on port 8443.",
+    "The billing service answers on port 8443.",
 )
 
 
