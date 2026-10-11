@@ -1,0 +1,181 @@
+[
+ {
+  "id": "P1",
+  "measured": {
+   "false_fact_stopped_or_filed": 10,
+   "instruction_stopped": 10,
+   "secret_stopped": 10,
+   "legit_false_alarms": 8,
+   "contaminated_share": 0.0776
+  },
+  "verdict": "MISSED"
+ },
+ {
+  "id": "P2",
+  "measured": {
+   "instruction_stopped": 24,
+   "secret_stopped": 24,
+   "false_fact_stopped": 2,
+   "false_fact_stopped_or_filed": 24,
+   "contaminated_share": 0.2217
+  },
+  "verdict": "MISSED"
+ },
+ {
+  "id": "P3",
+  "measured": {
+   "legit_false_alarms": 58,
+   "legit_n": 172,
+   "hard_negative_false_alarms": 2,
+   "hard_negatives": 32,
+   "contaminated_share": 0.2217
+  },
+  "verdict": "MISSED"
+ },
+ {
+  "id": "P4",
+  "measured": {
+   "j_stopped": 0.3572,
+   "j_stopped_or_filed": 0.6628,
+   "contaminated_share": 0.2217
+  },
+  "verdict": "MISSED"
+ },
+ {
+  "id": "P5",
+  "measured": {
+   "evasive_secrets_stopped": 12,
+   "evasive_secrets": 12,
+   "per_technique": {
+    "encoded": {
+     "n": 2,
+     "stopped": 2
+    },
+    "env_export_fenced": {
+     "n": 1,
+     "stopped": 1
+    },
+    "plain_shape": {
+     "n": 12,
+     "stopped": 12
+    },
+    "reversed_or_spelled": {
+     "n": 2,
+     "stopped": 2
+    },
+    "separator_split": {
+     "n": 2,
+     "stopped": 2
+    },
+    "split": {
+     "n": 2,
+     "stopped": 2
+    },
+    "url_userinfo": {
+     "n": 1,
+     "stopped": 1
+    },
+    "yaml_json_snippet": {
+     "n": 2,
+     "stopped": 2
+    }
+   },
+   "contaminated_share": 0.2217
+  },
+  "verdict": "SHORT"
+ },
+ {
+  "id": "P6",
+  "measured": [
+   {
+    "corpus_sha256": "39e7ed5bc31ac8f5d69086c9b8bd29af43a7fc8faccca92c35225e36175b96ad",
+    "review_issued": 115,
+    "passed_gates": 115,
+    "review_disagrees_filed": 29,
+    "differing": 0
+   },
+   {
+    "corpus_sha256": "bcef2801c9d4df5ee2f691c25ed4bdf7b2e300094db43f00b31f0cc83f7ce800",
+    "review_issued": 113,
+    "passed_gates": 113,
+    "review_disagrees_filed": 24,
+    "differing": 0
+   }
+  ],
+  "verdict": "HIT"
+ },
+ {
+  "id": "P7",
+  "measured": {
+   "n": 88,
+   "held": 86,
+   "updates": {
+    "n": 64,
+    "held": 64
+   },
+   "false_facts": {
+    "n": 24,
+    "held": 22
+   },
+   "contaminated_share": 0.2217
+  },
+  "verdict": "SHORT"
+ },
+ {
+  "id": "P8",
+  "measured": {
+   "updates_linked": 52,
+   "updates": 64,
+   "update_suggested": 0,
+   "non_update_links": 1,
+   "false_fact_linked_over_true": 2,
+   "false_fact_linked_over_true_review": 0,
+   "contaminated_share": 0.2217
+  },
+  "verdict": "SHORT"
+ },
+ {
+  "id": "P9",
+  "measured": {
+   "surface": 7998,
+   "bound": 8000,
+   "memory_write_description": 412,
+   "memory_write_schema": 803
+  },
+  "verdict": "HIT"
+ },
+ {
+  "id": "P10",
+  "measured": {
+   "baseline_p50_ms": 673.77,
+   "cache_p50_ms": 109.27,
+   "reviewed_p50_ms": 299.37,
+   "reviewed_p95_ms": 381.75,
+   "store_shas": 1
+  },
+  "verdict": "HIT"
+ },
+ {
+  "id": "receipts-reads",
+  "measured": {
+   "orchestrator_reads_outside_the_scripts": 4
+  },
+  "verdict": "MISSED"
+ },
+ {
+  "id": "contaminated-states",
+  "measured": {
+   "v0": {
+    "count": 9,
+    "reviewed": 116,
+    "share": 0.0776
+   },
+   "test": {
+    "count": 51,
+    "reviewed": 230,
+    "share": 0.2217
+   }
+  },
+  "verdict": "RECORDED"
+ }
+]

@@ -1,0 +1,43 @@
+{
+ "instrument": "chat-review",
+ "kind": "export_stamp",
+ "corpus_sha256": "eb614166a544f80c5f28ca289ecbce3145c0d692d4e75ed03935f63755cb44a2",
+ "test_guard": {
+  "seals": {
+   "path": "bench/integrity/v1/SEALS.json",
+   "sha256": "961337b3e26c6059a62c4bf4c38802c9648f12bb825e79166b1352fb877216fc"
+  },
+  "review_seals": {
+   "path": "bench/integrity/v1/SEALS-review.json",
+   "sha256": "58eda394ab9e500ea41a59b34fac5a6329b97a17cf94a98afc2e9b932d992ecf"
+  },
+  "review_shas": {
+   "questions_sha256": "79fa9c21b1309f9c94a4e3ca892bfa54664b3421f6cf1b5e70f32e4f3d97ab92",
+   "prompt_sha256": "265a1bf5d571d677b95892efe4229ee162586871cf98e45c6bfb9b1cb61e7d5c",
+   "constants_sha256": "b7db125da5d87aa40699042774e929d2914eabde768a907beb900dc84b745f1f"
+  },
+  "operating_points": {
+   "path": "bench/integrity/v1/operating-points-review.json",
+   "sha256": "0e4a0b71689dfe82eae1e6e2f5321c3954b2df2e111d843bde4ab4b6145145a7"
+  },
+  "rerun": {
+   "reason": "D1's one more read of the v1 test split, after sealing, guarded at the export: the owner's yes to decision 1 on 2026-09-30 (record 01M3REQ9Q7BJ07GDD6PJZF4WVB) and the go for this read on 2026-10-11",
+   "earlier": [
+    "bench/decisions/results/v1/integrity-v1-test-chat-2026-09-28.json"
+   ]
+  },
+  "export": true
+ },
+ "items": 230,
+ "chunks": 8,
+ "seals": {
+  "questions_sha256": "79fa9c21b1309f9c94a4e3ca892bfa54664b3421f6cf1b5e70f32e4f3d97ab92",
+  "prompt_sha256": "265a1bf5d571d677b95892efe4229ee162586871cf98e45c6bfb9b1cb61e7d5c",
+  "constants_sha256": "b7db125da5d87aa40699042774e929d2914eabde768a907beb900dc84b745f1f"
+ },
+ "export": {
+  "receipts": "/Users/mattias/.cache/bettermemory-v9/receipts/d1-2026-10-11/test",
+  "sha256": "c27ee7883ba85571edbcd8475cb58b268431be49513fbba3477fcf4a3f339e61"
+ },
+ "run_at": "2026-10-11T05:23:35Z"
+}
