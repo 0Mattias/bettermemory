@@ -12,6 +12,7 @@ from __future__ import annotations
 import http.server
 import json
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -282,8 +283,99 @@ def test_serve_runs_the_in_process_server_on_purpose(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
 async def _search(session: ClientSession) -> Any:
     return await session.call_tool("memory_search", {"query": "anything"})
+
+
+async def test_shim_survives_a_restart_on_the_same_port(
+    tmp_path: Path, daemon_env: dict[str, str]
+) -> None:
+    # The restart mints a fresh token; the shim's old one gets 401.
+    port = _free_port()
+    assert _cli(["up", "--port", str(port)], daemon_env).returncode == 0
+    before = _wait_running(tmp_path)
+    async with stdio_client(_shim_params(daemon_env)) as (r, w):
+        async with ClientSession(r, w) as session:
+            await session.initialize()
+            assert not (await _search(session)).is_error
+            assert _cli(["down"], daemon_env).returncode == 0
+            assert _cli(["up", "--port", str(port)], daemon_env).returncode == 0
+            after = _wait_running(tmp_path)
+            assert after["token"] != before["token"]
+            started = time.monotonic()
+            assert not (await _search(session)).is_error
+            first_call = time.monotonic() - started
+            listed = await session.list_tools()
+            assert {tool.name for tool in listed.tools} == NINE
+    # S-FIX S2: one 401, one state read, one resend; MISSED-if over 2 s.
+    assert first_call < (30.0 if os.environ.get("CI") else 2.0)
+
+
+async def test_shim_follows_a_daemon_to_another_port(
+    tmp_path: Path, daemon_env: dict[str, str]
+) -> None:
+    assert _cli(["up", "--port", str(_free_port())], daemon_env).returncode == 0
+    before = _wait_running(tmp_path)
+    async with stdio_client(_shim_params(daemon_env)) as (r, w):
+        async with ClientSession(r, w) as session:
+            await session.initialize()
+            assert not (await _search(session)).is_error
+            assert _cli(["down"], daemon_env).returncode == 0
+            assert _cli(["up", "--port", "0"], daemon_env).returncode == 0
+            assert _wait_running(tmp_path)["port"] != before["port"]
+            assert not (await _search(session)).is_error
+
+
+async def test_shim_starts_a_daemon_when_its_daemon_is_gone(
+    tmp_path: Path, daemon_env: dict[str, str]
+) -> None:
+    assert _cli(["up", "--port", "0"], daemon_env).returncode == 0
+    before = _wait_running(tmp_path)
+    async with stdio_client(_shim_params(daemon_env)) as (r, w):
+        async with ClientSession(r, w) as session:
+            await session.initialize()
+            assert _cli(["down"], daemon_env).returncode == 0
+            started = time.monotonic()
+            assert not (await _search(session)).is_error
+            elapsed = time.monotonic() - started
+            # While the shim serves, as in test_shim_starts_a_daemon_when_none_answers.
+            assert _wait_running(tmp_path)["pid"] != before["pid"]
+    # S-FIX S3: within the 8 s start timeout plus 2 s; MISSED-if over 12 s.
+    assert elapsed < (60.0 if os.environ.get("CI") else 12.0)
+
+
+async def test_shim_answers_an_error_and_stays_up_when_no_daemon_can_start(
+    tmp_path: Path, daemon_env: dict[str, str]
+) -> None:
+    assert _cli(["up", "--port", "0"], daemon_env).returncode == 0
+    _wait_running(tmp_path)
+    store_dir = tmp_path / "store"
+    parked = tmp_path / "store-parked"
+    async with stdio_client(_shim_params(daemon_env)) as (r, w):
+        async with ClientSession(r, w) as session:
+            await session.initialize()
+            assert _cli(["down"], daemon_env).returncode == 0
+            # A file where the store's directory was: a daemon started now
+            # cannot open the store and exits.
+            store_dir.rename(parked)
+            store_dir.write_text("not a directory")
+            started = time.monotonic()
+            with pytest.raises(MCPError, match="no bettermemory daemon"):
+                await _search(session)
+            elapsed = time.monotonic() - started
+            store_dir.unlink()
+            parked.rename(store_dir)
+            assert _cli(["up", "--port", "0"], daemon_env).returncode == 0
+            _wait_running(tmp_path)
+            assert not (await _search(session)).is_error
+    # S-FIX S4: the error within 12 s; MISSED-if over 15 s or the shim exits.
+    assert elapsed < (60.0 if os.environ.get("CI") else 15.0)
 
 
 class _FakeMcpDaemon(http.server.ThreadingHTTPServer):
@@ -339,8 +431,7 @@ class _FakeMcpHandler(http.server.BaseHTTPRequestHandler):
             self._json(405, {})
             return
         self._json(
-            200,
-            {"status": "ok", "version": self.fake.version, "store": "x", "pid": 1},
+            200, {"status": "ok", "version": self.fake.version, "store": "x", "pid": 1}
         )
 
     def do_POST(self) -> None:  # noqa: N802
@@ -402,3 +493,41 @@ async def test_shim_never_resends_a_call_whose_reply_was_lost(tmp_path: Path) ->
                 assert "answered by" in _text(await _search(session))
     finally:
         fake.stop()
+
+
+async def test_shim_resends_once_on_401_then_answers_an_error(tmp_path: Path) -> None:
+    env = _fake_shim_env(tmp_path)
+    fake = _FakeMcpDaemon(version=__version__, token="a" * 64, mode="unauthorized")
+    try:
+        write_state(tmp_path / "state", fake.state(_store_path(tmp_path)))
+        async with stdio_client(_shim_params(env)) as (r, w):
+            async with ClientSession(r, w) as session:
+                await session.initialize()
+                with pytest.raises(MCPError, match="refused the shim's token"):
+                    await _search(session)
+                assert fake.calls == 2
+    finally:
+        fake.stop()
+
+
+async def test_shim_reconnects_to_a_daemon_of_another_version_and_keeps_it(
+    tmp_path: Path,
+) -> None:
+    env = _fake_shim_env(tmp_path)
+    store = _store_path(tmp_path)
+    first = _FakeMcpDaemon(version=__version__, token="a" * 64)
+    second = _FakeMcpDaemon(version="0.0.1", token="b" * 64)
+    try:
+        write_state(tmp_path / "state", first.state(store))
+        async with stdio_client(_shim_params(env)) as (r, w):
+            async with ClientSession(r, w) as session:
+                await session.initialize()
+                assert f"answered by {first.port}" in _text(await _search(session))
+                first.stop()
+                write_state(tmp_path / "state", second.state(store))
+                assert f"answered by {second.port}" in _text(await _search(session))
+                assert second.calls == 1
+                assert second.shutdown_calls == 0
+    finally:
+        first.stop()
+        second.stop()

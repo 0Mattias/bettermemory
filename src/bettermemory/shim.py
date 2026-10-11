@@ -17,9 +17,16 @@ When no daemon can be reached or started, the shim serves the store
 in-process, the 8.x shape, and says so once on stderr: a broken daemon
 degrades to slower memory, never to no memory.
 
-Once it serves, a failure between the shim and the daemon answers the
-call that met it and leaves the shim up: the SDK's transport would
-otherwise let the exception end its task group and the process with it.
+Once it serves, the shim follows its daemon through a restart. A
+restart mints a fresh bearer token and may move the port, so a request
+the daemon refuses with 401, or one that finds no daemon listening,
+makes the shim read the state file again (starting a daemon only when
+none answers, and never stopping one) and send the same request once
+more. Both failures happen before the daemon runs anything, so the
+resend cannot apply a call twice. Any other failure between the shim
+and the daemon answers the call that met it and leaves the shim up: the
+SDK's transport would otherwise let the exception end its task group
+and the process with it.
 """
 
 from __future__ import annotations
@@ -29,8 +36,11 @@ import logging
 import os
 import secrets
 import sys
+from collections.abc import Callable
 from typing import Any
 
+import anyio
+import anyio.to_thread
 import httpx2
 
 log = logging.getLogger("bettermemory.shim")
@@ -102,24 +112,87 @@ def _error_reply(request: httpx2.Request, message: str) -> httpx2.Response:
     )
 
 
-class _AnsweringTransport(httpx2.AsyncBaseTransport):
-    """The shim's transport to the daemon: every transport failure comes
-    back as an error reply to the request that met it, never as an
-    exception. A connection that was never made says so; one lost after
-    the request went out says the call may have been applied, because
-    the daemon may have run it before the reply was lost."""
+#: What `_Upstream.refresh` runs in a worker thread: the state of a
+#: daemon that answers, or None and why none could be reached or started.
+Finder = Callable[[], tuple[dict[str, Any] | None, str | None]]
 
-    def __init__(self, inner: httpx2.AsyncBaseTransport) -> None:
+
+class _Upstream:
+    """The daemon the shim forwards to, as the state file last named it.
+    `generation` counts the refreshes, so a request that failed against
+    an old port or token can tell whether another request has already
+    found the daemon again."""
+
+    def __init__(self, state: dict[str, Any], find: Finder) -> None:
+        self.port = int(state["port"])
+        self.token = str(state["token"])
+        self.generation = 0
+        self._find = find
+        self._lock = anyio.Lock()
+
+    async def refresh(self, seen: int) -> str | None:
+        """Find the daemon again after a request made at generation
+        `seen` was refused. None once it is found, by this call or by one
+        that refreshed first; else why it could not be."""
+        async with self._lock:
+            if self.generation != seen:
+                return None
+            state, why = await anyio.to_thread.run_sync(self._find)
+            if state is None:
+                return why or "no daemon answered"
+            self.port = int(state["port"])
+            self.token = str(state["token"])
+            self.generation += 1
+            log.info(
+                "reconnected to the daemon at 127.0.0.1:%s (pid %s, version %s)",
+                state["port"],
+                state["pid"],
+                state["version"],
+            )
+            return None
+
+
+class _ForwardingTransport(httpx2.AsyncBaseTransport):
+    """The shim's transport to the daemon. Every request goes to the
+    port and with the token `upstream` holds. A request refused before
+    the daemon ran it (no connection, or 401) refreshes `upstream` and
+    goes once more; every other failure comes back as an error reply to
+    the request that met it, never as an exception."""
+
+    def __init__(self, inner: httpx2.AsyncBaseTransport, upstream: _Upstream) -> None:
         self._inner = inner
+        self._upstream = upstream
 
     async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
-        try:
-            return await self._inner.handle_async_request(request)
-        except (httpx2.ConnectError, httpx2.ConnectTimeout) as exc:
+        seen = self._upstream.generation
+        first = await self._attempt(request)
+        if isinstance(first, httpx2.Response):
+            return first
+        why = await self._upstream.refresh(seen)
+        if why is not None:
             return _error_reply(
                 request,
+                f"no bettermemory daemon could be reached or started ({why}); "
+                f"the request met: {first}",
+            )
+        second = await self._attempt(request)
+        if isinstance(second, httpx2.Response):
+            return second
+        return _error_reply(request, f"{second}, after one reconnect")
+
+    async def _attempt(self, request: httpx2.Request) -> httpx2.Response | str:
+        """The daemon's response, or why the daemon refused the request
+        before running it."""
+        upstream = self._upstream
+        request.url = request.url.copy_with(port=upstream.port)
+        request.headers["Host"] = request.url.netloc.decode("ascii")
+        request.headers["Authorization"] = f"Bearer {upstream.token}"
+        try:
+            response = await self._inner.handle_async_request(request)
+        except (httpx2.ConnectError, httpx2.ConnectTimeout) as exc:
+            return (
                 f"no bettermemory daemon answered at {request.url.netloc.decode()}: "
-                f"{exc.__class__.__name__}: {exc}",
+                f"{exc.__class__.__name__}: {exc}"
             )
         except httpx2.TransportError as exc:
             return _error_reply(
@@ -128,12 +201,18 @@ class _AnsweringTransport(httpx2.AsyncBaseTransport):
                 f"reply ({exc.__class__.__name__}: {exc}); the call may have been "
                 "applied, so check before repeating it",
             )
+        if response.status_code == 401:
+            await response.aclose()
+            return "the bettermemory daemon refused the shim's token"
+        return response
 
     async def aclose(self) -> None:
         await self._inner.aclose()
 
 
-async def _serve_through_daemon(state: dict[str, Any], version: str) -> None:
+async def _serve_through_daemon(
+    state: dict[str, Any], version: str, find: Finder
+) -> None:
     from mcp import ClientSession
     from mcp import types
     from mcp.client.streamable_http import streamable_http_client
@@ -143,15 +222,14 @@ async def _serve_through_daemon(state: dict[str, Any], version: str) -> None:
     from .identity import HEADER_SESSION
 
     session_id = "sess_" + secrets.token_hex(8)
-    base_headers = {
-        "Authorization": f"Bearer {state['token']}",
-        HEADER_SESSION: session_id,
-    }
     url = f"http://127.0.0.1:{state['port']}/mcp"
+    transport = _ForwardingTransport(
+        httpx2.AsyncHTTPTransport(), _Upstream(state, find)
+    )
     async with httpx2.AsyncClient(
-        headers=base_headers,
+        headers={HEADER_SESSION: session_id},
         timeout=httpx2.Timeout(60.0, connect=5.0),
-        transport=_AnsweringTransport(httpx2.AsyncHTTPTransport()),
+        transport=transport,
     ) as http:
         async with streamable_http_client(url, http_client=http) as (read, write):
             async with ClientSession(
@@ -197,14 +275,17 @@ async def _serve_through_daemon(state: dict[str, Any], version: str) -> None:
 def run_shim() -> None:
     """The default entry point: find or start the daemon for the store
     this process would open, and serve stdio in front of it."""
-    import anyio
-
     from ._daemon_client import (
+        START_TIMEOUT_SECONDS,
+        DaemonExited,
+        _answering,
+        _spawn,
         daemon_env_for,
         ensure_daemon,
         package_version,
         resolve_state_dir,
         resolved_store_path,
+        wait_for_daemon,
     )
     from .config import load_config
 
@@ -216,13 +297,15 @@ def run_shim() -> None:
     version = package_version()
     config = load_config()
     store_path = resolved_store_path()
+    state_dir = resolve_state_dir()
+    env = daemon_env_for(store_path)
     try:
         state = ensure_daemon(
-            resolve_state_dir(),
+            state_dir,
             store_path,
             version=version,
             port=config.daemon.port,
-            env=daemon_env_for(store_path),
+            env=env,
         )
     except Exception as exc:  # noqa: BLE001 - the fallback below is the answer
         log.warning("daemon lookup failed: %s: %s", exc.__class__.__name__, exc)
@@ -241,7 +324,27 @@ def run_shim() -> None:
         state["port"],
         state["pid"],
     )
-    anyio.run(_serve_through_daemon, state, version)
+
+    def find() -> tuple[dict[str, Any] | None, str | None]:
+        # Not ensure_daemon: that stops a daemon of another version, and a
+        # shim holds the version it imported, so after an upgrade an older
+        # shim would stop the newer daemon on every reconnect. Whatever
+        # daemon answers serves; one is started only when none does.
+        found = _answering(state_dir, store_path)
+        if found is not None:
+            return found, None
+        try:
+            started = _spawn(state_dir, store_path, port=config.daemon.port, env=env)
+            found = wait_for_daemon(
+                state_dir, store_path, timeout=START_TIMEOUT_SECONDS, started=started
+            )
+        except (DaemonExited, OSError) as exc:
+            return None, f"{exc.__class__.__name__}: {exc}"
+        if found is None:
+            return None, f"none answered within {START_TIMEOUT_SECONDS:g} s of a start"
+        return found, None
+
+    anyio.run(_serve_through_daemon, state, version, find)
 
 
 __all__ = ["run_shim"]
