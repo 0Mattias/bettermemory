@@ -222,6 +222,12 @@ surfaces leave with them. An 8.x directory is imported once by
   logged as a `review_issued` row. `bettermemory eval` counts reviews,
   and `bettermemory review samples` and `review grade` draw and grade
   samples. (`src/bettermemory/review.py`, `handlers/write.py`)
+- **The stdio shim follows its daemon through a restart.** A request the
+  daemon refuses with 401, or one that finds no daemon listening, makes
+  the shim read the state file again (starting a daemon only when none
+  answers, and never stopping one) and send it once more; any other
+  failure answers the call with an error and leaves the shim up.
+  (`src/bettermemory/shim.py`)
 - **`Store.open_or_create` refuses to create an empty store beside an
   un-migrated 8.x directory** (a memory file, an event shard or the
   tombstone directory present, no `memory.sqlite`), naming
