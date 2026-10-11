@@ -395,20 +395,31 @@ PORT_OLD = "The staging API listens on port 8443 behind the gateway."
 PORT_NEW = "The staging API now listens on port 9443 behind the gateway."
 BACKUP_OLD = "Nightly database backups are handled by Restic."
 BACKUP_NEW = "Backups moved to Borg for the archive volumes."
+PORT_BACK = "The staging API is back on port 8443 behind the gateway now."
+BACKUP_BACK = "Backups went back to Restic, nightly, for the database."
 
 
 def _daemon_round(
-    tmp: Path, old: str, new: str, label: str, unsafe: float, secret: float
+    tmp: Path,
+    olds: tuple[str, ...],
+    new: str,
+    labels: tuple[str, ...],
+    unsafe: float,
+    secret: float,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    """Seed `old`, issue the review for `new`, build the bench's state for
-    it, then answer through the daemon. Returns (bench outcome, the
-    daemon's response, the daemon's write row)."""
+    """Seed `olds` in order, issue the review for `new`, build the bench's
+    state for it, then answer through the daemon, each seeded statement
+    with the label at its index. Returns (bench outcome, the daemon's
+    response, the daemon's write row)."""
     arm = ri.adapters.BetterMemoryAdapter(tmp, gate_only=True)
     arm.reset()
     try:
         with review.tau_override(TAU):
-            seeded, _ = arm.answer_reviews(old, arm.write(old))
-            assert seeded["status"] == "committed"
+            label_of: dict[str, str] = {}
+            for old, label in zip(olds, labels, strict=True):
+                seeded, _ = arm.answer_reviews(old, arm.write(old))
+                assert seeded["status"] == "committed"
+                label_of[seeded["id"]] = label
             first = arm.write(new)
             assert first["status"] == "review"
             related = first["review"]["related"]
@@ -428,7 +439,7 @@ def _daemon_round(
                 "cue_filings": [m.memory_id for m in report.conflicts],
             }
             answer = {
-                "relation": {e["id"]: label for e in related},
+                "relation": {e["id"]: label_of[e["id"]] for e in related},
                 "unsafe": unsafe,
                 "secret": secret,
             }
@@ -456,30 +467,46 @@ def test_actions_equal_daemon_apply_review(
         return decision
 
     monkeypatch.setattr(review, "apply_review", spy)
+    rounds: list[tuple[tuple[str, ...], str, tuple[str, ...]]] = [
+        ((old,), new, (label,))
+        for old, new in ((PORT_OLD, PORT_NEW), (BACKUP_OLD, BACKUP_NEW))
+        for label in review.LABELS
+    ]
+    # A reversion (unit D1b): restates on the first value beside each
+    # answer on the second, with and without the cue code's link.
+    rounds += [
+        ((first, second), back, ("restates", label))
+        for first, second, back in (
+            (PORT_OLD, PORT_NEW, PORT_BACK),
+            (BACKUP_OLD, BACKUP_NEW, BACKUP_BACK),
+        )
+        for label in review.LABELS
+    ]
     n = 0
-    for old, new in ((PORT_OLD, PORT_NEW), (BACKUP_OLD, BACKUP_NEW)):
-        for label in review.LABELS:
-            for unsafe, secret in ((0.0, 0.0), (TAU, 0.0), (0.0, TAU)):
-                n += 1
-                bench, response, row = _daemon_round(
-                    tmp_path / f"r{n}", old, new, label, unsafe, secret
-                )
-                assert bench["action"] == row["review_action"], (label, unsafe, secret)
-                daemon_links = [
-                    r["id"]
-                    for r in response.get("supersedes") or []
-                    if r["evidence"] == "review"
-                ]
-                daemon_filings = [
-                    [r["id"], r["detector"]]
-                    for r in response.get("conflicts_filed") or []
-                    if "detector" in r
-                ]
-                assert bench.get("links", []) == daemon_links
-                assert bench.get("filings", []) == daemon_filings
-                assert bench.get("update_suggested", []) == response.get(
-                    "update_suggested", []
-                )
+    for olds, new, labels in rounds:
+        for unsafe, secret in ((0.0, 0.0), (TAU, 0.0), (0.0, TAU)):
+            n += 1
+            bench, response, row = _daemon_round(
+                tmp_path / f"r{n}", olds, new, labels, unsafe, secret
+            )
+            assert bench["action"] == row["review_action"], (labels, unsafe, secret)
+            daemon_links = [
+                r["id"]
+                for r in response.get("supersedes") or []
+                if r["evidence"] == "review"
+            ]
+            daemon_filings = [
+                [r["id"], r["detector"]]
+                for r in response.get("conflicts_filed") or []
+                if "detector" in r
+            ]
+            assert bench.get("links", []) == daemon_links
+            assert bench.get("filings", []) == daemon_filings
+            assert bench.get("update_suggested", []) == response.get(
+                "update_suggested", []
+            )
+            if labels == ("restates", "update") and not unsafe and not secret:
+                assert row["review_action"] == review.ACTION_COMMIT, olds
     # every bench decision went through the daemon's own function
     assert len(calls) >= n
 

@@ -1143,6 +1143,10 @@ def _reviewed_write(
         "review_answers": answers.to_event(),
         "review_action": decision.action,
     }
+    if decision.action == _review.ACTION_COMMIT and decision.restated:
+        # A commit that also restates (unit D1b): the ids only, kept on the
+        # log so these commits can be counted. They get no corroboration.
+        review_fields["review_restated"] = list(decision.restated)
 
     if decision.action == _review.ACTION_SECRET:
         deps.recorder.record(

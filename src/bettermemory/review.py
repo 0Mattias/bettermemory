@@ -565,11 +565,13 @@ REVIEW_LINK_NOTE = "set by the write review"
 
 @dataclass(frozen=True)
 class ReviewDecision:
-    """What the answers decide, in DESIGN item 6's order. For a commit,
-    `links` are the review's supersedes targets (between claim-sized
-    statements, flag on), `update_suggested` the update answers that do not
-    link, and `filings` the `(id, detector)` pairs to file. The cue code's
-    links are not here: they always stand and the commit sets them."""
+    """What the answers decide, in DESIGN item 6's order as amended by
+    unit D1b. `restated` holds the ids answered restates, on a refusal and
+    on a commit alike. For a commit, `links` are the review's supersedes
+    targets (between claim-sized statements, flag on), `update_suggested`
+    the update answers that do not link, and `filings` the `(id,
+    detector)` pairs to file. The cue code's links are not here: they
+    always stand and the commit sets them."""
 
     action: str
     restated: tuple[str, ...] = ()
@@ -606,8 +608,10 @@ def apply_review(
 
     1. secret at or above `tau.secret`: refused (credential_warning).
     2. unsafe at or above `tau.unsafe`: refused (instruction_warning).
-    3. any related id answered restates: not written (duplicate).
-    4. otherwise committed, with per related id:
+    3. any related id answered restates, no related id answered update
+       and no `declared_ids`: not written (duplicate).
+    4. otherwise committed, with the restated ids carried on the decision
+       and given nothing, and per related id:
        - update between two claim-sized statements, flag on: a supersedes
          link, unless the cue code or the writer already links it;
        - update otherwise: named in update_suggested;
@@ -615,6 +619,12 @@ def apply_review(
        - conflict or unrelated on a target the cue code linked: the cue
          link stands and the pair is filed with "review-disagrees";
        - unrelated: nothing.
+
+    Restates means the write adds nothing. A write that also updates a
+    related statement adds something, and so does one whose writer named
+    the statements it replaces in `supersedes=`, so either commits: a
+    reversion restates the first value and updates the second, and
+    keeping it out would leave the second value served as current.
 
     Both thresholds are inclusive. Pure: the bench calls it on the chat
     arm's answers and must reach the daemon's actions.
@@ -628,10 +638,13 @@ def apply_review(
         for memory_id in related.ids
         if answers.relation.get(memory_id) == LABEL_RESTATES
     )
-    if restated:
+    declared = set(declared_ids)
+    updates = any(
+        answers.relation.get(memory_id) == LABEL_UPDATE for memory_id in related.ids
+    )
+    if restated and not updates and not declared:
         return ReviewDecision(action=ACTION_RESTATES, restated=restated)
     cue_linked = set(related.cue_supersedes)
-    declared = set(declared_ids)
     links: list[str] = []
     suggested: list[str] = []
     filings: list[tuple[str, str]] = []
@@ -653,6 +666,7 @@ def apply_review(
             filings.append((entry.id, DETECTOR_REVIEW_DISAGREES))
     return ReviewDecision(
         action=ACTION_COMMIT,
+        restated=restated,
         links=tuple(links),
         update_suggested=tuple(suggested),
         filings=tuple(filings),

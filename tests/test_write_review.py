@@ -951,6 +951,213 @@ async def test_cue_link_stands_and_disagreement_is_filed(
     ]
 
 
+# ---------------------------------------------------------------------------
+# Restates beside update or a declared supersedes: the write commits (D1b)
+# ---------------------------------------------------------------------------
+
+# A reversion with no kin values: the first value, the second, and the
+# return to the first. The cue code links none of them.
+REVERT_FIRST = BACKUP_OLD
+REVERT_SECOND = BACKUP_NEW
+REVERT_THIRD = "Backups went back to Restic, nightly, for the database."
+
+# The same shape on a port: the cue code links the return over the second.
+PORT_BACK = "The staging API is back on port 8443 behind the gateway now."
+
+# Claim-sized, no kin value, beside PORT_OLD in the related set.
+PORT_HEALTH = "The staging API answers health checks behind the gateway."
+
+
+async def _answer_by_id(
+    harness: Harness,
+    first: dict[str, Any],
+    content: str,
+    labels: dict[str, str],
+    *,
+    secret: float = 0.0,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Re-send `content` answering the ids `first` showed, each by `labels`."""
+    assert first["status"] == "review", first
+    assert sorted(_related_ids(first)) == sorted(labels), first
+    return await harness.write(
+        content,
+        review={
+            "review_id": first["review"]["review_id"],
+            "relation": labels,
+            "unsafe": 0.0,
+            "secret": secret,
+        },
+        **kwargs,
+    )
+
+
+async def test_reversion_restates_and_updates_commits_with_review_link(
+    harness: Harness, tau: float
+) -> None:
+    f1 = harness.seed(REVERT_FIRST)
+    f2 = harness.seed(REVERT_SECOND)
+    first = await harness.write(REVERT_THIRD)
+    res = await _answer_by_id(
+        harness, first, REVERT_THIRD, {f1: "restates", f2: "update"}
+    )
+    assert res["status"] == "committed"
+    assert res["supersedes"] == [{"id": f2, "evidence": "review"}]
+    assert "conflicts_filed" not in res
+    memory = harness.store.load_one(res["id"])
+    assert [(link.target_id, link.note) for link in memory.links] == [
+        (f2, review.REVIEW_LINK_NOTE)
+    ]
+    # The restated statement is not corroborated by a write that commits.
+    assert harness.store.load_one(f1).corroborations == 0
+    (row,) = harness.events("write")
+    assert row["review_action"] == review.ACTION_COMMIT
+    assert row["review_restated"] == [f1]
+    assert row["supersedes_reviewed"] == [f2]
+    assert "corroborated_id" not in row
+
+
+async def test_reversion_over_a_cue_link_keeps_the_cue_link_only(
+    harness: Harness, tau: float
+) -> None:
+    f1 = harness.seed(PORT_OLD)
+    f2 = harness.seed(PORT_NEW)
+    report = supersession.detect_supersession(PORT_BACK, harness.store.load_all())
+    assert [m.memory_id for m in report.supersedes] == [f2]
+    first = await harness.write(PORT_BACK)
+    res = await _answer_by_id(harness, first, PORT_BACK, {f1: "restates", f2: "update"})
+    assert res["status"] == "committed"
+    assert [(r["id"], r["evidence"]) for r in res["supersedes"]] == [(f2, "kin")]
+    assert "conflicts_filed" not in res
+    assert ConflictQueue(harness.store).load() == []
+    (row,) = harness.events("write")
+    assert row["review_restated"] == [f1]
+    assert "supersedes_reviewed" not in row
+
+
+# The second value inside a record that is not claim-sized.
+REVERT_SECOND_LONG = " ".join(
+    [
+        REVERT_SECOND,
+        "Borg keeps fourteen daily and eight weekly archives per volume.",
+        "The archive volumes are checked by a weekly Borg verify job.",
+        "Restores are tested on the staging host at the start of each month.",
+        "The backup keys sit in the operations vault beside the runbook.",
+        "Failed Borg runs page the on-call operator through the backup alerts.",
+    ]
+)
+
+
+@pytest.mark.parametrize(
+    ("supersession_on", "second"),
+    [(False, REVERT_SECOND), (True, REVERT_SECOND_LONG)],
+    ids=["flag-off", "second-not-claim-sized"],
+)
+async def test_reversion_that_cannot_link_commits_with_update_suggested(
+    tmp_path: Path, tau: float, supersession_on: bool, second: str
+) -> None:
+    assert supersession.claim_sized(second) is not supersession_on
+    harness = Harness(
+        tmp_path / "store",
+        behavior=BehaviorConfig(write_supersession=supersession_on),
+    )
+    f1 = harness.seed(REVERT_FIRST)
+    f2 = harness.seed(second)
+    first = await harness.write(REVERT_THIRD)
+    res = await _answer_by_id(
+        harness, first, REVERT_THIRD, {f1: "restates", f2: "update"}
+    )
+    assert res["status"] == "committed"
+    assert res["update_suggested"] == [f2]
+    assert "supersedes" not in res
+    assert harness.store.load_one(res["id"]).links == []
+
+
+async def test_cue_link_on_the_restated_statement_stands_unfiled(
+    harness: Harness, tau: float
+) -> None:
+    f1 = harness.seed(PORT_OLD)
+    f2 = harness.seed(PORT_HEALTH)
+    report = supersession.detect_supersession(PORT_NEW, harness.store.load_all())
+    assert [m.memory_id for m in report.supersedes] == [f1]
+    first = await harness.write(PORT_NEW)
+    res = await _answer_by_id(harness, first, PORT_NEW, {f1: "restates", f2: "update"})
+    assert res["status"] == "committed"
+    assert [(r["id"], r["evidence"]) for r in res["supersedes"]] == [
+        (f1, "kin"),
+        (f2, "review"),
+    ]
+    assert "conflicts_filed" not in res
+    assert ConflictQueue(harness.store).load() == []
+    assert harness.store.load_one(f1).corroborations == 0
+    (row,) = harness.events("write")
+    assert row["review_restated"] == [f1]
+
+
+async def test_declared_supersedes_commits_beside_a_restates_answer(
+    harness: Harness, tau: float
+) -> None:
+    f1 = harness.seed(REVERT_FIRST)
+    f2 = harness.seed(REVERT_SECOND)
+    # The same answers with no declaration keep the write out.
+    first = await harness.write(REVERT_THIRD)
+    labels = {f1: "restates", f2: "unrelated"}
+    res = await _answer_by_id(harness, first, REVERT_THIRD, labels)
+    assert res["status"] == "duplicate"
+    # The writer's own supersedes= says the write adds something.
+    first = await harness.write(REVERT_THIRD, supersedes=[f2])
+    res = await _answer_by_id(harness, first, REVERT_THIRD, labels, supersedes=[f2])
+    assert res["status"] == "committed"
+    assert res["supersedes"] == [{"id": f2, "evidence": "declared"}]
+    assert "conflicts_filed" not in res
+    # The refused first try corroborated f1 once; the commit adds none.
+    assert harness.store.load_one(f1).corroborations == 1
+    row = harness.events("write")[-1]
+    assert row["status"] == "committed"
+    assert row["review_restated"] == [f1]
+
+
+@pytest.mark.parametrize("label", ["conflict", "unrelated"])
+async def test_restates_beside_a_disputed_cue_link_is_not_written(
+    harness: Harness, tau: float, label: str
+) -> None:
+    f1 = harness.seed(PORT_OLD)
+    f2 = harness.seed(PORT_NEW)
+    first = await harness.write(PORT_BACK)
+    res = await _answer_by_id(harness, first, PORT_BACK, {f1: "restates", f2: label})
+    assert res["status"] == "duplicate"
+    assert [m["id"] for m in res["matches"]] == [f1]
+    assert harness.memory_rows() == 2
+    assert ConflictQueue(harness.store).load() == []
+
+
+async def test_restates_beside_conflict_is_not_written(
+    harness: Harness, tau: float
+) -> None:
+    f1 = harness.seed(REVERT_FIRST)
+    f2 = harness.seed(REVERT_SECOND)
+    first = await harness.write(REVERT_THIRD)
+    res = await _answer_by_id(
+        harness, first, REVERT_THIRD, {f1: "restates", f2: "conflict"}
+    )
+    assert res["status"] == "duplicate"
+    assert [m["id"] for m in res["matches"]] == [f1]
+    assert harness.memory_rows() == 2
+
+
+async def test_secret_refuses_a_reversion_that_updates(
+    harness: Harness, tau: float
+) -> None:
+    f1 = harness.seed(REVERT_FIRST)
+    f2 = harness.seed(REVERT_SECOND)
+    first = await harness.write(REVERT_THIRD)
+    res = await _answer_by_id(
+        harness, first, REVERT_THIRD, {f1: "restates", f2: "update"}, secret=0.95
+    )
+    assert res["status"] == "credential_warning"
+    assert harness.memory_rows() == 2
+
+
 async def test_cue_detection_runs_once_per_call(
     harness: Harness, tau: float, monkeypatch: pytest.MonkeyPatch
 ) -> None:
