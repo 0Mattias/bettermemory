@@ -25,9 +25,10 @@ integrity bench imports them rather than copying them:
   did before the review existed. Tests and the bench set them explicitly,
   through `tau_override` or by patching the two module attributes.
 
-Precedence: a credential-regex refusal and a cue-code link always stand.
-What the review decides is additive to them, and a review answer that
-disagrees with a cue link files the pair as ``review-disagrees``.
+Precedence: a credential-regex refusal always stands. A cue-code link
+stands unless the review answers conflict or unrelated for its target
+(unit D1c): the link is then dropped and the pair filed as
+``review-disagrees``. A cue target the review did not show stands.
 """
 
 from __future__ import annotations
@@ -566,18 +567,20 @@ REVIEW_LINK_NOTE = "set by the write review"
 @dataclass(frozen=True)
 class ReviewDecision:
     """What the answers decide, in DESIGN item 6's order as amended by
-    unit D1b. `restated` holds the ids answered restates, on a refusal and
-    on a commit alike. For a commit, `links` are the review's supersedes
-    targets (between claim-sized statements, flag on), `update_suggested`
-    the update answers that do not link, and `filings` the `(id,
-    detector)` pairs to file. The cue code's links are not here: they
-    always stand and the commit sets them."""
+    units D1b and D1c. `restated` holds the ids answered restates, on a
+    refusal and on a commit alike. For a commit, `links` are the review's
+    supersedes targets (between claim-sized statements, flag on),
+    `update_suggested` the update answers that do not link, `filings` the
+    `(id, detector)` pairs to file, and `cue_dropped` the cue code's
+    targets the review disputed, whose links the commit does not set. The
+    cue code's other links are not here: the commit sets them."""
 
     action: str
     restated: tuple[str, ...] = ()
     links: tuple[str, ...] = ()
     update_suggested: tuple[str, ...] = ()
     filings: tuple[tuple[str, str], ...] = field(default_factory=tuple)
+    cue_dropped: tuple[str, ...] = ()
 
     def to_event(self) -> dict[str, Any]:
         out: dict[str, Any] = {"action": self.action}
@@ -592,6 +595,8 @@ class ReviewDecision:
                 {"id": memory_id, "detector": detector}
                 for memory_id, detector in self.filings
             ]
+        if self.cue_dropped:
+            out["cue_dropped"] = list(self.cue_dropped)
         return out
 
 
@@ -617,14 +622,22 @@ def apply_review(
        - update otherwise: named in update_suggested;
        - conflict: the pair filed with detector "review";
        - conflict or unrelated on a target the cue code linked: the cue
-         link stands and the pair is filed with "review-disagrees";
+         link is dropped (cue_dropped) and the pair is filed with
+         "review-disagrees";
        - unrelated: nothing.
+
+    Only a target in `related` is answered, so a cue target past the
+    related set's cap keeps its link.
 
     Restates means the write adds nothing. A write that also updates a
     related statement adds something, and so does one whose writer named
     the statements it replaces in `supersedes=`, so either commits: a
     reversion restates the first value and updates the second, and
     keeping it out would leave the second value served as current.
+
+    A dropped cue link (unit D1c): on legitimate writes in D1's runs the
+    review disputed a cue link only where the link missed the statement
+    the write replaces, and dropping a link cannot admit a write.
 
     Both thresholds are inclusive. Pure: the bench calls it on the chat
     arm's answers and must reach the daemon's actions.
@@ -648,6 +661,7 @@ def apply_review(
     links: list[str] = []
     suggested: list[str] = []
     filings: list[tuple[str, str]] = []
+    dropped: list[str] = []
     for entry in related.entries:
         label = answers.relation.get(entry.id)
         if label == LABEL_UPDATE:
@@ -657,19 +671,18 @@ def apply_review(
                 links.append(entry.id)
             else:
                 suggested.append(entry.id)
-        elif label == LABEL_CONFLICT:
-            detector = (
-                DETECTOR_REVIEW_DISAGREES if entry.id in cue_linked else DETECTOR_REVIEW
-            )
-            filings.append((entry.id, detector))
-        elif label == LABEL_UNRELATED and entry.id in cue_linked:
+        elif label in (LABEL_CONFLICT, LABEL_UNRELATED) and entry.id in cue_linked:
             filings.append((entry.id, DETECTOR_REVIEW_DISAGREES))
+            dropped.append(entry.id)
+        elif label == LABEL_CONFLICT:
+            filings.append((entry.id, DETECTOR_REVIEW))
     return ReviewDecision(
         action=ACTION_COMMIT,
         restated=restated,
         links=tuple(links),
         update_suggested=tuple(suggested),
         filings=tuple(filings),
+        cue_dropped=tuple(dropped),
     )
 
 

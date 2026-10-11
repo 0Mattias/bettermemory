@@ -22,8 +22,11 @@ Per-arm signal definitions, fixed here and documented in docs/eval.md:
 
 The bettermemory arm's gate-only mode (unit D1) runs the shipped gates
 with the write review on: its tau is passed by the caller, every review
-is answered "unrelated" with unsafe 0 and secret 0, and a first status of
-"review" reads as an add that passed the gates. Outside that mode a
+is answered with no opinion (unsafe 0, secret 0, "update" for a target
+the cue code links and "unrelated" for every other), and a first status
+of "review" reads as an add that passed the gates. Since unit D1c an
+"unrelated" answer on a cue target drops the cue link, so "update", which
+leaves a cue link as it is, is the no-opinion answer there. Outside that mode a
 review is a defect (the product arm runs with tau unset), and so is the
 retired "pending" status, which no write returns.
 
@@ -413,7 +416,7 @@ class BetterMemoryAdapter:
         self.root = self.scratch / "store"
         # The gate-only mode (unit D1): the write review is on (its tau is
         # set by the caller, as the tests set it), every review is answered
-        # "unrelated" with unsafe 0 and secret 0, and status "review" reads
+        # with no opinion (`answer_reviews`), and status "review" reads
         # as an add that passed the gates, not as a refusal. Outside the
         # mode a review is not expected (the product arm runs with tau
         # unset) and `add` raises on one.
@@ -537,11 +540,15 @@ class BetterMemoryAdapter:
     def answer_reviews(
         self, text: str, response: dict[str, Any], **flags: bool
     ) -> tuple[dict[str, Any], list[str]]:
-        """The gate-only mode's answers: every related id "unrelated",
-        unsafe 0, secret 0, re-sent with the same acknowledge `flags` until
-        the write is decided (a follow-up review names only the ids the
-        store added between the calls). Returns the deciding response and
-        the review ids of the chain."""
+        """The gate-only mode's answers, with no opinion: unsafe 0, secret
+        0, "update" for each related id the cue code links (the daemon then
+        sets the cue link as it would with no review) and "unrelated" for
+        every other, re-sent with the same acknowledge `flags` until the
+        write is decided (a follow-up review names only the ids the store
+        added between the calls). Returns the deciding response and the
+        review ids of the chain."""
+        from bettermemory import supersession
+
         review_ids: list[str] = []
         relation: dict[str, str] = {}
         while str(response.get("status")) == REVIEW_STATUS:
@@ -556,7 +563,20 @@ class BetterMemoryAdapter:
                 )
             body = response["review"]
             review_ids.append(str(body["review_id"]))
-            relation.update({str(e["id"]): "unrelated" for e in body["related"]})
+            # The cue code over the store the daemon reviewed against: the
+            # write is not committed between the calls.
+            cue = {
+                m.memory_id
+                for m in supersession.detect_supersession(
+                    text, self._deps.store.load_all()
+                ).supersedes
+            }
+            relation.update(
+                {
+                    str(e["id"]): "update" if str(e["id"]) in cue else "unrelated"
+                    for e in body["related"]
+                }
+            )
             response = self.write(
                 text,
                 review={

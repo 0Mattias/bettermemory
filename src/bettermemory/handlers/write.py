@@ -1239,8 +1239,10 @@ class SupersessionOutcome:
     linked on its own; `conflicts` the `(pair id, match)` rows filed for
     `memory_conflicts`. The review's share: `reviewed` the targets a
     review `update` answer linked, `update_suggested` the update answers
-    that did not link, and `review_filed` the `(pair id, target, detector)`
-    rows its conflict and disagreement answers filed."""
+    that did not link, `review_filed` the `(pair id, target, detector)`
+    rows its conflict and disagreement answers filed, and `cue_dropped`
+    the cue code's targets whose links the review's disagreement dropped
+    (unit D1c)."""
 
     declared: list[str] = field(default_factory=list)
     detected: list[SupersessionMatch] = field(default_factory=list)
@@ -1248,6 +1250,7 @@ class SupersessionOutcome:
     reviewed: list[str] = field(default_factory=list)
     update_suggested: list[str] = field(default_factory=list)
     review_filed: list[tuple[str, str, str]] = field(default_factory=list)
+    cue_dropped: list[str] = field(default_factory=list)
 
     def event_fields(self) -> dict[str, Any]:
         """Conditional, so a write that set nothing keeps the event's
@@ -1273,6 +1276,8 @@ class SupersessionOutcome:
                 {"pair_id": pair_id, "id": target, "detector": detector}
                 for pair_id, target, detector in self.review_filed
             ]
+        if self.cue_dropped:
+            out["supersedes_cue_dropped"] = list(self.cue_dropped)
         return out
 
     def response_fields(self) -> dict[str, Any]:
@@ -1366,8 +1371,9 @@ def _persist(
     code's report when the review already ran it on this call, so the cue
     code runs once per call; None runs it here (only when
     `behavior.write_supersession` is on). `decision` is the review's: its
-    links are set beside the cue code's, which always stand. A target
-    the writer declared is excluded from detection. `OSError` from the
+    links are set beside the cue code's, less the cue targets it disputed
+    (`cue_dropped`, unit D1c). A target the writer declared is excluded
+    from detection. `OSError` from the
     write propagates so each caller can name its own remedy.
     """
     payload = dict(payload)
@@ -1384,6 +1390,9 @@ def _persist(
         )
     if report is not None:
         detected, disagreements = report.supersedes, report.conflicts
+    dropped = set(decision.cue_dropped) if decision is not None else set()
+    cue_dropped = [m.memory_id for m in detected if m.memory_id in dropped]
+    detected = [m for m in detected if m.memory_id not in dropped]
     linked = set(declared_ids) | {m.memory_id for m in detected}
     reviewed = [
         target
@@ -1427,6 +1436,7 @@ def _persist(
         reviewed=reviewed,
         update_suggested=list(decision.update_suggested) if decision else [],
         review_filed=review_filed,
+        cue_dropped=cue_dropped,
     )
 
 

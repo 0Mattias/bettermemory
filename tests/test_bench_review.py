@@ -1057,8 +1057,18 @@ def test_gate_only_arm_matches_pre_review_statuses_on_v0_and_v1_dev(
     assert result["passed_gates"] == sum(1 for i in result["items"] if i["reviewed"])
     assert result["precondition_holds"] is True
     assert result["p6"]["equal"] is True and result["p6"]["differing"] == []
+    # No opinion (unit D1c): each cue target is answered "update", so the
+    # cue code's links are the ones the pre-review product sets, and no
+    # pair is filed as review-disagrees.
     cue_links = sum(i["cue_links"] for i in result["items"])
-    assert result["review_disagrees_filed"] == cue_links
+    parent_cue_links = sum(
+        1
+        for add in json.loads(parent.read_text(encoding="utf-8"))["adds"]
+        for r in add["outcome"]["raw"].get("supersedes") or []
+        if r.get("evidence") not in ("review", "declared")
+    )
+    assert cue_links == parent_cue_links > 0
+    assert result["review_disagrees_filed"] == 0
     vocabulary = {*durability.TRANSIENT_PHRASE_MARKERS, durability._AS_OF_DATE_MARKER}
     for bucket in result["transient_markers"].values():
         assert set(bucket) <= vocabulary

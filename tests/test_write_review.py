@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import pytest
@@ -932,23 +933,91 @@ async def test_conflict_on_cue_filed_pair_keeps_cue_row_reported_once(
     assert "review_filings" not in row
 
 
-async def test_cue_link_stands_and_disagreement_is_filed(
-    harness: Harness, tau: float
+@pytest.mark.parametrize("label", ["unrelated", "conflict"])
+async def test_disputed_cue_link_is_dropped_and_disagreement_filed(
+    harness: Harness, tau: float, label: str
 ) -> None:
+    """Unit D1c: an answer that disputes the cue code's target drops the
+    cue link; the pair is still filed as review-disagrees."""
     old = harness.seed(PORT_OLD)
     first = await harness.write(PORT_NEW)
     assert _related_ids(first) == [old]
-    res = await harness.answer(first, PORT_NEW, label="unrelated")
+    report = supersession.detect_supersession(PORT_NEW, harness.store.load_all())
+    assert [m.memory_id for m in report.supersedes] == [old]
+    res = await harness.answer(first, PORT_NEW, label=label)
     assert res["status"] == "committed"
-    assert [row["id"] for row in res["supersedes"]] == [old]
-    assert res["supersedes"][0]["evidence"] == "kin"
-    memory = harness.store.load_one(res["id"])
-    assert [link.target_id for link in memory.links] == [old]
-    assert (memory.links[0].note or "").startswith("set at write time")
+    assert "supersedes" not in res
+    assert harness.store.load_one(res["id"]).links == []
+    (filed,) = res["conflicts_filed"]
+    assert (filed["id"], filed["detector"]) == (old, review.DETECTOR_REVIEW_DISAGREES)
     queued = ConflictQueue(harness.store).load()
     assert [(c.b_id, c.detector) for c in queued] == [
         (old, review.DETECTOR_REVIEW_DISAGREES)
     ]
+    (row,) = harness.events("write")
+    assert row["supersedes_cue_dropped"] == [old]
+    assert "supersedes" not in row and "supersedes_detected" not in row
+    assert row["review_answers"]["relation"] == {old: label}
+
+
+async def test_cue_link_stands_when_the_review_agrees(
+    harness: Harness, tau: float
+) -> None:
+    """An update answer on the cue code's target leaves its link as the
+    cue code set it: no second link, no filing."""
+    old = harness.seed(PORT_OLD)
+    first = await harness.write(PORT_NEW)
+    res = await harness.answer(first, PORT_NEW, label="update")
+    assert res["status"] == "committed"
+    assert [(r["id"], r["evidence"]) for r in res["supersedes"]] == [(old, "kin")]
+    memory = harness.store.load_one(res["id"])
+    assert [link.target_id for link in memory.links] == [old]
+    assert (memory.links[0].note or "").startswith("set at write time")
+    assert "conflicts_filed" not in res
+    assert ConflictQueue(harness.store).load() == []
+    (row,) = harness.events("write")
+    assert "supersedes_cue_dropped" not in row
+
+
+def test_cue_target_the_review_did_not_show_keeps_its_link() -> None:
+    """Only an answered target can be disputed: a cue target past the
+    related set's cap stays out of cue_dropped, whatever else is said."""
+
+    def match(memory_id: str) -> supersession.SupersessionMatch:
+        return supersession.SupersessionMatch(
+            memory_id=memory_id,
+            outcome="supersedes",
+            evidence="cue",
+            cue=None,
+            new_value="",
+            old_value="",
+            similarity=0.0,
+            summary="",
+        )
+
+    shown = review.RelatedEntry(
+        id="shown", scopes=(), updated="", claim_sized=True, text=""
+    )
+    related = review.RelatedSet(
+        entries=(shown,),
+        report=supersession.SupersessionReport(
+            eligible=True, supersedes=[match("shown"), match("past-cap")], conflicts=[]
+        ),
+    )
+    answers = review.ReviewAnswers(
+        relation=MappingProxyType({"shown": "unrelated"}), unsafe=0.0, secret=0.0
+    )
+    decision = review.apply_review(
+        answers,
+        related,
+        tau=review.Tau(unsafe=0.9, secret=0.9),
+        write_claim_sized=True,
+        write_supersession=True,
+    )
+    assert decision.action == review.ACTION_COMMIT
+    assert decision.cue_dropped == ("shown",)
+    assert decision.filings == (("shown", review.DETECTOR_REVIEW_DISAGREES),)
+    assert decision.to_event()["cue_dropped"] == ["shown"]
 
 
 # ---------------------------------------------------------------------------

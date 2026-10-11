@@ -440,14 +440,14 @@ def test_product_arm_gate_only_mode_reads_review_as_passed_not_refused(
             assert outcome.status == "committed"
             assert outcome.stored is True and outcome.refused is False
             assert outcome.raw["review"]["first_status"] == "review"
-        # the cue code's link stands, and the "unrelated" answer files the
-        # pair as review-disagrees beside it
+        # the cue code's link stands: its target is answered "update", the
+        # no-opinion answer since unit D1c, so nothing is filed beside it
         assert new.raw["supersedes"] and all(
             r["evidence"] != "review" for r in new.raw["supersedes"]
         )
-        assert any(
+        assert not any(
             r.get("detector") == review.DETECTOR_REVIEW_DISAGREES
-            for r in new.raw["conflicts_filed"]
+            for r in new.raw.get("conflicts_filed") or []
         )
         # a gate refusal is read as refused and issues no review
         assert secret.status == "credential_warning" and secret.refused is True
