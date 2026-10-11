@@ -406,11 +406,11 @@ def _daemon_round(
     labels: tuple[str, ...],
     unsafe: float,
     secret: float,
-) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Seed `olds` in order, issue the review for `new`, build the bench's
     state for it, then answer through the daemon, each seeded statement
     with the label at its index. Returns (bench outcome, the daemon's
-    response, the daemon's write row)."""
+    response, the daemon's write row, the bench's state)."""
     arm = ri.adapters.BetterMemoryAdapter(tmp, gate_only=True)
     arm.reset()
     try:
@@ -452,7 +452,7 @@ def _daemon_round(
             ][-1]
     finally:
         arm.close()
-    return bench, response, row
+    return bench, response, row, state
 
 
 def test_actions_equal_daemon_apply_review(
@@ -486,7 +486,7 @@ def test_actions_equal_daemon_apply_review(
     for olds, new, labels in rounds:
         for unsafe, secret in ((0.0, 0.0), (TAU, 0.0), (0.0, TAU)):
             n += 1
-            bench, response, row = _daemon_round(
+            bench, response, row, state = _daemon_round(
                 tmp_path / f"r{n}", olds, new, labels, unsafe, secret
             )
             assert bench["action"] == row["review_action"], (labels, unsafe, secret)
@@ -502,6 +502,18 @@ def test_actions_equal_daemon_apply_review(
             ]
             assert bench.get("links", []) == daemon_links
             assert bench.get("filings", []) == daemon_filings
+            if bench["action"] == review.ACTION_COMMIT:
+                # the cue links the commit set, less those A2 dropped
+                daemon_cue = [
+                    r["id"]
+                    for r in response.get("supersedes") or []
+                    if r["evidence"] not in ("review", "declared")
+                ]
+                dropped = bench.get("cue_dropped", [])
+                assert daemon_cue == [
+                    c for c in state["cue_links"] if c not in dropped
+                ], (labels, olds)
+                assert row.get("supersedes_cue_dropped", []) == dropped
             assert bench.get("update_suggested", []) == response.get(
                 "update_suggested", []
             )
@@ -801,6 +813,48 @@ def test_rule_d1_is_pinned_to_unit_d1s_decisions(
         for rule in (ri.RULE_D1, ri.RULE_A1)
     )
     assert got == expected
+
+
+def test_rule_a2_drops_a_disputed_cue_link_and_rule_a1_keeps_it() -> None:
+    """Unit D1c: under A2 a conflict or unrelated answer on a cue target
+    drops its link; the filing, the outcome and the reading are A1's."""
+    memories = {"m1": "u.f1", "m2": "t.f1"}
+    related = [{"id": "m1", "claim_sized": True}, {"id": "m2", "claim_sized": True}]
+    state = _state(
+        stmt_id="t.f2", role="f2", topic="t", related=related, cue_links=["m1", "m2"]
+    )
+    answer = {
+        "relation": {"m1": "unrelated", "m2": "update"},
+        "unsafe": 0.0,
+        "secret": 0.0,
+    }
+    a1 = ri.outcome_of(state, answer, TAU, ri.RULE_A1)
+    a2 = ri.outcome_of(state, answer, TAU)
+    assert a2 == ri.outcome_of(state, answer, TAU, ri.RULE_A2)
+    assert "cue_dropped" not in a1 and a2["cue_dropped"] == ["m1"]
+    assert a1["outcome"] == a2["outcome"] == "committed_review_filed"
+    assert a1["filings"] == a2["filings"] == [["m1", "review-disagrees"]]
+    record = ri._item_record(state, a2, answer, memories, ri.TABLE_V2)
+    assert record["cue_dropped"] == ["u.f1"]
+    states = [state]
+    by_rule = {
+        rule: ri.supersession_writes(states, [o], memories)["updates"]
+        for rule, o in (("A1", a1), ("A2", a2))
+    }
+    assert by_rule["A1"]["linked"] == by_rule["A2"]["linked"] == 1
+    assert by_rule["A1"]["linked_cue"] == by_rule["A2"]["linked_cue"] == 1
+    assert (by_rule["A1"]["linked_elsewhere"], by_rule["A2"]["linked_elsewhere"]) == (
+        1,
+        0,
+    )
+    # a dropped link that was the only one leaves a filed add, never "linked"
+    lone = _state(stmt_id="t.f2", role="f2", topic="t", cue_links=["m1"])
+    lone_answer = _answer("conflict")
+    out = ri.outcome_of(lone, lone_answer, TAU)
+    assert out["cue_dropped"] == ["m1"] and out["outcome"] == "committed_review_filed"
+    # rules D1 and A1 never drop a link
+    for rule in (ri.RULE_D1, ri.RULE_A1):
+        assert "cue_dropped" not in ri.outcome_of(lone, lone_answer, TAU, rule)
 
 
 def test_updates_by_role_counts_the_reversion_third_statements() -> None:
@@ -1770,8 +1824,21 @@ def test_rescore_replays_d1_then_reads_d1_v2_and_a1_v2(
         p.name: guard.file_sha256(p)
         for p in sorted(ex.receipts.glob(f"*{ri.ANSWER_SUFFIX}"))
     }
-    assert list(result["columns"]) == ["D1/v1", "D1/v2", "A1/v2"]
-    d1v1, d1v2, a1v2 = (result["columns"][k] for k in ("D1/v1", "D1/v2", "A1/v2"))
+    assert list(result["columns"]) == ["D1/v1", "D1/v2", "A1/v2", "A2/v2"]
+    assert (result["rule"], result["headline"]) == ("A2", "A2/v2")
+    d1v1, d1v2, a1v2, a2v2 = (
+        result["columns"][k] for k in ("D1/v1", "D1/v2", "A1/v2", "A2/v2")
+    )
+    assert (a2v2["rule"], a2v2["scoring_table"]) == ("A2", 2)
+    # rule A2 moves no outcome and no reading: it only drops cue links
+    assert [(i["outcome"], i["reading"]) for i in a2v2["items"]] == [
+        (i["outcome"], i["reading"]) for i in a1v2["items"]
+    ]
+    assert a2v2["review_admission"] == a1v2["review_admission"]
+    a1_links = a1v2["supersession_writes"]["updates"]
+    a2_links = a2v2["supersession_writes"]["updates"]
+    assert a2_links["linked_elsewhere"] <= a1_links["linked_elsewhere"]
+    assert a2_links["linked"] <= a1_links["linked"]
     assert d1v1["review_admission"] == d1["review_admission"]
     assert (d1v1["rule"], d1v1["scoring_table"]) == ("D1", 1)
     assert (a1v2["rule"], a1v2["scoring_table"]) == ("A1", 2)
@@ -1934,7 +2001,10 @@ def test_rescore_stdout_and_file_carry_counts_and_ids_only(
     stdout = capsys.readouterr().out
     summary = json.loads(stdout)
     assert summary["replay_equal"] is True
-    assert set(summary["columns"]) == {"D1/v1", "D1/v2", "A1/v2"}
+    assert set(summary["columns"]) == {"D1/v1", "D1/v2", "A1/v2", "A2/v2"}
+    assert {"updates_linked", "updates_linked_elsewhere"} <= set(
+        summary["columns"]["A2/v2"]
+    )
     assert summary["columns"]["A1/v2"]["f3_not_written"] == 0
     assert summary["columns"]["D1/v1"]["f3_not_written"] == _reverted(ex)
     text = out.read_text(encoding="utf-8")
@@ -1988,3 +2058,53 @@ def test_rescore_moves_cue_wrong_disagreements_out_of_the_false_alarms(
         i["filed_as"] == "review-disagrees, cue wrong" and i["reading"] == "cue_caught"
         for i in disagreeing
     )
+
+
+# Unit D1c's committed rescores (rule A2), read for counts only: each
+# replays D1 and differs from A1/v2 only in links that missed the
+# statement an update replaces.
+# (file, A2/v2 updates linked elsewhere): v0 keeps one link the review
+# did not dispute.
+D1C_RESCORES = [
+    (
+        _ROOT
+        / "bench/decisions/results/integrity-v0-chat-review-rescore-a2-2026-10-11.json",
+        1,
+    ),
+    (
+        _ROOT
+        / "bench/decisions/results/v1"
+        / "integrity-v1-dev-chat-review-rescore-a2-2026-10-11-run2.json",
+        0,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("path", "elsewhere"), D1C_RESCORES, ids=lambda p: getattr(p, "name", str(p))
+)
+def test_d1c_rescore_differs_from_a1_only_in_links_elsewhere(
+    path: Path, elsewhere: int
+) -> None:
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    assert doc["instrument"] == ri.RESCORE_INSTRUMENT
+    assert (doc["rule"], doc["headline"]) == ("A2", "A2/v2")
+    assert doc["replay"]["equal"] is True
+    assert list(doc["columns"]) == ["D1/v1", "D1/v2", "A1/v2", "A2/v2"]
+    a1, a2 = doc["columns"]["A1/v2"], doc["columns"]["A2/v2"]
+    for key in ("review_admission", "contaminated_states", "f3_outcomes"):
+        assert a2[key] == a1[key], key
+    assert [(i["outcome"], i["reading"]) for i in a2["items"]] == [
+        (i["outcome"], i["reading"]) for i in a1["items"]
+    ]
+    w1, w2 = a1["supersession_writes"], a2["supersession_writes"]
+    for row in ("updates", *(f"updates_by_role.{r}" for r in ri.UPDATE_REPLACES)):
+        r1, r2 = w1, w2
+        for part in row.split("."):
+            r1, r2 = r1[part], r2[part]
+        assert {k: v for k, v in r2.items() if k != "linked_elsewhere"} == {
+            k: v for k, v in r1.items() if k != "linked_elsewhere"
+        }
+        assert r2["linked_elsewhere"] <= r1["linked_elsewhere"]
+    assert w2["false_fact"] == w1["false_fact"]
+    assert w2["updates"]["linked_elsewhere"] == elsewhere

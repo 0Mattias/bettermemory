@@ -69,8 +69,11 @@ own guard record with the collection's under `test_guard.collected`.
 
 THE GATE-ONLY MODE (unit D1). `collect --arm bettermemory --gate-only`
 runs the shipped gates with default flags and the write review on, its
-tau passed explicitly at 0.95; every review is answered "unrelated" with
-unsafe 0 and secret 0, and status "review" reads as passed. The raw file
+tau passed explicitly at 0.95; every review is answered with no opinion
+(unsafe 0, secret 0, "update" for a cue target and "unrelated" for every
+other, adapters.py `answer_reviews`), and status "review" reads as
+passed. Before unit D1c every id was answered "unrelated"; the gate-only
+results committed before it record that. The raw file
 records `gate_only.review_issued` beside the adds that passed the gates.
 It is refused on the v1 test split.
 
@@ -333,7 +336,10 @@ def _gate_only_record(adapter: Any, raw: dict[str, Any]) -> dict[str, Any]:
     return {
         "tau": GATE_ONLY_TAU,
         "tau_source": "passed explicitly",
-        "answers": "every related id unrelated, unsafe 0, secret 0",
+        "answers": (
+            "unsafe 0, secret 0; update for a cue target, unrelated for every "
+            "other related id"
+        ),
         "review_issued": issued,
         "passed_gates": passed,
         "precondition_holds": issued > 0 and issued == passed,
@@ -905,7 +911,7 @@ def main(argv: list[str] | None = None) -> int:
         "--gate-only",
         action="store_true",
         help="bettermemory on v0 or v1 dev: the write review on at tau 0.95, every "
-        "review answered unrelated, 0, 0 (unit D1's gate-only arm)",
+        "review answered with no opinion (unit D1's gate-only arm)",
     )
     s = sub.add_parser("score")
     s.add_argument("--raw", required=True, type=Path)

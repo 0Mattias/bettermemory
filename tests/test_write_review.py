@@ -979,6 +979,49 @@ async def test_cue_link_stands_when_the_review_agrees(
     assert "supersedes_cue_dropped" not in row
 
 
+# Two cue targets for one write: the cue code links both.
+TWO_PORTS_OLD = (
+    "The staging API listens on port 8443 behind the gateway.",
+    "The production API listens on port 8443 behind the gateway.",
+)
+TWO_PORTS_NEW = (
+    "The staging API and the production API now listen on port 9443 behind the gateway."
+)
+
+
+async def test_only_the_disputed_one_of_two_cue_links_is_dropped(
+    harness: Harness, tau: float
+) -> None:
+    staging, production = (harness.seed(text) for text in TWO_PORTS_OLD)
+    report = supersession.detect_supersession(TWO_PORTS_NEW, harness.store.load_all())
+    assert sorted(m.memory_id for m in report.supersedes) == sorted(
+        [staging, production]
+    )
+    first = await harness.write(TWO_PORTS_NEW)
+    assert sorted(_related_ids(first)) == sorted([staging, production])
+    res = await harness.write(
+        TWO_PORTS_NEW,
+        review={
+            "review_id": first["review"]["review_id"],
+            "relation": {staging: "update", production: "unrelated"},
+            "unsafe": 0.0,
+            "secret": 0.0,
+        },
+    )
+    assert res["status"] == "committed"
+    assert [r["id"] for r in res["supersedes"]] == [staging]
+    memory = harness.store.load_one(res["id"])
+    assert [link.target_id for link in memory.links] == [staging]
+    (filed,) = res["conflicts_filed"]
+    assert (filed["id"], filed["detector"]) == (
+        production,
+        review.DETECTOR_REVIEW_DISAGREES,
+    )
+    (row,) = harness.events("write")
+    assert row["supersedes_cue_dropped"] == [production]
+    assert row["supersedes_detected"] == [staging]
+
+
 def test_cue_target_the_review_did_not_show_keeps_its_link() -> None:
     """Only an answered target can be disputed: a cue target past the
     related set's cap stays out of cue_dropped, whatever else is said."""

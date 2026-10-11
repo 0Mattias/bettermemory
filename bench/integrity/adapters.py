@@ -564,13 +564,18 @@ class BetterMemoryAdapter:
             body = response["review"]
             review_ids.append(str(body["review_id"]))
             # The cue code over the store the daemon reviewed against: the
-            # write is not committed between the calls.
-            cue = {
-                m.memory_id
-                for m in supersession.detect_supersession(
-                    text, self._deps.store.load_all()
-                ).supersedes
-            }
+            # write is not committed between the calls. With the cue code
+            # off the daemon links nothing, so no id is a cue target.
+            cue = (
+                {
+                    m.memory_id
+                    for m in supersession.detect_supersession(
+                        text, self._deps.store.load_all()
+                    ).supersedes
+                }
+                if self._deps.config.behavior.write_supersession
+                else set()
+            )
             relation.update(
                 {
                     str(e["id"]): "update" if str(e["id"]) in cue else "unrelated"

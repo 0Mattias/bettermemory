@@ -27,9 +27,11 @@ acknowledge_user_claim and acknowledge_scope_mismatch set, and not
 acknowledge_credential, so a regex secret stays refused. An add the gates
 pass gets a review, built by review.related_for inside memory_write, and
 that review's related set is the add's state. The store is then fed only
-from deterministic outcomes: the review is answered "unrelated" with
-unsafe 0 and secret 0, so each add commits unless the credential regex or
-a dedup gate refused it, and the cue code's links are applied. No judge
+from deterministic outcomes: the review is answered with no opinion
+(bench/integrity/adapters.py, the gate-only mode: unsafe 0, secret 0,
+"update" for a cue target and "unrelated" for every other), so each add
+commits unless the credential regex or a dedup gate refused it, and the
+cue code's links are applied. No judge
 answer exists when a later state is built, so no answer feeds back. This
 is the declared deviation from the product, where a review refusal keeps
 the add out of the store; `score` reports the states that hold an add the
@@ -88,6 +90,7 @@ rescore there needs --rerun-reason.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import importlib.util
 import json
@@ -269,11 +272,12 @@ SCORING_TABLE_V2: Mapping[tuple[str, str | None], tuple[str, str]] = MappingProx
     }
 )
 
-# The decision rule. A1 is the product's (bettermemory.review.apply_review
-# since unit D1b); D1 is unit D1's, frozen here so its committed results
-# replay. A result without a rule field was decided by D1.
-RULE_D1, RULE_A1 = "D1", "A1"
-RULES = (RULE_D1, RULE_A1)
+# The decision rule. A2 is the product's (bettermemory.review.apply_review
+# since unit D1c: a disputed cue link is dropped); A1 is unit D1b's and D1
+# unit D1's, each frozen here so its committed results replay. A result
+# without a rule field was decided by D1.
+RULE_D1, RULE_A1, RULE_A2 = "D1", "A1", "A2"
+RULES = (RULE_D1, RULE_A1, RULE_A2)
 RESCORE_INSTRUMENT = guard.RESCORE_INSTRUMENT
 # The item fields unit D1b added; a replay compares every other field.
 D1B_ITEM_FIELDS = ("filed_as", "filing_targets", "restated")
@@ -438,10 +442,6 @@ def build_plan(corpus: dict[str, Any]) -> list[dict[str, Any]]:
 
 def labels_of(row: Mapping[str, Any]) -> dict[str, Any]:
     return {k: row[k] for k in LABEL_FIELDS if row.get(k) is not None}
-
-
-def _review_payload(related: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    return {"relation": {str(e["id"]): "unrelated" for e in related}}
 
 
 def build_states(
@@ -838,15 +838,18 @@ def apply_rule(
     related: review.RelatedSet,
     **kw: Any,
 ) -> review.ReviewDecision:
-    """The decision under `rule`. A1 is the daemon's own
-    (review.apply_review). D1 is unit D1's rule, frozen: it checked
-    restates before update, so once secret and unsafe passed any restates
-    answer kept the add out. A1 differs from it in that check alone, so D1
-    is A1's decision with the check put back; the replay gate holds it to
-    D1's committed outcomes."""
+    """The decision under `rule`. A2 is the daemon's own
+    (review.apply_review). A1 is unit D1b's rule, frozen: every cue link
+    stood, so A1 is A2's decision with no cue link dropped. D1 is unit
+    D1's rule, frozen: it checked restates before update, so once secret
+    and unsafe passed any restates answer kept the add out. D1 differs from
+    A1 in that check alone, so D1 is A1's decision with the check put back;
+    the replay gate holds it to D1's committed outcomes."""
     if rule not in RULES:
         raise Refused(f"no decision rule {rule!r}; the rules are {', '.join(RULES)}")
     decision = review.apply_review(answers, related, **kw)
+    if rule != RULE_A2 and decision.cue_dropped:
+        decision = dataclasses.replace(decision, cue_dropped=())
     if (
         rule == RULE_D1
         and decision.action == review.ACTION_COMMIT
@@ -862,10 +865,12 @@ def outcome_of(
     state: Mapping[str, Any],
     answer: Mapping[str, Any] | None,
     tau: float,
-    rule: str = RULE_A1,
+    rule: str = RULE_A2,
 ) -> dict[str, Any]:
     """One add's outcome under the scoring table. The decision is the
-    daemon's own (review.apply_review), or unit D1's under rule D1."""
+    daemon's own (review.apply_review) under rule A2, or a frozen rule's
+    (apply_rule). Under A2, `cue_dropped` names the cue targets whose links
+    the review's disagreement dropped."""
     if not state["reviewed"]:
         status = state["gate_status"]
         if status == "credential_warning":
@@ -906,6 +911,8 @@ def outcome_of(
     else:
         out["links"] = list(decision.links)
         out["update_suggested"] = list(decision.update_suggested)
+        if decision.cue_dropped:
+            out["cue_dropped"] = list(decision.cue_dropped)
         # The daemon files a review pair only where the cue code did not
         # already queue one (handlers/write.py `_file_review_pairs`).
         cue_filed = set(state.get("cue_filings") or [])
@@ -915,7 +922,11 @@ def outcome_of(
             out["outcome"] = OUTCOME_REVIEW_FILED
         elif state.get("cue_filings"):
             out["outcome"] = OUTCOME_CUE_FILED
-        elif state.get("cue_links") or decision.links or decision.update_suggested:
+        elif (
+            set(state.get("cue_links") or []) - set(decision.cue_dropped)
+            or decision.links
+            or decision.update_suggested
+        ):
             out["outcome"] = OUTCOME_LINKED
         else:
             out["outcome"] = OUTCOME_COMMITTED
@@ -1159,7 +1170,7 @@ def outcomes_at(
     states: Sequence[Mapping[str, Any]],
     answers: Mapping[str, Mapping[str, Any]],
     tau: float,
-    rule: str = RULE_A1,
+    rule: str = RULE_A2,
 ) -> list[dict[str, Any]]:
     return [outcome_of(s, answers.get(s["stmt_id"]), tau, rule) for s in states]
 
@@ -1167,7 +1178,7 @@ def outcomes_at(
 def curve(
     states: Sequence[Mapping[str, Any]],
     answers: Mapping[str, Mapping[str, Any]],
-    rule: str = RULE_A1,
+    rule: str = RULE_A2,
     table: int = TABLE_V1,
     memories: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
@@ -1226,7 +1237,7 @@ def choose_tau(rows: Sequence[Mapping[str, Any]]) -> tuple[float, dict[str, Any]
 def _floor(
     states: Sequence[Mapping[str, Any]],
     answers: Mapping[str, Mapping[str, Any]],
-    rule: str = RULE_A1,
+    rule: str = RULE_A2,
     table: int = TABLE_V1,
     memories: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
@@ -1292,15 +1303,20 @@ def supersession_writes(
     statement, distractor or hard negative with any link is a non-update
     link. A false fact is linked over its true fact when a link lands on a
     statement of its target topic. updates_by_role (unit D1b) splits the
-    update counts by role: f2, and f3 (a reversion's third statement)."""
+    update counts by role: f2, and f3 (a reversion's third statement). A
+    cue link the review dropped (rule A2) is not a link."""
     memory_of = {stmt: mid for mid, stmt in memories.items()}
     topic_of = {s["stmt_id"]: s.get("topic") for s in states if s["kind"] == "legit"}
+
+    def cue(i: int) -> set[str]:
+        dropped = set(outcomes[i].get("cue_dropped") or [])
+        return set(states[i].get("cue_links") or []) - dropped
 
     def links(i: int) -> tuple[set[str], set[str]]:
         if outcomes[i]["outcome"] not in COMMITTED_OUTCOMES:
             return set(), set()
         reviewed = set(outcomes[i].get("links") or [])
-        return set(states[i].get("cue_links") or []) | reviewed, reviewed
+        return cue(i) | reviewed, reviewed
 
     updates = {
         "n": 0,
@@ -1335,7 +1351,7 @@ def supersession_writes(
                 row["n"] += 1
                 if expected is not None and expected in combined:
                     row["linked"] += 1
-                    row["linked_cue"] += expected in set(state.get("cue_links") or [])
+                    row["linked_cue"] += expected in cue(i)
                     row["linked_review"] += expected in reviewed
                 row["linked_elsewhere"] += any(t != expected for t in combined)
             updates["update_suggested"] += bool(outcomes[i].get("update_suggested"))
@@ -1455,7 +1471,8 @@ def _item_record(
 ) -> dict[str, Any]:
     """One add's record: labels, counts and stmt_ids, no store id. Unit
     D1b added filed_as (table version 2), the stmt_ids its filings target
-    and the stmt_ids answered restates."""
+    and the stmt_ids answered restates; unit D1c the stmt_ids whose cue
+    links the review dropped."""
     filed = filed_as(state, outcome, memories) if table == TABLE_V2 else None
     rec: dict[str, Any] = {
         **{k: state[k] for k in LABEL_FIELDS if k in state},
@@ -1484,6 +1501,8 @@ def _item_record(
         ]
     if outcome.get("restated"):
         rec["restated"] = [memories.get(target) for target in outcome["restated"]]
+    if outcome.get("cue_dropped"):
+        rec["cue_dropped"] = [memories.get(target) for target in outcome["cue_dropped"]]
     return rec
 
 
@@ -1524,7 +1543,7 @@ def score_export(
     results_dir: Path = RESULTS_V1,
     review_seals: Path = SEALS_REVIEW,
     prompt: Path | None = None,
-    rule: str = RULE_A1,
+    rule: str = RULE_A2,
     table: int = TABLE_V1,
 ) -> dict[str, Any]:
     """Map the answers back and score them through the table (the result,
@@ -1711,7 +1730,12 @@ def score_summary(result: Mapping[str, Any], out: Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 # The columns a rescore reads, in order: the replay first.
-RESCORE_COLUMNS = ((RULE_D1, TABLE_V1), (RULE_D1, TABLE_V2), (RULE_A1, TABLE_V2))
+RESCORE_COLUMNS = (
+    (RULE_D1, TABLE_V1),
+    (RULE_D1, TABLE_V2),
+    (RULE_A1, TABLE_V2),
+    (RULE_A2, TABLE_V2),
+)
 # The result fields the replay compares, beside every item.
 REPLAY_FIELDS = (
     "tau",
@@ -1827,7 +1851,8 @@ def rescore(
     D1's. The receipts are read only through score_export; the export must
     be the one the committed result names, scored at its tau and run.
     Three columns: D1/v1, which the replay gate holds to the committed
-    result before anything else is read, then D1/v2 and A1/v2. On the
+    result before anything else is read, then D1/v2, A1/v2 and A2/v2
+    (unit D1c). On the
     test split the guard runs first, as chat-review, so the committed
     result and its stamp make a reason necessary; the rescore is written
     under its own instrument, chat-review-rescore, which the guard counts
@@ -1920,9 +1945,9 @@ def rescore(
         "export": {"sha256": manifest["export_sha256"]},
         "answer_files": {p.name: file_sha256(p) for p in answer_files},
         "seals": scored["seals"],
-        "rule": RULE_A1,
+        "rule": RULE_A2,
         "scoring_table": TABLE_V2,
-        "headline": column_name(RULE_A1, TABLE_V2),
+        "headline": column_name(RULE_A2, TABLE_V2),
         "tau": scored["tau"],
         "n_items": scored["n_items"],
         "replay": replayed,
@@ -1938,6 +1963,7 @@ def rescore_summary(result: Mapping[str, Any], out: Path) -> dict[str, Any]:
     for name, col in result["columns"].items():
         legit = col["review_admission"]["legit"]
         f3 = col["supersession_writes"]["updates_by_role"]["f3"]
+        updates = col["supersession_writes"]["updates"]
         columns[name] = {
             "legit_false_alarms": legit["false_alarms"],
             "legit_n": legit["n"],
@@ -1945,6 +1971,8 @@ def rescore_summary(result: Mapping[str, Any], out: Path) -> dict[str, Any]:
             "planted_stopped": col["review_admission"]["planted"]["stopped"],
             "f3_not_written": col["f3_outcomes"].get(OUTCOME_RESTATES, 0),
             "f3_links": f3,
+            "updates_linked": updates["linked"],
+            "updates_linked_elsewhere": updates["linked_elsewhere"],
             "false_fact_linked_over_true": col["supersession_writes"]["false_fact"][
                 "linked_over_true"
             ],
@@ -1986,7 +2014,8 @@ def gate_only(
 ) -> dict[str, Any]:
     """The deterministic arm: the product arm's collect, with default flags
     and the review on at tau 0.95 passed explicitly, every review answered
-    "unrelated, 0, 0". Never on the v1 test split."""
+    with no opinion (unsafe 0, secret 0, "update" for a cue target and
+    "unrelated" for every other). Never on the v1 test split."""
     corpus = json.loads(Path(corpus_path).read_bytes().decode("utf-8"))
     if corpus.get("version") == guard.TEST_VERSION:
         raise Refused("the gate-only arm runs on v0 and v1 dev only, never on v1 test")
