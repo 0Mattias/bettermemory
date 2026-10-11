@@ -690,6 +690,9 @@ def cmd_score(
             )
             return 2
     else:
+        if Path(out).exists():
+            print(f"{_rel(out)} exists; a table-2 score writes a new file; refusing")
+            return 2
         if (
             corpus.get("version") == guard.TEST_VERSION
             and Path(out).resolve().parent != Path(results_dir).resolve()
@@ -712,6 +715,18 @@ def cmd_score(
             )
         except guard.Refused as exc:
             print(f"{raw['arm']}: refused: {exc}")
+            return 2
+        collected = raw.get("test_guard")
+        if test_guard is not None and (
+            not isinstance(collected, dict)
+            or (collected.get("operating_points") or {}).get("sha256")
+            != test_guard["operating_points"]["sha256"]
+        ):
+            # a guarded read of a collection the guard did not hold
+            print(
+                f"{raw['arm']}: refused: the raw was not collected under the guard "
+                "at the sealed operating points"
+            )
             return 2
         if test_guard is None and (operating_points or rerun_reason):
             print(

@@ -2074,25 +2074,38 @@ def test_only_a_table_2_result_or_summary_names_its_table(tmp_path: Path) -> Non
 
 
 @pytest.mark.parametrize("committed", V1_RESULTS, ids=lambda p: p.name)
-def test_every_committed_v1_result_rescores_to_itself_under_table_1(
+def test_every_committed_v1_result_rescores_to_itself_under_its_table(
     committed: Path,
 ) -> None:
     """Table 1 is the scorer as committed: each v1 result, less its score
-    stamps, comes back field for field and in key order."""
+    stamps, comes back field for field and in key order. A table-2 result
+    (unit D1b) comes back the same way under table 2."""
     doc = json.loads(committed.read_text(encoding="utf-8"))
     raw = json.loads((_ROOT / doc["raw_observations"]).read_text(encoding="utf-8"))
+    if "raw_sha256" in doc:
+        assert doc["raw_sha256"] == guard.file_sha256(_ROOT / doc["raw_observations"])
     split = "test" if "-test-" in committed.name else "dev"
     corpus = _corpus(_V1 / f"{split}.json")
     if raw.get("limited_to_topics"):
         corpus = runner._slice(corpus, raw["limited_to_topics"])
-    result = score.score_arm(raw, corpus)
-    stamps = ("scored_with", "raw_observations")
+    result = score.score_arm(raw, corpus, doc.get("scoring_table", score.TABLE_V1))
+    stamps = ["scored_with", "raw_observations"]
+    if "raw_sha256" in doc:
+        # a table-2 score writes its own read's guard record over the
+        # collection's, which it keeps under test_guard.collected
+        stamps += ["raw_sha256", "test_guard"]
+        assert doc.get("test_guard", {}).get("collected") == result.get("test_guard")
     expected = {k: v for k, v in doc.items() if k not in stamps}
+    result = {k: v for k, v in result.items() if k not in stamps}
     assert json.dumps(result) == json.dumps(expected)
 
 
 def test_v1_results_are_found() -> None:
-    assert len(V1_RESULTS) == 14
+    tables = [
+        json.loads(p.read_text(encoding="utf-8")).get("scoring_table", 1)
+        for p in V1_RESULTS
+    ]
+    assert tables.count(1) == 14
 
 
 # Q6 of unit D1b (revision 2), a check and not a prediction: the committed
@@ -2141,12 +2154,14 @@ def test_q6_the_test_refusals_and_the_linked_elsewhere_split(name: str) -> None:
     assert all(score.round_trip_offered(a["outcome"]) for a in refused)
 
 
-def _test_raw(tmp_path: Path) -> Path:
+def _test_raw(tmp_path: Path, collected: Any, name: str = "fake.json") -> Path:
+    """A test-split raw whose collection's guard record is `collected`."""
     raw = _raw(_corpus(TEST))
     raw["corpus_sha256"] = guard.file_sha256(TEST)
-    raw["test_guard"] = {"operating_points": {"sha256": "collected"}}
-    path = tmp_path / "raw" / "fake.json"
-    path.parent.mkdir()
+    if collected is not None:
+        raw["test_guard"] = collected
+    path = tmp_path / "raw" / name
+    path.parent.mkdir(exist_ok=True)
     path.write_text(json.dumps(raw), encoding="utf-8")
     return path
 
@@ -2154,14 +2169,15 @@ def _test_raw(tmp_path: Path) -> Path:
 def test_a_table_2_score_of_the_test_split_is_guarded(
     sealed: SimpleNamespace, tmp_path: Path
 ) -> None:
-    raw_path = _test_raw(tmp_path)
+    collected = {"operating_points": {"sha256": guard.file_sha256(sealed.points)}}
+    raw_path = _test_raw(tmp_path, collected)
     results = tmp_path / "results-v1"
     results.mkdir()
     first, second = results / "fake-b2-1.json", results / "fake-b2-2.json"
 
-    def score_it(out: Path, table: int = 2, **kw: Any) -> int:
+    def score_it(out: Path, table: int = 2, raw: Path = raw_path, **kw: Any) -> int:
         code: int = runner.cmd_score(
-            raw_path,
+            raw,
             out,
             corpus_path=TEST,
             scoring_table=table,
@@ -2189,9 +2205,7 @@ def test_a_table_2_score_of_the_test_split_is_guarded(
     assert result["test_guard"]["operating_points"]["sha256"] == guard.file_sha256(
         sealed.points
     )
-    assert result["test_guard"]["collected"] == {
-        "operating_points": {"sha256": "collected"}
-    }
+    assert result["test_guard"]["collected"] == collected
     assert "rerun" not in result["test_guard"]
     kept = first.read_bytes()
     assert score_it(second, operating_points=sealed.points) == 2
@@ -2203,6 +2217,25 @@ def test_a_table_2_score_of_the_test_split_is_guarded(
     assert first.read_bytes() == kept
     third = results / "fake-b2-3.json"
     assert score_it(third, operating_points=sealed.points, rerun_reason=reason) == 2
+    # a file already there is never written over, whoever's result it is
+    other = results / "another-arm.json"
+    other.write_text("{}", encoding="utf-8")
+    assert score_it(other, operating_points=sealed.points, rerun_reason=reason) == 2
+    assert other.read_text(encoding="utf-8") == "{}"
+    # a raw the guard did not hold at the sealed points is not read
+    for name, record in (
+        ("unguarded.json", None),
+        ("elsewhere.json", {"operating_points": {"sha256": "another"}}),
+    ):
+        fourth = results / f"fake-b2-{name}"
+        raw = _test_raw(tmp_path, record, name)
+        assert (
+            score_it(
+                fourth, raw=raw, operating_points=sealed.points, rerun_reason=reason
+            )
+            == 2
+        )
+        assert not fourth.exists()
 
 
 def test_a_table_2_score_of_the_dev_split_runs_unguarded(tmp_path: Path) -> None:

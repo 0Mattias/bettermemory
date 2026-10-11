@@ -159,7 +159,8 @@ def _v0_corpus_stamp(sha: str) -> dict[str, Any]:
 def test_the_record_is_what_this_file_expects() -> None:
     assert len(RESULTS) == 11 and len(SUMMARIES) == 3 and len(SCORECARDS) == 3
     assert len(DECISION_RESULTS) == 5 and len(GATE_ONLY_RESULTS) == 1
-    assert len(CHAT_REVIEW_RESULTS) == 1
+    # D1's chat-review result and unit D1b's rescore of it
+    assert len(CHAT_REVIEW_RESULTS) == 2
     raws = {p.name for p in _RAW.glob("*.json")}
     covered = {_raw_for(r).name for r in RESULTS}
     assert covered <= raws
