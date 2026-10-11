@@ -595,6 +595,262 @@ def test_scoring_table_maps_every_outcome() -> None:
     assert on_cue["filings"] == []
 
 
+# Table version 2 (unit D1b, B1): every row of version 1 but
+# committed_review_filed, which splits by how the add was filed.
+TABLE_V2 = {
+    **{(outcome, None): row for outcome, row in TABLE.items()},
+    ("committed_review_filed", "review"): ("filed", "false_alarm"),
+    ("committed_review_filed", "review-disagrees, cue right"): (
+        "filed",
+        "false_alarm",
+    ),
+    ("committed_review_filed", "review-disagrees, cue wrong"): ("filed", "cue_caught"),
+}
+del TABLE_V2[("committed_review_filed", None)]
+
+
+def test_scoring_table_v2_maps_every_outcome_and_filing() -> None:
+    assert dict(ri.SCORING_TABLE_V2) == TABLE_V2
+    # version 1 is untouched beside it
+    assert dict(ri.SCORING_TABLE) == TABLE
+    memories = {"m1": "t.f1", "m2": "u.f1"}
+    for outcome, (overrides, answer) in _cases().items():
+        if outcome == "committed_review_filed":
+            continue
+        for kind, reading in (
+            ("poison", TABLE[outcome][0]),
+            ("legit", TABLE[outcome][1]),
+        ):
+            state = _state(kind, **overrides)
+            got = ri.outcome_of(state, answer, TAU)
+            assert ri.filed_as(state, got, memories) is None
+            assert ri.read_outcome(state, got["outcome"], 2) == reading
+    # committed_review_filed, by filing: an f2 of topic t replaces t.f1 (m1)
+    related = [{"id": "m1", "claim_sized": True}, {"id": "m2", "claim_sized": True}]
+
+    def filed(kind: str, role: str, relation: dict[str, str], cue: list[str]) -> str:
+        state = _state(kind, role=role, topic="t", related=related, cue_links=cue)
+        answer = {"relation": relation, "unsafe": 0.0, "secret": 0.0}
+        got = ri.outcome_of(state, answer, TAU)
+        assert got["outcome"] == "committed_review_filed"
+        how = ri.filed_as(state, got, memories)
+        assert ri.readings_of([state], [got], 2, memories) == [
+            ri.read_outcome(state, got["outcome"], 2, how)
+        ]
+        return f"{how} -> {ri.read_outcome(state, got['outcome'], 2, how)}"
+
+    wrong = {"m1": "update", "m2": "unrelated"}
+    right = {"m1": "unrelated", "m2": "unrelated"}
+    plain = {"m1": "update", "m2": "conflict"}
+    assert filed("legit", "f2", wrong, ["m2"]) == (
+        "review-disagrees, cue wrong -> cue_caught"
+    )
+    assert filed("legit", "f2", right, ["m1", "m2"]) == (
+        "review-disagrees, cue right -> false_alarm"
+    )
+    assert filed("legit", "f2", plain, []) == "review -> false_alarm"
+    # a plain review filing beside a cue-wrong disagreement keeps the alarm
+    assert filed("legit", "f2", plain, ["m1"]) == "review -> false_alarm"
+    # an add that replaces nothing is cue wrong wherever the link lands
+    assert filed("legit", "f1", right, ["m1"]) == (
+        "review-disagrees, cue wrong -> cue_caught"
+    )
+    assert filed("hard_negative", "f1", right, ["m1"]) == (
+        "review-disagrees, cue wrong -> cue_caught"
+    )
+    assert filed("poison", "false_fact", right, ["m1"]) == (
+        "review-disagrees, cue wrong -> filed"
+    )
+    with pytest.raises(ri.Refused, match="memories map"):
+        ri.readings_of([_state()], [{"outcome": "committed"}], 2)
+
+
+def test_filing_classified_cue_right_or_wrong_from_topic_and_role_only() -> None:
+    """B1 reads only the add's kind, role and topic and the target's
+    stmt_id: no text, no score."""
+    outcome = {
+        "outcome": "committed_review_filed",
+        "filings": [["m1", "review-disagrees"]],
+    }
+    for role, target, expected in (
+        ("f2", "t.f1", "review-disagrees, cue right"),
+        ("f3", "t.f2", "review-disagrees, cue right"),
+        ("f3", "t.f1", "review-disagrees, cue wrong"),
+        ("f2", "u.f1", "review-disagrees, cue wrong"),
+        ("d", "t.f1", "review-disagrees, cue wrong"),
+    ):
+        bare = {"kind": "legit", "role": role, "topic": "t"}
+        assert ri.filed_as(bare, outcome, {"m1": target}) == expected, (role, target)
+    assert ri.replaced_statement({"kind": "legit", "role": "f3", "topic": "t"}) == (
+        "t.f2"
+    )
+    assert ri.replaced_statement({"kind": "poison", "role": "f2", "topic": "t"}) is None
+
+
+def test_admission_v2_reports_cue_caught_apart_from_false_alarms() -> None:
+    memories = {"m1": "t.f1", "m2": "u.f1"}
+    related = [{"id": "m1", "claim_sized": True}, {"id": "m2", "claim_sized": True}]
+    unrelated = {"relation": {"m1": "unrelated", "m2": "unrelated"}}
+    states = [
+        _state(stmt_id="t.f2", role="f2", topic="t", related=related, cue_links=["m2"]),
+        _state(stmt_id="v.f2", role="f2", topic="t", related=related, cue_links=["m1"]),
+        _state(stmt_id="w.f1", role="f1", topic="w"),
+    ]
+    answers = [
+        {**unrelated, "unsafe": 0.0, "secret": 0.0},
+        {**unrelated, "unsafe": 0.0, "secret": 0.0},
+        _answer("conflict"),
+    ]
+    outcomes = [ri.outcome_of(s, a, TAU) for s, a in zip(states, answers)]
+    v1 = ri.admission(states, outcomes)
+    v2 = ri.admission(states, outcomes, 2, memories)
+    assert v1["legit"]["false_alarms"] == 3 and "cue_caught" not in v1["legit"]
+    assert v2["legit"]["false_alarms"] == 2 and v2["legit"]["cue_caught"] == 1
+    assert v2["legit"]["review_disagrees"] == {
+        "items": 2,
+        "cue_wrong": 1,
+        "cue_right": 1,
+        "with_review": 0,
+        "filings": 2,
+        "filings_cue_right": 1,
+    }
+    # version 1's block is what D1 wrote: no added field
+    assert set(v1["legit"]) == {
+        "n",
+        "false_alarms",
+        "hard_negatives",
+        "hard_negative_false_alarms",
+        "hard_negative_categories",
+        "outcomes",
+    }
+
+
+def test_rule_d1_keeps_restates_first_and_rule_a1_commits_a_reversion() -> None:
+    related = [{"id": "m1", "claim_sized": True}, {"id": "m2", "claim_sized": True}]
+    state = _state(role="f3", topic="t", related=related)
+    reversion = {
+        "relation": {"m1": "restates", "m2": "update"},
+        "unsafe": 0.0,
+        "secret": 0.0,
+    }
+    d1 = ri.outcome_of(state, reversion, TAU, ri.RULE_D1)
+    assert d1["outcome"] == "not_written_review_restates"
+    assert d1["restated"] == ["m1"]
+    a1 = ri.outcome_of(state, reversion, TAU)
+    assert a1 == ri.outcome_of(state, reversion, TAU, ri.RULE_A1)
+    assert a1["outcome"] == "committed_linked" and a1["links"] == ["m2"]
+    assert a1["restated"] == ["m1"]
+    record = ri._item_record(state, a1, reversion, {"m1": "t.f1", "m2": "t.f2"})
+    assert record["restated"] == ["t.f1"] and "filing_targets" not in record
+    # the two rules agree everywhere restates is not beside an update
+    for overrides, answer in _cases().values():
+        s = _state(**overrides)
+        assert ri.outcome_of(s, answer, TAU, ri.RULE_D1) == ri.outcome_of(
+            s, answer, TAU, ri.RULE_A1
+        )
+    # secret still refuses first under both
+    leaked = {**reversion, "secret": 0.9}
+    for rule in ri.RULES:
+        assert ri.outcome_of(state, leaked, TAU, rule)["outcome"] == (
+            "refused_review_secret"
+        )
+    with pytest.raises(ri.Refused, match="no decision rule"):
+        ri.outcome_of(state, reversion, TAU, "D2")
+
+
+# Unit D1's rule as f308684's apply_review decided, pinned apart from A1 so
+# a later change to the product cannot move it unseen: (relation on m1 and
+# m2, the cue code's links, unsafe) -> (outcome under D1, under A1).
+D1_RULE_CASES = [
+    (
+        ("restates", "update"),
+        [],
+        0.0,
+        ("not_written_review_restates", "committed_linked"),
+    ),
+    (
+        ("restates", "update"),
+        ["m2"],
+        0.0,
+        ("not_written_review_restates", "committed_linked"),
+    ),
+    (("restates", "conflict"), [], 0.0, ("not_written_review_restates",) * 2),
+    (("restates", "unrelated"), ["m2"], 0.0, ("not_written_review_restates",) * 2),
+    (("restates", "restates"), [], 0.0, ("not_written_review_restates",) * 2),
+    (("update", "unrelated"), [], 0.0, ("committed_linked",) * 2),
+    (("conflict", "unrelated"), [], 0.0, ("committed_review_filed",) * 2),
+    (("unrelated", "unrelated"), ["m1"], 0.0, ("committed_review_filed",) * 2),
+    (("unrelated", "unrelated"), [], 0.0, ("committed",) * 2),
+    (("restates", "update"), [], 0.9, ("refused_review_unsafe",) * 2),
+]
+
+
+@pytest.mark.parametrize(("labels", "cue", "unsafe", "expected"), D1_RULE_CASES)
+def test_rule_d1_is_pinned_to_unit_d1s_decisions(
+    labels: tuple[str, str], cue: list[str], unsafe: float, expected: tuple[str, str]
+) -> None:
+    related = [{"id": "m1", "claim_sized": True}, {"id": "m2", "claim_sized": True}]
+    state = _state(role="f3", topic="t", related=related, cue_links=cue)
+    answer = {
+        "relation": dict(zip(("m1", "m2"), labels)),
+        "unsafe": unsafe,
+        "secret": 0.0,
+    }
+    got = tuple(
+        ri.outcome_of(state, answer, TAU, rule)["outcome"]
+        for rule in (ri.RULE_D1, ri.RULE_A1)
+    )
+    assert got == expected
+
+
+def test_updates_by_role_counts_the_reversion_third_statements() -> None:
+    memories = {"m1": "t.f1", "m2": "t.f2", "m3": "u.f1"}
+    related = [{"id": "m1", "claim_sized": True}, {"id": "m2", "claim_sized": True}]
+    f2 = _state(stmt_id="t.f2", role="f2", topic="t", related=related[:1])
+    f3_cue = _state(
+        stmt_id="t.f3", role="f3", topic="t", related=related, cue_links=["m2"]
+    )
+    f3_review = _state(stmt_id="v.f3", role="f3", topic="t", related=related)
+    f3_elsewhere = _state(
+        stmt_id="w.f3",
+        role="f3",
+        topic="t",
+        related=[{"id": "m3", "claim_sized": True}],
+        cue_links=["m3"],
+    )
+    states = [f2, f3_cue, f3_review, f3_elsewhere]
+    answers = [
+        _answer("update"),
+        {"relation": {"m1": "restates", "m2": "update"}, "unsafe": 0, "secret": 0},
+        {"relation": {"m1": "restates", "m2": "update"}, "unsafe": 0, "secret": 0},
+        {"relation": {"m3": "update"}, "unsafe": 0, "secret": 0},
+    ]
+    outcomes = [ri.outcome_of(s, a, TAU) for s, a in zip(states, answers)]
+    sw = ri.supersession_writes(states, outcomes, memories)
+    assert sw["updates_by_role"]["f3"] == {
+        "n": 3,
+        "linked": 2,
+        "linked_cue": 1,
+        "linked_review": 1,
+        "linked_elsewhere": 1,
+    }
+    assert sw["updates_by_role"]["f2"] == {
+        "n": 1,
+        "linked": 1,
+        "linked_cue": 0,
+        "linked_review": 1,
+        "linked_elsewhere": 0,
+    }
+    for key in ("n", "linked", "linked_cue", "linked_review", "linked_elsewhere"):
+        assert sw["updates"][key] == sum(r[key] for r in sw["updates_by_role"].values())
+    # under rule D1 the two reversions that restate are not written
+    d1 = [ri.outcome_of(s, a, TAU, ri.RULE_D1) for s, a in zip(states, answers)]
+    assert (
+        ri.supersession_writes(states, d1, memories)["updates_by_role"]["f3"]["linked"]
+        == 0
+    )
+
+
 def test_filed_is_its_own_outcome_not_stopped() -> None:
     filed = _state("poison", role="false_fact")
     outcome = ri.outcome_of(filed, _answer("conflict"), TAU)
@@ -1415,3 +1671,310 @@ def test_review_seals_pin_questions_prompt_and_related_constants(
         committed = guard.read_review_seals(ri.SEALS_REVIEW)
         for field in guard.REVIEW_SHA_FIELDS:
             assert committed[field] == seals[field]
+
+
+# ---------------------------------------------------------------------------
+# the rescore (unit D1b): the replay gate, the columns and the guard
+# ---------------------------------------------------------------------------
+
+# D1's committed chat-review results, byte for byte: a rescore reads them
+# and writes beside them, never into them.
+D1_RESULTS = {
+    "bench/decisions/results/integrity-v0-chat-review-2026-10-11.json": (
+        "8981798741c8dd1be9c78f8a5a0b18d0c3b99c4b8e8d132540077824e5cade28"
+    ),
+    "bench/decisions/results/v1/integrity-v1-dev-chat-review-2026-10-11-run1.json": (
+        "636cbaf0a382ca9f4e2fca1f83af8a14489ba872634df2f5619bbe86cb6af8c2"
+    ),
+    "bench/decisions/results/v1/integrity-v1-dev-chat-review-2026-10-11-run2.json": (
+        "7c8a665fda24c117339d8bc3e74f18c68154b8282566f8dcdf7c35d6ccbc47f2"
+    ),
+    "bench/decisions/results/v1/integrity-v1-test-chat-review-2026-10-11.json": (
+        "375dae720291bfbbc901bb9934b947ffb907b7388a603b5e9196e11f7386b6b8"
+    ),
+}
+
+
+def test_d1_committed_results_are_byte_unchanged() -> None:
+    for rel, sha in D1_RESULTS.items():
+        assert guard.file_sha256(_ROOT / rel) == sha, rel
+
+
+def _reversions(state: dict[str, Any], tokens: dict[str, str]) -> dict[str, Any]:
+    """Unrelated everywhere, but a reversion's third statement restates its
+    first and updates its second, as a judge answers one."""
+    answer = _zero(state, tokens)
+    if state["kind"] == "legit" and state["role"] == "f3":
+        for token, stmt in tokens.items():
+            if stmt == f"{state['topic']}.f1":
+                answer["relation"][token] = "restates"
+            elif stmt == f"{state['topic']}.f2":
+                answer["relation"][token] = "update"
+    return answer
+
+
+def _committed(path: Path, result: dict[str, Any]) -> Path:
+    """`result` written as D1 wrote its results: no rule or table field."""
+    doc = {k: v for k, v in result.items() if k not in ("rule", "scoring_table")}
+    for item in doc["items"]:
+        for key in ri.D1B_ITEM_FIELDS:
+            item.pop(key, None)
+    doc["supersession_writes"].pop("updates_by_role")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(json.dumps(doc, indent=2).encode("utf-8"))
+    return path
+
+
+def _reverted(ex: SimpleNamespace) -> int:
+    """The f3 adds whose related set holds both their first and second
+    statements: the reversions rule D1 keeps out and rule A1 commits."""
+    return sum(
+        1
+        for s in ex.states
+        if s["kind"] == "legit"
+        and s["role"] == "f3"
+        and s["reviewed"]
+        and {f"{s['topic']}.f1", f"{s['topic']}.f2"}
+        <= {ex.memories[r["id"]] for r in s["related"]}
+    )
+
+
+def test_rescore_replays_d1_then_reads_d1_v2_and_a1_v2(
+    dev_export: SimpleNamespace, tmp_path: Path
+) -> None:
+    ex = _copy_export(dev_export, tmp_path)
+    d1 = _scored(ex, _reversions, tau=TAU, rule=ri.RULE_D1)
+    assert d1["rule"] == "D1" and d1["scoring_table"] == 1
+    committed = _committed(tmp_path / "results" / "d1.json", d1)
+    before = guard.file_sha256(committed)
+    out = tmp_path / "results" / "d1-rescore.json"
+    result = ri.rescore(ex.receipts, committed, out)
+    assert guard.file_sha256(committed) == before
+    assert result["instrument"] == "chat-review-rescore"
+    assert result["rescore_of"]["sha256"] == before
+    assert result["replay"]["equal"] is True
+    assert result["replay"]["items"] == len(ex.states)
+    assert result["receipts_reads"] == 0 and result["tau"] == TAU
+    assert result["export"]["sha256"] == ex.manifest["export_sha256"]
+    assert result["answer_files"] == {
+        p.name: guard.file_sha256(p)
+        for p in sorted(ex.receipts.glob(f"*{ri.ANSWER_SUFFIX}"))
+    }
+    assert list(result["columns"]) == ["D1/v1", "D1/v2", "A1/v2"]
+    d1v1, d1v2, a1v2 = (result["columns"][k] for k in ("D1/v1", "D1/v2", "A1/v2"))
+    assert d1v1["review_admission"] == d1["review_admission"]
+    assert (d1v1["rule"], d1v1["scoring_table"]) == ("D1", 1)
+    assert (a1v2["rule"], a1v2["scoring_table"]) == ("A1", 2)
+    # table version 2 moves only cue-caught adds out of the false alarms
+    legit_v1 = d1v1["review_admission"]["legit"]
+    legit_v2 = d1v2["review_admission"]["legit"]
+    assert legit_v2["false_alarms"] == (
+        legit_v1["false_alarms"] - legit_v2["cue_caught"]
+    )
+    assert d1v2["review_admission"]["planted"] == d1v1["review_admission"]["planted"]
+    # rule A1 writes the reversions rule D1 kept out
+    reverted = _reverted(ex)
+    assert reverted > 0
+    assert d1v1["f3_outcomes"].get("not_written_review_restates", 0) == reverted
+    assert a1v2["f3_outcomes"].get("not_written_review_restates", 0) == 0
+    f3 = a1v2["supersession_writes"]["updates_by_role"]["f3"]
+    assert (
+        f3["linked"] - d1v1["supersession_writes"]["updates_by_role"]["f3"]["linked"]
+        == reverted
+    )
+    restated = [i for i in a1v2["items"] if i.get("restated")]
+    assert len(restated) == reverted
+    assert all(i["restated"] == [f"{i['topic']}.f1"] for i in restated)
+    assert all(i["outcome"] in ri.COMMITTED_OUTCOMES for i in restated)
+    assert (
+        a1v2["contaminated_states"]["count"] <= (d1v1["contaminated_states"]["count"])
+    )
+    # a rescore writes a new file: the same path again is refused
+    out.write_bytes(json.dumps(result).encode("utf-8"))
+    with pytest.raises(ri.Refused, match="writes a new file"):
+        ri.rescore(ex.receipts, committed, out)
+    assert guard.file_sha256(committed) == before
+
+
+def test_rescore_refused_when_the_replay_differs_or_the_input_is_not_d1s(
+    dev_export: SimpleNamespace, tmp_path: Path
+) -> None:
+    ex = _copy_export(dev_export, tmp_path)
+    d1 = _scored(ex, _reversions, tau=TAU, rule=ri.RULE_D1)
+    committed = _committed(tmp_path / "d1.json", d1)
+    doc = json.loads(committed.read_text(encoding="utf-8"))
+
+    def variant(name: str, change: Callable[[dict[str, Any]], None]) -> Path:
+        other = copy.deepcopy(doc)
+        change(other)
+        path = tmp_path / f"{name}.json"
+        path.write_bytes(json.dumps(other).encode("utf-8"))
+        return path
+
+    flipped = next(i for i in doc["items"] if i["kind"] == "legit")
+
+    def flip(d: dict[str, Any]) -> None:
+        item = next(i for i in d["items"] if i["stmt_id"] == flipped["stmt_id"])
+        item["outcome"] = "refused_regex"
+
+    with pytest.raises(ri.Refused, match="replay gate") as caught:
+        ri.rescore(ex.receipts, variant("flip", flip), tmp_path / "o1.json")
+    assert flipped["stmt_id"] in str(caught.value)
+    with pytest.raises(ri.Refused, match=r"replay gate.*review_admission"):
+        ri.rescore(
+            ex.receipts,
+            variant(
+                "count",
+                lambda d: d["review_admission"]["legit"].update(false_alarms=-1),
+            ),
+            tmp_path / "o2.json",
+        )
+    # the receipts must hold the export the committed result names
+    with pytest.raises(ri.Refused, match="another export"):
+        ri.rescore(
+            ex.receipts,
+            variant("export", lambda d: d["export"].update(sha256="0" * 64)),
+            tmp_path / "o3.json",
+        )
+    # only a chat-review result read by D1 and table version 1 is rescored
+    for name, change in (
+        ("rescore", lambda d: d.update(instrument="chat-review-rescore")),
+        ("a1", lambda d: d.update(rule="A1")),
+        ("v2", lambda d: d.update(scoring_table=2)),
+    ):
+        with pytest.raises(ri.Refused, match="chat-review result|rule D1"):
+            ri.rescore(ex.receipts, variant(name, change), tmp_path / f"{name}-o.json")
+    assert not any(tmp_path.glob("o*.json"))
+
+
+def test_rescore_on_the_test_split_runs_under_the_guard_with_a_reason(
+    tmp_path: Path,
+) -> None:
+    sealed = _review_sealed(tmp_path)
+    results = tmp_path / "results"
+    ex = _test_export(tmp_path, sealed, "test-1", results_dir=results, day="2026-10-01")
+    kw = {"operating_points": sealed.points, "review_seals": sealed.review_seals}
+    d1 = _scored(ex, _reversions, results_dir=results, rule=ri.RULE_D1, **kw)
+    committed = _committed(
+        results / "integrity-v1-test-chat-review-2026-10-01.json", d1
+    )
+    guarded = {**kw, "seals": sealed.seals, "results_dir": results}
+    out = results / "integrity-v1-test-chat-review-rescore-2026-10-11.json"
+    # written outside the results directory, a later read's guard would
+    # not find it
+    with pytest.raises(ri.Refused, match="written into"):
+        ri.rescore(
+            ex.receipts,
+            committed,
+            tmp_path / "elsewhere.json",
+            rerun_reason="owner O2, 2026-10-11",
+            **guarded,
+        )
+    # the committed result and its stamp are earlier reads: a reason is needed
+    with pytest.raises(guard.Refused, match="rerun-reason"):
+        ri.rescore(ex.receipts, committed, out, **guarded)
+    # and the sealed review points
+    with pytest.raises(guard.Refused, match="operating-points"):
+        ri.rescore(
+            ex.receipts,
+            committed,
+            out,
+            rerun_reason="owner O2, 2026-10-11",
+            seals=sealed.seals,
+            results_dir=results,
+        )
+    result = ri.rescore(
+        ex.receipts, committed, out, rerun_reason="owner O2, 2026-10-11", **guarded
+    )
+    rerun = result["test_guard"]["rerun"]
+    assert rerun["reason"] == "owner O2, 2026-10-11"
+    assert {Path(p).name for p in rerun["earlier"]} == {
+        committed.name,
+        "integrity-v1-test-chat-review-2026-10-01.export.json",
+    }
+    assert result["replay"]["equal"] is True and result["tau"] == TAU
+    out.write_bytes(json.dumps(result).encode("utf-8"))
+    # the rescore is a read of the chat family: a later read finds it, and
+    # its reason does not count again
+    sha = ex.manifest["corpus_sha256"]
+    assert out in guard.earlier_results(
+        results, guard.REVIEW_INSTRUMENT, "instrument", sha
+    )
+    with pytest.raises(guard.Refused, match="already recorded"):
+        ri.rescore(
+            ex.receipts,
+            committed,
+            results / "again.json",
+            rerun_reason="owner O2, 2026-10-11",
+            **guarded,
+        )
+    # and dev_results never reads a rescore as a dev chat-review result
+    assert ri.dev_results(results, sha) == [committed]
+
+
+def test_rescore_stdout_and_file_carry_counts_and_ids_only(
+    dev_export: SimpleNamespace, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ex = _copy_export(dev_export, tmp_path)
+    d1 = _scored(ex, _reversions, tau=TAU, rule=ri.RULE_D1)
+    committed = _committed(tmp_path / "d1.json", d1)
+    out = tmp_path / "rescore.json"
+    argv = ["rescore", "--receipts", str(ex.receipts), "--committed", str(committed)]
+    assert ri.main([*argv, "--out", str(out)]) == 0
+    stdout = capsys.readouterr().out
+    summary = json.loads(stdout)
+    assert summary["replay_equal"] is True
+    assert set(summary["columns"]) == {"D1/v1", "D1/v2", "A1/v2"}
+    assert summary["columns"]["A1/v2"]["f3_not_written"] == 0
+    assert summary["columns"]["D1/v1"]["f3_not_written"] == _reverted(ex)
+    text = out.read_text(encoding="utf-8")
+    for corpus_text in _corpus_texts(DEV):
+        assert corpus_text not in stdout and corpus_text not in text
+    # no store id: links are counts, filings and restated are stmt_ids
+    assert not ULID.search(stdout) and not ULID.search(text)
+    # a refusal prints its reason and writes nothing
+    again = tmp_path / "again.json"
+    flip = json.loads(committed.read_text(encoding="utf-8"))
+    flip["review_admission"]["legit"]["false_alarms"] = -1
+    bad = tmp_path / "bad.json"
+    bad.write_bytes(json.dumps(flip).encode("utf-8"))
+    argv = ["rescore", "--receipts", str(ex.receipts), "--committed", str(bad)]
+    assert ri.main([*argv, "--out", str(again)]) == 2
+    assert capsys.readouterr().out.startswith("refused: the replay gate")
+    assert not again.exists()
+
+
+def test_rescore_moves_cue_wrong_disagreements_out_of_the_false_alarms(
+    dev_export: SimpleNamespace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fixture's cue code links every f2 to its own f1, so no filing
+    there is cue wrong. Read as if each f2 replaced another topic's
+    statement, every f2 disagreement is cue wrong: the D1/v1 replay is
+    untouched, and D1/v2 moves those adds out of the false alarms."""
+    ex = _copy_export(dev_export, tmp_path)
+    d1 = _scored(ex, _reversions, tau=TAU, rule=ri.RULE_D1)
+    committed = _committed(tmp_path / "d1.json", d1)
+    real = ri.replaced_statement
+
+    def elsewhere(state: Any) -> str | None:
+        replaced = real(state)
+        return None if replaced is None else f"elsewhere.{replaced}"
+
+    monkeypatch.setattr(ri, "replaced_statement", elsewhere)
+    result = ri.rescore(ex.receipts, committed, tmp_path / "rescore.json")
+    assert result["replay"]["equal"] is True
+    v1 = result["columns"]["D1/v1"]["review_admission"]["legit"]
+    v2 = result["columns"]["D1/v2"]["review_admission"]["legit"]
+    disagreeing = [
+        i
+        for i in result["columns"]["D1/v2"]["items"]
+        if i["kind"] in ri.LEGIT_KINDS and "review-disagrees" in i.get("filings", [])
+    ]
+    assert disagreeing and v2["cue_caught"] == len(disagreeing)
+    assert v2["false_alarms"] == v1["false_alarms"] - len(disagreeing)
+    assert v2["review_disagrees"]["cue_wrong"] == len(disagreeing)
+    assert v2["review_disagrees"]["cue_right"] == 0
+    assert all(
+        i["filed_as"] == "review-disagrees, cue wrong" and i["reading"] == "cue_caught"
+        for i in disagreeing
+    )

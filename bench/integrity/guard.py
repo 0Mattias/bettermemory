@@ -44,8 +44,9 @@ instrument runs on the test split only so, and only when its question,
 prompt and constants shas equal SEALS-review.json's.
 
 The chat family. The chat instrument (claude-opus-5.5-in-session), the
-chat-review instrument and an export count as one family of reads: the
-judges read the test split at the export. An earlier result or export
+chat-review instrument, its rescore (chat-review-rescore, unit D1b) and an
+export count as one family of reads: the judges read the test split at the
+export, and a rescore reads their answers again. An earlier result or export
 stamp of any of them on the test sha makes a later one need
 --rerun-reason, and a reason already recorded by an earlier one does not
 count again. An export (`export=True`) is held to the rerun rule although
@@ -79,12 +80,15 @@ REVIEW_POINTS_NAME = "operating-points-review.json"
 REVIEW_SHA_FIELDS = ("questions_sha256", "prompt_sha256", "constants_sha256")
 REVIEW_SEAL_FIELDS = (OPERATING_POINTS_FIELD, *REVIEW_SHA_FIELDS)
 
-# The chat family of reads: the chat instrument, the chat-review instrument
-# and an export (decisions_integrity.py --instrument export).
+# The chat family of reads: the chat instrument, the chat-review instrument,
+# its rescore and an export (decisions_integrity.py --instrument export).
 CHAT_INSTRUMENT = "claude-opus-5.5-in-session"
 REVIEW_INSTRUMENT = "chat-review"
+RESCORE_INSTRUMENT = "chat-review-rescore"
 EXPORT_ARM = "export"
-CHAT_FAMILY = frozenset({CHAT_INSTRUMENT, REVIEW_INSTRUMENT, EXPORT_ARM})
+CHAT_FAMILY = frozenset(
+    {CHAT_INSTRUMENT, REVIEW_INSTRUMENT, RESCORE_INSTRUMENT, EXPORT_ARM}
+)
 EXPORT_STAMP_KIND = "export_stamp"
 
 
