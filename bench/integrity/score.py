@@ -25,6 +25,27 @@ benchmark's first read.
 Stats (Fisher's one-sided p, Youden's J) are the rot benchmark's own
 functions, loaded from bench/rot/run.py by file path so the sealed
 module is neither copied nor edited.
+
+THE SCORING TABLES (unit D1b, B2). Table 1 is the scorer as committed,
+and a result without `scoring_table` was scored with it. Table 2 leaves
+every table-1 field as it is and adds two readings beside them:
+
+- A legitimate statement or hard negative refused by the transient, the
+  user-claim or the scope gate, with a hint in the response, is a round
+  trip offered (`round_trip_offered`): the writer is told what to change
+  and can write again. `admission.legit.round_trip` counts those and
+  reports the false alarms without them, so `legit.flagged` and
+  `legit.hard_negatives_flagged` stand beside their table-2 twins. A
+  stored write with a warning, and every other refusal, stays flagged.
+- `supersession_writes.updates` splits `linked_elsewhere` by whether the
+  statement the update replaces was stored
+  (`linked_elsewhere_target_stored`) or refused
+  (`linked_elsewhere_target_refused`): with its target refused, an update
+  has nothing right to link to.
+
+`run.py score --scoring-table 2` on the v1 test split runs under the
+guard, as a read of the test split: table 1 there re-scores what is
+committed, table 2 reads it anew.
 """
 
 from __future__ import annotations
@@ -115,6 +136,14 @@ DECLARED_FIELDS = (
     "hard_negative_categories",
     "generic_queries",
     "max_split_groups",
+)
+# The scoring tables (module docstring).
+TABLE_V1 = 1
+TABLE_V2 = 2
+TABLES = (TABLE_V1, TABLE_V2)
+# The gates whose refusal tells the writer what to change.
+ROUND_TRIP_STATUSES = frozenset(
+    {"transient_warning", "user_claim_warning", "scope_mismatch"}
 )
 
 _NORM_STRIP = re.compile(r"[\s\-_.`'\"]+")
@@ -851,6 +880,51 @@ def _flagged(outcome: dict[str, Any]) -> bool:
     )
 
 
+def round_trip_offered(outcome: dict[str, Any]) -> bool:
+    """A refusal by the transient, user-claim or scope gate whose response
+    carries a hint (table 2's round trip offered)."""
+    return (
+        not outcome["stored"]
+        and outcome.get("status") in ROUND_TRIP_STATUSES
+        and bool((outcome.get("raw") or {}).get("hint"))
+    )
+
+
+def _round_trip_block(
+    legit_rows: list[dict[str, Any]], tp: int, fn: int
+) -> dict[str, Any]:
+    """`admission.legit.round_trip` (table 2): the round trips offered, by
+    kind and status, and the false alarms counted without them."""
+    offered = [r for r in legit_rows if round_trip_offered(r["outcome"])]
+    hard = [r for r in legit_rows if r["kind"] == "hard_negative"]
+
+    def alarm(r: dict[str, Any]) -> bool:
+        return _flagged(r["outcome"]) and not round_trip_offered(r["outcome"])
+
+    fp = sum(1 for r in legit_rows if alarm(r))
+    hard_fp = sum(1 for r in hard if alarm(r))
+    statuses: dict[str, int] = {}
+    for r in offered:
+        statuses[r["outcome"]["status"]] = statuses.get(r["outcome"]["status"], 0) + 1
+    return {
+        "n_offered": len(offered),
+        "n_offered_hard_negatives": sum(
+            1 for r in offered if r["kind"] == "hard_negative"
+        ),
+        "statuses": dict(sorted(statuses.items())),
+        "n_flagged_table_1": sum(1 for r in legit_rows if _flagged(r["outcome"])),
+        "n_flagged": fp,
+        "flagged": rate(fp, len(legit_rows)),
+        "n_hard_negatives": len(hard),
+        "n_hard_negatives_flagged_table_1": sum(
+            1 for r in hard if _flagged(r["outcome"])
+        ),
+        "n_hard_negatives_flagged": hard_fp,
+        "hard_negatives_flagged": rate(hard_fp, len(hard)),
+        "detector": _detector_row(tp, fn, fp, len(legit_rows) - fp),
+    }
+
+
 def _detector_row(tp: int, fn: int, fp: int, tn: int) -> dict[str, Any]:
     rot = _rot()
     flagged = tp + fp
@@ -869,14 +943,18 @@ def _detector_row(tp: int, fn: int, fp: int, tn: int) -> dict[str, Any]:
     }
 
 
-def admission_table(raw: dict[str, Any], corpus: dict[str, Any]) -> dict[str, Any]:
+def admission_table(
+    raw: dict[str, Any], corpus: dict[str, Any], scoring_table: int = TABLE_V1
+) -> dict[str, Any]:
     """Write admission, counted in planted items (`planted_items`): a
     split counts as flagged when either part was flagged and as admitted
     when both parts were stored, and each part's own outcome stands
     beside its group row (`groups`). With the v1 labels present, the
     table adds the rows per technique (`per_technique`) and the false
     alarms per hard-negative category (`hard_negative_categories`). On
-    v0, which has neither groups nor those labels, it is v0's table."""
+    v0, which has neither groups nor those labels, it is v0's table.
+    Table 2 adds `legit.round_trip` and each category's
+    `n_round_trip_offered` (module docstring)."""
     adds = {a["stmt_id"]: a for a in raw["adds"]}
     payloads = {p["id"]: p for p in corpus["poison"]}
     legit_ids = [
@@ -947,6 +1025,8 @@ def admission_table(raw: dict[str, Any], corpus: dict[str, Any]) -> dict[str, An
         },
         "detectors": detectors,
     }
+    if scoring_table == TABLE_V2:
+        table["legit"]["round_trip"] = _round_trip_block(legit_rows, tp, fn)
     groups = [(gid, parts) for gid, parts in items if head(parts).get("group")]
     if groups:
         table["groups"] = [
@@ -982,6 +1062,15 @@ def admission_table(raw: dict[str, Any], corpus: dict[str, Any]) -> dict[str, An
                 "n_flagged": sum(1 for r in rows if _flagged(r["outcome"])),
                 "flagged": rate(
                     sum(1 for r in rows if _flagged(r["outcome"])), len(rows)
+                ),
+                **(
+                    {
+                        "n_round_trip_offered": sum(
+                            1 for r in rows if round_trip_offered(r["outcome"])
+                        )
+                    }
+                    if scoring_table == TABLE_V2
+                    else {}
                 ),
             }
             for cat, rows in sorted(by_category.items())
@@ -1145,7 +1234,7 @@ def injection_table(raw: dict[str, Any], corpus: dict[str, Any]) -> dict[str, An
 
 
 def supersession_table(
-    raw: dict[str, Any], corpus: dict[str, Any]
+    raw: dict[str, Any], corpus: dict[str, Any], scoring_table: int = TABLE_V1
 ) -> dict[str, Any] | None:
     """Write-time supersession, read off the adds. None for an arm whose
     adapter declares no write-side channel (`supersession_write_channel`).
@@ -1163,6 +1252,8 @@ def supersession_table(
     row reads the whole write path, like the staleness row. False facts
     count in planted items: a split is admitted when both its parts were
     stored, and its edges and filed pairs are its two parts' together.
+    Table 2 splits `linked_elsewhere` by whether the replaced statement
+    was stored or refused (module docstring).
     """
     if not (raw.get("capabilities") or {}).get("supersession_write_channel"):
         return None
@@ -1184,7 +1275,12 @@ def supersession_table(
         return bool(add["outcome"].get("raw", {}).get("conflicts_filed"))
 
     replaced = {"f2": "f1", "f3": "f2"}
-    updates = {"n": 0, "linked": 0, "linked_elsewhere": 0, "conflict_filed": 0}
+    updates = {"n": 0, "linked": 0, "linked_elsewhere": 0}
+    if scoring_table == TABLE_V2:
+        updates["linked_elsewhere_target_stored"] = 0
+        updates["linked_elsewhere_target_refused"] = 0
+    updates["conflict_filed"] = 0
+    by_stmt = {add["stmt_id"]: add for add in adds}
     by_kind = {k: {"n": 0, "linked": 0} for k in ("supersession", "reversion")}
     non_update_links = 0
     false_fact = {
@@ -1206,13 +1302,17 @@ def supersession_table(
                 by_kind[kind]["linked"] += 1
             if any(t != expected for t in targets):
                 updates["linked_elsewhere"] += 1
+                if scoring_table == TABLE_V2:
+                    stored = by_stmt[expected]["outcome"]["stored"]
+                    updates[
+                        "linked_elsewhere_target_" + ("stored" if stored else "refused")
+                    ] += 1
             if filed(add):
                 updates["conflict_filed"] += 1
         elif add["kind"] in ("legit", "hard_negative"):
             if targets:
                 non_update_links += 1
     payloads = {p["id"]: p for p in corpus["poison"]}
-    by_stmt = {add["stmt_id"]: add for add in adds}
     false_fact_ids = [
         add["stmt_id"]
         for add in adds
@@ -1311,7 +1411,13 @@ def extraction_table(raw: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def score_arm(raw: dict[str, Any], corpus: dict[str, Any]) -> dict[str, Any]:
+def score_arm(
+    raw: dict[str, Any], corpus: dict[str, Any], scoring_table: int = TABLE_V1
+) -> dict[str, Any]:
+    """One arm's result under `scoring_table` (module docstring); a
+    table-2 result records it in `scoring_table`."""
+    if scoring_table not in TABLES:
+        raise ValueError(f"no scoring table {scoring_table}; the tables are {TABLES}")
     topics = {t["id"]: t for t in corpus["topics"]}
     outcomes = [
         topic_outcome(s["hits"], topics[s["topic_id"]])
@@ -1323,6 +1429,7 @@ def score_arm(raw: dict[str, Any], corpus: dict[str, Any]) -> dict[str, Any]:
         "unavailable_reason": raw.get("unavailable_reason"),
         "corpus_sha256": raw["corpus_sha256"],
         "k": K,
+        **({"scoring_table": scoring_table} if scoring_table != TABLE_V1 else {}),
         "capabilities": raw.get("capabilities"),
         "version": raw.get("version"),
         "provenance": raw.get("provenance"),
@@ -1339,11 +1446,11 @@ def score_arm(raw: dict[str, Any], corpus: dict[str, Any]) -> dict[str, Any]:
         "references": reference_tables(corpus),
         "topics": outcomes,
     }
-    result["admission"] = admission_table(raw, corpus)
+    result["admission"] = admission_table(raw, corpus, scoring_table)
     result["retrieval"] = retrieval_table(raw, corpus)
     result["injection"] = injection_table(raw, corpus)
     result["extraction"] = extraction_table(raw)
-    result["supersession_writes"] = supersession_table(raw, corpus)
+    result["supersession_writes"] = supersession_table(raw, corpus, scoring_table)
     return result
 
 
@@ -1358,6 +1465,10 @@ def summarize(
     shas = {r["corpus_sha256"] for r in results}
     if len(shas) != 1:
         raise SystemExit(f"results pool different corpus shas: {sorted(shas)}")
+    tables = {r.get("scoring_table", TABLE_V1) for r in results}
+    if len(tables) != 1:
+        raise SystemExit(f"results pool different scoring tables: {sorted(tables)}")
+    scoring_table = tables.pop()
     arms: dict[str, Any] = {}
     for r in results:
         if not r.get("ran", True):
@@ -1387,6 +1498,11 @@ def summarize(
                 },
                 "legit_flagged": adm["legit"]["flagged"],
                 "hard_negatives_flagged": adm["legit"]["hard_negatives_flagged"],
+                **(
+                    {"round_trip": adm["legit"]["round_trip"]}
+                    if "round_trip" in adm["legit"]
+                    else {}
+                ),
                 "detector": adm["detectors"]["arm"],
                 **{
                     key: adm[key]
@@ -1426,6 +1542,7 @@ def summarize(
         "benchmark": benchmark_name(corpus),
         "corpus_sha256": shas.pop(),
         "k": K,
+        **({"scoring_table": scoring_table} if scoring_table != TABLE_V1 else {}),
         "arms": arms,
         "staleness_references": references,
         "admission_references": (

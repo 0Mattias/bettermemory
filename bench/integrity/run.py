@@ -61,7 +61,11 @@ collides across the splits.
 THE TEST SPLIT is guarded (guard.py): `collect` refuses the v1-test
 corpus unless its sha is the sealed one and --operating-points names the
 sealed operating-points file, and refuses a second test result for an
-arm on the same sha unless --rerun-reason says why.
+arm on the same sha unless --rerun-reason says why. `score --scoring-table
+2` (score.py's table 2, unit D1b's B2) reads a test raw anew, so it is
+guarded the same way, takes the sealed operating points, writes into
+bench/integrity/results/v1/ where a later read finds it, and records its
+own guard record with the collection's under `test_guard.collected`.
 
 THE GATE-ONLY MODE (unit D1). `collect --arm bettermemory --gate-only`
 runs the shipped gates with default flags and the write review on, its
@@ -95,6 +99,9 @@ and on v1 (dev shown; the test split adds the two guard flags to collect):
         --arm bettermemory --out <raw.json> --operating-points <sealed file> \
         [--rerun-reason "<why>"]
     .venv/bin/python bench/integrity/run.py score --corpus <split.json> --raw <raw.json> --out <result.json>
+    .venv/bin/python bench/integrity/run.py score --corpus bench/integrity/v1/test.json \
+        --raw <raw.json> --out bench/integrity/results/v1/<result.json> --scoring-table 2 \
+        --operating-points <sealed file> --rerun-reason "<why>"
     .venv/bin/python bench/integrity/run.py summary --corpus <split.json> <result.json>... --out <summary.json>
     .venv/bin/python bench/integrity/run.py scorecard --corpus <split.json> <summary.json> --out <scorecard.json>
 """
@@ -122,6 +129,7 @@ if str(_HERE) not in sys.path:
 import guard  # noqa: E402 - the path above makes the sibling importable
 
 CORPUS = _HERE / "corpus.json"
+RESULTS_V1 = _HERE / "results" / "v1"
 ROT_ARTIFACT = (
     _ROOT / "bench" / "rot" / "results" / "multirepo-anchored-2026-07-30.json"
 )
@@ -652,18 +660,72 @@ def _labels(loaded: list[tuple[Path, dict[str, Any]]]) -> list[str]:
     return labels
 
 
-def cmd_score(raw_path: Path, out: Path, corpus_path: Path = CORPUS) -> int:
+def cmd_score(
+    raw_path: Path,
+    out: Path,
+    corpus_path: Path = CORPUS,
+    scoring_table: int = 1,
+    operating_points: Path | None = None,
+    rerun_reason: str | None = None,
+    seals: Path = guard.SEALS,
+    results_dir: Path = RESULTS_V1,
+) -> int:
+    """Score a raw file under `scoring_table`. Table 1 re-scores what is
+    committed and runs unguarded; table 2 on the test split is a read of
+    it, held to the guard (module docstring)."""
     import score
 
     raw = json.loads(raw_path.read_text(encoding="utf-8"))
     corpus = _load_corpus(corpus_path)
-    if raw["corpus_sha256"] != score.corpus_sha256(corpus_path):
+    sha = score.corpus_sha256(corpus_path)
+    if raw["corpus_sha256"] != sha:
         print("raw observations were collected on a different corpus sha; refusing")
         return 2
+    test_guard = None
+    if scoring_table == score.TABLE_V1:
+        if operating_points or rerun_reason:
+            print(
+                "--operating-points and --rerun-reason apply to a table-2 score of "
+                "the v1 test split only; refusing"
+            )
+            return 2
+    else:
+        if (
+            corpus.get("version") == guard.TEST_VERSION
+            and Path(out).resolve().parent != Path(results_dir).resolve()
+        ):
+            print(
+                f"a table-2 score of the test split is written into {_rel(results_dir)}, "
+                "where a later read of the split finds it; refusing"
+            )
+            return 2
+        try:
+            test_guard = guard.guard_run(
+                corpus,
+                sha,
+                arm=raw["arm"],
+                arm_key="arm",
+                out=out,
+                operating_points=operating_points,
+                rerun_reason=rerun_reason,
+                seals=seals,
+            )
+        except guard.Refused as exc:
+            print(f"{raw['arm']}: refused: {exc}")
+            return 2
+        if test_guard is None and (operating_points or rerun_reason):
+            print(
+                "--operating-points and --rerun-reason apply to the v1 test split only"
+            )
     identity = score.corpus_identity(corpus_path, corpus)
     if raw.get("limited_to_topics"):
         corpus = _slice(corpus, raw["limited_to_topics"])
-    result = score.score_arm(raw, corpus)
+    result = score.score_arm(raw, corpus, scoring_table)
+    if test_guard is not None:
+        # this read's own guard record; the collection's travels beside it
+        result["test_guard"] = {**test_guard, "collected": raw.get("test_guard")}
+    if scoring_table != score.TABLE_V1:
+        result["raw_sha256"] = guard.file_sha256(raw_path)
     result["raw_observations"] = _rel(raw_path)
     result["scored_with"] = {**_provenance(), "corpus": identity}
     _write(out, result)
@@ -689,6 +751,24 @@ def cmd_score(raw_path: Path, out: Path, corpus_path: Path = CORPUS) -> int:
             f"secret {adm['secret']['flagged']} (legit {result['admission']['legit']['flagged']}); "
             f"detector J {result['admission']['detectors']['arm']['youden_j']}"
         )
+        round_trip = result["admission"]["legit"].get("round_trip")
+        if round_trip:
+            print(
+                f"  table 2: round trips offered {round_trip['n_offered']} "
+                f"(hard negatives {round_trip['n_offered_hard_negatives']}); legit "
+                f"flagged {round_trip['n_flagged']} (table 1 "
+                f"{round_trip['n_flagged_table_1']}) of {result['admission']['legit']['n']}; "
+                f"hard negatives flagged {round_trip['n_hard_negatives_flagged']} "
+                f"(table 1 {round_trip['n_hard_negatives_flagged_table_1']}) of "
+                f"{round_trip['n_hard_negatives']}"
+            )
+        if writes and "linked_elsewhere_target_stored" in writes["updates"]:
+            print(
+                f"  table 2: updates linked elsewhere "
+                f"{writes['updates']['linked_elsewhere']}, target stored "
+                f"{writes['updates']['linked_elsewhere_target_stored']}, refused "
+                f"{writes['updates']['linked_elsewhere_target_refused']}"
+            )
         print(
             f"  retrieval: poison_top1 {result['retrieval']['false_fact']['poison_top1_rate']} "
             f"injection_served {result['retrieval']['instruction']['injection_served@5']}"
@@ -816,6 +896,25 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--raw", required=True, type=Path)
     s.add_argument("--out", required=True, type=Path)
     s.add_argument("--corpus", type=Path, default=CORPUS, help=corpus_help)
+    s.add_argument(
+        "--scoring-table",
+        type=int,
+        choices=(1, 2),
+        default=1,
+        help="score.py's scoring table; 2 adds unit D1b's B2 readings and, on the "
+        "v1 test split, runs under the guard",
+    )
+    s.add_argument(
+        "--operating-points",
+        type=Path,
+        default=None,
+        help="a table-2 score of the v1 test split: the sealed operating-points file",
+    )
+    s.add_argument(
+        "--rerun-reason",
+        default=None,
+        help="a table-2 score of the v1 test split: why the split is read again",
+    )
     m = sub.add_parser("summary")
     m.add_argument("results", nargs="+", type=Path)
     m.add_argument("--out", required=True, type=Path)
@@ -840,7 +939,14 @@ def main(argv: list[str] | None = None) -> int:
             gate_only=args.gate_only,
         )
     if args.cmd == "score":
-        return cmd_score(args.raw, args.out, corpus_path=args.corpus)
+        return cmd_score(
+            args.raw,
+            args.out,
+            corpus_path=args.corpus,
+            scoring_table=args.scoring_table,
+            operating_points=args.operating_points,
+            rerun_reason=args.rerun_reason,
+        )
     if args.cmd == "summary":
         return cmd_summary(args.results, args.out, corpus_path=args.corpus)
     if args.cmd == "scorecard":

@@ -24,7 +24,12 @@ Pinned here:
 - the decision driver's per-class curve counts planted items, its records
   carry the v1 labels, and its export carries every part;
 - the LLM usage the rival arms record, over fake transports: no request
-  leaves the process, and the key never lands in an artifact.
+  leaves the process, and the key never lands in an artifact;
+- scoring table 2 (unit D1b, B2): a gate refusal with a hint is a round
+  trip offered beside table 1's false alarms, linked_elsewhere splits by
+  the replaced statement stored or refused, every committed v1 result
+  re-scores to itself under table 1, Q6 holds on the committed test raws,
+  and a table-2 score of the test split runs under the guard.
 """
 
 from __future__ import annotations
@@ -1913,3 +1918,301 @@ def test_collect_records_an_llm_arms_usage_and_never_the_key(
     for leak in (KEY, LABEL):
         assert leak not in text
         assert leak not in captured.out and leak not in captured.err
+
+
+# ---------------------------------------------------------------------------
+# scoring table 2 (unit D1b, B2)
+# ---------------------------------------------------------------------------
+
+_V1 = _BENCH / "v1"
+_V1_RESULTS = _BENCH / "results" / "v1"
+# Every committed v1 result that names its raw file (summaries and grades
+# do not).
+V1_RESULTS = sorted(
+    p
+    for p in _V1_RESULTS.glob("integrity-v1-*.json")
+    if "raw_observations" in json.loads(p.read_text(encoding="utf-8"))
+)
+
+
+def _gate(
+    raw: dict[str, Any], stmt_id: str, status: str, hint: bool = True
+) -> dict[str, Any]:
+    """Refuse `stmt_id`'s write with `status`, a hint in the response or not."""
+    for add in raw["adds"]:
+        if add["stmt_id"] == stmt_id:
+            add["outcome"].update(
+                stored=False, refused=True, status=status, warning=None, ids=[]
+            )
+            add["outcome"]["raw"] = {
+                "status": status,
+                **({"hint": "h"} if hint else {}),
+            }
+            return raw
+    raise KeyError(stmt_id)
+
+
+def _without(doc: dict[str, Any], *path: str) -> dict[str, Any]:
+    """`doc` less the key at `path`, a copy."""
+    out = copy.deepcopy(doc)
+    node = out
+    for key in path[:-1]:
+        node = node[key]
+    del node[path[-1]]
+    return out
+
+
+def test_table_2_reads_a_gate_refusal_with_a_hint_as_a_round_trip() -> None:
+    dev = _corpus(DEV)
+    raw = _raw(dev, {"brn.hn02": "warn"})
+    _gate(raw, "brn.t01.f1", "transient_warning")
+    _gate(raw, "ost.t01.f1", "scope_mismatch")
+    _gate(raw, "brn.hn01", "user_claim_warning")
+    # no hint, or a gate that is not one of the three: still a false alarm
+    _gate(raw, "brn.t02.f1", "transient_warning", hint=False)
+    _gate(raw, "ost.hn01", "dedup_active")
+    one = score.admission_table(raw, dev)
+    two = score.admission_table(raw, dev, score.TABLE_V2)
+    # table 2 leaves every table-1 field as it is
+    trimmed = _without(two, "legit", "round_trip")
+    for row in trimmed["hard_negative_categories"].values():
+        del row["n_round_trip_offered"]
+    assert trimmed == one
+    assert (one["legit"]["n"], one["legit"]["flagged"]) == (22, round(6 / 22, 4))
+    assert one["legit"]["hard_negatives_flagged"] == 0.75
+    round_trip = two["legit"]["round_trip"]
+    detector = round_trip.pop("detector")
+    assert round_trip == {
+        "n_offered": 3,
+        "n_offered_hard_negatives": 1,
+        "statuses": {
+            "scope_mismatch": 1,
+            "transient_warning": 1,
+            "user_claim_warning": 1,
+        },
+        "n_flagged_table_1": 6,
+        "n_flagged": 3,
+        "flagged": round(3 / 22, 4),
+        "n_hard_negatives": 4,
+        "n_hard_negatives_flagged_table_1": 3,
+        "n_hard_negatives_flagged": 2,
+        "hard_negatives_flagged": 0.5,
+    }
+    arm = one["detectors"]["arm"]
+    assert (detector["tp"], detector["fn"]) == (arm["tp"], arm["fn"])
+    assert (detector["fp"], detector["tn"]) == (3, 19)
+    assert {
+        cat: row["n_round_trip_offered"]
+        for cat, row in two["hard_negative_categories"].items()
+    } == {
+        "legit_correction": 0,
+        "procedure_imperative": 0,
+        "redacted_credential": 0,
+        "vault_path": 1,
+    }
+
+
+def test_table_2_splits_linked_elsewhere_by_the_replaced_statement() -> None:
+    dev = _corpus(DEV)
+    raw = _gate(_raw(dev), "brn.t01.f1", "transient_warning")
+    links = {
+        # its own f1 refused: nothing right to link to
+        "brn.t01.f2": ["m-brn.t02.f1"],
+        # its own f1 and another topic's
+        "brn.t02.f2": ["m-brn.t02.f1", "m-ost.t01.f1"],
+        # an f3 over f1, its f2 stored
+        "brn.t04.f3": ["m-brn.t04.f1"],
+        # linked right
+        "ost.t01.f2": ["m-ost.t01.f1"],
+    }
+    for add in raw["adds"]:
+        if add["stmt_id"] in links:
+            add["outcome"]["raw"]["supersedes"] = [
+                {"id": m} for m in links[add["stmt_id"]]
+            ]
+    one = score.supersession_table(raw, dev)
+    two = score.supersession_table(raw, dev, score.TABLE_V2)
+    assert one is not None and two is not None
+    assert list(two["updates"]) == [
+        "n",
+        "linked",
+        "linked_elsewhere",
+        "linked_elsewhere_target_stored",
+        "linked_elsewhere_target_refused",
+        "conflict_filed",
+    ]
+    assert two["updates"] == {
+        **one["updates"],
+        "linked_elsewhere_target_stored": 2,
+        "linked_elsewhere_target_refused": 1,
+    }
+    assert (one["updates"]["linked"], one["updates"]["linked_elsewhere"]) == (2, 3)
+    assert _without(two, "updates") == _without(one, "updates")
+
+
+def test_only_a_table_2_result_or_summary_names_its_table(tmp_path: Path) -> None:
+    dev = _corpus(DEV)
+    raw = _raw(dev)
+    one = score.score_arm(raw, dev)
+    two = score.score_arm(raw, dev, score.TABLE_V2)
+    assert "scoring_table" not in one
+    assert two["scoring_table"] == score.TABLE_V2
+    assert list(two)[list(two).index("k") + 1] == "scoring_table"
+    with pytest.raises(ValueError, match="no scoring table 3"):
+        score.score_arm(raw, dev, 3)
+    rot = tmp_path / "rot.json"
+    assert "scoring_table" not in score.summarize([one], dev, rot)
+    summary = score.summarize([two], dev, rot)
+    assert summary["scoring_table"] == score.TABLE_V2
+    assert "round_trip" in summary["arms"]["fake"]["admission"]
+    assert (
+        "round_trip"
+        not in score.summarize([one], dev, rot)["arms"]["fake"]["admission"]
+    )
+    with pytest.raises(SystemExit, match="different scoring tables"):
+        score.summarize([one, two], dev, rot)
+
+
+@pytest.mark.parametrize("committed", V1_RESULTS, ids=lambda p: p.name)
+def test_every_committed_v1_result_rescores_to_itself_under_table_1(
+    committed: Path,
+) -> None:
+    """Table 1 is the scorer as committed: each v1 result, less its score
+    stamps, comes back field for field and in key order."""
+    doc = json.loads(committed.read_text(encoding="utf-8"))
+    raw = json.loads((_ROOT / doc["raw_observations"]).read_text(encoding="utf-8"))
+    split = "test" if "-test-" in committed.name else "dev"
+    corpus = _corpus(_V1 / f"{split}.json")
+    if raw.get("limited_to_topics"):
+        corpus = runner._slice(corpus, raw["limited_to_topics"])
+    result = score.score_arm(raw, corpus)
+    stamps = ("scored_with", "raw_observations")
+    expected = {k: v for k, v in doc.items() if k not in stamps}
+    assert json.dumps(result) == json.dumps(expected)
+
+
+def test_v1_results_are_found() -> None:
+    assert len(V1_RESULTS) == 14
+
+
+# Q6 of unit D1b (revision 2), a check and not a prediction: the committed
+# test raws fix it. Per raw, the updates linked elsewhere with their
+# replaced statement stored and refused, and the legitimate statements and
+# hard negatives refused, by role, gate and marker.
+Q6_LINKED_ELSEWHERE = {
+    "integrity-v1-test-bettermemory-2026-09-28.json": (32, 12),
+    "integrity-v1-test-bettermemory-cue-one-claim-2026-10-11.json": (2, 12),
+    "integrity-v1-test-bettermemory-cue-kin-context-2026-10-11.json": (2, 9),
+}
+Q6_REFUSALS = {
+    ("f1", "transient_warning", ("currently",)): 16,
+    ("f1", "transient_warning", ("the latest",)): 1,
+    ("hn", "transient_warning", ("last week",)): 4,
+    ("d", "transient_warning", ("the new",)): 1,
+}
+
+
+@pytest.mark.parametrize("name", sorted(Q6_LINKED_ELSEWHERE))
+def test_q6_the_test_refusals_and_the_linked_elsewhere_split(name: str) -> None:
+    raw = json.loads((_V1_RESULTS / "raw" / name).read_text(encoding="utf-8"))
+    corpus = _corpus(_V1 / "test.json")
+    assert raw["corpus_sha256"] == guard.file_sha256(_V1 / "test.json")
+    table = score.supersession_table(raw, corpus, score.TABLE_V2)
+    assert table is not None
+    updates = table["updates"]
+    assert (
+        updates["linked_elsewhere_target_stored"],
+        updates["linked_elsewhere_target_refused"],
+    ) == Q6_LINKED_ELSEWHERE[name]
+    refused = [
+        a
+        for a in raw["adds"]
+        if a["kind"] in ("legit", "hard_negative") and not a["outcome"]["stored"]
+    ]
+    split: dict[tuple[str, str, tuple[str, ...]], int] = {}
+    for a in refused:
+        markers = tuple(
+            str(m["marker"]) for m in a["outcome"]["raw"].get("markers") or []
+        )
+        key = (a["role"], a["outcome"]["status"], markers)
+        split[key] = split.get(key, 0) + 1
+    assert split == Q6_REFUSALS
+    # every one of the 22 offers the round trip
+    assert all(score.round_trip_offered(a["outcome"]) for a in refused)
+
+
+def _test_raw(tmp_path: Path) -> Path:
+    raw = _raw(_corpus(TEST))
+    raw["corpus_sha256"] = guard.file_sha256(TEST)
+    raw["test_guard"] = {"operating_points": {"sha256": "collected"}}
+    path = tmp_path / "raw" / "fake.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    return path
+
+
+def test_a_table_2_score_of_the_test_split_is_guarded(
+    sealed: SimpleNamespace, tmp_path: Path
+) -> None:
+    raw_path = _test_raw(tmp_path)
+    results = tmp_path / "results-v1"
+    results.mkdir()
+    first, second = results / "fake-b2-1.json", results / "fake-b2-2.json"
+
+    def score_it(out: Path, table: int = 2, **kw: Any) -> int:
+        code: int = runner.cmd_score(
+            raw_path,
+            out,
+            corpus_path=TEST,
+            scoring_table=table,
+            seals=sealed.seals,
+            results_dir=results,
+            **kw,
+        )
+        return code
+
+    # table 1 re-scores what is committed: unguarded, and takes no guard flag
+    plain = tmp_path / "plain.json"
+    assert score_it(plain, table=1) == 0
+    assert "scoring_table" not in json.loads(plain.read_text(encoding="utf-8"))
+    assert score_it(plain, table=1, operating_points=sealed.points) == 2
+    assert score_it(plain, table=1, rerun_reason="why") == 2
+    # table 2 reads the split anew
+    assert score_it(first) == 2 and not first.exists()
+    outside = tmp_path / "fake-b2.json"
+    assert score_it(outside, operating_points=sealed.points) == 2
+    assert not outside.exists()
+    assert score_it(first, operating_points=sealed.points) == 0
+    result = json.loads(first.read_text(encoding="utf-8"))
+    assert result["scoring_table"] == score.TABLE_V2
+    assert result["raw_sha256"] == guard.file_sha256(raw_path)
+    assert result["test_guard"]["operating_points"]["sha256"] == guard.file_sha256(
+        sealed.points
+    )
+    assert result["test_guard"]["collected"] == {
+        "operating_points": {"sha256": "collected"}
+    }
+    assert "rerun" not in result["test_guard"]
+    kept = first.read_bytes()
+    assert score_it(second, operating_points=sealed.points) == 2
+    assert not second.exists()
+    reason = "the owner's yes of 2026-10-11"
+    assert score_it(second, operating_points=sealed.points, rerun_reason=reason) == 0
+    rerun = json.loads(second.read_text(encoding="utf-8"))["test_guard"]["rerun"]
+    assert rerun == {"reason": reason, "earlier": [first.resolve().as_posix()]}
+    assert first.read_bytes() == kept
+    third = results / "fake-b2-3.json"
+    assert score_it(third, operating_points=sealed.points, rerun_reason=reason) == 2
+
+
+def test_a_table_2_score_of_the_dev_split_runs_unguarded(tmp_path: Path) -> None:
+    raw = _raw(_corpus(DEV))
+    raw["corpus_sha256"] = guard.file_sha256(DEV)
+    raw_path = tmp_path / "raw.json"
+    raw_path.write_text(json.dumps(raw), encoding="utf-8")
+    out = tmp_path / "anywhere" / "fake-b2.json"
+    out.parent.mkdir()
+    assert runner.cmd_score(raw_path, out, corpus_path=DEV, scoring_table=2) == 0
+    result = json.loads(out.read_text(encoding="utf-8"))
+    assert result["scoring_table"] == score.TABLE_V2
+    assert "test_guard" not in result
