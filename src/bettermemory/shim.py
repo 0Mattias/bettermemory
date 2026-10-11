@@ -16,17 +16,27 @@ about the client.
 When no daemon can be reached or started, the shim serves the store
 in-process, the 8.x shape, and says so once on stderr: a broken daemon
 degrades to slower memory, never to no memory.
+
+Once it serves, a failure between the shim and the daemon answers the
+call that met it and leaves the shim up: the SDK's transport would
+otherwise let the exception end its task group and the process with it.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import secrets
 import sys
 from typing import Any
 
+import httpx2
+
 log = logging.getLogger("bettermemory.shim")
+
+#: JSON-RPC's internal error, the code a failed forward answers with.
+_INTERNAL_ERROR = -32603
 
 
 def _client_info_of(ctx: Any) -> tuple[str | None, str | None]:
@@ -74,8 +84,56 @@ def _forward_headers(ctx: Any) -> dict[str, str]:
     return headers
 
 
+def _error_reply(request: httpx2.Request, message: str) -> httpx2.Response:
+    """A JSON-RPC error as the daemon's reply to `request`, which the SDK
+    hands to the caller as an MCPError carrying `message`."""
+    try:
+        request_id = json.loads(request.content).get("id")
+    except (ValueError, AttributeError, httpx2.RequestNotRead):
+        request_id = None
+    return httpx2.Response(
+        503,
+        json={
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "error": {"code": _INTERNAL_ERROR, "message": message},
+        },
+        request=request,
+    )
+
+
+class _AnsweringTransport(httpx2.AsyncBaseTransport):
+    """The shim's transport to the daemon: every transport failure comes
+    back as an error reply to the request that met it, never as an
+    exception. A connection that was never made says so; one lost after
+    the request went out says the call may have been applied, because
+    the daemon may have run it before the reply was lost."""
+
+    def __init__(self, inner: httpx2.AsyncBaseTransport) -> None:
+        self._inner = inner
+
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+        try:
+            return await self._inner.handle_async_request(request)
+        except (httpx2.ConnectError, httpx2.ConnectTimeout) as exc:
+            return _error_reply(
+                request,
+                f"no bettermemory daemon answered at {request.url.netloc.decode()}: "
+                f"{exc.__class__.__name__}: {exc}",
+            )
+        except httpx2.TransportError as exc:
+            return _error_reply(
+                request,
+                "the connection to the bettermemory daemon was lost before its "
+                f"reply ({exc.__class__.__name__}: {exc}); the call may have been "
+                "applied, so check before repeating it",
+            )
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+
 async def _serve_through_daemon(state: dict[str, Any], version: str) -> None:
-    import httpx2
     from mcp import ClientSession
     from mcp import types
     from mcp.client.streamable_http import streamable_http_client
@@ -91,7 +149,9 @@ async def _serve_through_daemon(state: dict[str, Any], version: str) -> None:
     }
     url = f"http://127.0.0.1:{state['port']}/mcp"
     async with httpx2.AsyncClient(
-        headers=base_headers, timeout=httpx2.Timeout(60.0, connect=5.0)
+        headers=base_headers,
+        timeout=httpx2.Timeout(60.0, connect=5.0),
+        transport=_AnsweringTransport(httpx2.AsyncHTTPTransport()),
     ) as http:
         async with streamable_http_client(url, http_client=http) as (read, write):
             async with ClientSession(

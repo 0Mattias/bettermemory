@@ -18,11 +18,12 @@ import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.shared.exceptions import MCPError
 
 from bettermemory import __version__
 from bettermemory._daemon_client import health, read_state, write_state
@@ -274,3 +275,130 @@ def test_serve_runs_the_in_process_server_on_purpose(tmp_path: Path) -> None:
     assert proc.returncode == 0, proc.stderr
     assert '"serverInfo"' in proc.stdout
     assert not _state_path(tmp_path).exists()
+
+
+# ---------------------------------------------------------------------------
+# A daemon restart under a live shim (unit S-FIX)
+# ---------------------------------------------------------------------------
+
+
+async def _search(session: ClientSession) -> Any:
+    return await session.call_tool("memory_search", {"query": "anything"})
+
+
+class _FakeMcpDaemon(http.server.ThreadingHTTPServer):
+    """A daemon's HTTP surface, enough for a shim: /health, the shutdown
+    endpoint and a stateless /mcp whose tools/call does what `mode` says."""
+
+    def __init__(self, *, version: str, token: str, mode: str = "answer") -> None:
+        super().__init__(("127.0.0.1", 0), _FakeMcpHandler)
+        self.version = version
+        self.token = token
+        self.mode = mode
+        self.calls = 0
+        self.shutdown_calls = 0
+        threading.Thread(target=self.serve_forever, daemon=True).start()
+
+    @property
+    def port(self) -> int:
+        return int(self.server_address[1])
+
+    def state(self, store: Path) -> dict[str, Any]:
+        return {
+            "pid": 2**22 + 4322,
+            "port": self.port,
+            "token": self.token,
+            "version": self.version,
+            "store": str(store),
+            "started": "2026-01-01T00:00:00Z",
+        }
+
+    def stop(self) -> None:
+        self.shutdown()
+        self.server_close()
+
+
+class _FakeMcpHandler(http.server.BaseHTTPRequestHandler):
+    @property
+    def fake(self) -> _FakeMcpDaemon:
+        return cast(_FakeMcpDaemon, self.server)
+
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+        return
+
+    def _json(self, status: int, payload: object) -> None:
+        body = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self) -> None:  # noqa: N802
+        if self.path != "/health":
+            self._json(405, {})
+            return
+        self._json(
+            200,
+            {"status": "ok", "version": self.fake.version, "store": "x", "pid": 1},
+        )
+
+    def do_POST(self) -> None:  # noqa: N802
+        body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        if self.path == "/api/v1/admin/shutdown":
+            self.fake.shutdown_calls += 1
+            self._json(200, {})
+            return
+        message = json.loads(body)
+        method = message.get("method")
+        if method == "tools/call":
+            self.fake.calls += 1
+        if self.headers.get("Authorization") != f"Bearer {self.fake.token}" or (
+            method == "tools/call" and self.fake.mode == "unauthorized"
+        ):
+            self._json(401, {"error": "unauthorized"})
+            return
+        if "id" not in message:
+            self.send_response(202)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        if method == "initialize":
+            result: dict[str, Any] = {
+                "protocolVersion": message["params"]["protocolVersion"],
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "fake", "version": self.fake.version},
+                "instructions": "fake",
+            }
+        elif method == "tools/list":
+            result = {"tools": []}
+        elif self.fake.mode == "drop":
+            self.close_connection = True
+            return
+        else:
+            result = {
+                "content": [{"type": "text", "text": f"answered by {self.fake.port}"}],
+                "isError": False,
+            }
+        self._json(200, {"jsonrpc": "2.0", "id": message["id"], "result": result})
+
+
+def _fake_shim_env(tmp_path: Path) -> dict[str, str]:
+    return child_tau_env(_env(tmp_path), tmp_path / "site", None)
+
+
+async def test_shim_never_resends_a_call_whose_reply_was_lost(tmp_path: Path) -> None:
+    env = _fake_shim_env(tmp_path)
+    fake = _FakeMcpDaemon(version=__version__, token="a" * 64, mode="drop")
+    try:
+        write_state(tmp_path / "state", fake.state(_store_path(tmp_path)))
+        async with stdio_client(_shim_params(env)) as (r, w):
+            async with ClientSession(r, w) as session:
+                await session.initialize()
+                with pytest.raises(MCPError, match="may have been applied"):
+                    await _search(session)
+                assert fake.calls == 1
+                fake.mode = "answer"
+                assert "answered by" in _text(await _search(session))
+    finally:
+        fake.stop()
