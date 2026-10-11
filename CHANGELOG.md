@@ -194,6 +194,34 @@ surfaces leave with them. An 8.x directory is imported once by
   it, and the plugin's `hooks.json` names the new commands.
   (`src/bettermemory/daemon.py`, `shim.py`, `_daemon_client.py`,
   `cli/daemon_cmd.py`)
+- **The write review.** A `memory_write` that passes the gates writes
+  nothing on its first call: it returns status `review` with a
+  `review_id`, the related stored statements (the engine's top three
+  plus the cue code's targets, at most five, each at most 600
+  characters) and three questions: a relation per related id
+  (`restates`, `update`, `conflict` or `unrelated`), and `unsafe` and
+  `secret` scores from 0 to 1. The writing model answers by sending the
+  same call again with a `review` argument. The daemon keeps no state
+  between the calls: it recomputes the related ids, asks again for any
+  left unanswered, and then acts in this order:
+  - `secret` at or above 0.30 refuses as `credential_warning`.
+  - `unsafe` at or above 0.30 refuses as `instruction_warning`.
+  - `restates`, with no `update` answer and no declared `supersedes=`,
+    refuses as a duplicate.
+  - Otherwise the write commits. An `update` answer sets a supersedes
+    link between claim-sized statements, or is named in
+    `update_suggested`. A `conflict` answer files the pair with
+    detector `review`.
+
+  The credential regex always stands. A cue-code link stands unless the
+  answer for its target is `conflict` or `unrelated`: the link is then
+  dropped and the pair filed as `review-disagrees`. No model runs
+  inside the product; the questions are put to the caller. Both
+  thresholds were sealed on the v1 integrity dev split
+  (`bench/integrity/v1/operating-points-review.json`). Every review is
+  logged as a `review_issued` row. `bettermemory eval` counts reviews,
+  and `bettermemory review samples` and `review grade` draw and grade
+  samples. (`src/bettermemory/review.py`, `handlers/write.py`)
 - **`Store.open_or_create` refuses to create an empty store beside an
   un-migrated 8.x directory** (a memory file, an event shard or the
   tombstone directory present, no `memory.sqlite`), naming
@@ -235,6 +263,12 @@ surfaces leave with them. An 8.x directory is imported once by
   SessionStart and UserPromptSubmit hooks stay.
 - A config file that still sets a removed key or section loads with one
   logged warning per key and the line ignored.
+- **Write-time supersession links one stored claim per cue.**
+  `detect_supersession` used to link a write that carries a change cue
+  to every stored claim passing its lexical floors, so an update also
+  linked other topics' updates. It now keeps the strongest match, plus
+  any other match holding that match's old value. No threshold moved.
+  (`src/bettermemory/supersession.py`)
 
 ### Removed
 
