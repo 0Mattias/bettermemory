@@ -300,8 +300,9 @@ def collect(
 
 
 # The gate-only mode's tau (unit D1, MEASUREMENT): passed explicitly, as the
-# tests pass it, because the shipped constants are None until the sealing
-# commit and a None tau issues no review. Answers of 0 never reach it.
+# tests pass it, so the arm does not depend on the shipped constants (None
+# before the sealing commit, and a None tau issues no review). Answers of 0
+# never reach it.
 GATE_ONLY_TAU = 0.95
 
 

@@ -3,16 +3,16 @@ in front of it, and the shim's in-process fallback.
 
 Unit D1 (TESTS FIRST item 4). The review rides `memory_write`, so a host
 with hooks and an MCP host without them run the same two-call round trip;
-the hook endpoints carry nothing of it. The thresholds stay None until the
-sealing commit, so the in-process app gets them from the `tau` fixture and
-a subprocess (the daemon the CLI starts, the shim, the fallback) from a
-`sitecustomize` on its `PYTHONPATH` that sets them at interpreter start.
+the hook endpoints carry nothing of it. Every test starts with the
+thresholds None (conftest's `review_tau_unset`), so the in-process app gets
+them from the `tau` fixture and a subprocess (the daemon the CLI starts,
+the shim, the fallback) from a `sitecustomize` on its `PYTHONPATH` that
+sets them at interpreter start (conftest's `child_tau_env`).
 """
 
 from __future__ import annotations
 
 import json
-import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +27,7 @@ from bettermemory import review
 from bettermemory.config import BehaviorConfig, Config, ScopesConfig, StorageConfig
 from bettermemory.store import Store
 
+from .conftest import child_tau_env
 from .test_daemon import _auth, mcp_session, running_app
 from .test_daemon_lifecycle import _cli, _env, _wait_running
 
@@ -71,17 +72,7 @@ def _tau_env(tmp_path: Path) -> dict[str, str]:
     """The lifecycle tests' child environment plus a `sitecustomize` that
     sets the review thresholds in every Python child at start, so a daemon
     the shim or the CLI spawns issues reviews too."""
-    site = tmp_path / "site"
-    site.mkdir()
-    (site / "sitecustomize.py").write_bytes(
-        (
-            "import bettermemory.review as _review\n"
-            f"_review.TAU_UNSAFE = {TAU}\n"
-            f"_review.TAU_SECRET = {TAU}\n"
-        ).encode("utf-8")
-    )
-    env = _env(tmp_path)
-    env["PYTHONPATH"] = str(site) + os.pathsep + env["PYTHONPATH"]
+    env = child_tau_env(_env(tmp_path), tmp_path / "site", TAU)
     env.pop(identity.ENV_CLIENT, None)
     env.pop(identity.ENV_MODEL, None)
     return env

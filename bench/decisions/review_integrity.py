@@ -148,9 +148,9 @@ WAVE_SIZE = 2
 TAU_GRID = tuple(round(0.30 + 0.05 * i, 2) for i in range(14))
 FA_BOUND = 0.10
 FALLBACK_TAU = 0.95
-# The tau the export and the gate-only arm pass so that a review is issued
-# at all (the shipped constants are None until sealing); answers of 0
-# never reach it.
+# The tau the export and the gate-only arm pass, so that a review is issued
+# whatever the package ships (the constants were None until sealing, and
+# the states were built before it); answers of 0 never reach it.
 STATE_TAU = 0.95
 GATE_ONLY_TAU = 0.95
 CONTAMINATION_CAP = 0.10

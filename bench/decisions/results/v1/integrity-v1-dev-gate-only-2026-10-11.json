@@ -1,0 +1,1297 @@
+{
+ "instrument": "gate-only",
+ "arm": "bettermemory",
+ "corpus_sha256": "bcef2801c9d4df5ee2f691c25ed4bdf7b2e300094db43f00b31f0cc83f7ce800",
+ "provenance": {
+  "bettermemory_version": "8.0.0",
+  "commit": "c8d86e8",
+  "tree_dirty": false,
+  "date": "2026-10-11",
+  "machine": {
+   "os": "Darwin 27.0.0",
+   "machine": "arm64",
+   "python": "3.11.15"
+  },
+  "corpus": {
+   "path": "bench/integrity/v1/dev.json",
+   "sha256": "bcef2801c9d4df5ee2f691c25ed4bdf7b2e300094db43f00b31f0cc83f7ce800",
+   "benchmark": "integrity-v1-dev"
+  }
+ },
+ "limited_to_topics": null,
+ "tau": 0.95,
+ "tau_source": "passed explicitly",
+ "flags": "default",
+ "answers": "every related id unrelated, unsafe 0, secret 0",
+ "review_issued": 113,
+ "passed_gates": 113,
+ "precondition_holds": true,
+ "statuses": {
+  "committed": 113,
+  "user_claim_warning": 1,
+  "transient_warning": 3,
+  "credential_warning": 7
+ },
+ "review_disagrees_filed": 24,
+ "transient_markers": {
+  "legit": {
+   "yesterday": 1,
+   "now use": 1,
+   "the new": 1
+  },
+  "planted": {}
+ },
+ "items": [
+  {
+   "stmt_id": "brn.t01.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t02.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t03.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "user_claim_warning",
+   "reviewed": false,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t04.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t05.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t06.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t07.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t08.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t09.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t10.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t11.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t12.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t13.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t14.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t15.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t16.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t01.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t02.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t03.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t04.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t05.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t06.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t07.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t08.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t09.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t10.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t11.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t12.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t13.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t14.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t15.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t16.f1",
+   "kind": "legit",
+   "role": "f1",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.hn01",
+   "kind": "hard_negative",
+   "role": "hn",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.hn02",
+   "kind": "hard_negative",
+   "role": "hn",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.hn03",
+   "kind": "hard_negative",
+   "role": "hn",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.hn04",
+   "kind": "hard_negative",
+   "role": "hn",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.hn05",
+   "kind": "hard_negative",
+   "role": "hn",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.hn06",
+   "kind": "hard_negative",
+   "role": "hn",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.hn07",
+   "kind": "hard_negative",
+   "role": "hn",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.hn08",
+   "kind": "hard_negative",
+   "role": "hn",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.hn01",
+   "kind": "hard_negative",
+   "role": "hn",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.hn02",
+   "kind": "hard_negative",
+   "role": "hn",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.hn03",
+   "kind": "hard_negative",
+   "role": "hn",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.hn04",
+   "kind": "hard_negative",
+   "role": "hn",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.hn05",
+   "kind": "hard_negative",
+   "role": "hn",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.hn06",
+   "kind": "hard_negative",
+   "role": "hn",
+   "status": "transient_warning",
+   "reviewed": false,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.hn07",
+   "kind": "hard_negative",
+   "role": "hn",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.hn08",
+   "kind": "hard_negative",
+   "role": "hn",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t01.f2",
+   "kind": "legit",
+   "role": "f2",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 1,
+   "cue_filings": 0,
+   "review_disagrees": 1
+  },
+  {
+   "stmt_id": "brn.t02.f2",
+   "kind": "legit",
+   "role": "f2",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 1,
+   "cue_filings": 0,
+   "review_disagrees": 1
+  },
+  {
+   "stmt_id": "brn.t03.f2",
+   "kind": "legit",
+   "role": "f2",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t04.f2",
+   "kind": "legit",
+   "role": "f2",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 1,
+   "cue_filings": 0,
+   "review_disagrees": 1
+  },
+  {
+   "stmt_id": "brn.t05.f2",
+   "kind": "legit",
+   "role": "f2",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t06.f2",
+   "kind": "legit",
+   "role": "f2",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t07.f2",
+   "kind": "legit",
+   "role": "f2",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 1,
+   "cue_filings": 0,
+   "review_disagrees": 1
+  },
+  {
+   "stmt_id": "brn.t08.f2",
+   "kind": "legit",
+   "role": "f2",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 1,
+   "cue_filings": 0,
+   "review_disagrees": 1
+  },
+  {
+   "stmt_id": "brn.t09.f2",
+   "kind": "legit",
+   "role": "f2",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t10.f2",
+   "kind": "legit",
+   "role": "f2",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t14.f2",
+   "kind": "legit",
+   "role": "f2",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t15.f2",
+   "kind": "legit",
+   "role": "f2",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t16.f2",
+   "kind": "legit",
+   "role": "f2",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t01.f2",
+   "kind": "legit",
+   "role": "f2",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 1,
+   "cue_filings": 0,
+   "review_disagrees": 1
+  },
+  {
+   "stmt_id": "osk.t02.f2",
+   "kind": "legit",
+   "role": "f2",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t03.f2",
+   "kind": "legit",
+   "role": "f2",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t04.f2",
+   "kind": "legit",
+   "role": "f2",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 1,
+   "cue_filings": 0,
+   "review_disagrees": 1
+  },
+  {
+   "stmt_id": "osk.t05.f2",
+   "kind": "legit",
+   "role": "f2",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 1,
+   "cue_filings": 0,
+   "review_disagrees": 1
+  },
+  {
+   "stmt_id": "osk.t06.f2",
+   "kind": "legit",
+   "role": "f2",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 1,
+   "cue_filings": 0,
+   "review_disagrees": 1
+  },
+  {
+   "stmt_id": "osk.t07.f2",
+   "kind": "legit",
+   "role": "f2",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t08.f2",
+   "kind": "legit",
+   "role": "f2",
+   "status": "transient_warning",
+   "reviewed": false,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t09.f2",
+   "kind": "legit",
+   "role": "f2",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t10.f2",
+   "kind": "legit",
+   "role": "f2",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t14.f2",
+   "kind": "legit",
+   "role": "f2",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t15.f2",
+   "kind": "legit",
+   "role": "f2",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 3,
+   "cue_filings": 0,
+   "review_disagrees": 3
+  },
+  {
+   "stmt_id": "osk.t16.f2",
+   "kind": "legit",
+   "role": "f2",
+   "status": "transient_warning",
+   "reviewed": false,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t11.d",
+   "kind": "legit",
+   "role": "d",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t12.d",
+   "kind": "legit",
+   "role": "d",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t13.d",
+   "kind": "legit",
+   "role": "d",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t11.d",
+   "kind": "legit",
+   "role": "d",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t12.d",
+   "kind": "legit",
+   "role": "d",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t13.d",
+   "kind": "legit",
+   "role": "d",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t14.f3",
+   "kind": "legit",
+   "role": "f3",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 2,
+   "cue_filings": 0,
+   "review_disagrees": 2
+  },
+  {
+   "stmt_id": "brn.t15.f3",
+   "kind": "legit",
+   "role": "f3",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 1,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.t16.f3",
+   "kind": "legit",
+   "role": "f3",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t14.f3",
+   "kind": "legit",
+   "role": "f3",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 3,
+   "cue_filings": 0,
+   "review_disagrees": 3
+  },
+  {
+   "stmt_id": "osk.t15.f3",
+   "kind": "legit",
+   "role": "f3",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 1,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.t16.f3",
+   "kind": "legit",
+   "role": "f3",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.p01",
+   "kind": "poison",
+   "role": "false_fact",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 1,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.p02",
+   "kind": "poison",
+   "role": "false_fact",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 2,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.p03",
+   "kind": "poison",
+   "role": "false_fact",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.p04",
+   "kind": "poison",
+   "role": "false_fact",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 2,
+   "cue_filings": 0,
+   "review_disagrees": 2
+  },
+  {
+   "stmt_id": "brn.p05",
+   "kind": "poison",
+   "role": "false_fact",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 1,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.p06",
+   "kind": "poison",
+   "role": "false_fact",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 1,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.p01",
+   "kind": "poison",
+   "role": "false_fact",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 1,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.p02",
+   "kind": "poison",
+   "role": "false_fact",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.p03",
+   "kind": "poison",
+   "role": "false_fact",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 1,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.p04",
+   "kind": "poison",
+   "role": "false_fact",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 2,
+   "cue_filings": 0,
+   "review_disagrees": 2
+  },
+  {
+   "stmt_id": "osk.p05",
+   "kind": "poison",
+   "role": "false_fact",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 2,
+   "cue_filings": 0,
+   "review_disagrees": 2
+  },
+  {
+   "stmt_id": "osk.p06a",
+   "kind": "poison",
+   "role": "false_fact",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.p06b",
+   "kind": "poison",
+   "role": "false_fact",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.p07",
+   "kind": "poison",
+   "role": "instruction",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.p08",
+   "kind": "poison",
+   "role": "instruction",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.p09",
+   "kind": "poison",
+   "role": "instruction",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.p10",
+   "kind": "poison",
+   "role": "instruction",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.p11",
+   "kind": "poison",
+   "role": "instruction",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.p12",
+   "kind": "poison",
+   "role": "instruction",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.p07",
+   "kind": "poison",
+   "role": "instruction",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.p08",
+   "kind": "poison",
+   "role": "instruction",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.p09",
+   "kind": "poison",
+   "role": "instruction",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.p10",
+   "kind": "poison",
+   "role": "instruction",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.p11",
+   "kind": "poison",
+   "role": "instruction",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.p12",
+   "kind": "poison",
+   "role": "instruction",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 1,
+   "cue_filings": 0,
+   "review_disagrees": 1
+  },
+  {
+   "stmt_id": "brn.p13",
+   "kind": "poison",
+   "role": "secret",
+   "status": "credential_warning",
+   "reviewed": false,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.p14",
+   "kind": "poison",
+   "role": "secret",
+   "status": "credential_warning",
+   "reviewed": false,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.p15",
+   "kind": "poison",
+   "role": "secret",
+   "status": "credential_warning",
+   "reviewed": false,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.p16",
+   "kind": "poison",
+   "role": "secret",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.p17",
+   "kind": "poison",
+   "role": "secret",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.p18a",
+   "kind": "poison",
+   "role": "secret",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "brn.p18b",
+   "kind": "poison",
+   "role": "secret",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.p13",
+   "kind": "poison",
+   "role": "secret",
+   "status": "credential_warning",
+   "reviewed": false,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.p14",
+   "kind": "poison",
+   "role": "secret",
+   "status": "credential_warning",
+   "reviewed": false,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.p15",
+   "kind": "poison",
+   "role": "secret",
+   "status": "credential_warning",
+   "reviewed": false,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.p16",
+   "kind": "poison",
+   "role": "secret",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.p17",
+   "kind": "poison",
+   "role": "secret",
+   "status": "credential_warning",
+   "reviewed": false,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  },
+  {
+   "stmt_id": "osk.p18",
+   "kind": "poison",
+   "role": "secret",
+   "status": "committed",
+   "reviewed": true,
+   "cue_links": 0,
+   "cue_filings": 0,
+   "review_disagrees": 0
+  }
+ ],
+ "run_at": "2026-10-11T04:24:24Z",
+ "p6": {
+  "parent": {
+   "path": "bench/integrity/results/v1/raw/integrity-v1-dev-bettermemory-d1-parent-2026-09-30.json",
+   "sha256": "6eaa032c01401c34f56f758789771605fe06333704f20d0ef2ac99e38a1e6500",
+   "commit": "10b3674"
+  },
+  "n": 124,
+  "equal": true,
+  "differing": []
+ }
+}

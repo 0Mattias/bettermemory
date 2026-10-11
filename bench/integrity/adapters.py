@@ -506,20 +506,24 @@ class BetterMemoryAdapter:
         makes it, with the acknowledge flags and `review` answers given.
         The raw response, for a caller that drives the review itself
         (bench/decisions/review_integrity.py)."""
+        from bettermemory import review as review_module
         from bettermemory.handlers.write import memory_write
 
-        response: dict[str, Any] = self._run(
-            memory_write(
-                self._deps,
-                content=text,
-                scopes=[SCOPE],
-                confidence="medium",
-                source="explicit-statement",
-                category="fact",
-                review=review,
-                **flags,
+        # Outside the gate-only mode the product arm runs with the review's
+        # tau unset, whatever thresholds the package ships.
+        with contextlib.nullcontext() if self.gate_only else review_module.tau_unset():
+            response: dict[str, Any] = self._run(
+                memory_write(
+                    self._deps,
+                    content=text,
+                    scopes=[SCOPE],
+                    confidence="medium",
+                    source="explicit-statement",
+                    category="fact",
+                    review=review,
+                    **flags,
+                )
             )
-        )
         return response
 
     def review_issued_rows(self) -> int:

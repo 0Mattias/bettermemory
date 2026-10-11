@@ -455,16 +455,18 @@ def test_product_arm_gate_only_mode_reads_review_as_passed_not_refused(
         assert arm.reviews_issued == arm.review_issued_rows() == 2
     finally:
         arm.close()
-    # outside the mode a review is a defect, not a refusal
+    # outside the mode the product arm writes with tau unset, whatever is
+    # in force, and a review reaching it is a defect, not a refusal
     product = adapters.BetterMemoryAdapter(tmp_path / "product")
     product.reset()
     try:
-        with review.tau_override(runner.GATE_ONLY_TAU):
-            with pytest.raises(RuntimeError, match="outside the gate-only mode"):
-                product.add("t.f1", _PORT_OLD, {})
-        # with tau unset (the shipped constants) the product arm commits
-        assert review.current_tau() is None
-        assert product.add("t.f1", _PORT_OLD, {}).status == "committed"
+        with review.tau_override(runner.GATE_ONLY_TAU) as in_force:
+            outcome = product.add("t.f1", _PORT_OLD, {})
+            assert review.current_tau() == in_force
+        assert outcome.status == "committed" and "review" not in outcome.raw
+        assert product.review_issued_rows() == 0
+        with pytest.raises(RuntimeError, match="outside the gate-only mode"):
+            product.answer_reviews(_PORT_NEW, {"status": "review", "review": {}})
     finally:
         product.close()
 

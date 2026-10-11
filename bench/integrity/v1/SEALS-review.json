@@ -1,0 +1,11 @@
+{
+ "operating_points_sha256": "0e4a0b71689dfe82eae1e6e2f5321c3954b2df2e111d843bde4ab4b6145145a7",
+ "questions_sha256": "79fa9c21b1309f9c94a4e3ca892bfa54664b3421f6cf1b5e70f32e4f3d97ab92",
+ "prompt_sha256": "265a1bf5d571d677b95892efe4229ee162586871cf98e45c6bfb9b1cb61e7d5c",
+ "constants_sha256": "b7db125da5d87aa40699042774e929d2914eabde768a907beb900dc84b745f1f",
+ "operating_points": "bench/integrity/v1/operating-points-review.json",
+ "fitted_on": {
+  "path": "bench/decisions/results/v1/integrity-v1-dev-chat-review-2026-10-11-run2.json",
+  "sha256": "7c8a665fda24c117339d8bc3e74f18c68154b8282566f8dcdf7c35d6ccbc47f2"
+ }
+}

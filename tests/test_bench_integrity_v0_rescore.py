@@ -44,7 +44,9 @@ any other difference fails. Two raw files have no committed result.
 mem0-infer-2026-09-04-no-self-test.json is re-scored for the record,
 with nothing to compare it with. bettermemory-v0-d1-parent-2026-09-30.json
 is D1's product arm run at commit 4's parent (10b3674), committed with
-commit 4 for P6; its gate-only result lands with the sealing commit.
+commit 4 for P6; its gate-only result, integrity-v0-gate-only-*.json,
+landed with the sealing commit and is review_integrity.py's, not
+re-scored here.
 """
 
 from __future__ import annotations
@@ -97,11 +99,15 @@ RESULTS = sorted(
 SUMMARIES = sorted(_RESULTS.glob("integrity-v0-summary-*.json"))
 SCORECARDS = sorted(_RESULTS.glob("integrity-v0-scorecard-*.json"))
 # A run's saved answers (``<result>.answers.json``) sit beside the results
-# in a working checkout; they are gitignored and are not results.
+# in a working checkout; they are gitignored and are not results. D1's
+# gate-only results are review_integrity.py's, not this driver's.
 DECISION_RESULTS = sorted(
     p
     for p in (_DECISIONS / "results").glob("integrity-*.json")
-    if not p.name.endswith(".answers.json")
+    if not p.name.endswith(".answers.json") and "-gate-only-" not in p.name
+)
+GATE_ONLY_RESULTS = sorted(
+    (_DECISIONS / "results").glob("integrity-v0-gate-only-*.json")
 )
 
 # What ef496de's own scorer already adds to these committed files (see the
@@ -145,7 +151,7 @@ def _v0_corpus_stamp(sha: str) -> dict[str, Any]:
 
 def test_the_record_is_what_this_file_expects() -> None:
     assert len(RESULTS) == 11 and len(SUMMARIES) == 3 and len(SCORECARDS) == 3
-    assert len(DECISION_RESULTS) == 5
+    assert len(DECISION_RESULTS) == 5 and len(GATE_ONLY_RESULTS) == 1
     raws = {p.name for p in _RAW.glob("*.json")}
     covered = {_raw_for(r).name for r in RESULTS}
     assert covered <= raws

@@ -28,6 +28,7 @@ from bettermemory import _caches
 from bettermemory import _daemon_client
 from bettermemory import config as _config
 from bettermemory import log as _log
+from bettermemory import review as _review
 from bettermemory.store import Store
 
 from ._event_helpers import EventLog
@@ -101,6 +102,25 @@ def shielded_child_env() -> dict[str, str]:
     existing = env.get("PYTHONPATH")
     env["PYTHONPATH"] = str(_SRC) if not existing else str(_SRC) + os.pathsep + existing
     return env
+
+
+def child_tau_env(env: dict[str, str], site: Path, tau: float | None) -> dict[str, str]:
+    """``env`` with a ``sitecustomize`` on ``PYTHONPATH`` that sets both
+    review thresholds in every Python child at start, so a daemon the shim
+    or the CLI spawns runs at ``tau`` whatever the package ships: the
+    child-process leg of ``review_tau_unset``. ``None`` issues no review."""
+    site.mkdir(parents=True, exist_ok=True)
+    (site / "sitecustomize.py").write_bytes(
+        (
+            "import bettermemory.review as _review\n"
+            f"_review.TAU_UNSAFE = {tau!r}\n"
+            f"_review.TAU_SECRET = {tau!r}\n"
+        ).encode("utf-8")
+    )
+    out = dict(env)
+    existing = out.get("PYTHONPATH")
+    out["PYTHONPATH"] = str(site) if not existing else str(site) + os.pathsep + existing
+    return out
 
 
 @pytest.fixture
@@ -181,6 +201,27 @@ def storage_dir(
         if state is not None:
             _daemon_client.shutdown_daemon(state, timeout=10.0)
         state_file.unlink(missing_ok=True)
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers", "shipped_tau: the test reads the review thresholds the package ships"
+    )
+
+
+@pytest.fixture(autouse=True)
+def review_tau_unset(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every test starts with the review off: both thresholds None, so
+    ``memory_write`` issues no review and behaves as it did before the
+    review existed. The package ships the sealed tau; a test that exercises
+    the review sets tau explicitly (``review.tau_override`` or the two
+    module attributes), and a test marked ``shipped_tau`` reads the shipped
+    constants."""
+    if request.node.get_closest_marker("shipped_tau") is None:
+        monkeypatch.setattr(_review, "TAU_UNSAFE", None)
+        monkeypatch.setattr(_review, "TAU_SECRET", None)
 
 
 @pytest.fixture(autouse=True)

@@ -757,7 +757,7 @@ def test_gate_only_arm_matches_pre_review_statuses_on_v0_and_v1_dev(
     tmp_path: Path, corpus: Path, limit: int | None
 ) -> None:
     parent = tmp_path / "parent-raw.json"
-    assert review.current_tau() is None
+    shipped = review.current_tau()
     assert (
         runner.collect(
             "bettermemory", parent, tmp_path / "parent", limit, corpus_path=corpus
@@ -767,7 +767,7 @@ def test_gate_only_arm_matches_pre_review_statuses_on_v0_and_v1_dev(
     result = ri.gate_only(
         corpus, scratch=tmp_path / "gate", parent_raw=parent, limit_topics=limit
     )
-    assert review.current_tau() is None  # passed explicitly, and restored
+    assert review.current_tau() == shipped  # passed explicitly, and restored
     assert result["tau"] == 0.95 and result["tau_source"] == "passed explicitly"
     assert result["review_issued"] > 0
     assert result["review_issued"] == result["passed_gates"]
@@ -1347,9 +1347,10 @@ def test_review_instrument_on_test_refused_without_sealed_review_points(
     assert code == 2 and "refused" in capsys.readouterr().out
 
 
+@pytest.mark.shipped_tau
 def test_review_constants_equal_sealed_review_points() -> None:
-    """Live from the sealing commit on: the shipped constants are the
-    sealed points' tau. Before it, both are None and no review is issued."""
+    """From the sealing commit on, the shipped constants are the sealed
+    points' tau. Before it, both are None and no review is issued."""
     if not ri.REVIEW_POINTS.is_file():
         assert review.TAU_UNSAFE is None and review.TAU_SECRET is None
         assert review.current_tau() is None

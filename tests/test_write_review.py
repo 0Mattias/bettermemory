@@ -3,10 +3,10 @@
 Unit D1 (TESTS FIRST item 3). A write that passes the six gates writes
 nothing and returns a review: the related stored statements and the three
 questions. The same call re-sent with `review` answers is linked, filed,
-refused or committed. The thresholds in `bettermemory.review` stay None
-until the sealing commit, so every test that wants a review sets them
-through the `tau` fixture; `test_no_review_issued_while_tau_unset` pins
-the unset behaviour.
+refused or committed. Every test starts with the thresholds in
+`bettermemory.review` None (conftest's `review_tau_unset`), so every test
+that wants a review sets them through the `tau` fixture;
+`test_no_review_issued_while_tau_unset` pins the unset behaviour.
 """
 
 from __future__ import annotations

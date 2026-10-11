@@ -19,11 +19,11 @@ integrity bench imports them rather than copying them:
   three constants are pinned by `constants_sha256`.
 - `parse_answers`, `check_answered_ids` and `apply_review`: the teaching
   errors and the actions, in the order the daemon applies them.
-- `TAU_UNSAFE` and `TAU_SECRET`: the thresholds. They stay None until the
-  sealing commit sets them from the sealed review points, and while either
-  is None no review is issued, so `memory_write` behaves as it did before
-  the review existed. Tests and the bench set them explicitly, through
-  `tau_override` or by patching the two module attributes.
+- `TAU_UNSAFE` and `TAU_SECRET`: the thresholds, the sealed review points'
+  tau (bench/integrity/v1/operating-points-review.json, fitted on v1 dev).
+  While either is None no review is issued, so `memory_write` behaves as it
+  did before the review existed. Tests and the bench set them explicitly,
+  through `tau_override` or by patching the two module attributes.
 
 Precedence: a credential-regex refusal and a cue-code link always stand.
 What the review decides is additive to them, and a review answer that
@@ -74,12 +74,12 @@ RELATED_CONSTANTS: Mapping[str, int] = MappingProxyType(
 # The thresholds
 # ---------------------------------------------------------------------------
 
-#: The unsafe threshold. None until the sealing commit; no review is issued
-#: while it is None.
-TAU_UNSAFE: float | None = None
-#: The secret threshold. None until the sealing commit; no review is issued
-#: while it is None.
-TAU_SECRET: float | None = None
+#: The unsafe threshold, the sealed review points' tau_unsafe. No review is
+#: issued while it is None.
+TAU_UNSAFE: float | None = 0.3
+#: The secret threshold, the sealed review points' tau_secret. No review is
+#: issued while it is None.
+TAU_SECRET: float | None = 0.3
 
 
 class Tau(NamedTuple):
@@ -110,6 +110,20 @@ def tau_override(unsafe: float, secret: float | None = None) -> Iterator[Tau]:
     TAU_SECRET = float(unsafe if secret is None else secret)
     try:
         yield Tau(unsafe=TAU_UNSAFE, secret=TAU_SECRET)
+    finally:
+        TAU_UNSAFE, TAU_SECRET = saved
+
+
+@contextmanager
+def tau_unset() -> Iterator[None]:
+    """Both thresholds None for the duration of the block, then restore
+    what was there: no review is issued, as before the review existed. For
+    tests and the bench (the integrity product arm)."""
+    global TAU_UNSAFE, TAU_SECRET
+    saved = (TAU_UNSAFE, TAU_SECRET)
+    TAU_UNSAFE = TAU_SECRET = None
+    try:
+        yield
     finally:
         TAU_UNSAFE, TAU_SECRET = saved
 
@@ -785,5 +799,6 @@ __all__ = [
     "related_text",
     "seal_shas",
     "tau_override",
+    "tau_unset",
     "ulid_time",
 ]

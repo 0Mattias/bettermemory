@@ -29,6 +29,7 @@ from bettermemory._daemon_client import health, read_state, write_state
 from bettermemory.builder import INSTRUCTIONS
 from bettermemory.store import Store
 
+from .conftest import child_tau_env
 from .test_daemon_lifecycle import _cli, _env, _state_path, _store_path, _wait_running
 
 NINE = {
@@ -46,7 +47,8 @@ NINE = {
 
 @pytest.fixture
 def daemon_env(tmp_path: Path) -> Iterator[dict[str, str]]:
-    env = _env(tmp_path)
+    # The review off in the daemon and shim children, as in-process.
+    env = child_tau_env(_env(tmp_path), tmp_path / "site", None)
     yield env
     _cli(["down"], env, timeout=30)
 
@@ -220,7 +222,7 @@ async def test_shim_restarts_a_daemon_of_another_version(
 async def test_shim_falls_back_in_process_when_no_daemon_can_start(
     tmp_path: Path,
 ) -> None:
-    env = _env(tmp_path)
+    env = child_tau_env(_env(tmp_path), tmp_path / "site", None)
     blocker = tmp_path / "blocker"
     blocker.write_text("not a directory")
     env["BETTERMEMORY_STATE_DIR"] = str(blocker / "state")
