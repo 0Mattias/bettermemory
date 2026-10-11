@@ -30,6 +30,13 @@ bench/integrity/corpus.json -text
 bench/integrity/v1/*.json -text
 bench/rot/results/multirepo-anchored-2026-07-30.json -text
 
+# The write review's judge prompt, same rule. Its sha256 is stamped into
+# every chat-review export and result and sealed in
+# bench/integrity/v1/SEALS-review.json, and sealing is refused unless a dev
+# result's recorded sha equals the committed file's; a CRLF checkout would
+# make that sha differ per platform.
+bench/decisions/prompts/*.md -text
+
 # The golden v8 fixture, byte for byte. `tests/test_export_mirror.py` pins
 # the mirror's renderers by comparing their output with every memory,
 # tombstone and episode file under it, and the migration tests compare the

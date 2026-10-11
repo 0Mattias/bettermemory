@@ -46,6 +46,7 @@ from bettermemory.eval import (
     render_widening_preview_text,
 )
 from bettermemory.events import Recorder
+from bettermemory.review_counters import compute_review_report
 from bettermemory.models import (
     Category,
     Confidence,
@@ -808,6 +809,7 @@ class TestSilentMissInvalidation:
         assert report.to_dict() == {
             "generated_at": now.isoformat(),
             "window_seconds": None,
+            "window": {"since": None, "until": None},
             "scope_filter": None,
             "threshold_rule": "v1_top1_high",
             "total_events_scanned": 8,
@@ -852,6 +854,12 @@ class TestSilentMissInvalidation:
                     "recent_retrieval_count": 0,
                 }
             ],
+            # D1's review section over a stream with no review rows: every
+            # counter at zero. Its own shape is pinned in
+            # tests/test_eval_decision_series.py.
+            "review": compute_review_report(
+                [], start=None, end=None, now=now
+            ).to_dict(),
         }
 
     def test_parity_with_compute_health_over_same_stream(self) -> None:

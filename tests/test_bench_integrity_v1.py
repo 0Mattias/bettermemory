@@ -1243,6 +1243,8 @@ def test_the_decision_driver_on_the_test_split_is_guarded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(decisions, "SEALS", sealed.seals)
+    monkeypatch.setattr(decisions, "CHAT_RESULTS", tmp_path / "results-v1")
+    (tmp_path / "results-v1").mkdir()
     test = _corpus(TEST)
     first, second = tmp_path / "integrity-chat.json", tmp_path / "integrity-chat-2.json"
     for out in (first, second):
@@ -1272,7 +1274,324 @@ def test_the_decision_driver_on_the_test_split_is_guarded(
     export = tmp_path / "export.jsonl"
     base = ["--corpus", str(TEST), "--instrument", "export", "--out", str(export)]
     assert decisions.main(base) == 2 and not export.exists()
-    assert decisions.main(base + points) == 0  # writes no result: no rerun rule
+    # An export is a read (unit D1): the chat results beside it on this sha
+    # make it need a reason, as a result would.
+    assert decisions.main(base + points) == 2 and not export.exists()
+    reason = ["--rerun-reason", "the export for the re-judging"]
+    assert decisions.main(base + points + reason) == 0
+
+
+# ---------------------------------------------------------------------------
+# the guard and the write review's seals (unit D1, TESTS FIRST item 11)
+# ---------------------------------------------------------------------------
+
+_REVIEW_SHAS = {
+    "questions_sha256": "1" * 64,
+    "prompt_sha256": "2" * 64,
+    "constants_sha256": "3" * 64,
+}
+
+
+@pytest.fixture
+def review_sealed(sealed: SimpleNamespace, tmp_path: Path) -> SimpleNamespace:
+    """Review points (named as the sealed file is) and a SEALS-review.json
+    pinning them with three fixture shas, beside the fixture SEALS.json."""
+    directory = tmp_path / "review"
+    directory.mkdir()
+    points = directory / guard.REVIEW_POINTS_NAME
+    points.write_bytes(b'{"tau_unsafe": 0.5, "tau_secret": 0.5}\n')
+    seals = directory / "SEALS-review.json"
+    seals.write_bytes(
+        json.dumps(
+            {"operating_points_sha256": guard.file_sha256(points), **_REVIEW_SHAS}
+        ).encode("utf-8")
+    )
+    return SimpleNamespace(
+        seals=sealed.seals,
+        old_points=sealed.points,
+        points=points,
+        review_seals=seals,
+        shas=dict(_REVIEW_SHAS),
+    )
+
+
+def _review_guard(rs: SimpleNamespace, **kw: Any) -> Any:
+    defaults: dict[str, Any] = {
+        "arm": guard.REVIEW_INSTRUMENT,
+        "arm_key": "instrument",
+        "seals": rs.seals,
+        "review_seals": rs.review_seals,
+        "operating_points": rs.points,
+        "review_shas": rs.shas,
+    }
+    defaults.update(kw)
+    return _guard(TEST, **defaults)
+
+
+def test_guard_accepts_review_points_and_still_checks_test_sha(
+    review_sealed: SimpleNamespace, tmp_path: Path
+) -> None:
+    rs = review_sealed
+    record = _review_guard(rs)
+    assert record["operating_points"] == {
+        "path": rs.points.resolve().as_posix(),
+        "sha256": guard.file_sha256(rs.points),
+    }
+    assert record["review_seals"]["sha256"] == guard.file_sha256(rs.review_seals)
+    assert record["seals"]["sha256"] == guard.file_sha256(rs.seals)
+    # the review points' sha is checked against SEALS-review.json, not SEALS.json
+    other = tmp_path / "other" / guard.REVIEW_POINTS_NAME
+    other.parent.mkdir()
+    other.write_bytes(b'{"tau_unsafe": 0.3, "tau_secret": 0.3}\n')
+    with pytest.raises(guard.Refused, match="SEALS-review.json"):
+        _review_guard(rs, operating_points=other)
+    # and the split's own sha is still checked against SEALS.json
+    wrong = tmp_path / "wrong-seals.json"
+    wrong.write_text(
+        json.dumps({**json.loads(rs.seals.read_text()), "test_sha256": "0" * 64}),
+        encoding="utf-8",
+    )
+    with pytest.raises(guard.Refused, match="is not the sealed test_sha256"):
+        _review_guard(rs, seals=wrong)
+    # a run of another arm naming the review points is held to them too
+    with pytest.raises(guard.Refused, match="question, prompt"):
+        _review_guard(rs, arm="fake", arm_key="arm", review_shas=None)
+
+
+def test_guard_counts_chat_review_as_a_chat_read(
+    review_sealed: SimpleNamespace, tmp_path: Path
+) -> None:
+    rs = review_sealed
+    sha = guard.file_sha256(TEST)
+    results = tmp_path / "results"
+    results.mkdir()
+    chat = results / "integrity-v1-test-chat.json"
+    chat.write_text(
+        json.dumps({"instrument": guard.CHAT_INSTRUMENT, "corpus_sha256": sha}),
+        encoding="utf-8",
+    )
+    out = results / "integrity-v1-test-chat-review.json"
+    with pytest.raises(guard.Refused, match="a rerun needs --rerun-reason"):
+        _review_guard(rs, out=out)
+    record = _review_guard(rs, out=out, rerun_reason="the owner's recorded yes")
+    assert record["rerun"]["earlier"] == [chat.resolve().as_posix()]
+    # and the other way: a chat-review result makes a chat run a rerun
+    chat.unlink()
+    out.write_text(
+        json.dumps({"instrument": guard.REVIEW_INSTRUMENT, "corpus_sha256": sha}),
+        encoding="utf-8",
+    )
+    with pytest.raises(guard.Refused, match="a rerun needs --rerun-reason"):
+        _guard(
+            TEST,
+            arm=guard.CHAT_INSTRUMENT,
+            arm_key="instrument",
+            out=results / "chat-2.json",
+            operating_points=rs.old_points,
+            seals=rs.seals,
+        )
+
+
+def test_guard_refuses_test_run_whose_seal_shas_differ(
+    review_sealed: SimpleNamespace,
+) -> None:
+    rs = review_sealed
+    for field in guard.REVIEW_SHA_FIELDS:
+        with pytest.raises(guard.Refused, match=f"is not the sealed {field}"):
+            _review_guard(rs, review_shas={**rs.shas, field: "9" * 64})
+    with pytest.raises(guard.Refused, match="must carry its question, prompt"):
+        _review_guard(rs, review_shas=None)
+    assert _review_guard(rs)["review_shas"] == rs.shas
+
+
+def test_guard_refuses_test_export_without_review_seals_or_rerun_reason(
+    review_sealed: SimpleNamespace, tmp_path: Path
+) -> None:
+    rs = review_sealed
+    results = tmp_path / "results"
+    results.mkdir()
+    stamp = results / "integrity-v1-test-chat-review-2026-10-01.export.json"
+    kw: dict[str, Any] = {"export": True, "out": stamp, "results_dirs": (results,)}
+    with pytest.raises(guard.Refused, match=guard.REVIEW_POINTS_NAME):
+        _review_guard(rs, operating_points=None, **kw)
+    with pytest.raises(guard.Refused, match=guard.REVIEW_POINTS_NAME):
+        _review_guard(rs, operating_points=rs.old_points, **kw)
+    with pytest.raises(guard.Refused, match="no review seals file"):
+        _review_guard(rs, review_seals=tmp_path / "missing.json", **kw)
+    with pytest.raises(guard.Refused, match="is not the sealed prompt_sha256"):
+        _review_guard(rs, review_shas={**rs.shas, "prompt_sha256": "8" * 64}, **kw)
+    # no chat-family read on the sha yet: the export needs no reason
+    record = _review_guard(rs, **kw)
+    assert record["export"] is True and "rerun" not in record
+    # with one (a chat result, or an export stamp) it does
+    sha = guard.file_sha256(TEST)
+    for earlier in (
+        {"instrument": guard.CHAT_INSTRUMENT, "corpus_sha256": sha},
+        {"instrument": "export", "kind": guard.EXPORT_STAMP_KIND, "corpus_sha256": sha},
+    ):
+        path = results / "earlier.json"
+        path.write_text(json.dumps(earlier), encoding="utf-8")
+        with pytest.raises(guard.Refused, match="a rerun needs --rerun-reason"):
+            _review_guard(rs, **kw)
+        assert _review_guard(rs, rerun_reason="the recorded yes", **kw)["rerun"]
+        path.unlink()
+    # an export held to the rule writes no result, so the earlier results
+    # are also looked for in the results directories it names
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "chat.json").write_text(
+        json.dumps({"instrument": guard.CHAT_INSTRUMENT, "corpus_sha256": sha}),
+        encoding="utf-8",
+    )
+    with pytest.raises(guard.Refused, match="a rerun needs --rerun-reason"):
+        _review_guard(rs, **{**kw, "results_dirs": (results, elsewhere)})
+
+
+def _review_integrity() -> ModuleType:
+    saved = list(sys.path)
+    try:
+        return _load(
+            "bench_decisions_review_integrity", _DECISIONS / "review_integrity.py"
+        )
+    finally:
+        sys.path[:] = saved
+
+
+def test_test_export_writes_a_stamp_that_counts_as_a_read(
+    sealed: SimpleNamespace, tmp_path: Path
+) -> None:
+    ri = _review_integrity()
+    points = tmp_path / "review" / guard.REVIEW_POINTS_NAME
+    points.parent.mkdir()
+    points.write_bytes(b'{"tau_unsafe": 0.5, "tau_secret": 0.5}\n')
+    review_seals = tmp_path / "review" / "SEALS-review.json"
+    review_seals.write_bytes(
+        json.dumps(
+            {"operating_points_sha256": guard.file_sha256(points), **ri.seal_shas()}
+        ).encode("utf-8")
+    )
+    results = tmp_path / "results"
+
+    def export(day: str, receipts: str, reason: str | None = None) -> dict[str, Any]:
+        out: dict[str, Any] = ri.export(
+            TEST,
+            receipts=tmp_path / receipts,
+            scratch=tmp_path / f"{receipts}-scratch",
+            operating_points=points,
+            rerun_reason=reason,
+            results_dir=results,
+            day=day,
+            seals=sealed.seals,
+            review_seals=review_seals,
+        )
+        return out
+
+    export("2026-10-01", "r1")
+    stamp = results / "integrity-v1-test-chat-review-2026-10-01.export.json"
+    doc = json.loads(stamp.read_text(encoding="utf-8"))
+    assert doc["kind"] == guard.EXPORT_STAMP_KIND
+    assert doc["instrument"] == guard.REVIEW_INSTRUMENT
+    assert doc["corpus_sha256"] == guard.file_sha256(TEST)
+    assert doc["test_guard"]["review_shas"] == ri.seal_shas()
+    assert doc["seals"] == ri.seal_shas()
+    assert {"items", "chunks", "export"} <= set(doc)
+    assert set(doc["export"]) == {"receipts", "sha256"}
+    # a later export on the sha finds the stamp: it needs a reason
+    with pytest.raises(ri.Refused, match="a rerun needs --rerun-reason"):
+        export("2026-10-02", "r2")
+    assert not (tmp_path / "r2").exists()
+    export("2026-10-02", "r2", reason="the owner's yes of 2026-10-02")
+    second = json.loads(
+        (results / "integrity-v1-test-chat-review-2026-10-02.export.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert second["test_guard"]["rerun"]["earlier"] == [stamp.resolve().as_posix()]
+    # and a new one: a reason already recorded does not count again
+    with pytest.raises(ri.Refused, match="a new read needs a new reason"):
+        export("2026-10-03", "r3", reason="the owner's yes of 2026-10-02")
+    # an earlier stamp is never overwritten
+    with pytest.raises(ri.Refused, match="is an earlier test result"):
+        export("2026-10-01", "r4", reason="a third yes")
+
+
+def test_decisions_integrity_export_on_test_runs_the_rerun_rule(
+    decisions: ModuleType,
+    sealed: SimpleNamespace,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(decisions, "SEALS", sealed.seals)
+    results = tmp_path / "results-v1"
+    results.mkdir()
+    monkeypatch.setattr(decisions, "CHAT_RESULTS", results)
+    calls: list[dict[str, Any]] = []
+    real = decisions.guard.guard_run
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        calls.append(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(decisions.guard, "guard_run", spy)
+    points = ["--operating-points", str(sealed.points)]
+
+    def export(name: str, *extra: str, where: Path = tmp_path) -> int:
+        where.mkdir(exist_ok=True)
+        code: int = decisions.main(
+            [
+                "--corpus",
+                str(TEST),
+                "--instrument",
+                "export",
+                "--out",
+                str(where / name),
+                *points,
+                *extra,
+            ]
+        )
+        return code
+
+    assert export("first.jsonl") == 0
+    assert calls[-1]["out"] is not None and calls[-1]["export"] is True
+    # the stamp goes in the chat results directory, not beside the export
+    assert not (tmp_path / "first.export.json").exists()
+    stamp = results / "first.export.json"
+    doc = json.loads(stamp.read_text(encoding="utf-8"))
+    assert doc["kind"] == guard.EXPORT_STAMP_KIND and "test_guard" in doc
+    assert doc["export"]["sha256"] == guard.file_sha256(tmp_path / "first.jsonl")
+    # the stamp counts as a read: a second export needs a reason, from
+    # whichever directory it writes to
+    elsewhere = tmp_path / "elsewhere"
+    assert export("second.jsonl", where=elsewhere) == 2
+    assert not (elsewhere / "second.jsonl").exists()
+    reason = ["--rerun-reason", "a recorded yes"]
+    assert export("second.jsonl", *reason, where=elsewhere) == 0
+    assert (results / "second.export.json").is_file()
+    # and the reason that stamp recorded does not count again, from a third
+    # directory
+    assert export("third.jsonl", *reason, where=tmp_path / "third") == 2
+    assert (
+        export("third.jsonl", "--rerun-reason", "a new yes", where=tmp_path / "third")
+        == 0
+    )
+    # and so does a chat run after it
+    out = tmp_path / "integrity-chat.json"
+    out.with_suffix(".answers.json").write_text(
+        json.dumps(_answers(decisions, _corpus(TEST))), encoding="utf-8"
+    )
+    chat = ["--corpus", str(TEST), "--instrument", "chat", "--out", str(out), *points]
+    assert decisions.main(chat) == 2
+    assert decisions.main([*chat, "--rerun-reason", "another recorded yes"]) == 0
+    # the dev split is not guarded, and its export writes no stamp
+    dev_out = tmp_path / "dev.jsonl"
+    assert (
+        decisions.main(
+            ["--corpus", str(DEV), "--instrument", "export", "--out", str(dev_out)]
+        )
+        == 0
+    )
+    assert not dev_out.with_suffix(".export.json").exists()
+    assert not (results / "dev.export.json").exists()
 
 
 # ---------------------------------------------------------------------------

@@ -23,13 +23,19 @@ if TYPE_CHECKING:
 
 EpisodeAction = Literal["write", "handoff"]
 
+# When to call handoff ("At a loop iteration's entry, call
+# episode(action='handoff') first") is said once per session, in the
+# server instructions (`builder.INSTRUCTIONS`), and in the addendum and the
+# skill. The description dropped its own copy of that sentence in D1 to pay
+# for the write review's parameter under the 8,000-character surface
+# budget (owner decision O6).
 DESC_EPISODE = (
     "The journal beside memory: run-state and takeaways, no durability "
     "gate, pruned after 30 days. write: `body`, one-line `takeaway`, "
     "`scopes`, `swarm_id` for fan-in. handoff: the prior session's "
     "takeaways in this worktree (`prior_session_id` names one; "
     "`max_episodes` up to 50; `include_bodies`, never for an unaccounted "
-    "episode). Call handoff first at a loop iteration's entry."
+    "episode)."
 )
 
 

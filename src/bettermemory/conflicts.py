@@ -149,7 +149,12 @@ class ConflictCandidate:
     new body and a stored claim share a subject and diverge on a value
     with no change cue to say which is current — see `supersession`;
     that path labels a pair of numbers ``"numeric"`` too, so a port or
-    version pair reads the same whichever producer queued it).
+    version pair reads the same whichever producer queued it). The write
+    review (`review`) adds two: ``"review"`` (the writing model answered
+    that the new statement conflicts with the stored one; the write
+    commits and the pair is filed) and ``"review-disagrees"`` (the cue
+    code linked the pair as a supersession and the review answered
+    conflict or unrelated; the link stands and the pair is filed).
 
     `verdict_hash_a` / `verdict_hash_b` are `_body_hash` of each member
     as the verdict judged it — the resurrect rule's key on a dismissed

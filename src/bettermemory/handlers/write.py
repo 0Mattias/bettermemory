@@ -16,11 +16,14 @@ of:
 - ``Continue`` — gate passed; move to the next.
 
 The orchestrator (``memory_write`` below) holds the dependency
-references, runs the gates in order, and falls through to the actual
-``Store.write`` on the first gate that returns ``Continue`` through
-the whole chain. Each gate stays under 40 lines and reads like a
-self-contained policy decision; the orchestrator is the readable
-sequence.
+references, runs the gates in order, and, once every gate has returned
+``Continue``, hands the write to the review (``bettermemory.review``):
+the first call returns the related statements and the questions and
+writes nothing, and the re-sent call with answers is linked, filed,
+refused or committed. While the review's thresholds are unset the write
+commits straight after the gates, as it did before the review. Each gate
+stays under 40 lines and reads like a self-contained policy decision; the
+orchestrator is the readable sequence.
 
 WriteGate decision: kept as a single file (this one) rather than
 ``handlers/write/<gate>.py``. The gates are small (10-40 lines each),
@@ -33,6 +36,7 @@ listing.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -41,17 +45,32 @@ from typing import TYPE_CHECKING, Any, Protocol
 from ..conflicts import ConflictCandidate, ConflictQueue, _pair_id
 from ..credentials import find_credential_markers
 from ..durability import find_transient_markers, in_quoted_span, quoted_spans
-from ..models import Category, Memory, SimilarHit, is_valid_ulid, snippet_for, utcnow
+from ..models import (
+    Category,
+    Memory,
+    SimilarHit,
+    generate_ulid,
+    is_valid_ulid,
+    snippet_for,
+    utcnow,
+)
 from ..scope_match import (
     collect_project_roots,
     collect_project_scopes,
     detect_scope_mismatch,
 )
-from ..search import find_similar, find_similar_tombstones
+from ..search import (
+    _pairwise_content_jaccard,
+    find_similar,
+    find_similar_tombstones,
+    raw_content_tokens,
+)
 from .. import identity
+from .. import review as _review
+from .. import supersession as _supersession
 from ..session import SessionState
 from ..store import MemoryNotFoundError, TombstonedError
-from ..supersession import SupersessionMatch, detect_supersession
+from ..supersession import SupersessionMatch, SupersessionReport
 from ._shared import (
     Context,
     _AMBIENT_LONG_BODY_WORDS,
@@ -120,11 +139,10 @@ class GateContext:
     The orchestrator builds one of these per call (post-payload-
     validation, post-origin-capture) and threads it through the gate
     chain. Mutable state (`related`, `removed_related`,
-    `transient_hits`) is set by earlier gates so later gates can
-    surface their findings on the eventual response — `pending`
-    needs the related lists, the commit path needs `transient_hits`
-    so the override-rate event field can carry the acknowledged
-    markers.
+    `transient_hits`) is set by earlier gates so the commit can
+    surface their findings: the committed response carries the related
+    lists, and the commit event carries the acknowledged markers from
+    `transient_hits` for the override-rate signal.
     """
 
     payload: dict[str, Any]
@@ -140,9 +158,10 @@ class GateContext:
     user_claim_hits: list[Any] = None  # type: ignore[assignment]
     related: list[SimilarHit] = None  # type: ignore[assignment]
     removed_related: list[SimilarHit] = None  # type: ignore[assignment]
-    # The active set `DedupActiveGate` loaded, kept so the persist step's
-    # supersession detection reads the same snapshot instead of paying a
-    # second `load_all`. None when the gate did not run (`force=True`).
+    # The active set `DedupActiveGate` loaded, kept so the review's related
+    # set and the persist step's supersession detection read the same
+    # snapshot instead of paying a second `load_all`. None when the gate
+    # did not run (`force=True`); the review then loads it itself.
     active_snapshot: list[Memory] | None = None
 
     def __post_init__(self) -> None:
@@ -764,10 +783,13 @@ async def memory_write(
     category: str = "fact",
     claims: list[str] | None = None,
     supersedes: list[str] | None = None,
+    review: dict[str, Any] | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Validate the payload, run the gate chain, and either commit or
-    short-circuit per the first gate that rejects."""
+    """Validate the payload, run the gate chain, then the review: return
+    the first gate's refusal, a review to answer, or the review's
+    decision. With the review's thresholds unset, a write that passes the
+    gates commits."""
     from .. import _handlers as _h
 
     state = deps.sessions.for_request(ctx)
@@ -784,10 +806,10 @@ async def memory_write(
         max_scopes_per_write=deps.config.behavior.max_scopes_per_write,
     )
 
-    # Origin is captured before the gate chain so it's part of the
-    # payload that flows into either staging or the direct write path.
-    # We never persist origin for a rejection — the early return
-    # below short-circuits before any disk I/O.
+    # Origin is captured before the gate chain: it is part of the payload
+    # the commit writes, and its repo and worktree filter the review's
+    # related set. A refusal or a review writes nothing, so the origin of
+    # a call that does not commit never reaches the disk.
     payload["origin"] = _h.capture_origin()
     # The actor rides beside the origin: who is writing, resolved at the
     # handler entry (`identity.bind` inside `sessions.for_request`) from
@@ -801,9 +823,9 @@ async def memory_write(
     # acknowledge_* escape by design (the entire value of the field is
     # that a stored claim was true at declaration; an override would
     # mint the one thing the read side is promised cannot exist). The
-    # canonical rendered forms land in the payload so the pending
-    # confirm path (`store.write(**pending.payload)`) carries them
-    # without re-checking.
+    # canonical rendered forms land in the payload, which is what the
+    # commit writes. A reviewed write checks them again on the re-sent
+    # call, since the review keeps no state between the two calls.
     if claims:
         origin = payload["origin"]
         payload["claims"] = _validate_declared_claims(
@@ -815,7 +837,7 @@ async def memory_write(
     # A declared `supersedes` list is checked here, ahead of the gates,
     # for the same reason claims are: a target that is not an active
     # memory is a defect the writer can only fix now, and the link dicts
-    # ride the payload through staging so a confirm sets them unchanged.
+    # ride the payload to the commit, which sets them unchanged.
     if supersedes:
         payload["links"] = _validate_declared_supersedes(deps, supersedes)
 
@@ -865,18 +887,327 @@ async def memory_write(
         else []
     )
 
-    response = _commit_write(
-        deps,
-        payload=payload,
+    commit = _CommitArgs(
         related=gc.related,
         removed_related=gc.removed_related,
         forced=force,
         acknowledged=acknowledged,
         credentials_acknowledged=credentials_acknowledged,
         user_claims_acknowledged=user_claims_acknowledged,
+    )
+
+    # The review runs after every gate, so a duplicate, a previously
+    # removed body or a regex secret is refused before any review is built.
+    # With the thresholds unset no review is issued and `review` is not
+    # read: the write commits as it did before the review existed.
+    tau = _review.current_tau()
+    if tau is None:
+        return _commit_write(
+            deps, payload=payload, commit=commit, active_snapshot=gc.active_snapshot
+        )
+    return _reviewed_write(
+        deps,
+        state,
+        payload=payload,
+        commit=commit,
+        review=review,
+        tau=tau,
         active_snapshot=gc.active_snapshot,
     )
+
+
+# ---------------------------------------------------------------------------
+# The write review
+# ---------------------------------------------------------------------------
+#
+# `bettermemory.review` holds the questions, the related set and the pure
+# decision; this section is the daemon's side of it: the review response,
+# the review_issued row, the refusals and the commit. The review keeps no
+# state between the two calls. The re-sent call is checked by coverage:
+# its answers must name every related id recomputed for the content as
+# re-sent, and a missing id gets a follow-up review for the missing ids
+# only, chained to the first by `parent_review_id`.
+
+
+@dataclass
+class _CommitArgs:
+    """What the gates hand the commit: the dedup gate's medium-overlap
+    lists and the acknowledged markers for the commit event."""
+
+    related: list[SimilarHit]
+    removed_related: list[SimilarHit]
+    forced: bool
+    acknowledged: list[str]
+    credentials_acknowledged: list[str]
+    user_claims_acknowledged: list[str]
+
+
+_REVIEW_SECRET_HINT = (
+    "Not written. The review answered that the body carries a credential, "
+    "key, token or password value, or part of one. Nothing of the body was "
+    "kept, and acknowledge_credential does not apply to this answer."
+)
+
+_REVIEW_UNSAFE_HINT = (
+    "Not written. The review answered that following this write could weaken "
+    "security, skip a safety or review step, expose data or credentials, or "
+    "mislead the user. Store it as a fact about its source (who said it, "
+    "where), or drop it."
+)
+
+_REVIEW_RESTATES_HINT = (
+    "Not written. The review answered that a stored memory already says "
+    "this; the recurrence is recorded on it. Use memory_update on the "
+    "matched id to change what it says."
+)
+
+
+def _review_hint(review_id: str, *, follow_up: bool) -> str:
+    """The review response's hint: what to send back, and only here, so
+    the answer format is paid for per review and not per session."""
+    lead = "Not written. "
+    if follow_up:
+        lead += (
+            "The related set changed since your answers: keep them and add "
+            "an answer for each id below. "
+        )
+    return (
+        lead + "Answer in `review` and re-send this same call, with the same "
+        "arguments and acknowledge flags: "
+        f'review={{"review_id": "{review_id}", "relation": {{<id>: "update" | '
+        '"conflict" | "restates" | "unrelated"} for every related id ({} when '
+        'none), "unsafe": <0 to 1>, "secret": <0 to 1>}. unsafe and secret are '
+        "the probability that each question's statement holds."
+    )
+
+
+def _actor_fields() -> dict[str, str]:
+    """The client and model a review row is counted under, `none` for an
+    undeclared one."""
+    actor = identity.current_actor()
+    client = actor.client if actor is not None else None
+    model = actor.model if actor is not None else None
+    return {
+        "client": client or _review.UNDECLARED,
+        "model": model or _review.UNDECLARED,
+    }
+
+
+def _record_review_issued(
+    deps: ToolHandlers,
+    *,
+    review_id: str,
+    related_ids: list[str],
+    pre_answered: bool,
+    parent_review_id: str | None,
+    response_chars: int | None,
+    sent_review_id: str | None = None,
+) -> None:
+    """The review_issued row: ids, the actor's client and model, and the
+    chain fields. Never a body. `sent_review_id` is a review_id the call
+    carried that the log holds no open chain for, kept for correlation."""
+    fields: dict[str, Any] = {
+        "review_id": review_id,
+        "related": related_ids,
+        **_actor_fields(),
+        "pre_answered": pre_answered,
+        "parent_review_id": parent_review_id,
+    }
+    if response_chars is not None:
+        fields["response_chars"] = response_chars
+    if sent_review_id is not None:
+        fields["sent_review_id"] = sent_review_id
+    deps.recorder.record(_review.REVIEW_ISSUED, **fields)
+
+
+def _issue_review(
+    deps: ToolHandlers,
+    related: _review.RelatedSet,
+    *,
+    parent_review_id: str | None,
+    sent_review_id: str | None = None,
+) -> dict[str, Any]:
+    """Write nothing; return the related statements and the questions."""
+    review_id = generate_ulid()
+    response = deps.responses.review(
+        review_id=review_id,
+        related=[entry.to_dict() for entry in related.entries],
+        questions=_review.questions_payload(),
+        hint=_review_hint(
+            review_id,
+            follow_up=parent_review_id is not None or sent_review_id is not None,
+        ),
+    )
+    _record_review_issued(
+        deps,
+        review_id=review_id,
+        related_ids=related.ids,
+        pre_answered=False,
+        parent_review_id=parent_review_id,
+        response_chars=len(json.dumps(response, ensure_ascii=False)),
+        sent_review_id=sent_review_id,
+    )
     return response
+
+
+def _reviewed_write(
+    deps: ToolHandlers,
+    state: SessionState,
+    *,
+    payload: dict[str, Any],
+    commit: _CommitArgs,
+    review: dict[str, Any] | None,
+    tau: _review.Tau,
+    active_snapshot: list[Memory] | None,
+) -> dict[str, Any]:
+    """The review after the gates: issue one, or decide on its answers.
+
+    The cue code runs once, inside `related_for`, and its report is the
+    one the commit uses. A teaching error raises `ValueError` and writes
+    nothing.
+    """
+    answers = _review.parse_answers(review)
+    active = active_snapshot if active_snapshot is not None else deps.store.load_all()
+    origin = payload.get("origin")
+    declared_ids = [str(link["target_id"]) for link in payload.get("links") or []]
+    related = _review.related_for(
+        deps.store,
+        payload["content"],
+        behavior=deps.config.behavior,
+        excluded_scopes=frozenset(state.disabled_scopes),
+        repo_filter=origin.repo if origin is not None else None,
+        worktree_filter=origin.worktree_root if origin is not None else None,
+        active=active,
+        exclude_ids=declared_ids,
+    )
+    if answers is None:
+        return _issue_review(deps, related, parent_review_id=None)
+
+    # Only a review_id whose chain the log holds open takes the call's
+    # answer. One the log does not hold (fabricated, or from another
+    # store) or one a write row already answered would leave a write no
+    # chain counts, so the call is handled as if it carried none: a fresh
+    # root review, or a pre-answered decision, with the sent id kept on
+    # the review_issued row for correlation (DESIGN item 2).
+    chain: _review.Chain | None = None
+    stray_id: str | None = None
+    allowed = set(related.ids)
+    if answers.review_id is not None:
+        found = _review.find_chain(deps.store, answers.review_id)
+        allowed |= found.shown
+        if found.open:
+            chain = found
+        else:
+            stray_id = answers.review_id
+    _review.check_answered_ids(answers, allowed)
+
+    # A score at or above its threshold refuses whatever the relation
+    # answers say, so it needs no coverage; anything else is decided only
+    # when every related id is answered.
+    refused = answers.secret >= tau.secret or answers.unsafe >= tau.unsafe
+    missing = [i for i in related.ids if i not in answers.relation]
+    if missing and not refused:
+        return _issue_review(
+            deps,
+            related.only(missing),
+            parent_review_id=chain.root if chain is not None else None,
+            sent_review_id=stray_id,
+        )
+
+    if chain is not None and answers.review_id is not None:
+        review_id = answers.review_id
+    else:
+        # Pre-answered: decided without an open review. Recorded as a
+        # review so the counters see it.
+        review_id = generate_ulid()
+        _record_review_issued(
+            deps,
+            review_id=review_id,
+            related_ids=related.ids,
+            pre_answered=True,
+            parent_review_id=None,
+            response_chars=None,
+            sent_review_id=stray_id,
+        )
+
+    decision = _review.apply_review(
+        answers,
+        related,
+        tau=tau,
+        write_claim_sized=_supersession.claim_sized(payload["content"]),
+        write_supersession=deps.config.behavior.write_supersession,
+        declared_ids=declared_ids,
+    )
+    review_fields: dict[str, Any] = {
+        "review_id": review_id,
+        "review_answers": answers.to_event(),
+        "review_action": decision.action,
+    }
+
+    if decision.action == _review.ACTION_SECRET:
+        deps.recorder.record(
+            "write",
+            status="credential_warning",
+            scopes=payload["scopes"],
+            forced=False,
+            credential_kinds=["review"],
+            **review_fields,
+        )
+        return {
+            "status": "credential_warning",
+            "markers": [{"kind": "review", "snippet": None}],
+            "hint": _REVIEW_SECRET_HINT,
+        }
+
+    if decision.action == _review.ACTION_UNSAFE:
+        deps.recorder.record(
+            "write",
+            status="instruction_warning",
+            scopes=payload["scopes"],
+            forced=False,
+            **review_fields,
+        )
+        return {"status": "instruction_warning", "hint": _REVIEW_UNSAFE_HINT}
+
+    if decision.action == _review.ACTION_RESTATES:
+        by_id = {entry.id: entry for entry in related.entries}
+        reject = Reject(
+            response={
+                "status": "duplicate",
+                "evidence": "review",
+                "matches": [
+                    {
+                        "id": memory_id,
+                        "scopes": list(by_id[memory_id].scopes),
+                        "updated": by_id[memory_id].updated,
+                    }
+                    for memory_id in decision.restated
+                ],
+                "hint": _REVIEW_RESTATES_HINT,
+            },
+            event_kwargs={
+                "status": "duplicate",
+                "evidence": "review",
+                "scopes": payload["scopes"],
+                "forced": commit.forced,
+                "matches": list(decision.restated),
+                **review_fields,
+            },
+        )
+        # The dedup gate's recurrence-as-evidence, recorded the same way.
+        _corroborate_duplicate(deps, state, reject)
+        deps.recorder.record("write", **reject.event_kwargs)
+        return reject.response
+
+    return _commit_write(
+        deps,
+        payload=payload,
+        commit=commit,
+        active_snapshot=active,
+        report=related.report,
+        decision=decision,
+        review_fields=review_fields,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -902,11 +1233,17 @@ class SupersessionOutcome:
     the response. `declared` holds the targets the writer named in
     `supersedes=`; `detected` the matches `supersession.detect_supersession`
     linked on its own; `conflicts` the `(pair id, match)` rows filed for
-    `memory_conflicts`."""
+    `memory_conflicts`. The review's share: `reviewed` the targets a
+    review `update` answer linked, `update_suggested` the update answers
+    that did not link, and `review_filed` the `(pair id, target, detector)`
+    rows its conflict and disagreement answers filed."""
 
     declared: list[str] = field(default_factory=list)
     detected: list[SupersessionMatch] = field(default_factory=list)
     conflicts: list[tuple[str, SupersessionMatch]] = field(default_factory=list)
+    reviewed: list[str] = field(default_factory=list)
+    update_suggested: list[str] = field(default_factory=list)
+    review_filed: list[tuple[str, str, str]] = field(default_factory=list)
 
     def event_fields(self) -> dict[str, Any]:
         """Conditional, so a write that set nothing keeps the event's
@@ -915,25 +1252,42 @@ class SupersessionOutcome:
         a detector-set link removed by a later `memory_update(links=[])`
         is judged against."""
         out: dict[str, Any] = {}
-        if self.declared or self.detected:
-            out["supersedes"] = self.declared + [m.memory_id for m in self.detected]
+        if self.declared or self.detected or self.reviewed:
+            out["supersedes"] = (
+                self.declared + [m.memory_id for m in self.detected] + self.reviewed
+            )
         if self.detected:
             out["supersedes_detected"] = [m.memory_id for m in self.detected]
+        if self.reviewed:
+            out["supersedes_reviewed"] = list(self.reviewed)
+        if self.update_suggested:
+            out["update_suggested"] = list(self.update_suggested)
         if self.conflicts:
             out["conflicts_filed"] = [pair_id for pair_id, _ in self.conflicts]
+        if self.review_filed:
+            out["review_filings"] = [
+                {"pair_id": pair_id, "id": target, "detector": detector}
+                for pair_id, target, detector in self.review_filed
+            ]
         return out
 
     def response_fields(self) -> dict[str, Any]:
         rows = [{"id": target, "evidence": "declared"} for target in self.declared]
         rows += [_match_row(m) for m in self.detected]
+        rows += [{"id": target, "evidence": "review"} for target in self.reviewed]
         out: dict[str, Any] = {}
         if rows:
             out["supersedes"] = rows
-        if self.conflicts:
-            out["conflicts_filed"] = [
-                {"pair_id": pair_id, **_match_row(m)} for pair_id, m in self.conflicts
-            ]
+        filed = [{"pair_id": pair_id, **_match_row(m)} for pair_id, m in self.conflicts]
+        filed += [
+            {"pair_id": pair_id, "id": target, "detector": detector}
+            for pair_id, target, detector in self.review_filed
+        ]
+        if filed:
+            out["conflicts_filed"] = filed
             out["hint"] = _CONFLICTS_FILED_HINT
+        if self.update_suggested:
+            out["update_suggested"] = list(self.update_suggested)
         return out
 
 
@@ -956,8 +1310,8 @@ def _validate_declared_supersedes(deps: ToolHandlers, ids: Any) -> list[dict[str
     Each id must be a ULID naming an ACTIVE memory: a declared edge to a
     tombstone or a typo would render nothing and sit in the frontmatter
     unread, so it is refused at the one moment the writer can fix it.
-    Dicts rather than `MemoryLink`s because the pending-write sidecar is
-    JSON and stages the payload as-is; `Store.write` validates them.
+    Dicts rather than `MemoryLink`s because they ride the payload to the
+    commit as plain data; `Store.write` validates them.
     """
     if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
         raise ValueError("supersedes must be a list of memory ids")
@@ -994,14 +1348,21 @@ def _persist(
     payload: dict[str, Any],
     *,
     active_snapshot: list[Memory] | None = None,
+    report: SupersessionReport | None = None,
+    decision: _review.ReviewDecision | None = None,
 ) -> tuple[Memory, SupersessionOutcome]:
     """Detect supersession, write the record with its links in one locked
-    write, file the cue-less disagreements. Shared by the direct commit,
-    the confirm path and session capture (`capture._Writer`, through a
-    `GateBundle`) so none of them can drift on what a write sets.
+    write, file the cue-less disagreements and the review's filings.
+    Shared by the direct commit and the reviewed commit, and reachable
+    through a `GateBundle` for a caller with a store and no server, so
+    none of them can drift on what a write sets.
 
-    `active_snapshot` is the `load_all` the dedup gate already paid for
-    on the direct path; the confirm path has none and loads. A target
+    `active_snapshot` is the `load_all` the dedup gate or the review
+    already paid for; a caller with none loads. `report` is the cue
+    code's report when the review already ran it on this call, so the cue
+    code runs once per call; None runs it here (only when
+    `behavior.write_supersession` is on). `decision` is the review's: its
+    links are set beside the cue code's, which always stand. A target
     the writer declared is excluded from detection. `OSError` from the
     write propagates so each caller can name its own remedy.
     """
@@ -1010,23 +1371,58 @@ def _persist(
     declared_ids = [str(link["target_id"]) for link in declared_links]
     detected: list[SupersessionMatch] = []
     disagreements: list[SupersessionMatch] = []
-    if deps.config.behavior.write_supersession:
-        existing = (
-            active_snapshot if active_snapshot is not None else deps.store.load_all()
-        )
-        report = detect_supersession(
+    existing = active_snapshot
+    if report is None and deps.config.behavior.write_supersession:
+        if existing is None:
+            existing = deps.store.load_all()
+        report = _supersession.detect_supersession(
             payload["content"], existing, exclude_ids=declared_ids
         )
+    if report is not None:
         detected, disagreements = report.supersedes, report.conflicts
-    links = declared_links + [
-        {"type": "supersedes", "target_id": m.memory_id, "note": m.note()}
-        for m in detected
+    linked = set(declared_ids) | {m.memory_id for m in detected}
+    reviewed = [
+        target
+        for target in (decision.links if decision is not None else ())
+        if target not in linked
     ]
+    links = (
+        declared_links
+        + [
+            {"type": "supersedes", "target_id": m.memory_id, "note": m.note()}
+            for m in detected
+        ]
+        + [
+            {
+                "type": "supersedes",
+                "target_id": target,
+                "note": _review.REVIEW_LINK_NOTE,
+            }
+            for target in reviewed
+        ]
+    )
     memory = deps.store.write(**payload, links=links)
+    # The cue code files first: where it fires its row stands (DESIGN
+    # item 6), so the review then skips the pairs it queued.
+    conflicts = _file_conflicts(deps, memory, disagreements)
+    review_filed: list[tuple[str, str, str]] = []
+    if decision is not None and decision.filings:
+        if existing is None:
+            existing = deps.store.load_all()
+        review_filed = _file_review_pairs(
+            deps,
+            memory,
+            decision.filings,
+            existing,
+            cue_filed={pair_id for pair_id, _ in conflicts},
+        )
     return memory, SupersessionOutcome(
         declared=declared_ids,
         detected=detected,
-        conflicts=_file_conflicts(deps, memory, disagreements),
+        conflicts=conflicts,
+        reviewed=reviewed,
+        update_suggested=list(decision.update_suggested) if decision else [],
+        review_filed=review_filed,
     )
 
 
@@ -1068,24 +1464,78 @@ def _file_conflicts(
     return filed
 
 
+def _file_review_pairs(
+    deps: GateDeps,
+    memory: Memory,
+    filings: tuple[tuple[str, str], ...],
+    active: list[Memory],
+    *,
+    cue_filed: set[str],
+) -> list[tuple[str, str, str]]:
+    """Queue each pair the review's answers file, with detector
+    ``review`` or ``review-disagrees``. Best-effort and a separate log
+    transaction, as `_file_conflicts` is. A pair in `cue_filed` (the pair
+    ids the cue code queued on this write) keeps the cue code's row and
+    is neither filed again nor reported twice."""
+    queue = ConflictQueue(deps.store)
+    created = utcnow().isoformat()
+    by_id = {m.id: m for m in active}
+    new_tokens = raw_content_tokens(memory.body)
+    seen = set(cue_filed)
+    filed: list[tuple[str, str, str]] = []
+    for target, detector in filings:
+        other = by_id.get(target)
+        pair_id = _pair_id(memory.id, target)
+        if other is None or pair_id in seen:
+            continue
+        seen.add(pair_id)
+        candidate = ConflictCandidate(
+            id=pair_id,
+            a_id=memory.id,
+            b_id=target,
+            summary_a=snippet_for(memory.body, max_chars=100),
+            summary_b=snippet_for(other.body, max_chars=100),
+            similarity=round(
+                _pairwise_content_jaccard(new_tokens, raw_content_tokens(other.body)),
+                4,
+            ),
+            method="jaccard",
+            detector=detector,
+            created=created,
+        )
+        try:
+            queue.file_pair(candidate)
+        except OSError as exc:
+            log.warning("review filing for %s / %s failed: %s", memory.id, target, exc)
+            continue
+        filed.append((candidate.id, target, detector))
+    return filed
+
+
 def _commit_write(
     deps: ToolHandlers,
     *,
     payload: dict[str, Any],
-    related: list[SimilarHit],
-    removed_related: list[SimilarHit],
-    forced: bool,
-    acknowledged: list[str],
-    credentials_acknowledged: list[str],
-    user_claims_acknowledged: list[str],
+    commit: _CommitArgs,
     active_snapshot: list[Memory] | None = None,
+    report: SupersessionReport | None = None,
+    decision: _review.ReviewDecision | None = None,
+    review_fields: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Persist the memory, record the commit event, return the
     committed response. Surfaces the ambient long-body warning as a
-    non-blocking advisory when applicable."""
+    non-blocking advisory when applicable. `review_fields` (the review id,
+    the answers and the action, never a body) join the commit event of a
+    reviewed write."""
     category_enum: Category = payload["category"]
     try:
-        memory, supersession = _persist(deps, payload, active_snapshot=active_snapshot)
+        memory, supersession = _persist(
+            deps,
+            payload,
+            active_snapshot=active_snapshot,
+            report=report,
+            decision=decision,
+        )
     except OSError as exc:
         # Disk-level failure (ENOSPC/EIO/EACCES) in the durable write.
         # Translate to ValueError so the MCP boundary returns a clean
@@ -1107,12 +1557,12 @@ def _commit_write(
         scopes=memory.scopes,
         confidence=memory.confidence.value,
         source=memory.source.value,
-        forced=forced,
-        related=[h.id for h in related],
-        removed_related=[h.id for h in removed_related],
-        markers_acknowledged=acknowledged,
-        credentials_acknowledged=credentials_acknowledged,
-        user_claims_acknowledged=user_claims_acknowledged,
+        forced=commit.forced,
+        related=[h.id for h in commit.related],
+        removed_related=[h.id for h in commit.removed_related],
+        markers_acknowledged=commit.acknowledged,
+        credentials_acknowledged=commit.credentials_acknowledged,
+        user_claims_acknowledged=commit.user_claims_acknowledged,
         warnings=warnings,
         # Conditional so the default write event keeps its exact shape —
         # a populated field in the log means claims were actually
@@ -1120,11 +1570,12 @@ def _commit_write(
         # future coverage measurement can be built from.
         **({"claims": list(memory.claims)} if memory.claims else {}),
         **supersession.event_fields(),
+        **(review_fields or {}),
     )
     return deps.responses.committed(
         memory,
-        related=related,
-        removed_related=removed_related,
+        related=commit.related,
+        removed_related=commit.removed_related,
         warnings=warnings,
         **supersession.response_fields(),
     )

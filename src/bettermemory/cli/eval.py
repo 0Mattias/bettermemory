@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -26,10 +27,21 @@ def add_subparser(
         type=str,
         default="30d",
         help=(
-            "Window for events to include. Accepts 'Ns'/'Nm'/'Nh'/'Nd' "
-            "or 'all'. Default: 30d, mirroring the verification-staleness "
-            "default so the eval window and freshness threshold tell a "
-            "consistent story."
+            "Window for events to include. Accepts 'Ns'/'Nm'/'Nh'/'Nd', "
+            "'all', or an absolute ISO-8601 UTC timestamp such as "
+            "2026-10-01T00:00:00Z. Default: 30d, mirroring the "
+            "verification-staleness default so the eval window and "
+            "freshness threshold tell a consistent story."
+        ),
+    )
+    parser.add_argument(
+        "--until",
+        type=str,
+        default=None,
+        help=(
+            "End of the window, exclusive, in the same forms as --since. "
+            "Default: now. Review chains issued inside the window are "
+            "judged from rows up to 30 minutes after it. Rate mode only."
         ),
     )
     parser.add_argument(
@@ -165,6 +177,7 @@ def run(
     """
     _cli_eval(
         since_spec=args.since,
+        until_spec=args.until,
         scope=args.scope,
         endorsement_min_retrievals=args.min_retrievals,
         silent_miss_limit=args.silent_miss_limit,
@@ -193,6 +206,7 @@ def _cli_eval(
     report: bool = False,
     output: str | None = None,
     parser: Any,
+    until_spec: str | None = None,
 ) -> None:
     """`bettermemory eval` — compute and render the effectiveness report.
 
@@ -231,13 +245,14 @@ def _cli_eval(
         compute_tool_usage,
         compute_widening_detail,
         compute_widening_preview,
-        parse_since,
+        parse_window_bound,
         render_report_markdown,
         render_text,
         render_threshold_sweep_text,
         render_tool_usage_text,
         render_widening_detail_text,
         render_widening_preview_text,
+        resolve_window,
     )
 
     if report and (
@@ -276,8 +291,16 @@ def _cli_eval(
         parser.error("--detail only applies to --widening-preview")
         return  # pragma: no cover — parser.error raises SystemExit
 
+    if until_spec is not None and (
+        report or tool_usage or threshold_sweep or widening_preview
+    ):
+        parser.error("--until only applies to the default rate mode")
+        return  # pragma: no cover — parser.error raises SystemExit
+
+    now = datetime.now(timezone.utc)
     try:
-        since = parse_since(since_spec)
+        window_since = parse_window_bound(since_spec, flag="--since")
+        window_until = parse_window_bound(until_spec, flag="--until")
     except (ValueError, OverflowError) as exc:
         # `parse_since` already maps an out-of-range value's OverflowError
         # to ValueError; the OverflowError arm here is defence-in-depth so
@@ -285,6 +308,21 @@ def _cli_eval(
         # this clean-error path.
         parser.error(str(exc))
         return  # pragma: no cover — parser.error raises SystemExit
+    window_start, window_end = resolve_window(window_since, window_until, now=now)
+    if (
+        window_start is not None
+        and window_end is not None
+        and window_end <= window_start
+    ):
+        parser.error("--until must be later than --since")
+        return  # pragma: no cover — parser.error raises SystemExit
+    # The other modes take a span read back from now; an absolute --since
+    # becomes the span from it to now.
+    since: timedelta | None
+    if isinstance(window_since, datetime):
+        since = max(now - window_since, timedelta(0))
+    else:
+        since = window_since
 
     ctx = cli_context()
 
@@ -385,7 +423,9 @@ def _cli_eval(
     rate_report = compute_eval(
         memories=store.load_all(),
         events=ctx.store.iter_events(),
-        since=since,
+        now=now,
+        since=window_since,
+        until=window_until,
         scope=scope,
         endorsement_min_retrievals=floor,
         silent_miss_limit=silent_miss_limit,

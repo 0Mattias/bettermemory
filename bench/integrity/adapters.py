@@ -20,6 +20,13 @@ Per-arm signal definitions, fixed here and documented in docs/eval.md:
                  list (an API-written edge names its source episode).
   letta          no supersession channel, no provenance channel.
 
+The bettermemory arm's gate-only mode (unit D1) runs the shipped gates
+with the write review on: its tau is passed by the caller, every review
+is answered "unrelated" with unsafe 0 and secret 0, and a first status of
+"review" reads as an add that passed the gates. Outside that mode a
+review is a defect (the product arm runs with tau unset), and so is the
+retired "pending" status, which no write returns.
+
 An adapter that cannot run raises `SystemUnavailable` with the reason,
 the same discipline as tests/eval/adapters.py: the row is published as
 unavailable with the blocker, never with a fabricated number.
@@ -82,6 +89,12 @@ SELF_TEST_STATEMENT = (
 )
 USER = "halden"
 GROUP = "halden"
+# The write review (unit D1): the status of a first call that passed the
+# gates, the event kind each review writes, and how many follow-up reviews
+# the gate-only mode answers before it gives up.
+REVIEW_STATUS = "review"
+REVIEW_ISSUED = "review_issued"
+MAX_REVIEW_ROUNDS = 4
 
 
 class SystemUnavailable(Exception):
@@ -391,13 +404,21 @@ class BetterMemoryAdapter:
 
     name = "bettermemory"
 
-    def __init__(self, scratch: Path) -> None:
+    def __init__(self, scratch: Path, *, gate_only: bool = False) -> None:
         # Resolved, because the guard in `reset` compares this root with
         # the config's `resolved_directory()`, and a `tempfile.mkdtemp`
         # path on macOS reaches the same store through a symlink
         # (`/var` -> `/private/var`) that the config layer follows.
         self.scratch = Path(scratch).resolve()
         self.root = self.scratch / "store"
+        # The gate-only mode (unit D1): the write review is on (its tau is
+        # set by the caller, as the tests set it), every review is answered
+        # "unrelated" with unsafe 0 and secret 0, and status "review" reads
+        # as an add that passed the gates, not as a refusal. Outside the
+        # mode a review is not expected (the product arm runs with tau
+        # unset) and `add` raises on one.
+        self.gate_only = gate_only
+        self.reviews_issued = 0
         self._deps: Any = None
         self._loop: Any = None
         self._session_id: str | None = None
@@ -407,6 +428,7 @@ class BetterMemoryAdapter:
     def reset(self) -> None:
         import asyncio
 
+        self.reviews_issued = 0
         if self.root.exists():
             shutil.rmtree(self.root)
         self.root.mkdir(parents=True)
@@ -477,10 +499,16 @@ class BetterMemoryAdapter:
 
         return {"bettermemory": bettermemory.__version__}
 
-    def add(self, stmt_id: str, text: str, meta: dict[str, Any]) -> AddOutcome:
+    def write(
+        self, text: str, *, review: dict[str, Any] | None = None, **flags: bool
+    ) -> dict[str, Any]:
+        """One `memory_write` call through the shipped handler, as `add`
+        makes it, with the acknowledge flags and `review` answers given.
+        The raw response, for a caller that drives the review itself
+        (bench/decisions/review_integrity.py)."""
         from bettermemory.handlers.write import memory_write
 
-        response = self._run(
+        response: dict[str, Any] = self._run(
             memory_write(
                 self._deps,
                 content=text,
@@ -488,11 +516,69 @@ class BetterMemoryAdapter:
                 confidence="medium",
                 source="explicit-statement",
                 category="fact",
+                review=review,
+                **flags,
             )
         )
+        return response
+
+    def review_issued_rows(self) -> int:
+        """The review_issued event rows in the scratch store's log."""
+        return sum(
+            1
+            for event in self._deps.store.iter_events()
+            if event.get("kind") == REVIEW_ISSUED
+        )
+
+    def answer_reviews(
+        self, text: str, response: dict[str, Any], **flags: bool
+    ) -> tuple[dict[str, Any], list[str]]:
+        """The gate-only mode's answers: every related id "unrelated",
+        unsafe 0, secret 0, re-sent with the same acknowledge `flags` until
+        the write is decided (a follow-up review names only the ids the
+        store added between the calls). Returns the deciding response and
+        the review ids of the chain."""
+        review_ids: list[str] = []
+        relation: dict[str, str] = {}
+        while str(response.get("status")) == REVIEW_STATUS:
+            if not self.gate_only:
+                raise RuntimeError(
+                    "memory_write returned a review outside the gate-only mode: "
+                    "the product arm runs with the review's tau unset"
+                )
+            if len(review_ids) >= MAX_REVIEW_ROUNDS:
+                raise RuntimeError(
+                    f"the review was not decided in {MAX_REVIEW_ROUNDS} rounds"
+                )
+            body = response["review"]
+            review_ids.append(str(body["review_id"]))
+            relation.update({str(e["id"]): "unrelated" for e in body["related"]})
+            response = self.write(
+                text,
+                review={
+                    "review_id": body["review_id"],
+                    "relation": dict(relation),
+                    "unsafe": 0,
+                    "secret": 0,
+                },
+                **flags,
+            )
+        return response, review_ids
+
+    def add(self, stmt_id: str, text: str, meta: dict[str, Any]) -> AddOutcome:
+        response = self.write(text)
+        first_status = str(response.get("status"))
+        response, review_ids = self.answer_reviews(text, response)
+        self.reviews_issued += len(review_ids)
         status = str(response.get("status"))
+        if status == "pending":
+            # memory_write stages nothing since 9.0.0; a "pending" status is
+            # a defect, not an add that passed.
+            raise RuntimeError(
+                "memory_write returned status 'pending', which no write returns"
+            )
         stored = status == "committed"
-        refused = status not in ("committed", "pending")
+        refused = not stored
         warnings = response.get("warnings") or []
         warning = None
         if stored and warnings:
@@ -509,11 +595,16 @@ class BetterMemoryAdapter:
                 "markers",
                 "matches",
                 "warnings",
-                "pending_reason",
                 "supersedes",
                 "conflicts_filed",
+                "update_suggested",
             )
         }
+        if review_ids:
+            # The add passed the six gates and was reviewed: the first
+            # status was "review", read as passed, and the record keeps the
+            # chain's ids (correlation only, never a body).
+            raw["review"] = {"first_status": first_status, "review_ids": review_ids}
         return AddOutcome(
             stored=stored,
             refused=refused,
@@ -1437,9 +1528,11 @@ def _require_ollama() -> None:
             raise SystemUnavailable(f"ollama model {needed} not pulled")
 
 
-def make_adapter(arm: str, scratch: Path) -> Adapter:
+def make_adapter(arm: str, scratch: Path, *, gate_only: bool = False) -> Adapter:
+    if gate_only and arm != "bettermemory":
+        raise SystemExit("the gate-only mode is the bettermemory arm's alone")
     if arm == "bettermemory":
-        return BetterMemoryAdapter(scratch)
+        return BetterMemoryAdapter(scratch, gate_only=gate_only)
     if arm == "mem0-raw":
         return Mem0Adapter(scratch, "raw")
     if arm == "mem0-infer":

@@ -412,3 +412,79 @@ def test_extraction_table_reads_event_and_relation_extractors() -> None:
         )
         is None
     )
+
+
+# ---------------------------------------------------------------------------
+# the product arm's gate-only mode (unit D1, TESTS FIRST item 9)
+# ---------------------------------------------------------------------------
+
+_PORT_OLD = "The staging API listens on port 8443 behind the gateway."
+_PORT_NEW = "The staging API now listens on port 9443 behind the gateway."
+
+
+def test_product_arm_gate_only_mode_reads_review_as_passed_not_refused(
+    tmp_path: Path,
+) -> None:
+    from bettermemory import review
+
+    assert adapters.REVIEW_STATUS == "review"
+    assert adapters.REVIEW_ISSUED == review.REVIEW_ISSUED
+    arm = adapters.BetterMemoryAdapter(tmp_path / "gate", gate_only=True)
+    arm.reset()
+    try:
+        with review.tau_override(runner.GATE_ONLY_TAU):
+            old = arm.add("t.f1", _PORT_OLD, {})
+            new = arm.add("t.f2", _PORT_NEW, {})
+            secret = arm.add("p.s", "The deploy key is AKIA" + "IOSFODNN7EXAMPLE.", {})
+        for outcome in (old, new):
+            assert outcome.status == "committed"
+            assert outcome.stored is True and outcome.refused is False
+            assert outcome.raw["review"]["first_status"] == "review"
+        # the cue code's link stands, and the "unrelated" answer files the
+        # pair as review-disagrees beside it
+        assert new.raw["supersedes"] and all(
+            r["evidence"] != "review" for r in new.raw["supersedes"]
+        )
+        assert any(
+            r.get("detector") == review.DETECTOR_REVIEW_DISAGREES
+            for r in new.raw["conflicts_filed"]
+        )
+        # a gate refusal is read as refused and issues no review
+        assert secret.status == "credential_warning" and secret.refused is True
+        assert "review" not in secret.raw
+        assert arm.reviews_issued == arm.review_issued_rows() == 2
+    finally:
+        arm.close()
+    # outside the mode a review is a defect, not a refusal
+    product = adapters.BetterMemoryAdapter(tmp_path / "product")
+    product.reset()
+    try:
+        with review.tau_override(runner.GATE_ONLY_TAU):
+            with pytest.raises(RuntimeError, match="outside the gate-only mode"):
+                product.add("t.f1", _PORT_OLD, {})
+        # with tau unset (the shipped constants) the product arm commits
+        assert review.current_tau() is None
+        assert product.add("t.f1", _PORT_OLD, {}).status == "committed"
+    finally:
+        product.close()
+
+
+def test_product_arm_rejects_pending_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import bettermemory.handlers.write as write_handler
+
+    async def pending(*args: object, **kwargs: object) -> dict:
+        return {"status": "pending", "id": "01M0000000000000000000000A"}
+
+    arm = adapters.BetterMemoryAdapter(tmp_path)
+    arm.reset()
+    try:
+        monkeypatch.setattr(write_handler, "memory_write", pending)
+        with pytest.raises(RuntimeError, match="'pending'"):
+            arm.add("t.f1", _PORT_OLD, {})
+    finally:
+        arm.close()
+    # and the adapter no longer copies a staging field off a response
+    assert adapters.__file__ is not None
+    assert "pending_reason" not in Path(adapters.__file__).read_text(encoding="utf-8")

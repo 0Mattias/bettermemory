@@ -41,6 +41,7 @@ from . import (
     migrate,
     prompt_recall_cmd,
     rename_scope,
+    review_cmd,
     rollback,
     serve,
     session_start_cmd,
@@ -120,6 +121,7 @@ def _build_parser() -> tuple[
         "session-start": session_start_cmd.add_subparser(sub),
         "prompt-recall": prompt_recall_cmd.add_subparser(sub),
         "eval": eval_cmd.add_subparser(sub),
+        "review": review_cmd.add_subparser(sub),
         "rename-scope": rename_scope.add_subparser(sub),
         "try": try_cmd.add_subparser(sub),
         "up": daemon_cmd.add_up(sub),
@@ -236,6 +238,9 @@ def main() -> None:
         return
     if cmd == "eval":
         eval_cmd.run(args, sub_parser=subparsers["eval"])
+        return
+    if cmd == "review":
+        review_cmd.run(args, sub_parser=subparsers["review"])
         return
     if cmd == "rename-scope":
         rename_scope.run(args, root_parser=parser)

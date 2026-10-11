@@ -36,7 +36,10 @@ NINE = {
 # 8,241 at U4a with the descriptions at the floor of meaning and the
 # schema envelope at 4,591. D1 removed the groundedness parameters from
 # memory_write (design item 8, owner ruling 2026-09-30), which took the
-# surface to 7,991, so the ceiling is the declared 8,000.
+# surface to 7,991, so the ceiling is the declared 8,000. The write
+# review's `review` parameter added 55 (8,046), and D1 trimmed the episode
+# description's copy of the handoff-first sentence, which the instructions
+# carry, back to 7,998 (owner decision O6: trim, keep the ceiling).
 SESSION_BUDGET_CHARS = 8_000
 
 # The parameters D1 removed with the groundedness gate. None may return.
@@ -89,17 +92,31 @@ async def test_session_surface_under_budget(tmp_path: Path) -> None:
     )
 
 
-async def test_memory_write_schema_has_no_groundedness_parameters(
+async def test_memory_write_schema_has_review_and_no_groundedness_parameters(
     tmp_path: Path,
 ) -> None:
     mcp = await _server(tmp_path)
     by_name = {t.name: t for t in await mcp.list_tools()}
     write = by_name["memory_write"]
     properties = set(write.input_schema["properties"])
+    assert "review" in properties
+    assert "review" not in write.input_schema.get("required", [])
     assert properties.isdisjoint(REMOVED_WRITE_PARAMETERS), properties
     blob = json.dumps(write.input_schema).lower() + (write.description or "").lower()
     assert "grounded" not in blob
     assert "transcript" not in blob
+    # The answer format lives in the review response's hint, never in the
+    # description, so its cost is paid per review and not per session.
+    assert "review" not in (write.description or "").lower()
+
+
+async def test_review_parameter_is_a_plain_object(tmp_path: Path) -> None:
+    """Served as an object with no null branch: an empty-dict default,
+    not `dict | None`, which would serve an `anyOf` with a null branch."""
+    mcp = await _server(tmp_path)
+    by_name = {t.name: t for t in await mcp.list_tools()}
+    served = by_name["memory_write"].input_schema["properties"]["review"]
+    assert served == {"additionalProperties": True, "type": "object"}
 
 
 def test_instructions_fit_claude_code() -> None:

@@ -63,6 +63,13 @@ corpus unless its sha is the sealed one and --operating-points names the
 sealed operating-points file, and refuses a second test result for an
 arm on the same sha unless --rerun-reason says why.
 
+THE GATE-ONLY MODE (unit D1). `collect --arm bettermemory --gate-only`
+runs the shipped gates with default flags and the write review on, its
+tau passed explicitly at 0.95; every review is answered "unrelated" with
+unsafe 0 and secret 0, and status "review" reads as passed. The raw file
+records `gate_only.review_issued` beside the adds that passed the gates.
+It is refused on the v1 test split.
+
 LLM USAGE. The mem0-infer and graphiti arms' chat completions are
 counted (adapters.LLMUsage) into the raw file's `llm_usage`: totals, per
 phase and per add, and, on OpenRouter, the key's usage before and after
@@ -192,6 +199,7 @@ def collect(
     operating_points: Path | None = None,
     rerun_reason: str | None = None,
     seals: Path = guard.SEALS,
+    gate_only: bool = False,
 ) -> int:
     import adapters as arms
     import score
@@ -201,6 +209,11 @@ def collect(
     problems = score.corpus_checks(corpus)
     if problems:
         print("corpus checks failed:", *problems, sep="\n  ")
+        return 2
+    if gate_only and (arm != "bettermemory" or corpus.get("version") == "v1-test"):
+        # The gate-only arm is deterministic and runs on v0 and v1 dev only:
+        # a run on the test split would be a read the owner did not approve.
+        print(f"{arm}: refused: the gate-only mode is the bettermemory arm's, off test")
         return 2
     sha = score.corpus_sha256(corpus_path)
     try:
@@ -224,7 +237,11 @@ def collect(
         corpus = _slice(corpus, limit_topics)
     scratch = scratch or Path(tempfile.mkdtemp(prefix=f"bm-integrity-{arm}-"))
     scratch.mkdir(parents=True, exist_ok=True)
-    adapter = make_adapter(arm, scratch)
+    adapter = (
+        make_adapter(arm, scratch, gate_only=True)
+        if gate_only
+        else make_adapter(arm, scratch)
+    )
     raw: dict[str, Any] = {
         "arm": arm,
         "ran": True,
@@ -258,7 +275,10 @@ def collect(
     raw["capabilities"] = adapter.capabilities()
     raw["version"] = adapter.version()
     try:
-        _run_phases(adapter, corpus, raw, InjectionUnsupported, attribute)
+        with _gate_only_tau(gate_only):
+            _run_phases(adapter, corpus, raw, InjectionUnsupported, attribute)
+        if gate_only:
+            raw["gate_only"] = _gate_only_record(adapter, raw)
     finally:
         adapter.close()
     raw["timing"] = {"seconds": round(time.time() - started, 1)}
@@ -277,6 +297,38 @@ def collect(
             f"{totals['completion_tokens']}, reported cost {totals['cost']}"
         )
     return 0
+
+
+# The gate-only mode's tau (unit D1, MEASUREMENT): passed explicitly, as the
+# tests pass it, because the shipped constants are None until the sealing
+# commit and a None tau issues no review. Answers of 0 never reach it.
+GATE_ONLY_TAU = 0.95
+
+
+def _gate_only_tau(gate_only: bool) -> contextlib.AbstractContextManager[Any]:
+    """The review's tau for the gate-only mode, restored on exit; a no-op
+    otherwise, so the product arm runs with the shipped (unset) tau."""
+    if not gate_only:
+        return contextlib.nullcontext()
+    from bettermemory import review
+
+    return review.tau_override(GATE_ONLY_TAU)
+
+
+def _gate_only_record(adapter: Any, raw: dict[str, Any]) -> dict[str, Any]:
+    """The gate-only run's precondition (P6): the review_issued rows in the
+    scratch log, which must be more than 0 and equal to the adds that
+    passed the six gates (those whose first status was "review")."""
+    passed = sum(1 for add in raw["adds"] if add["outcome"]["raw"].get("review"))
+    issued = adapter.review_issued_rows()
+    return {
+        "tau": GATE_ONLY_TAU,
+        "tau_source": "passed explicitly",
+        "answers": "every related id unrelated, unsafe 0, secret 0",
+        "review_issued": issued,
+        "passed_gates": passed,
+        "precondition_holds": issued > 0 and issued == passed,
+    }
 
 
 Attributor = Callable[[str, str | None], contextlib.AbstractContextManager[None]]
@@ -753,6 +805,12 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="v1 test split: why this arm runs again on the same sha (recorded)",
     )
+    c.add_argument(
+        "--gate-only",
+        action="store_true",
+        help="bettermemory on v0 or v1 dev: the write review on at tau 0.95, every "
+        "review answered unrelated, 0, 0 (unit D1's gate-only arm)",
+    )
     s = sub.add_parser("score")
     s.add_argument("--raw", required=True, type=Path)
     s.add_argument("--out", required=True, type=Path)
@@ -778,6 +836,7 @@ def main(argv: list[str] | None = None) -> int:
             corpus_path=args.corpus,
             operating_points=args.operating_points,
             rerun_reason=args.rerun_reason,
+            gate_only=args.gate_only,
         )
     if args.cmd == "score":
         return cmd_score(args.raw, args.out, corpus_path=args.corpus)

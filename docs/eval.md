@@ -165,9 +165,44 @@ rather than a QA endpoint.
 ## `bettermemory eval`
 
 ```text
-bettermemory eval [--since 30d] [--scope SCOPE] [--min-retrievals N]
-                  [--silent-miss-limit N] [--json]
+bettermemory eval [--since 30d] [--until TS] [--scope SCOPE]
+                  [--min-retrievals N] [--silent-miss-limit N] [--json]
 ```
+
+`--since` takes a relative span (`30d`, `12h`), `all`, or an absolute
+ISO-8601 UTC timestamp (`2026-10-01T00:00:00Z`); `--until` closes the
+window (exclusive) in the same forms and applies to the default mode
+only. A timestamp without a UTC offset is refused.
+
+The default report carries a `review` section: the write review's
+chains issued in the window (a root `review_issued` row with its
+follow-ups), answered, unanswered and pending, by client (with `none`)
+and by model; the pre-answered share and `pre_answered_zero`; the p50
+of review response sizes; calls per committed write (refused and
+unanswered chains reported apart); filings per 100 committed writes and
+per ISO week, by detector (`review`, `review-disagrees`); and the
+owner's grades from `review_grade` events. A chain is unanswered when no
+write carrying one of its review_ids arrives within 30 minutes of its
+latest review and no closing call arrives (a call from the same session
+and client without a review_id that commits within 30 minutes and names
+every related id of the open review). A call carrying a review_id the
+log holds no open chain for (one no review returned, or one a write
+already answered) is recorded as pre-answered, with the sent id kept on
+its `review_issued` row as `sent_review_id`, so every reviewed write is
+in some chain. A chain issued inside the window is judged from rows up
+to 30 minutes after `--until`. `--scope` does not filter the section.
+`review_counters.py` holds the computation.
+
+`bettermemory review samples [--since] [--until] [--n 40] [--seed 0]`
+draws reviewed writes to grade (every refusal, link and filing up to
+half the sample, then pre-answered writes up to 10, then random draws)
+and shows each one's related set, answers and action. A committed write
+shows its body from the store; a secret refusal shows its kinds only; any
+other refusal shows the body from the transcripts under
+`~/.claude/projects` (`--transcripts DIR`), found by review_id, and a
+refusal from any other host shows none. `bettermemory review grade
+<review_id> --answers right|wrong --action right|wrong` records a grade
+as a `review_grade` event; the latest grade of a write counts.
 
 Reads the active event log — the sharded `<store>/.events.00.jsonl` …
 `.events.15.jsonl` segments, plus a pre-3.24 `<store>/.events.jsonl` on

@@ -74,7 +74,7 @@ from .health import _HOOKLESS_REASON  # one sentence, shared — see its comment
 from .health import applied_tier as _applied_tier
 from .health import is_hook_telemetry_event
 from .models import Memory, first_summary_line
-from .time_utils import parse_event_ts
+from .time_utils import isoformat_utc_optional, parse_event_ts
 
 
 # ---------------------------------------------------------------------------
@@ -363,6 +363,16 @@ class EvalReport:
     repeat_audits: int = 0
     by_model: dict[str, dict[str, int]] = field(default_factory=dict)
 
+    # The window's absolute bounds: `window_start` is `--since` (given as
+    # a timestamp, or `now` minus a relative span), `window_end` is
+    # `--until`. None is open on that side.
+    window_start: datetime | None = None
+    window_end: datetime | None = None
+    # The write review's counters over the same window (D1, DESIGN items
+    # 3, 12 and 14): `review_counters.ReviewReport.to_dict()`. None for a
+    # report built without them.
+    review: dict[str, Any] | None = None
+
     # `applied_explicit` split by producer — `applied_model +
     # applied_hook == applied_explicit`, always. Additive: the
     # `endorsement_rate` numerator stays `applied_explicit`, because
@@ -386,6 +396,10 @@ class EvalReport:
         return {
             "generated_at": self.generated_at.isoformat(),
             "window_seconds": self.window_seconds,
+            "window": {
+                "since": isoformat_utc_optional(self.window_start),
+                "until": isoformat_utc_optional(self.window_end),
+            },
             "scope_filter": self.scope_filter,
             "threshold_rule": self.threshold_rule,
             "total_events_scanned": self.total_events_scanned,
@@ -418,6 +432,7 @@ class EvalReport:
                 ),
             },
             "silent_miss_recent": [c.to_dict() for c in self.silent_miss_recent],
+            "review": self.review,
         }
 
 
@@ -463,16 +478,72 @@ def parse_since(spec: str | None) -> timedelta | None:
         ) from exc
 
 
+def parse_timestamp_utc(spec: str, *, flag: str) -> datetime:
+    """Parse an absolute ISO-8601 timestamp with an explicit UTC offset
+    (``Z`` or ``+HH:MM``) into an aware UTC datetime. A timestamp with no
+    offset is refused: the live window is stated in UTC, and a local
+    reading would shift it by the reader's offset."""
+    raw = spec.strip()
+    if raw.endswith(("Z", "z")):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"{flag}: expected 'Ns'/'Nm'/'Nh'/'Nd', 'all', or an ISO-8601 UTC "
+            f"timestamp such as 2026-10-01T00:00:00Z, got {spec!r}."
+        ) from exc
+    if parsed.tzinfo is None:
+        raise ValueError(
+            f"{flag}: {spec!r} has no UTC offset; add 'Z' (for example "
+            f"{spec.strip()}Z)."
+        )
+    return parsed.astimezone(timezone.utc)
+
+
+def parse_window_bound(
+    spec: str | None, *, flag: str = "--since"
+) -> timedelta | datetime | None:
+    """Parse a `--since` or `--until` value: a relative span
+    (``Ns``/``Nm``/``Nh``/``Nd``, read back from now), ``all`` or empty
+    for no bound (None), or an absolute ISO-8601 UTC timestamp. Raises
+    ``ValueError`` with a hint for anything else."""
+    if spec is None or spec.strip() in ("", "all"):
+        return None
+    if _SINCE_PATTERN.fullmatch(spec.strip()):
+        return parse_since(spec.strip())
+    if not any(ch.isdigit() for ch in spec) or "-" not in spec:
+        raise ValueError(
+            f"{flag}: expected 'Ns'/'Nm'/'Nh'/'Nd', 'all', or an ISO-8601 UTC "
+            f"timestamp such as 2026-10-01T00:00:00Z, got {spec!r}."
+        )
+    return parse_timestamp_utc(spec, flag=flag)
+
+
+def resolve_window(
+    since: timedelta | datetime | None,
+    until: timedelta | datetime | None,
+    *,
+    now: datetime,
+) -> tuple[datetime | None, datetime | None]:
+    """The absolute ``[start, end)`` a pair of parsed bounds names as of
+    `now`: a relative bound is `now` minus its span."""
+    start = now - since if isinstance(since, timedelta) else since
+    end = now - until if isinstance(until, timedelta) else until
+    return start, end
+
+
 def compute_eval(
     memories: Iterable[Memory],
     events: Iterable[dict[str, Any]],
     *,
     now: datetime | None = None,
-    since: timedelta | None = None,
+    since: timedelta | datetime | None = None,
     scope: str | None = None,
     endorsement_min_retrievals: int = DEFAULT_ENDORSEMENT_MIN_RETRIEVALS,
     silent_miss_limit: int = DEFAULT_SILENT_MISS_LIMIT,
     tombstoned_ids: set[str] | None = None,
+    until: timedelta | datetime | None = None,
 ) -> EvalReport:
     """Build an ``EvalReport`` from active memories + the event stream.
 
@@ -480,7 +551,12 @@ def compute_eval(
     produces this). ``now`` defaults to the current UTC instant.
 
     ``since`` filters events to those with ``ts >= now - since``;
-    ``None`` admits all events. ``scope`` filters to events that
+    ``None`` admits all events. An aware ``datetime`` is an absolute
+    start instead. ``until`` (a datetime, or a span read back from
+    ``now``) closes the window: events with ``ts >= until`` are left
+    out. The ``review`` section counts the review chains issued in the
+    same window, each judged from rows up to 30 minutes after ``until``
+    (``review_counters``); ``scope`` does not filter it. ``scope`` filters to events that
     reference at least one memory tagged with that scope — search /
     show / use events all carry a memory id and are mapped to scopes
     via the live store. ``turn_audited`` and ``search_miss`` are
@@ -534,9 +610,15 @@ def compute_eval(
     ``explicit_applied_count == 0`` is uninformative when nothing was
     ever in a position to attribute an apply.
     """
+    from .review_counters import compute_review_report, is_review_row
+
     now = now or datetime.now(timezone.utc)
-    cutoff: datetime | None = (now - since) if since is not None else None
+    cutoff, window_end = resolve_window(since, until, now=now)
     tombstoned_ids = tombstoned_ids or set()
+    # The review counters' rows, kept from the same walk. They are read
+    # past the window's end (a chain is judged from rows up to 30
+    # minutes after it), so they are collected before the window filter.
+    review_rows: list[dict[str, Any]] = []
 
     # Live store: id → memory, for cold-endorsement rows + scope filter.
     by_id: dict[str, Memory] = {m.id: m for m in memories}
@@ -639,11 +721,17 @@ def compute_eval(
         # a missing or unparseable `ts` counts as out-of-window, the
         # same predicate the filter further down applies.
         in_window = True
-        if cutoff is not None:
+        if cutoff is not None or window_end is not None:
             event_ts = _parse_ts(ev.get("ts"))
-            in_window = event_ts is not None and event_ts >= cutoff
+            in_window = (
+                event_ts is not None
+                and (cutoff is None or event_ts >= cutoff)
+                and (window_end is None or event_ts < window_end)
+            )
         if in_window:
             events_in_window += 1
+        if is_review_row(ev):
+            review_rows.append(ev)
 
         kind = ev.get("kind")
         # Coverage tally — like the markers below, deliberately ahead
@@ -921,9 +1009,18 @@ def compute_eval(
         # determinism.
         cold_rows.sort(key=lambda r: (-r.retrieval_count, r.id))
 
+    if cutoff is None:
+        window_seconds = None
+    else:
+        window_seconds = int(((window_end or now) - cutoff).total_seconds())
     report = EvalReport(
         generated_at=now,
-        window_seconds=int(since.total_seconds()) if since is not None else None,
+        window_seconds=window_seconds,
+        window_start=cutoff,
+        window_end=window_end,
+        review=compute_review_report(
+            review_rows, start=cutoff, end=window_end, now=now
+        ).to_dict(),
         scope_filter=scope,
         threshold_rule=threshold_rule,
         total_events_scanned=total_events_scanned,
@@ -968,7 +1065,14 @@ def render_text(report: EvalReport) -> str:
         else _humanize_seconds(report.window_seconds)
     )
     scope_part = f" · scope={report.scope_filter}" if report.scope_filter else ""
-    lines.append(f"bettermemory eval — last {window}{scope_part}")
+    if report.window_end is not None:
+        # An absolute --until: name both ends, since "last N" would read
+        # back from now.
+        start = isoformat_utc_optional(report.window_start) or "the start"
+        window = f"{start} to {isoformat_utc_optional(report.window_end)}"
+        lines.append(f"bettermemory eval — {window}{scope_part}")
+    else:
+        lines.append(f"bettermemory eval — last {window}{scope_part}")
     lines.append("─" * 60)
     # Window-scoped, matching the "— last {window}" header above.
     # `total_events_scanned` counts the WHOLE log (marker resolution
@@ -1038,6 +1142,7 @@ def render_text(report: EvalReport) -> str:
     if report.threshold_rule:
         lines.append("")
         lines.append(f"Threshold rule: {report.threshold_rule}")
+    lines.extend(_review_text_lines(report.review))
     if (
         report.memory_helped_rate.torn_read
         or report.endorsement_rate.torn_read
@@ -1051,6 +1156,50 @@ def render_text(report: EvalReport) -> str:
             "Re-run without --since to rule out the window edge."
         )
     return "\n".join(lines) + "\n"
+
+
+def _review_text_lines(review: dict[str, Any] | None) -> list[str]:
+    """The text form of the review section: totals and the per-client
+    rows. Silent when no review chain was issued in the window. The
+    per-model split is in the JSON."""
+    if not review or not review["chains"]["issued"]:
+        return []
+    chains = review["chains"]
+
+    def num(value: Any) -> str:
+        return "n/a" if value is None else str(value)
+
+    lines = [
+        "",
+        "Write review (chains issued in the window):",
+        f"  issued={chains['issued']} answered={chains['answered']} "
+        f"unanswered={chains['unanswered']} pending={chains['pending']} "
+        f"closed_by_call={chains['closed_by_call']}",
+        f"  pre_answered={review['pre_answered']} "
+        f"pre_answered_zero={review['pre_answered_zero']['total']} "
+        f"response_chars_p50={num(review['response_chars_p50'])} "
+        f"calls_per_committed_write={num(review['calls_per_committed_write'])}",
+        "  actions "
+        + " ".join(f"{name}={count}" for name, count in review["actions"].items()),
+        "  filings_per_100_committed "
+        + " ".join(
+            f"{name}={num(value)}"
+            for name, value in review["filings_per_100_committed"].items()
+        ),
+    ]
+    for client, bucket in review["by_client"].items():
+        lines.append(
+            f"  client {client}: issued={bucket['issued']} "
+            f"unanswered={bucket['unanswered']} "
+            f"pre_answered_zero={bucket['pre_answered_zero']}"
+        )
+    grades = review["grades"]
+    if grades["n"]:
+        lines.append(
+            f"  grades n={grades['n']} right_both={grades['right_both']} "
+            f"pre_answered_n={grades['pre_answered_n']}"
+        )
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -2597,6 +2746,10 @@ TOOLS_WITHOUT_TELEMETRY: tuple[str, ...] = ()
 # tool invocation, so it stays off the usage rollup; it is the
 # delivery lane's OWN counter, read beside ``search_miss`` when tracing
 # what the recall path did.
+#
+# ``review_grade`` is the owner's grade of one reviewed write, written by
+# ``bettermemory review grade`` under a throwaway CLI session. No tool
+# call is behind it, and it is admin-recorded by kind.
 _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
     {
         "turn_audited",
@@ -2604,6 +2757,7 @@ _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
         "silent_miss_cutoff",
         "use_token_expired",
         "prompt_recall",
+        "review_grade",
     }
 )
 

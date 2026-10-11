@@ -25,6 +25,31 @@ gives a reason: the rerun, its reason and the earlier files are then
 recorded in the new result, and the earlier files are kept (the new
 result may not overwrite one of them). Every other corpus passes
 untouched.
+
+The write review (unit D1) adds a second seal file beside SEALS.json,
+bench/integrity/v1/SEALS-review.json, written by
+bench/decisions/review_integrity.py seal. Its fields:
+
+  operating_points_sha256  sha256 of operating-points-review.json
+  questions_sha256         sha256 of the canonical JSON of the review's
+                           questions (bettermemory.review.QUESTIONS)
+  prompt_sha256            sha256 of bench/decisions/prompts/review-judge.md
+  constants_sha256         sha256 of the canonical JSON of the related_for
+                           constants
+
+A test run whose --operating-points names operating-points-review.json
+has that file's sha checked against SEALS-review.json, while the split's
+own sha is still checked against SEALS.json's test_sha256. The chat-review
+instrument runs on the test split only so, and only when its question,
+prompt and constants shas equal SEALS-review.json's.
+
+The chat family. The chat instrument (claude-opus-5.5-in-session), the
+chat-review instrument and an export count as one family of reads: the
+judges read the test split at the export. An earlier result or export
+stamp of any of them on the test sha makes a later one need
+--rerun-reason, and a reason already recorded by an earlier one does not
+count again. An export (`export=True`) is held to the rerun rule although
+it writes no result; its stamp is what a later run finds.
 """
 
 from __future__ import annotations
@@ -32,6 +57,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +72,20 @@ SEAL_FIELDS = {
 }
 OPERATING_POINTS_FIELD = "operating_points_sha256"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+# The write review's seals (unit D1).
+SEALS_REVIEW = _HERE / "v1" / "SEALS-review.json"
+REVIEW_POINTS_NAME = "operating-points-review.json"
+REVIEW_SHA_FIELDS = ("questions_sha256", "prompt_sha256", "constants_sha256")
+REVIEW_SEAL_FIELDS = (OPERATING_POINTS_FIELD, *REVIEW_SHA_FIELDS)
+
+# The chat family of reads: the chat instrument, the chat-review instrument
+# and an export (decisions_integrity.py --instrument export).
+CHAT_INSTRUMENT = "claude-opus-5.5-in-session"
+REVIEW_INSTRUMENT = "chat-review"
+EXPORT_ARM = "export"
+CHAT_FAMILY = frozenset({CHAT_INSTRUMENT, REVIEW_INSTRUMENT, EXPORT_ARM})
+EXPORT_STAMP_KIND = "export_stamp"
 
 
 class Refused(Exception):
@@ -87,6 +127,42 @@ def read_seals(
     return out
 
 
+def read_review_seals(seals: Path = SEALS_REVIEW) -> dict[str, str]:
+    """SEALS-review.json's four fields, each checked to be a sha256;
+    raises Refused when the file is missing, unreadable or lacks one."""
+    if not Path(seals).is_file():
+        raise Refused(
+            f"no review seals file at {_rel(seals)}: the review points are not sealed"
+        )
+    return read_seals(seals, fields=REVIEW_SEAL_FIELDS)
+
+
+def is_review_points(path: Path | None) -> bool:
+    """Whether --operating-points names the review's points file."""
+    return path is not None and Path(path).name == REVIEW_POINTS_NAME
+
+
+def check_review_shas(
+    shas: Mapping[str, str] | None, sealed: Mapping[str, str]
+) -> dict[str, str]:
+    """The run's question, prompt and constants shas, refused unless each
+    equals the one SEALS-review.json holds."""
+    if not shas:
+        raise Refused(
+            "a chat-review run on the test split must carry its question, prompt "
+            "and constants shas"
+        )
+    out: dict[str, str] = {}
+    for field in REVIEW_SHA_FIELDS:
+        value = shas.get(field)
+        if value != sealed[field]:
+            raise Refused(
+                f"the run's {field} {value} is not the sealed {field} {sealed[field]}"
+            )
+        out[field] = str(value)
+    return out
+
+
 def seal_status(corpus: dict[str, Any], sha: str, seals: Path = SEALS) -> list[str]:
     """For `check`: the problem when a v1 split's sha differs from its
     seal. Nothing before the seals file exists, and nothing for v0. Only
@@ -107,9 +183,25 @@ def seal_status(corpus: dict[str, Any], sha: str, seals: Path = SEALS) -> list[s
     return []
 
 
+def _same_read(doc: dict[str, Any], arm: str, arm_key: str) -> bool:
+    """Whether `doc` is a read by `arm`: the same arm, or, for the chat
+    family, any member of it or an export stamp."""
+    if doc.get(arm_key) == arm:
+        return True
+    if arm not in CHAT_FAMILY:
+        return False
+    return (
+        doc.get(arm_key) in CHAT_FAMILY
+        or doc.get("instrument") in CHAT_FAMILY
+        or doc.get("kind") == EXPORT_STAMP_KIND
+    )
+
+
 def earlier_results(directory: Path, arm: str, arm_key: str, sha: str) -> list[Path]:
     """The JSON files in `directory` (not below it) that are results of
-    `arm` (read from the `arm_key` field) on corpus sha `sha`."""
+    `arm` (read from the `arm_key` field) on corpus sha `sha`. For an arm of
+    the chat family, a result of any member of the family and an export
+    stamp count too."""
     found: list[Path] = []
     if not Path(directory).is_dir():
         return found
@@ -120,11 +212,26 @@ def earlier_results(directory: Path, arm: str, arm_key: str, sha: str) -> list[P
             continue
         if (
             isinstance(doc, dict)
-            and doc.get(arm_key) == arm
             and doc.get("corpus_sha256") == sha
+            and _same_read(doc, arm, arm_key)
         ):
             found.append(path)
     return found
+
+
+def _recorded_reasons(paths: Iterable[Path]) -> dict[str, Path]:
+    """The rerun reasons the earlier files recorded, each with its file."""
+    reasons: dict[str, Path] = {}
+    for path in paths:
+        try:
+            doc = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        rerun = (doc.get("test_guard") or {}).get("rerun") or {}
+        reason = rerun.get("reason") if isinstance(rerun, dict) else None
+        if isinstance(reason, str) and reason.strip():
+            reasons.setdefault(reason.strip(), Path(path))
+    return reasons
 
 
 def guard_run(
@@ -137,11 +244,22 @@ def guard_run(
     operating_points: Path | None,
     rerun_reason: str | None,
     seals: Path = SEALS,
+    review_seals: Path = SEALS_REVIEW,
+    review_shas: Mapping[str, str] | None = None,
+    export: bool = False,
+    results_dirs: Iterable[Path] = (),
 ) -> dict[str, Any] | None:
     """Pass or refuse a run. None for any corpus but the v1 test split;
     for it, the record the run's output carries (its `test_guard` field),
-    or Refused. `out` is the result the run will write, None for a run
-    that writes none, which skips the rerun rule."""
+    or Refused.
+
+    `out` is the file the run will write, None for a run that writes none,
+    which skips the rerun rule unless `export` is set: an export is a read
+    of the test split, so it is held to the rule although it writes no
+    result. The earlier results are looked for beside `out` and in each of
+    `results_dirs`. `review_shas` are the run's question, prompt and
+    constants shas, checked against `review_seals` when --operating-points
+    names the review points or the arm is chat-review."""
     if corpus.get("version") != TEST_VERSION:
         return None
     rerun_reason = (rerun_reason or "").strip() or None
@@ -151,7 +269,13 @@ def guard_run(
             f"the test split's sha {corpus_sha} is not the sealed test_sha256 "
             f"{sealed['test_sha256']}"
         )
+    review = arm == REVIEW_INSTRUMENT or is_review_points(operating_points)
     if operating_points is None:
+        if review:
+            raise Refused(
+                "the chat-review instrument runs on the test split only with "
+                f"--operating-points naming the sealed {REVIEW_POINTS_NAME}"
+            )
         raise Refused(
             "the test split runs only with --operating-points naming the sealed "
             "operating-points file"
@@ -159,32 +283,68 @@ def guard_run(
     if not Path(operating_points).is_file():
         raise Refused(f"--operating-points {operating_points} is not a file")
     points_sha = file_sha256(operating_points)
-    if points_sha != sealed[OPERATING_POINTS_FIELD]:
+    record: dict[str, Any] = {
+        "seals": {"path": _rel(seals), "sha256": file_sha256(seals)},
+    }
+    if review:
+        if not is_review_points(operating_points):
+            raise Refused(
+                "the chat-review instrument runs on the test split only with "
+                f"--operating-points naming the sealed {REVIEW_POINTS_NAME}, not "
+                f"{_rel(operating_points)}"
+            )
+        review_sealed = read_review_seals(review_seals)
+        if points_sha != review_sealed[OPERATING_POINTS_FIELD]:
+            raise Refused(
+                f"--operating-points sha {points_sha} is not the sealed "
+                f"{OPERATING_POINTS_FIELD} {review_sealed[OPERATING_POINTS_FIELD]} "
+                f"of {_rel(review_seals)}"
+            )
+        record["review_seals"] = {
+            "path": _rel(review_seals),
+            "sha256": file_sha256(review_seals),
+        }
+        record["review_shas"] = check_review_shas(review_shas, review_sealed)
+    elif points_sha != sealed[OPERATING_POINTS_FIELD]:
         raise Refused(
             f"--operating-points sha {points_sha} is not the sealed "
             f"{OPERATING_POINTS_FIELD} {sealed[OPERATING_POINTS_FIELD]}"
         )
-    record: dict[str, Any] = {
-        "seals": {"path": _rel(seals), "sha256": file_sha256(seals)},
-        "operating_points": {"path": _rel(operating_points), "sha256": points_sha},
-    }
-    if out is None:
+    record["operating_points"] = {"path": _rel(operating_points), "sha256": points_sha}
+    if out is None and not export:
         return record
-    earlier = earlier_results(Path(out).parent, arm, arm_key, corpus_sha)
+    directories = [Path(out).parent] if out is not None else []
+    directories += [Path(d) for d in results_dirs]
+    earlier: list[Path] = []
+    seen: set[Path] = set()
+    for directory in directories:
+        for path in earlier_results(directory, arm, arm_key, corpus_sha):
+            if path.resolve() not in seen:
+                seen.add(path.resolve())
+                earlier.append(path)
     if earlier and not rerun_reason:
         raise Refused(
             f"{arm} already has a test result on this sha: "
             f"{', '.join(_rel(p) for p in earlier)}; a rerun needs --rerun-reason"
         )
-    resolved_out = Path(out).resolve()
-    if any(p.resolve() == resolved_out for p in earlier):
-        raise Refused(
-            f"--out {_rel(out)} is an earlier test result, which is kept; write the "
-            "rerun to a new path"
-        )
+    if out is not None:
+        resolved_out = Path(out).resolve()
+        if any(p.resolve() == resolved_out for p in earlier):
+            raise Refused(
+                f"--out {_rel(out)} is an earlier test result, which is kept; write "
+                "the rerun to a new path"
+            )
     if rerun_reason:
+        recorded = _recorded_reasons(earlier)
+        if rerun_reason in recorded:
+            raise Refused(
+                f"--rerun-reason is already recorded by {_rel(recorded[rerun_reason])}; "
+                "a new read needs a new reason"
+            )
         record["rerun"] = {
             "reason": rerun_reason,
             "earlier": [_rel(p) for p in earlier],
         }
+    if export:
+        record["export"] = True
     return record

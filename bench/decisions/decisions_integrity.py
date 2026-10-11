@@ -16,7 +16,11 @@ Each part of a split is asked, exported and recorded as its own item under its o
 poison item's record carries its payload's org, variant, technique and group. The v1 test split is
 guarded (bench/integrity/guard.py): it is refused unless its sha is the sealed one and
 --operating-points names the sealed file, and a second result for an instrument on the same sha is
-refused unless --rerun-reason says why. The guard checks the operating-points file's sha and
+refused unless --rerun-reason says why. An export (--instrument export) is a read of the test
+split and is held to the same rule: a chat-family result or export stamp on the sha, beside the
+export or under bench/decisions/results/v1/, needs --rerun-reason, and the export leaves a stamp
+(results/v1/<out stem>.export.json, wherever --out is) that a later read
+finds. The guard checks the operating-points file's sha and
 records it, and the test split then applies the threshold that file froze on dev for the
 instrument ({"instruments": {"<instrument>": {"tau": <float>, ...}}}), never one of its own; the
 curve on the test split is still recorded, for information only. Every other corpus chooses its
@@ -55,6 +59,10 @@ _guard_spec = importlib.util.spec_from_file_location(
 guard = importlib.util.module_from_spec(_guard_spec)
 _guard_spec.loader.exec_module(guard)
 SEALS = guard.SEALS
+# Where the chat family's v1 results and export stamps are committed; an
+# export of the test split looks for earlier reads here as well as beside
+# its own output.
+CHAT_RESULTS = Path(__file__).resolve().parent / "results" / "v1"
 sys.path.insert(0, str(Path(__file__).parent))
 import instruments  # noqa: E402
 
@@ -349,6 +357,32 @@ def score_answers(
     }
 
 
+def _stamp_path(export: Path) -> Path:
+    return CHAT_RESULTS / f"{export.stem}.export.json"
+
+
+def _write_export_stamp(export: Path, sha: str, test_guard: dict, n_items: int) -> Path:
+    """The stamp an export of the test split leaves in the chat results
+    directory, wherever the export itself went: the guard's record, the
+    item count and the export's sha, no content. A later read of the chat
+    family finds it there and needs a new --rerun-reason."""
+    stamp = _stamp_path(export)
+    doc = {
+        "instrument": guard.EXPORT_ARM,
+        "kind": guard.EXPORT_STAMP_KIND,
+        "corpus_sha256": sha,
+        "test_guard": test_guard,
+        "items": n_items,
+        "export": {
+            "path": score.repo_path(export),
+            "sha256": guard.file_sha256(export),
+        },
+        "run_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    stamp.write_bytes((json.dumps(doc, indent=1) + "\n").encode("utf-8"))
+    return stamp
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -391,17 +425,31 @@ def main(argv: list[str] | None = None) -> int:
         print("corpus checks failed:", *problems, sep="\n  ")
         return 2
     sha = score.corpus_sha256(a.corpus)
-    writes_result = not (a.estimate or a.instrument == "export")
+    exporting = a.instrument == "export" and not a.estimate
+    guarded_out: Path | None = None
+    if not a.estimate:
+        guarded_out = _stamp_path(Path(a.out)) if exporting else Path(a.out)
     try:
+        # An export is a read of the test split (the judges read what it
+        # writes), so it is held to the rerun rule like a result: its
+        # stamp's path is the output the guard checks, the earlier
+        # chat-family results and export stamps beside --out and in the
+        # chat results directory count (for every read, not only
+        # exports), and the stamp it leaves is what a later read finds (an
+        # earlier stamp is never overwritten). The stamp goes in the chat
+        # results directory whatever --out is, so every later read sees
+        # it. Only --estimate writes nothing.
         test_guard = guard.guard_run(
             corpus,
             sha,
             arm=INSTRUMENT_NAMES.get(a.instrument, a.instrument),
             arm_key="instrument",
-            out=Path(a.out) if writes_result else None,
+            out=guarded_out,
             operating_points=a.operating_points,
             rerun_reason=a.rerun_reason,
             seals=SEALS,
+            export=exporting,
+            results_dirs=(CHAT_RESULTS, Path(a.out).parent),
         )
     except guard.Refused as exc:
         print(f"refused: {exc}")
@@ -423,19 +471,23 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     if a.instrument == "export":
-        with open(a.out, "w") as fh:
-            for it in items:
-                fh.write(
-                    json.dumps(
-                        {
-                            "stmt_id": it["row"]["stmt_id"],
-                            "state": it["state"],
-                            "questions": it["questions"],
-                        },
-                        ensure_ascii=False,
-                    )
-                    + "\n"
+        # bytes, so the stamp's sha is the same on every platform
+        Path(a.out).write_bytes(
+            "".join(
+                json.dumps(
+                    {
+                        "stmt_id": it["row"]["stmt_id"],
+                        "state": it["state"],
+                        "questions": it["questions"],
+                    },
+                    ensure_ascii=False,
                 )
+                + "\n"
+                for it in items
+            ).encode("utf-8")
+        )
+        if test_guard is not None:
+            _write_export_stamp(Path(a.out), sha, test_guard, len(items))
         print(json.dumps({"exported": len(items)}))
         return 0
     sealed_tau = None

@@ -40,9 +40,11 @@ re-scored at ef496de, the tree this unit started from, each gains
 `"supersession_writes": null` and nothing else, and the 2026-09-04
 summary gains the same key under those four arms. DRIFT pins exactly
 that: the re-scored file less the drift equals the committed text, and
-any other difference fails. One raw file has no committed result
-(mem0-infer-2026-09-04-no-self-test.json); it is re-scored for the
-record, with nothing to compare it with.
+any other difference fails. Two raw files have no committed result.
+mem0-infer-2026-09-04-no-self-test.json is re-scored for the record,
+with nothing to compare it with. bettermemory-v0-d1-parent-2026-09-30.json
+is D1's product arm run at commit 4's parent (10b3674), committed with
+commit 4 for P6; its gate-only result lands with the sealing commit.
 """
 
 from __future__ import annotations
@@ -147,7 +149,10 @@ def test_the_record_is_what_this_file_expects() -> None:
     raws = {p.name for p in _RAW.glob("*.json")}
     covered = {_raw_for(r).name for r in RESULTS}
     assert covered <= raws
-    assert raws - covered == {"mem0-infer-2026-09-04-no-self-test.json"}
+    assert raws - covered == {
+        "mem0-infer-2026-09-04-no-self-test.json",
+        "bettermemory-v0-d1-parent-2026-09-30.json",
+    }
 
 
 @pytest.mark.parametrize("committed_path", RESULTS, ids=lambda p: p.name)

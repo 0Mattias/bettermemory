@@ -533,6 +533,7 @@ class ResponseBuilder:
         supersedes: list[dict[str, Any]] | None = None,
         conflicts_filed: list[dict[str, Any]] | None = None,
         hint: str | None = None,
+        update_suggested: list[str] | None = None,
     ) -> dict[str, Any]:
         """Serialise a freshly-written Memory into the tool response shape.
 
@@ -540,7 +541,10 @@ class ResponseBuilder:
         rows the handler rendered (`handlers.write.SupersessionOutcome`):
         the stored memories this record now supersedes, and the pairs
         filed for `memory_conflicts`. `hint` rides with the latter and
-        names the remedy. All three are omitted when empty.
+        names the remedy. `update_suggested` names the stored records a
+        review answered as updated but no link was set on (a record that
+        is not claim-sized, or write-time supersession off). All four are
+        omitted when empty.
 
         `related` carries any medium-overlap matches that didn't block the
         write — surfaced so the caller can still consider memory_update on a
@@ -585,9 +589,34 @@ class ResponseBuilder:
             out["supersedes"] = list(supersedes)
         if conflicts_filed:
             out["conflicts_filed"] = list(conflicts_filed)
+        if update_suggested:
+            out["update_suggested"] = list(update_suggested)
         if hint:
             out["hint"] = hint
         return out
+
+    def review(
+        self,
+        *,
+        review_id: str,
+        related: list[dict[str, Any]],
+        questions: dict[str, Any],
+        hint: str,
+    ) -> dict[str, Any]:
+        """The write review's first-call shape: nothing was written, and
+        the caller answers the questions about the related statements by
+        re-sending the same call with `review`. The answer format is in
+        `hint` only (`handlers.write._review_hint`)."""
+        return {
+            "status": "review",
+            "written": False,
+            "review": {
+                "review_id": review_id,
+                "related": related,
+                "questions": questions,
+            },
+            "hint": hint,
+        }
 
     # ---- minor row shapes ----------------------------------------------
 

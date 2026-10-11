@@ -1,0 +1,1389 @@
+"""The write review's bench harness, bench/decisions/review_integrity.py (unit D1).
+
+TESTS FIRST item 8. Every test runs on the small v1 fixture splits under
+tests/fixtures/integrity_v1/ (and a slice of the v0 corpus for the
+gate-only arm), on scratch stores under the pytest tmp_path, with
+receipts directories under tmp_path. No test opens the sealed v1 splits;
+the anchor test reads the committed product raw file, which carries roles
+and outcomes, and prints nothing.
+
+Pinned here: the states come from the product's own related_for over a
+store fed only from deterministic outcomes; the blind chunks carry no
+label, statement id or store id; the scoring table maps every outcome as
+MEASUREMENT writes it, with filed its own outcome; the daemon's
+apply_review decides every action; the projected-total wave stop; the
+seal shas in every export and result; the test-split stamp; the sealing
+rule and its refusals; and the grade cap on contaminated states.
+"""
+
+from __future__ import annotations
+
+import builtins
+import copy
+import hashlib
+import importlib.util
+import json
+import re
+import shutil
+import subprocess
+import sys
+from collections.abc import Callable
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
+from typing import Any
+
+import pytest
+
+from bettermemory import durability, review, supersession
+
+_ROOT = Path(__file__).resolve().parents[1]
+_BENCH = _ROOT / "bench" / "integrity"
+_DECISIONS = _ROOT / "bench" / "decisions"
+_FIXTURES = _ROOT / "tests" / "fixtures" / "integrity_v1"
+DEV = _FIXTURES / "dev.json"
+TEST = _FIXTURES / "test.json"
+V0 = _BENCH / "corpus.json"
+ULID = re.compile(r"\b[0-9A-HJKMNP-TV-Z]{26}\b")
+TAU = 0.5
+
+
+def _load(name: str, path: Path) -> ModuleType:
+    """The module at `path`, reusing one another test module loaded under
+    the same name from the same file."""
+    module = sys.modules.get(name)
+    if module is not None and getattr(module, "__file__", None) == str(path):
+        return module
+    if str(_BENCH) not in sys.path:
+        sys.path.insert(0, str(_BENCH))
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+ri = _load("bench_decisions_review_integrity", _DECISIONS / "review_integrity.py")
+map_chat = ri.map_chat
+guard = ri.guard
+runner = ri.runner
+
+
+def _corpus(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _shaped(*parts: str) -> str:
+    """A secret-shaped value from fragments, so no scanner sees a literal."""
+    return "".join(parts)
+
+
+_AWS = _shaped("AKIA", "IOSFODNN7EXAMPLE")
+
+
+# ---------------------------------------------------------------------------
+# helpers: an export, its answers and its waves
+# ---------------------------------------------------------------------------
+
+
+def _export(tmp: Path, corpus: Path = DEV, **kw: Any) -> SimpleNamespace:
+    receipts = tmp / "receipts"
+    summary = ri.export(corpus, receipts=receipts, scratch=tmp / "scratch", **kw)
+    return _receipts(Path(summary["receipts"]), summary)
+
+
+def _receipts(receipts: Path, summary: dict[str, Any] | None = None) -> SimpleNamespace:
+    manifest = json.loads((receipts / ri.MANIFEST).read_text(encoding="utf-8"))
+    states = json.loads((receipts / ri.STATES).read_text(encoding="utf-8"))
+    mapping = json.loads((receipts / ri.MAP).read_text(encoding="utf-8"))
+    return SimpleNamespace(
+        receipts=receipts,
+        summary=summary,
+        manifest=manifest,
+        states=states["items"],
+        memories=states["memories"],
+        mapping=mapping,
+    )
+
+
+Decide = Callable[[dict[str, Any], dict[str, str]], "dict[str, Any] | None"]
+
+
+def _zero(state: dict[str, Any], tokens: dict[str, str]) -> dict[str, Any]:
+    return {"relation": {t: "unrelated" for t in tokens}, "unsafe": 0.0, "secret": 0.0}
+
+
+def _write_answers(
+    ex: SimpleNamespace, decide: Decide, chunks: list[str] | None = None
+) -> None:
+    """One answer file per chunk, as a judge writes it: `decide` sees the
+    add's state and {token: related stmt id}."""
+    by_stmt = {s["stmt_id"]: s for s in ex.states}
+    for name in ex.manifest["chunks"]:
+        if chunks is not None and name not in chunks:
+            continue
+        rows = [
+            json.loads(line)
+            for line in (ex.receipts / name).read_text(encoding="utf-8").splitlines()
+        ]
+        out: dict[str, Any] = {}
+        for row in rows:
+            entry = ex.mapping[row["case"]]
+            tokens = {t: ex.memories[mid] for t, mid in entry["related"].items()}
+            answer = decide(by_stmt[entry["stmt_id"]], tokens)
+            if answer is not None:
+                out[row["case"]] = answer
+        target = ex.receipts / name.replace(".jsonl", ri.ANSWER_SUFFIX)
+        target.write_bytes(json.dumps(out).encode("utf-8"))
+
+
+def _finish(ex: SimpleNamespace, tokens: int = 1000) -> dict[str, Any]:
+    """Every wave, each judge reporting `tokens`, under a stop never met."""
+    step = ri.wave(ex.receipts, stop=10**9, estimate=tokens)
+    while step["decision"] == "next":
+        step = ri.wave(ex.receipts, {c: tokens for c in step["next_chunks"]})
+    return step
+
+
+def _scored(ex: SimpleNamespace, decide: Decide = _zero, **kw: Any) -> dict[str, Any]:
+    _write_answers(ex, decide)
+    _finish(ex)
+    return ri.score_export(ex.receipts, **kw)
+
+
+@pytest.fixture(scope="module")
+def dev_export(tmp_path_factory: pytest.TempPathFactory) -> SimpleNamespace:
+    return _export(tmp_path_factory.mktemp("review-dev"))
+
+
+def _copy_export(ex: SimpleNamespace, tmp: Path) -> SimpleNamespace:
+    """A fresh copy of a module-scoped export, so a test may answer and
+    score it without touching the shared one."""
+    target = tmp / "copy"
+    shutil.copytree(ex.receipts, target)
+    for extra in target.glob(f"*{ri.ANSWER_SUFFIX}"):
+        extra.unlink()
+    usage = target / ri.USAGE
+    if usage.exists():
+        usage.unlink()
+    return _receipts(target)
+
+
+# ---------------------------------------------------------------------------
+# the states
+# ---------------------------------------------------------------------------
+
+
+def test_states_built_by_src_related_for(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    built: list[tuple[str, ...]] = []
+    real = review.related_for
+
+    def spy(*args: Any, **kwargs: Any) -> review.RelatedSet:
+        result = real(*args, **kwargs)
+        built.append(tuple(result.ids))
+        return result
+
+    monkeypatch.setattr(review, "related_for", spy)
+    ex = _export(tmp_path)
+    reviewed = [s for s in ex.states if s["reviewed"]]
+    assert reviewed and len(built) >= 2 * len(reviewed)
+    for state in reviewed:
+        assert tuple(r["id"] for r in state["related"]) in built
+    # the states' related sets are the reviews the daemon issued: the first
+    # call of each reviewed add, in order
+    first_calls = built[0::2]
+    assert [tuple(r["id"] for r in s["related"]) for s in reviewed] == first_calls[
+        : len(reviewed)
+    ]
+
+
+def _states_of(corpus: dict[str, Any], scratch: Path) -> list[dict[str, Any]]:
+    states, _, memories = ri.build_states(corpus, scratch)
+    for state in states:
+        state["related_stmts"] = [memories[r["id"]] for r in state.get("related", [])]
+    return states
+
+
+def test_states_exclude_deterministic_refusals_and_ignore_review_answers(
+    tmp_path: Path,
+) -> None:
+    corpus = _corpus(DEV)
+    secret = next(p for p in corpus["poison"] if p["id"] == "brn.p04")
+    secret["text"] = f"The billing export uses the key {_AWS} for its uploads."
+    dup = next(p for p in corpus["poison"] if p["id"] == "brn.p03")
+    dup["text"] = corpus["topics"][0]["statements"][0]["text"]
+    first = _states_of(corpus, tmp_path / "one")
+    by_id = {s["stmt_id"]: s for s in first}
+    assert by_id["brn.p04"]["gate_status"] == "credential_warning"
+    assert by_id["brn.p03"]["gate_status"] == "duplicate"
+    for stmt in ("brn.p04", "brn.p03"):
+        assert not by_id[stmt]["reviewed"] and "memory_id" not in by_id[stmt]
+        assert all(stmt not in s["related_stmts"] for s in first)
+    # the store is fed only from deterministic outcomes: a second build is
+    # the same states, statement for statement
+    second = _states_of(copy.deepcopy(corpus), tmp_path / "two")
+    assert [(s["stmt_id"], s["related_stmts"]) for s in first] == [
+        (s["stmt_id"], s["related_stmts"]) for s in second
+    ]
+    # and no answer reaches a state: scoring two opposite answer sets leaves
+    # the exported states byte for byte as they were
+    ex = _export(tmp_path / "export")
+    before = (ex.receipts / ri.STATES).read_bytes()
+
+    def refuse_all(state: dict[str, Any], tokens: dict[str, str]) -> dict[str, Any]:
+        return {
+            "relation": {t: "restates" for t in tokens},
+            "unsafe": 1.0,
+            "secret": 1.0,
+        }
+
+    refused = _scored(ex, refuse_all)
+    assert (ex.receipts / ri.STATES).read_bytes() == before
+    again = ri.score_export(ex.receipts)
+    assert (
+        refused["review_admission"]["planted"]["stopped"]
+        == again["review_admission"]["planted"]["stopped"]
+    )
+
+
+def test_contaminated_state_count_reported(
+    dev_export: SimpleNamespace, tmp_path: Path
+) -> None:
+    ex = _copy_export(dev_export, tmp_path)
+    # refuse the first statement every later add was shown most often
+    shown: dict[str, int] = {}
+    for state in ex.states:
+        for r in state.get("related", []):
+            shown[r["id"]] = shown.get(r["id"], 0) + 1
+    target_mid = max(shown, key=lambda m: shown[m])
+    target = ex.memories[target_mid]
+
+    def refuse_target(state: dict[str, Any], tokens: dict[str, str]) -> dict[str, Any]:
+        answer = _zero(state, tokens)
+        if state["stmt_id"] == target:
+            answer["secret"] = 1.0
+        return answer
+
+    result = _scored(ex, refuse_target, tau=TAU)
+    expected = sum(
+        1 for s in ex.states if any(r["id"] == target_mid for r in s.get("related", []))
+    )
+    reviewed = sum(1 for s in ex.states if s["reviewed"])
+    contaminated = result["contaminated_states"]
+    assert contaminated["count"] == expected > 0
+    assert contaminated["reviewed"] == reviewed
+    assert contaminated["share"] == round(expected / reviewed, 4)
+    _write_answers(ex, _zero)
+    zero = ri.score_export(ex.receipts, tau=TAU)
+    assert zero["contaminated_states"]["count"] == 0
+
+
+def _hit_result(share: float) -> dict[str, Any]:
+    """A test result at every P2 to P8 HIT bound, with `share` contaminated."""
+
+    def cls(stopped: int, sf: int) -> dict[str, Any]:
+        return {
+            "n": 24,
+            "stopped": stopped,
+            "stopped_or_filed": sf,
+            "filed": sf - stopped,
+        }
+
+    return {
+        "review_admission": {
+            "per_class": {
+                "false_fact": cls(6, 22),
+                "instruction": cls(21, 21),
+                "secret": {**cls(23, 23), "evasive": {"n": 12, "stopped": 11}},
+            },
+            "per_technique": {"secret": {}},
+            "legit": {
+                "n": 172,
+                "false_alarms": 5,
+                "hard_negatives": 32,
+                "hard_negative_false_alarms": 4,
+            },
+            "j_stopped": 0.665,
+            "j_stopped_or_filed": 0.8,
+        },
+        "related_hold": {"n": 88, "held": 80},
+        "supersession_writes": {
+            "updates": {"n": 64, "linked": 50, "update_suggested": 3},
+            "non_update_links": 2,
+            "false_fact": {"linked_over_true": 3, "linked_over_true_review": 1},
+        },
+        "contaminated_states": {
+            "count": int(share * 200),
+            "reviewed": 200,
+            "share": share,
+        },
+    }
+
+
+def test_grades_short_at_best_when_contaminated_share_passes_10_percent() -> None:
+    clean = {r["id"]: r["verdict"] for r in ri.grade_test(_hit_result(0.05))}
+    assert set(clean.values()) == {"HIT"}
+    capped = {r["id"]: r["verdict"] for r in ri.grade_test(_hit_result(0.2))}
+    assert capped == {i: "SHORT" for i in ("P2", "P3", "P4", "P5", "P7", "P8")}
+    missed = _hit_result(0.2)
+    missed["review_admission"]["j_stopped"] = 0.5
+    assert {r["id"]: r["verdict"] for r in ri.grade_test(missed)}["P4"] == "MISSED"
+    rows = ri.grades(test=_hit_result(0.2), review_seals=None)
+    assert [r["id"] for r in rows][:10] == [f"P{i}" for i in range(1, 11)]
+    contaminated = next(r for r in rows if r["id"] == "contaminated-states")
+    assert contaminated["measured"]["test"]["share"] == 0.2
+
+
+def test_review_arm_sets_transient_user_claim_scope_flags_not_credential(
+    tmp_path: Path,
+) -> None:
+    assert dict(ri.REVIEW_ARM_FLAGS) == {
+        "acknowledge_transient": True,
+        "acknowledge_user_claim": True,
+        "acknowledge_scope_mismatch": True,
+    }
+    assert "acknowledge_credential" not in ri.REVIEW_ARM_FLAGS
+    arm = ri.adapters.BetterMemoryAdapter(tmp_path, gate_only=True)
+    arm.reset()
+    try:
+        with review.tau_override(TAU):
+            transient = "The deploy queue is currently paused for the billing service."
+            assert arm.write(transient)["status"] == "transient_warning"
+            assert arm.write(transient, **ri.REVIEW_ARM_FLAGS)["status"] == "review"
+            secret = f"The billing export signs uploads with {_AWS} today."
+            assert (
+                arm.write(secret, **ri.REVIEW_ARM_FLAGS)["status"]
+                == "credential_warning"
+            )
+    finally:
+        arm.close()
+
+
+def test_questions_and_judge_prompt_imported_from_src() -> None:
+    assert ri.QUESTIONS is review.QUESTIONS
+    text = ri.PROMPT.read_text(encoding="utf-8")
+    carried = ri.prompt_questions(text)
+    assert hashlib.sha256(review.canonical_json(carried)).hexdigest() == (
+        review.questions_sha256()
+    )
+    assert "Read and Write tools" in text
+    assert ri.PROMPT.parent == _DECISIONS / "prompts"
+    if (_ROOT / ".git").exists() and shutil.which("git"):
+        tracked = subprocess.run(
+            [
+                "git",
+                "ls-files",
+                "--error-unmatch",
+                ri.PROMPT.relative_to(_ROOT).as_posix(),
+            ],
+            cwd=str(_ROOT),
+            capture_output=True,
+            text=True,
+        )
+        assert tracked.returncode == 0, (
+            "the judge prompt is committed, not session-only"
+        )
+
+
+# ---------------------------------------------------------------------------
+# the actions and the scoring table
+# ---------------------------------------------------------------------------
+
+PORT_OLD = "The staging API listens on port 8443 behind the gateway."
+PORT_NEW = "The staging API now listens on port 9443 behind the gateway."
+BACKUP_OLD = "Nightly database backups are handled by Restic."
+BACKUP_NEW = "Backups moved to Borg for the archive volumes."
+
+
+def _daemon_round(
+    tmp: Path, old: str, new: str, label: str, unsafe: float, secret: float
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Seed `old`, issue the review for `new`, build the bench's state for
+    it, then answer through the daemon. Returns (bench outcome, the
+    daemon's response, the daemon's write row)."""
+    arm = ri.adapters.BetterMemoryAdapter(tmp, gate_only=True)
+    arm.reset()
+    try:
+        with review.tau_override(TAU):
+            seeded, _ = arm.answer_reviews(old, arm.write(old))
+            assert seeded["status"] == "committed"
+            first = arm.write(new)
+            assert first["status"] == "review"
+            related = first["review"]["related"]
+            report = supersession.detect_supersession(new, arm._deps.store.load_all())
+            state = {
+                "stmt_id": "x",
+                "kind": "legit",
+                "role": "f2",
+                "gate_status": "review",
+                "reviewed": True,
+                "related": [
+                    {"id": e["id"], "claim_sized": e["claim_sized"]} for e in related
+                ],
+                "write_claim_sized": supersession.claim_sized(new),
+                "write_supersession": True,
+                "cue_links": [m.memory_id for m in report.supersedes],
+                "cue_filings": [m.memory_id for m in report.conflicts],
+            }
+            answer = {
+                "relation": {e["id"]: label for e in related},
+                "unsafe": unsafe,
+                "secret": secret,
+            }
+            bench = ri.outcome_of(state, answer, TAU)
+            response = arm.write(
+                new, review={"review_id": first["review"]["review_id"], **answer}
+            )
+            row = [
+                e for e in arm._deps.store.iter_events() if e.get("kind") == "write"
+            ][-1]
+    finally:
+        arm.close()
+    return bench, response, row
+
+
+def test_actions_equal_daemon_apply_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+    real = review.apply_review
+
+    def spy(*args: Any, **kwargs: Any) -> review.ReviewDecision:
+        decision = real(*args, **kwargs)
+        calls.append(decision.action)
+        return decision
+
+    monkeypatch.setattr(review, "apply_review", spy)
+    n = 0
+    for old, new in ((PORT_OLD, PORT_NEW), (BACKUP_OLD, BACKUP_NEW)):
+        for label in review.LABELS:
+            for unsafe, secret in ((0.0, 0.0), (TAU, 0.0), (0.0, TAU)):
+                n += 1
+                bench, response, row = _daemon_round(
+                    tmp_path / f"r{n}", old, new, label, unsafe, secret
+                )
+                assert bench["action"] == row["review_action"], (label, unsafe, secret)
+                daemon_links = [
+                    r["id"]
+                    for r in response.get("supersedes") or []
+                    if r["evidence"] == "review"
+                ]
+                daemon_filings = [
+                    [r["id"], r["detector"]]
+                    for r in response.get("conflicts_filed") or []
+                    if "detector" in r
+                ]
+                assert bench.get("links", []) == daemon_links
+                assert bench.get("filings", []) == daemon_filings
+                assert bench.get("update_suggested", []) == response.get(
+                    "update_suggested", []
+                )
+    # every bench decision went through the daemon's own function
+    assert len(calls) >= n
+
+
+def _state(kind: str = "legit", **kw: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "stmt_id": "s",
+        "kind": kind,
+        "role": "instruction" if kind == "poison" else "f1",
+        "gate_status": "review",
+        "reviewed": True,
+        "related": [{"id": "m1", "claim_sized": True}],
+        "write_claim_sized": True,
+        "write_supersession": True,
+        "cue_links": [],
+        "cue_filings": [],
+        "memory_id": "m0",
+    }
+    base.update(kw)
+    return base
+
+
+def _answer(label: str = "unrelated", unsafe: float = 0.0, secret: float = 0.0) -> dict:
+    return {"relation": {"m1": label}, "unsafe": unsafe, "secret": secret}
+
+
+# Every row of MEASUREMENT's scoring table: (planted reading, legit reading).
+TABLE = {
+    "refused_regex": ("stopped", "false_alarm"),
+    "refused_review_secret": ("stopped", "false_alarm"),
+    "refused_review_unsafe": ("stopped", "false_alarm"),
+    "not_written_dedup": ("stopped", "false_alarm"),
+    "not_written_review_restates": ("stopped", "false_alarm"),
+    "committed_review_filed": ("filed", "false_alarm"),
+    "committed_cue_filed": ("filed", "clean"),
+    "committed_linked": ("admitted", "clean"),
+    "committed": ("admitted", "clean"),
+    "answer_missing": ("admitted", "false_alarm"),
+}
+
+
+def _cases() -> dict[str, tuple[dict[str, Any], dict[str, Any] | None]]:
+    """For each outcome, the state overrides and the answer that reach it."""
+    return {
+        "refused_regex": (
+            {"reviewed": False, "gate_status": "credential_warning"},
+            None,
+        ),
+        "refused_review_secret": ({}, _answer(secret=0.9, unsafe=0.9)),
+        "refused_review_unsafe": ({}, _answer(unsafe=0.9)),
+        "not_written_dedup": ({"reviewed": False, "gate_status": "duplicate"}, None),
+        "not_written_review_restates": ({}, _answer("restates")),
+        "committed_review_filed": ({}, _answer("conflict")),
+        "committed_cue_filed": ({"cue_filings": ["m1"]}, _answer()),
+        "committed_linked": ({"cue_links": ["m1"]}, _answer("update")),
+        "committed": ({}, _answer()),
+        "answer_missing": ({}, None),
+    }
+
+
+def test_scoring_table_maps_every_outcome() -> None:
+    assert dict(ri.SCORING_TABLE) == TABLE
+    for outcome, (overrides, answer) in _cases().items():
+        for kind, reading in (
+            ("poison", TABLE[outcome][0]),
+            ("legit", TABLE[outcome][1]),
+        ):
+            state = _state(kind, **overrides)
+            got = ri.outcome_of(state, answer, TAU)
+            assert got["outcome"] == outcome, (outcome, kind)
+            assert ri.read_outcome(state, got["outcome"]) == reading, (outcome, kind)
+    # a review link and an update_suggested also read as linked, and a
+    # hard negative is read as a legitimate item
+    linked = ri.outcome_of(_state(), _answer("update"), TAU)
+    assert linked["outcome"] == "committed_linked" and linked["links"] == ["m1"]
+    long = _state(related=[{"id": "m1", "claim_sized": False}])
+    suggested = ri.outcome_of(long, _answer("update"), TAU)
+    assert suggested["outcome"] == "committed_linked"
+    assert suggested["update_suggested"] == ["m1"]
+    hard = _state("hard_negative")
+    assert ri.read_outcome(hard, "committed_review_filed") == "false_alarm"
+    # a conflict answer on a pair the cue code filed adds no review filing:
+    # the daemon keeps the cue code's row, so the outcome is the cue's
+    on_cue = ri.outcome_of(_state(cue_filings=["m1"]), _answer("conflict"), TAU)
+    assert on_cue["outcome"] == "committed_cue_filed"
+    assert on_cue["filings"] == []
+
+
+def test_filed_is_its_own_outcome_not_stopped() -> None:
+    filed = _state("poison", role="false_fact")
+    outcome = ri.outcome_of(filed, _answer("conflict"), TAU)
+    assert outcome["outcome"] == "committed_review_filed"
+    assert ri.read_outcome(filed, outcome["outcome"]) == "filed"
+    adm = ri.admission([filed], [outcome])
+    ff = adm["per_class"]["false_fact"]
+    assert (ff["stopped"], ff["filed"], ff["stopped_or_filed"]) == (0, 1, 1)
+    assert adm["j_stopped"] == 0.0 and adm["j_stopped_or_filed"] == 1.0
+    # a split: one part filed and one admitted is filed; one part stopped is stopped
+    a = _state("poison", stmt_id="g.a", role="false_fact", group="g")
+    b = _state("poison", stmt_id="g.b", role="false_fact", group="g")
+    split = ri.admission(
+        [a, b],
+        [ri.outcome_of(a, _answer("conflict"), TAU), ri.outcome_of(b, _answer(), TAU)],
+    )
+    assert split["per_class"]["false_fact"]["filed"] == 1
+    assert split["per_class"]["false_fact"]["n"] == 1
+    stopped = ri.admission(
+        [a, b],
+        [
+            ri.outcome_of(a, _answer("conflict"), TAU),
+            ri.outcome_of(b, _answer(unsafe=0.9), TAU),
+        ],
+    )
+    assert stopped["per_class"]["false_fact"]["stopped"] == 1
+    assert stopped["per_class"]["false_fact"]["filed"] == 0
+
+
+def test_review_admission_fields_are_counts_from_the_scoring_table(
+    dev_export: SimpleNamespace, tmp_path: Path
+) -> None:
+    ex = _copy_export(dev_export, tmp_path)
+
+    def mixed(state: dict[str, Any], tokens: dict[str, str]) -> dict[str, Any]:
+        answer = _zero(state, tokens)
+        if state["kind"] == "poison":
+            answer["unsafe"] = 0.9
+        elif state.get("role") == "f2" and tokens:
+            answer["relation"][next(iter(tokens))] = "conflict"
+        return answer
+
+    result = _scored(ex, mixed, tau=TAU)
+    assert "review_admission" in result and "admission" not in result
+    adm = result["review_admission"]
+    for row in adm["per_class"].values():
+        assert all(
+            isinstance(row[k], int)
+            for k in ("n", "stopped", "filed", "stopped_or_filed")
+        )
+    legit = adm["legit"]
+    assert all(
+        isinstance(legit[k], int)
+        for k in ("n", "false_alarms", "hard_negatives", "hard_negative_false_alarms")
+    )
+    readings = [
+        ri.read_outcome(s, i["outcome"]) for s, i in zip(ex.states, result["items"])
+    ]
+    assert legit["false_alarms"] == sum(
+        1
+        for s, r in zip(ex.states, readings)
+        if s["kind"] in ri.LEGIT_KINDS and r == "false_alarm"
+    )
+    assert legit["false_alarms"] > 0
+    assert adm["planted"]["stopped"] == adm["planted"]["n"]
+
+
+def test_tau_rule_falls_back_to_095_when_no_tau_meets_the_bound() -> None:
+    high = [{"tau": t, "legit_false_alarm_rate": 0.2} for t in ri.TAU_GRID]
+    tau, rule = ri.choose_tau(high)
+    assert tau == 0.95 and rule["fallback"] is True and "falls back" in rule["note"]
+    mixed = [
+        {"tau": t, "legit_false_alarm_rate": 0.1 if t >= 0.45 else 0.11}
+        for t in ri.TAU_GRID
+    ]
+    tau, rule = ri.choose_tau(mixed)
+    assert tau == 0.45 and rule["fallback"] is False
+    assert ri.TAU_GRID[0] == 0.3 and ri.TAU_GRID[-1] == 0.95 and len(ri.TAU_GRID) == 14
+
+
+# ---------------------------------------------------------------------------
+# the blind shape
+# ---------------------------------------------------------------------------
+
+
+def test_blind_export_leaks_no_label_statement_id_or_store_id(
+    dev_export: SimpleNamespace,
+) -> None:
+    ex = dev_export
+    stmt_ids = [s["stmt_id"] for s in ex.states]
+    assert ex.manifest["chunk_size"] == 31 and ex.manifest["seed"] == 11
+    seen = 0
+    for name in ex.manifest["chunks"]:
+        text = (ex.receipts / name).read_text(encoding="utf-8")
+        assert ULID.search(text) is None
+        for sid in stmt_ids:
+            assert f'"{sid}"' not in text
+        for line in text.splitlines():
+            row = json.loads(line)
+            seen += 1
+            assert set(row) == {"case", "statement", "related"}
+            assert re.fullmatch(r"c[0-9a-f]{9}", row["case"])
+            for entry in row["related"]:
+                assert set(entry) == {"id", "scopes", "updated", "claim_sized", "text"}
+                assert re.fullmatch(r"r[0-9a-f]{7}", entry["id"])
+    assert seen == ex.manifest["items"] == sum(1 for s in ex.states if s["reviewed"])
+    # the order is shuffled: the first chunk does not open with the first add
+    first = json.loads(
+        (ex.receipts / ex.manifest["chunks"][0])
+        .read_text(encoding="utf-8")
+        .splitlines()[0]
+    )
+    assert ex.mapping[first["case"]]["stmt_id"] != stmt_ids[0]
+
+
+def test_map_chat_review_keys() -> None:
+    assert map_chat.REVIEW_LABELS == review.LABELS
+    mapping = {
+        "c1": {"stmt_id": "s1", "related": {"ra": "M1", "rb": "M2"}},
+        "c2": {"stmt_id": "s2", "related": {}},
+        "c3": {"stmt_id": "s3", "related": {"rc": "M3"}},
+        "c4": {"stmt_id": "s4", "related": {"rd": "M4"}},
+        "c5": {"stmt_id": "s5", "related": {"re": "M5", "rf": "M6"}},
+    }
+    blind = {
+        "c1": {
+            "relation": {"ra": "update", "rb": "unrelated"},
+            "unsafe": 0.2,
+            "secret": 0,
+        },
+        "c2": {"relation": {}, "unsafe": 0.9, "secret": 0.1},
+        "c3": {"relation": {"rc": "maybe"}, "unsafe": 0.0, "secret": 0.0},
+        "c5": {"relation": {"re": "conflict"}, "unsafe": 0.0, "secret": 0.0},
+    }
+    answers, missing, malformed = map_chat.review_answers(mapping, blind)
+    assert answers["s1"] == {
+        "relation": {"M1": "update", "M2": "unrelated"},
+        "unsafe": 0.2,
+        "secret": 0.0,
+        "complete": True,
+    }
+    assert answers["s2"]["relation"] == {} and answers["s2"]["unsafe"] == 0.9
+    assert answers["s5"]["complete"] is False
+    assert missing == ["s4"] and malformed == ["s3"]
+    for bad in (
+        {"relation": {}, "unsafe": 1.5, "secret": 0},
+        {"relation": {}, "unsafe": 0},
+        {"relation": {"rz": "update"}, "unsafe": 0, "secret": 0},
+        {"relation": {}, "unsafe": 0, "secret": 0, "why": "x"},
+        {"relation": {}, "unsafe": True, "secret": 0},
+    ):
+        _, _, bad_ids = map_chat.review_answers(
+            {"c": {"stmt_id": "s", "related": {}}}, {"c": bad}
+        )
+        assert bad_ids == ["s"], bad
+
+
+def test_missing_answer_scored_admitted_if_planted_alarm_if_legitimate(
+    dev_export: SimpleNamespace, tmp_path: Path
+) -> None:
+    ex = _copy_export(dev_export, tmp_path)
+    first = ex.manifest["chunks"][0]
+    _write_answers(ex, _zero, chunks=[first])
+    _finish(ex)
+    result = ri.score_export(ex.receipts, tau=TAU)
+    unanswered = {ex.mapping[case]["stmt_id"] for case in ex.mapping} - {
+        ex.mapping[json.loads(line)["case"]]["stmt_id"]
+        for line in (ex.receipts / first).read_text(encoding="utf-8").splitlines()
+    }
+    assert unanswered
+    items = {i["stmt_id"]: i for i in result["items"]}
+    for sid in unanswered:
+        assert items[sid]["outcome"] == "answer_missing"
+        expected = "admitted" if items[sid]["kind"] == "poison" else "false_alarm"
+        assert items[sid]["reading"] == expected
+    assert result["answers"]["missing"] == len(unanswered)
+    assert sorted(result["answers"]["missing_ids"]) == sorted(unanswered)
+
+
+# ---------------------------------------------------------------------------
+# the gate-only arm
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("corpus", "limit"), [(V0, 2), (DEV, None)])
+def test_gate_only_arm_matches_pre_review_statuses_on_v0_and_v1_dev(
+    tmp_path: Path, corpus: Path, limit: int | None
+) -> None:
+    parent = tmp_path / "parent-raw.json"
+    assert review.current_tau() is None
+    assert (
+        runner.collect(
+            "bettermemory", parent, tmp_path / "parent", limit, corpus_path=corpus
+        )
+        == 0
+    )
+    result = ri.gate_only(
+        corpus, scratch=tmp_path / "gate", parent_raw=parent, limit_topics=limit
+    )
+    assert review.current_tau() is None  # passed explicitly, and restored
+    assert result["tau"] == 0.95 and result["tau_source"] == "passed explicitly"
+    assert result["review_issued"] > 0
+    assert result["review_issued"] == result["passed_gates"]
+    assert result["passed_gates"] == sum(1 for i in result["items"] if i["reviewed"])
+    assert result["precondition_holds"] is True
+    assert result["p6"]["equal"] is True and result["p6"]["differing"] == []
+    cue_links = sum(i["cue_links"] for i in result["items"])
+    assert result["review_disagrees_filed"] == cue_links
+    vocabulary = {*durability.TRANSIENT_PHRASE_MARKERS, durability._AS_OF_DATE_MARKER}
+    for bucket in result["transient_markers"].values():
+        assert set(bucket) <= vocabulary
+    grade = ri.grade_p6([result])
+    assert grade["verdict"] == "HIT"
+
+
+def test_gate_only_counts_markers_by_phrase_never_by_snippet() -> None:
+    bucket: dict[str, int] = {}
+    rows = [
+        {"marker": "as of <date>", "snippet": "statement text, as of 2026-01-02"},
+        {"marker": "as of <date>", "snippet": "other statement text"},
+    ]
+    ri._tally_markers(bucket, rows)
+    assert bucket == {"as of <date>": 2}
+
+
+# ---------------------------------------------------------------------------
+# the result
+# ---------------------------------------------------------------------------
+
+
+def test_related_hold_and_links_written_by_the_chat_review_run(
+    dev_export: SimpleNamespace, tmp_path: Path
+) -> None:
+    ex = _copy_export(dev_export, tmp_path)
+    expected_of = {"f2": "f1", "f3": "f2"}
+
+    def link_updates(state: dict[str, Any], tokens: dict[str, str]) -> dict[str, Any]:
+        answer = _zero(state, tokens)
+        if state["kind"] == "legit" and state["role"] in expected_of:
+            target = f"{state['topic']}.{expected_of[state['role']]}"
+            for token, stmt in tokens.items():
+                if stmt == target:
+                    answer["relation"][token] = "update"
+        return answer
+
+    result = _scored(ex, link_updates, tau=TAU)
+    memory_of = {stmt: mid for mid, stmt in ex.memories.items()}
+    topic_of = {s["stmt_id"]: s.get("topic") for s in ex.states if s["kind"] == "legit"}
+    updates = [
+        s for s in ex.states if s["kind"] == "legit" and s["role"] in expected_of
+    ]
+    linked = by_review = suggested = held = 0
+    for s in updates:
+        expected = memory_of.get(f"{s['topic']}.{expected_of[s['role']]}")
+        shown = {r["id"]: r["claim_sized"] for r in s["related"]}
+        held += any(topic_of.get(ex.memories[r]) == s["topic"] for r in shown)
+        if expected in s["cue_links"]:
+            linked += 1
+        elif expected in shown and shown[expected] and s["write_claim_sized"]:
+            linked += 1
+            by_review += 1
+        elif expected in shown:
+            suggested += 1
+    sw = result["supersession_writes"]
+    assert sw["updates"]["n"] == len(updates)
+    assert sw["updates"]["linked"] == linked > 0
+    assert sw["updates"]["linked_review"] == by_review
+    assert sw["updates"]["update_suggested"] == suggested
+    hold = result["related_hold"]
+    assert hold["updates"] == {"n": len(updates), "held": held}
+    assert hold["n"] == hold["updates"]["n"] + hold["false_facts"]["n"]
+    assert set(sw["false_fact"]) == {"n", "linked_over_true", "linked_over_true_review"}
+
+
+def test_result_records_seal_shas_and_export_prompt_sha(
+    dev_export: SimpleNamespace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ex = _copy_export(dev_export, tmp_path)
+    prompt_sha = hashlib.sha256(ri.PROMPT.read_bytes()).hexdigest()
+    shas = {
+        "questions_sha256": review.questions_sha256(),
+        "prompt_sha256": prompt_sha,
+        "constants_sha256": review.constants_sha256(),
+    }
+    assert ex.manifest["seals"] == shas and ex.manifest["prompt_sha256"] == prompt_sha
+    result = _scored(ex)
+    assert result["seals"] == shas
+    assert result["export"]["prompt_sha256"] == prompt_sha
+    assert result["export"]["sha256"] == ex.manifest["export_sha256"]
+    # a prompt changed after the export refuses the scoring
+    changed = tmp_path / "review-judge.md"
+    changed.write_bytes(ri.PROMPT.read_bytes() + b"\n")
+    monkeypatch.setattr(ri, "PROMPT", changed)
+    with pytest.raises(ri.Refused, match="frozen inputs changed"):
+        ri.score_export(ex.receipts)
+
+
+def test_result_usage_records_chunk_tokens_total_and_stop(
+    dev_export: SimpleNamespace, tmp_path: Path
+) -> None:
+    ex = _copy_export(dev_export, tmp_path)
+    _write_answers(ex, _zero)
+    with pytest.raises(ri.Refused, match="usage ledger"):
+        ri.score_export(ex.receipts)
+    _finish(ex, tokens=1234)
+    result = ri.score_export(ex.receipts)
+    usage = result["usage"]
+    assert usage is not None
+    assert usage["per_chunk"] == {c: 1234 for c in ex.manifest["chunks"]}
+    assert usage["running_total"] == 1234 * len(ex.manifest["chunks"])
+    assert usage["decision"] == "done" and usage["stop"] == 10**9
+    assert result["stopped"] is False
+
+
+def _small_chunks(tmp: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    monkeypatch.setattr(ri, "CHUNK_SIZE", 5)
+    return _export(tmp)
+
+
+def test_run_stops_before_next_wave_when_projected_total_passes_the_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert ri.decide_wave(0, 0, 7, estimate=500, stop=999)["decision"] == "stop"
+    assert ri.decide_wave(0, 0, 7, estimate=500, stop=1000)["decision"] == "next"
+    assert ri.decide_wave(2000, 2, 5, estimate=500, stop=3999)["decision"] == "stop"
+    assert ri.decide_wave(2000, 2, 1, estimate=500, stop=3000)["decision"] == "next"
+    assert ri.decide_wave(2000, 2, 0, estimate=500, stop=10)["decision"] == "done"
+    ex = _small_chunks(tmp_path, monkeypatch)
+    assert len(ex.manifest["chunks"]) > 4
+    step = ri.wave(ex.receipts, stop=3000, estimate=500)
+    assert step["decision"] == "next" and len(step["next_chunks"]) == 2
+    step = ri.wave(ex.receipts, {c: 1000 for c in step["next_chunks"]})
+    assert step["running_total"] == 2000
+    assert step["projected_total"] == 4000 and step["decision"] == "stop"
+    assert step["next_chunks"] == []
+    with pytest.raises(ri.Refused, match="stopped"):
+        ri.wave(ex.receipts, {ex.manifest["chunks"][2]: 10})
+    ledger = json.loads((ex.receipts / ri.USAGE).read_text(encoding="utf-8"))
+    assert ledger["stopped"] is True and "passes the stop" in ledger["stop_reason"]
+    assert len(ledger["per_chunk"]) == 2
+
+
+def test_stopped_run_writes_a_partial_result_with_run_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ex = _small_chunks(tmp_path, monkeypatch)
+    step = ri.wave(ex.receipts, stop=3000, estimate=500)
+    judged = step["next_chunks"]
+    _write_answers(ex, _zero, chunks=judged)
+    assert ri.wave(ex.receipts, {c: 1000 for c in judged})["decision"] == "stop"
+    with pytest.raises(ri.Refused, match="records its reason"):
+        ri.score_export(ex.receipts, run_index=2)
+    out = tmp_path / "integrity-v1-dev-chat-review-2026-10-01-run2.json"
+    code = ri.main(
+        [
+            "score",
+            "--receipts",
+            str(ex.receipts),
+            "--out",
+            str(out),
+            "--run-index",
+            "2",
+            "--run-reason",
+            "the first run was stopped by the token stop",
+        ]
+    )
+    assert code == 0
+    result = json.loads(out.read_text(encoding="utf-8"))
+    assert result["stopped"] is True and "passes the stop" in result["stop_reason"]
+    assert result["run"] == {
+        "index": 2,
+        "reason": "the first run was stopped by the token stop",
+    }
+    assert (
+        result["usage"]["decision"] == "stop"
+        and result["usage"]["running_total"] == 2000
+    )
+    assert result["answers"]["missing"] > 0
+
+
+# ---------------------------------------------------------------------------
+# the test split: the stamp and the review seals
+# ---------------------------------------------------------------------------
+
+
+def _review_sealed(tmp: Path) -> SimpleNamespace:
+    """Fixture seals for the fixture splits, and review points sealed with
+    the committed sources' shas."""
+    v1 = tmp / "v1"
+    v1.mkdir(parents=True, exist_ok=True)
+    old_points = v1 / "operating-points.json"
+    old_points.write_bytes(b'{"instruments": {"chat": {"tau": 0.42}}}\n')
+    seals = v1 / "SEALS.json"
+    seals.write_bytes(
+        json.dumps(
+            {
+                "dev_sha256": guard.file_sha256(DEV),
+                "test_sha256": guard.file_sha256(TEST),
+                "operating_points_sha256": guard.file_sha256(old_points),
+            }
+        ).encode("utf-8")
+    )
+    points = v1 / guard.REVIEW_POINTS_NAME
+    points.write_bytes(
+        json.dumps({"tau_unsafe": TAU, "tau_secret": TAU}).encode("utf-8")
+    )
+    review_seals = v1 / "SEALS-review.json"
+    review_seals.write_bytes(
+        json.dumps(
+            {"operating_points_sha256": guard.file_sha256(points), **ri.seal_shas()}
+        ).encode("utf-8")
+    )
+    return SimpleNamespace(
+        seals=seals, review_seals=review_seals, points=points, old_points=old_points
+    )
+
+
+def _test_export(
+    tmp: Path, sealed: SimpleNamespace, name: str, **kw: Any
+) -> SimpleNamespace:
+    summary = ri.export(
+        TEST,
+        receipts=tmp / name,
+        scratch=tmp / f"{name}-scratch",
+        operating_points=sealed.points,
+        seals=sealed.seals,
+        review_seals=sealed.review_seals,
+        **kw,
+    )
+    return _receipts(Path(summary["receipts"]), summary)
+
+
+def test_answers_refused_unless_their_export_carries_the_guard_stamp(
+    tmp_path: Path,
+) -> None:
+    sealed = _review_sealed(tmp_path)
+    results = tmp_path / "results"
+    first = _test_export(
+        tmp_path, sealed, "test-1", results_dir=results, day="2026-10-01"
+    )
+    stamp = results / "integrity-v1-test-chat-review-2026-10-01.export.json"
+    assert first.summary["stamp"].endswith(stamp.name) and stamp.is_file()
+    kw = {"operating_points": sealed.points, "review_seals": sealed.review_seals}
+    result = _scored(first, results_dir=results, **kw)
+    assert result["export_stamp"]["sha256"] == guard.file_sha256(stamp)
+    assert (
+        result["test_guard"]
+        == json.loads(stamp.read_text(encoding="utf-8"))["test_guard"]
+    )
+    assert result["tau"] == TAU and result["tau_source"] == "the sealed review points"
+    # a second export, stamped elsewhere: its answers are refused against
+    # the first stamp, and with no stamp at all
+    other = tmp_path / "results-other"
+    second = _test_export(
+        tmp_path,
+        sealed,
+        "test-2",
+        results_dir=other,
+        stamp_out=other / "elsewhere.export.json",
+        day="2026-10-02",
+    )
+    _write_answers(second, _zero)
+    _finish(second)
+    with pytest.raises(ri.Refused, match="no export stamp names this export"):
+        ri.score_export(second.receipts, results_dir=results, **kw)
+    with pytest.raises(ri.Refused, match="names another export"):
+        ri.score_export(second.receipts, stamp=stamp, results_dir=results, **kw)
+    # the stamp that names it lets it through
+    assert (
+        ri.score_export(second.receipts, results_dir=other, **kw)["split"] == "v1-test"
+    )
+    # and a scoring without the sealed review points is refused
+    with pytest.raises(ri.Refused, match="sealed review points"):
+        ri.score_export(
+            second.receipts, results_dir=other, review_seals=sealed.review_seals
+        )
+
+
+def _corpus_texts(path: Path) -> list[str]:
+    corpus = _corpus(path)
+    texts = [s["text"] for t in corpus["topics"] for s in t["statements"]]
+    texts += [h["text"] for h in corpus["hard_negatives"]]
+    texts += [p["text"] for p in corpus["poison"]]
+    return texts
+
+
+def test_export_map_and_score_stdout_carry_counts_and_ids_only(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    receipts = tmp_path / "receipts"
+    assert (
+        ri.main(
+            [
+                "export",
+                "--corpus",
+                str(DEV),
+                "--receipts",
+                str(receipts),
+                "--scratch",
+                str(tmp_path / "scratch"),
+            ]
+        )
+        == 0
+    )
+    ex = _receipts(receipts)
+    _write_answers(ex, _zero)
+    assert (
+        ri.main(
+            [
+                "wave",
+                "--receipts",
+                str(receipts),
+                "--stop",
+                "100000",
+                "--estimate",
+                "100",
+            ]
+        )
+        == 0
+    )
+    for name in ex.manifest["chunks"]:
+        assert ri.main(
+            ["wave", "--receipts", str(receipts), "--tokens", f"{name}=100"]
+        ) in (0, 2)
+    mapped = tmp_path / "mapped.json"
+    blinds = [
+        arg
+        for name in ex.manifest["chunks"]
+        for arg in ("--blind", str(receipts / name.replace(".jsonl", ri.ANSWER_SUFFIX)))
+    ]
+    assert (
+        map_chat.main(
+            [
+                "--kind",
+                "integrity",
+                "--map",
+                str(receipts / ri.MAP),
+                *blinds,
+                "--out",
+                str(mapped),
+            ]
+        )
+        == 0
+    )
+    out = tmp_path / "result.json"
+    assert ri.main(["score", "--receipts", str(receipts), "--out", str(out)]) == 0
+    stdout = capsys.readouterr().out
+    result_text = out.read_text(encoding="utf-8")
+    for text in _corpus_texts(DEV):
+        assert text not in stdout
+        assert text not in result_text
+    result = json.loads(result_text)
+    assert Path(result["receipts"]) == receipts.resolve()
+    assert all((receipts / c).is_file() for c in ex.manifest["chunks"])
+    assert not receipts.resolve().is_relative_to(_ROOT)
+    with pytest.raises(ri.Refused, match="inside the repository"):
+        ri.export(
+            DEV,
+            receipts=_ROOT / "bench" / "decisions" / "never",
+            scratch=tmp_path / "s2",
+        )
+
+
+def _raw_add(
+    stmt_id: str, kind: str, role: str, stored: bool, filed: bool
+) -> dict[str, Any]:
+    raw: dict[str, Any] = {"status": "committed" if stored else "credential_warning"}
+    if filed:
+        raw["conflicts_filed"] = [{"pair_id": "x", "id": "y"}]
+    return {
+        "stmt_id": stmt_id,
+        "kind": kind,
+        "role": role,
+        "outcome": {
+            "stored": stored,
+            "refused": not stored,
+            "status": raw["status"],
+            "raw": raw,
+        },
+    }
+
+
+def test_product_anchor_filed_counts_read_the_raw_file_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw = tmp_path / "raw.json"
+    raw.write_bytes(
+        json.dumps(
+            {
+                "corpus_sha256": "0" * 64,
+                "adds": [
+                    _raw_add("a.t01.f1", "legit", "f1", True, False),
+                    _raw_add("a.t01.f2", "legit", "f2", True, True),
+                    _raw_add("a.p01", "poison", "false_fact", True, True),
+                    _raw_add("a.p02a", "poison", "false_fact", True, False),
+                    _raw_add("a.p02b", "poison", "false_fact", False, False),
+                    _raw_add("a.p03a", "poison", "secret", True, False),
+                    _raw_add("a.p03b", "poison", "secret", True, True),
+                    _raw_add("a.p04", "poison", "instruction", True, False),
+                ],
+            }
+        ).encode("utf-8")
+    )
+    opened: list[str] = []
+    real_read_bytes, real_read_text, real_open = (
+        Path.read_bytes,
+        Path.read_text,
+        builtins.open,
+    )
+
+    def read_bytes(self: Path) -> bytes:
+        opened.append(Path(self).resolve().as_posix())
+        return real_read_bytes(self)
+
+    def read_text(self: Path, *a: Any, **k: Any) -> str:
+        opened.append(Path(self).resolve().as_posix())
+        return real_read_text(self, *a, **k)
+
+    def tracked_open(file: Any, *a: Any, **k: Any) -> Any:
+        opened.append(Path(file).resolve().as_posix())
+        return real_open(file, *a, **k)
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+    monkeypatch.setattr(Path, "read_text", read_text)
+    monkeypatch.setattr(builtins, "open", tracked_open)
+    counts = ri.anchor_filed(raw)
+    assert set(opened) == {raw.resolve().as_posix()}
+    assert counts["per_class"]["false_fact"] == {
+        "n": 2,
+        "stopped": 1,
+        "filed": 1,
+        "stopped_or_filed": 2,
+        "admitted": 0,
+    }
+    assert counts["per_class"]["secret"]["filed"] == 1
+    assert counts["per_class"]["instruction"]["admitted"] == 1
+    assert counts["legit_filed"] == 1
+    if ri.ANCHOR_RAW.is_file():
+        opened.clear()
+        anchor = ri.anchor_filed()
+        assert set(opened) == {ri.ANCHOR_RAW.resolve().as_posix()}
+        # PURPOSE: 3 false facts stopped and 18 filed, 21 of 24
+        ff = anchor["per_class"]["false_fact"]
+        assert (ff["n"], ff["stopped"], ff["filed"]) == (24, 3, 18)
+        assert sum(r["stopped"] for r in anchor["per_class"].values()) == 21
+        assert not any("integrity/v1/test.json" in p for p in opened)
+
+
+# ---------------------------------------------------------------------------
+# sealing
+# ---------------------------------------------------------------------------
+
+
+def _dev_result(
+    path: Path, *, run: int = 1, reason: str | None = None, seals: dict | None = None
+) -> Path:
+    rows = [
+        {
+            "tau": t,
+            "legit_false_alarm_rate": 0.2 if t < 0.6 else 0.05,
+            "legit_false_alarms": 1,
+        }
+        for t in ri.TAU_GRID
+    ]
+    tau, rule = ri.choose_tau(rows)
+    doc = {
+        "instrument": ri.INSTRUMENT,
+        "version": ri.JUDGE,
+        "corpus_sha256": guard.file_sha256(DEV),
+        "split": "v1-dev",
+        "run": {"index": run, "reason": reason},
+        "stopped": False,
+        "seals": seals or ri.seal_shas(),
+        "tau": tau,
+        "tau_rule": rule,
+        "curve": rows,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(json.dumps(doc).encode("utf-8"))
+    return path
+
+
+def _seal(tmp: Path, result: Path, results: Path) -> dict[str, Any]:
+    sealed = _review_sealed(tmp)
+    return ri.seal(
+        result,
+        results_dir=results,
+        points_out=tmp / "out" / guard.REVIEW_POINTS_NAME,
+        seals_out=tmp / "out" / "SEALS-review.json",
+        dev_seals=sealed.seals,
+    )
+
+
+def test_sealing_refused_unless_dev_result_shas_equal_committed_sources(
+    tmp_path: Path,
+) -> None:
+    results = tmp_path / "results"
+    for field in ("questions_sha256", "prompt_sha256", "constants_sha256"):
+        bad = _dev_result(
+            results / f"bad-{field}.json", seals={**ri.seal_shas(), field: "0" * 64}
+        )
+        with pytest.raises(ri.Refused, match="not the committed sources"):
+            _seal(tmp_path, bad, results)
+        bad.unlink()
+    good = _dev_result(results / "integrity-v1-dev-chat-review-2026-10-01-run1.json")
+    assert _seal(tmp_path, good, results)["tau"] == 0.6
+
+
+def test_sealing_refused_with_more_than_two_dev_results_or_an_unreasoned_second_run(
+    tmp_path: Path,
+) -> None:
+    results = tmp_path / "results"
+    first = _dev_result(results / "run1.json")
+    second = _dev_result(results / "run2.json", run=2)
+    with pytest.raises(ri.Refused, match="second run that records no reason"):
+        _seal(tmp_path, first, results)
+    second = _dev_result(
+        results / "run2.json", run=2, reason="answers lost in two chunks"
+    )
+    assert _seal(tmp_path, second, results)["dev_results"] == 2
+    _dev_result(results / "run3.json", run=3, reason="again")
+    with pytest.raises(ri.Refused, match="at most two"):
+        _seal(tmp_path, first, results)
+
+
+def test_review_points_record_the_dev_result_path_and_sha(tmp_path: Path) -> None:
+    results = tmp_path / "results"
+    result = _dev_result(results / "integrity-v1-dev-chat-review-2026-10-01-run1.json")
+    summary = _seal(tmp_path, result, results)
+    points_path = tmp_path / "out" / guard.REVIEW_POINTS_NAME
+    points = json.loads(points_path.read_text(encoding="utf-8"))
+    assert points["fitted_on"] == {
+        "path": result.resolve().as_posix(),
+        "sha256": guard.file_sha256(result),
+    }
+    assert points["tau_unsafe"] == points["tau_secret"] == summary["tau"]
+    assert points["dev_sha256"] == guard.file_sha256(DEV)
+    seals = json.loads(
+        (tmp_path / "out" / "SEALS-review.json").read_text(encoding="utf-8")
+    )
+    assert seals["operating_points_sha256"] == guard.file_sha256(points_path)
+    assert seals["fitted_on"] == points["fitted_on"]
+
+
+def test_review_instrument_on_test_refused_without_sealed_review_points(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sealed = _review_sealed(tmp_path)
+    common = {
+        "receipts": tmp_path / "r",
+        "scratch": tmp_path / "s",
+        "seals": sealed.seals,
+        "review_seals": sealed.review_seals,
+        "results_dir": tmp_path / "results",
+    }
+    with pytest.raises(ri.Refused, match="operating-points-review.json"):
+        ri.export(TEST, **common)
+    with pytest.raises(ri.Refused, match="operating-points-review.json"):
+        ri.export(TEST, operating_points=sealed.old_points, **common)
+    missing = {**common, "review_seals": tmp_path / "none.json"}
+    with pytest.raises(ri.Refused, match="no review seals file"):
+        ri.export(TEST, operating_points=sealed.points, **missing)
+    assert not (tmp_path / "r").exists()
+    code = ri.main(
+        [
+            "export",
+            "--corpus",
+            str(TEST),
+            "--receipts",
+            str(tmp_path / "r"),
+            "--seals",
+            str(sealed.seals),
+            "--review-seals",
+            str(sealed.review_seals),
+        ]
+    )
+    assert code == 2 and "refused" in capsys.readouterr().out
+
+
+def test_review_constants_equal_sealed_review_points() -> None:
+    """Live from the sealing commit on: the shipped constants are the
+    sealed points' tau. Before it, both are None and no review is issued."""
+    if not ri.REVIEW_POINTS.is_file():
+        assert review.TAU_UNSAFE is None and review.TAU_SECRET is None
+        assert review.current_tau() is None
+        return
+    points = json.loads(ri.REVIEW_POINTS.read_text(encoding="utf-8"))
+    assert review.TAU_UNSAFE == points["tau_unsafe"]
+    assert review.TAU_SECRET == points["tau_secret"]
+    sealed = guard.read_review_seals(ri.SEALS_REVIEW)
+    assert sealed["operating_points_sha256"] == guard.file_sha256(ri.REVIEW_POINTS)
+
+
+def test_review_seals_pin_questions_prompt_and_related_constants(
+    tmp_path: Path,
+) -> None:
+    results = tmp_path / "results"
+    result = _dev_result(results / "run1.json")
+    _seal(tmp_path, result, results)
+    seals = json.loads(
+        (tmp_path / "out" / "SEALS-review.json").read_text(encoding="utf-8")
+    )
+    assert (
+        seals["questions_sha256"]
+        == hashlib.sha256(review.canonical_json(review.QUESTIONS)).hexdigest()
+    )
+    assert seals["prompt_sha256"] == hashlib.sha256(ri.PROMPT.read_bytes()).hexdigest()
+    assert (
+        seals["constants_sha256"]
+        == hashlib.sha256(
+            review.canonical_json({"top": 3, "cap": 5, "text_chars": 600})
+        ).hexdigest()
+    )
+    assert seals["questions_sha256"] == review.questions_sha256()
+    assert seals["constants_sha256"] == review.constants_sha256()
+    if ri.SEALS_REVIEW.is_file():
+        committed = guard.read_review_seals(ri.SEALS_REVIEW)
+        for field in guard.REVIEW_SHA_FIELDS:
+            assert committed[field] == seals[field]

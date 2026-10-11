@@ -20,6 +20,9 @@ import copy
 import logging
 from typing import Any
 
+from pydantic import Field
+from pydantic.fields import FieldInfo
+
 from . import handlers as _handlers_pkg
 from ._response import ResponseBuilder
 from .config import Config
@@ -258,9 +261,17 @@ class ToolHandlers:
         category: str = "fact",
         claims: list[str] | None = None,
         supersedes: list[str] | None = None,
+        # The write review's answers. An object defaulting to an empty
+        # dict, so it is served with no null branch; the answer format is
+        # in the review response's hint, not here.
+        review: dict[str, Any] = Field(default_factory=dict),
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         deps = self.for_request(ctx)
+        # A direct Python call that omits `review` receives the FieldInfo
+        # default itself; the SDK's validation fills in the empty dict.
+        if isinstance(review, FieldInfo):
+            review = {}
         return await _handlers_pkg.memory_write(
             deps,
             content,
@@ -275,6 +286,7 @@ class ToolHandlers:
             category=category,
             claims=claims,
             supersedes=supersedes,
+            review=review,
             ctx=ctx,
         )
 
