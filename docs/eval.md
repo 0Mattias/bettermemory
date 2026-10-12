@@ -257,8 +257,11 @@ bridge: the conversation whose hook row was the latest in the row's
 worktree. A stamp naming an id whose hooks went quiet before that
 conversation's first hook row is the window's own server under the id
 it had before a /clear or /resume, and its row joins that conversation,
-as the hooks join it. Rows after a show are read up to `--until`, and
-the join reads only rows before it.
+as the hooks join it. Rows after a show are read up to the id's next
+show in the same conversation, by either surface (a compact re-shows a
+brief's ids, a recall may show what the brief showed), or else up to
+`--until`, so an open or a use counts once, for the latest show of the
+id before it; the join reads only rows before `--until`.
 
 Beside them: `settlements` by surface; `segments` (the conversations
 the surface spoke in, and the segments a compact or clear opened);

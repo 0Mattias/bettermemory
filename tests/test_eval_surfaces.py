@@ -526,6 +526,39 @@ def test_opens_uses_and_ignores_after_a_show() -> None:
     assert surfaces["rules"] == ["rs-v1"]
 
 
+def test_an_open_counts_for_the_latest_show_of_the_id_only() -> None:
+    """The slice 4 verifier's repro: a show's follow-ups ran to the
+    window's end, so one open counted for every earlier show of the id.
+    They end at the id's next show in the conversation, by either
+    surface."""
+    # A compact re-shows the brief's id in a new segment.
+    compact = [
+        _brief(_ts(1), [MEM_A], event_id="e1"),
+        _brief(_ts(1, 30), [MEM_A], segment=1, event_id="e2"),
+        _tool("show", _ts(1, 31), id=MEM_A),
+    ]
+    brief = _surfaces(compact)["brief"]
+    assert (brief["shown"], brief["opened"], brief["deliveries_helped"]) == (2, 1, 1)
+    # A recall shows the id the brief showed.
+    both = [
+        _brief(_ts(1), [MEM_A], event_id="e1"),
+        _recall(_ts(1, 30), [MEM_A], segment=1, event_id="e2"),
+        _tool("show", _ts(1, 31), id=MEM_A),
+    ]
+    surfaces = _surfaces(both)
+    assert (surfaces["brief"]["opened"], surfaces["recall"]["opened"]) == (0, 1)
+    # An open before the re-show still counts for the first show, and a
+    # re-show in another conversation does not bound it.
+    early = [
+        _brief(_ts(1), [MEM_A], event_id="e1"),
+        _tool("show", _ts(1, 5), id=MEM_A),
+        _brief(_ts(1, 30), [MEM_A], session="transcript-2", event_id="e2"),
+        _brief(_ts(1, 40), [MEM_A], segment=1, event_id="e3"),
+    ]
+    brief = _surfaces(early)["brief"]
+    assert (brief["shown"], brief["opened"]) == (3, 1)
+
+
 def test_an_unstamped_row_joins_by_the_worktree_bridge() -> None:
     """With no harness stamp, a tool row joins the conversation whose hook
     row was the latest in its worktree before it; a conversation joined

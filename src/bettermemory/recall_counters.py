@@ -27,13 +27,18 @@ server keeps the id it was spawned with, so a row stamped with an id
 whose hooks do not run beside the bridge's conversation (none at or
 after its first hook row) joins that conversation.
 
-Every count is over shows inside the window; the rows after a show are
-read up to the window's end. Rows carry ids, counts and labels, never a
-body or a prompt, and so does everything here.
+Every count is over shows inside the window. The rows after a show
+are read up to the id's next show in the same conversation, by either
+surface (a compact re-shows a brief's ids in a new segment, a recall may
+show an id a brief showed), or else up to the window's end: an open or
+a use counts once, for the latest show of the id before it. Rows carry
+ids, counts and labels, never a body or a prompt, and so does
+everything here.
 """
 
 from __future__ import annotations
 
+import bisect
 import statistics
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -294,6 +299,44 @@ def _conversation_rows(
     return out
 
 
+def _reshown(
+    rows: list[Mapping[str, Any]], end: datetime | None
+) -> dict[tuple[str, str], list[tuple[datetime, int]]]:
+    """Per conversation and id, when a show (of either surface) put the
+    id in front of the model before `end`: (timestamp, log position),
+    sorted."""
+    out: dict[tuple[str, str], list[tuple[datetime, int]]] = {}
+    for index, row in enumerate(rows):
+        if not is_surface_show(row):
+            continue
+        session = session_of(row)
+        stamp = parse_event_ts(row.get("ts"))
+        if session is None or stamp is None or (end is not None and stamp >= end):
+            continue
+        for memory_id in shown_ids(row):
+            out.setdefault((session, memory_id), []).append((stamp, index))
+    for times in out.values():
+        times.sort()
+    return out
+
+
+def _next_show(
+    reshown: Mapping[tuple[str, str], list[tuple[datetime, int]]],
+    session: str | None,
+    memory_id: str,
+    stamp: datetime | None,
+    index: int,
+) -> datetime | None:
+    """When the id is next shown in the conversation after the show at
+    (`stamp`, `index`), or None: the show's follow-ups for the id end
+    there, so an open or a use counts for the latest show before it."""
+    if session is None or stamp is None:
+        return None
+    times = reshown.get((session, memory_id), [])
+    position = bisect.bisect_right(times, (stamp, index))
+    return times[position][0] if position < len(times) else None
+
+
 def _latest_grades(
     rows: Iterable[Mapping[str, Any]], start: datetime | None, end: datetime | None
 ) -> dict[str, dict[str, int]]:
@@ -334,7 +377,12 @@ def compute_surface_report(
     in_window = [
         row for row in rows if _in_window(parse_event_ts(row.get("ts")), start, end)
     ]
-    shows = [row for row in in_window if is_surface_show(row)]
+    shows = [
+        (index, row)
+        for index, row in enumerate(rows)
+        if is_surface_show(row)
+        and _in_window(parse_event_ts(row.get("ts")), start, end)
+    ]
     settlements = [row for row in in_window if is_settlement(row)]
     opened_rows = [row for row in in_window if row.get("kind") == "segment_opened"]
     unanswered = [row for row in in_window if row.get("kind") == "review_unanswered"]
@@ -343,11 +391,12 @@ def compute_surface_report(
         return None
 
     after = _conversation_rows(rows, end)
+    reshown = _reshown(rows, end)
     tallies = {surface: _SurfaceTally() for surface in SURFACES}
     sessions: set[str] = set()
     segments: set[tuple[str, int]] = set()
     rules: set[str] = set()
-    for show in shows:
+    for index, show in shows:
         surface = surface_of(show)
         session = session_of(show)
         stamp = parse_event_ts(show.get("ts"))
@@ -377,7 +426,12 @@ def compute_surface_report(
         helped = False
         for memory_id in shown_ids(show):
             tally.shown += 1
-            mine = [row for row in later if memory_id in row.ids]
+            until = _next_show(reshown, session, memory_id, stamp, index)
+            mine = [
+                row
+                for row in later
+                if memory_id in row.ids and (until is None or row.stamp < until)
+            ]
             opened = any(row.kind == "show" for row in mine)
             used = any(
                 row.kind == "use" and _attested(row.event, memory_id) for row in mine
