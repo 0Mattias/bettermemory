@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -417,6 +418,48 @@ def test_line_faults_flags_a_line_beyond_id_summary_and_mark() -> None:
         stdout=text + "\n- more", surface="session_brief", ids=tuple(ids)
     )
     assert brief._line_faults(store, longer) == 1
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
+def test_signature_sees_a_root_file_created_and_removed(tmp_path: Path) -> None:
+    """The held stamps are part of the signature: a file created and
+    removed in the root leaves the head's signature and the walk files as
+    they were, and moves the signature all the same, so a fill that lost
+    its memo to it is visible in the results."""
+    from .test_verdict import _repo
+
+    repo = _repo(tmp_path)
+    before = brief._signature(str(repo))
+    assert before is not None and before[1] is not None and before[2]
+    assert brief._signature(str(repo)) == before
+    scratch = repo / ".notes.md.swp"
+    scratch.write_text("x")
+    scratch.unlink()
+    after = brief._signature(str(repo))
+    assert after[:2] == before[:2]
+    assert after != before
+    assert brief._signature(None) is None
+
+
+def test_fill_counts_read_the_checkouts_last_fill() -> None:
+    from bettermemory.recall import brief_key
+    from bettermemory.verdict import FillReport
+
+    origin = Origin(repo=REPO, worktree_root=WT, cwd=None)
+    report = FillReport(rows=5, resolved=4, kept=3, retried=1, lost=1)
+    state = SimpleNamespace(
+        fill_report=lambda key: report if key == brief_key(origin) else None
+    )
+    checkout = {"local": None, "origin": origin}
+    assert brief._fill_counts(state, checkout) == {
+        "fill_rows": 5,
+        "fill_resolved": 4,
+        "fill_kept": 3,
+        "fill_retried": 1,
+        "fill_lost": 1,
+    }
+    nothing = SimpleNamespace(fill_report=lambda key: None)
+    assert set(brief._fill_counts(nothing, checkout).values()) == {None}
 
 
 # ---------------------------------------------------------------------------

@@ -40,9 +40,11 @@ rows by verdict outside those surfaces applies it the same way.
 fork git (the session brief, built on a hook's deadline): a row whose
 commit leg the memo answers, or that needs no git at all, gets its full
 verdict; every other row comes back an `UnresolvedVerdict`, with no
-process run. `resolve_verdicts` over those rows fills the memo, in the
-caller's thread or a worker thread's (`anyio.to_thread`): the memo is
-lock-guarded and each call opens its own pass.
+process run. `resolve_verdicts` over those rows answers them in the
+caller's thread; `fill_verdicts` fills the memo with their commit legs
+from a worker thread, storing row by row so that one disturbance in the
+repository loses one row, not the pass. The memo is lock-guarded and
+each call opens its own pass.
 
 The caller's origin is an argument, never captured here: `memory_show`
 passes `_handlers.capture_origin()`, the hook the origin it builds from
@@ -70,8 +72,10 @@ from .verify import (
 )
 
 __all__ = [
+    "FillReport",
     "MemoryVerdict",
     "UnresolvedVerdict",
+    "fill_verdicts",
     "memoised_verdicts",
     "memory_verdict",
     "resolve_verdicts",
@@ -125,8 +129,9 @@ def resolve_verdicts(
     commit landed keeps nothing and the next call resolves again.
 
     `memory_show` calls it with one memory; the session brief with the
-    rows it resolves synchronously, and from a worker thread with the
-    rest to fill the memo for the next call."""
+    rows it resolves synchronously. The brief's background fill, which
+    resolves the rest for the next call, runs `fill_verdicts`, which
+    stores row by row."""
     drift = _open_pass(caller_origin)
     out: list[MemoryVerdict] = []
     for memory in memories:
@@ -136,6 +141,99 @@ def resolve_verdicts(
     if drift is not None:
         drift.store()
     return out
+
+
+@dataclass(frozen=True)
+class FillReport:
+    """What one `fill_verdicts` call did with the rows handed to it.
+
+    `rows` is how many it was given; `resolved` how many commit legs its
+    first attempt resolved with git and could key (a row the memo already
+    answered, one that needs no git, one whose files settle no key and
+    one resolved while a git process failed count for none); `kept` how
+    many resolutions reached `_DRIFT_MEMO`, first attempt and retry
+    together; `retried` the rows whose first resolution the hold check
+    discarded, each resolved once more; `lost` those whose retry was
+    discarded too."""
+
+    rows: int
+    resolved: int = 0
+    kept: int = 0
+    retried: int = 0
+    lost: int = 0
+
+
+def fill_verdicts(
+    memories: Sequence[Memory],
+    *,
+    caller_origin: Origin | None,
+) -> FillReport:
+    """Resolve each memory's commit leg the memo does not hold into
+    `_DRIFT_MEMO`, for the next `memoised_verdicts` to read: the session
+    brief's background fill. Returns what it kept (`FillReport`). No
+    verdict is assembled: the memo holds the commit leg alone, and the
+    other parts are computed on every read.
+
+    What keeps a resolution is `resolve_verdicts`'s rule, the pass's
+    `store` check: the head, its signature, every keyed file and every
+    held directory (the repository root, the index, the attribute files'
+    directories) read as they did when the pass opened. What changes is
+    the window. `resolve_verdicts` stores once, at the end, so one
+    unrelated disturbance anywhere in a pass over a hundred rows (a file
+    an editor creates and removes in the root, a ``git status`` that
+    rewrites the index) discards every row. Here the pass stores after
+    each row it resolved: a store that holds commits that row, its check
+    covering the whole span since the pass opened and so every walk the
+    row shared with earlier rows; a store that fails discards only the
+    row resolved since the last one that held, and the fill goes on in a
+    new pass opened on what the files read then. The rows a failed store
+    discarded are resolved once more, in a pass of their own, after the
+    rest; a row lost twice stays out of the memo and the next brief
+    resolves it. A disturbance that never stops (files created in the
+    root steadily) still keeps nothing, as before.
+
+    No looser than one store at the end: each store compares with the
+    pass's opening read, as the single store does, and a pass whose check
+    has failed once stores nothing more (`_DriftPass.store`). The cost is
+    one check per row resolved with git: stats of the held files and
+    directories and of the files that name the head, beside the git
+    process the row ran."""
+    rows = list(memories)
+    if caller_origin is None or caller_origin.cwd is None:
+        return FillReport(rows=len(rows))
+    if caller_origin.repo is None:
+        return FillReport(rows=len(rows))
+    cwd = Path(caller_origin.cwd)
+    repo = caller_origin.repo
+
+    def attempt(batch: list[Memory]) -> tuple[int, int, list[Memory]]:
+        drift = _DriftPass(cwd, repo)
+        resolved = kept = 0
+        discarded: list[Memory] = []
+        for memory in batch:
+            drift.lookup(memory, memory.last_verified_at)
+            count = drift.unstored
+            if not count:
+                continue
+            resolved += count
+            if drift.store():
+                kept += count
+            else:
+                discarded.append(memory)
+                drift = _DriftPass(cwd, repo)
+        return resolved, kept, discarded
+
+    resolved, kept, discarded = attempt(rows)
+    if not discarded:
+        return FillReport(rows=len(rows), resolved=resolved, kept=kept)
+    _, again, still = attempt(discarded)
+    return FillReport(
+        rows=len(rows),
+        resolved=resolved,
+        kept=kept + again,
+        retried=len(discarded),
+        lost=len(still),
+    )
 
 
 def memoised_verdicts(

@@ -44,10 +44,12 @@ directory in this process) reads `memoised_verdicts` and runs no git
 process while the memo answers; when rows it cannot answer would leave
 the brief short of eight, the first 24 of them are resolved on the
 request path and the rest handed to a background fill (one in-flight
-fill per repository and directory, `resolve_verdicts` on a worker
-thread). A cold call resolves the 24 newest eligible rows synchronously
-and hands the rest to the fill. The in-process CLI path has no background: its process exits
-after printing, so it resolves its 24 and stops.
+fill per repository and directory, `fill_verdicts` on a worker
+thread, which stores row by row so one disturbance in the repository
+loses one row and not the fill). A cold call resolves the 24 newest
+eligible rows synchronously and hands the rest to the fill. The
+in-process CLI path has no background: its process exits after
+printing, so it resolves its 24 and stops.
 """
 
 from __future__ import annotations
@@ -77,8 +79,10 @@ from .origin import (
 from .store import IMPORTED, LOCAL, STORE_FILENAME, Store, TrustRow
 from .time_utils import ensure_utc, parse_event_ts
 from .verdict import (
+    FillReport,
     MemoryVerdict,
     UnresolvedVerdict,
+    fill_verdicts,
     memoised_verdicts,
     resolve_verdicts,
 )
@@ -101,6 +105,7 @@ __all__ = [
     "SEGMENT_DELIVERY_CAP",
     "SURFACE_BRIEF",
     "SURFACE_RECALL",
+    "brief_key",
     "clean_prompt",
     "disputed_marks",
     "in_project",
@@ -535,7 +540,8 @@ class RecallState:
     and beyond `max_sessions`; a session not held is rebuilt from the log
     (`rebuild_session`) on first sight. Briefs: per repository, the HEAD
     the last brief there read (a brief is warm while it holds) and the one
-    background fill in flight.
+    background fill in flight, and what each repository's last finished
+    fill kept (`fill_report`).
 
     The daemon holds one for its lifetime and calls it from worker
     threads. The in-process CLI path builds a fresh one per call with
@@ -554,6 +560,7 @@ class RecallState:
         self._sessions: OrderedDict[tuple[str, str], _SessionRecall] = OrderedDict()
         self._heads: OrderedDict[str, str] = OrderedDict()
         self._fills: OrderedDict[str, threading.Thread] = OrderedDict()
+        self._reports: OrderedDict[str, FillReport] = OrderedDict()
         self._background = background
         self._max_sessions = max_sessions
         self._idle_seconds = idle_seconds
@@ -744,15 +751,14 @@ class RecallState:
         memories: Sequence[Memory],
         *,
         caller_origin: Origin,
-        now: datetime,
-        stale_after_days: int,
     ) -> bool:
-        """Resolve `memories`' verdicts into the memo on a worker thread,
-        off the request path, so the next brief reads them warm. One fill
-        per repository at a time: while one runs, another is not started
-        (the rows it would have filled are still unresolved next call and
-        are scheduled then). Returns whether a fill started; never one
-        without `background`."""
+        """Resolve `memories`' commit legs into the memo on a worker thread
+        (`fill_verdicts`), off the request path, so the next brief reads
+        them warm; what it kept is kept for `fill_report`. One fill per
+        repository at a time: while one runs, another is not started (the
+        rows it would have filled are still unresolved next call and are
+        scheduled then). Returns whether a fill started; never one without
+        `background`."""
         if not self._background or not memories:
             return False
         rows = list(memories)
@@ -763,12 +769,12 @@ class RecallState:
 
             def fill() -> None:
                 try:
-                    resolve_verdicts(
-                        rows,
-                        caller_origin=caller_origin,
-                        now=now,
-                        stale_after_days=stale_after_days,
-                    )
+                    report = fill_verdicts(rows, caller_origin=caller_origin)
+                    with self._lock:
+                        self._reports[repo_key] = report
+                        self._reports.move_to_end(repo_key)
+                        while len(self._reports) > STATE_MAX_BRIEF_KEYS:
+                            self._reports.popitem(last=False)
                 except Exception as exc:  # noqa: BLE001 - a fill is best effort
                     log.warning(
                         "brief fill for %s failed: %s: %s",
@@ -785,6 +791,12 @@ class RecallState:
             thread.start()
             return True
 
+    def fill_report(self, repo_key: str) -> FillReport | None:
+        """What the last finished fill for `repo_key` kept, or None when
+        none has finished (or it failed): diagnostics for a bench."""
+        with self._lock:
+            return self._reports.get(repo_key)
+
     def wait_for_fills(self, timeout: float = 30.0) -> bool:
         """Join every fill in flight; True when none is left running."""
         with self._lock:
@@ -797,6 +809,13 @@ class RecallState:
 # ---------------------------------------------------------------------------
 # The session brief
 # ---------------------------------------------------------------------------
+
+
+def brief_key(caller: Origin) -> str:
+    """The key the brief's state is held under for `caller`: its repository
+    (the worktree root, else the remote) and the directory it stands in
+    (`RecallState.brief_is_warm`, `schedule_fill`, `fill_report`)."""
+    return f"{caller.worktree_root or caller.repo or ''}\0{caller.cwd or ''}"
 
 
 def _head_of(caller: Origin) -> str | None:
@@ -860,7 +879,7 @@ def _select_brief(
     than `BRIEF_MAX_POINTERS`, resolves the first `BRIEF_SYNC_RESOLVE` of
     them on the request path, as a cold call does, and hands the rest to
     the fill."""
-    repo_key = f"{caller.worktree_root or caller.repo or ''}\0{caller.cwd or ''}"
+    repo_key = brief_key(caller)
     ids = store.brief_rows(
         admit=lambda memory_origin: in_project(memory_origin, caller),
         provenance=_DELIVERED_PROVENANCE,
@@ -964,8 +983,6 @@ def _select_brief(
             repo_key,
             pending,
             caller_origin=caller,
-            now=now,
-            stale_after_days=stale_after_days,
         )
     return _BriefSelection(picked, examined, len(pending))
 

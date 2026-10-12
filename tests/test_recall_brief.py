@@ -21,7 +21,9 @@ counter), the one place every git subprocess in the package is spawned.
 
 from __future__ import annotations
 
+import os
 import shutil
+import subprocess
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -32,6 +34,7 @@ from typing import Any
 import pytest
 
 from bettermemory import _caches
+from bettermemory import _response as response_module
 from bettermemory import origin as origin_module
 from bettermemory import recall as recall_module
 from bettermemory.config import Config, StorageConfig, TelemetryConfig
@@ -47,7 +50,13 @@ from bettermemory.recall import (
     summarize,
 )
 from bettermemory.store import Store
-from bettermemory.verdict import resolve_verdicts
+from bettermemory.verdict import (
+    FillReport,
+    UnresolvedVerdict,
+    fill_verdicts,
+    memoised_verdicts,
+    resolve_verdicts,
+)
 
 from .test_server_commit_drift import _REMOTE, _commit_touching
 from .test_verdict import _repo
@@ -359,15 +368,22 @@ def test_a_warm_brief_runs_no_git(
 
 
 def _spy_resolve(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, int]]:
-    """Every `resolve_verdicts` the brief runs: (thread name, rows)."""
+    """Every `resolve_verdicts` the brief runs on the request path and every
+    `fill_verdicts` its background fill runs: (thread name, rows)."""
     calls: list[tuple[str, int]] = []
     real = resolve_verdicts
+    real_fill = fill_verdicts
 
     def spy(memories: Any, **kw: Any) -> Any:
         calls.append((threading.current_thread().name, len(memories)))
         return real(memories, **kw)
 
+    def spy_fill(memories: Any, **kw: Any) -> Any:
+        calls.append((threading.current_thread().name, len(memories)))
+        return real_fill(memories, **kw)
+
     monkeypatch.setattr(recall_module, "resolve_verdicts", spy)
+    monkeypatch.setattr(recall_module, "fill_verdicts", spy_fill)
     return calls
 
 
@@ -456,21 +472,19 @@ def test_one_fill_per_repository_at_a_time(
     gate = threading.Event()
     started: list[int] = []
 
-    def slow(memories: Any, **kw: Any) -> Any:
+    def slow(memories: Any, **kw: Any) -> FillReport:
         started.append(len(memories))
         gate.wait(10)
-        return []
+        return FillReport(rows=len(memories))
 
     memory = world.fresh("the widget rule lives in notes.md")
-    monkeypatch.setattr(recall_module, "resolve_verdicts", slow)
+    monkeypatch.setattr(recall_module, "fill_verdicts", slow)
 
     def fill(repo_key: str) -> bool:
         return world.state.schedule_fill(
             repo_key,
             [memory],
             caller_origin=world.caller,
-            now=datetime.now(timezone.utc),
-            stale_after_days=30,
         )
 
     assert fill("repo")
@@ -490,9 +504,236 @@ def test_no_background_fill_on_the_cli_path(world: _World) -> None:
         "repo",
         [memory],
         caller_origin=world.caller,
-        now=datetime.now(timezone.utc),
-        stale_after_days=30,
     )
+
+
+# ---------------------------------------------------------------------------
+# The fill while the repository moves under it
+# ---------------------------------------------------------------------------
+#
+# The fill stores row by row (`verdict.fill_verdicts`): a disturbance that
+# moves a held stamp (the root directory, the index) loses the one row
+# whose resolution overlapped it, which is resolved again after the rest,
+# and never the whole fill. The fixture makes the fill matter: the 24
+# newest rows (C, citing notes.md) and the 24 before them (B, citing
+# docs/guide.md) drift after a commit to each file, so only the 16 oldest
+# (A, citing other.md) read fresh, and they sit beyond the 24 a cold call
+# resolves and beyond the 24 a warm call resolves for rows the memo cannot
+# answer. A fill that keeps nothing therefore leaves the warm brief empty
+# where the full scan shows eight.
+
+_FILL_ROWS = 40  # B and A: what the cold brief after the commits hands the fill
+
+
+def _fill_world(world: _World) -> list[Memory]:
+    """The three groups, oldest first, after the commits that drift B and
+    C; the repository's head noted by a brief before them."""
+    older = [world.fresh(f"gadget rule {i} lives in other.md") for i in range(16)]
+    middle = [world.fresh(f"guide rule {i} lives in docs/guide.md") for i in range(24)]
+    newer = [world.fresh(f"widget rule {i} lives in notes.md") for i in range(24)]
+    assert world.brief().ids  # note the repository's head
+    assert world.state.wait_for_fills()
+    _commit_touching(world.repo, "post", when=_FUTURE)
+    _commit_touching(world.repo, "post", when=_FUTURE, filename="docs/guide.md")
+    return older + middle + newer
+
+
+def _on_fill_rows(monkeypatch: pytest.MonkeyPatch, steps: dict[int, Any]) -> list[int]:
+    """Run `steps[n]` on the fill's thread just before its n-th row
+    resolution (`_response._resolve_hit_drift`), inside the window of the
+    pass that resolves that row. Returns the fill-thread resolution count
+    (one element, updated in place)."""
+    real = response_module._resolve_hit_drift
+    seen = [0]
+
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        if threading.current_thread().name.startswith("bettermemory-brief-fill"):
+            seen[0] += 1
+            step = steps.get(seen[0])
+            if step is not None:
+                step()
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(response_module, "_resolve_hit_drift", wrapped)
+    return seen
+
+
+def _full_scan(world: _World, memories: list[Memory]) -> list[str]:
+    """The first eight rows that read fresh, newest first, resolved from an
+    empty memo; the memo is restored afterwards."""
+    saved = dict(response_module._DRIFT_MEMO)
+    response_module._clear_drift_memo()
+    full = resolve_verdicts(
+        [world.store.load_one(m.id) for m in reversed(memories)],
+        caller_origin=world.caller,
+        now=datetime.now(timezone.utc),
+        stale_after_days=world.config.behavior.verification_stale_days,
+    )
+    response_module._clear_drift_memo()
+    response_module._remember_drift(saved)
+    return [v.id for v in full if v.staleness_verdict == "fresh"][:BRIEF_MAX_POINTERS]
+
+
+def _repo_key(world: _World) -> str:
+    return recall_module.brief_key(world.caller)
+
+
+def _stamp_of(path: Path) -> tuple[int, int]:
+    status = path.stat()
+    return status.st_mtime_ns, status.st_ctime_ns
+
+
+def _fill_then_warm(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> tuple[recall_module.HookResult, list[int]]:
+    """The cold brief after the commits, its fill joined, then a warm
+    brief: the warm brief and the rows it resolved on the request path."""
+    cold = world.brief()
+    assert cold.stdout == ""  # none of the 24 newest is fresh
+    assert world.briefs()[-1]["unresolved"] == _FILL_ROWS
+    assert world.state.wait_for_fills()
+    calls = _spy_resolve(monkeypatch)
+    warm = world.brief()
+    request_thread = threading.current_thread().name
+    return warm, [rows for name, rows in calls if name == request_thread]
+
+
+def test_a_fill_keeps_its_rows_when_a_root_file_comes_and_goes(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file created and removed in the root mid-fill (an editor's swap
+    file) moves the root's stamp: the row whose resolution it overlapped
+    is discarded and resolved again, every other row is kept, and the
+    warm brief equals the full scan with nothing resolved on the request
+    path."""
+    every = _fill_world(world)
+    moved: list[bool] = []
+
+    def swap_file() -> None:
+        before = _stamp_of(world.repo)
+        scratch = world.repo / ".notes.md.swp"
+        scratch.write_text("x")
+        scratch.unlink()
+        moved.append(_stamp_of(world.repo) != before)
+
+    seen = _on_fill_rows(monkeypatch, {10: swap_file})
+    warm, on_request = _fill_then_warm(world, monkeypatch)
+    assert moved == [True]
+    assert list(warm.ids) == _full_scan(world, every)
+    assert len(warm.ids) == BRIEF_MAX_POINTERS
+    assert on_request == []
+    assert world.briefs()[-1]["unresolved"] == 0
+    report = world.state.fill_report(_repo_key(world))
+    assert report is not None
+    assert (report.rows, report.retried, report.lost) == (_FILL_ROWS, 1, 0)
+    assert report.kept == report.resolved == _FILL_ROWS
+    assert seen[0] == _FILL_ROWS + 1  # the discarded row, resolved again
+
+
+def test_a_fill_keeps_its_rows_when_the_index_is_rewritten(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``git status`` that rewrites the index mid-fill (a file stat-dirty
+    with its content unchanged, as an IDE's poll finds it) loses one row,
+    which the retry recovers: the warm brief equals the full scan."""
+    every = _fill_world(world)
+    index = world.repo / ".git" / "index"
+    moved: list[bool] = []
+
+    def refresh_index() -> None:
+        before = _stamp_of(index)
+        target = world.repo / "other.md"
+        later = target.stat().st_mtime_ns + 5_000_000_000
+        os.utime(target, ns=(later, later))
+        subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=world.repo,
+            check=True,
+            capture_output=True,
+        )
+        moved.append(_stamp_of(index) != before)
+
+    _on_fill_rows(monkeypatch, {10: refresh_index})
+    warm, on_request = _fill_then_warm(world, monkeypatch)
+    assert moved == [True]
+    assert list(warm.ids) == _full_scan(world, every)
+    assert on_request == []
+    report = world.state.fill_report(_repo_key(world))
+    assert report is not None
+    assert (report.retried, report.lost) == (1, 0)
+    assert report.kept == report.resolved == _FILL_ROWS
+
+
+def test_a_quiet_fill_keeps_every_row(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    every = _fill_world(world)
+    warm, on_request = _fill_then_warm(world, monkeypatch)
+    assert list(warm.ids) == _full_scan(world, every)
+    assert on_request == []
+    assert world.briefs()[-1]["unresolved"] == 0
+    report = world.state.fill_report(_repo_key(world))
+    assert report is not None
+    assert (report.rows, report.resolved, report.kept) == (_FILL_ROWS,) * 3
+    assert (report.retried, report.lost) == (0, 0)
+
+
+def test_a_fill_never_memoises_a_verdict_computed_across_a_claimed_change(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A commit to the path the oldest rows claim lands mid-fill and is
+    undone a few rows later (the head moves away and back). The rows
+    resolved while it stood read drifted, and no such reading may be
+    memoised under the head the repository is back on: every row the memo
+    answers afterwards reads as a full scan from an empty memo reads it,
+    and the memo answers all but the rows resolved under the passing
+    head."""
+    every = _fill_world(world)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=world.repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    def passing_commit() -> None:
+        _commit_touching(world.repo, "passing", when=_FUTURE, filename="other.md")
+
+    def undo() -> None:
+        subprocess.run(
+            ["git", "reset", "--hard", head],
+            cwd=world.repo,
+            check=True,
+            capture_output=True,
+        )
+
+    # The fill takes B first (newest first), then A: rows 25 to 40 cite
+    # other.md.
+    _on_fill_rows(monkeypatch, {28: passing_commit, 31: undo})
+    assert world.brief().stdout == ""
+    assert world.state.wait_for_fills()
+
+    rows = [world.store.load_one(m.id) for m in reversed(every)]
+    now = datetime.now(timezone.utc)
+    stale = world.config.behavior.verification_stale_days
+    memoised = memoised_verdicts(
+        rows, caller_origin=world.caller, now=now, stale_after_days=stale
+    )
+    response_module._clear_drift_memo()
+    full = {
+        v.id: v
+        for v in resolve_verdicts(
+            rows, caller_origin=world.caller, now=now, stale_after_days=stale
+        )
+    }
+    assert sum(1 for v in full.values() if v.staleness_verdict == "fresh") == 16
+    answered = [v for v in memoised if not isinstance(v, UnresolvedVerdict)]
+    assert [v for v in answered if v != full[v.id]] == []
+    assert len(rows) - len(answered) <= 3
+    report = world.state.fill_report(_repo_key(world))
+    assert report is not None
+    assert report.retried == 2
 
 
 # ---------------------------------------------------------------------------
@@ -537,14 +778,12 @@ def test_a_failed_fill_is_logged(
         raise RuntimeError("git went away")
 
     memory = world.fresh("the widget rule lives in notes.md")
-    monkeypatch.setattr(recall_module, "resolve_verdicts", broken)
+    monkeypatch.setattr(recall_module, "fill_verdicts", broken)
     with caplog.at_level("WARNING", logger="bettermemory.recall"):
         assert world.state.schedule_fill(
             "repo",
             [memory],
             caller_origin=world.caller,
-            now=datetime.now(timezone.utc),
-            stale_after_days=30,
         )
         assert world.state.wait_for_fills()
     assert "brief fill for repo failed: RuntimeError: git went away" in caplog.text
@@ -553,7 +792,9 @@ def test_a_failed_fill_is_logged(
 def test_the_brief_tables_are_bounded(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(recall_module, "resolve_verdicts", lambda m, **kw: [])
+    monkeypatch.setattr(
+        recall_module, "fill_verdicts", lambda m, **kw: FillReport(rows=len(m))
+    )
     memory = world.fresh("the widget rule lives in notes.md")
     state = RecallState(background=True)
     for i in range(recall_module.STATE_MAX_BRIEF_KEYS + 10):
@@ -562,8 +803,6 @@ def test_the_brief_tables_are_bounded(
             f"repo-{i}",
             [memory],
             caller_origin=world.caller,
-            now=datetime.now(timezone.utc),
-            stale_after_days=30,
         )
     assert state.wait_for_fills()
     assert len(state._heads) == recall_module.STATE_MAX_BRIEF_KEYS
