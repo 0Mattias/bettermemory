@@ -619,6 +619,7 @@ def compute_eval(
     ``explicit_applied_count == 0`` is uninformative when nothing was
     ever in a position to attribute an apply.
     """
+    from .recall import is_settlement
     from .recall_counters import compute_surface_report, is_surface_row
     from .review_counters import compute_review_report, is_review_row
 
@@ -824,7 +825,7 @@ def compute_eval(
             outcome = ev.get("outcome")
             if outcome != "applied":
                 continue
-            if ev.get("surface") is not None:
+            if is_settlement(ev):
                 # A pointer's settlement (`recall.settle_shown`): the
                 # surfaces section counts it, the trio does not, so the
                 # published series keeps one definition across the
@@ -3070,6 +3071,8 @@ def compute_tool_usage(
     and a tally of unmapped event kinds so the map can be audited
     against the live recorder.
     """
+    from .recall import is_settlement
+
     now = now or datetime.now(timezone.utc)
     cutoff: datetime | None = (now - since) if since is not None else None
 
@@ -3093,7 +3096,7 @@ def compute_tool_usage(
         kind = ev.get("kind")
         if not isinstance(kind, str):
             continue
-        if kind == "use" and ev.get("surface") is not None:
+        if is_settlement(ev):
             # A pointer's settlement, recorded by the Stop
             # (`recall.settle_shown`): no tool was called.
             continue

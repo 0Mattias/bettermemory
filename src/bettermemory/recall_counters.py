@@ -21,15 +21,24 @@ that is the conversation's (the hooks' rows), and otherwise by the
 worktree bridge: the conversation whose hook row (a show or a Stop's
 `turn_audited`) was the latest in the row's worktree before it. A
 conversation any row is stamped for is joined by the stamp only, as the
-hooks join it.
+hooks join it. A stamp is read by the hooks' rule (`hook.runs_beside`):
+Claude Code names the conversation anew on /clear and /resume while the
+server keeps the id it was spawned with, so a row stamped with an id
+whose hooks do not run beside the bridge's conversation (none at or
+after its first hook row) joins that conversation.
 
-Every count is over shows inside the window; the rows after a show are
-read up to the window's end. Rows carry ids, counts and labels, never a
-body or a prompt, and so does everything here.
+Every count is over shows inside the window. The rows after a show
+are read up to the id's next show in the same conversation, by either
+surface (a compact re-shows a brief's ids in a new segment, a recall may
+show an id a brief showed), or else up to the window's end: an open or
+a use counts once, for the latest show of the id before it. Rows carry
+ids, counts and labels, never a body or a prompt, and so does
+everything here.
 """
 
 from __future__ import annotations
 
+import bisect
 import statistics
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -37,7 +46,8 @@ from datetime import datetime
 from typing import Any
 
 from .events import HARNESS_SESSION_FIELD, HARNESS_STAMPED_KINDS
-from .recall import SURFACE_BRIEF, SURFACE_RECALL
+from .hook import hook_spans, runs_beside
+from .recall import SURFACE_BRIEF, SURFACE_RECALL, is_settlement
 from .time_utils import parse_event_ts
 
 #: The event kind `bettermemory recall grade` writes.
@@ -219,12 +229,22 @@ def _conversation_rows(
 
     Walks the rows in log order, holding per worktree the conversation of
     the latest hook row there (the bridge); a row stamped with a harness
-    session joins that one, a row recorded under a conversation's own id
-    joins it, and any other row joins the bridge's answer for its
-    worktree unless that conversation is joined by stamps."""
+    session joins that one unless its hooks do not run beside the
+    bridge's answer (`hook.runs_beside`: the stamp is that window's own
+    server under the id it had before a /clear or /resume), a row
+    recorded under a conversation's own id joins it, and any other row
+    joins the bridge's answer for its worktree. The bridge never answers
+    with a conversation any row is stamped for. Rows at or
+    after `end` take no part, so a window's report does not move when the
+    log grows past it."""
+    bounded: list[Mapping[str, Any]] = []
+    for row in rows:
+        stamp = parse_event_ts(row.get("ts"))
+        if stamp is not None and (end is None or stamp < end):
+            bounded.append(row)
     conversations: set[str] = set()
     stamped: set[str] = set()
-    for row in rows:
+    for row in bounded:
         if is_surface_show(row) or row.get("kind") == "turn_audited":
             hook_session = session_of(row)
             if hook_session is not None:
@@ -232,13 +252,13 @@ def _conversation_rows(
         harness = _str(row.get(HARNESS_SESSION_FIELD))
         if harness is not None:
             stamped.add(harness)
+    spans = hook_spans(bounded)
     latest: dict[str, str] = {}
     out: dict[str, list[_After]] = {}
-    for row in rows:
+    for row in bounded:
         kind = row.get("kind")
         stamp = parse_event_ts(row.get("ts"))
-        if stamp is None or (end is not None and stamp >= end):
-            continue
+        assert stamp is not None
         worktree = _str(row.get("worktree_root"))
         session = session_of(row)
         if is_surface_show(row) or kind == "turn_audited":
@@ -247,13 +267,24 @@ def _conversation_rows(
             continue
         if kind not in ("show", "use"):
             continue
+        bridged = latest.get(worktree) if worktree is not None else None
+        if bridged in stamped:
+            bridged = None
         conversation = _str(row.get(HARNESS_SESSION_FIELD))
-        if conversation is None and session in conversations:
-            conversation = session
-        if conversation is None and worktree is not None:
-            bridged = latest.get(worktree)
-            if bridged is not None and bridged not in stamped:
+        if conversation is not None:
+            # A server keeps the id it was spawned with across a /clear or
+            # /resume: a stamp whose hooks do not run beside the bridged
+            # conversation is that window's own server under its old id.
+            if (
+                bridged is not None
+                and conversation != bridged
+                and not runs_beside(spans, conversation, bridged)
+            ):
                 conversation = bridged
+        elif session in conversations:
+            conversation = session
+        else:
+            conversation = bridged
         if conversation is None:
             continue
         ids = (
@@ -266,6 +297,44 @@ def _conversation_rows(
                 _After(stamp=stamp, kind=str(kind), ids=tuple(ids), event=row)
             )
     return out
+
+
+def _reshown(
+    rows: list[Mapping[str, Any]], end: datetime | None
+) -> dict[tuple[str, str], list[tuple[datetime, int]]]:
+    """Per conversation and id, when a show (of either surface) put the
+    id in front of the model before `end`: (timestamp, log position),
+    sorted."""
+    out: dict[tuple[str, str], list[tuple[datetime, int]]] = {}
+    for index, row in enumerate(rows):
+        if not is_surface_show(row):
+            continue
+        session = session_of(row)
+        stamp = parse_event_ts(row.get("ts"))
+        if session is None or stamp is None or (end is not None and stamp >= end):
+            continue
+        for memory_id in shown_ids(row):
+            out.setdefault((session, memory_id), []).append((stamp, index))
+    for times in out.values():
+        times.sort()
+    return out
+
+
+def _next_show(
+    reshown: Mapping[tuple[str, str], list[tuple[datetime, int]]],
+    session: str | None,
+    memory_id: str,
+    stamp: datetime | None,
+    index: int,
+) -> datetime | None:
+    """When the id is next shown in the conversation after the show at
+    (`stamp`, `index`), or None: the show's follow-ups for the id end
+    there, so an open or a use counts for the latest show before it."""
+    if session is None or stamp is None:
+        return None
+    times = reshown.get((session, memory_id), [])
+    position = bisect.bisect_right(times, (stamp, index))
+    return times[position][0] if position < len(times) else None
 
 
 def _latest_grades(
@@ -308,12 +377,13 @@ def compute_surface_report(
     in_window = [
         row for row in rows if _in_window(parse_event_ts(row.get("ts")), start, end)
     ]
-    shows = [row for row in in_window if is_surface_show(row)]
-    settlements = [
-        row
-        for row in in_window
-        if row.get("kind") == "use" and row.get("surface") in SURFACES
+    shows = [
+        (index, row)
+        for index, row in enumerate(rows)
+        if is_surface_show(row)
+        and _in_window(parse_event_ts(row.get("ts")), start, end)
     ]
+    settlements = [row for row in in_window if is_settlement(row)]
     opened_rows = [row for row in in_window if row.get("kind") == "segment_opened"]
     unanswered = [row for row in in_window if row.get("kind") == "review_unanswered"]
     grades = [row for row in in_window if row.get("kind") == RECALL_GRADE]
@@ -321,11 +391,12 @@ def compute_surface_report(
         return None
 
     after = _conversation_rows(rows, end)
+    reshown = _reshown(rows, end)
     tallies = {surface: _SurfaceTally() for surface in SURFACES}
     sessions: set[str] = set()
     segments: set[tuple[str, int]] = set()
     rules: set[str] = set()
-    for show in shows:
+    for index, show in shows:
         surface = surface_of(show)
         session = session_of(show)
         stamp = parse_event_ts(show.get("ts"))
@@ -355,7 +426,12 @@ def compute_surface_report(
         helped = False
         for memory_id in shown_ids(show):
             tally.shown += 1
-            mine = [row for row in later if memory_id in row.ids]
+            until = _next_show(reshown, session, memory_id, stamp, index)
+            mine = [
+                row
+                for row in later
+                if memory_id in row.ids and (until is None or row.stamp < until)
+            ]
             opened = any(row.kind == "show" for row in mine)
             used = any(
                 row.kind == "use" and _attested(row.event, memory_id) for row in mine

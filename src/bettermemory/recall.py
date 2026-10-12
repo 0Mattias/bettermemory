@@ -104,6 +104,7 @@ __all__ = [
     "clean_prompt",
     "disputed_marks",
     "in_project",
+    "is_settlement",
     "previous_audit_at",
     "prompt_recall",
     "render_brief",
@@ -196,6 +197,15 @@ _SURFACE_OF_KIND: dict[str, str] = {
     "prompt_recall": SURFACE_RECALL,
 }
 _SETTLEMENT_SURFACES: frozenset[str] = frozenset(_SURFACE_OF_KIND.values())
+
+
+def is_settlement(event: Mapping[str, Any]) -> bool:
+    """True for a shown pointer's settlement: a `use` row naming the
+    surface that showed it (`settle_shown`). The eval's trio and tool
+    count leave exactly these out, and its surfaces section counts
+    exactly these, so the two never disagree on a row."""
+    return event.get("kind") == "use" and event.get("surface") in _SETTLEMENT_SURFACES
+
 
 #: The event kind the Stop records when reviews in the session went
 #: unanswered (`review_unanswered`).
@@ -463,7 +473,7 @@ def rebuild_session(
         if stamp is None:
             continue
         kind = event.get("kind")
-        if kind == "use" and event.get("surface") not in _SETTLEMENT_SURFACES:
+        if kind == "use" and not is_settlement(event):
             continue
         if kind == REVIEW_UNANSWERED:
             review_roots.update(_str_ids(event.get("root_ids")))

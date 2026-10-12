@@ -435,6 +435,27 @@ def test_a_settlement_moves_no_rate_and_no_tool_call() -> None:
     assert report.surfaces["settlements"] == {"brief": 1, "recall": 0}
 
 
+def test_the_trio_drops_exactly_the_rows_the_section_counts() -> None:
+    """One predicate names a settlement: a `use` whose `surface` is one
+    the recall surface settles under. The trio and the tool count used
+    to drop any `use` carrying a `surface` while the section counted only
+    the two names, so a row with another value was in neither."""
+    from bettermemory.eval import compute_report, compute_tool_usage
+
+    base = [
+        _brief(_ts(1), ["m2"]),
+        _tool("search", _ts(1, 1), stamp=None, returned=["m1"]),
+    ]
+    for surface, settled in (("brief", 1), ("recall", 1), ("prompt_recall", 0)):
+        row = _settle(_ts(1, 2), "m1", surface, "e1")
+        report = compute_report([], base + [row], version="t", now=NOW).alltime_eval
+        assert report.surfaces is not None
+        counted = sum(report.surfaces["settlements"].values())
+        assert counted == settled, surface
+        assert report.applied_total == 1 - settled, surface
+        assert compute_tool_usage(base + [row]).total_tool_calls == 2 - settled
+
+
 # ---------------------------------------------------------------------------
 # What the conversation did after a show
 # ---------------------------------------------------------------------------
@@ -505,6 +526,39 @@ def test_opens_uses_and_ignores_after_a_show() -> None:
     assert surfaces["rules"] == ["rs-v1"]
 
 
+def test_an_open_counts_for_the_latest_show_of_the_id_only() -> None:
+    """The slice 4 verifier's repro: a show's follow-ups ran to the
+    window's end, so one open counted for every earlier show of the id.
+    They end at the id's next show in the conversation, by either
+    surface."""
+    # A compact re-shows the brief's id in a new segment.
+    compact = [
+        _brief(_ts(1), [MEM_A], event_id="e1"),
+        _brief(_ts(1, 30), [MEM_A], segment=1, event_id="e2"),
+        _tool("show", _ts(1, 31), id=MEM_A),
+    ]
+    brief = _surfaces(compact)["brief"]
+    assert (brief["shown"], brief["opened"], brief["deliveries_helped"]) == (2, 1, 1)
+    # A recall shows the id the brief showed.
+    both = [
+        _brief(_ts(1), [MEM_A], event_id="e1"),
+        _recall(_ts(1, 30), [MEM_A], segment=1, event_id="e2"),
+        _tool("show", _ts(1, 31), id=MEM_A),
+    ]
+    surfaces = _surfaces(both)
+    assert (surfaces["brief"]["opened"], surfaces["recall"]["opened"]) == (0, 1)
+    # An open before the re-show still counts for the first show, and a
+    # re-show in another conversation does not bound it.
+    early = [
+        _brief(_ts(1), [MEM_A], event_id="e1"),
+        _tool("show", _ts(1, 5), id=MEM_A),
+        _brief(_ts(1, 30), [MEM_A], session="transcript-2", event_id="e2"),
+        _brief(_ts(1, 40), [MEM_A], segment=1, event_id="e3"),
+    ]
+    brief = _surfaces(early)["brief"]
+    assert (brief["shown"], brief["opened"]) == (3, 1)
+
+
 def test_an_unstamped_row_joins_by_the_worktree_bridge() -> None:
     """With no harness stamp, a tool row joins the conversation whose hook
     row was the latest in its worktree before it; a conversation joined
@@ -532,11 +586,47 @@ def test_an_unstamped_row_joins_by_the_worktree_bridge() -> None:
 
 
 def test_a_row_stamped_for_another_conversation_does_not_count() -> None:
+    """Another window's row: its conversation's hooks run beside this
+    one (a hook row at or after this one's first), so its stamp holds."""
     events = [
         _brief(_ts(1), [MEM_A]),
         _tool("show", _ts(1, 1), stamp="transcript-2", id=MEM_A),
+        _brief(_ts(1, 2), [MEM_B], session="transcript-2", event_id="e2"),
     ]
     assert _surfaces(events)["brief"]["opened"] == 0
+
+
+def test_a_stamp_from_before_a_clear_joins_the_conversation_after_it() -> None:
+    """The slice 4 verifier's repro: after a /clear the server still
+    stamps the old id, whose hooks went quiet before the new conversation
+    began, so its rows are the new conversation's. They used to be filed
+    under the old id, and the new conversation's shows counted no open."""
+    before = [
+        _brief(_ts(1), [MEM_A], session="transcript-0", event_id="e0"),
+        {
+            "ts": _ts(1, 1),
+            "session": "transcript-0",
+            "kind": "turn_audited",
+            "triggered_from": "stop_hook",
+            "worktree_root": WORKTREE,
+        },
+    ]
+    after = [
+        _brief(_ts(1, 10), [MEM_B]),
+        _tool("show", _ts(1, 11), stamp="transcript-0", id=MEM_B),
+    ]
+    brief = _surfaces(before + after)["brief"]
+    assert (brief["shown"], brief["opened"]) == (2, 1)
+    # A stamp no hook row names at all is read the same way.
+    unnamed = _surfaces(after)["brief"]
+    assert (unnamed["shown"], unnamed["opened"]) == (1, 1)
+    # Once the old id's hooks run again it is another window, and its
+    # stamp holds.
+    again = before + after
+    again.append(
+        _brief(_ts(1, 12), [MEM_C], session="transcript-0", event_id="e3"),
+    )
+    assert _surfaces(again)["brief"]["opened"] == 0
 
 
 def test_rows_after_the_window_do_not_count() -> None:
@@ -555,6 +645,24 @@ def test_rows_after_the_window_do_not_count() -> None:
     # A show before the window is not counted at all.
     late = compute_eval(legacy_memories(), events, now=NOW, since=timedelta(days=2))
     assert late.surfaces is None
+
+
+def test_a_stamp_after_the_window_does_not_move_its_report() -> None:
+    """The conversations and stamps the join reads are those of rows up
+    to the window's end: a row stamped for the conversation a day after
+    the window used to stop the bridge that joined an open inside it."""
+    from bettermemory.recall_counters import compute_surface_report
+
+    end = NOW - timedelta(days=2)
+    base = [
+        _brief(_ts(3), [MEM_A]),
+        _tool("show", _ts(3, 1), stamp=None, id=MEM_A),
+    ]
+    later = base + [_tool("search", _ts(1), returned=[MEM_B])]
+    for events in (base, later):
+        report = compute_surface_report(events, start=None, end=end)
+        assert report is not None
+        assert report["brief"]["opened"] == 1
 
 
 def test_segments_unanswered_reviews_and_grades() -> None:
