@@ -47,10 +47,14 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any, NamedTuple
 
 _PROTOCOL = "2025-06-18"
+#: The prefix of every variable bettermemory reads; none is inherited.
+_OWN_ENV_PREFIX = "BETTERMEMORY_"
 
 
 class ProbeResult(NamedTuple):
@@ -92,7 +96,16 @@ def probe_tools(
     child_env: dict[str, str] = {}
     try:
         child_env = {
-            **os.environ,
+            # No BETTERMEMORY_* variable from the runner's environment: an
+            # exported store, state or keys directory (or port) would point
+            # the sandbox shim at a daemon outside the sandbox, which the
+            # probe would then reuse and stop. The spec's own env, laid on
+            # last, may still name them.
+            **{
+                key: value
+                for key, value in os.environ.items()
+                if not key.startswith(_OWN_ENV_PREFIX)
+            },
             "HOME": sandbox,
             "XDG_CONFIG_HOME": str(Path(sandbox) / ".config"),
             "XDG_DATA_HOME": str(Path(sandbox) / ".local" / "share"),
@@ -215,6 +228,70 @@ def _within(path: Path, root: Path) -> bool:
     return True
 
 
+def _down_state_dirs(env: dict[str, str]) -> list[Path] | None:
+    """The state directories `bettermemory down` may resolve under `env`
+    (`_daemon_client.resolve_state_dir`): `BETTERMEMORY_STATE_DIR` when
+    set, else the platform's user state directory. platformdirs reads
+    `XDG_STATE_HOME` on macOS in some releases and not in others, so both
+    are named there. None where the directory is not one the environment
+    decides (Windows, or no HOME)."""
+    named = env.get("BETTERMEMORY_STATE_DIR")
+    if named:
+        return [Path(named).expanduser()]
+    home = env.get("HOME")
+    if not home or sys.platform == "win32":
+        return None
+    xdg = env.get("XDG_STATE_HOME")
+    linux = Path(xdg or str(Path(home) / ".local" / "state")) / "bettermemory"
+    if sys.platform != "darwin":
+        return [linux]
+    darwin = Path(home) / "Library" / "Application Support" / "bettermemory"
+    return [darwin, linux] if xdg else [darwin]
+
+
+def _health_pid(port: int, timeout: float = 1.0) -> int | None:
+    """The pid the daemon on 127.0.0.1:`port` reports at ``GET /health``,
+    None when nothing answers there or the answer names none."""
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{int(port)}/health", timeout=timeout
+        ) as response:
+            body = json.loads(response.read().decode("utf-8"))
+    except (OSError, ValueError, urllib.error.URLError):
+        return None
+    if not isinstance(body, dict) or body.get("status") != "ok":
+        return None
+    pid = body.get("pid")
+    return pid if isinstance(pid, int) and not isinstance(pid, bool) else None
+
+
+def _may_signal(record: dict[str, Any], sandbox: str) -> bool:
+    """Whether the daemon `record` names is provably this probe's: its
+    state file is inside the sandbox and the daemon answering on its port
+    reports its pid. A pid alone may since belong to anything."""
+    pid = int(record["pid"])
+    if not _within(Path(str(record.get("state_file", ""))), Path(sandbox)):
+        print(
+            f"toolcost: not signalling pid {pid}: its state file is outside "
+            "the sandbox",
+            file=sys.stderr,
+        )
+        return False
+    try:
+        port = int(record["port"])
+    except (TypeError, ValueError):
+        port = 0
+    answered = _health_pid(port) if port > 0 else None
+    if answered != pid:
+        print(
+            f"toolcost: not signalling pid {pid}: the daemon on port "
+            f"{record.get('port')} reports pid {answered}",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
 def sandbox_daemons(sandbox: str, env: dict[str, str]) -> list[dict[str, Any]]:
     """The state records of the daemons whose state file is inside the
     sandbox: under the sandbox HOME, or under `BETTERMEMORY_STATE_DIR` when
@@ -269,15 +346,29 @@ def stop_sandbox_daemons(
     `bettermemory down` first, with the binary the spec ran and the
     probe's own environment and working directory, so it resolves the
     store and state directory the shim did and stops the daemon the
-    supported way (its shutdown endpoint, then a signal). A state record
-    still in the sandbox afterwards (a `down` that failed, or a command
-    not recognisably bettermemory) has its pid signalled, that pid only.
-    Returns once every pid found is gone, so the sandbox is not removed
-    from under a daemon still closing its store."""
+    supported way (its shutdown endpoint, then a signal); only when every
+    state directory `down` may resolve is inside the sandbox, so a `down`
+    never reaches a daemon outside it. A state record still in the
+    sandbox afterwards (a `down` that failed or was skipped, or a command
+    not recognisably bettermemory) has its pid signalled, that pid only,
+    and only when the daemon answering on the record's port reports that
+    pid (`_may_signal`). Returns once every pid found is gone, so the
+    sandbox is not removed from under a daemon still closing its store."""
     found = sandbox_daemons(sandbox, env)
     if not found:
         return []
     down = _down_command(command)
+    state_dirs = _down_state_dirs(env)
+    if down is not None and (
+        state_dirs is None
+        or not all(_within(state_dir, Path(sandbox)) for state_dir in state_dirs)
+    ):
+        print(
+            f"toolcost: skipping `{' '.join(down)}`: its state directory "
+            "is not inside the sandbox",
+            file=sys.stderr,
+        )
+        down = None
     if down is not None:
         try:
             subprocess.run(
@@ -294,7 +385,7 @@ def stop_sandbox_daemons(
             print(f"toolcost: `{' '.join(down)}` failed: {exc}", file=sys.stderr)
     for record in sandbox_daemons(sandbox, env):
         pid = int(record["pid"])
-        if not _pid_alive(pid):
+        if not _pid_alive(pid) or not _may_signal(record, sandbox):
             continue
         try:
             os.kill(pid, signal.SIGTERM)

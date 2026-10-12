@@ -1,11 +1,19 @@
-"""The daemon stops once the store file it opened is unlinked.
+"""The daemon stops once its store path no longer names the file it
+opened, and saves the store it had open beside the path first.
 
 A daemon whose store was removed, or replaced by a rename over its path,
 serves an inode nobody can open again, and before the watch it did so
 forever (the toolcost bench removed its sandbox under one per run). The
-watch reads the link count of a descriptor the daemon holds on the
-store file: zero stops the daemon through the shutdown path, and a copy
-over the path, which keeps the inode, does not.
+watch records the device and inode the path names and stats the path on
+every tick: the path gone or naming another inode stops the daemon
+through the shutdown path, and a copy over the path, which keeps the
+inode, does not. It holds no descriptor on the store: closing one would
+drop the daemon connection's POSIX locks on the file
+(`test_the_watch_leaves_a_connections_locks_alone`).
+
+Before it stops, the daemon backs the store it still holds up through
+its own connection to ``<store>.orphaned-<stamp>.sqlite`` beside the path
+(`daemon.save_orphan`).
 
 The watch itself is tested in-process on a plain file; the daemon is
 tested as a process, started by ``up`` under the test's own state
@@ -15,13 +23,20 @@ interval lowered in the child by a ``sitecustomize``.
 
 from __future__ import annotations
 
+import errno
+import logging
 import os
+import re
 import shutil
+import sqlite3
+import subprocess
 import sys
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 from mcp import ClientSession, StdioServerParameters
@@ -29,6 +44,7 @@ from mcp.client.stdio import stdio_client
 
 from bettermemory import daemon as _daemon
 from bettermemory._daemon_client import _stopped, health, pid_alive
+from bettermemory.store import Store
 
 from .test_daemon_lifecycle import (
     _cli,
@@ -104,19 +120,21 @@ def test_the_watch_ignores_a_copy_over_the_file(tmp_path: Path) -> None:
 def test_a_failing_stat_is_ignored(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Only an observed link count of zero stops the daemon: a stat that
-    fails is logged and checked again on the next tick."""
+    """Only the path gone or naming another file stops the daemon: a stat
+    that fails any other way is logged and checked again next tick."""
     store = tmp_path / "memory.sqlite"
     store.write_bytes(b"store")
     calls = {"n": 0}
-    real_fstat = os.fstat
+    real_stat = os.stat
 
-    def failing_fstat(fd: int) -> os.stat_result:
+    def failing_stat(path: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+        if os.fspath(path) != str(store):
+            return real_stat(path, *args, **kwargs)
         calls["n"] += 1
-        raise OSError("transient")
+        raise PermissionError("transient")
 
     watch, fired = _watch(store, 0.05)
-    monkeypatch.setattr(_daemon.os, "fstat", failing_fstat)
+    monkeypatch.setattr(os, "stat", failing_stat)
     try:
         deadline = time.monotonic() + 2.0
         while calls["n"] < 3 and time.monotonic() < deadline:
@@ -124,8 +142,52 @@ def test_a_failing_stat_is_ignored(
         assert calls["n"] >= 3
         assert not fired.is_set()
     finally:
-        monkeypatch.setattr(_daemon.os, "fstat", real_fstat)
+        monkeypatch.setattr(os, "stat", real_stat)
         watch.stop()
+
+
+def test_the_watch_fires_when_a_symlinked_store_is_repointed(tmp_path: Path) -> None:
+    """The path is followed as SQLite follows it: a symlink pointed at
+    another file names another store."""
+    first = tmp_path / "first.sqlite"
+    first.write_bytes(b"store")
+    second = tmp_path / "second.sqlite"
+    second.write_bytes(b"another store")
+    link = tmp_path / "memory.sqlite"
+    link.symlink_to(first)
+    watch, fired = _watch(link, 0.05)
+    try:
+        assert not fired.wait(3 * 0.05)
+        link.unlink()
+        link.symlink_to(second)
+        assert fired.wait(2 * 0.05 + 1.0)
+    finally:
+        watch.stop()
+
+
+def test_sqlite_maintenance_does_not_fire_the_watch(tmp_path: Path) -> None:
+    """VACUUM, a truncating checkpoint and an online backup into the store
+    all write through the inode the path names."""
+    store = tmp_path / "memory.sqlite"
+    conn = sqlite3.connect(store, isolation_level=None)
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("CREATE TABLE t(x)")
+    conn.executemany("INSERT INTO t VALUES (?)", [(i,) for i in range(500)])
+    source = sqlite3.connect(tmp_path / "source.sqlite")
+    source.execute("CREATE TABLE t(x)")
+    source.execute("INSERT INTO t VALUES (1)")
+    source.commit()
+    watch, fired = _watch(store, 0.05)
+    try:
+        conn.execute("DELETE FROM t WHERE x % 2 = 0")
+        conn.execute("VACUUM")
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        source.backup(conn)
+        assert not fired.wait(5 * 0.05)
+    finally:
+        watch.stop()
+        source.close()
+        conn.close()
 
 
 def test_stopping_the_watch_does_not_wait_out_its_interval(tmp_path: Path) -> None:
@@ -136,6 +198,230 @@ def test_stopping_the_watch_does_not_wait_out_its_interval(tmp_path: Path) -> No
     watch.stop()
     assert time.monotonic() - started < 2.0
     assert not fired.is_set()
+
+
+# ---------------------------------------------------------------------------
+# The watch and the daemon connection's locks
+# ---------------------------------------------------------------------------
+
+#: Run in a second process: whether it can take an exclusive lock on the
+#: database at argv[1] without waiting.
+_TAKE_EXCLUSIVE = """
+import sqlite3, sys
+conn = sqlite3.connect(sys.argv[1], timeout=0, isolation_level=None)
+try:
+    conn.execute("BEGIN EXCLUSIVE")
+except sqlite3.OperationalError:
+    print("locked")
+else:
+    conn.execute("ROLLBACK")
+    print("taken")
+"""
+
+#: Run in a second process: a write to the WAL database at argv[1], then a
+#: close, which checkpoints and deletes the WAL when no other connection
+#: holds its shared lock on the file.
+_WRITE_AND_CLOSE = """
+import sqlite3, sys
+conn = sqlite3.connect(sys.argv[1], isolation_level=None)
+conn.execute("INSERT INTO t VALUES (2)")
+conn.close()
+"""
+
+
+def _second_process(script: str, path: Path) -> str:
+    done = subprocess.run(
+        [sys.executable, "-c", script, str(path)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    return done.stdout.strip()
+
+
+def _close_a_descriptor(path: Path) -> None:
+    """What the watch did before: open the store and close it again."""
+    os.close(os.open(path, os.O_RDONLY))
+
+
+def _cycle_the_watch(path: Path) -> None:
+    watch, fired = _watch(path, 0.02)
+    time.sleep(0.1)
+    watch.stop()
+    assert not fired.is_set()
+
+
+_BETWEEN = pytest.mark.parametrize(
+    ("between", "keeps_locks"),
+    [(_cycle_the_watch, True), (_close_a_descriptor, False)],
+    ids=["the-watch", "a-closed-descriptor"],
+)
+
+
+@_BETWEEN
+def test_the_watch_leaves_a_connections_locks_alone(
+    tmp_path: Path, between: Callable[[Path], None], keeps_locks: bool
+) -> None:
+    """Closing any descriptor on a file drops every POSIX advisory lock
+    the process holds on it. With a read transaction open, the daemon's
+    connection holds a shared lock another process's exclusive lock must
+    wait for; a watch started and stopped beside it must leave that so.
+    The closed descriptor is the control: it shows the check sees a lost
+    lock."""
+    store = tmp_path / "memory.sqlite"
+    conn = sqlite3.connect(store, isolation_level=None)
+    try:
+        conn.execute("CREATE TABLE t(x)")
+        conn.execute("INSERT INTO t VALUES (1)")
+        conn.execute("BEGIN")
+        conn.execute("SELECT * FROM t").fetchall()
+        assert _second_process(_TAKE_EXCLUSIVE, store) == "locked"
+        between(store)
+        expected = "locked" if keeps_locks else "taken"
+        assert _second_process(_TAKE_EXCLUSIVE, store) == expected
+        conn.execute("COMMIT")
+    finally:
+        conn.close()
+
+
+@_BETWEEN
+def test_the_watch_leaves_the_wal_to_the_open_connection(
+    tmp_path: Path, between: Callable[[Path], None], keeps_locks: bool
+) -> None:
+    """The daemon's store is in WAL mode: an open connection's shared lock
+    on the file is what stops another process's close from checkpointing
+    and deleting the WAL under it. After the watch it still does."""
+    store = tmp_path / "memory.sqlite"
+    conn = sqlite3.connect(store, isolation_level=None)
+    try:
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("CREATE TABLE t(x)")
+        conn.execute("INSERT INTO t VALUES (1)")
+        conn.execute("SELECT * FROM t").fetchall()
+        between(store)
+        _second_process(_WRITE_AND_CLOSE, store)
+        assert Path(f"{store}-wal").exists() is keeps_locks
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# The orphan, in-process
+# ---------------------------------------------------------------------------
+
+_ORPHAN_NAME = re.compile(r"memory\.sqlite\.orphaned-\d{8}T\d{6}Z(-\d+)?\.sqlite")
+
+
+def _store_with_one_memory(tmp_path: Path) -> Store:
+    store = Store(tmp_path / "store", keys_dir=tmp_path / "keys")
+    store.write(content="the release runs from the tag", scopes=["global"])
+    return store
+
+
+def _leftovers(directory: Path) -> list[str]:
+    return sorted(p.name for p in directory.iterdir() if p.name.endswith(".tmp"))
+
+
+def _orphans(directory: Path) -> list[Path]:
+    return sorted(p for p in directory.iterdir() if _ORPHAN_NAME.fullmatch(p.name))
+
+
+def test_save_orphan_copies_the_unlinked_store_beside_its_path(
+    tmp_path: Path,
+) -> None:
+    store = _store_with_one_memory(tmp_path)
+    try:
+        path = store.path
+        path.unlink()
+        orphan = _daemon.save_orphan(
+            store, now=datetime(2026, 10, 12, 5, 39, tzinfo=timezone.utc)
+        )
+    finally:
+        store.close()
+    assert orphan is not None
+    assert orphan == path.with_name("memory.sqlite.orphaned-20261012T053900Z.sqlite")
+    assert orphan.is_file()
+    assert _leftovers(path.parent) == []
+    copy = sqlite3.connect(orphan)
+    try:
+        (count,) = copy.execute("SELECT COUNT(*) FROM memories").fetchone()
+        (store_id,) = copy.execute(
+            "SELECT value FROM meta WHERE key = 'store_id'"
+        ).fetchone()
+    finally:
+        copy.close()
+    assert count == 1
+    assert store_id == store.store_id
+
+
+def test_save_orphan_never_overwrites_an_earlier_orphan(tmp_path: Path) -> None:
+    store = _store_with_one_memory(tmp_path)
+    when = datetime(2026, 10, 12, 5, 39, tzinfo=timezone.utc)
+    try:
+        first = _daemon.save_orphan(store, now=when)
+        second = _daemon.save_orphan(store, now=when)
+    finally:
+        store.close()
+    assert first is not None and second is not None
+    assert first != second
+    assert _orphans(store.path.parent) == sorted([first, second])
+
+
+def test_save_orphan_logs_and_returns_none_when_the_directory_is_gone(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    store = _store_with_one_memory(tmp_path)
+    try:
+        shutil.rmtree(store.path.parent)
+        with caplog.at_level(logging.ERROR, logger="bettermemory.daemon"):
+            assert _daemon.save_orphan(store) is None
+    finally:
+        store.close()
+    assert any(
+        r.levelno == logging.ERROR and str(store.path) in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_save_orphan_leaves_no_partial_file_when_the_write_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A full disk at the rename: no orphan, no temporary file, one error."""
+    store = _store_with_one_memory(tmp_path)
+
+    def full(src: Any, dst: Any) -> None:
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(os, "replace", full)
+    try:
+        with caplog.at_level(logging.ERROR, logger="bettermemory.daemon"):
+            assert _daemon.save_orphan(store) is None
+    finally:
+        store.close()
+    directory = store.path.parent
+    assert _leftovers(directory) == []
+    assert _orphans(directory) == []
+    assert [r for r in caplog.records if r.levelno == logging.ERROR]
+
+
+def test_save_orphan_from_another_thread_fails_without_raising(
+    tmp_path: Path,
+) -> None:
+    """The store's connection serves only the thread that opened it, which
+    is why the daemon hands the backup to its event loop: called from the
+    watch thread it fails, logged, with nothing written."""
+    store = _store_with_one_memory(tmp_path)
+    got: list[Path | None] = []
+    try:
+        thread = threading.Thread(target=lambda: got.append(_daemon.save_orphan(store)))
+        thread.start()
+        thread.join(10)
+    finally:
+        store.close()
+    assert got == [None]
+    assert _leftovers(store.path.parent) == []
+    assert _orphans(store.path.parent) == []
 
 
 # ---------------------------------------------------------------------------
@@ -194,28 +480,64 @@ def _process_gone(pid: int, bound: float = 10.0) -> bool:
     return True
 
 
+def _orphans_at_exit(state: dict, directory: Path, bound: float) -> list[Path] | None:
+    """The orphans beside the store at the first moment the daemon in
+    `state` was seen gone, None when it outlived `bound`: the backup runs
+    before the shutdown, so it is there before the port closes."""
+    started = time.monotonic()
+    while time.monotonic() - started < bound:
+        if _stopped(int(state["pid"]), int(state["port"])):
+            return _orphans(directory)
+        time.sleep(0.02)
+    return None
+
+
+def _store_id(path: Path) -> str:
+    conn = sqlite3.connect(path)
+    try:
+        (value,) = conn.execute(
+            "SELECT value FROM meta WHERE key = 'store_id'"
+        ).fetchone()
+    finally:
+        conn.close()
+    return str(value)
+
+
 def test_the_daemon_exits_when_its_store_is_unlinked(
     tmp_path: Path, watched_env: dict[str, str]
 ) -> None:
     state = _start(tmp_path, watched_env)
-    _store_path(tmp_path).unlink()
-    took = _exited_within(state, EXIT_BOUND)
-    assert took is not None, f"the daemon outlived its store by {EXIT_BOUND} s"
+    store = _store_path(tmp_path)
+    store_id = _store_id(store)
+    store.unlink()
+    orphans = _orphans_at_exit(state, store.parent, EXIT_BOUND)
+    assert orphans is not None, f"the daemon outlived its store by {EXIT_BOUND} s"
+    # Saved through the daemon's own connection before the port closed.
+    assert len(orphans) == 1
+    assert _store_id(orphans[0]) == store_id
     # The normal shutdown ran: the state file is gone with the daemon.
     assert _process_gone(state["pid"])
     assert not _state_path(tmp_path).exists()
     log = _state_path(tmp_path).with_suffix(".log").read_text(encoding="utf-8")
-    assert log.count("was removed or replaced") == 1
+    assert log.count("the daemon stops") == 1
+    assert log.count(f"is saved at {orphans[0]}") == 1
+    assert _leftovers(store.parent) == []
 
 
 def test_the_daemon_exits_when_its_store_is_renamed_over(
     tmp_path: Path, watched_env: dict[str, str]
 ) -> None:
+    """The store it had open is saved, not the file now at the path."""
     state = _start(tmp_path, watched_env)
+    store = _store_path(tmp_path)
+    store_id = _store_id(store)
     replacement = tmp_path / "replacement.sqlite"
     replacement.write_bytes(b"not the store the daemon opened")
-    os.replace(replacement, _store_path(tmp_path))
-    assert _exited_within(state, EXIT_BOUND) is not None
+    os.replace(replacement, store)
+    orphans = _orphans_at_exit(state, store.parent, EXIT_BOUND)
+    assert orphans is not None
+    assert [_store_id(path) for path in orphans] == [store_id]
+    assert store.read_bytes() == b"not the store the daemon opened"
     assert _process_gone(state["pid"])
     assert not _state_path(tmp_path).exists()
 
@@ -232,12 +554,57 @@ def test_the_daemon_stays_up_through_a_copy_over_its_store(
     time.sleep(3 * INTERVAL)
     assert pid_alive(state["pid"])
     assert health(state["port"]) is not None
+    assert _orphans(store.parent) == []
     # And the normal shutdown still works with the watch running.
     down = _cli(["down"], watched_env)
     assert down.returncode == 0, down.stderr
     assert _exited_within(state, 10.0) is not None
     assert _process_gone(state["pid"])
     assert not _state_path(tmp_path).exists()
+
+
+def _session_start(env: dict[str, str], cwd: Path) -> str:
+    done = subprocess.run(
+        [sys.executable, "-m", "bettermemory", "hook", "session-start"],
+        input='{"session_id": "sess-orphan", "source": "startup"}',
+        env=env,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert done.returncode == 0, done.stderr
+    return done.stdout
+
+
+def test_the_next_daemon_reports_the_store_it_replaced(
+    tmp_path: Path, watched_env: dict[str, str]
+) -> None:
+    """The daemon started after one saved its orphan opens a new, empty
+    store beside it: `/health` names the orphan and the session brief
+    says how to restore it, until the orphan is deleted."""
+    first = _start(tmp_path, watched_env)
+    store = _store_path(tmp_path)
+    store.unlink()
+    orphans = _orphans_at_exit(first, store.parent, EXIT_BOUND)
+    assert orphans is not None and len(orphans) == 1
+    assert _process_gone(first["pid"])
+    second = _start(tmp_path, watched_env)
+    assert second["pid"] != first["pid"]
+    answered = health(second["port"])
+    assert answered is not None
+    assert answered["store_orphans"] == [str(orphans[0])]
+    workdir = tmp_path / "cwd"
+    workdir.mkdir()
+    brief = _session_start(watched_env, workdir)
+    assert "created fresh" in brief
+    assert str(orphans[0]) in brief
+    assert str(store) in brief
+    orphans[0].unlink()
+    answered = health(second["port"])
+    assert answered is not None
+    assert answered["store_orphans"] == []
+    assert "created fresh" not in _session_start(watched_env, workdir)
 
 
 def test_a_normal_shutdown_is_not_held_by_the_watch(

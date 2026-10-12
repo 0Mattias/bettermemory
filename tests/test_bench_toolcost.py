@@ -10,10 +10,15 @@ first run, reporting 27 tools instead of 18.
 
 from __future__ import annotations
 
+import http.server
 import importlib.util
 import json
+import socket
+import subprocess
 import sys
 import tempfile
+import threading
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -195,3 +200,261 @@ def test_probing_the_shim_leaves_no_daemon_and_no_sandbox(
     for pid in pids:
         assert not pid_alive(pid), f"daemon pid {pid} outlived the probe"
     assert list(tmp_path.glob("toolcost-home-*")) == []
+
+
+# ---------------------------------------------------------------------------
+# The probe never reaches a daemon outside its sandbox
+# ---------------------------------------------------------------------------
+
+
+def _capture_child_env(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, str]]:
+    seen: list[dict[str, str]] = []
+
+    def fake_probe(
+        command: list[str],
+        *,
+        child_env: dict[str, str],
+        cwd: str | None,
+        timeout: float,
+    ) -> Any:
+        seen.append(dict(child_env))
+        return toolcost.ProbeResult(tools=[], instructions="")
+
+    monkeypatch.setattr(toolcost, "_probe", fake_probe)
+    return seen
+
+
+def test_the_child_env_carries_no_runner_bettermemory_variable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A runner with another daemon's home and port exported: the probe's
+    child sees none of them, so the sandbox shim cannot reuse that daemon,
+    nor the clean-up stop it."""
+    other = tmp_path / "other-daemon"
+    monkeypatch.setenv("BETTERMEMORY_HOME", str(other))
+    monkeypatch.setenv("BETTERMEMORY_PORT", "48211")
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(other / "store"))
+    monkeypatch.setenv("BETTERMEMORY_STATE_DIR", str(other / "state"))
+    monkeypatch.setenv("BETTERMEMORY_KEYS_DIR", str(other / "keys"))
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    seen = _capture_child_env(monkeypatch)
+    toolcost.probe_tools([sys.executable, "-m", "bettermemory"], timeout=5)
+    (child_env,) = seen
+    assert [key for key in child_env if key.startswith("BETTERMEMORY_")] == []
+    assert not any(str(other) in value for value in child_env.values())
+    assert "48211" not in child_env.values()
+    assert Path(child_env["HOME"]).name.startswith("toolcost-home-")
+
+
+def test_the_specs_own_bettermemory_variables_still_apply(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(tmp_path / "runner"))
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    seen = _capture_child_env(monkeypatch)
+    toolcost.probe_tools(["/bin/true"], env={"BETTERMEMORY_DIR": ""}, timeout=5)
+    (child_env,) = seen
+    assert child_env["BETTERMEMORY_DIR"] == ""
+
+
+class _Health:
+    """A fake daemon's ``/health`` on 127.0.0.1, reporting `pid`."""
+
+    def __init__(self, pid: int) -> None:
+        reported = pid
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802 - the stdlib's name
+                body = json.dumps({"status": "ok", "pid": reported}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+                pass
+
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        self.port = int(self.server.server_address[1])
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def _free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+@pytest.fixture
+def sleeper() -> Iterator[subprocess.Popen[bytes]]:
+    """A process this test started and owns, standing in for a daemon."""
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(120)"],
+        env=shielded_child_env(),
+    )
+    yield proc
+    if proc.poll() is None:
+        proc.kill()
+    proc.wait(10)
+
+
+def _sandbox_with_record(tmp_path: Path, *, pid: int, port: int) -> tuple[Path, Path]:
+    sandbox = tmp_path / "toolcost-home-test"
+    state = sandbox / "state"
+    state.mkdir(parents=True)
+    record = state / "daemon-abc.json"
+    record.write_text(
+        json.dumps(
+            {
+                "pid": pid,
+                "port": port,
+                "token": "t",
+                "version": "0",
+                "store": str(sandbox / "store" / "memory.sqlite"),
+                "started": "2026-10-12T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return sandbox, record
+
+
+def _stop(sandbox: Path) -> list[int]:
+    pids: list[int] = toolcost.stop_sandbox_daemons(
+        ["/nonexistent/not-bettermemory"],
+        sandbox=str(sandbox),
+        env={"HOME": str(sandbox), "BETTERMEMORY_STATE_DIR": str(sandbox / "state")},
+        cwd=None,
+    )
+    return pids
+
+
+def test_the_fallback_signals_a_pid_its_port_confirms(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sleeper: subprocess.Popen[bytes]
+) -> None:
+    monkeypatch.setattr(toolcost, "_STOP_TIMEOUT", 5.0)
+    health = _Health(sleeper.pid)
+    try:
+        sandbox, _ = _sandbox_with_record(tmp_path, pid=sleeper.pid, port=health.port)
+        assert _stop(sandbox) == [sleeper.pid]
+    finally:
+        health.close()
+    assert sleeper.wait(10) is not None
+
+
+def test_the_fallback_skips_a_pid_another_daemon_answers_for(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sleeper: subprocess.Popen[bytes],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The record's pid may since name an unrelated process: the daemon
+    on its port reporting another pid means it is not this probe's."""
+    monkeypatch.setattr(toolcost, "_STOP_TIMEOUT", 0.2)
+    health = _Health(sleeper.pid + 100000)
+    try:
+        sandbox, _ = _sandbox_with_record(tmp_path, pid=sleeper.pid, port=health.port)
+        _stop(sandbox)
+    finally:
+        health.close()
+    assert sleeper.poll() is None
+    assert f"not signalling pid {sleeper.pid}" in capsys.readouterr().err
+
+
+def test_the_fallback_skips_a_pid_nothing_answers_for(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sleeper: subprocess.Popen[bytes],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(toolcost, "_STOP_TIMEOUT", 0.2)
+    sandbox, _ = _sandbox_with_record(tmp_path, pid=sleeper.pid, port=_free_port())
+    _stop(sandbox)
+    assert sleeper.poll() is None
+    assert f"not signalling pid {sleeper.pid}" in capsys.readouterr().err
+
+
+def test_the_fallback_skips_a_record_outside_the_sandbox(
+    tmp_path: Path, sleeper: subprocess.Popen[bytes]
+) -> None:
+    """Even with its port confirming the pid, a record outside the
+    sandbox is not this probe's to act on."""
+    health = _Health(sleeper.pid)
+    try:
+        elsewhere = tmp_path / "elsewhere"
+        _, record = _sandbox_with_record(elsewhere, pid=sleeper.pid, port=health.port)
+        found = {"pid": sleeper.pid, "port": health.port, "state_file": str(record)}
+        sandbox = tmp_path / "toolcost-home-test"
+        sandbox.mkdir()
+        assert not toolcost._may_signal(found, str(sandbox))
+        assert toolcost._may_signal(found, str(elsewhere))
+    finally:
+        health.close()
+    assert sleeper.poll() is None
+
+
+def _record_down(monkeypatch: pytest.MonkeyPatch, sandbox: Path) -> list[list[str]]:
+    """`subprocess.run` calls from the stop, with one dead daemon record
+    found in the sandbox so the stop runs and signals nothing."""
+    calls: list[list[str]] = []
+
+    def fake_run(argv: list[str], **kwargs: Any) -> None:
+        calls.append(list(argv))
+
+    monkeypatch.setattr(toolcost.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        toolcost,
+        "sandbox_daemons",
+        lambda sandbox_dir, env: [
+            {"pid": 999999, "port": 1, "state_file": str(sandbox / "x.json")}
+        ],
+    )
+    monkeypatch.setattr(toolcost, "_pid_alive", lambda pid: False)
+    return calls
+
+
+def test_down_runs_when_its_state_dir_is_in_the_sandbox(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sandbox = tmp_path / "toolcost-home-test"
+    sandbox.mkdir()
+    calls = _record_down(monkeypatch, sandbox)
+    for env in (
+        {"HOME": str(sandbox), "BETTERMEMORY_STATE_DIR": str(sandbox / "state")},
+        {"HOME": str(sandbox), "XDG_STATE_HOME": str(sandbox / ".local" / "state")},
+    ):
+        toolcost.stop_sandbox_daemons(
+            [sys.executable, "-m", "bettermemory"],
+            sandbox=str(sandbox),
+            env=env,
+            cwd=None,
+        )
+    assert calls == [[sys.executable, "-m", "bettermemory", "down"]] * 2
+
+
+def test_down_is_skipped_when_its_state_dir_is_outside_the_sandbox(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sandbox = tmp_path / "toolcost-home-test"
+    sandbox.mkdir()
+    outside = tmp_path / "live"
+    calls = _record_down(monkeypatch, sandbox)
+    for env in (
+        {"HOME": str(sandbox), "BETTERMEMORY_STATE_DIR": str(outside / "state")},
+        {"HOME": str(outside)},
+        {"HOME": str(sandbox), "XDG_STATE_HOME": str(outside / "state")},
+    ):
+        toolcost.stop_sandbox_daemons(
+            [sys.executable, "-m", "bettermemory"],
+            sandbox=str(sandbox),
+            env=env,
+            cwd=None,
+        )
+    assert calls == []
+    assert capsys.readouterr().err.count("skipping") == 3

@@ -59,7 +59,7 @@ import re
 import threading
 from collections import OrderedDict
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -1097,7 +1097,26 @@ def session_brief(
             segment=view.segment,
             rule=RULE,
         )
+    notice = orphan_notice(store)
+    if notice:
+        stdout = f"{notice}\n{result.stdout}" if result.stdout else notice
+        result = replace(result, stdout=stdout, chars=len(stdout))
     return result
+
+
+def orphan_notice(store: Store) -> str:
+    """The line the brief leads with while the store was created fresh
+    after a daemon saved the one it lost (`Store.store_orphans`), naming
+    the newest saved file; empty otherwise. Shown whatever else the brief
+    holds, since the fresh store is usually empty, and never acted on."""
+    orphans = store.store_orphans()
+    if not orphans:
+        return ""
+    return (
+        f"bettermemory: this store was created fresh after the previous one was "
+        f"lost; that one is saved at {orphans[-1]}. To restore it, stop "
+        f"bettermemory (`bettermemory down`) and copy it over {store.path}."
+    )
 
 
 def _brief_in_segment(

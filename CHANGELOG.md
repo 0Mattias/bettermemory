@@ -147,6 +147,11 @@ surfaces leave with them. An 8.x directory is imported once by
 - `bench/toolcost` records the served `instructions` block beside the
   descriptions and schemas (`instructions_bytes`, `instructions_chars`,
   `session_bytes`).
+- `bench/toolcost` never reaches a daemon outside its sandbox: the probe's
+  child inherits no `BETTERMEMORY_*` variable, `bettermemory down` runs
+  only when its state directory is inside the sandbox, and a leftover
+  daemon is signalled only when its record is inside the sandbox and
+  its port's `/health` reports its pid.
 - `bench/daemon/latency.py` measures a lone session-start hook both ways:
   `hook_service_idle`, each call after a fixed 2.2 s idle gap with the
   origin capture reused, and `hook_service_cold`, the same with the
@@ -193,11 +198,20 @@ surfaces leave with them. An 8.x directory is imported once by
   A daemon whose store file is removed, or replaced by a rename over
   its path, stops through its normal shutdown at its next check (every
   30 s) and logs one line; a copy over the store keeps it running. An
-  open shim starts a new one on its next call.
+  open shim starts a new one on its next call. The check stats the path
+  for the device and inode it named at start and holds no descriptor
+  on the store, whose closing would drop the daemon connection's locks.
+  Before it stops, the daemon saves the store it still has open through
+  its own connection to `<store>.orphaned-<UTC stamp>.sqlite` beside the
+  path, logged at error level. A store created while one or more such
+  files sit beside it names them in its `meta`, and while any is still
+  there `/health` lists them under `store_orphans` and the session brief
+  leads with one line naming the saved file and how to copy it back.
+  Deleting the files, or restoring the old store, ends the notice.
   `session-start`, `audit-turn` and `prompt-recall` stay as aliases of
   it, and the plugin's `hooks.json` names the new commands.
   (`src/bettermemory/daemon.py`, `shim.py`, `_daemon_client.py`,
-  `cli/daemon_cmd.py`)
+  `cli/daemon_cmd.py`, `store.py`, `recall.py`)
 - **The write review.** A `memory_write` that passes the gates writes
   nothing on its first call: it returns status `review` with a
   `review_id`, the related stored statements (the engine's top three
