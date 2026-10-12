@@ -512,3 +512,50 @@ async def test_a_verify_moves_the_verdict(
     shown = await _call(server, "memory_show", id=written["id"])
     assert shown["staleness_verdict"] == "fresh"
     assert shown["commit_drift"]["status"] == "clean"
+
+
+# ---------------------------------------------------------------------------
+# (e) memory_search's expanded top hit reads the same verdict
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("drifted", [False, True])
+async def test_a_warm_expanded_search_spawns_no_git(
+    server_with_fake_origin: Any,  # noqa: F811
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    drifted: bool,
+) -> None:
+    """`expand_top` used to compute the top hit's commit leg with
+    `verify.compute_commit_drift`, forking git on every search; it reads
+    `verdict.memory_verdict` now, so the second identical search runs no
+    git process, and the expanded hit agrees with memory_show."""
+    repo = _repo(tmp_path)
+    server = server_with_fake_origin(_origin(repo))
+    written = await _call(
+        server, "memory_write", content="widget rule in notes.md", scopes=["tools"]
+    )
+    await _call(server, "memory_verify", id=written["id"])
+    if drifted:
+        _commit_touching(repo, "post", when=_FUTURE)
+
+    _caches.clear_all()
+    with _git_calls(monkeypatch) as cold_calls:
+        cold = _unwrap(
+            await _call(server, "memory_search", query="widget rule", expand_top=True)
+        )
+    assert cold_calls
+    with _git_calls(monkeypatch) as warm_calls:
+        warm = _unwrap(
+            await _call(server, "memory_search", query="widget rule", expand_top=True)
+        )
+    assert warm_calls == []
+    top_cold, top_warm = cold[0], warm[0]
+    assert top_cold["id"] == written["id"] and "body" in top_cold
+    for hit in (top_cold, top_warm):
+        hit.pop("use_token", None)
+    assert top_warm == top_cold
+    shown = await _call(server, "memory_show", id=written["id"])
+    assert top_warm["staleness_verdict"] == shown["staleness_verdict"]
+    assert top_warm["commit_drift"] == shown["commit_drift"]
+    assert top_warm["commit_drift"]["status"] == ("drift" if drifted else "clean")

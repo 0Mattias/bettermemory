@@ -63,12 +63,7 @@ from ..search import (
     top_hit_leads_runner_up,
 )
 from ..store import MemoryNotFoundError, Store, TombstonedError
-from ..verify import (
-    compute_commit_drift,
-    compute_staleness_verdict,
-    compute_verification_status,
-    detect_path_drift,
-)
+from ..verdict import memory_verdict
 from ._shared import Context, _advance_turn, _attach_use_tokens
 
 if TYPE_CHECKING:
@@ -678,14 +673,12 @@ async def memory_search(
     # there is nothing to dominate, and "clear winner of a field of one"
     # is an absence of evidence, not evidence.
     expanded_id: str | None = None
+    # A TELEMETRY field on the `search` event: the full-set count, so the
+    # event log keeps measuring how much path evidence the detector
+    # produced. The verdict escalates on the claim-anchored subset alone
+    # (`verdict.memory_verdict`); collapsing the two would either
+    # re-broaden the verdict or silently rewrite a logged series.
     expanded_drift_missing = 0
-    # Kept separate from `expanded_drift_missing` on purpose. That one is
-    # a TELEMETRY field on the `search` event and stays the full-set
-    # count, so the event log keeps measuring how much path evidence the
-    # detector produced; this one is the claim-anchored subset the
-    # VERDICT escalates on. Collapsing them would either re-broaden the
-    # verdict or silently rewrite the meaning of a logged series.
-    expanded_claim_anchored_missing = 0
     expanded_commit_drift_status: str | None = None
     expanded_commits_since_verify: int | None = None
     expand_top_fires = bool(expand_top and out) and (
@@ -709,59 +702,47 @@ async def memory_search(
             pass
         else:
             out[0]["body"] = memory.body
-            drift = detect_path_drift(
-                memory.body,
-                verified_paths=memory.verified_paths,
-                absent_paths=memory.verified_absent_paths,
-                worktree_root=memory.origin.worktree_root if memory.origin else None,
-            )
-            if drift.has_drift or drift.verified or drift.expected_absent:
-                out[0]["path_drift"] = drift.to_dict()
-            expanded_drift_missing = len(drift.missing)
-            expanded_claim_anchored_missing = len(drift.claim_anchored_missing)
-            # `claims` rides along exactly as on memory_show's call: a
+            # The top hit's verdict is `memory_show`'s, through the one
+            # verdict both surfaces read (`verdict.memory_verdict`): path
+            # drift over the full body, the calendar status at this
+            # search's `now`, and the commit leg read through the per-hit
+            # memo `attach_commit_drift_counts` fills, so a top hit the
+            # memo holds forks no git process here either. `claims` and
+            # the body feed the leg exactly as on memory_show's call: a
             # count computed without the memory's claims is a different
             # policy (any-touch), and the loudest retrieval surface would
             # disagree with memory_show on the same memory in the same
             # turn — see `resolve_commit_drift_count`'s docstring.
-            commit_drift = compute_commit_drift(
-                memory.last_verified_at,
-                memory.origin.repo if memory.origin else None,
+            shown = memory_verdict(
+                memory,
                 caller_origin=current_origin,
-                verified_paths=memory.verified_paths,
-                body=memory.body,
-                claims=memory.claims,
-                verified_head=memory.verified_head,
+                now=now,
+                stale_after_days=deps.config.behavior.verification_stale_days,
             )
-            commit_drift_count_for_verdict: int | None = None
+            drift = shown.path_drift
+            if drift.has_drift or drift.verified or drift.expected_absent:
+                out[0]["path_drift"] = drift.to_dict()
+            expanded_drift_missing = len(drift.missing)
+            commit_drift = shown.commit_drift
             if commit_drift is not None:
                 out[0]["commit_drift"] = commit_drift.to_dict()
                 expanded_commit_drift_status = commit_drift.status
                 expanded_commits_since_verify = commit_drift.commits_since_verify
-                commit_drift_count_for_verdict = commit_drift.commits_since_verify
                 # Overwrite the cheap per-hit `commit_drift_count` that
                 # `attach_commit_drift_counts` stamped from the pre-expansion
                 # bisect, so a single response never carries two
-                # inconsistent counts on its top hit. Both paths now share
-                # the author-timestamp + bisect_right source, so they agree
-                # on the unfiltered count; this keeps them aligned on the
-                # claim-narrowed value too (compute_commit_drift received
-                # the memory's claims above and applies the same anchor
-                # narrowing the per-hit pass does — but pinning the field
-                # to the block that also drives
-                # `commit_drift`/`staleness_verdict` here makes the
-                # top-hit triple provably consistent).
+                # inconsistent counts on its top hit. Both read the same
+                # memoised resolution, so they agree; pinning the field to
+                # the block that also drives `commit_drift` /
+                # `staleness_verdict` here makes the top-hit triple
+                # provably consistent.
                 out[0]["commit_drift_count"] = commit_drift.commits_since_verify
             # Re-derive the top hit's verdict from the just-computed
             # body-level signals — the verdict that landed via
             # `hit_to_dict` was based on `path_drift_missing` from
             # the search index (unloaded body) and may have skipped
             # claims surfaced by the actual body-level detection.
-            top_verification = compute_verification_status(
-                memory.last_verified_at,
-                now=now,
-                stale_after_days=deps.config.behavior.verification_stale_days,
-            )
+            #
             # Unless the trust rule already demoted the hit: a `synced`
             # record whose stamp this host never made reads "remote" and
             # spot_check_required (`ResponseBuilder.apply_trust`, applied
@@ -774,16 +755,12 @@ async def memory_search(
             if out[0].get("verification", {}).get("status") != "remote" and not out[
                 0
             ].get("trust_unavailable"):
-                out[0]["staleness_verdict"] = compute_staleness_verdict(
-                    verification=top_verification,
-                    # Claim-anchored subset, matching every other verdict
-                    # site. The full report — prose misses included — is
-                    # already in `out[0]["path_drift"]` above, so nothing
-                    # the caller could see before disappeared; only the
-                    # tier narrowed. See `verdict_from_signals`.
-                    path_drift_missing=expanded_claim_anchored_missing,
-                    commit_drift_count=commit_drift_count_for_verdict,
-                )
+                # Claim-anchored subset, matching every other verdict
+                # site. The full report — prose misses included — is
+                # already in `out[0]["path_drift"]` above, so nothing the
+                # caller could see before disappeared; only the tier
+                # narrowed. See `verdict_from_signals`.
+                out[0]["staleness_verdict"] = shown.staleness_verdict
             expanded_id = memory.id
 
     # Issue use-tokens after every other field is in place so the
