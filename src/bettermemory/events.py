@@ -3,8 +3,9 @@
 Every tool handler holds one `Recorder`, constructed once per server
 process, and calls `record()` once per invocation. The recorder carries
 what the store's `record_event` does not know on its own: the session
-id the process runs under, the worktree the server was started in, and
-the admin attribution a CLI command stamps on its writes. `enabled=False`
+and the worktree an event belongs to (the request's own when the caller
+declared them, else the process's), and the admin attribution a CLI
+command stamps on its writes. `enabled=False`
 makes every call a no-op, so handlers call unconditionally.
 
 A failure to record is swallowed at WARNING: telemetry never fails the
@@ -152,6 +153,32 @@ class Recorder:
     attribution: str = ""
     triggered_from: str = ""
 
+    def session_for_request(self) -> str:
+        """The session the current request belongs to: the caller's own
+        when it declared one through the transport or the shim's
+        `x-bettermemory-session` (one per conversation), else this
+        process's. A daemon serves every conversation on the machine from
+        one process, so its own id would merge them all."""
+        actor = identity.current_actor()
+        if (
+            actor is not None
+            and actor.session is not None
+            and actor.sources.get("session")
+            in (identity.SOURCE_TRANSPORT, identity.SOURCE_HEADER)
+        ):
+            return actor.session
+        return self.session_id
+
+    def worktree_for_request(self) -> str | None:
+        """The worktree of the workspace the current request declared, else
+        the one this process was started in. A daemon's own directory says
+        nothing about the client it is answering."""
+        if identity.workspace_declaration() is None:
+            return self.worktree_root
+        from . import _handlers as _h
+
+        return _h.capture_origin().worktree_root
+
     def record(self, kind: str, **fields: Any) -> None:
         if not self.enabled:
             return
@@ -159,8 +186,10 @@ class Recorder:
             fields.setdefault("attribution", self.attribution)
         if self.triggered_from:
             fields.setdefault("triggered_from", self.triggered_from)
-        if self.worktree_root is not None:
-            fields.setdefault("worktree_root", self.worktree_root)
+        if "worktree_root" not in fields:
+            worktree_root = self.worktree_for_request()
+            if worktree_root is not None:
+                fields["worktree_root"] = worktree_root
         if kind in HARNESS_STAMPED_KINDS:
             harness_session = identity.current_harness_session()
             if harness_session is not None:
@@ -171,9 +200,11 @@ class Recorder:
         if actor is None:
             actor = identity.current_actor()
         # A field named `session` names the session the event belongs to
-        # (the hooks record under the transcript's id); the recorder's
-        # own id is the default.
-        session = fields.pop("session", self.session_id)
+        # (the hooks record under the transcript's id); the request's
+        # session is the default.
+        session = (
+            fields.pop("session") if "session" in fields else self.session_for_request()
+        )
         try:
             self.store.record_event(kind, session=session, actor=actor, **fields)
         except Exception as exc:  # noqa: BLE001 - telemetry never fails the call

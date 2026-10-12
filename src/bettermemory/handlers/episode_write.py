@@ -129,12 +129,11 @@ async def episode_write(
         _validate_scope_count(scopes, deps.config.behavior.max_scopes_per_write)
 
     origin = _h.capture_origin()
-    # The recorder's session_id is the canonical per-process id that's
-    # tagged on every event. Same discipline scope_overview uses for
-    # the prior-session boundary — keying episodes on the same id keeps
-    # the episode_handoff handler aligned with what the event log
-    # actually carries.
-    session_id = deps.recorder.session_id
+    # The request's session (the conversation's, under the daemon) is the
+    # id the recorder tags on this call's events. Keying episodes on the
+    # same id keeps the episode_handoff handler aligned with what the
+    # event log actually carries.
+    session_id = deps.recorder.session_for_request()
 
     # `swarm_id` (when set) is validated by the Episode model's
     # `_check_swarm_id` (charset + length) inside `store.write`; an

@@ -337,18 +337,23 @@ async def episode_handoff(
     # shape can also mean "its takeaway was promoted out" (episode_promote
     # deletes the journal source on commit), and the event log can tell.
 
+    # Reuse the origin captured at handler entry above (used to tag the
+    # session-tag floor episode). Same shim discipline scope_overview /
+    # search / write use. The `worktree_root` field is the discriminator
+    # the auto-scope filter on `should_include_for_caller` uses for
+    # memories; we apply the same key here for episodes so the two
+    # surfaces stay in sync about what "this worktree's prior session"
+    # means.
+    caller_worktree = handoff_origin.worktree_root if handoff_origin else None
+
+    def in_callers_worktree(ep: Any) -> bool:
+        return _worktrees_equal_strict(
+            ep.origin.worktree_root if ep.origin else None, caller_worktree
+        )
+
     resolved_session_id: str | None = prior_session_id
     if resolved_session_id is None:
         from ..hook import _OUT_OF_PROCESS_TRIGGERS
-
-        # Reuse the origin captured at handler entry above (used to
-        # tag the session-tag floor episode). Same shim discipline
-        # scope_overview / search / write use. The `worktree_root`
-        # field is the discriminator the auto-scope filter on
-        # `should_include_for_caller` uses for memories; we apply
-        # the same key here for episodes so the two surfaces stay
-        # in sync about what "this worktree's prior session" means.
-        caller_worktree = handoff_origin.worktree_root if handoff_origin else None
 
         # Walk the event log to collect candidate session_ids with
         # their max event timestamp (descending order = most recent
@@ -382,7 +387,7 @@ async def episode_handoff(
             # event, the current session's included, before the
             # candidate bookkeeping below narrows to other sessions.
             sid = ev.get("session") or ev.get("session_id")
-            if not isinstance(sid, str) or sid == deps.recorder.session_id:
+            if not isinstance(sid, str) or sid == deps.recorder.session_for_request():
                 continue
             ts = ev.get("ts")
             if not isinstance(ts, str):
@@ -482,20 +487,16 @@ async def episode_handoff(
                 # worktree) — walk past to the next-most-recent candidate.
                 continue
 
-            # A candidate belongs to the caller's worktree when ANY of
+            # A candidate belongs to the caller's worktree when any of
             # its episodes (floor or real) carries a matching origin
-            # under the strict None-only-matches-None rule. The
-            # discriminator is the worktree_root itself, not the branch —
-            # one session can legitimately span branches inside one
-            # worktree, so we don't require ALL episodes to match.
-            worktree_matches = any(
-                _worktrees_equal_strict(
-                    ep.origin.worktree_root if ep.origin else None,
-                    caller_worktree,
-                )
-                for ep in candidate_eps
-            )
-            if not worktree_matches:
+            # under the strict None-only-matches-None rule, and only
+            # those episodes count. The discriminator is the worktree_root
+            # itself, not the branch: one session can span branches inside
+            # one worktree. A session recorded from two worktrees (every
+            # daemon lifetime before sessions were per request) hands each
+            # worktree only its own episodes.
+            candidate_eps = [ep for ep in candidate_eps if in_callers_worktree(ep)]
+            if not candidate_eps:
                 continue
 
             # Visible, takeaway-bearing episodes. Floors carry no
@@ -604,6 +605,8 @@ async def episode_handoff(
         # Filter floors from the emit stream — they carry no takeaway
         # and the marker body is a placeholder, not content the model
         # should reason over as "what the prior session concluded".
+        if prior_session_id is None:
+            all_eps = [ep for ep in all_eps if in_callers_worktree(ep)]
         all_eps = [ep for ep in all_eps if not ep.is_floor]
         # Apply the same scope-hide filter to the emit stream. This
         # matters in two cases the auto-resolution walk doesn't reach:
@@ -737,7 +740,7 @@ def _maybe_write_session_floor(
     liner and the discipline (capture_origin once, route through
     the recorder's session_id) is enforced in one place.
     """
-    session_id = deps.recorder.session_id
+    session_id = deps.recorder.session_for_request()
     # Cheap existence check. `list_by_session` returns oldest-first
     # episodes; we only need to know whether any exists.
     try:

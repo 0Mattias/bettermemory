@@ -420,7 +420,7 @@ async def memory_search(
 
         prior_boundary = find_prior_session_boundary(
             deps.store.iter_events(),
-            deps.recorder.session_id,
+            deps.recorder.session_for_request(),
         )
 
     # Candidate pool. Two paths:

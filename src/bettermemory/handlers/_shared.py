@@ -667,7 +667,7 @@ def _already_recorded_pending_ids(
     # pre-collected from the log — the hook stamps every event it
     # writes, so the bridge is decided per event inside the loop. See
     # the docstring's session-id bridge note.
-    allowed_sessions = {recorder.session_id}
+    allowed_sessions = {recorder.session_for_request()}
     if extra_session_ids:
         allowed_sessions |= extra_session_ids
     for event in recorder.store.iter_events_backward():

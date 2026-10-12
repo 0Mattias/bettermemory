@@ -51,20 +51,29 @@ def _session_with_body(memory_dir: Path, marker: str) -> str:
 
 
 def _plant(memory_dir: Path, session_id: str, marker: str) -> str:
-    """A row inserted into `session_id` with no log row behind it."""
+    """A row inserted into `session_id` with no log row behind it, under
+    the origin the session's own episodes carry (none for a new session),
+    so the handoff's worktree filter treats it as the session's."""
     store = Store.open(memory_dir)
     planted_id = generate_ulid()
+    row = store.conn.execute(
+        "SELECT origin_json FROM episodes WHERE session_id = ? "
+        "AND origin_json IS NOT NULL LIMIT 1",
+        (session_id,),
+    ).fetchone()
+    origin_json = row[0] if row is not None else None
     with store.conn:
         store.conn.execute(
             "INSERT INTO episodes(id, session_id, created, body, scopes_json, "
             "takeaway, origin_json, is_floor, swarm_id, log_mac) "
-            "VALUES (?, ?, ?, ?, '[]', ?, NULL, 0, NULL, NULL)",
+            "VALUES (?, ?, ?, ?, '[]', ?, ?, 0, NULL, NULL)",
             (
                 planted_id,
                 session_id,
                 datetime.now(timezone.utc).isoformat(),
                 f"planted body {marker}",
                 f"planted takeaway {marker}",
+                origin_json,
             ),
         )
     assert store.episode_provenance([planted_id]) == {planted_id: "unaccounted"}
