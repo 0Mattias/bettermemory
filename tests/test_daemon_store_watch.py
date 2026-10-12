@@ -563,6 +563,50 @@ def test_the_daemon_stays_up_through_a_copy_over_its_store(
     assert not _state_path(tmp_path).exists()
 
 
+def _session_start(env: dict[str, str], cwd: Path) -> str:
+    done = subprocess.run(
+        [sys.executable, "-m", "bettermemory", "hook", "session-start"],
+        input='{"session_id": "sess-orphan", "source": "startup"}',
+        env=env,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert done.returncode == 0, done.stderr
+    return done.stdout
+
+
+def test_the_next_daemon_reports_the_store_it_replaced(
+    tmp_path: Path, watched_env: dict[str, str]
+) -> None:
+    """The daemon started after one saved its orphan opens a new, empty
+    store beside it: `/health` names the orphan and the session brief
+    says how to restore it, until the orphan is deleted."""
+    first = _start(tmp_path, watched_env)
+    store = _store_path(tmp_path)
+    store.unlink()
+    orphans = _orphans_at_exit(first, store.parent, EXIT_BOUND)
+    assert orphans is not None and len(orphans) == 1
+    assert _process_gone(first["pid"])
+    second = _start(tmp_path, watched_env)
+    assert second["pid"] != first["pid"]
+    answered = health(second["port"])
+    assert answered is not None
+    assert answered["store_orphans"] == [str(orphans[0])]
+    workdir = tmp_path / "cwd"
+    workdir.mkdir()
+    brief = _session_start(watched_env, workdir)
+    assert "created fresh" in brief
+    assert str(orphans[0]) in brief
+    assert str(store) in brief
+    orphans[0].unlink()
+    answered = health(second["port"])
+    assert answered is not None
+    assert answered["store_orphans"] == []
+    assert "created fresh" not in _session_start(watched_env, workdir)
+
+
 def test_a_normal_shutdown_is_not_held_by_the_watch(
     tmp_path: Path, watched_env: dict[str, str]
 ) -> None:

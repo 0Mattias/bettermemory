@@ -246,12 +246,19 @@ def build_app(
 
     @_route(mcp, "/health", ["GET"])
     async def health(request: Request) -> Response:
+        try:
+            orphans = [str(path) for path in store.store_orphans()]
+        except sqlite3.Error:
+            orphans = []
         return JSONResponse(
             {
                 "status": "ok",
                 "version": served_version,
                 "store": str(store.path),
                 "pid": os.getpid(),
+                # The saved stores this one was created fresh after
+                # (`Store.store_orphans`), while any is still on disk.
+                "store_orphans": orphans,
             }
         )
 

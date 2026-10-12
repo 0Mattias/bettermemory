@@ -198,11 +198,15 @@ surfaces leave with them. An 8.x directory is imported once by
   on the store, whose closing would drop the daemon connection's locks.
   Before it stops, the daemon saves the store it still has open through
   its own connection to `<store>.orphaned-<UTC stamp>.sqlite` beside the
-  path, logged at error level.
+  path, logged at error level. A store created while one or more such
+  files sit beside it names them in its `meta`, and while any is still
+  there `/health` lists them under `store_orphans` and the session brief
+  leads with one line naming the saved file and how to copy it back.
+  Deleting the files, or restoring the old store, ends the notice.
   `session-start`, `audit-turn` and `prompt-recall` stay as aliases of
   it, and the plugin's `hooks.json` names the new commands.
   (`src/bettermemory/daemon.py`, `shim.py`, `_daemon_client.py`,
-  `cli/daemon_cmd.py`)
+  `cli/daemon_cmd.py`, `store.py`, `recall.py`)
 - **The write review.** A `memory_write` that passes the gates writes
   nothing on its first call: it returns status `review` with a
   `review_id`, the related stored statements (the engine's top three

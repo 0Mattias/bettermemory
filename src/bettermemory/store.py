@@ -34,6 +34,7 @@ leaves the store readable and refuses mutations.
 from __future__ import annotations
 
 import contextlib
+import glob
 import re
 import hmac
 import json
@@ -105,6 +106,14 @@ SCHEMA_VERSION = 1
 # (bench/parity/results/sqlite-candidates-8.0.0-2026-09-26.json records
 # both sizes beside the parity).
 PAGE_SIZE = 8192
+
+# A daemon whose store path was removed or replaced saves the store it
+# had open beside the path as `<store>.orphaned-<UTC stamp>.sqlite`
+# (`daemon.save_orphan`). A store created while one or more sit beside it
+# names them in `meta` under this key, as a JSON list of file names, so
+# the notice that it started empty (`Store.store_orphans`) lasts until
+# those files are deleted or the old store is copied back over this one.
+CREATED_AFTER_ORPHANS = "created_after_orphans"
 
 # How a record entered the store. `local`: written through this store's
 # own code path. `imported`: brought in by the migration or an import.
@@ -1291,6 +1300,16 @@ def store_path(path: Path | str) -> Path:
     return resolved / STORE_FILENAME
 
 
+def orphans_beside(path: Path) -> list[Path]:
+    """The saved orphans beside the store file `path`, oldest first: the
+    UTC stamp in their names sorts."""
+    pattern = f"{glob.escape(path.name)}.orphaned-*.sqlite"
+    try:
+        return sorted(p for p in path.parent.glob(pattern) if p.is_file())
+    except OSError:
+        return []
+
+
 class UnmigratedV8DirectoryError(RuntimeError):
     """A directory holds bettermemory 8 files and no store file."""
 
@@ -1386,6 +1405,7 @@ class Store:
         if path.exists():
             raise FileExistsError(f"a store already exists at {path}")
         ensure_owner_only_dir(path.parent, parents=True)
+        orphans = orphans_beside(path)
         conn = _connect(path)
         try:
             conn.executescript(SCHEMA)
@@ -1406,6 +1426,8 @@ class Store:
                 "key_fingerprint": fingerprint(key),
                 "created": created,
             }
+            if orphans:
+                meta[CREATED_AFTER_ORPHANS] = json.dumps([p.name for p in orphans])
             store = cls._bind(path, conn, keyring, key, store_id)
             with store._transaction() as tx:
                 tx.executemany(
@@ -1559,6 +1581,32 @@ class Store:
             str(r["key"]): str(r["value"])
             for r in self._conn.execute("SELECT key, value FROM meta ORDER BY key")
         }
+
+    def store_orphans(self) -> list[Path]:
+        """The saved orphans this store was created after that are still
+        beside it, oldest first; empty for a store that existed before,
+        including one copied back from an orphan, which carries no such
+        names."""
+        row = self._conn.execute(
+            "SELECT value FROM meta WHERE key = ?", (CREATED_AFTER_ORPHANS,)
+        ).fetchone()
+        if row is None:
+            return []
+        try:
+            names = json.loads(str(row[0]))
+        except ValueError:
+            return []
+        if not isinstance(names, list):
+            return []
+        directory = self._path.parent
+        return [
+            directory / name
+            for name in names
+            if isinstance(name, str)
+            and name
+            and Path(name).name == name
+            and (directory / name).is_file()
+        ]
 
     # -- transactions -------------------------------------------------------
 
