@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -37,6 +38,17 @@ def _orphan(directory: Path, stamp: str, keys: Path) -> Path:
     shutil.move(str(directory / "source" / "memory.sqlite"), orphan)
     shutil.rmtree(directory / "source")
     return orphan
+
+
+def _meta_store_id(path: Path) -> str:
+    conn = sqlite3.connect(path)
+    try:
+        (value,) = conn.execute(
+            "SELECT value FROM meta WHERE key = 'store_id'"
+        ).fetchone()
+    finally:
+        conn.close()
+    return str(value)
 
 
 @pytest.fixture
@@ -158,13 +170,13 @@ def test_the_brief_of_a_fresh_store_leads_with_the_notice(
         assert shown.stdout == orphan_notice(store)
         assert "\n" not in shown.stdout
         assert "created fresh" in shown.stdout
-        assert str(orphan) in shown.stdout
+        assert orphan.name in shown.stdout
         assert str(store.path) in shown.stdout
         assert "bettermemory down" in shown.stdout
         assert shown.chars == len(shown.stdout)
         assert shown.ids == ()
-        # Short: the paths aside, one sentence and a half.
-        assert len(shown.stdout) - len(str(orphan)) - len(str(store.path)) < 200
+        # Short: the paths aside, two sentences.
+        assert len(shown.stdout) - len(orphan.name) - len(str(store.path)) < 300
         orphan.unlink()
         again = session_brief(
             session_id="sess-2",
@@ -177,10 +189,93 @@ def test_the_brief_of_a_fresh_store_leads_with_the_notice(
 
 
 def test_the_notice_names_the_newest_orphan(store_dir: Path, tmp_path: Path) -> None:
-    _orphan(store_dir, "20261011T010000Z", tmp_path / "keys")
-    newer = _orphan(store_dir, "20261012T053900Z", tmp_path / "keys")
-    with Store(store_dir, keys_dir=tmp_path / "keys") as store:
-        assert str(newer) in orphan_notice(store)
+    """Oldest to newest is the stamp, then the counter a second orphan
+    from the same second carries; a plain sort of the names puts
+    ``-2.sqlite`` before ``.sqlite``."""
+    keys = tmp_path / "keys"
+    oldest = _orphan(store_dir, "20261011T010000Z", keys)
+    first = _orphan(store_dir, "20261012T053900Z", keys)
+    tenth = _orphan(store_dir, "20261012T053900Z-10", keys)
+    second = _orphan(store_dir, "20261012T053900Z-2", keys)
+    assert orphans_beside(store_dir / "memory.sqlite") == [oldest, first, second, tenth]
+    with Store(store_dir, keys_dir=keys) as store:
+        assert store.store_orphans() == [oldest, first, second, tenth]
+        assert tenth.name in orphan_notice(store)
+        tenth.unlink()
+        assert second.name in orphan_notice(store)
+
+
+def test_the_notice_shortens_its_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The home directory shows as ``~``, and a path too long for one
+    line keeps its two ends."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    keys = tmp_path / "keys"
+    near = home / ".bettermemory"
+    near.mkdir(parents=True)
+    _orphan(near, "20261012T053900Z", keys)
+    with Store(near, keys_dir=keys) as store:
+        notice = orphan_notice(store)
+    assert "bettermemory: ~/.bettermemory/memory.sqlite was created" in notice
+    assert str(home) not in notice
+    deep = tmp_path / "/".join(["a-directory-name-of-some-length"] * 7)
+    deep.mkdir(parents=True)
+    _orphan(deep, "20261012T053900Z", keys)
+    with Store(deep, keys_dir=keys) as store:
+        notice = orphan_notice(store)
+    assert len(str(deep / "memory.sqlite")) > 200
+    assert "..." in notice
+    assert str(deep / "memory.sqlite")[:90] in notice
+    assert notice.split(" was created")[0].endswith("-of-some-length/memory.sqlite")
+    assert len(notice) < 540
+
+
+@pytest.mark.parametrize("follows_the_steps", [True, False])
+def test_the_notice_steps_restore_the_saved_store(
+    store_dir: Path, tmp_path: Path, follows_the_steps: bool
+) -> None:
+    """The restore the notice gives, step by step, over a WAL the fresh
+    store left behind: the store reads back as the saved one. Skipping
+    the deletion is the control: the copied file then reads through the
+    stale WAL as the fresh store."""
+    keys = tmp_path / "keys"
+    orphan = _orphan(store_dir, "20261012T053900Z", keys)
+    saved_id = _meta_store_id(orphan)
+    fresh = Store(store_dir, keys_dir=keys)
+    fresh.write(content="a memory in the fresh store", scopes=["global"])
+    fresh.write(content="another memory in the fresh store", scopes=["global"])
+    fresh_id = fresh.store_id
+    notice = orphan_notice(fresh)
+    path = fresh.path
+    wal, shm = Path(f"{path}-wal"), Path(f"{path}-shm")
+    # A session that did not close cleanly leaves the WAL in place.
+    kept = {sibling: sibling.read_bytes() for sibling in (wal, shm)}
+    # 1. Close the sessions and 2. `bettermemory down`: nothing has the
+    # store open any more (no daemon runs here).
+    fresh.close()
+    for sibling, data in kept.items():
+        sibling.write_bytes(data)
+    assert wal.stat().st_size > 0
+    # 3. Delete the WAL and shared-memory files beside the store.
+    assert f"delete {wal.name} and {shm.name}" in notice
+    if follows_the_steps:
+        wal.unlink()
+        shm.unlink()
+    # 4. Copy the saved file over the store.
+    assert f"saved beside it as {orphan.name}" in notice
+    assert notice.index("bettermemory down") < notice.index(wal.name)
+    shutil.copyfile(orphan, path)
+    store_id = _meta_store_id(path)
+    if not follows_the_steps:
+        assert store_id == fresh_id
+        return
+    assert store_id == saved_id
+    with Store(store_dir, keys_dir=keys) as restored:
+        assert restored.store_id == saved_id
+        assert restored.count_memories() == 1
+        assert restored.store_orphans() == []
 
 
 def test_the_notice_leads_a_brief_that_shows_memories(
@@ -199,7 +294,7 @@ def test_the_notice_leads_a_brief_that_shows_memories(
     shown = world.brief()
     first, rest = shown.stdout.split("\n", 1)
     assert first == orphan_notice(world.store)
-    assert str(orphan) in first
+    assert orphan.name in first
     assert len(shown.ids) == 1
     assert shown.ids[0] in rest
     world.store.close()

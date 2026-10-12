@@ -113,6 +113,8 @@ PAGE_SIZE = 8192
 # names them in `meta` under this key, as a JSON list of file names, so
 # the notice that it started empty (`Store.store_orphans`) lasts until
 # those files are deleted or the old store is copied back over this one.
+# A store created at the path before the orphan was saved gets the name
+# added by the daemon that saved it.
 CREATED_AFTER_ORPHANS = "created_after_orphans"
 
 # How a record entered the store. `local`: written through this store's
@@ -1300,12 +1302,46 @@ def store_path(path: Path | str) -> Path:
     return resolved / STORE_FILENAME
 
 
+_ORPHAN_SUFFIX = re.compile(r"\.orphaned-(?P<stamp>[^.]*?)(?:-(?P<n>\d+))?\.sqlite\Z")
+
+
+def orphan_order(path: Path | str) -> tuple[str, int]:
+    """The key saved orphans sort by, oldest first: the UTC stamp in the
+    name, then the counter a second orphan from the same second carries
+    (``-2``, ``-3``), the first having none. A plain sort of the names
+    puts ``-2.sqlite`` before ``.sqlite``."""
+    found = _ORPHAN_SUFFIX.search(Path(path).name)
+    if found is None:
+        return (Path(path).name, 1)
+    return (found["stamp"], int(found["n"] or 1))
+
+
+def orphan_names(value: str | None) -> list[str]:
+    """The file names a `CREATED_AFTER_ORPHANS` value holds: plain names
+    beside the store, anything else dropped; empty when it is malformed."""
+    if value is None:
+        return []
+    try:
+        names = json.loads(value)
+    except ValueError:
+        return []
+    if not isinstance(names, list):
+        return []
+    return [
+        name
+        for name in names
+        if isinstance(name, str) and name and Path(name).name == name
+    ]
+
+
 def orphans_beside(path: Path) -> list[Path]:
-    """The saved orphans beside the store file `path`, oldest first: the
-    UTC stamp in their names sorts."""
+    """The saved orphans beside the store file `path`, oldest first
+    (`orphan_order`)."""
     pattern = f"{glob.escape(path.name)}.orphaned-*.sqlite"
     try:
-        return sorted(p for p in path.parent.glob(pattern) if p.is_file())
+        return sorted(
+            (p for p in path.parent.glob(pattern) if p.is_file()), key=orphan_order
+        )
     except OSError:
         return []
 
@@ -1592,21 +1628,15 @@ class Store:
         ).fetchone()
         if row is None:
             return []
-        try:
-            names = json.loads(str(row[0]))
-        except ValueError:
-            return []
-        if not isinstance(names, list):
-            return []
         directory = self._path.parent
-        return [
-            directory / name
-            for name in names
-            if isinstance(name, str)
-            and name
-            and Path(name).name == name
-            and (directory / name).is_file()
-        ]
+        return sorted(
+            (
+                directory / name
+                for name in orphan_names(str(row[0]))
+                if (directory / name).is_file()
+            ),
+            key=orphan_order,
+        )
 
     # -- transactions -------------------------------------------------------
 

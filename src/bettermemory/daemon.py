@@ -35,6 +35,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import contextlib
+import json
 import logging
 import os
 import queue
@@ -49,7 +50,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Awaitable, Callable, TypeVar, cast
+from typing import Any, Awaitable, Callable, Mapping, TypeVar, cast
 
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -57,10 +58,11 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ._daemon_client import HOST, remove_state, write_state
-from ._fsutil import replace_atomic
+from ._fsutil import ensure_owner_only_dir, fsync_dir, replace_atomic
 from .builder import build_server
 from .config import Config
-from .store import Store
+from .store import CREATED_AFTER_ORPHANS, Store, orphan_names, orphan_order
+from .time_utils import parse_event_ts
 
 log = logging.getLogger("bettermemory.daemon")
 
@@ -403,6 +405,10 @@ def build_app(
 STORE_WATCH_SECONDS = 30.0
 
 
+#: The files SQLite keeps beside a store in WAL mode, by suffix.
+_SIBLINGS = ("-wal", "-shm")
+
+
 class _StoreWatch:
     """Fires once the store path no longer names the file the daemon
     opened.
@@ -434,7 +440,14 @@ class _StoreWatch:
         self._on_removed = on_removed
         self._interval = interval
         self._stop = threading.Event()
-        self._identity: tuple[int, int] | None = None
+        #: The device and inode the path named at `start`.
+        self.identity: tuple[int, int] | None = None
+        #: The same for the path and its ``-wal`` and ``-shm`` siblings,
+        #: by suffix, those there at `start`: the daemon's own files.
+        self.files: dict[str, tuple[int, int]] = {}
+        #: When the watch started: a store at the path created later
+        #: cannot be the one the daemon opened (`save_orphan`).
+        self.started_at: datetime | None = None
         self._thread: threading.Thread | None = None
 
     def start(self) -> bool:
@@ -453,28 +466,42 @@ class _StoreWatch:
                 exc,
             )
             return False
-        self._identity = (found.st_dev, found.st_ino)
+        self.identity = (found.st_dev, found.st_ino)
+        self.files = {"": self.identity}
+        for suffix in _SIBLINGS:
+            with contextlib.suppress(OSError):
+                sibling = os.stat(f"{self._path}{suffix}")
+                self.files[suffix] = (sibling.st_dev, sibling.st_ino)
+        self.started_at = datetime.now(timezone.utc)
         self._thread = threading.Thread(
             target=self._run, name="bettermemory-store-watch", daemon=True
         )
         self._thread.start()
         return True
 
+    def moved(self) -> bool:
+        """Whether the path is gone or names another file than the one
+        recorded at `start`; False for a watch that never started, and
+        for a stat that failed any other way, logged."""
+        if self.identity is None:
+            return False
+        try:
+            found = os.stat(self._path)
+        except (FileNotFoundError, NotADirectoryError):
+            return True
+        except OSError as exc:
+            log.warning(
+                "could not stat the store %s: %s: %s",
+                self._path,
+                exc.__class__.__name__,
+                exc,
+            )
+            return False
+        return (found.st_dev, found.st_ino) != self.identity
+
     def _run(self) -> None:
         while not self._stop.wait(self._interval):
-            try:
-                found = os.stat(self._path)
-            except (FileNotFoundError, NotADirectoryError):
-                found = None
-            except OSError as exc:
-                log.warning(
-                    "could not stat the store %s: %s: %s",
-                    self._path,
-                    exc.__class__.__name__,
-                    exc,
-                )
-                continue
-            if found is not None and (found.st_dev, found.st_ino) == self._identity:
+            if not self.moved():
                 continue
             log.warning(
                 "the store %s was removed or replaced; the daemon stops",
@@ -509,21 +536,35 @@ def _orphan_path(store_path: Path, stamp: str) -> Path:
     return candidate
 
 
-def save_orphan(store: Store, *, now: datetime | None = None) -> Path | None:
+def save_orphan(
+    store: Store,
+    *,
+    now: datetime | None = None,
+    into: Path | None = None,
+    successor_after: datetime | None = None,
+    own_files: Mapping[str, tuple[int, int]] | None = None,
+) -> Path | None:
     """Back up the store the daemon still holds open, after its path was
     removed or replaced, to ``<store>.orphaned-<UTC stamp>.sqlite`` beside
-    the path; the orphan's path, or None when it could not be written.
+    the path, or over `into`, an orphan saved earlier; the orphan's path,
+    or None when it could not be written.
 
     The copy is SQLite's online backup through `store`'s own connection,
     the only way left to the inode, so it must run on the thread that
     opened that connection. It is written under a temporary name in the
     same directory and renamed into place, so no other process sees a
-    partial file. Every failure (the directory gone, a full disk) is
-    logged at error level, never raised: the daemon stops either way."""
+    partial file, and the directory is synced after the rename. A
+    directory removed with the store is made again, owner-only. Every
+    failure (the path's parent a file, a full disk) is logged at error
+    level, never raised: the daemon stops either way.
+
+    With `successor_after`, a store another process created at the path
+    after that moment is told about the orphan (`_tell_successor`)."""
     store_path = Path(store.path)
     directory = store_path.parent
     temp: str | None = None
     try:
+        ensure_owner_only_dir(directory, parents=True)
         handle, temp = tempfile.mkstemp(
             prefix=f".{store_path.name}.orphaned-", suffix=".tmp", dir=directory
         )
@@ -533,9 +574,10 @@ def save_orphan(store: Store, *, now: datetime | None = None) -> Path | None:
             store.conn.backup(target)
         finally:
             target.close()
-        orphan = _orphan_path(store_path, _utc_stamp(now))
+        orphan = into if into is not None else _orphan_path(store_path, _utc_stamp(now))
         replace_atomic(Path(temp), orphan)
         temp = None
+        fsync_dir(directory)
     except (OSError, sqlite3.Error) as exc:
         log.error(
             "the store %s was removed or replaced and its open copy could not "
@@ -549,13 +591,126 @@ def save_orphan(store: Store, *, now: datetime | None = None) -> Path | None:
         if temp is not None:
             with contextlib.suppress(OSError):
                 os.unlink(temp)
-    log.error(
-        "the store %s was removed or replaced; the store this daemon had open "
-        "is saved at %s",
-        store_path,
-        orphan,
-    )
+    if into is None:
+        log.error(
+            "the store %s was removed or replaced; the store this daemon had "
+            "open is saved at %s",
+            store_path,
+            orphan,
+        )
+    if successor_after is not None:
+        _tell_successor(
+            store_path,
+            orphan,
+            store_id=store.store_id,
+            created_after=successor_after,
+            own_files=own_files or {},
+        )
     return orphan
+
+
+def _tell_successor(
+    store_path: Path,
+    orphan: Path,
+    *,
+    store_id: str,
+    created_after: datetime,
+    own_files: Mapping[str, tuple[int, int]],
+) -> None:
+    """Name `orphan` in the ``created_after_orphans`` meta of the store now
+    at `store_path`, when another process created it there after
+    `created_after`: a store created before the orphan existed did not
+    see it beside itself (`Store.create`) and would never say it started
+    empty.
+
+    A store whose ``created`` is earlier, an older store moved back over
+    the path, is left alone, as is any file whose ``store_id`` is the
+    orphan's.
+
+    Nothing is opened while the path or its ``-wal`` or ``-shm`` is one
+    of the daemon's own files (`own_files`, by suffix), or a ``-wal`` or
+    ``-shm`` is there whose owner is unknown: SQLite opens the WAL and
+    shared memory beside a store with the store, and closing them would
+    drop the daemon connection's locks on its own, the WAL it still
+    writes. Only another store's files are opened, by a short connection
+    of their own. Failures are logged, never raised."""
+    for suffix in ("", *_SIBLINGS):
+        try:
+            found = os.stat(f"{store_path}{suffix}")
+        except FileNotFoundError:
+            if suffix == "":
+                return
+            continue
+        except OSError:
+            return
+        own = own_files.get(suffix)
+        if (suffix and own is None) or (found.st_dev, found.st_ino) == own:
+            log.warning(
+                "the saved store %s is not named in the store now at %s: "
+                "its %s may still be this daemon's",
+                orphan,
+                store_path,
+                f"{store_path.name}{suffix}",
+            )
+            return
+    uri = f"{Path(os.path.abspath(store_path)).as_uri()}?mode=rw"
+    try:
+        conn = sqlite3.connect(uri, uri=True, timeout=5.0, isolation_level=None)
+    except sqlite3.Error as exc:
+        log.warning(
+            "could not open the store now at %s: %s: %s",
+            store_path,
+            exc.__class__.__name__,
+            exc,
+        )
+        return
+    told = False
+    try:
+        # Read before anything is written: a write lock taken on a file
+        # that is no database at all stamps a header on it.
+        conn.execute("BEGIN")
+        meta = dict(
+            conn.execute(
+                "SELECT key, value FROM meta WHERE key IN ('store_id', 'created', ?)",
+                (CREATED_AFTER_ORPHANS,),
+            ).fetchall()
+        )
+        created = parse_event_ts(meta.get("created"))
+        names = orphan_names(meta.get(CREATED_AFTER_ORPHANS))
+        if (
+            meta.get("store_id") in (None, store_id)
+            or created is None
+            or created <= created_after
+            or orphan.name in names
+        ):
+            conn.execute("ROLLBACK")
+            return
+        conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+            (
+                CREATED_AFTER_ORPHANS,
+                json.dumps(sorted([*names, orphan.name], key=orphan_order)),
+            ),
+        )
+        conn.execute("COMMIT")
+        told = True
+    except sqlite3.Error as exc:
+        log.warning(
+            "could not name the saved store %s in the store now at %s: %s: %s",
+            orphan,
+            store_path,
+            exc.__class__.__name__,
+            exc,
+        )
+    finally:
+        conn.close()
+    if told:
+        log.warning(
+            "the store now at %s was created after the one this daemon had "
+            "open; it now names the saved store %s",
+            store_path,
+            orphan,
+        )
 
 
 def bind(host: str, port: int) -> socket.socket:
@@ -585,8 +740,11 @@ def serve(
     """Run the daemon in this process until the shutdown endpoint, a
     signal, or the removal of its store file (`_StoreWatch`) stops it;
     on a removal it first saves the store it had open beside the path
-    (`save_orphan`). Writes the state file after the socket is bound and
-    removes it on the way out. Returns the exit status."""
+    (`save_orphan`), and saves it again over that file once nothing
+    else writes to it. A removal the watch had no tick to see before
+    any other stop is caught as the app shuts down and saved the same
+    way. Writes the state file after the socket is bound and removes it
+    on the way out. Returns the exit status."""
     import uvicorn
 
     requested = config.daemon.port if port is None else port
@@ -600,24 +758,53 @@ def serve(
         if server is not None:
             server.should_exit = True
 
-    def orphaned() -> None:
+    def save(into: Path | None = None) -> Path | None:
         # On the event loop, the thread that opened `store` and the only
-        # one its connection serves: the backup runs between two requests
-        # and before the port closes, so a daemon started next for the
-        # path already finds the orphan beside it.
-        save_orphan(store)
+        # one its connection serves.
+        return save_orphan(
+            store,
+            into=into,
+            successor_after=watch.started_at,
+            own_files=watch.files,
+        )
+
+    def orphaned() -> None:
+        # The backup runs between two requests and before the port
+        # closes, so a daemon started next for the path already finds the
+        # orphan beside it. Once the app is shutting down, `settle` has
+        # this covered.
+        if holder.get("settled"):
+            return
+        holder["fired"] = True
+        holder["orphan"] = save()
         shutdown()
 
+    def settle() -> None:
+        # At the app's shutdown, on the event loop: the requests are
+        # done, the hook workers have closed their connections and
+        # `store`'s is still open. Writes that reached the orphaned inode
+        # after the first save (a request in flight, a hook job) are
+        # saved again over the same file; a removal no tick saw, before
+        # `down` or a signal, is saved now.
+        holder["settled"] = True
+        orphan = holder.get("orphan")
+        if orphan is not None:
+            save(into=orphan)
+        elif watch.moved():
+            if not holder.get("fired"):
+                log.warning(
+                    "the store %s was removed or replaced; the daemon was "
+                    "already stopping",
+                    store.path,
+                )
+            holder["orphan"] = save()
+
     def store_gone() -> None:
-        # From the watch thread.
-        loop = holder.get("loop")
-        if loop is None:
-            shutdown()
-            return
+        # From the watch thread, which starts after the loop is recorded.
         try:
-            loop.call_soon_threadsafe(orphaned)
+            holder["loop"].call_soon_threadsafe(orphaned)
         except RuntimeError:
-            # The loop is closed: the daemon is already on its way out.
+            # The loop is closed: `settle` has run.
             pass
 
     watch = _StoreWatch(Path(store.path), store_gone, interval=STORE_WATCH_SECONDS)
@@ -635,6 +822,7 @@ def serve(
                 yield started
         finally:
             watch.stop()
+            settle()
 
     app.router.lifespan_context = lifespan
     state = {

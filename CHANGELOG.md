@@ -197,17 +197,27 @@ surfaces leave with them. An 8.x directory is imported once by
   timeout and name no cause.
   A daemon whose store file is removed, or replaced by a rename over
   its path, stops through its normal shutdown at its next check (every
-  30 s) and logs one line; a copy over the store keeps it running. An
-  open shim starts a new one on its next call. The check stats the path
-  for the device and inode it named at start and holds no descriptor
-  on the store, whose closing would drop the daemon connection's locks.
+  30 s), logging a warning that it stops and an error naming the saved
+  store; a copy over the store keeps it running. An open shim starts a
+  new one on its next call. The check stats the path for the device and
+  inode it named at start and holds no descriptor on the store, whose
+  closing would drop the daemon connection's locks.
   Before it stops, the daemon saves the store it still has open through
   its own connection to `<store>.orphaned-<UTC stamp>.sqlite` beside the
-  path, logged at error level. A store created while one or more such
-  files sit beside it names them in its `meta`, and while any is still
-  there `/health` lists them under `store_orphans` and the session brief
-  leads with one line naming the saved file and how to copy it back.
-  Deleting the files, or restoring the old store, ends the notice.
+  path, making the directory again (owner-only) when it went with the
+  store, and saves it again over the same file as it shuts down, once
+  the hook workers have closed, so writes still in flight are kept. A
+  `down` or a signal before the next check is caught at that same point
+  and saves the store too. A store created while one or more such files
+  sit beside it names them in its `meta`; one another process created at
+  the path after the daemon started, before the orphan was saved, is
+  given its name by the daemon, while an older store moved back over the
+  path is not. While any named file is still there `/health` lists them
+  under `store_orphans` and the session brief, whatever its settings,
+  leads with one line naming the newest saved file and the restore
+  steps: close the sessions, `bettermemory down`, delete the store's
+  `-wal` and `-shm` files, then copy the saved file over it. Deleting
+  the files, or restoring the old store, ends the notice.
   `session-start`, `audit-turn` and `prompt-recall` stay as aliases of
   it, and the plugin's `hooks.json` names the new commands.
   (`src/bettermemory/daemon.py`, `shim.py`, `_daemon_client.py`,

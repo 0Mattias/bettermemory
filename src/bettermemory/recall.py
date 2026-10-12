@@ -55,6 +55,7 @@ printing, so it resolves its 24 and stops.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import threading
 from collections import OrderedDict
@@ -1048,7 +1049,13 @@ def session_brief(
     records a `segment_opened` row instead (the session id, harness,
     source and the new segment's number), so the segment is read back
     after a restart and on the in-process path, which rebuilds the state
-    from the log on every call."""
+    from the log on every call.
+
+    One line leads whatever is shown, or stands alone, while the store
+    was created fresh after a daemon saved the one it lost
+    (`orphan_notice`): it is a data-loss alarm, so it shows with
+    `session_brief` or telemetry off, outside a repository and on an
+    empty store as well, given a session id."""
     empty = HookResult.empty("session_brief")
     if not session_id:
         return empty
@@ -1104,18 +1111,46 @@ def session_brief(
     return result
 
 
+#: The most characters a path in the orphan notice takes; a longer one
+#: keeps its two ends. `/health` lists the full paths.
+_NOTICE_PATH_CHARS = 200
+
+
+def _notice_path(path: Path) -> str:
+    """`path` for the orphan notice: the home directory as ``~``, and no
+    longer than `_NOTICE_PATH_CHARS`."""
+    shown = str(path)
+    home = str(Path.home())
+    if home not in ("", os.sep) and (
+        shown == home or shown.startswith(home.rstrip(os.sep) + os.sep)
+    ):
+        shown = "~" + shown[len(home.rstrip(os.sep)) :]
+    if len(shown) > _NOTICE_PATH_CHARS:
+        half = (_NOTICE_PATH_CHARS - 3) // 2
+        shown = f"{shown[:half]}...{shown[-half:]}"
+    return shown
+
+
 def orphan_notice(store: Store) -> str:
     """The line the brief leads with while the store was created fresh
     after a daemon saved the one it lost (`Store.store_orphans`), naming
-    the newest saved file; empty otherwise. Shown whatever else the brief
-    holds, since the fresh store is usually empty, and never acted on."""
+    the newest saved file and the restore steps in the order that works;
+    empty otherwise. Shown whatever else the brief holds, since the fresh
+    store is usually empty, and never acted on.
+
+    The steps are all needed: an open session's shim starts a daemon
+    again on its next call, and a WAL left beside the store is read over
+    the copied file, which then reads as the fresh store."""
     orphans = store.store_orphans()
     if not orphans:
         return ""
+    name = store.path.name
     return (
-        f"bettermemory: this store was created fresh after the previous one was "
-        f"lost; that one is saved at {orphans[-1]}. To restore it, stop "
-        f"bettermemory (`bettermemory down`) and copy it over {store.path}."
+        f"bettermemory: {_notice_path(store.path)} was created fresh after the "
+        f"previous store was lost; that store is saved beside it as "
+        f"{orphans[-1].name}. To restore it: close all Claude Code and Codex "
+        f"sessions, run `bettermemory down`, delete {name}-wal and {name}-shm "
+        f"there, then copy the saved file over {name}."
     )
 
 

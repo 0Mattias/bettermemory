@@ -13,7 +13,11 @@ drop the daemon connection's POSIX locks on the file
 
 Before it stops, the daemon backs the store it still holds up through
 its own connection to ``<store>.orphaned-<stamp>.sqlite`` beside the path
-(`daemon.save_orphan`).
+(`daemon.save_orphan`). As the app shuts down it saves it again over the
+same file, keeping writes still in flight, and saves a removal no tick
+saw before a ``down`` or a signal. A store another process created at
+the path inside the window is given the orphan's name; an older store
+moved back over the path is not.
 
 The watch itself is tested in-process on a plain file; the daemon is
 tested as a process, started by ``up`` under the test's own state
@@ -24,10 +28,12 @@ interval lowered in the child by a ``sitecustomize``.
 from __future__ import annotations
 
 import errno
+import json
 import logging
 import os
 import re
 import shutil
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -43,8 +49,14 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from bettermemory import daemon as _daemon
-from bettermemory._daemon_client import _stopped, health, pid_alive
-from bettermemory.store import Store
+from bettermemory._daemon_client import (
+    _stopped,
+    health,
+    pid_alive,
+    post,
+    read_state,
+)
+from bettermemory.store import CREATED_AFTER_ORPHANS, Store
 
 from .test_daemon_lifecycle import (
     _cli,
@@ -368,20 +380,193 @@ def test_save_orphan_never_overwrites_an_earlier_orphan(tmp_path: Path) -> None:
     assert _orphans(store.path.parent) == sorted([first, second])
 
 
-def test_save_orphan_logs_and_returns_none_when_the_directory_is_gone(
+def _integrity_and_counts(path: Path) -> tuple[str, dict[str, int]]:
+    conn = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)
+    try:
+        (integrity,) = conn.execute("PRAGMA integrity_check").fetchone()
+        tables = [
+            name
+            for (name,) in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' "
+                "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            )
+        ]
+        counts = {
+            name: conn.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
+            for name in tables
+        }
+    finally:
+        conn.close()
+    return str(integrity), counts
+
+
+def test_save_orphan_makes_the_directory_again_when_it_is_gone(
+    tmp_path: Path,
+) -> None:
+    """``rm -rf`` of the store's directory: the orphan is saved in the
+    directory made again, owner-only."""
+    store = _store_with_one_memory(tmp_path)
+    try:
+        directory = store.path.parent
+        expected = _integrity_and_counts(store.path)
+        shutil.rmtree(directory)
+        orphan = _daemon.save_orphan(store)
+    finally:
+        store.close()
+    assert orphan is not None and orphan.parent == directory
+    assert _orphans(directory) == [orphan]
+    assert _leftovers(directory) == []
+    assert _integrity_and_counts(orphan) == expected
+    assert expected[0] == "ok"
+    assert (directory.stat().st_mode & 0o777) == 0o700
+
+
+def test_save_orphan_logs_and_returns_none_when_the_directory_cannot_be_made(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
+    """A regular file where the directory was: nothing to save into."""
     store = _store_with_one_memory(tmp_path)
     try:
         shutil.rmtree(store.path.parent)
+        store.path.parent.write_bytes(b"not a directory")
         with caplog.at_level(logging.ERROR, logger="bettermemory.daemon"):
             assert _daemon.save_orphan(store) is None
     finally:
         store.close()
+    assert store.path.parent.read_bytes() == b"not a directory"
     assert any(
         r.levelno == logging.ERROR and str(store.path) in r.getMessage()
         for r in caplog.records
     )
+
+
+def test_save_orphan_saves_again_over_the_same_file(tmp_path: Path) -> None:
+    """`into` replaces an orphan saved earlier, with what was written to
+    the store since, and logs nothing new."""
+    store = _store_with_one_memory(tmp_path)
+    try:
+        store.path.unlink()
+        first = _daemon.save_orphan(store)
+        assert first is not None
+        store.write(content="written after the first save", scopes=["global"])
+        again = _daemon.save_orphan(store, into=first)
+    finally:
+        store.close()
+    assert again == first
+    assert _orphans(store.path.parent) == [first]
+    assert _leftovers(store.path.parent) == []
+    assert _integrity_and_counts(first)[1]["memories"] == 2
+
+
+def _unlink_store(path: Path) -> None:
+    for sibling in (path, Path(f"{path}-wal"), Path(f"{path}-shm")):
+        sibling.unlink(missing_ok=True)
+
+
+def _marker(path: Path) -> list[str] | None:
+    conn = sqlite3.connect(path)
+    try:
+        row = conn.execute(
+            "SELECT value FROM meta WHERE key = ?", (CREATED_AFTER_ORPHANS,)
+        ).fetchone()
+    finally:
+        conn.close()
+    return None if row is None else json.loads(row[0])
+
+
+def test_save_orphan_tells_a_store_created_at_the_path_since(tmp_path: Path) -> None:
+    """A store another process created at the path after the watch
+    started, before the orphan existed to be seen beside it, is given its
+    name, once, beside any it already had."""
+    store = _store_with_one_memory(tmp_path)
+    try:
+        watched_since = datetime.now(timezone.utc)
+        _unlink_store(store.path)
+        time.sleep(0.01)
+        Store.create(store.path, keys_dir=tmp_path / "keys").close()
+        assert _marker(store.path) is None
+        orphan = _daemon.save_orphan(store, successor_after=watched_since)
+        assert orphan is not None
+        assert _marker(store.path) == [orphan.name]
+        later = _daemon.save_orphan(store, successor_after=watched_since)
+        assert later is not None
+        _daemon.save_orphan(store, into=orphan, successor_after=watched_since)
+    finally:
+        store.close()
+    assert _marker(store.path) == [orphan.name, later.name]
+    with Store(store.path, keys_dir=tmp_path / "keys") as successor:
+        assert successor.store_orphans() == [orphan, later]
+
+
+def test_save_orphan_leaves_an_older_store_moved_over_the_path_alone(
+    tmp_path: Path,
+) -> None:
+    """Restoring an older store by a rename over the path is not a store
+    created after the loss: no notice."""
+    older = Store(tmp_path / "older", keys_dir=tmp_path / "keys")
+    older_id = older.store_id
+    older.close()
+    store = _store_with_one_memory(tmp_path)
+    try:
+        time.sleep(0.01)
+        watched_since = datetime.now(timezone.utc)
+        _unlink_store(store.path)
+        os.replace(older.path, store.path)
+        assert _daemon.save_orphan(store, successor_after=watched_since) is not None
+    finally:
+        store.close()
+    assert _store_id(store.path) == older_id
+    assert _marker(store.path) is None
+
+
+def test_save_orphan_never_opens_the_wal_the_daemon_still_writes(
+    tmp_path: Path,
+) -> None:
+    """A newer store renamed over the path with the daemon's WAL and
+    shared memory still beside it: opening that store would open them
+    too, and closing them would drop the daemon's locks on its own WAL.
+    It is not told, and the daemon's WAL is left where it was."""
+    store = _store_with_one_memory(tmp_path)
+    newer = tmp_path / "newer"
+    try:
+        watch = _daemon._StoreWatch(store.path, lambda: None, interval=30.0)
+        assert watch.start()
+        watch.stop()
+        assert set(watch.files) == {"", "-wal", "-shm"}
+        wal = Path(f"{store.path}-wal")
+        wal_identity = (wal.stat().st_dev, wal.stat().st_ino)
+        assert watch.started_at is not None
+        time.sleep(0.01)
+        Store.create(newer, keys_dir=tmp_path / "keys").close()
+        os.replace(newer / "memory.sqlite", store.path)
+        orphan = _daemon.save_orphan(
+            store, successor_after=watch.started_at, own_files=watch.files
+        )
+        assert orphan is not None
+        assert (wal.stat().st_dev, wal.stat().st_ino) == wal_identity
+        store.write(content="written after the save", scopes=["global"])
+    finally:
+        store.close()
+    for sibling in (wal, Path(f"{store.path}-shm")):
+        sibling.unlink(missing_ok=True)
+    assert _marker(store.path) is None
+
+
+def test_save_orphan_never_marks_a_copy_of_the_store_it_saved(tmp_path: Path) -> None:
+    """A file at the path with the orphan's store id is the orphan's own
+    store, whenever it was made: never written to."""
+    store = _store_with_one_memory(tmp_path)
+    try:
+        before = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        _unlink_store(store.path)
+        orphan = _daemon.save_orphan(store)
+        assert orphan is not None
+        shutil.copyfile(orphan, store.path)
+        _daemon.save_orphan(store, successor_after=before)
+    finally:
+        store.close()
+    assert _store_id(store.path) == store.store_id
+    assert _marker(store.path) is None
 
 
 def test_save_orphan_leaves_no_partial_file_when_the_write_fails(
@@ -429,12 +614,14 @@ def test_save_orphan_from_another_thread_fails_without_raising(
 # ---------------------------------------------------------------------------
 
 
-def _interval_env(env: dict[str, str], site: Path) -> dict[str, str]:
-    """`env` with a ``sitecustomize`` that lowers the daemon's check
+def _interval_env(
+    env: dict[str, str], site: Path, interval: float = INTERVAL
+) -> dict[str, str]:
+    """`env` with a ``sitecustomize`` that sets the daemon's check
     interval in every Python child, the daemon `up` spawns among them."""
     site.mkdir(parents=True, exist_ok=True)
     (site / "sitecustomize.py").write_text(
-        f"import bettermemory.daemon as _d\n_d.STORE_WATCH_SECONDS = {INTERVAL!r}\n",
+        f"import bettermemory.daemon as _d\n_d.STORE_WATCH_SECONDS = {interval!r}\n",
         encoding="utf-8",
     )
     out = dict(env)
@@ -598,8 +785,8 @@ def test_the_next_daemon_reports_the_store_it_replaced(
     workdir.mkdir()
     brief = _session_start(watched_env, workdir)
     assert "created fresh" in brief
-    assert str(orphans[0]) in brief
-    assert str(store) in brief
+    assert orphans[0].name in brief
+    assert "memory.sqlite-wal" in brief
     orphans[0].unlink()
     answered = health(second["port"])
     assert answered is not None
@@ -644,3 +831,228 @@ async def test_an_open_shim_restarts_a_daemon_that_stopped_this_way(
             assert not answered.is_error
             second = _wait_running(tmp_path)
             assert second["pid"] != first["pid"]
+
+
+# ---------------------------------------------------------------------------
+# A stop the watch had no tick to see
+# ---------------------------------------------------------------------------
+
+#: A check interval no test outlasts: the watch never ticks, so whatever
+#: is saved is saved as the daemon shuts down.
+NO_TICK = 600.0
+
+
+@pytest.fixture
+def unticked_env(tmp_path: Path) -> Iterator[dict[str, str]]:
+    env = _interval_env(_env(tmp_path), tmp_path / "site", NO_TICK)
+    yield env
+    _cli(["down"], env, timeout=30)
+
+
+def _stop(state: dict, env: dict[str, str], how: str) -> None:
+    if how == "down":
+        down = _cli(["down"], env)
+        assert down.returncode == 0, down.stderr
+    else:
+        os.kill(int(state["pid"]), signal.SIGTERM)
+    assert _process_gone(int(state["pid"]))
+
+
+def _daemon_writes(state: dict, workdir: Path, n: int = 3) -> None:
+    """`n` rows the daemon writes: a compact opens a segment, which is
+    logged when no brief carries it."""
+    workdir.mkdir(exist_ok=True)
+    for i in range(n):
+        post(
+            int(state["port"]),
+            str(state["token"]),
+            "/api/v1/hook/session-start",
+            {"session_id": f"sess-{i}", "source": "compact", "cwd": str(workdir)},
+            timeout=30,
+        )
+
+
+@pytest.mark.parametrize("how", ["down", "sigterm"])
+def test_a_stop_before_the_tick_still_saves_the_removed_store(
+    tmp_path: Path, unticked_env: dict[str, str], how: str
+) -> None:
+    """The store, its WAL and its shared memory unlinked with rows only in
+    the WAL, then the daemon stopped as `down` or a signal does before
+    the watch ticks: the store is saved as the app shuts down, whole."""
+    state = _start(tmp_path, unticked_env)
+    store = _store_path(tmp_path)
+    _daemon_writes(state, tmp_path / "cwd")
+    expected = _integrity_and_counts(store)
+    main_only = tmp_path / "main-only.sqlite"
+    shutil.copyfile(store, main_only)
+    # The daemon holds the store open, so nothing has checkpointed them.
+    assert _integrity_and_counts(main_only)[1] != expected[1]
+    _unlink_store(store)
+    _stop(state, unticked_env, how)
+    orphans = _orphans(store.parent)
+    assert len(orphans) == 1
+    assert _integrity_and_counts(orphans[0]) == expected
+    assert expected[0] == "ok"
+    assert _leftovers(store.parent) == []
+    log = _state_path(tmp_path).with_suffix(".log").read_text(encoding="utf-8")
+    assert log.count("already stopping") == 1
+    assert log.count(f"is saved at {orphans[0]}") == 1
+
+
+def test_a_normal_stop_saves_nothing(
+    tmp_path: Path, unticked_env: dict[str, str]
+) -> None:
+    state = _start(tmp_path, unticked_env)
+    _stop(state, unticked_env, "down")
+    assert _orphans(_store_path(tmp_path).parent) == []
+
+
+def test_a_store_created_before_the_orphan_was_saved_reports_it(
+    tmp_path: Path, unticked_env: dict[str, str]
+) -> None:
+    """The store removed and a CLI command run before the save: the
+    command creates a fresh store, which never saw the orphan beside it,
+    and is told of it as the daemon saves it. The next daemon reports it
+    in `/health` and the brief."""
+    first = _start(tmp_path, unticked_env)
+    store = _store_path(tmp_path)
+    lost_id = _store_id(store)
+    _unlink_store(store)
+    _cli(["health"], unticked_env)
+    fresh_id = _store_id(store)
+    assert fresh_id != lost_id
+    assert _orphans(store.parent) == []
+    _stop(first, unticked_env, "down")
+    orphans = _orphans(store.parent)
+    assert [_store_id(path) for path in orphans] == [lost_id]
+    second = _start(tmp_path, unticked_env)
+    assert _store_id(store) == fresh_id
+    answered = health(second["port"])
+    assert answered is not None
+    assert answered["store_orphans"] == [str(orphans[0])]
+    workdir = tmp_path / "cwd"
+    workdir.mkdir()
+    brief = _session_start(unticked_env, workdir)
+    assert "created fresh" in brief
+    assert orphans[0].name in brief
+
+
+def test_an_older_store_moved_over_the_path_reports_nothing(
+    tmp_path: Path, unticked_env: dict[str, str]
+) -> None:
+    """Restoring an older store by a rename over the path while the
+    daemon runs: the daemon's store is saved, the restored one is not
+    told of it."""
+    older = Store(tmp_path / "older", keys_dir=tmp_path / "keys")
+    older_id = older.store_id
+    older.close()
+    first = _start(tmp_path, unticked_env)
+    store = _store_path(tmp_path)
+    lost_id = _store_id(store)
+    _unlink_store(store)
+    os.replace(older.path, store)
+    _stop(first, unticked_env, "down")
+    assert [_store_id(path) for path in _orphans(store.parent)] == [lost_id]
+    second = _start(tmp_path, unticked_env)
+    assert _store_id(store) == older_id
+    answered = health(second["port"])
+    assert answered is not None
+    assert answered["store_orphans"] == []
+    workdir = tmp_path / "cwd"
+    workdir.mkdir()
+    assert "created fresh" not in _session_start(unticked_env, workdir)
+
+
+# ---------------------------------------------------------------------------
+# The daemon in-process: what lands after the first save
+# ---------------------------------------------------------------------------
+
+
+def _serve_in_a_thread(
+    tmp_path: Path, between: Callable[[Store], None]
+) -> tuple[threading.Thread, dict[str, Any]]:
+    """`serve` on a thread of its own, which opens the store as the CLI
+    does so the loop's thread is the connection's. `between` runs on the
+    loop right after the first save, before the daemon stops."""
+    directory = tmp_path / "store"
+    out: dict[str, Any] = {}
+    opened = threading.Event()
+    real_save = _daemon.save_orphan
+
+    def save_then(store: Store, **kwargs: Any) -> Path | None:
+        orphan = real_save(store, **kwargs)
+        if kwargs.get("into") is None:
+            between(store)
+        return orphan
+
+    def run() -> None:
+        from bettermemory.config import Config, StorageConfig
+
+        config = Config(storage=StorageConfig(directory=str(directory)))
+        store = Store(directory, keys_dir=tmp_path / "keys")
+        store.write(content="the release runs from the tag", scopes=["global"])
+        out["store"] = store
+        opened.set()
+        try:
+            out["code"] = _daemon.serve(
+                config=config, store=store, state_dir=tmp_path / "state", port=0
+            )
+        finally:
+            store.close()
+
+    thread = threading.Thread(target=run, daemon=True)
+    out["save_then"] = save_then
+    thread.start()
+    assert opened.wait(30)
+    # Serving, so the watch has recorded the store.
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        state = read_state(tmp_path / "state", out["store"].path)
+        if state is not None and health(int(state["port"]), timeout=0.5):
+            return thread, out
+        time.sleep(0.02)
+    raise AssertionError("the daemon on its thread never answered")
+
+
+def test_a_write_after_the_first_save_reaches_the_orphan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A write that commits to the orphaned store after the first save,
+    as a request or hook job still in flight would, is in the orphan the
+    daemon leaves: it saves again over the same file once nothing else
+    writes."""
+    monkeypatch.setattr(_daemon, "STORE_WATCH_SECONDS", 0.1)
+
+    def late_write(store: Store) -> None:
+        store.write(content="committed after the first save", scopes=["global"])
+
+    thread, out = _serve_in_a_thread(tmp_path, late_write)
+    monkeypatch.setattr(_daemon, "save_orphan", out["save_then"])
+    store = out["store"]
+    _unlink_store(store.path)
+    thread.join(30)
+    assert not thread.is_alive()
+    assert out["code"] == 0
+    orphans = _orphans(store.path.parent)
+    assert len(orphans) == 1
+    integrity, counts = _integrity_and_counts(orphans[0])
+    assert integrity == "ok"
+    assert counts["memories"] == 2
+    assert _leftovers(store.path.parent) == []
+
+
+def test_the_watch_tells_a_store_created_inside_its_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The watch's own save names the orphan in a store created at the
+    path before it ticked."""
+    monkeypatch.setattr(_daemon, "STORE_WATCH_SECONDS", 1.0)
+    thread, out = _serve_in_a_thread(tmp_path, lambda store: None)
+    store = out["store"]
+    _unlink_store(store.path)
+    Store.create(store.path, keys_dir=tmp_path / "keys").close()
+    thread.join(30)
+    assert not thread.is_alive()
+    orphans = _orphans(store.path.parent)
+    assert len(orphans) == 1
+    assert _marker(store.path) == [orphans[0].name]
