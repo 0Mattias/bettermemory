@@ -170,7 +170,9 @@ def fsync_dir(path: Path) -> None:
     rename ordering through its journal rather than user-issued fsync,
     so the helper is a no-op there.
 
-    The `O_RDONLY` open is the cross-Unix portable form. Some
+    The `O_RDONLY` open is the cross-Unix portable form, with
+    `O_DIRECTORY` where the platform has it so a path that is not a
+    directory is never opened. Some
     filesystems (FAT, overlayfs in unprivileged user namespaces) reject
     directory fsync with EINVAL — we suppress and move on; the
     write/rename has already happened.
@@ -178,7 +180,7 @@ def fsync_dir(path: Path) -> None:
     if sys.platform == "win32":  # pragma: no cover - non-unix
         return
     try:
-        fd = os.open(str(path), os.O_RDONLY)
+        fd = os.open(str(path), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     except OSError:
         return
     try:

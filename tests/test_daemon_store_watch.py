@@ -27,6 +27,7 @@ interval lowered in the child by a ``sitecustomize``.
 
 from __future__ import annotations
 
+import asyncio
 import errno
 import json
 import logging
@@ -609,6 +610,77 @@ def test_save_orphan_from_another_thread_fails_without_raising(
     assert _orphans(store.path.parent) == []
 
 
+_HOLD_THE_WRITE_LOCK = """
+import sqlite3, sys, time
+conn = sqlite3.connect(sys.argv[1], isolation_level=None)
+conn.execute("BEGIN IMMEDIATE")
+conn.execute("UPDATE meta SET value = value WHERE key = 'created'")
+print("locked", flush=True)
+time.sleep(1.0)
+conn.execute("COMMIT")
+conn.close()
+"""
+
+
+def test_save_orphan_waits_out_a_writer_on_the_new_store(tmp_path: Path) -> None:
+    """Another process holding the new store's write lock for a second
+    holds the notice back for that second, not off: the write lock is
+    taken up front, where the busy timeout applies. A read upgraded to a
+    write failed at once."""
+    store = _store_with_one_memory(tmp_path)
+    try:
+        watch = _daemon._StoreWatch(store.path, lambda: None, interval=30.0)
+        assert watch.start()
+        watch.stop()
+        assert watch.started_at is not None
+        _unlink_store(store.path)
+        time.sleep(0.01)
+        Store.create(store.path, keys_dir=tmp_path / "keys").close()
+        holder = subprocess.Popen(
+            [sys.executable, "-c", _HOLD_THE_WRITE_LOCK, str(store.path)],
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            assert holder.stdout is not None
+            assert holder.stdout.readline().strip() == "locked"
+            started = time.monotonic()
+            orphan = _daemon.save_orphan(
+                store, successor_after=watch.started_at, own_files=watch.files
+            )
+            waited = time.monotonic() - started
+        finally:
+            assert holder.wait(30) == 0
+    finally:
+        store.close()
+    assert orphan is not None
+    assert waited < 5.0
+    assert _marker(store.path) == [orphan.name]
+
+
+@pytest.mark.parametrize("data", [b"", b"no database at all, " * 64])
+def test_save_orphan_never_writes_to_a_file_that_is_no_store(
+    tmp_path: Path, data: bytes
+) -> None:
+    """An empty file or one that is no SQLite database at the path is
+    left byte for byte as it was, with nothing made beside it."""
+    store = _store_with_one_memory(tmp_path)
+    try:
+        _unlink_store(store.path)
+        store.path.write_bytes(data)
+        before = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        assert _daemon.save_orphan(store, successor_after=before) is not None
+    finally:
+        store.close()
+    assert store.path.read_bytes() == data
+    beside = sorted(
+        p.name
+        for p in store.path.parent.iterdir()
+        if p.name.startswith(store.path.name) and not _ORPHAN_NAME.fullmatch(p.name)
+    )
+    assert beside == [store.path.name]
+
+
 # ---------------------------------------------------------------------------
 # The daemon, as a process
 # ---------------------------------------------------------------------------
@@ -1056,3 +1128,87 @@ def test_the_watch_tells_a_store_created_inside_its_window(
     orphans = _orphans(store.path.parent)
     assert len(orphans) == 1
     assert _marker(store.path) == [orphans[0].name]
+
+
+def test_a_save_that_raises_still_stops_the_daemon(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The watch fires once: a save failing in a way it does not expect
+    is logged and the daemon stops anyway, never left serving the lost
+    store."""
+    monkeypatch.setattr(_daemon, "STORE_WATCH_SECONDS", 0.1)
+    thread, out = _serve_in_a_thread(tmp_path, lambda store: None)
+
+    def broken(store: Store, **kwargs: Any) -> Path | None:
+        raise RuntimeError("an unexpected failure")
+
+    monkeypatch.setattr(_daemon, "save_orphan", broken)
+    caplog.set_level(logging.ERROR, logger="bettermemory.daemon")
+    _unlink_store(out["store"].path)
+    thread.join(30)
+    assert not thread.is_alive()
+    assert any(
+        record.exc_info is not None and "saving the removed store" in record.message
+        for record in caplog.records
+    )
+
+
+@pytest.mark.parametrize("how", ["signals", "in-process", "tasks-left"])
+def test_a_forced_exit_still_saves_the_removed_store(
+    tmp_path: Path,
+    unticked_env: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    how: str,
+) -> None:
+    """A second SIGINT forces uvicorn out without the app's shutdown,
+    where the store is saved. Closing the loop cancels the app's
+    lifespan, which saves it then; a loop closed without cancelling it
+    (``tasks-left``) leaves the save to `serve` after the server
+    returns."""
+    if how == "signals":
+        state = _start(tmp_path, unticked_env)
+        store = _store_path(tmp_path)
+        _daemon_writes(state, tmp_path / "cwd")
+        expected = _integrity_and_counts(store)
+        _unlink_store(store)
+        os.kill(int(state["pid"]), signal.SIGINT)
+        os.kill(int(state["pid"]), signal.SIGINT)
+        assert _process_gone(int(state["pid"]))
+        directory = store.parent
+    else:
+        import uvicorn
+
+        monkeypatch.setattr(_daemon, "STORE_WATCH_SECONDS", NO_TICK)
+        servers: list[uvicorn.Server] = []
+        real_init = uvicorn.Server.__init__
+
+        def recording(self: uvicorn.Server, *args: Any, **kwargs: Any) -> None:
+            real_init(self, *args, **kwargs)
+            servers.append(self)
+
+        monkeypatch.setattr(uvicorn.Server, "__init__", recording)
+        loops: list[asyncio.AbstractEventLoop] = []
+        if how == "tasks-left":
+
+            def leaving_tasks(main: Any, **kwargs: Any) -> Any:
+                loop = asyncio.new_event_loop()
+                loops.append(loop)
+                return loop.run_until_complete(main)
+
+            monkeypatch.setattr(uvicorn.server, "asyncio_run", leaving_tasks)
+        thread, out = _serve_in_a_thread(tmp_path, lambda store: None)
+        store = out["store"].path
+        expected = _integrity_and_counts(store)
+        _unlink_store(store)
+        (server,) = servers
+        server.force_exit = True
+        server.should_exit = True
+        thread.join(30)
+        assert not thread.is_alive()
+        assert len(loops) == (how == "tasks-left")
+        directory = store.parent
+    orphans = _orphans(directory)
+    assert len(orphans) == 1
+    assert expected[0] == "ok"
+    assert _integrity_and_counts(orphans[0]) == expected
+    assert _leftovers(directory) == []

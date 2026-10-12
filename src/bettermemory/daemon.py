@@ -633,7 +633,8 @@ def _tell_successor(
     shared memory beside a store with the store, and closing them would
     drop the daemon connection's locks on its own, the WAL it still
     writes. Only another store's files are opened, by a short connection
-    of their own. Failures are logged, never raised."""
+    of their own that waits up to five seconds on a writer in another
+    process. Failures are logged, never raised."""
     for suffix in ("", *_SIBLINGS):
         try:
             found = os.stat(f"{store_path}{suffix}")
@@ -666,9 +667,13 @@ def _tell_successor(
         return
     told = False
     try:
-        # Read before anything is written: a write lock taken on a file
-        # that is no database at all stamps a header on it.
-        conn.execute("BEGIN")
+        # The write lock is taken first, so the busy timeout covers
+        # waiting on a writer in another process: a read upgraded to a
+        # write fails at once on a busy store, its busy handler never
+        # called. The lock writes nothing; the reads below still come
+        # before any write, so a file that is no database at all fails
+        # them and is never stamped with a header.
+        conn.execute("BEGIN IMMEDIATE")
         meta = dict(
             conn.execute(
                 "SELECT key, value FROM meta WHERE key IN ('store_id', 'created', ?)",
@@ -695,6 +700,8 @@ def _tell_successor(
         conn.execute("COMMIT")
         told = True
     except sqlite3.Error as exc:
+        with contextlib.suppress(sqlite3.Error):
+            conn.rollback()
         log.warning(
             "could not name the saved store %s in the store now at %s: %s: %s",
             orphan,
@@ -743,8 +750,10 @@ def serve(
     (`save_orphan`), and saves it again over that file once nothing
     else writes to it. A removal the watch had no tick to see before
     any other stop is caught as the app shuts down and saved the same
-    way. Writes the state file after the socket is bound and removes it
-    on the way out. Returns the exit status."""
+    way, or after the server returns when a forced exit (a second
+    signal) skipped that shutdown. Writes the state file after the
+    socket is bound and removes it on the way out. Returns the exit
+    status."""
     import uvicorn
 
     requested = config.daemon.port if port is None else port
@@ -776,8 +785,14 @@ def serve(
         if holder.get("settled"):
             return
         holder["fired"] = True
-        holder["orphan"] = save()
-        shutdown()
+        try:
+            holder["orphan"] = save()
+        except Exception:
+            # The watch fires once: a daemon left serving here would
+            # serve the lost store for good.
+            log.exception("saving the removed store %s failed", store.path)
+        finally:
+            shutdown()
 
     def settle() -> None:
         # At the app's shutdown, on the event loop: the requests are
@@ -855,6 +870,14 @@ def serve(
         server.run(sockets=[sock])
     finally:
         watch.stop()
+        if not holder.get("settled"):
+            # A forced exit (a second signal) skips the app's shutdown,
+            # `settle` with it. This is the thread the loop ran on, and
+            # `store`'s connection is still open.
+            try:
+                settle()
+            except Exception:
+                log.exception("saving the removed store %s failed", store.path)
         remove_state(state_dir, store.path, pid=os.getpid())
         sock.close()
     return 0
