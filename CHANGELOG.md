@@ -206,18 +206,26 @@ surfaces leave with them. An 8.x directory is imported once by
   its own connection to `<store>.orphaned-<UTC stamp>.sqlite` beside the
   path, making the directory again (owner-only) when it went with the
   store, and saves it again over the same file as it shuts down, once
-  the hook workers have closed, so writes still in flight are kept. A
-  `down` or a signal before the next check is caught at that same point
-  and saves the store too. A store created while one or more such files
-  sit beside it names them in its `meta`; one another process created at
-  the path after the daemon started, before the orphan was saved, is
-  given its name by the daemon, while an older store moved back over the
-  path is not. While any named file is still there `/health` lists them
-  under `store_orphans` and the session brief, whatever its settings,
-  leads with one line naming the newest saved file and the restore
-  steps: close the sessions, `bettermemory down`, delete the store's
-  `-wal` and `-shm` files, then copy the saved file over it. Deleting
-  the files, or restoring the old store, ends the notice.
+  the hook workers have closed or their 10 s join bound ran out,
+  whichever comes first, so writes still in flight are kept. A `down`
+  or a signal before the next check is caught at that same point and
+  saves the store too, as is a forced exit (a second Ctrl-C), which
+  skips the app's shutdown: the daemon saves after the server returns.
+  A save that fails in an unexpected way is logged and the daemon still
+  stops. A store created while one or more such files sit beside it
+  names them in its `meta`; one another process created at the path
+  after the daemon started, before the orphan was saved, is
+  given its name by the daemon, waiting up to 5 s for a writer in
+  another process to let go of it, while an older store moved back over
+  the path, or a file that is no database, is not. While any named file
+  is still there `/health` lists them under `store_orphans` and the
+  session brief, whatever its settings, leads with one line naming the
+  newest saved file and the restore steps: close every session using
+  bettermemory, `bettermemory down` (prefixed with
+  `BETTERMEMORY_DIR=<dir>` when the store is not the one a plain shell
+  resolves), delete the store's `-wal` and `-shm` files, then copy the
+  saved file over it. Deleting the files, or restoring the old store,
+  ends the notice.
   `session-start`, `audit-turn` and `prompt-recall` stay as aliases of
   it, and the plugin's `hooks.json` names the new commands.
   (`src/bettermemory/daemon.py`, `shim.py`, `_daemon_client.py`,

@@ -57,6 +57,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shlex
 import threading
 from collections import OrderedDict
 from collections.abc import Collection, Iterable, Mapping, Sequence
@@ -1104,7 +1105,7 @@ def session_brief(
             segment=view.segment,
             rule=RULE,
         )
-    notice = orphan_notice(store)
+    notice = orphan_notice(store, cfg)
     if notice:
         stdout = f"{notice}\n{result.stdout}" if result.stdout else notice
         result = replace(result, stdout=stdout, chars=len(stdout))
@@ -1116,22 +1117,41 @@ def session_brief(
 _NOTICE_PATH_CHARS = 200
 
 
-def _notice_path(path: Path) -> str:
-    """`path` for the orphan notice: the home directory as ``~``, and no
-    longer than `_NOTICE_PATH_CHARS`."""
+def _home_as_tilde(path: Path) -> str:
+    """`path` with the home directory as ``~``."""
     shown = str(path)
     home = str(Path.home())
     if home not in ("", os.sep) and (
         shown == home or shown.startswith(home.rstrip(os.sep) + os.sep)
     ):
         shown = "~" + shown[len(home.rstrip(os.sep)) :]
+    return shown
+
+
+def _notice_path(path: Path) -> str:
+    """`path` for the orphan notice: the home directory as ``~``, and no
+    longer than `_NOTICE_PATH_CHARS`."""
+    shown = _home_as_tilde(path)
     if len(shown) > _NOTICE_PATH_CHARS:
         half = (_NOTICE_PATH_CHARS - 3) // 2
         shown = f"{shown[:half]}...{shown[-half:]}"
     return shown
 
 
-def orphan_notice(store: Store) -> str:
+def _down_command(store: Store, config: Config) -> str:
+    """``bettermemory down`` for `store`, prefixed with its directory as
+    ``BETTERMEMORY_DIR`` when a shell without one would resolve another
+    store: `down` stops the daemon of the store its caller resolves. The
+    ``~`` survives quoting, since `down` expands it itself."""
+    directory = store.path.parent.resolve()
+    if directory == config.default_directory():
+        return "bettermemory down"
+    return (
+        f"BETTERMEMORY_DIR={shlex.quote(_home_as_tilde(directory))} bettermemory down"
+    )
+
+
+def orphan_notice(store: Store, config: Config | None = None) -> str:
     """The line the brief leads with while the store was created fresh
     after a daemon saved the one it lost (`Store.store_orphans`), naming
     the newest saved file and the restore steps in the order that works;
@@ -1140,17 +1160,20 @@ def orphan_notice(store: Store) -> str:
 
     The steps are all needed: an open session's shim starts a daemon
     again on its next call, and a WAL left beside the store is read over
-    the copied file, which then reads as the fresh store."""
+    the copied file, which then reads as the fresh store. `config` (loaded
+    when not given) decides whether `down` needs the store's directory
+    (`_down_command`)."""
     orphans = store.store_orphans()
     if not orphans:
         return ""
+    down = _down_command(store, config if config is not None else load_config())
     name = store.path.name
     return (
         f"bettermemory: {_notice_path(store.path)} was created fresh after the "
         f"previous store was lost; that store is saved beside it as "
-        f"{orphans[-1].name}. To restore it: close all Claude Code and Codex "
-        f"sessions, run `bettermemory down`, delete {name}-wal and {name}-shm "
-        f"there, then copy the saved file over {name}."
+        f"{orphans[-1].name}. To restore it: close every session using "
+        f"bettermemory (Claude Code, Codex, ...), run `{down}`, delete "
+        f"{name}-wal and {name}-shm there, then copy the saved file over {name}."
     )
 
 
