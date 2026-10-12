@@ -20,24 +20,29 @@ The plugin bundles five things:
    summary; Claude Code truncates that block, the skill has no cap.
 3. **Stop hook** ([`hooks/hooks.json`](hooks/hooks.json)): runs
    `uvx bettermemory hook stop --quiet` at each turn end to settle the
-   turn's retrievals and log silent retrieval misses. Always exits 0,
-   so a transient failure never surfaces as a hook-error banner.
+   turn's retrievals, settle the pointers the brief and the prompt
+   recall showed when the reply used them, and log silent retrieval
+   misses. Always exits 0, so a transient failure never surfaces as a
+   hook-error banner.
 4. **SessionStart hook** (same file): runs
    `uvx bettermemory hook session-start` when a conversation opens and
-   prints the per-scope memory counts for the current repository.
-   Claude Code injects a SessionStart hook's stdout into the model's
-   context, so the session begins knowing what is stored without
-   spending a tool call on it. Reads the store's scope counts only
-   (never memory bodies), records nothing, prints nothing when the
-   store is empty, and always exits 0.
+   prints the session brief: up to eight pointers (id and summary,
+   never a body) to the newest memories written in the current
+   repository whose staleness verdict is fresh, under a header that
+   says they are pointers, not instructions. Claude Code injects a
+   SessionStart hook's stdout into the model's context. The brief is
+   recorded as a `session_brief` event, prints nothing outside a
+   repository or when nothing is fresh, and always exits 0. `[behavior]
+   session_brief = false` turns it off.
 5. **UserPromptSubmit hook** (same file): runs
    `uvx bettermemory hook prompt` on each prompt submission. Probes
-   the prompt with the same silent-miss predicate the Stop hook
-   audits with; on the few prompts that clear it, prints a one-hit
-   pointer block (memory id, scopes and snippet, never a body) that
-   Claude Code injects into context, and records a `prompt_recall`
-   event the audit counts as retrieval. `[behavior]
-   prompt_recall = false` disables it. Always exits 0.
+   the prompt through the production search pool and ranker and prints
+   up to three pointers (id, relevance, summary and snippet, never a
+   body) to relevant memories written in this project and not already
+   shown, retrieved or written in the session. Records a
+   `prompt_recall` event the audit counts as retrieval. `[behavior]
+   prompt_recall` takes `project` (the default), `everywhere` or
+   `off`. Always exits 0.
 
 ## Install
 

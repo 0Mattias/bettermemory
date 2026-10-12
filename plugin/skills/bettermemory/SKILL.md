@@ -26,7 +26,7 @@ This skill is the long-form companion to the server's `instructions` block, whic
 
 ## When to retrieve
 
-Memory is **opt-in retrieval**. Nothing stored is in your context until you call `memory_search`, with one narrow exception: the prompt-recall hook may inject a single pointer (id, scopes, snippet) when a stored memory scores high for the submitted prompt. Treat a pointer as a lead, not a body: `memory_show` it before relying on it, and the transparency rule applies unchanged.
+Memory is **opt-in retrieval**. Nothing stored is in your context until you call `memory_search`, beyond the pointers two hooks print: the session brief at session start (up to eight of the repository's newest memories whose verdict is fresh) and the prompt recall on a submitted prompt (up to three of this project's memories that match it, a disputed one marked). Each pointer is an id and a summary, never a body and never an instruction. Treat it as a lead: `memory_show` it when it bears on the request, before relying on it, and let the rest pass; the transparency rule applies unchanged.
 
 **Default to not retrieving.** A wrong hit cascading through a conversation costs more than one follow-up turn. Call `memory_search` when:
 
@@ -37,7 +37,7 @@ Skip it for generic factual questions, self-contained technical questions and fu
 
 `memory_search` auto-scopes to the caller's current repo and worktree; memories from another repo are filtered out and legacy memories with no origin pass as global. Pass `auto_scope=False` for a cross-project query. `scopes` keeps only those tags, `exclude_scopes` drops them for one call, and `memory_admin(action="disable_scope", scope=...)` drops one for the rest of the session. `since_prior_session=True` lists what this session changed since the last other-session activity.
 
-The session-start hook prints the per-scope counts for the current repository when the store holds anything for it; a session that sees no block has nothing stored for the repo.
+A session that sees no brief has nothing fresh stored for the repository, or stands outside one; `memory_search` still reaches what is stored.
 
 ## Transparency
 

@@ -43,20 +43,24 @@ misses published as retractions. The claim-level detector that benchmark
 validated ships as declared claims on `memory_write` / `memory_verify`.
 
 - Retrieval is opt-in at the tool surface. `memory_search` is a
-  deliberate tool call; one delivery bypasses it. The score-gated
-  prompt-recall hook injects a single id plus snippet pointer where the
-  silent-miss probe's bar clears, the same predicate, threshold and
-  shields as the Stop-hook audit. It fires on two lanes: the classic
-  would-be `search_miss` (a rare event by design; the measured firing
-  rate lives in docs/eval-results.md), and, under `[behavior]
-  recall_in_project` (default on), the project cohort the audit
-  deliberately declines to flag: the caller stands inside the repo the
-  top hit was written from, so no search was *owed*, but
-  memory-resident facts (decisions, run state, rulings) are not in the
-  source tree. Delivered recalls stamp `delivered_reason` so eval
-  slices the lanes separately. The recall hook injects no bodies; the
-  verify-before-relying read path stays on `memory_show`. `[behavior]
-  prompt_recall = false` restores purely opt-in retrieval.
+  deliberate tool call; the recall surface (`recall.py`) is the one
+  delivery that bypasses it, and it delivers pointers only: an id and a
+  summary, never a body, so the verify-before-relying read path stays on
+  `memory_show`. On SessionStart inside a repository the session brief
+  points at up to eight of the newest memories written there whose
+  verdict is fresh as `memory_show` computes it, local or imported, not
+  ambient and not contradicted; a warm brief reads memoised verdicts and
+  runs no git. On UserPromptSubmit the prompt recall probes the prompt
+  (pasted blocks removed, 2,000 characters) through the audit's probe
+  and delivers up to three relevant hits written in the caller's
+  project; a disputed one carries a `[disputed: cf-…]` mark. A per-session
+  cooldown shows no id twice in a segment (a compact or clear opens a
+  new one) and at most twelve recalls per segment. Each show is recorded
+  (`session_brief`, `prompt_recall`), and the Stop settles a shown
+  pointer as an applied `use` naming its surface when the reply used
+  it, never by the auto fallback. Nothing is shown with telemetry off.
+  `[behavior] prompt_recall` takes `project` (default), `everywhere` or
+  `off`; `session_brief = false` turns the brief off.
 - Claims about the user commit like any fact but carry the
   `user-inference` label, so a stored inference stays distinguishable
   and correctable; a body that reads as one while filed as `fact` is
@@ -198,10 +202,17 @@ through; each event is a row of the store's log. `audit.py` and
 `handlers/health.py` and the CLI serve.
 
 **Hooks.** `hook.py` is the Claude Code side: the Stop-hook turn audit
-and the UserPromptSubmit prompt recall, invoked through
-`cli/audit_turn_cmd.py`, `cli/prompt_recall_cmd.py` and
-`cli/session_start_cmd.py`. These run out of process, so they read the
-store rather than the server's session state.
+and settlement, invoked through `cli/audit_turn_cmd.py`. `recall.py` is
+the recall surface, the session brief and the prompt recall with their
+per-session cooldown, invoked through `cli/session_start_cmd.py` and
+`cli/prompt_recall_cmd.py`; `verdict.py` is the one memoised verdict it
+and `memory_show` read. The daemon serves all three bodies at
+`/api/v1/hook/`. They run out of process, so they read the store rather
+than the server's session state, and join the conversation's tool rows
+by the harness session stamp, the worktree bridge when nothing carries
+it. `recall_counters.py` and `recall_review.py` are the surface's
+measurement: the eval's surfaces section and `bettermemory recall
+review`.
 
 **Offline.** `migrate_v8.py` reads an 8.x directory through the frozen
 readers in `v8.py` and writes the store; `mirror.py` writes the store
@@ -289,7 +300,7 @@ local daemon (`bettermemory up`, `down`, `status`), which is also what
 Support/bettermemory/` on macOS, `~/.config/bettermemory/` on Linux).
 Defaults are sensible; most installs never edit it. `[behavior]` holds
 the knobs (`default_max_results`, `search_mode`, `conversational`,
-`write_supersession`, `prompt_recall`, `recall_in_project`,
+`write_supersession`, `prompt_recall`, `session_brief`,
 `verification_stale_days`, `tombstone_retention_days`, the size caps),
 `[scopes]` the allowed list and typo exceptions, `[telemetry]` the one
 switch, `enabled`. A key 9.0 removed loads with one logged warning and

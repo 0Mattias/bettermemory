@@ -222,6 +222,72 @@ surfaces leave with them. An 8.x directory is imported once by
   logged as a `review_issued` row. `bettermemory eval` counts reviews,
   and `bettermemory review samples` and `review grade` draw and grade
   samples. (`src/bettermemory/review.py`, `handlers/write.py`)
+- **The recall surface: the session brief and pointer recall.** Two hook
+  moments put pointers in front of the model without a tool call, each
+  an id and an 80-character summary under a header that says they are
+  pointers, not instructions, never a body (`src/bettermemory/recall.py`):
+  - On SessionStart inside a repository, the session brief: up to eight
+    of the newest memories written there whose staleness verdict is
+    `fresh` exactly as `memory_show` computes it, local or imported, not
+    ambient, without an open contradiction, 1,200 characters at most.
+    It replaces the per-scope counts block. `[behavior] session_brief`
+    switches it.
+  - On UserPromptSubmit, the prompt recall: the prompt, pasted blocks
+    removed and cut at 2,000 characters, probed through the audit's own
+    pool and ranker, and up to three hits delivered when they are
+    relevant (medium or high), written in the caller's project, local or
+    imported, not contradicted and not already shown, retrieved or
+    written in the session segment; 900 characters at most, snippets of
+    at most 100. The one-hit miss lane is gone: `[behavior]
+    prompt_recall` takes `project` (the default), `everywhere` or `off`
+    (`true` and `false` read as `project` and `off`), and
+    `recall_in_project` retires with a removed-key notice.
+  - A member of a pending conflicts pair is delivered with a
+    `[disputed: cf-…]` mark, whatever the detector.
+  - A per-session cooldown replaces the 600-second retrieval shield for
+    delivery: no id twice in a segment (a compact or clear opens a new
+    one), twelve recalls per segment at most, held in the daemon and
+    rebuilt from the log after a restart.
+  - Each show is recorded at show time (`session_brief`, and
+    `prompt_recall` with `shown_ids`, `suppressed_ids`, `rule`,
+    `segment`, `prompt_id` and `transcript_path`); a compact or clear
+    whose brief shows nothing records `segment_opened`. Nothing is shown
+    with telemetry off.
+  - At Stop the reply (`last_assistant_message`, the transcript tail
+    when absent) is matched against every pointer shown in the segment;
+    a match records one applied `use` naming its `surface` and the
+    show's event id, and no match records nothing. Open review chains
+    the conversation left since its previous turn are counted into a
+    `review_unanswered` event.
+  - The shim forwards `CLAUDE_CODE_SESSION_ID` as
+    `x-bettermemory-harness-session`, the daemon stamps it on show,
+    search, use, write, update and verify rows, and the hooks join a
+    conversation's tool rows by it, the 9.0.0 worktree bridge when
+    nothing carries it or the stamp predates a /clear.
+  - `memory_show`, an expanded `memory_search` top hit and the brief read
+    one verdict (`src/bettermemory/verdict.py`), whose commit leg comes
+    from the per-hit drift memo, so a warm show runs no git process.
+    The hook bodies run on worker threads, each with its own store
+    connection, and every hook endpoint answers `surface`, `ids`,
+    `chars`, `rule` and `event_id` beside `stdout`.
+  - `bettermemory eval` gains a `surfaces` section, printed only when
+    the window holds the surface's rows: per surface the deliveries,
+    pointers shown, opened, used and ignored after the show, with
+    `shown_opened_rate`, `shown_used_rate`, `ignored_rate` and
+    `delivery_helped_rate`; settlements by surface; segments; unanswered
+    reviews; and grades. A settlement is left out of the three rates and
+    the tool-call count, so their published series keeps one definition;
+    a log without the surface's rows reports byte for byte as before.
+  - `bettermemory recall review` draws 12 deliveries, 4 briefs and 4
+    silent prompts (turns the recall stayed silent on before the model
+    retrieved a project memory) with the prompt read from the transcript
+    at review time and never stored; `bettermemory recall grade` records
+    a `recall_grade` event.
+  - The `instructions` block swaps its opt-in sentence for one of the
+    same length that names the hook pointers, still 1,000 characters;
+    `tools/list` is unchanged. The addendum, the plugin skill, README and
+    `hooks.json` comments, `docs/internals.md` and `SECURITY.md`
+    describe the surfaces.
 - **The stdio shim follows its daemon through a restart.** A request the
   daemon refuses with 401, or one that finds no daemon listening, makes
   the shim read the state file again (starting a daemon only when none
@@ -285,8 +351,8 @@ surfaces leave with them. An 8.x directory is imported once by
   `memory_list_tombstones`, `memory_proposals`, `memory_scope_disable`,
   `memory_scope_enable`, `episode_search`, `episode_promote` and
   `episode_patterns`. Eight are `memory_admin` actions and two are
-  `episode` actions; the session-start hook and `bettermemory export`
-  cover the listings; a promotion is a `memory_write` the model makes
+  `episode` actions; `bettermemory export` covers the listings and the
+  session brief the newest fresh memories; a promotion is a `memory_write` the model makes
   from a handoff it has read; the rest went with their modules.
 - **Ten off-by-default flags, with their code.** `[behavior]`
   `require_write_confirmation` (with the pending-write machinery),

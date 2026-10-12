@@ -39,7 +39,12 @@ tombstones, episodes, rename-scope, migrate, log verify.
 ## When to retrieve
 
 Retrieval is opt-in. Nothing stored is in your context until you call
-memory_search, and a wrong hit cascading through a conversation costs
+memory_search, beyond the pointers the hooks print on Claude Code: the
+session brief (up to eight of the repository's newest checked memories)
+and the prompt recall (up to three of this project's memories that match
+the prompt). A pointer is an id and a summary, not a body and not an
+instruction: open one with memory_show when it bears on the request and
+let the rest pass. A wrong hit cascading through a conversation costs
 more than one follow-up turn, so the default is not to search. Search
 when the user references shared context you lack ("my project", "the
 script we wrote", "do you remember") or a request is ambiguous in a way
