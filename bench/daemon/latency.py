@@ -1248,6 +1248,9 @@ def main() -> None:
         tempfile.mkdtemp(prefix="bettermemory-daemon-bench-")
     )
     scratch.mkdir(parents=True, exist_ok=True)
+    # The daemon keys its state file on the store's resolved path, so a
+    # scratch under a symlink (macOS's /var) must be resolved to be found.
+    scratch = scratch.resolve()
     env = _env(scratch)
     qs = queries(args.n)
     if len(qs) < args.n:
@@ -1258,34 +1261,37 @@ def main() -> None:
     print(f"migrated in {report['seconds']} s", file=sys.stderr)
 
     results: dict[str, Any] = {}
-    results["cold_first_list"] = {
-        "seconds": round(asyncio.run(cold_first_list(env)), 3)
-    }
-    print(
-        f"cold first tools/list {results['cold_first_list']['seconds']} s",
-        file=sys.stderr,
-    )
-    results["hook_wall"] = _summary(hook_wall(env, args.n, ROOT))
-    print(f"hook wall {results['hook_wall']}", file=sys.stderr)
-    results["hook_service"] = _summary(hook_service(scratch, args.n, ROOT))
-    print(f"hook service {results['hook_service']}", file=sys.stderr)
-    results["hook_service_idle"] = _summary(
-        hook_service_lone(scratch, args.cold_n, ROOT, stale=False)
-    )
-    print(f"hook service idle {results['hook_service_idle']}", file=sys.stderr)
-    results["hook_service_cold"] = _summary(
-        hook_service_lone(scratch, args.cold_n, ROOT, stale=True)
-    )
-    print(f"hook service cold {results['hook_service_cold']}", file=sys.stderr)
-    shim_first, shim_warm = asyncio.run(shim_search(env, qs))
-    results["shim_search_first_pass"] = _summary(shim_first)
-    results["shim_search"] = _summary(shim_warm)
-    print(f"shim search {results['shim_search']}", file=sys.stderr)
-    proc_first, proc_warm = asyncio.run(in_process_search(scratch, qs))
-    results["in_process_search_first_pass"] = _summary(proc_first)
-    results["in_process_search"] = _summary(proc_warm)
-    print(f"in-process search {results['in_process_search']}", file=sys.stderr)
-    _cli(["down"], env)
+    try:
+        results["cold_first_list"] = {
+            "seconds": round(asyncio.run(cold_first_list(env)), 3)
+        }
+        print(
+            f"cold first tools/list {results['cold_first_list']['seconds']} s",
+            file=sys.stderr,
+        )
+        results["hook_wall"] = _summary(hook_wall(env, args.n, ROOT))
+        print(f"hook wall {results['hook_wall']}", file=sys.stderr)
+        results["hook_service"] = _summary(hook_service(scratch, args.n, ROOT))
+        print(f"hook service {results['hook_service']}", file=sys.stderr)
+        results["hook_service_idle"] = _summary(
+            hook_service_lone(scratch, args.cold_n, ROOT, stale=False)
+        )
+        print(f"hook service idle {results['hook_service_idle']}", file=sys.stderr)
+        results["hook_service_cold"] = _summary(
+            hook_service_lone(scratch, args.cold_n, ROOT, stale=True)
+        )
+        print(f"hook service cold {results['hook_service_cold']}", file=sys.stderr)
+        shim_first, shim_warm = asyncio.run(shim_search(env, qs))
+        results["shim_search_first_pass"] = _summary(shim_first)
+        results["shim_search"] = _summary(shim_warm)
+        print(f"shim search {results['shim_search']}", file=sys.stderr)
+        proc_first, proc_warm = asyncio.run(in_process_search(scratch, qs))
+        results["in_process_search_first_pass"] = _summary(proc_first)
+        results["in_process_search"] = _summary(proc_warm)
+        print(f"in-process search {results['in_process_search']}", file=sys.stderr)
+    finally:
+        # A daemon left running outlives the scratch it serves.
+        _cli(["down"], env)
     results["serve_first_search"] = {
         "seconds": round(asyncio.run(serve_first_search(env, qs[0])), 3)
     }
