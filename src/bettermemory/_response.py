@@ -230,8 +230,9 @@ class _DriftPass:
     pass opens (no process). The head's whole history (`timestamps`) and
     the root and head from git where the files decline (`located`) are
     read on first use, so a pass the memo answers whole runs no git
-    process. What the pass resolves is kept by `store`, at its end, only
-    while what it was keyed on still reads as it did.
+    process. What the pass resolves is kept by `store`, at its end (or
+    after each row, for the brief's fill), only while what it was keyed on
+    still reads as it did when the pass opened.
 
     Not shared between threads: each caller opens its own. The memo it
     reads and merges into is lock-guarded, and every other memo the
@@ -270,6 +271,9 @@ class _DriftPass:
         # resolution, and a pass the memo answers whole stores nothing, so
         # it reads none.
         self._signature: githead.Signature | None = None
+        # Set by a `store` whose check failed: nothing this pass resolves
+        # is stored after that.
+        self._broken = False
 
     def timestamps(self) -> list[datetime] | None:
         """The head's whole history (`commit_author_timestamps`, memoised
@@ -421,18 +425,38 @@ class _DriftPass:
             self._walk_files,
         )
 
-    def store(self) -> None:
+    @property
+    def unstored(self) -> int:
+        """How many resolutions this pass holds that `store` has not yet
+        merged into `_DRIFT_MEMO`."""
+        return len(self._resolved)
+
+    def store(self) -> bool:
         """Merge this pass's resolutions into `_DRIFT_MEMO`, while what
-        they are keyed on reads as it did.
+        they are keyed on reads as it did; False when the check discarded
+        them, True when they were merged or there were none.
 
         The path-filtered logs read HEAD as they run, the patch stream the
         attribute files and the walk the config and .gitmodules, so a
         commit landing or a file changing mid-pass would otherwise store
         the next state's answer under this one's key. The signature and
         the directories' stamps also catch a change undone before the end:
-        a head moved away and back, a file created and removed."""
+        a head moved away and back, a file created and removed.
+
+        Every comparison is with what the pass read when it opened (or
+        when it first keyed a part), never with an earlier `store`'s read,
+        so a pass may store more than once (`verdict.fill_verdicts` stores
+        after each row it resolves): each store that holds covers every
+        resolution since the pass opened. Merged resolutions leave the
+        pass, so a later store merges only what came after. A store that
+        fails discards what it held and breaks the pass: every later store
+        on it fails too, so a stamp moved back by hand never readmits a
+        resolution computed across the move, and the caller opens a new
+        pass to go on."""
+        if not self._resolved:
+            return not self._broken
         if (
-            self._resolved
+            not self._broken
             and self.settled is not None
             and toplevel_and_head_from_files(self.cwd) == self.settled
             and githead.signature(self.cwd) == self._signature
@@ -446,6 +470,11 @@ class _DriftPass:
             )
         ):
             _remember_drift(self._resolved)
+            self._resolved = {}
+            return True
+        self._resolved = {}
+        self._broken = True
+        return False
 
 
 class ResponseBuilder:
