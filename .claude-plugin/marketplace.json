@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Memory you can verify: a trust layer between an agent and its own past. Per-hit staleness verdicts, claim-level use attribution, a signed store that shows how each record arrived, episodic run-state. Local-first, no cloud.",
-    "version": "8.0.0"
+    "version": "9.0.0.dev0"
   },
   "plugins": [
     {
