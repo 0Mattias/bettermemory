@@ -193,7 +193,12 @@ surfaces leave with them. An 8.x directory is imported once by
   A daemon whose store file is removed, or replaced by a rename over
   its path, stops through its normal shutdown at its next check (every
   30 s) and logs one line; a copy over the store keeps it running. An
-  open shim starts a new one on its next call.
+  open shim starts a new one on its next call. The check stats the path
+  for the device and inode it named at start and holds no descriptor
+  on the store, whose closing would drop the daemon connection's locks.
+  Before it stops, the daemon saves the store it still has open through
+  its own connection to `<store>.orphaned-<UTC stamp>.sqlite` beside the
+  path, logged at error level.
   `session-start`, `audit-turn` and `prompt-recall` stay as aliases of
   it, and the plugin's `hooks.json` names the new commands.
   (`src/bettermemory/daemon.py`, `shim.py`, `_daemon_client.py`,

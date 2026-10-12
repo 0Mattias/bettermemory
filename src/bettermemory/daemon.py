@@ -34,12 +34,15 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextlib
 import logging
 import os
 import queue
 import secrets
 import socket
+import sqlite3
 import sys
+import tempfile
 import threading
 import time
 from collections.abc import AsyncIterator
@@ -54,6 +57,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ._daemon_client import HOST, remove_state, write_state
+from ._fsutil import replace_atomic
 from .builder import build_server
 from .config import Config
 from .store import Store
@@ -386,23 +390,30 @@ def build_app(
     return app
 
 
-#: How often, in seconds, the daemon checks that the store file it opened
-#: is still linked (`_StoreWatch`). Read when `serve` starts; tests lower it.
+#: How often, in seconds, the daemon checks that its store path still
+#: names the file it opened (`_StoreWatch`). Read when `serve` starts;
+#: tests lower it.
 STORE_WATCH_SECONDS = 30.0
 
 
 class _StoreWatch:
-    """Stops the daemon once the store file it opened is unlinked.
+    """Fires once the store path no longer names the file the daemon
+    opened.
 
-    The watch holds its own descriptor on the store file and reads the
-    file's link count every `interval` seconds. Zero means the file was
-    removed, or replaced by a rename over its path (the inode the daemon
-    opened loses its last link), and a daemon left running would serve a
-    store no other process can open again, under a state file that may
-    be gone with it. A copy over the path writes into the same inode and
-    keeps it linked, so it does not count. Only an observed count of zero
-    stops the daemon: a stat that fails is logged and the next tick
-    checks again. The WAL and SHM files are never looked at.
+    At `start` the watch records the device and inode the path names,
+    following a symlink as SQLite does, and every `interval` seconds
+    stats the path again. The path gone, or naming another device or
+    inode, means the store was removed or replaced by a rename over its
+    path, and a daemon left running would serve a store no other process
+    can open again, under a state file that may be gone with it. A copy
+    over the path writes into the same inode, as SQLite's own VACUUM,
+    checkpoint and backup do, so none of them counts. A stat that fails
+    any other way is logged and the next tick checks again.
+
+    The watch holds no descriptor on the store. Closing any descriptor on
+    a file drops every POSIX advisory lock the process holds on it, the
+    daemon's SQLite connections' among them, and a connection whose locks
+    are gone lets another process checkpoint and delete the WAL under it.
 
     Not on Windows, where SQLite's own handle already refuses an unlink
     or a rename over the open store, so there is nothing to watch for."""
@@ -410,20 +421,23 @@ class _StoreWatch:
     def __init__(
         self, path: Path, on_removed: Callable[[], None], *, interval: float
     ) -> None:
-        self._path = path
+        # Absolute as SQLite makes it at open, against the same working
+        # directory; symlinks are left for `os.stat` to follow.
+        self._path = Path(os.path.abspath(path))
         self._on_removed = on_removed
         self._interval = interval
         self._stop = threading.Event()
-        self._fd: int | None = None
+        self._identity: tuple[int, int] | None = None
         self._thread: threading.Thread | None = None
 
     def start(self) -> bool:
-        """Open the descriptor and start the thread; False when the
-        platform has nothing to watch or the store cannot be opened."""
+        """Record the file the path names and start the thread; False
+        when the platform has nothing to watch or the path cannot be
+        stat'ed."""
         if sys.platform == "win32":
             return False
         try:
-            self._fd = os.open(str(self._path), os.O_RDONLY)
+            found = os.stat(self._path)
         except OSError as exc:
             log.warning(
                 "cannot watch the store %s: %s: %s",
@@ -432,6 +446,7 @@ class _StoreWatch:
                 exc,
             )
             return False
+        self._identity = (found.st_dev, found.st_ino)
         self._thread = threading.Thread(
             target=self._run, name="bettermemory-store-watch", daemon=True
         )
@@ -439,10 +454,11 @@ class _StoreWatch:
         return True
 
     def _run(self) -> None:
-        assert self._fd is not None
         while not self._stop.wait(self._interval):
             try:
-                links = os.fstat(self._fd).st_nlink
+                found = os.stat(self._path)
+            except (FileNotFoundError, NotADirectoryError):
+                found = None
             except OSError as exc:
                 log.warning(
                     "could not stat the store %s: %s: %s",
@@ -451,30 +467,88 @@ class _StoreWatch:
                     exc,
                 )
                 continue
-            if links == 0:
-                log.warning(
-                    "the store %s was removed or replaced; the daemon stops",
-                    self._path,
-                )
-                self._on_removed()
-                return
+            if found is not None and (found.st_dev, found.st_ino) == self._identity:
+                continue
+            log.warning(
+                "the store %s was removed or replaced; the daemon stops",
+                self._path,
+            )
+            self._on_removed()
+            return
 
     def stop(self, timeout: float = 1.0) -> None:
-        """Stop the thread and close the descriptor. The thread waits on
-        an event, so this never waits out an interval."""
+        """Stop the thread. It waits on an event, so this never waits out
+        an interval."""
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout)
-            if self._thread.is_alive():
-                # Never close a descriptor a live thread may still stat:
-                # its number could be reused for another file.
-                return
-        if self._fd is not None:
-            try:
-                os.close(self._fd)
-            except OSError:
-                pass
-            self._fd = None
+
+
+def _utc_stamp(now: datetime | None = None) -> str:
+    """``20261012T053900Z``: the stamp an orphan's file name carries."""
+    moment = now if now is not None else datetime.now(timezone.utc)
+    return moment.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _orphan_path(store_path: Path, stamp: str) -> Path:
+    """``<store>.orphaned-<stamp>.sqlite`` beside the store, with a counter
+    when an orphan from the same second is already there."""
+    base = f"{store_path.name}.orphaned-{stamp}"
+    candidate = store_path.with_name(f"{base}.sqlite")
+    counter = 2
+    while candidate.exists():
+        candidate = store_path.with_name(f"{base}-{counter}.sqlite")
+        counter += 1
+    return candidate
+
+
+def save_orphan(store: Store, *, now: datetime | None = None) -> Path | None:
+    """Back up the store the daemon still holds open, after its path was
+    removed or replaced, to ``<store>.orphaned-<UTC stamp>.sqlite`` beside
+    the path; the orphan's path, or None when it could not be written.
+
+    The copy is SQLite's online backup through `store`'s own connection,
+    the only way left to the inode, so it must run on the thread that
+    opened that connection. It is written under a temporary name in the
+    same directory and renamed into place, so no other process sees a
+    partial file. Every failure (the directory gone, a full disk) is
+    logged at error level, never raised: the daemon stops either way."""
+    store_path = Path(store.path)
+    directory = store_path.parent
+    temp: str | None = None
+    try:
+        handle, temp = tempfile.mkstemp(
+            prefix=f".{store_path.name}.orphaned-", suffix=".tmp", dir=directory
+        )
+        os.close(handle)
+        target = sqlite3.connect(temp)
+        try:
+            store.conn.backup(target)
+        finally:
+            target.close()
+        orphan = _orphan_path(store_path, _utc_stamp(now))
+        replace_atomic(Path(temp), orphan)
+        temp = None
+    except (OSError, sqlite3.Error) as exc:
+        log.error(
+            "the store %s was removed or replaced and its open copy could not "
+            "be saved: %s: %s",
+            store_path,
+            exc.__class__.__name__,
+            exc,
+        )
+        return None
+    finally:
+        if temp is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(temp)
+    log.error(
+        "the store %s was removed or replaced; the store this daemon had open "
+        "is saved at %s",
+        store_path,
+        orphan,
+    )
+    return orphan
 
 
 def bind(host: str, port: int) -> socket.socket:
@@ -502,9 +576,10 @@ def serve(
     host: str = HOST,
 ) -> int:
     """Run the daemon in this process until the shutdown endpoint, a
-    signal, or the removal of its store file (`_StoreWatch`) stops it.
-    Writes the state file after the socket is bound and removes it on the
-    way out. Returns the exit status."""
+    signal, or the removal of its store file (`_StoreWatch`) stops it;
+    on a removal it first saves the store it had open beside the path
+    (`save_orphan`). Writes the state file after the socket is bound and
+    removes it on the way out. Returns the exit status."""
     import uvicorn
 
     requested = config.daemon.port if port is None else port
@@ -518,7 +593,43 @@ def serve(
         if server is not None:
             server.should_exit = True
 
+    def orphaned() -> None:
+        # On the event loop, the thread that opened `store` and the only
+        # one its connection serves: the backup runs between two requests
+        # and before the port closes, so a daemon started next for the
+        # path already finds the orphan beside it.
+        save_orphan(store)
+        shutdown()
+
+    def store_gone() -> None:
+        # From the watch thread.
+        loop = holder.get("loop")
+        if loop is None:
+            shutdown()
+            return
+        try:
+            loop.call_soon_threadsafe(orphaned)
+        except RuntimeError:
+            # The loop is closed: the daemon is already on its way out.
+            pass
+
+    watch = _StoreWatch(Path(store.path), store_gone, interval=STORE_WATCH_SECONDS)
     app = build_app(config=config, store=store, token=token, shutdown=shutdown)
+    built_lifespan = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def lifespan(served: Any) -> AsyncIterator[Any]:
+        # The watch runs while the loop does, so it always has one to
+        # hand the backup to.
+        holder["loop"] = asyncio.get_running_loop()
+        watch.start()
+        try:
+            async with built_lifespan(served) as started:
+                yield started
+        finally:
+            watch.stop()
+
+    app.router.lifespan_context = lifespan
     state = {
         "pid": os.getpid(),
         "port": bound_port,
@@ -545,9 +656,7 @@ def serve(
     )
     server = uvicorn.Server(uv_config)
     holder["server"] = server
-    watch = _StoreWatch(Path(store.path), shutdown, interval=STORE_WATCH_SECONDS)
     try:
-        watch.start()
         server.run(sockets=[sock])
     finally:
         watch.stop()
@@ -562,5 +671,6 @@ __all__ = [
     "STORE_WATCH_SECONDS",
     "bind",
     "build_app",
+    "save_orphan",
     "serve",
 ]
