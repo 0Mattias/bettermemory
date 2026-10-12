@@ -3425,9 +3425,13 @@ class Store:
                     "missing": missing,
                     "rows": len(live),
                 }
-            # In place: a connection `reopen` made shares this set.
-            self._unaccounted_memory_ids.clear()
-            self._unaccounted_memory_ids.update(tables["memories"]["unaccounted"])
+            # In place: a connection `reopen` made shares this set, and a
+            # worker may read it meanwhile. Add first, then drop the rest:
+            # each step is one call on the set, and between them it holds
+            # every id still unaccounted, never fewer.
+            found = set(tables["memories"]["unaccounted"])
+            self._unaccounted_memory_ids.update(found)
+            self._unaccounted_memory_ids.intersection_update(found)
             return {
                 "status": "diverged" if diverged else "ok",
                 "tables": tables,

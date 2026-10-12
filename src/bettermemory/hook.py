@@ -1041,6 +1041,45 @@ def harness_joined_sessions(
     return found
 
 
+def live_harness_sessions(
+    events: Iterable[dict[str, Any]], harness_session: str | None
+) -> set[str]:
+    """The other harness sessions whose hooks run beside `harness_session`
+    in `events`: those with a hook row of their own, and, once this
+    conversation has a hook row there, one at or after its first.
+
+    A server's stamp is fixed when it is spawned (the in-process server
+    reads CLAUDE_CODE_SESSION_ID once, the shim forwards what it was
+    started with), while Claude Code issues a new session id on /clear
+    and /resume. A stamp whose conversation shows no hook row, or went
+    quiet before this one began, is this window's own server under its
+    old id, not another window's; a conversation whose hooks still run
+    is another window. Before this conversation has a hook row of its own
+    any conversation with one counts as live, so a /resume whose brief
+    showed nothing joins through the bridge from its second hook call."""
+    if not harness_session:
+        return set()
+    hook_rows: list[tuple[datetime, str]] = []
+    own_first: datetime | None = None
+    for event in events:
+        if event.get("triggered_from") not in _OUT_OF_PROCESS_TRIGGERS:
+            continue
+        session = _session_of(event)
+        stamp = parse_event_ts(event.get("ts"))
+        if session is None or stamp is None:
+            continue
+        if session == harness_session:
+            if own_first is None or stamp < own_first:
+                own_first = stamp
+            continue
+        hook_rows.append((stamp, session))
+    return {
+        session
+        for stamp, session in hook_rows
+        if own_first is None or stamp >= own_first
+    }
+
+
 def bridged_session(
     events: list[dict[str, Any]],
     *,
@@ -1054,11 +1093,13 @@ def bridged_session(
     names the session (a restarted server stamps the same harness id, so
     the newest is the live one, the reset-on-restart the bridge keeps).
     With no such event, `_latest_in_process_session` answers, over the
-    events of every session NOT stamped with another harness session: a
-    server that declared it serves a different conversation is never this
-    one's bridge."""
+    events of every session NOT stamped with another live harness session
+    (`live_harness_sessions`): a server that declared it serves another
+    window's conversation is never this one's bridge, while a server
+    stamped with this window's id from before a /clear or /resume is
+    found by the bridge as 9.0.0 found it."""
     if harness_session:
-        foreign: set[str] = set()
+        stamped_by: dict[str, str] = {}
         for event in reversed(events):
             if event.get("triggered_from") in _OUT_OF_PROCESS_TRIGGERS:
                 continue
@@ -1070,9 +1111,12 @@ def bridged_session(
                 continue
             if stamped == harness_session:
                 return session
-            foreign.add(session)
-        if foreign:
-            events = [e for e in events if _session_of(e) not in foreign]
+            stamped_by.setdefault(session, stamped)
+        if stamped_by:
+            live = live_harness_sessions(events, harness_session)
+            foreign = {s for s, stamped in stamped_by.items() if stamped in live}
+            if foreign:
+                events = [e for e in events if _session_of(e) not in foreign]
     return _latest_in_process_session(events, worktree_root=worktree_root)
 
 
@@ -1097,11 +1141,14 @@ def event_joined(
     event: dict[str, Any], *, harness_session: str | None, sessions: Collection[str]
 ) -> bool:
     """Whether a tool event belongs to the hook's conversation: by its
-    harness stamp when it carries one, else by its session (one of
-    `sessions`, the joined in-process sessions and the hook's own id)."""
-    stamped = event.get(HARNESS_SESSION_FIELD)
-    if isinstance(stamped, str) and stamped:
-        return stamped == harness_session
+    harness stamp when it names this conversation, else by its session
+    (one of `sessions`, the joined in-process sessions and the hook's own
+    id). A stamp naming another id joins through its session: the bridge
+    puts a server in `sessions` only when its stamp is not another live
+    window's (`bridged_session`), so a server stamped before a /clear
+    stays joined."""
+    if event.get(HARNESS_SESSION_FIELD) == harness_session and harness_session:
+        return True
     return _session_of(event) in sessions
 
 

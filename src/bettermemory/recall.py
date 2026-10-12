@@ -1267,9 +1267,10 @@ def _seen_in_log(
     back: a concurrent session's retrieval in the same checkout counts.
 
     An event stamped with a harness session (`events.HARNESS_SESSION_FIELD`)
-    is judged by that stamp alone: it is this conversation's when it names
-    `harness_session`, under the own cut, and never by worktree or session
-    otherwise. The two halves above are the bridge for events that carry
+    is this conversation's, under the own cut, when the stamp names
+    `harness_session` or its session is one of `sessions` (a server whose
+    stamp predates a /clear, which the bridge joined), and never by
+    worktree. The two halves above are the bridge for events that carry
     no stamp."""
     seen: set[str] = set()
     for event in events:
@@ -1281,7 +1282,13 @@ def _seen_in_log(
             continue
         stamped = event.get(HARNESS_SESSION_FIELD)
         if isinstance(stamped, str) and stamped:
-            if stamped != harness_session or stamp < own_since:
+            # Another stamp joins through its session alone: a server
+            # stamped with this window's id from before a /clear is in
+            # `sessions` by the bridge, another window's never is.
+            own = stamped == harness_session or (
+                (event.get("session") or event.get("session_id")) in sessions
+            )
+            if not own or stamp < own_since:
                 continue
         else:
             session = event.get("session") or event.get("session_id")

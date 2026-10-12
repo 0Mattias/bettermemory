@@ -22,7 +22,12 @@ from bettermemory import shim as shim_module
 from bettermemory._daemon_client import HARNESS_SESSION_ENV, daemon_env_for
 from bettermemory.config import Config
 from bettermemory.events import HARNESS_STAMPED_KINDS, Recorder
-from bettermemory.hook import bridged_session, joined_sessions
+from bettermemory.hook import (
+    bridged_session,
+    event_joined,
+    joined_sessions,
+    live_harness_sessions,
+)
 from bettermemory.identity import (
     ENV_HARNESS_SESSION,
     HEADER_HARNESS_SESSION,
@@ -277,12 +282,89 @@ def test_the_bridge_answers_when_nothing_is_stamped() -> None:
 
 
 def test_a_session_stamped_for_another_conversation_is_never_the_bridge() -> None:
+    """Another window's server: its conversation's hooks run (a hook row
+    under its id), so its stamped session is never this one's bridge."""
     events = [
         _ev("search", "sess_mine"),
+        _ev("turn_audited", "another", triggered_from="stop_hook"),
         _ev("show", "sess_theirs", harness_session="another"),
         _ev("scope_disable", "sess_theirs"),
     ]
     assert bridged_session(events, harness_session=HARNESS) == "sess_mine"
+
+
+# After a /clear or /resume Claude Code names the conversation with a new
+# session id, while the server keeps the id it was spawned with.
+
+BEFORE_CLEAR = "transcript-before-clear"
+AFTER_CLEAR = "transcript-after-clear"
+
+
+def _at(kind: str, session: str, second: int, **fields: Any) -> dict[str, Any]:
+    return {
+        "kind": kind,
+        "session": session,
+        "ts": f"2026-10-11T10:00:{second:02d}Z",
+        "worktree_root": "/w",
+        **fields,
+    }
+
+
+def test_a_server_stamped_before_a_clear_is_still_bridged() -> None:
+    """The slice 3 verifier's repro: no hook row names the old id, and
+    the server stamped with it is the one the 9.0.0 bridge found."""
+    events = [
+        _at("search", "sess_srv1", 0, harness_session=BEFORE_CLEAR),
+        _at("show", "sess_srv1", 5, harness_session=BEFORE_CLEAR),
+    ]
+    assert bridged_session(events, harness_session=AFTER_CLEAR, worktree_root="/w") == (
+        "sess_srv1"
+    )
+    assert joined_sessions(events, harness_session=AFTER_CLEAR, worktree_root="/w") == {
+        "sess_srv1"
+    }
+
+
+def test_a_conversation_that_went_quiet_before_this_one_is_not_foreign() -> None:
+    """The old id's hook rows all precede the new id's first (the clear's
+    own SessionStart row): its server is this window's."""
+    events = [
+        _at("turn_audited", BEFORE_CLEAR, 0, triggered_from="stop_hook"),
+        _at("search", "sess_srv1", 1, harness_session=BEFORE_CLEAR),
+        _at("segment_opened", AFTER_CLEAR, 2, triggered_from="session_hook"),
+        _at("show", "sess_srv1", 3, harness_session=BEFORE_CLEAR),
+    ]
+    assert live_harness_sessions(events, AFTER_CLEAR) == set()
+    assert bridged_session(events, harness_session=AFTER_CLEAR, worktree_root="/w") == (
+        "sess_srv1"
+    )
+
+
+def test_a_window_whose_hooks_still_run_is_foreign() -> None:
+    events = [
+        _at("search", "sess_mine", 0),
+        _at("segment_opened", AFTER_CLEAR, 1, triggered_from="session_hook"),
+        _at("turn_audited", "other-window", 2, triggered_from="stop_hook"),
+        _at("show", "sess_theirs", 3, harness_session="other-window"),
+    ]
+    assert live_harness_sessions(events, AFTER_CLEAR) == {"other-window"}
+    assert bridged_session(events, harness_session=AFTER_CLEAR, worktree_root="/w") == (
+        "sess_mine"
+    )
+
+
+def test_before_its_own_first_hook_row_any_hooked_conversation_is_live() -> None:
+    events = [
+        _at("turn_audited", BEFORE_CLEAR, 0, triggered_from="stop_hook"),
+        _at("show", "sess_srv1", 1, harness_session=BEFORE_CLEAR),
+    ]
+    assert live_harness_sessions(events, AFTER_CLEAR) == {BEFORE_CLEAR}
+
+
+def test_a_stamped_event_of_a_joined_server_is_joined() -> None:
+    event = _at("use", "sess_srv1", 1, harness_session=BEFORE_CLEAR)
+    assert event_joined(event, harness_session=AFTER_CLEAR, sessions={"sess_srv1"})
+    assert not event_joined(event, harness_session=AFTER_CLEAR, sessions={"sess_x"})
 
 
 def test_hook_rows_are_not_joined() -> None:
@@ -323,6 +405,12 @@ def test_another_conversations_stamped_retrieval_does_not(world: PromptWorld) ->
     conversation's show in the same checkout says nothing about this one."""
     memory = world.write()
     Recorder(
+        store=world.store,
+        session_id="another-conversation",
+        worktree_root=str(world.worktree),
+        triggered_from="stop_hook",
+    ).record("turn_audited", verdict="ok")
+    Recorder(
         store=world.store, session_id="sess_theirs", worktree_root=str(world.worktree)
     ).record("show", id=memory.id, harness_session="another-conversation")
     assert world.recall(state=RecallState(background=False)).ids == (memory.id,)
@@ -335,4 +423,29 @@ def test_an_unstamped_retrieval_in_the_worktree_still_holds_it_back(
     Recorder(
         store=world.store, session_id="sess_old", worktree_root=str(world.worktree)
     ).record("show", id=memory.id)
+    assert world.recall(state=RecallState(background=False)).stdout == ""
+
+
+def test_a_retrieval_stamped_before_a_clear_holds_the_pointer_back(
+    world: PromptWorld,
+) -> None:
+    """After a /clear the server still stamps the old id: its show of a
+    memory is this conversation's retrieval, so the recall under the new
+    id does not point at it again."""
+    memory = world.write()
+    Recorder(
+        store=world.store,
+        session_id="transcript-before",
+        worktree_root=str(world.worktree),
+        triggered_from="stop_hook",
+    ).record("turn_audited", verdict="ok")
+    Recorder(
+        store=world.store,
+        session_id="transcript-recall",
+        worktree_root=str(world.worktree),
+        triggered_from="session_hook",
+    ).record("segment_opened", segment=1)
+    Recorder(
+        store=world.store, session_id="sess_srv1", worktree_root=str(world.worktree)
+    ).record("show", id=memory.id, harness_session="transcript-before")
     assert world.recall(state=RecallState(background=False)).stdout == ""

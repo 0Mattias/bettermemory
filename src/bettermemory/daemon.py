@@ -40,6 +40,7 @@ import queue
 import secrets
 import socket
 import threading
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -192,14 +193,16 @@ class _HookWorkers:
 
     def close(self, timeout: float = 10.0) -> None:
         """Stop every worker; each closes its own connection on the way
-        out, after the job it is running."""
+        out, after the job it is running. `timeout` bounds the whole wait,
+        not each worker's."""
         with self._lock:
             self._closed = True
             threads = list(self._threads)
         for _ in threads:
             self._jobs.put(None)
+        deadline = time.monotonic() + timeout
         for thread in threads:
-            thread.join(timeout)
+            thread.join(max(0.0, deadline - time.monotonic()))
 
 
 def _failed(surface: str, exc: Exception) -> Response:

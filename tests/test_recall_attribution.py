@@ -350,3 +350,31 @@ def test_the_harness_join_picks_the_retrieval_session(world: PromptWorld) -> Non
     _audit(world, f"Done. {SENTENCE}")
     [use] = _uses(world.store)
     assert (use["ids"], use["attribution"]) == ([memory.id], "hook")
+
+
+def test_a_use_stamped_before_a_clear_is_not_credited_again(
+    world: PromptWorld,
+) -> None:
+    """After a /clear the server still stamps the conversation's old id.
+    The model's own memory_record_use of a pointer is this conversation's
+    use, so the Stop does not settle the pointer a second time."""
+    memory = _memory(world)
+    worktree = str(world.worktree)
+    Recorder(
+        store=world.store,
+        session_id="transcript-before",
+        worktree_root=worktree,
+        triggered_from="stop_hook",
+    ).record("turn_audited", verdict="ok")
+    _brief(world.store, [memory.id], segment=1, worktree_root=worktree)
+    Recorder(store=world.store, session_id=SERVER, worktree_root=worktree).record(
+        "use",
+        ids=[memory.id],
+        outcome="applied",
+        auto=False,
+        attribution="model",
+        claim_excerpts=[SENTENCE],
+        harness_session="transcript-before",
+    )
+    _audit(world, f"Done. {SENTENCE}")
+    assert [u for u in _uses(world.store) if u.get("surface")] == []
