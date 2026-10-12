@@ -313,7 +313,9 @@ def resolve_search_pool(
                 model_filter=model_filter,
             )
 
-        resolved = store.document_frequencies(terms, admit=_admit)
+        # Through the store's document frequency memo, which answers as
+        # the uncached read does and reads again after a memory changes.
+        resolved = store.document_frequencies(terms, admit=_admit, memoised=True)
         if resolved is None:
             return None
         size, body_df, scope_df = resolved

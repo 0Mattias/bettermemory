@@ -1140,6 +1140,75 @@ def _clear_event_windows() -> None:
         _EVENT_WINDOWS.clear()
 
 
+@dataclass
+class _DocFreqInputs:
+    """What `Store.document_frequencies(..., memoised=True)` keeps for one
+    store while its memories stay as they were: the admission inputs of
+    every memory row whose scopes parse, grouped by equal inputs, and each
+    term's FTS hits. A row is a bit, its position in the scan; `groups`
+    maps `(scopes, origin, actor)` to the mask of the rows that carry them,
+    and `terms` maps a term to the masks of the rows whose body matches it
+    and whose body or scopes match it. `head` is the log's last memory row,
+    `(seq, mac)`, when the inputs were read."""
+
+    head: tuple[int, str]
+    groups: tuple[tuple[list[str], Origin | None, Actor | None, int], ...]
+    index: dict[str, int]
+    terms: OrderedDict[str, tuple[int, int]]
+
+
+# The document frequency memo of `Store.document_frequencies(...,
+# memoised=True)`, the corpus statistics every search above the prefilter
+# threshold prices its BM25 legs with: the per-prompt recall's probe,
+# `memory_search` and the review sample. The uncached call reads every
+# memory row and runs two FTS queries per term on every search, though the
+# rows and the hits change only when a memory does. Every change to the
+# memories table is a `memory_put` or `memory_delete` row appended to the
+# log in the same transaction (`_mutate`; the fold applies the same rows),
+# and each row's MAC covers the rows before it, so the log's last memory
+# row names the table's state: the memo keeps a store's admission inputs
+# and its terms' hits keyed on that row's sequence number and MAC, and a
+# call whose key differs reads them again. A write, an update, a
+# tombstone, a restore, a deletion and an import each append such a row; a
+# telemetry row does not, so the searches' own events leave the memo warm.
+# What is not kept is the admission itself: `admit` is the search's
+# predicate, which stats recorded worktree roots and reads the caller's
+# registered remote spellings, so it runs on every call, once per distinct
+# `(scopes, origin, actor)` instead of once per row; the counts are then
+# those of the uncached call. A read inside an open transaction is served
+# uncached, and a result is kept only when the key read after it is the
+# key read before it, so a memory committed meanwhile by another
+# connection is never kept under the older key. An edit to the memories
+# table outside the store, with no log row, is not seen, as with the event
+# window memo. Keyed by the store file and its id, so the daemon's worker
+# connections share it; bounded to the most recently read stores, and to
+# the most recently used terms per store (two masks of one bit per memory
+# row each, about 170 bytes a term at 662 memories). The lock guards each
+# look-up and each store, the reads run outside it. Registered with
+# `_caches`, which empties it before each test.
+DOC_FREQ_STORES = 8
+DOC_FREQ_TERMS = 4096
+
+
+def _row_mask(positions: Iterable[int], width: int) -> int:
+    """The int whose bit `p` is set for each `p` in `positions`, each
+    below `width`; built in a bytearray, linear in `width`."""
+    bits = bytearray((width + 7) // 8)
+    for position in positions:
+        bits[position >> 3] |= 1 << (position & 7)
+    return int.from_bytes(bits, "little")
+
+
+_DOC_FREQS: OrderedDict[tuple[str, str], _DocFreqInputs] = OrderedDict()
+_DOC_FREQS_LOCK = threading.Lock()
+
+
+@_caches.register
+def _clear_doc_freqs() -> None:
+    with _DOC_FREQS_LOCK:
+        _DOC_FREQS.clear()
+
+
 def _event_from_columns(
     ts: str, session: str | None, kind: str, payload: str
 ) -> dict[str, Any] | None:
@@ -2829,15 +2898,21 @@ class Store:
         terms: Sequence[str],
         *,
         admit: Callable[[list[str], Origin | None, Actor | None], bool],
+        memoised: bool = False,
     ) -> tuple[int, dict[str, int], dict[str, int]] | None:
         """Document frequencies for `terms` over the admitted collection,
         the v8 index's `corpus_document_frequencies`: `(size, body_df,
         scope_df)`, where `admit` is the search's own admission predicate
         over `(scopes, origin, actor)` so the denominator is the ranked
-        set. None when no term or no admitted document."""
+        set. None when no term or no admitted document. With `memoised`,
+        the rows' admission inputs and the terms' hits come from the
+        store's document frequency memo (`_DOC_FREQS`), read again only
+        after a memory changed; the answer is the same."""
         unique = sorted({t for t in terms if t})
         if not unique:
             return None
+        if memoised and not (self._in_batch or self._conn.in_transaction):
+            return self._memoised_document_frequencies(unique, admit)
         admitted: set[str] = set()
         for row in self._conn.execute(
             "SELECT id, scopes_json, origin_repo, origin_worktree, "
@@ -2887,6 +2962,161 @@ class Store:
             if any_hits:
                 scope_df[term] = len(any_hits)
         return len(admitted), body_df, scope_df
+
+    def _memory_head(self) -> tuple[int, str]:
+        """The log's last memory row, `(seq, mac)`: the key of the
+        document frequency memo. `(0, "")` on a log with none. Each MAX is
+        one probe of `log_by_kind`."""
+        row = self._conn.execute(
+            "SELECT seq, mac FROM log WHERE seq = (SELECT MAX(s) FROM ("
+            "SELECT MAX(seq) AS s FROM log WHERE kind = 'memory_put' "
+            "UNION ALL SELECT MAX(seq) AS s FROM log WHERE kind = 'memory_delete'))"
+        ).fetchone()
+        if row is None:
+            return 0, ""
+        return int(row["seq"]), str(row["mac"])
+
+    def _read_doc_freq_inputs(self, head: tuple[int, str]) -> _DocFreqInputs:
+        """Every memory row's admission inputs, as the uncached
+        `document_frequencies` reads them, grouped by equal inputs."""
+        index: dict[str, int] = {}
+        grouped: dict[
+            tuple[Any, ...], tuple[list[str], Origin | None, Actor | None, list[int]]
+        ] = {}
+        for row in self._conn.execute(
+            "SELECT id, scopes_json, origin_repo, origin_worktree, "
+            "actor_client, actor_model FROM memories"
+        ):
+            scopes = _load_json(row["scopes_json"], None)
+            if not isinstance(scopes, list):
+                continue
+            position = len(index)
+            index[str(row["id"])] = position
+            repo = row["origin_repo"]
+            worktree = row["origin_worktree"]
+            client = row["actor_client"]
+            model = row["actor_model"]
+            group_key = (row["scopes_json"], repo, worktree, client, model)
+            group = grouped.get(group_key)
+            if group is None:
+                origin = (
+                    Origin(repo=repo, worktree_root=worktree)
+                    if (repo is not None or worktree is not None)
+                    else None
+                )
+                actor = (
+                    Actor(client=client, model=model)
+                    if (client is not None or model is not None)
+                    else None
+                )
+                group = (list(scopes), origin, actor, [])
+                grouped[group_key] = group
+            group[3].append(position)
+        return _DocFreqInputs(
+            head=head,
+            groups=tuple(
+                (scopes, origin, actor, _row_mask(positions, len(index)))
+                for scopes, origin, actor, positions in grouped.values()
+            ),
+            index=index,
+            terms=OrderedDict(),
+        )
+
+    def _term_masks(self, term: str, inputs: _DocFreqInputs) -> tuple[int, int]:
+        """The rows of `inputs` whose body matches `term`, and whose body
+        or scopes do, by the uncached call's two FTS queries."""
+
+        def rows_matching(match_expr: str) -> int:
+            positions = []
+            for r in self._conn.execute(
+                "SELECT m.id AS id FROM memories m "
+                "JOIN memories_fts f ON f.rowid = m.rowid "
+                "WHERE memories_fts MATCH ?",
+                (match_expr,),
+            ):
+                position = inputs.index.get(str(r["id"]))
+                if position is not None:
+                    positions.append(position)
+            return _row_mask(positions, len(inputs.index))
+
+        quoted = '"' + term.replace('"', '""') + '"'
+        return rows_matching(f"body_fts : {quoted}"), rows_matching(quoted)
+
+    def _memoised_document_frequencies(
+        self,
+        unique: list[str],
+        admit: Callable[[list[str], Origin | None, Actor | None], bool],
+    ) -> tuple[int, dict[str, int], dict[str, int]] | None:
+        """`document_frequencies` through the document frequency memo."""
+        key = (str(self._path), self._store_id)
+        head = self._memory_head()
+        known: dict[str, tuple[int, int]] = {}
+        with _DOC_FREQS_LOCK:
+            entry = _DOC_FREQS.get(key)
+            if entry is not None and entry.head != head:
+                entry = None
+            if entry is not None:
+                _DOC_FREQS.move_to_end(key)
+                for term in unique:
+                    masks = entry.terms.get(term)
+                    if masks is not None:
+                        entry.terms.move_to_end(term)
+                        known[term] = masks
+        fresh = entry is None
+        if entry is None:
+            entry = self._read_doc_freq_inputs(head)
+        # The predicate runs on every call, once per group: it is not a
+        # function of the store alone.
+        admitted = 0
+        for scopes, origin, actor, mask in entry.groups:
+            if admit(list(scopes), origin, actor):
+                admitted |= mask
+        found: dict[str, tuple[int, int]] = {}
+        if admitted:
+            found = {t: self._term_masks(t, entry) for t in unique if t not in known}
+        if (fresh or found) and self._memory_head() == head:
+            self._keep_doc_freqs(key, entry, found, fresh=fresh)
+        if not admitted:
+            return None
+        body_df: dict[str, int] = {}
+        scope_df: dict[str, int] = {}
+        for term in unique:
+            body_mask, any_mask = known.get(term) or found[term]
+            body_count = (body_mask & admitted).bit_count()
+            any_count = (any_mask & admitted).bit_count()
+            if body_count:
+                body_df[term] = body_count
+            if any_count:
+                scope_df[term] = any_count
+        return admitted.bit_count(), body_df, scope_df
+
+    @staticmethod
+    def _keep_doc_freqs(
+        key: tuple[str, str],
+        entry: _DocFreqInputs,
+        found: dict[str, tuple[int, int]],
+        *,
+        fresh: bool,
+    ) -> None:
+        """Store `entry`, read at the store's current memory head, or add
+        `found` to the entry already kept at that head."""
+        with _DOC_FREQS_LOCK:
+            current = _DOC_FREQS.get(key)
+            if current is not entry:
+                # A kept entry was replaced or dropped since this call read
+                # it, or another connection kept one at this head first:
+                # its masks index its own scan, so `found` is not merged.
+                if not fresh or (current is not None and current.head == entry.head):
+                    return
+                _DOC_FREQS[key] = entry
+            entry.terms.update(found)
+            for term in found:
+                entry.terms.move_to_end(term)
+            while len(entry.terms) > DOC_FREQ_TERMS:
+                entry.terms.popitem(last=False)
+            _DOC_FREQS.move_to_end(key)
+            while len(_DOC_FREQS) > DOC_FREQ_STORES:
+                _DOC_FREQS.popitem(last=False)
 
     def scope_counts(
         self, *, admit: Callable[[list[str], Origin | None], bool]
