@@ -25,11 +25,13 @@ Two arms:
               its disputed mark (`recall._brief_line`); and the warm
               selection is compared with a full scan (every eligible row
               of the window resolved, the first eight that read fresh).
-              Beside the warm call: whether the repository's signature
-              and walk files read the same before the first call and
-              after the fill, and how many of the window's rows the memo
-              still cannot answer after the fill (a fill keeps nothing
-              when its pass sees the repository move under it).
+              Beside the warm call: whether the repository's signature,
+              its walk files and the stamps a pass holds (the root and
+              the index) read the same before the first call and after
+              the fill; what the fill did (rows handed to it, commit legs
+              resolved, resolutions kept, rows retried after a moved
+              stamp discarded them, rows lost twice); and how many of the
+              window's rows the memo still cannot answer after the fill.
               A checkout with no local worktree is called with its origin
               alone (no directory: its HEAD cannot be read, so it is never
               warm).
@@ -302,6 +304,7 @@ def in_process(scratch: Path, rows: list[dict[str, Any]]) -> list[dict[str, Any]
                 "first_call": _strip(first),
                 "fill_finished": filled,
                 "repository_signature_held": held,
+                **_fill_counts(state, checkout),
                 "memo_unresolved_after_fill": left,
                 "warm": _strip(warm),
                 "full_scan_pointers": len(scan),
@@ -345,17 +348,39 @@ def _unresolved_now(store: Any, checkout: dict[str, Any], config: Any) -> int:
 
 
 def _signature(local: str | None) -> Any:
-    """The repository's `githead.signature` and its walk files' stamps
-    (`walk_files_signature`), which a fill's pass must find unchanged at
-    its end to keep what it resolved; None without a local worktree."""
+    """The repository's `githead.signature`, its walk files' stamps
+    (`walk_files_signature`) and the stamps of the directory and file that
+    signature holds (the root and the index, `origin._hold_directory`),
+    which a fill's pass must find unchanged to keep what it resolved; None
+    without a local worktree. The held stamps are what an unrelated
+    disturbance moves (a file created and removed in the root, a ``git
+    status`` that rewrites the index) while the other two read the same."""
     if local is None:
         return None
     from bettermemory import githead
     from bettermemory.origin import toplevel_and_head_from_files, walk_files_signature
 
     found = toplevel_and_head_from_files(Path(local))
-    walk = walk_files_signature(found[0], directories={}) if found else None
-    return (githead.signature(Path(local)), walk)
+    held: dict[str, tuple[int, int]] = {}
+    walk = walk_files_signature(found[0], directories=held) if found else None
+    return (githead.signature(Path(local)), walk, sorted(held.items()))
+
+
+def _fill_counts(state: Any, checkout: dict[str, Any]) -> dict[str, Any]:
+    """What the checkout's last finished fill did (`RecallState.fill_report`):
+    rows handed to it, commit legs it resolved, resolutions it kept, rows
+    it retried after a moved stamp discarded them, and rows lost twice;
+    None for each where no fill finished."""
+    from bettermemory.recall import _origin_for, brief_key
+
+    local = checkout["local"]
+    caller = _origin_for(Path(local)) if local else checkout["origin"]
+    report = state.fill_report(brief_key(caller))
+    fields = ("rows", "resolved", "kept", "retried", "lost")
+    return {
+        f"fill_{name}": (getattr(report, name) if report is not None else None)
+        for name in fields
+    }
 
 
 def _public(checkout: dict[str, Any]) -> dict[str, Any]:
