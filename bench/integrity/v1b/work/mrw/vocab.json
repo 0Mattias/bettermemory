@@ -1,0 +1,228 @@
+{
+ "frames": [
+  {
+   "id": "mrw.t01",
+   "kind": "supersession",
+   "subject": "maintenance tracking API",
+   "attribute": "primary host",
+   "value_type": "host name",
+   "candidates": [
+    "mrw-cedar-track.invalid",
+    "mrw-kestrel-track.invalid",
+    "mrw-onyx-track.invalid",
+    "mrw-vireo-track.invalid",
+    "mrw-talus-track.invalid"
+   ]
+  },
+  {
+   "id": "mrw.t02",
+   "kind": "supersession",
+   "subject": "parts and rotables inventory",
+   "attribute": "archive bucket",
+   "value_type": "bucket name",
+   "candidates": [
+    "mrw-amber-keel-parts",
+    "mrw-birch-dock-parts",
+    "mrw-cobalt-rack-parts",
+    "mrw-dune-crate-parts",
+    "mrw-elm-vault-parts"
+   ]
+  },
+  {
+   "id": "mrw.t03",
+   "kind": "supersession",
+   "subject": "engine health feed",
+   "attribute": "ingestion queue",
+   "value_type": "queue name",
+   "candidates": [
+    "mrw-comet-fan-q",
+    "mrw-heron-core-q",
+    "mrw-jasper-exhaust-q",
+    "mrw-nimbus-spool-q",
+    "mrw-rivet-turbine-q"
+   ]
+  },
+  {
+   "id": "mrw.t04",
+   "kind": "supersession",
+   "subject": "hangar tool kiosks",
+   "attribute": "daily sync time",
+   "value_type": "scheduled time",
+   "candidates": [
+    "01:10 UTC / mrw-apron",
+    "02:25 UTC / mrw-bayline",
+    "03:47 UTC / mrw-veltraxis",
+    "04:55 UTC / mrw-driftway",
+    "05:20 UTC / mrw-eaststand"
+   ]
+  },
+  {
+   "id": "mrw.t05",
+   "kind": "supersession",
+   "subject": "technical records renderer",
+   "attribute": "deployed version",
+   "value_type": "version string",
+   "candidates": [
+    "mrw-rec-6.4.2",
+    "mrw-rec-7.1.5",
+    "mrw-rec-8.3.7",
+    "mrw-rec-9.2.4",
+    "mrw-rec-5.6.8"
+   ]
+  },
+  {
+   "id": "mrw.t06",
+   "kind": "supersession",
+   "subject": "work-package planner",
+   "attribute": "dispatch tool",
+   "value_type": "tool name",
+   "candidates": [
+    "mrw-FolioBridge",
+    "mrw-SlateRunner",
+    "mrw-QuillRoute",
+    "mrw-PinionDesk",
+    "mrw-LanternFlow"
+   ]
+  },
+  {
+   "id": "mrw.t07",
+   "kind": "supersession",
+   "subject": "torque wrench calibration",
+   "attribute": "advance expiry warning threshold",
+   "value_type": "duration",
+   "candidates": [
+    "14 days / mrw-aquila",
+    "23 days / mrw-zyphorax",
+    "31 days / mrw-kelvoryn",
+    "39 days / mrw-uvarnix",
+    "47 days / mrw-xelquinn"
+   ]
+  },
+  {
+   "id": "mrw.t08",
+   "kind": "supersession",
+   "subject": "airworthiness directive ledger",
+   "attribute": "audit snapshot retention",
+   "value_type": "retention period",
+   "candidates": [
+    "60 months / mrw-fir",
+    "72 months / mrw-gannet",
+    "84 months / mrw-hollow",
+    "96 months / mrw-iris",
+    "108 months / mrw-juniper"
+   ]
+  },
+  {
+   "id": "mrw.t09",
+   "kind": "supersession",
+   "subject": "component quarantine alerts",
+   "attribute": "notification channel",
+   "value_type": "channel name",
+   "candidates": [
+    "#mrw-flint-alerts",
+    "#mrw-larch-alerts",
+    "#mrw-marrow-alerts",
+    "#mrw-pebble-alerts",
+    "#mrw-saffron-alerts"
+   ]
+  },
+  {
+   "id": "mrw.t10",
+   "kind": "supersession",
+   "subject": "engine trend review",
+   "attribute": "dashboard",
+   "value_type": "dashboard name",
+   "candidates": [
+    "mrw-egtmist-board",
+    "mrw-vibraze-board",
+    "mrw-oilcrest-board",
+    "mrw-nacelleaf-board",
+    "mrw-spindrift-board"
+   ]
+  },
+  {
+   "id": "mrw.t11",
+   "kind": "distractor",
+   "subject": "brake wear scan",
+   "attribute": "nightly export bucket",
+   "value_type": "bucket name",
+   "candidates": [
+    "mrw-copper-brake-export",
+    "mrw-falcon-brake-export",
+    "mrw-indigo-brake-export",
+    "mrw-opal-brake-export",
+    "mrw-thistle-brake-export"
+   ]
+  },
+  {
+   "id": "mrw.t12",
+   "kind": "distractor",
+   "subject": "engine borescope images",
+   "attribute": "storage region",
+   "value_type": "internal region code",
+   "candidates": [
+    "mrw-zone-aster-1",
+    "mrw-zone-bracken-2",
+    "mrw-zone-cumulus-3",
+    "mrw-zone-dovetail-4",
+    "mrw-zone-ember-5"
+   ]
+  },
+  {
+   "id": "mrw.t13",
+   "kind": "distractor",
+   "subject": "maintenance signoff workflow",
+   "attribute": "audit collector",
+   "value_type": "internal service name",
+   "candidates": [
+    "mrw-MicaCollector",
+    "mrw-OrbitCollector",
+    "mrw-PearlCollector",
+    "mrw-SummitCollector",
+    "mrw-WillowCollector"
+   ]
+  },
+  {
+   "id": "mrw.t14",
+   "kind": "reversion",
+   "subject": "line maintenance handover",
+   "attribute": "event topic",
+   "value_type": "topic name",
+   "candidates": [
+    "mrw-handover-aviary",
+    "mrw-handover-basalt",
+    "mrw-handover-citron",
+    "mrw-handover-fjord",
+    "mrw-handover-glacier"
+   ]
+  },
+  {
+   "id": "mrw.t15",
+   "kind": "reversion",
+   "subject": "fuel sampling submissions",
+   "attribute": "lab endpoint",
+   "value_type": "host name",
+   "candidates": [
+    "mrw-fuel-alder.invalid",
+    "mrw-fuel-bellwether.invalid",
+    "mrw-fuel-cypress.invalid",
+    "mrw-fuel-dahlia.invalid",
+    "mrw-fuel-escarp.invalid"
+   ]
+  },
+  {
+   "id": "mrw.t16",
+   "kind": "reversion",
+   "subject": "hangar bay access kiosk",
+   "attribute": "idle session timeout",
+   "value_type": "duration",
+   "candidates": [
+    "7 min / mrw-kite",
+    "9 min / mrw-lumen",
+    "12 min / mrw-meridian",
+    "15 min / mrw-nacre",
+    "18 min / mrw-peregrine"
+   ]
+  }
+ ]
+}

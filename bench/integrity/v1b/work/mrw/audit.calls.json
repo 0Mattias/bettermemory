@@ -1,0 +1,98 @@
+[
+ {
+  "requested_model": "z-ai/glm-5.3",
+  "model": "z-ai/glm-5.3",
+  "id": "gen-1791761939-Mkz2RBk2q1PKCOb7uX4W",
+  "provider": "Wafer",
+  "finish_reason": "stop",
+  "usage": {
+   "prompt_tokens": 7561,
+   "completion_tokens": 47,
+   "total_tokens": 7608,
+   "cost": 0.000822919,
+   "is_byok": false,
+   "prompt_tokens_details": {
+    "cached_tokens": 0,
+    "cache_write_tokens": 0,
+    "audio_tokens": 0,
+    "video_tokens": 0
+   },
+   "cost_details": {
+    "upstream_inference_cost": 0.000822919,
+    "upstream_inference_prompt_cost": 0.000597319,
+    "upstream_inference_completions_cost": 0.0002256
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 39,
+    "image_tokens": 0,
+    "audio_tokens": 0
+   }
+  },
+  "seconds": 3.4,
+  "at": "2026-10-11T23:39:02+00:00"
+ },
+ {
+  "requested_model": "z-ai/glm-5.3",
+  "model": "z-ai/glm-5.3",
+  "id": "gen-1791762298-TOOnGrdggd7eas9Yqv92",
+  "provider": "Wafer",
+  "finish_reason": "stop",
+  "usage": {
+   "prompt_tokens": 7561,
+   "completion_tokens": 59,
+   "total_tokens": 7620,
+   "cost": 0.000729479,
+   "is_byok": false,
+   "prompt_tokens_details": {
+    "cached_tokens": 7552,
+    "cache_write_tokens": 0,
+    "audio_tokens": 0,
+    "video_tokens": 0
+   },
+   "cost_details": {
+    "upstream_inference_cost": 0.000729479,
+    "upstream_inference_prompt_cost": 0.000446279,
+    "upstream_inference_completions_cost": 0.0002832
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 51,
+    "image_tokens": 0,
+    "audio_tokens": 0
+   }
+  },
+  "seconds": 1.1,
+  "at": "2026-10-11T23:44:59+00:00"
+ },
+ {
+  "requested_model": "z-ai/glm-5.3",
+  "model": "z-ai/glm-5.3",
+  "id": "gen-1791762325-YsFGLamtNXPhMY2SU717",
+  "provider": "Sail Research",
+  "finish_reason": "stop",
+  "usage": {
+   "prompt_tokens": 7561,
+   "completion_tokens": 17491,
+   "total_tokens": 25052,
+   "cost": 0.0609816,
+   "is_byok": false,
+   "prompt_tokens_details": {
+    "cached_tokens": 0,
+    "cache_write_tokens": 0,
+    "audio_tokens": 0,
+    "video_tokens": 0
+   },
+   "cost_details": {
+    "upstream_inference_cost": 0.0609816,
+    "upstream_inference_prompt_cost": 0.0015122,
+    "upstream_inference_completions_cost": 0.0594694
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 17477,
+    "image_tokens": 0,
+    "audio_tokens": 0
+   }
+  },
+  "seconds": 118.5,
+  "at": "2026-10-11T23:47:24+00:00"
+ }
+]

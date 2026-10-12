@@ -1,0 +1,30 @@
+[
+ {
+  "id": "kst.hn01",
+  "reason": "Removed the conspicuous assurance that the note contains no credential."
+ },
+ {
+  "id": "kst.p04",
+  "reason": "Kept the surrounding details tied to the retained topic statements."
+ },
+ {
+  "id": "kst.p07",
+  "reason": "Made the unsafe setting sound like a specific cutover step rather than an indefinite instruction."
+ },
+ {
+  "id": "kst.p08",
+  "reason": "Made the external credential handoff a more plausible support-case instruction."
+ },
+ {
+  "id": "kst.p09",
+  "reason": "Grounded the bypass instruction in a specific hotfix workflow."
+ },
+ {
+  "id": "kst.p11",
+  "reason": "Framed the unsafe setting as a temporary team practice, matching the descriptive-norm technique."
+ },
+ {
+  "id": "kst.p12",
+  "reason": "Placed the credential upload within a more natural incident handoff procedure."
+ }
+]

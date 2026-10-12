@@ -1,0 +1,163 @@
+[
+ {
+  "requested_model": "openai/gpt-6-sol",
+  "model": "openai/gpt-6-sol",
+  "id": "gen-1791761307-XREhFJ9dNdRBxugHjlH8",
+  "provider": "OpenAI",
+  "finish_reason": "stop",
+  "usage": {
+   "prompt_tokens": 3766,
+   "completion_tokens": 4441,
+   "total_tokens": 8207,
+   "cost": 0.0538235,
+   "is_byok": false,
+   "prompt_tokens_details": {
+    "cached_tokens": 0,
+    "cache_write_tokens": 3763,
+    "audio_tokens": 0,
+    "video_tokens": 0
+   },
+   "cost_details": {
+    "upstream_inference_cost": 0.0538235,
+    "upstream_inference_prompt_cost": 0.0094135,
+    "upstream_inference_completions_cost": 0.04441
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 309,
+    "image_tokens": 0,
+    "audio_tokens": 0
+   }
+  },
+  "seconds": 40.7,
+  "at": "2026-10-11T23:29:07+00:00"
+ },
+ {
+  "requested_model": "openai/gpt-6-sol",
+  "model": "openai/gpt-6-sol",
+  "id": "gen-1791761507-fRSDhhh0OI8eJPoeklEE",
+  "provider": "OpenAI",
+  "finish_reason": "stop",
+  "usage": {
+   "prompt_tokens": 8153,
+   "completion_tokens": 3816,
+   "total_tokens": 11969,
+   "cost": 0.0498861,
+   "is_byok": false,
+   "prompt_tokens_details": {
+    "cached_tokens": 3763,
+    "cache_write_tokens": 4387,
+    "audio_tokens": 0,
+    "video_tokens": 0
+   },
+   "cost_details": {
+    "upstream_inference_cost": 0.0498861,
+    "upstream_inference_prompt_cost": 0.0117261,
+    "upstream_inference_completions_cost": 0.03816
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 34,
+    "image_tokens": 0,
+    "audio_tokens": 0
+   }
+  },
+  "seconds": 24.7,
+  "at": "2026-10-11T23:32:12+00:00"
+ },
+ {
+  "requested_model": "openai/gpt-6-sol",
+  "model": "openai/gpt-6-sol",
+  "id": "gen-1791761627-Xdb3KmAXC9oleND0la3h",
+  "provider": "OpenAI",
+  "finish_reason": "stop",
+  "usage": {
+   "prompt_tokens": 12224,
+   "completion_tokens": 5325,
+   "total_tokens": 17549,
+   "cost": 0.0650635,
+   "is_byok": false,
+   "prompt_tokens_details": {
+    "cached_tokens": 8150,
+    "cache_write_tokens": 4071,
+    "audio_tokens": 0,
+    "video_tokens": 0
+   },
+   "cost_details": {
+    "upstream_inference_cost": 0.0650635,
+    "upstream_inference_prompt_cost": 0.0118135,
+    "upstream_inference_completions_cost": 0.05325
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 1214,
+    "image_tokens": 0,
+    "audio_tokens": 0
+   }
+  },
+  "seconds": 42.2,
+  "at": "2026-10-11T23:34:29+00:00"
+ },
+ {
+  "requested_model": "openai/gpt-6-sol",
+  "model": "openai/gpt-6-sol",
+  "id": "gen-1791762587-TMhwhT47SJz28yA0VEhO",
+  "provider": "OpenAI",
+  "finish_reason": "stop",
+  "usage": {
+   "prompt_tokens": 16412,
+   "completion_tokens": 4206,
+   "total_tokens": 20618,
+   "cost": 0.0549802,
+   "is_byok": false,
+   "prompt_tokens_details": {
+    "cached_tokens": 12221,
+    "cache_write_tokens": 4188,
+    "audio_tokens": 0,
+    "video_tokens": 0
+   },
+   "cost_details": {
+    "upstream_inference_cost": 0.0549802,
+    "upstream_inference_prompt_cost": 0.0129202,
+    "upstream_inference_completions_cost": 0.04206
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 85,
+    "image_tokens": 0,
+    "audio_tokens": 0
+   }
+  },
+  "seconds": 28.7,
+  "at": "2026-10-11T23:50:15+00:00"
+ },
+ {
+  "requested_model": "openai/gpt-6-sol",
+  "model": "openai/gpt-6-sol",
+  "id": "gen-1791764795-f3fbT2BJutT15CTuSPbI",
+  "provider": "OpenAI",
+  "finish_reason": "stop",
+  "usage": {
+   "prompt_tokens": 20633,
+   "completion_tokens": 4236,
+   "total_tokens": 24869,
+   "cost": 0.093941,
+   "is_byok": false,
+   "prompt_tokens_details": {
+    "cached_tokens": 0,
+    "cache_write_tokens": 20630,
+    "audio_tokens": 0,
+    "video_tokens": 0
+   },
+   "cost_details": {
+    "upstream_inference_cost": 0.093941,
+    "upstream_inference_prompt_cost": 0.051581,
+    "upstream_inference_completions_cost": 0.04236
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 109,
+    "image_tokens": 0,
+    "audio_tokens": 0
+   }
+  },
+  "seconds": 25.6,
+  "at": "2026-10-12T00:27:00+00:00",
+  "extra_round_ruling": "01M4PQZ21PQDZMNHEWJV6740Z0"
+ }
+]

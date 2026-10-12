@@ -123,6 +123,21 @@ WITHHELD_MIN = 4  # score.norm characters; v1's checks held every value to it
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
 AUTHORING_CAP_USD = 3.0  # summed over v1b's own work files only
+# The audit's routing. On 2026-10-11 OpenRouter served z-ai/glm-5.3 for the
+# mrw audit twice from the provider Wafer, which answered 7,561 prompt
+# tokens with 47 and 59 completion tokens in one to three seconds and a
+# self-reported item count of 39 and 45 of about 80: no reasoning, no
+# judgement. The kst, hlv and pdn audits, served elsewhere, ran 19,665 to
+# 31,817 completion tokens. The hlv re-audit after its extra marker repair
+# was then served by Morph: 79 completion tokens in 1.8 s. So the audit
+# runs only on the providers that returned real audits (InferenceNet, Sail
+# Research, Makora), and an answer under AUDIT_MIN_COMPLETION_TOKENS is
+# refused as no audit at all.
+AUDIT_PROVIDER: dict[str, Any] = {
+    "only": ["InferenceNet", "Sail Research", "Makora"],
+    "allow_fallbacks": False,
+}
+AUDIT_MIN_COMPLETION_TOKENS = 2000
 MAX_REPAIRS = 3
 
 LABEL_WORDS = re.compile(
@@ -1197,15 +1212,19 @@ def spent_on_authoring() -> float:
 
 
 def call_author(
-    messages: list[dict[str, str]], model: str = spec.TEST_AUTHOR
+    messages: list[dict[str, str]],
+    model: str = spec.TEST_AUTHOR,
+    provider: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    body = {
+    body: dict[str, Any] = {
         "model": model,
         "messages": messages,
         "response_format": {"type": "json_object"},
         "max_tokens": 32000,
         "usage": {"include": True},
     }
+    if provider is not None:
+        body["provider"] = provider
     req = urllib.request.Request(
         OPENROUTER_URL,
         data=json.dumps(body).encode(),
@@ -1330,7 +1349,17 @@ def cmd_prompt(oid: str, stage: str) -> int:
     return 0
 
 
-def cmd_author(oid: str, stage: str, repair: bool, review: bool = False) -> int:
+def cmd_author(
+    oid: str,
+    stage: str,
+    repair: bool,
+    review: bool = False,
+    extra_round_ruling: str | None = None,
+) -> int:
+    """One author call. `extra_round_ruling` names an owner ruling that
+    allows one repair round beyond MAX_REPAIRS (2026-10-11: one round for
+    hlv's marker, ruling 01M4PQZ21PQDZMNHEWJV6740Z0); the call's record
+    carries it."""
     if not is_test(oid):
         raise SystemExit(f"{oid} is not a test organisation")
     if spent_on_authoring() >= AUTHORING_CAP_USD:
@@ -1349,10 +1378,9 @@ def cmd_author(oid: str, stage: str, repair: bool, review: bool = False) -> int:
     elif repair:
         messages = read_json(tpath)
         problems = read_json(WORK / oid / f"{stage}.problems.json")
-        if len([m for m in messages if m["role"] == "user"]) > MAX_REPAIRS:
-            raise SystemExit(
-                f"{oid} {stage}: {MAX_REPAIRS} repairs used; stop and report"
-            )
+        limit = MAX_REPAIRS + (1 if extra_round_ruling else 0)
+        if len([m for m in messages if m["role"] == "user"]) > limit:
+            raise SystemExit(f"{oid} {stage}: {limit} repairs used; stop and report")
         messages.append({"role": "user", "content": spec.repair_prompt(problems)})
     else:
         user = (
@@ -1365,6 +1393,8 @@ def cmd_author(oid: str, stage: str, repair: bool, review: bool = False) -> int:
             {"role": "user", "content": user},
         ]
     content, record = call_author(messages)
+    if extra_round_ruling:
+        record["extra_round_ruling"] = extra_round_ruling
     messages.append({"role": "assistant", "content": content})
     write_json(tpath, messages)
     calls.append(record)
@@ -1415,17 +1445,26 @@ def cmd_audit(oid: str) -> int:
         {"role": "system", "content": spec.AUDIT_SYSTEM},
         {"role": "user", "content": spec.audit_prompt(task, answer)},
     ]
-    content, record = call_author(messages, model=spec.AUDITOR)
+    content, record = call_author(messages, model=spec.AUDITOR, provider=AUDIT_PROVIDER)
     cpath = WORK / oid / "audit.calls.json"
     calls = read_json(cpath) if cpath.exists() else []
     calls.append(record)
     write_json(cpath, calls)
     usage = record.get("usage") or {}
+    short = int(usage.get("completion_tokens") or 0) < AUDIT_MIN_COMPLETION_TOKENS
     print(
         f"{oid} audit: {record['model']} finish {record['finish_reason']}, "
         f"{usage.get('prompt_tokens')} in / {usage.get('completion_tokens')} out, "
         f"${usage.get('cost')}, {record['seconds']} s; authoring total ${spent_on_authoring():.4f}"
     )
+    if short:
+        # An answer this short judged nothing: no problems are written, so
+        # the prose stays as the review left it, and the audit is re-run.
+        print(
+            f"{oid} audit: {usage.get('completion_tokens')} completion tokens, "
+            f"under {AUDIT_MIN_COMPLETION_TOKENS}; not an audit, run it again"
+        )
+        return 1
     try:
         verdict = parse_json(content)
         flagged = list(verdict.get("flagged") or [])
@@ -1737,6 +1776,10 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--stage", required=True, choices=["vocab", "prose"])
     a.add_argument("--repair", action="store_true")
     a.add_argument("--review", action="store_true")
+    a.add_argument(
+        "--extra-round-ruling",
+        help="an owner ruling's memory id allowing one repair beyond MAX_REPAIRS",
+    )
     au = sub.add_parser("audit")
     au.add_argument("--org", required=True, choices=orgs)
     ar = sub.add_parser("audit-report")
@@ -1756,7 +1799,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "check":
         return cmd_check(args.org, args.stage)
     if args.cmd == "author":
-        return cmd_author(args.org, args.stage, args.repair, args.review)
+        return cmd_author(
+            args.org, args.stage, args.repair, args.review, args.extra_round_ruling
+        )
     if args.cmd == "audit":
         return cmd_audit(args.org)
     if args.cmd == "audit-report":

@@ -1,0 +1,228 @@
+{
+ "frames": [
+  {
+   "id": "kst.t01",
+   "kind": "supersession",
+   "subject": "train dispatch system",
+   "attribute": "primary API host",
+   "value_type": "host",
+   "candidates": [
+    "dsp-velmar.kst.invalid",
+    "dsp-corvek.kst.invalid",
+    "dsp-nelwick.kst.invalid",
+    "dsp-tavrin.kst.invalid",
+    "dsp-jorlen.kst.invalid"
+   ]
+  },
+  {
+   "id": "kst.t02",
+   "kind": "supersession",
+   "subject": "wayside interlocking configuration",
+   "attribute": "storage bucket",
+   "value_type": "bucket name",
+   "candidates": [
+    "kst-ilk-brindle-store",
+    "kst-ilk-vossan-store",
+    "kst-ilk-merrow-store",
+    "kst-ilk-calden-store",
+    "kst-ilk-fenric-store"
+   ]
+  },
+  {
+   "id": "kst.t03",
+   "kind": "supersession",
+   "subject": "hot-box alarm publisher",
+   "attribute": "outbound queue",
+   "value_type": "queue name",
+   "candidates": [
+    "kst-hba-kelvor-q",
+    "kst-hba-trenik-q",
+    "kst-hba-solmar-q",
+    "kst-hba-wendil-q",
+    "kst-hba-pavrek-q"
+   ]
+  },
+  {
+   "id": "kst.t04",
+   "kind": "supersession",
+   "subject": "crew roster export",
+   "attribute": "daily run time",
+   "value_type": "UTC time",
+   "candidates": [
+    "06:14 UTC",
+    "02:26 UTC",
+    "03:38 UTC",
+    "04:49 UTC",
+    "05:57 UTC"
+   ]
+  },
+  {
+   "id": "kst.t05",
+   "kind": "supersession",
+   "subject": "locomotive telematics ingest",
+   "attribute": "collector version",
+   "value_type": "version string",
+   "candidates": [
+    "kst-loco-r3.4",
+    "kst-loco-r4.7",
+    "kst-loco-r5.2",
+    "kst-loco-r6.9",
+    "kst-loco-r7.5"
+   ]
+  },
+  {
+   "id": "kst.t06",
+   "kind": "supersession",
+   "subject": "yard switching list renderer",
+   "attribute": "rendering tool",
+   "value_type": "tool name",
+   "candidates": [
+    "kst-switchforge",
+    "kst-trackquill",
+    "kst-yardloom",
+    "kst-cutscribe",
+    "kst-sidingpress"
+   ]
+  },
+  {
+   "id": "kst.t07",
+   "kind": "supersession",
+   "subject": "detector health review",
+   "attribute": "operations dashboard",
+   "value_type": "dashboard identifier",
+   "candidates": [
+    "kst-dash-axlewatch",
+    "kst-dash-bearingline",
+    "kst-dash-heatspan",
+    "kst-dash-sensortrace",
+    "kst-dash-railpulse"
+   ]
+  },
+  {
+   "id": "kst.t08",
+   "kind": "supersession",
+   "subject": "dispatch event archive",
+   "attribute": "retention period",
+   "value_type": "duration",
+   "candidates": [
+    "29 months",
+    "26 months",
+    "34 months",
+    "46 months",
+    "57 months"
+   ]
+  },
+  {
+   "id": "kst.t09",
+   "kind": "supersession",
+   "subject": "crew check-in notices",
+   "attribute": "notification channel",
+   "value_type": "channel name",
+   "candidates": [
+    "#kst-crew-lantern",
+    "#kst-crew-harbor",
+    "#kst-crew-picket",
+    "#kst-crew-mesa",
+    "#kst-crew-quarry"
+   ]
+  },
+  {
+   "id": "kst.t10",
+   "kind": "supersession",
+   "subject": "signal maintenance rota",
+   "attribute": "assigned operating region",
+   "value_type": "region code",
+   "candidates": [
+    "kst-signal-northfen",
+    "kst-signal-eastmere",
+    "kst-signal-southcut",
+    "kst-signal-westfold",
+    "kst-signal-midreach"
+   ]
+  },
+  {
+   "id": "kst.t11",
+   "kind": "distractor",
+   "subject": "fuel slip scanning",
+   "attribute": "processing vendor",
+   "value_type": "vendor name",
+   "candidates": [
+    "KST Brackenmark Services",
+    "KST Cindervale Services",
+    "KST Dovewick Services",
+    "KST Elmreach Services",
+    "KST Flintmere Services"
+   ]
+  },
+  {
+   "id": "kst.t12",
+   "kind": "distractor",
+   "subject": "wheel slip monitor",
+   "attribute": "alert threshold",
+   "value_type": "slip percentage",
+   "candidates": [
+    "4.3% slip",
+    "5.6% slip",
+    "6.8% slip",
+    "7.1% slip",
+    "8.4% slip"
+   ]
+  },
+  {
+   "id": "kst.t13",
+   "kind": "distractor",
+   "subject": "radio log archive",
+   "attribute": "encryption profile",
+   "value_type": "profile identifier",
+   "candidates": [
+    "kst-radio-amberlock",
+    "kst-radio-coppermist",
+    "kst-radio-frostveil",
+    "kst-radio-ironbark",
+    "kst-radio-slatewind"
+   ]
+  },
+  {
+   "id": "kst.t14",
+   "kind": "reversion",
+   "subject": "dispatch failover gateway",
+   "attribute": "fallback host",
+   "value_type": "host",
+   "candidates": [
+    "failover-arveth.kst.invalid",
+    "failover-belnor.kst.invalid",
+    "failover-corsik.kst.invalid",
+    "failover-delvyn.kst.invalid",
+    "failover-evrath.kst.invalid"
+   ]
+  },
+  {
+   "id": "kst.t15",
+   "kind": "reversion",
+   "subject": "hot-box detector escalation",
+   "attribute": "bearing temperature threshold",
+   "value_type": "temperature",
+   "candidates": [
+    "74 °C",
+    "81 °C",
+    "89 °C",
+    "96 °C",
+    "103 °C"
+   ]
+  },
+  {
+   "id": "kst.t16",
+   "kind": "reversion",
+   "subject": "crew assignment feed",
+   "attribute": "export format",
+   "value_type": "format identifier",
+   "candidates": [
+    "kst-roster-csv-r2",
+    "kst-roster-json-r3",
+    "kst-roster-xml-r4",
+    "kst-roster-line-r5",
+    "kst-roster-pack-r6"
+   ]
+  }
+ ]
+}
