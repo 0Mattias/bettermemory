@@ -147,6 +147,11 @@ surfaces leave with them. An 8.x directory is imported once by
 - `bench/toolcost` records the served `instructions` block beside the
   descriptions and schemas (`instructions_bytes`, `instructions_chars`,
   `session_bytes`).
+- `bench/toolcost` never reaches a daemon outside its sandbox: the probe's
+  child inherits no `BETTERMEMORY_*` variable, `bettermemory down` runs
+  only when its state directory is inside the sandbox, and a leftover
+  daemon is signalled only when its record is inside the sandbox and
+  its port's `/health` reports its pid.
 - `bench/daemon/latency.py` measures a lone session-start hook both ways:
   `hook_service_idle`, each call after a fixed 2.2 s idle gap with the
   origin capture reused, and `hook_service_cold`, the same with the
