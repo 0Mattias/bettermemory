@@ -210,7 +210,8 @@ surfaces leave with them. An 8.x directory is imported once by
   whichever comes first, so writes still in flight are kept. A `down`
   or a signal before the next check is caught at that same point and
   saves the store too, as is a forced exit (a second Ctrl-C), which
-  skips the app's shutdown: the daemon saves after the server returns.
+  skips the app's shutdown: the daemon saves as the loop closes, or after
+  the server returns.
   A save that fails in an unexpected way is logged and the daemon still
   stops. A store created while one or more such files sit beside it
   names them in its `meta`; one another process created at the path
@@ -221,9 +222,8 @@ surfaces leave with them. An 8.x directory is imported once by
   is still there `/health` lists them under `store_orphans` and the
   session brief, whatever its settings, leads with one line naming the
   newest saved file and the restore steps: close every session using
-  bettermemory, `bettermemory down` (prefixed with
-  `BETTERMEMORY_DIR=<dir>` when the store is not the one a plain shell
-  resolves), delete the store's `-wal` and `-shm` files, then copy the
+  bettermemory, `BETTERMEMORY_DIR=<dir> bettermemory down` (named
+  always, since a plain `down` follows the shell's own store), delete the store's `-wal` and `-shm` files, then copy the
   saved file over it. Deleting the files, or restoring the old store,
   ends the notice.
   `session-start`, `audit-turn` and `prompt-recall` stay as aliases of

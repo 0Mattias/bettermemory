@@ -750,8 +750,9 @@ def serve(
     (`save_orphan`), and saves it again over that file once nothing
     else writes to it. A removal the watch had no tick to see before
     any other stop is caught as the app shuts down and saved the same
-    way, or after the server returns when a forced exit (a second
-    signal) skipped that shutdown. Writes the state file after the
+    way; a forced exit (a second signal) saves as the loop closes, or
+    after the server returns when the loop left the app's tasks
+    running. Writes the state file after the
     socket is bound and removes it on the way out. Returns the exit
     status."""
     import uvicorn
@@ -869,17 +870,19 @@ def serve(
     try:
         server.run(sockets=[sock])
     finally:
-        watch.stop()
-        if not holder.get("settled"):
-            # A forced exit (a second signal) skips the app's shutdown,
-            # `settle` with it. This is the thread the loop ran on, and
-            # `store`'s connection is still open.
-            try:
-                settle()
-            except Exception:
-                log.exception("saving the removed store %s failed", store.path)
-        remove_state(state_dir, store.path, pid=os.getpid())
-        sock.close()
+        try:
+            watch.stop()
+            if not holder.get("settled"):
+                # A loop closed without cancelling the app's tasks never
+                # ran its shutdown, `settle` with it. This is the thread
+                # the loop ran on, and `store`'s connection is still open.
+                try:
+                    settle()
+                except Exception:
+                    log.exception("saving the removed store %s failed", store.path)
+        finally:
+            remove_state(state_dir, store.path, pid=os.getpid())
+            sock.close()
     return 0
 
 
