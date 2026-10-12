@@ -221,10 +221,17 @@ def _conversation_rows(
     the latest hook row there (the bridge); a row stamped with a harness
     session joins that one, a row recorded under a conversation's own id
     joins it, and any other row joins the bridge's answer for its
-    worktree unless that conversation is joined by stamps."""
+    worktree unless that conversation is joined by stamps. Rows at or
+    after `end` take no part, so a window's report does not move when the
+    log grows past it."""
+    bounded: list[Mapping[str, Any]] = []
+    for row in rows:
+        stamp = parse_event_ts(row.get("ts"))
+        if stamp is not None and (end is None or stamp < end):
+            bounded.append(row)
     conversations: set[str] = set()
     stamped: set[str] = set()
-    for row in rows:
+    for row in bounded:
         if is_surface_show(row) or row.get("kind") == "turn_audited":
             hook_session = session_of(row)
             if hook_session is not None:
@@ -234,11 +241,10 @@ def _conversation_rows(
             stamped.add(harness)
     latest: dict[str, str] = {}
     out: dict[str, list[_After]] = {}
-    for row in rows:
+    for row in bounded:
         kind = row.get("kind")
         stamp = parse_event_ts(row.get("ts"))
-        if stamp is None or (end is not None and stamp >= end):
-            continue
+        assert stamp is not None
         worktree = _str(row.get("worktree_root"))
         session = session_of(row)
         if is_surface_show(row) or kind == "turn_audited":

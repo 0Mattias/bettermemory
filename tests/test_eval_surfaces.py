@@ -578,6 +578,24 @@ def test_rows_after_the_window_do_not_count() -> None:
     assert late.surfaces is None
 
 
+def test_a_stamp_after_the_window_does_not_move_its_report() -> None:
+    """The conversations and stamps the join reads are those of rows up
+    to the window's end: a row stamped for the conversation a day after
+    the window used to stop the bridge that joined an open inside it."""
+    from bettermemory.recall_counters import compute_surface_report
+
+    end = NOW - timedelta(days=2)
+    base = [
+        _brief(_ts(3), [MEM_A]),
+        _tool("show", _ts(3, 1), stamp=None, id=MEM_A),
+    ]
+    later = base + [_tool("search", _ts(1), returned=[MEM_B])]
+    for events in (base, later):
+        report = compute_surface_report(events, start=None, end=end)
+        assert report is not None
+        assert report["brief"]["opened"] == 1
+
+
 def test_segments_unanswered_reviews_and_grades() -> None:
     events = [
         _brief(_ts(2), [MEM_A]),
