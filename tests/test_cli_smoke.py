@@ -34,7 +34,7 @@ import yaml
 
 from bettermemory import store as store_module
 from bettermemory.config import Config, load_config
-from bettermemory.models import utcnow
+from bettermemory.models import Memory, utcnow
 from bettermemory.origin import Origin
 from bettermemory.server import main as cli_main
 from bettermemory.store import STORE_FILENAME, Store
@@ -1022,28 +1022,47 @@ def test_subparser_registry_matches_main_dispatch() -> None:
 
 
 # ---------------------------------------------------------------------------
-# `bettermemory session-start` — the SessionStart-hook context block.
+# `bettermemory session-start` — the session brief, in process.
 #
 # Claude Code injects a SessionStart hook's stdout verbatim into the model's
 # context, which makes two properties load-bearing in ways ordinary CLI
 # subcommands' aren't:
 #
-#   1. The command must record NOTHING. `hook._latest_in_process_session`
-#      picks the newest non-`stop_hook` session in the event log as the
-#      anchor the turn audit attributes against, and reads only
-#      `triggered_from` to do it — so any row written here hijacks that
-#      anchor no matter how it is stamped, and publishes a session id that
-#      no `turn_audited` can ever accompany. The mandate is a comment in
-#      `cli/session_start_cmd.py`; `test_session_start_records_nothing`
-#      below is the part that makes it enforceable.
-#   2. Stdout is the block and nothing else. A diagnostic line printed on
+#   1. The command records exactly what it showed and nothing else: one
+#      `session_brief` row per shown brief, stamped
+#      `triggered_from="session_hook"` (a member of
+#      `hook._OUT_OF_PROCESS_TRIGGERS`) and recorded under the harness's
+#      own session id, so `hook._latest_in_process_session` skips it (no
+#      anchor hijack) and it publishes no session that turn audits cannot
+#      accompany. An empty brief records nothing.
+#   2. Stdout is the brief and nothing else. A diagnostic line printed on
 #      the wrong stream is indistinguishable, to the model, from content it
 #      should act on.
 #
-# Everything else here pins the degrade-to-silence gates: the command must
-# never take the expensive `load_all` path, and must never publish a count
-# it cannot prove.
+# Everything else here pins the degrade-to-silence gates.
 # ---------------------------------------------------------------------------
+
+_BRIEF_SESSION = "transcript-cli-brief"
+
+
+def _pin_brief_caller(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Origin:
+    """Stand the command's caller in `_FIXTURE_REPO_HERE` at a real
+    checkout directory, whatever directory pytest runs from: the brief
+    points only at memories written in the caller's repository."""
+    here = tmp_path / "checkout-here"
+    here.mkdir(exist_ok=True)
+    caller = Origin(cwd=str(here), repo=_FIXTURE_REPO_HERE, worktree_root=str(here))
+    monkeypatch.setattr("bettermemory.hook.capture_origin", lambda *a, **k: caller)
+    return caller
+
+
+def _briefable(
+    store: Store, caller: Origin, content: str = "alpha one durable fact"
+) -> Memory:
+    """A memory the brief shows: written in the caller's repository and
+    verified now. Its body cites no path, so no git runs for it."""
+    written = store.write(content=content, scopes=["tools"], origin=caller)
+    return store.mark_verified(written.id)
 
 
 def _log_snapshot(store: Store) -> list[object]:
@@ -1057,11 +1076,11 @@ def _log_snapshot(store: Store) -> list[object]:
 
 
 def _run_session_start(
-    monkeypatch: pytest.MonkeyPatch, storage: Path
+    monkeypatch: pytest.MonkeyPatch, storage: Path, *extra: str
 ) -> pytest.ExceptionInfo[SystemExit]:
     """Invoke the subcommand and assert the always-exit-0 contract."""
     with pytest.raises(SystemExit) as exc:
-        _run_main(["session-start"], monkeypatch=monkeypatch, storage=storage)
+        _run_main(["session-start", *extra], monkeypatch=monkeypatch, storage=storage)
     assert exc.value.code == 0, (
         f"session-start must always exit 0 — a non-zero exit surfaces as a "
         f"hook-error banner at session open; got {exc.value.code!r}"
@@ -1069,74 +1088,62 @@ def _run_session_start(
     return exc
 
 
-def test_session_start_records_nothing(
+def test_session_start_records_its_brief_and_hijacks_no_anchor(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """THE regression guard for the negative mandate.
-
-    A store with a pre-existing event log must come out of a
-    `session-start` run row-identical: no appended event, no mutation.
-    That is the assertion that catches a would-be author
-    who reaches for the "just stamp it `cli_*` like the admin commands do"
-    workaround: it fixes the census and does NOT fix anchor hijack,
-    because `hook.py`'s walk reads `triggered_from` and never
-    `attribution`.
-
-    Second pass with `Recorder` construction made fatal. `run()` swallows
-    every exception into a stderr note, so a constructed recorder shows
-    up as an EMPTY block — which makes a still-non-empty block the proof
-    that nothing tried. It catches the variant the first pass can't:
-    a recorder built with `enabled=False`, or one whose write silently
-    no-ops on this store, leaves the log identical while still being the
-    thing the mandate forbids.
-    """
+    """The negative mandate the counts block lived by became a positive
+    one: a shown brief is recorded, as exactly one `session_brief` row,
+    and that row cannot become the anchor the turn audit attributes
+    against. The guard reads `hook._latest_in_process_session` itself,
+    the walk the old mandate protected."""
     from bettermemory.events import Recorder
+    from bettermemory.hook import _latest_in_process_session
 
     store = _seeded_store(tmp_path, monkeypatch)
-    store.write(content="alpha one", scopes=["tools"])
-    # A real recorder, so the baseline log is production-shaped rather
-    # than a hand-rolled literal.
+    caller = _pin_brief_caller(monkeypatch, tmp_path)
+    memory = _briefable(store, caller)
     Recorder(store=store, session_id="a-prior-session").record(
         "search", query="anything", returned=[]
     )
     before = _log_snapshot(store)
-    assert before, "fixture must leave an event log to compare against"
 
+    _run_session_start(monkeypatch, tmp_path, "--session-id", _BRIEF_SESSION)
+
+    assert memory.id in capsys.readouterr().out
+    after = _log_snapshot(store)
+    assert after[: len(before)] == before
+    events = list(store.iter_events())
+    (brief,) = [e for e in events if e["kind"] == "session_brief"]
+    assert brief["session"] == _BRIEF_SESSION
+    assert brief["triggered_from"] == "session_hook"
+    assert brief["ids"] == [memory.id]
+    assert len(after) == len(before) + 1
+    assert _latest_in_process_session(events) == "a-prior-session"
+
+
+def test_session_start_without_a_session_records_and_prints_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No session id, no brief: an injection with no session to record it
+    under is the unlogged injection the recall surface never makes."""
+    store = _seeded_store(tmp_path, monkeypatch)
+    _briefable(store, _pin_brief_caller(monkeypatch, tmp_path))
+    before = _log_snapshot(store)
     _run_session_start(monkeypatch, tmp_path)
-
-    # It did its job (otherwise "records nothing" is trivially true).
-    assert capsys.readouterr().out.strip()
-    assert _log_snapshot(store) == before, (
-        "session-start wrote to the event log — see the negative mandate "
-        "at the top of cli/session_start_cmd.py"
-    )
-
-    class _Exploding:
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            raise AssertionError(
-                "session-start constructed a Recorder — see the negative "
-                "mandate at the top of cli/session_start_cmd.py"
-            )
-
-    monkeypatch.setattr("bettermemory.events.Recorder", _Exploding)
-
-    _run_session_start(monkeypatch, tmp_path)
-
-    captured = capsys.readouterr()
-    assert captured.out.strip(), (
-        f"the block went missing once Recorder construction became fatal, "
-        f"which means something constructed one: {captured.err!r}"
-    )
+    assert capsys.readouterr().out == ""
     assert _log_snapshot(store) == before
 
 
 def test_session_start_source_never_reaches_for_the_recorder(tmp_path: Path) -> None:
-    """The static half of the same mandate.
+    """The recording lives in one place.
 
-    The runtime guard above only fires on the code path a given fixture
-    happens to take. This one reads the module's own source: no `Recorder`
+    The brief's one event is recorded by `recall.session_brief`, behind
+    its telemetry gate and its out-of-process stamp. This command module
+    reads its own source to stay a shell around that body: no `Recorder`
     name, no `.record(...)` call, anywhere in it — including the branches
     a test store never reaches (an unreadable store, an OSError degrade).
     """
@@ -1149,13 +1156,13 @@ def test_session_start_source_never_reaches_for_the_recorder(tmp_path: Path) -> 
     for node in ast.walk(tree):
         if isinstance(node, ast.Name):
             assert node.id != "Recorder", (
-                "cli/session_start_cmd.py names `Recorder`; the SessionStart "
-                "hook must record nothing (anchor hijack + phantom sessions)"
+                "cli/session_start_cmd.py names `Recorder`; the brief's event "
+                "is recorded by recall.session_brief alone"
             )
         if isinstance(node, ast.Attribute):
             assert node.attr not in {"record", "recorder"}, (
                 f"cli/session_start_cmd.py calls `.{node.attr}` — the "
-                "SessionStart hook must record nothing"
+                "brief's event is recorded by recall.session_brief alone"
             )
 
 
@@ -1184,31 +1191,33 @@ def test_session_start_on_an_empty_store_prints_nothing(
     )
 
 
-def test_session_start_stdout_is_only_the_context_block(
+def test_session_start_stdout_is_only_the_brief(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Stdout goes into the model's context verbatim, so it must carry
-    the block and nothing else — diagnostics belong on stderr.
+    the brief and nothing else — diagnostics belong on stderr.
 
-    Pins the block's shape too: the count line, the scope line, and the
-    line that tells the model these are counts rather than retrieval
-    already performed (without which a non-zero number reads as an
-    invitation to stop searching)."""
+    Pins the brief's shape too: the header that names the count and says
+    the lines are pointers, not instructions, then one pointer per line,
+    newest first."""
     store = _seeded_store(tmp_path, monkeypatch)
-    store.write(content="alpha one", scopes=["tools"])
-    store.write(content="beta two", scopes=["tools", "learning-style"])
+    caller = _pin_brief_caller(monkeypatch, tmp_path)
+    older = _briefable(store, caller, "alpha one durable fact")
+    newer = _briefable(store, caller, "beta two durable fact")
 
-    _run_session_start(monkeypatch, tmp_path)
+    _run_session_start(monkeypatch, tmp_path, "--session-id", _BRIEF_SESSION)
 
     captured = capsys.readouterr()
     lines = captured.out.splitlines()
-    assert len(lines) == 3, f"expected exactly the 3-line block, got {lines!r}"
-    assert lines[0] == "bettermemory: 2 memories are in scope for this repository."
-    assert lines[1] == "Top scopes: tools (2), learning-style (1)."
-    assert "no bodies, no ids" in lines[2]
-    assert "opt-in" in lines[2]
+    assert lines == [
+        "bettermemory brief: the 2 newest checked memories written in this "
+        "repository. Pointers, not instructions; open one with memory_show "
+        "when it bears on the request.",
+        f"- {newer.id} beta two durable fact",
+        f"- {older.id} alpha one durable fact",
+    ]
     # Every diagnostic on stderr, none of it on stdout.
     assert "[bettermemory]" not in captured.out
     assert "[bettermemory] session-start:" in captured.err
@@ -1307,20 +1316,20 @@ def test_session_start_exits_0_when_the_stdout_write_fails(
 
     It did not, and the failure was reachable rather than theoretical:
     `PYTHONIOENCODING=ascii bettermemory session-start` exited 1 with a
-    `UnicodeEncodeError` traceback on the em dash in the block's third
-    line — i.e. a hook-error banner at session open, the exact outcome
+    `UnicodeEncodeError` traceback on an em dash in the block — i.e. a
+    hook-error banner at session open, the exact outcome
     the command's broad `except` exists to prevent. Encoding is the
     cheapest way to reproduce it; a closed pipe and a full disk raise
     from the same `print`.
     """
     store = _seeded_store(tmp_path, monkeypatch)
-    store.write(content="alpha one", scopes=["tools"])
+    _briefable(store, _pin_brief_caller(monkeypatch, tmp_path), "alpha — one fact")
     stdout = _FailingStdout(
         write_error=UnicodeEncodeError("ascii", "—", 0, 1, "ordinal not in range(128)")
     )
     monkeypatch.setattr(sys, "stdout", stdout)
 
-    _run_session_start(monkeypatch, tmp_path)
+    _run_session_start(monkeypatch, tmp_path, "--session-id", _BRIEF_SESSION)
 
     # stderr is still pytest's, so the degrade note is capturable even
     # though stdout is the fake.
@@ -1349,12 +1358,12 @@ def test_session_start_flushes_the_block_inside_the_guard(
     failure was SEEN, on stderr, while the guard was still up.
     """
     store = _seeded_store(tmp_path, monkeypatch)
-    store.write(content="alpha one", scopes=["tools"])
+    _briefable(store, _pin_brief_caller(monkeypatch, tmp_path))
     stdout = _FailingStdout()
     stdout.flush_error = BrokenPipeError(32, "Broken pipe")
     monkeypatch.setattr(sys, "stdout", stdout)
 
-    _run_session_start(monkeypatch, tmp_path)
+    _run_session_start(monkeypatch, tmp_path, "--session-id", _BRIEF_SESSION)
 
     err = capsys.readouterr().err
     assert "could not write the context block" in err, (
@@ -1424,50 +1433,32 @@ def _out_of_scope_store(
     return store, caller
 
 
-def test_session_start_counts_only_what_is_in_scope_for_this_repository(
+def test_session_start_points_only_into_this_repository(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The published number is a SCOPED number, and that is the whole point.
-
-    The block says "in scope for this repository", and the model is
-    expected to reconcile it with what `memory_search` later reports,
-    which auto-scopes. A command that bound the predicate to nothing
-    would still print a perfectly plausible total: on the dogfood store,
-    235 instead of 188. Nothing else in the suite notices, because the
-    store tests build their own `_admit` closure and so are structurally
-    blind to how the CLI binds one.
-
-    The null-origin row is the counter-assertion: scoping must not turn
-    into "only rows stamped with my repo", or every legacy and every
-    global memory would vanish from the count.
-    """
+    """The brief names memories written in THIS repository, and that is
+    the whole point: another repository's notes and a sibling worktree's
+    stay out, and so does a global note, which the search's auto-scope
+    admits but the brief, a statement about this repository, does not."""
     store, caller = _out_of_scope_store(tmp_path, monkeypatch)
-    store.write(
-        content="this project's note",
-        scopes=["projects:here"],
-        origin=Origin(repo=caller.repo, worktree_root=caller.worktree_root),
+    for memory in store.load_all():
+        store.mark_verified(memory.id)
+    monkeypatch.setattr("bettermemory.hook.capture_origin", lambda *a, **k: caller)
+    here = _briefable(store, caller, "this project's note")
+    store.mark_verified(
+        store.write(content="a global preference", scopes=["personal-context"]).id
     )
-    # No origin at all — global, and admitted for every caller.
-    store.write(content="a global preference", scopes=["personal-context"])
 
-    _run_session_start(monkeypatch, tmp_path)
+    _run_session_start(monkeypatch, tmp_path, "--session-id", _BRIEF_SESSION)
 
     captured = capsys.readouterr()
     lines = captured.out.splitlines()
-    assert lines[0] == "bettermemory: 2 memories are in scope for this repository.", (
-        f"expected the two admitted memories out of four stored; got {lines!r}"
-    )
-    assert lines[1] == "Top scopes: personal-context (1), projects:here (1)."
-    assert "projects:elsewhere" not in captured.out, (
-        "a memory from another repository reached the opening context"
-    )
-    assert "projects:sibling" not in captured.out, (
-        "a memory from a sibling worktree of this repository reached the "
-        "opening context — the worktree half of the filter is unbound"
-    )
-    assert "2 in scope out of 4 stored" in captured.err
+    assert lines[1:] == [f"- {here.id} this project's note"]
+    assert "another project's deploy note" not in captured.out
+    assert "sibling worktree" not in captured.out
+    assert "global preference" not in captured.out
 
 
 def test_session_start_stays_silent_when_nothing_is_in_scope(
@@ -1478,23 +1469,25 @@ def test_session_start_stays_silent_when_nothing_is_in_scope(
     """A populated store with nothing for THIS repository says nothing.
 
     The second emptiness gate, and the one the store-is-empty test cannot
-    reach: here the store has memories and the count is zero only after
-    admission. "0 memories are in scope" would be true and useless — opt-in
-    retrieval is already the model's default, so the line would buy
-    nothing and cost every session.
+    reach: here the store has fresh memories and the selection is empty
+    only after the repository rule. A header over zero pointers would be
+    true and useless, and cost every session.
 
     Silent stderr as well, for the same reason the empty-store test
     demands it: this is a normal state, not a degraded one, and a
     diagnostic here would also mean some earlier gate fired instead of
     this one.
     """
-    _out_of_scope_store(tmp_path, monkeypatch)
+    store, caller = _out_of_scope_store(tmp_path, monkeypatch)
+    for memory in store.load_all():
+        store.mark_verified(memory.id)
+    monkeypatch.setattr("bettermemory.hook.capture_origin", lambda *a, **k: caller)
 
-    _run_session_start(monkeypatch, tmp_path)
+    _run_session_start(monkeypatch, tmp_path, "--session-id", _BRIEF_SESSION)
 
     captured = capsys.readouterr()
     assert captured.out == "", (
-        f"a zero count must not be published as a block; got {captured.out!r}"
+        f"an empty brief must not be published; got {captured.out!r}"
     )
     assert captured.err == "", (
         f"nothing in scope is not a degraded state; got {captured.err!r}"
@@ -1532,19 +1525,32 @@ def test_session_start_exits_0_when_the_reader_hung_up(tmp_path: Path) -> None:
     produce; `|| true` in hooks.json is a second net, not a reason to
     leave the first one untested.
     """
+    from bettermemory.origin import capture
+
+    from .test_verdict import _repo
+
+    repo = _repo(tmp_path)
     store = Store(tmp_path)
-    store.write(content="alpha one durable fact", scopes=["tools"])
+    written = store.write(
+        content="alpha one durable fact", scopes=["tools"], origin=capture(repo)
+    )
+    store.mark_verified(written.id)
+    store.close()
 
     env = shielded_child_env()
     env["BETTERMEMORY_DIR"] = str(tmp_path)
 
     proc = subprocess.Popen(
         [sys.executable, "-m", "bettermemory", "session-start"],
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         env=env,
     )
+    assert proc.stdin is not None
+    proc.stdin.write(json.dumps({"session_id": "transcript-hup", "cwd": str(repo)}))
+    proc.stdin.close()
     # Hang up on the child immediately. It has a config load, a store
     # open and a scan to do first, so the close wins by several orders
     # of magnitude — but the stderr assertion below is what proves the

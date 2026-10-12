@@ -1,5 +1,5 @@
-"""Client-side hook entry points: the Stop-hook turn audit and the
-UserPromptSubmit prompt recall — one probe, two moments.
+"""Client-side hook entry points: the Stop-hook turn audit, and the
+CLI shims of the recall surface (`recall.py`) — one probe, two moments.
 
 The audit MCP tool (`memory_audit_turn`) needs to fire after every
 assistant turn to populate silent-miss telemetry. The model is
@@ -16,14 +16,11 @@ parses the transcript JSONL to find the latest user message and
 assistant response, and calls `audit.probe_for_miss` against the
 store identified by `BETTERMEMORY_DIR` (or the usual resolution
 rules). The UserPromptSubmit half (`prompt_main` /
-`run_prompt_recall`) runs the SAME probe over the prompt being
-submitted — before the turn, via the shared `_probe_message` — and,
-where the Stop hook would later have flagged a silent miss, prints a
-score-gated pointer block that Claude Code injects into the model's
-context instead. For years the probe computed "was memory needed
-this turn?" every turn and wrote the answer to the log after the
-fact; the recall half is that same answer delivered while it can
-still change the turn.
+`run_prompt_recall`) is a delegate of `recall.prompt_recall`, which
+runs the SAME probe over the prompt being submitted — before the turn,
+via the shared `_probe_message` — and delivers up to three pointers to
+the hits it ranks, under the recall surface's own per-session cooldown.
+The session brief, the SessionStart surface, lives in `recall.py` too.
 
 Cross-process limitation: the model and the hook run in different
 processes, so the hook can't share the model's in-memory
@@ -118,7 +115,6 @@ from .audit import (
     MissReport,
     is_duplicate_audit,
     probe_for_miss,
-    prompt_recall_fields,
     search_miss_fields,
     turn_audited_fields,
 )
@@ -205,9 +201,11 @@ _STDIN_PAYLOAD_CAP_BYTES = 64 * 1024
 # this set; extend both together. `session_capture` is the third
 # out-of-process writer: `bettermemory capture` records its writes under
 # the captured transcript's session id, from a process that is not the
-# server.
+# server. `session_hook` is the fourth: the SessionStart hook's
+# `session_brief` row (`recall.session_brief`), recorded under the
+# transcript id like the prompt hook's.
 _OUT_OF_PROCESS_TRIGGERS: frozenset[str] = frozenset(
-    {"stop_hook", "prompt_hook", "session_capture"}
+    {"stop_hook", "prompt_hook", "session_capture", "session_hook"}
 )
 
 
@@ -372,12 +370,12 @@ def _probe_message(
     ranking inputs, `probe_for_miss`, nothing else.
 
     Shared by `run_audit` (Stop — the after-the-fact audit) and
-    `run_prompt_recall` (UserPromptSubmit — the same verdict computed
-    before the turn, delivered instead of logged). One body because
-    the two callers MUST agree: the recall path's promise is "injects
-    exactly where the audit would have flagged a silent miss", and two
-    hand-kept copies of this plumbing would let the promise drift the
-    first time one of them was retuned.
+    `recall.prompt_recall` (UserPromptSubmit — the same probe run before
+    the turn, its hits delivered as pointers). One body because the two
+    callers MUST rank alike: a pointer the recall delivers is a hit the
+    audit's probe ranks for the same message, and two hand-kept copies
+    of this plumbing would let them drift the first time one of them
+    was retuned.
     """
     from .handlers.search import default_search_width, resolve_search_pool
 
@@ -435,11 +433,9 @@ def _probe_message(
         # shield and emitted a false `search_miss`. 600s is also the
         # ceiling the MCP handler clamps `lookback_seconds` to; the
         # wider window's bias is conservative (over-suppress), matching
-        # the project's stance on miss-signal noise. The recall path
-        # inherits the same window deliberately: a `prompt_recall` event
-        # is itself a retrieval kind, so one delivered recall suppresses
-        # the next injection for this window — the anti-spam bound is
-        # this constant, not a separate knob.
+        # the project's stance on miss-signal noise. The recall surface
+        # reads the hits, not this verdict: its anti-spam bound is its
+        # own per-session cooldown (`recall.RecallState`).
         lookback_seconds=_ATTRIBUTION_LOOKBACK_SECONDS,
         caller_origin=caller_origin,
         excluded_scopes=excluded_scopes,
@@ -486,69 +482,6 @@ def audit_transcript(
         dry_run=dry_run,
         store=store,
         cwd=cwd,
-    )
-
-
-_SESSION_START_MAX_SCOPES_SHOWN = 5
-
-
-def session_start_block(
-    store: Store, *, cwd: Path | None = None, origin: Origin | None = None
-) -> tuple[str | None, str | None]:
-    """The session-start context block and a one-line stderr note, each
-    None when there is nothing to say. Reads scope counts off the store's
-    rows for the repository at `origin` (captured at `cwd`, or at the
-    process cwd, when None), never a body. The body of `bettermemory
-    session-start` and of the daemon's session-start endpoint."""
-    from .search import candidate_admitted
-
-    stored = store.count_memories()
-    if stored == 0:
-        return None, None
-    current = origin if origin is not None else _origin_for(cwd)
-
-    def _admit(scopes: list[str], memory_origin: Origin | None) -> bool:
-        return candidate_admitted(
-            scopes,
-            memory_origin,
-            None,
-            scope_filter=None,
-            excluded=set(),
-            repo_filter=current.repo,
-            worktree_filter=current.worktree_root,
-        )
-
-    total, scopes = store.scope_counts(admit=_admit)
-    if total == 0:
-        return None, None
-    note = (
-        f"[bettermemory] session-start: {total} in scope out of {stored} "
-        f"stored in {store.path.parent} (repo={current.repo!r})."
-    )
-    return render_session_start_block(total, scopes), note
-
-
-def render_session_start_block(total: int, scopes: dict[str, int]) -> str:
-    """Format the context block the model sees: count-descending then
-    name-ascending, the top five scopes, no bodies, no ids, and the
-    opt-in rule restated. Byte-identical to what `bettermemory
-    session-start` printed before 9.0.0 with the standing tier off."""
-    ordered = sorted(scopes.items(), key=lambda kv: (-kv[1], kv[0]))
-    shown = ordered[:_SESSION_START_MAX_SCOPES_SHOWN]
-    rendered = ", ".join(f"{name} ({count})" for name, count in shown)
-    remaining = len(ordered) - len(shown)
-    if remaining > 0:
-        rendered += f", +{remaining} more"
-    noun = "memory is" if total == 1 else "memories are"
-    head = (
-        f"bettermemory: {total} {noun} in scope for this repository.\n"
-        f"Top scopes: {rendered}.\n"
-    )
-    return head + (
-        "Per-scope counts only — no bodies, no ids; memory_admin's health "
-        "action carries the curation rollups when you need them. Retrieval "
-        "stays opt-in: reach for memory_search when a request leans on "
-        "shared context or is ambiguous, not for self-contained questions."
     )
 
 
@@ -768,111 +701,6 @@ def run_audit(
     return report.to_dict()
 
 
-# Ceiling on the rendered recall block. The snippet is already
-# query-window-bounded by the search layer (~200 chars) and the block
-# injects exactly one hit, so a typical render sits near 700 chars; the
-# cap is the guard against a pathological scope list or a future edit
-# quietly turning a pointer into a payload. Enforced by bounding the
-# two caller-data parts — the scope list to its own cap below, the
-# snippet to the room the bounded frame leaves — never the
-# instructions: a recall whose "verify before relying" line got cut
-# would be worse than no recall.
-_RECALL_BLOCK_CAP_CHARS = 1_200
-
-# The scope list's bound inside the block. Scopes are caller data with
-# no schema-side length cap, and they live in the FRAME the snippet
-# math measures around — so without their own bound a pathological
-# list pushes the whole block past the ceiling no matter how hard the
-# snippet is cut. Whole scope names only; the dropped tail is marked
-# with an ellipsis.
-_RECALL_SCOPES_CAP_CHARS = 200
-
-
-def _render_recall_block(
-    report: MissReport,
-    *,
-    provenance: str | None = None,
-    remote_stamp: bool = False,
-    trust_unavailable: bool = False,
-) -> str:
-    """Render the injected context block for a miss-verdict report.
-
-    `provenance` is the index's label for the top hit (schema v7). It is
-    rendered as a `[provenance: <label>]` suffix on the pointer line only
-    when it is known and not `local`: this block is the one delivery that
-    reaches the model without a tool call, so a record that did not enter
-    through the store's own paths announces itself here, while a local
-    record adds nothing to the common case. `remote_stamp` (schema v8)
-    adds `unverified here` inside the same bracket when the record is
-    synced, carries a verification stamp, and this host never verified
-    it: the trust rule `memory_show` will report as `"remote"`, named at
-    the pointer so the model reads the fetch it is told to make. The
-    suffix lives in the frame the snippet math measures around, so the
-    snippet absorbs its few bytes under the block cap.
-
-    One hit only — the verdict reads only rank 1 (`THRESHOLD_RULE_V1`),
-    so rank 1 is the only hit the ~2%-of-turns fire rate was measured
-    for; injecting the rank 2-3 hits would widen delivery beyond the
-    measured rule exactly the way the dropped w1/w2 label-widening
-    candidates were measured NOT to earn.
-
-    The block is a POINTER, not a payload: id + scopes + the
-    query-biased snippet that cleared the bar, plus the verify-first
-    instruction. Full bodies are deliberately not injected — the read
-    path's staleness machinery (path drift, claim drift, verdicts)
-    lives on `memory_show` / `memory_search`, and a body delivered
-    around it would be the one read surface in the product that skips
-    verification. The model is told to fetch; the fetch carries the
-    signals.
-    """
-    hit = report.top_hits[0]
-    scopes = ", ".join(hit.scopes)
-    if len(scopes) > _RECALL_SCOPES_CAP_CHARS:
-        kept: list[str] = []
-        for scope in hit.scopes:
-            if len(", ".join([*kept, scope])) > _RECALL_SCOPES_CAP_CHARS:
-                break
-            kept.append(scope)
-        scopes = (", ".join(kept) + ", …") if kept else "…"
-    snippet = " ".join(hit.snippet.split())
-    pointer = f"- {hit.id} [{scopes}]"
-    if trust_unavailable:
-        # The index could not be read, so the label is not "local by
-        # default": this is the one delivery that reaches the model
-        # without a tool call, and a record of unknown provenance must
-        # announce itself here exactly as an `unaccounted` one does.
-        pointer += " [provenance: unknown, key absent]"
-    elif provenance is not None and provenance != "local":
-        qualifier = ", unverified here" if remote_stamp else ""
-        pointer += f" [provenance: {provenance}{qualifier}]"
-    frame = (
-        "bettermemory recall (score-gated: a stored memory ranks high for "
-        "this prompt; most turns get no injection):\n"
-        f"{pointer}\n"
-        '  "{snippet}"\n'
-        "Verify before relying: memory_show(id) carries the full body and "
-        "staleness verdict, and say so when it shapes the reply. "
-        'Irrelevant? memory_record_use([id], outcome="ignored") tunes '
-        "this down."
-    )
-    overhead = len(frame) - len("{snippet}")
-    room = _RECALL_BLOCK_CAP_CHARS - overhead
-    if len(snippet) > room:
-        snippet = snippet[: max(room - 1, 0)].rstrip() + "…"
-    return frame.replace("{snippet}", snippet)
-
-
-def _carries_a_stamp(store: Store, memory_id: str) -> bool:
-    """Whether the file behind `memory_id` carries a `last_verified_at`.
-    One file read, paid only on a delivery whose top hit is `synced` with
-    no local verification (the trust rule's remaining condition); a
-    record that vanished or cannot be read reads as unstamped."""
-    try:
-        return store.load_one(memory_id).last_verified_at is not None
-    except Exception:
-        return False
-
-
 def run_prompt_recall(
     *,
     prompt: str,
@@ -880,137 +708,30 @@ def run_prompt_recall(
     config: Config | None = None,
     store: Store | None = None,
     cwd: Path | None = None,
+    prompt_id: str | None = None,
+    transcript_path: str | None = None,
+    harness: str | None = None,
 ) -> str | None:
-    """UserPromptSubmit entry point: probe the submitted prompt and, on
-    a would-be silent miss, return the context block to inject (None
-    otherwise — the caller prints nothing and Claude Code adds nothing).
+    """UserPromptSubmit entry point for the in-process CLI path: the block
+    `recall.prompt_recall` returns, or None when it shows nothing (the
+    caller prints nothing and Claude Code adds nothing).
 
-    This is `run_audit`'s verdict computed BEFORE the turn instead of
-    after it. Same pool, same ranking inputs, same threshold rule, same
-    shields (`_probe_message` is shared code, not a parallel
-    implementation). It fires on two lanes:
+    A delegate kept under its 8.x name so `prompt_main` and its callers
+    are unchanged. The in-process path has no daemon, so the recall's
+    per-session cooldown is computed from the log on every call."""
+    from .recall import prompt_recall
 
-    - the classic would-be `search_miss` (`delivered_reason="miss"`) —
-      exactly where the Stop hook would otherwise have flagged; and
-    - under `[behavior] recall_in_project` (default on), the
-      project-cohort turns the audit deliberately declines to flag
-      (`delivered_reason="project_cohort"`): the caller stands in the
-      repo the top hit was written from, so no memory_search was
-      *owed* — but the memory itself (decisions, run state, rulings)
-      is not in the source tree, and dogfood measured ~95% of
-      replayable misses in this cohort. The audit's suppression stays;
-      only delivery widens.
-
-    The founding don't-pollute-generic-answers stance is carried by the
-    bar (v1 top-1 "high" plus the retrieval/creation/ack shields), not
-    by opt-in; the historical miss-lane-only firing rate was ~2% of
-    audited turns (docs/eval-results.md), and the project-cohort lane's
-    rate is measured per-store from the `delivered_reason` slice of
-    `prompt_recall` events.
-
-    On a miss this records a `prompt_recall` event BEFORE returning the
-    block. The event is load-bearing twice over: it is a member of
-    `audit._RETRIEVAL_EVENT_KINDS`, so the Stop hook's audit of this
-    same turn sees the delivery and reports `ok` (a delivered pointer
-    is not a SILENT miss), and it carries the full `MissHit` shapes so
-    delivered recalls stay replayable under future threshold rules
-    exactly like flagged misses. Same-worktree suppression rides the
-    same membership: a second high-scoring prompt within the
-    attribution window after a delivery probes `ok`, which is the
-    anti-spam bound.
-
-    Honesty note on the one shield asymmetry: the retrieval shield asks
-    "was memory retrieved in the last 600s", and at prompt time every
-    such event belongs to a PREVIOUS turn — so a session actively using
-    memory gets no injections. That is the conservative direction
-    (over-suppress), deliberate, and cheap: a session with a live
-    retrieval reflex doesn't need prodding.
-
-    Telemetry config is honoured the same way `run_audit` honours it:
-    with `telemetry.enabled = false` the Recorder drops the event, and
-    the block is NOT injected — an unlogged injection would be
-    invisible to the Stop-hook shield and re-flagged as a miss, and a
-    delivery lane that can't be measured shouldn't fire at all.
-    """
-    cfg = config or load_config(None)
-    if not cfg.behavior.prompt_recall or not cfg.telemetry.enabled:
-        return None
-    if store is None:
-        root = cfg.resolved_directory()
-        if not (root / STORE_FILENAME).is_file():
-            return None
-        store = Store.open_or_create(root / STORE_FILENAME)
-    recent = list(
-        store.events_since(_utcnow() - timedelta(seconds=REAUDIT_DEDUP_WINDOW_SECONDS))
-    )
-    # Same caller the Stop hook publishes (`run_audit`), minus the model
-    # — this hook fires before the assistant has answered.
-    identity.bind_transcript(session_id=session_id, model=None)
-    caller_origin = _origin_for(cwd)
-    if caller_origin.git_indeterminate:
-        # Delivery is scope-gated on the caller's repo and worktree, and
-        # git could not say what they are. A null repo here would open
-        # the auto-scope filter to every project's memories on a prompt
-        # that asked for none of them, and the scope-toggle replay to
-        # every concurrent window's toggles. No delivery is the only
-        # honest answer; the Stop-hook audit reads the same origin and
-        # declines to call the turn a miss for the same reason.
-        return None
-    excluded_scopes = _disabled_scopes_from_events(
-        recent, worktree_root=caller_origin.worktree_root
-    )
-    server_session = _latest_in_process_session(
-        recent, worktree_root=caller_origin.worktree_root
-    )
-    report = _probe_message(
-        cfg=cfg,
-        store=store,
-        user_message=prompt,
+    result = prompt_recall(
+        prompt=prompt,
         session_id=session_id,
-        server_session=server_session,
-        caller_origin=caller_origin,
-        excluded_scopes=excluded_scopes,
-        recent=recent,
-    )
-    if report.is_miss:
-        delivered_reason = "miss"
-    elif cfg.behavior.recall_in_project and report.suppressed_by == "project_cohort":
-        delivered_reason = "project_cohort"
-    else:
-        return None
-    top_hit = report.top_hits[0]
-    rows = store.trust_rows([top_hit.id])
-    trust = rows.get(top_hit.id) if rows is not None else None
-    provenance = trust.provenance if trust is not None else None
-    remote_stamp = (
-        trust is not None
-        and trust.provenance == "synced"
-        and trust.verified_locally_at is None
-        and _carries_a_stamp(store, top_hit.id)
-    )
-    block = _render_recall_block(
-        report,
-        provenance=provenance,
-        remote_stamp=remote_stamp,
-        trust_unavailable=rows is None,
-    )
-    recorder = Recorder(
+        harness=harness,
+        prompt_id=prompt_id,
+        transcript_path=transcript_path,
+        cwd=cwd,
+        config=config,
         store=store,
-        session_id=session_id,
-        enabled=cfg.telemetry.enabled,
-        worktree_root=caller_origin.worktree_root,
     )
-    recorder.record(
-        "prompt_recall",
-        **prompt_recall_fields(
-            report,
-            session_id=session_id,
-            probe_mode=cfg.behavior.search_mode or "hybrid",
-            injected_chars=len(block),
-            delivered_reason=delivered_reason,
-        ),
-    )
-    return block
+    return result.stdout or None
 
 
 def prompt_main(argv: list[str] | None = None) -> int:
@@ -1019,9 +740,10 @@ def prompt_main(argv: list[str] | None = None) -> int:
     Reads the Claude Code UserPromptSubmit payload from stdin
     (`{session_id, transcript_path, cwd, hook_event_name, prompt}`),
     and prints the recall block to stdout when — and only when — the
-    probe verdict is a would-be miss. Claude Code injects stdout
-    verbatim into the model's context; empty stdout adds nothing.
-    `--prompt` / `--session-id` drive it manually for debugging.
+    recall surface delivers (`recall.prompt_recall`). Claude Code
+    injects stdout verbatim into the model's context; empty stdout adds
+    nothing. `--prompt` / `--session-id` drive it manually for
+    debugging.
 
     Always exits 0 — this hook runs on EVERY prompt submission, ahead
     of the model seeing the prompt, so a failure here is strictly
@@ -1032,7 +754,7 @@ def prompt_main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(
         prog="bettermemory prompt-recall",
-        description="Score-gated memory recall for a just-submitted prompt.",
+        description="Pointer recall for a just-submitted prompt.",
     )
     parser.add_argument(
         "--prompt",
@@ -1068,7 +790,20 @@ def prompt_main(argv: list[str] | None = None) -> int:
         if not prompt or not isinstance(prompt, str) or not session_id:
             return 0
 
-        block = run_prompt_recall(prompt=prompt, session_id=str(session_id))
+        prompt_id = payload.get("prompt_id")
+        transcript_path = payload.get("transcript_path")
+        harness = payload.get("harness")
+        cwd = payload.get("cwd")
+        block = run_prompt_recall(
+            prompt=prompt,
+            session_id=str(session_id),
+            cwd=Path(cwd) if isinstance(cwd, str) and cwd else None,
+            prompt_id=prompt_id if isinstance(prompt_id, str) else None,
+            transcript_path=(
+                transcript_path if isinstance(transcript_path, str) else None
+            ),
+            harness=harness if isinstance(harness, str) else None,
+        )
         if block:
             print(block, file=sys.stdout)
             sys.stdout.flush()

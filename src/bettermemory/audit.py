@@ -9,14 +9,13 @@ False positives (junk hits) are visible in `dead_weight` and
 because nothing in the event log records a search that didn't happen.
 
 This module closes that loop, and since 3.41.0 the loop closes twice:
-`probe_for_miss` is also the predicate behind `hook.run_prompt_recall`
-(the UserPromptSubmit hook), which computes the SAME verdict before
-the turn starts and, on a would-be miss, injects the top hit's id +
-snippet instead of logging the failure after the fact. The founding
-wager is preserved by the bar, not by opt-in: the probe's threshold
-and shields fire on ~2% of audited turns (docs/eval-results.md), so
-generic answers stay unpolluted while the flagged 2% get the pointer
-when it is still actionable.
+`probe_for_miss` is also the probe behind `recall.prompt_recall` (the
+UserPromptSubmit hook), which runs the SAME search before the turn
+starts and delivers up to three of its hits as pointers (relevant,
+written in the caller's project, not yet seen in the session segment)
+instead of logging a failure after the fact. The recall reads the hits,
+not this module's verdict: its own per-session cooldown, not the
+retrieval shield, bounds it.
 
 `probe_for_miss` runs a cheap search
 sweep over the candidate list its CALLER supplies, using a completed
@@ -98,7 +97,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Collection, Iterable, Literal, cast
+from typing import Any, Callable, Collection, Iterable, Literal, Mapping, Sequence, cast
 
 from .models import Memory, MemoryHit, generate_ulid
 from .origin import Origin, repos_match
@@ -118,17 +117,20 @@ from .time_utils import ensure_utc, isoformat_utc, parse_event_ts
 # `search` is the obvious one; `show` is the equally-legitimate
 # direct-by-id retrieval; `list` is the same surface with a different
 # entry point (scope filter, optionally with bodies). `prompt_recall`
-# is the UserPromptSubmit hook's score-gated injection (`hook.
-# run_prompt_recall`): the hook put a stored memory's id + snippet in
+# is the UserPromptSubmit hook's pointer delivery (`recall.
+# prompt_recall`): the hook put stored memories' ids + snippets in
 # front of the model before the turn began, so the turn is not a
-# SILENT miss whatever the model does next — and the same membership
-# makes the recall path self-limiting (a delivered recall suppresses
-# a second injection for the lookback window; the model that wants
-# more has the tool surface). All four put memory content in front of
-# the model, so a turn where any of them fired shouldn't trip the
+# SILENT miss whatever the model does next. Delivery itself no longer
+# reads this shield: the recall surface's own per-session cooldown
+# (`recall.RecallState`) bounds it, so a session using memory still
+# gets pointers it has not seen. All four put memory content in front
+# of the model, so a turn where any of them fired shouldn't trip the
 # miss probe. Other event kinds (`use`, `verify`, etc.) are
 # downstream of an earlier retrieval — counting them as retrieval
-# would double-shield the audit. Kept as a module-level frozenset so
+# would double-shield the audit. `session_brief` is deliberately NOT
+# here: the brief lands once at session start, before any turn, and
+# counting it would shield every turn of the session's first ten
+# minutes. Kept as a module-level frozenset so
 # a future event kind (e.g. a hypothetical `replay` mode) can be
 # added in one place rather than scattered across the function body.
 _RETRIEVAL_EVENT_KINDS: frozenset[str] = frozenset(
@@ -272,7 +274,8 @@ _ACK_TOKENS: frozenset[str] = frozenset(
 # UserPromptSubmit hook emits `"prompt_hook"`. `"session_capture"`
 # emits none of the three kinds today; it is listed because every
 # out-of-process trigger is, and `bettermemory capture` stamps it on
-# the writes it records. Pinning the set at the
+# the writes it records. `"session_hook"` is the SessionStart hook's
+# stamp on its `session_brief` event (`recall.session_brief`). Pinning the set at the
 # builder boundary mirrors the search-mode runtime guard in
 # `search.py:761` — without this check, a typo elsewhere silently
 # produces unsplittable eval rows (downstream consumers `groupby`-split
@@ -282,7 +285,7 @@ _ACK_TOKENS: frozenset[str] = frozenset(
 # events become false anchors for `hook._latest_in_process_session`
 # (the server-session bridge skips on that set alone).
 _VALID_TRIGGERED_FROM: frozenset[str] = frozenset(
-    {"stop_hook", "mcp_tool", "prompt_hook", "session_capture"}
+    {"stop_hook", "mcp_tool", "prompt_hook", "session_capture", "session_hook"}
 )
 
 
@@ -588,47 +591,60 @@ def prompt_recall_fields(
     probe_mode: str,
     injected_chars: int,
     triggered_from: str = "prompt_hook",
-    delivered_reason: str = "miss",
+    delivered_reason: str = "project",
+    shown_ids: Sequence[str] | None = None,
+    suppressed: Sequence[Mapping[str, str]] | None = None,
+    rule: str | None = None,
+    segment: int | None = None,
+    prompt_id: str | None = None,
+    transcript_path: str | None = None,
+    harness: str | None = None,
 ) -> dict[str, Any]:
     """Canonical field set for a ``prompt_recall`` event — the
-    UserPromptSubmit hook's record that it injected a stored memory's
-    id + snippet into the model's context before the turn began.
+    UserPromptSubmit hook's record that it injected stored memories'
+    ids + snippets into the model's context before the turn began.
 
     Pairs with :func:`turn_audited_fields` / :func:`search_miss_fields`
     and exists for the same drift-prevention reason: today the hook is
     the only producer, but the builder boundary is where the shape is
     pinned, not the call site.
 
-    Field semantics mirror ``search_miss_fields`` deliberately — a
-    ``prompt_recall`` IS the miss verdict, computed before the turn
-    instead of after it, so the full ``MissHit.to_dict`` shapes ride
-    along and any future threshold rule can be replayed over delivered
-    recalls exactly as it replays over flagged misses. Two additions:
+    The probe's full ``MissHit.to_dict`` shapes ride along as
+    ``top_hits`` (the candidates, delivered or not), so any future rule
+    can be replayed over delivered recalls exactly as it replays over
+    flagged misses. Beside them:
 
     - ``probe_mode`` — the ranker the probe used; ``search_miss``
       leaves this on the companion ``turn_audited`` event, but a
       recall has no companion (the Stop hook's later audit of the same
       turn sees the recall via ``_RETRIEVAL_EVENT_KINDS`` and reports
       ``ok``), so the mode must travel on the event itself.
-    - ``injected_chars`` — rendered size of the injected block. There
-      is no budget test for per-turn injected context (the resident
+    - ``injected_chars`` (and ``chars``, the recall surface's name for
+      the same number) — rendered size of the injected block. There is
+      no budget test for per-turn injected context (the resident
       footprint suite measures the tool surface, not hook stdout), so
       the log carries the number that would let one be written.
-
-    ``delivered_reason`` (additive, default ``"miss"``) records which
-    predicate branch fired the delivery: ``"miss"`` (the classic
-    would-be silent miss) or ``"project_cohort"`` (the caller-in-repo
-    cohort the audit suppresses but the delivery lane serves under
-    ``[behavior] recall_in_project`` — see `hook.run_prompt_recall`).
-    Eval slices the two lanes separately; replay under a future rule
-    reads the hit shapes either way.
+    - ``delivered_reason`` — the `[behavior] prompt_recall` mode that
+      delivered: ``"project"`` (memories of the caller's repository
+      only) or ``"everywhere"``. Events written before the recall
+      surface carry ``"miss"`` or ``"project_cohort"``, the two lanes
+      of the old one-hit rule; eval slices on the field either way.
+    - ``shown_ids`` (the delivered ids, in block order),
+      ``suppressed`` (``{"id", "reason"}`` per candidate held back:
+      ``seen_in_segment``, ``other_project``, ``low_relevance``,
+      ``provenance``, ``contradicted`` or ``segment_cap``), ``rule``
+      (the delivery rule's name), ``segment`` (the session segment the
+      cooldown counted it in), ``prompt_id`` (the harness's turn id
+      when its payload carries one), ``transcript_path`` and
+      ``harness``. Each is omitted when the caller passes None, so the
+      builder's older call shape keeps its exact output.
     """
     if triggered_from not in _VALID_TRIGGERED_FROM:
         raise ValueError(
             f"triggered_from must be one of "
             f"{sorted(_VALID_TRIGGERED_FROM)!r}, got {triggered_from!r}"
         )
-    fields = {
+    fields: dict[str, Any] = {
         "event_id": generate_ulid(),
         "session_id": session_id,
         "threshold_rule": report.threshold_rule,
@@ -641,6 +657,21 @@ def prompt_recall_fields(
         "triggered_from": triggered_from,
         "delivered_reason": delivered_reason,
     }
+    if shown_ids is not None:
+        fields["shown_ids"] = list(shown_ids)
+    if suppressed is not None:
+        fields["suppressed_ids"] = [dict(entry) for entry in suppressed]
+    if rule is not None:
+        fields["rule"] = rule
+        fields["chars"] = injected_chars
+    if segment is not None:
+        fields["segment"] = segment
+    if prompt_id is not None:
+        fields["prompt_id"] = prompt_id
+    if transcript_path is not None:
+        fields["transcript_path"] = transcript_path
+    if harness is not None:
+        fields["harness"] = harness
     return fields
 
 

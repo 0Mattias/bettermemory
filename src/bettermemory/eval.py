@@ -2741,11 +2741,17 @@ TOOLS_WITHOUT_TELEMETRY: tuple[str, ...] = ()
 # not a call, and it has no tool of its own to be attributed to.
 #
 # ``prompt_recall`` is the UserPromptSubmit hook's delivery record
-# (`hook.run_prompt_recall`): the probe's miss verdict computed before
-# the turn and injected as context instead of flagged after it. Not a
+# (`recall.prompt_recall`): pointers the probe ranked, delivered before
+# the turn as context instead of flagged after it. Not a
 # tool invocation, so it stays off the usage rollup; it is the
 # delivery lane's OWN counter, read beside ``search_miss`` when tracing
 # what the recall path did.
+#
+# ``session_brief`` is the SessionStart hook's record that it put the
+# session brief (`recall.session_brief`) in front of the model: pointers
+# to the repository's newest fresh memories. A hook record, not a tool
+# call, so it stays off the usage rollup like ``prompt_recall``; and,
+# unlike ``prompt_recall``, it is not a retrieval kind for the audit.
 #
 # ``review_grade`` is the owner's grade of one reviewed write, written by
 # ``bettermemory review grade`` under a throwaway CLI session. No tool
@@ -2757,6 +2763,7 @@ _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
         "silent_miss_cutoff",
         "use_token_expired",
         "prompt_recall",
+        "session_brief",
         "review_grade",
     }
 )
@@ -2767,7 +2774,9 @@ _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
 # recorder (hook.py), ``prompt_recall`` comes off the UserPromptSubmit
 # hook's recorder (hook.py), stamped with the SAME Claude Code
 # transcript session id the Stop hook's rows for that conversation
-# carry, and ``use_token_expired`` is drained handler-side through the
+# carry, ``session_brief`` comes off the SessionStart hook's recorder
+# (recall.py) under that same transcript session id, and
+# ``use_token_expired`` is drained handler-side through the
 # live session's recorder (handlers/_shared.py), at the entry of the
 # very tool call that noticed the eviction. ``silent_miss_cutoff`` stays
 # admin by kind, the classification its v8 CLI writer had: a cutoff on
@@ -2792,6 +2801,7 @@ _IN_SESSION_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
         "search_miss",
         "use_token_expired",
         "prompt_recall",
+        "session_brief",
     }
 )
 

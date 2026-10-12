@@ -43,7 +43,7 @@ import secrets
 import sqlite3
 import threading
 from collections import OrderedDict
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -2941,6 +2941,121 @@ class Store:
             if admit(list(scopes), origin):
                 out.append(str(row["id"]))
         return out
+
+    def brief_rows(
+        self,
+        *,
+        admit: Callable[[Origin | None], bool],
+        provenance: Collection[str],
+        exclude_category: str,
+    ) -> list[str]:
+        """The ids of admitted memories the session brief may consider,
+        newest ``updated`` first (id breaking a tie): stored label in
+        `provenance`, category other than `exclude_category`, origin
+        admitted by `admit`. Reads the origin columns, never a body. The
+        stored label is a pre-filter only: the caller re-reads the
+        verified one (`trust_rows`), which a failed pointer turns into
+        ``unaccounted``."""
+        labels = sorted(set(provenance))
+        if not labels:
+            return []
+        placeholders = ",".join("?" * len(labels))
+        out: list[str] = []
+        for row in self._conn.execute(
+            "SELECT id, origin_repo, origin_worktree FROM memories "
+            f"WHERE provenance IN ({placeholders}) "
+            "AND (category IS NULL OR category != ?) "
+            "ORDER BY updated DESC, id DESC",
+            (*labels, exclude_category),
+        ):
+            repo = row["origin_repo"]
+            worktree = row["origin_worktree"]
+            origin = (
+                Origin(repo=repo, worktree_root=worktree)
+                if (repo is not None or worktree is not None)
+                else None
+            )
+            if admit(origin):
+                out.append(str(row["id"]))
+        return out
+
+    def pending_conflict_pairs(self) -> list[tuple[str, str, str]]:
+        """``(a_id, b_id, pair id)`` for every conflict row whose status is
+        ``pending``, whatever the detector: the recall surface's disputed
+        mark, one query per brief and per prompt."""
+        return [
+            (str(row["a_id"]), str(row["b_id"]), str(row["id"]))
+            for row in self._conn.execute(
+                "SELECT a_id, b_id, id FROM conflicts WHERE status = 'pending' "
+                "ORDER BY id"
+            )
+        ]
+
+    def contradicted_at(self, memory_ids: Sequence[str]) -> dict[str, datetime]:
+        """The newest ``use`` event with outcome ``contradicted`` naming
+        each of `memory_ids`, by id; ids never contradicted are absent.
+        Reads the ``use`` rows through the log's kind index, every
+        session and the whole log, since a contradiction stays open until
+        the record is updated or verified, however long ago it was
+        recorded."""
+        wanted = set(memory_ids)
+        if not wanted:
+            return {}
+        out: dict[str, datetime] = {}
+        for row in self._conn.execute(
+            "SELECT ts, payload FROM log WHERE kind = 'use' ORDER BY seq"
+        ):
+            try:
+                fields = json.loads(row["payload"])
+            except ValueError:
+                continue
+            if not isinstance(fields, dict) or fields.get("outcome") != "contradicted":
+                continue
+            ids = fields.get("ids") or fields.get("memory_ids")
+            if not isinstance(ids, list):
+                continue
+            try:
+                stamp = _dt(str(row["ts"]))
+            except ValueError:
+                continue
+            for memory_id in ids:
+                if isinstance(memory_id, str) and memory_id in wanted:
+                    previous = out.get(memory_id)
+                    if previous is None or stamp > previous:
+                        out[memory_id] = stamp
+        return out
+
+    def events_of_kinds(
+        self, kinds: Collection[str], *, since: datetime
+    ) -> Iterator[dict[str, Any]]:
+        """The telemetry rows of `kinds` stamped at or after `since`, in
+        log order, read through the log's kind index rather than the
+        whole log `events_since` walks. The cut compares the stamp's
+        first nineteen characters, as `events_since` does."""
+        names = sorted(set(kinds))
+        if not names:
+            return
+        cut = _iso(since.astimezone(timezone.utc)).replace("+00:00", "Z")[:19]
+        placeholders = ",".join("?" * len(names))
+        for raw in self._conn.execute(
+            "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log "
+            f"WHERE kind IN ({placeholders}) AND substr(ts, 1, 19) >= ? "
+            "ORDER BY seq",
+            (*names, cut),
+        ):
+            event = self._event_from_raw(raw)
+            if event is not None:
+                yield event
+
+    def reopen(self) -> Store:
+        """Another connection to this store, for another thread: SQLite
+        binds a connection to the thread that opened it, so a worker
+        thread reads and records through its own. The same key directory,
+        and never a rekey: a store this process opened without its key
+        stays unable to mutate on the new connection too."""
+        return Store.open(
+            self._path, keys_dir=self._keyring.keys_dir, allow_rekey=False
+        )
 
     def links_with_status(
         self, memory_id: str

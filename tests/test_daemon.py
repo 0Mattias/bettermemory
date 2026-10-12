@@ -181,19 +181,98 @@ async def test_two_sessions_keep_separate_disabled_scopes(
     )
 
 
-async def test_session_start_endpoint_returns_the_block(
+_FIELDS = {"stdout", "surface", "ids", "chars", "rule", "event_id"}
+
+
+async def test_session_start_endpoint_returns_the_brief(
     daemon_config: Config, daemon_store: Store, tmp_path: Path
 ) -> None:
-    daemon_store.write(content="a global preference", scopes=["personal-context"])
+    """The endpoint answers the session brief in `stdout`, and beside it
+    the fields an adapter wraps: the surface, the ids shown, the text's
+    length, the rule and the id of the `session_brief` event."""
+    from bettermemory.origin import capture
+
+    from .test_verdict import _repo
+
+    repo = _repo(tmp_path)
+    written = daemon_store.write(
+        content="prefer short release notes in this project",
+        scopes=["projects:foo"],
+        origin=capture(repo),
+    )
+    daemon_store.mark_verified(written.id)
     async with running_app(daemon_config, daemon_store) as client:
         response = await client.post(
-            "/api/v1/hook/session-start", json={"cwd": str(tmp_path)}, headers=_auth()
+            "/api/v1/hook/session-start",
+            json={"cwd": str(repo), "session_id": "sess_hook", "source": "startup"},
+            headers=_auth(),
         )
     assert response.status_code == 200
     body = response.json()
+    assert set(body) == _FIELDS
     assert body["stdout"].startswith(
-        "bettermemory: 1 memory is in scope for this repository."
+        "bettermemory brief: the 1 newest checked memory written in this repository."
     )
+    assert body["surface"] == "session_brief"
+    assert body["ids"] == [written.id]
+    assert body["chars"] == len(body["stdout"])
+    assert body["rule"] == "rs-v1"
+    events = [e for e in daemon_store.iter_events() if e["kind"] == "session_brief"]
+    assert [e["event_id"] for e in events] == [body["event_id"]]
+
+
+async def test_hook_bodies_run_on_a_worker_thread(
+    daemon_config: Config,
+    daemon_store: Store,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The session-start and prompt bodies run off the event loop, each
+    worker thread on its own connection to the store."""
+    import threading
+
+    from bettermemory import recall
+
+    seen: dict[str, tuple[int, Store]] = {}
+    real_brief, real_prompt = recall.session_brief, recall.prompt_recall
+
+    def brief(**kw: Any) -> recall.HookResult:
+        seen["session-start"] = (threading.get_ident(), kw["store"])
+        return real_brief(**kw)
+
+    def prompt(**kw: Any) -> recall.HookResult:
+        seen["prompt"] = (threading.get_ident(), kw["store"])
+        return real_prompt(**kw)
+
+    monkeypatch.setattr(recall, "session_brief", brief)
+    monkeypatch.setattr(recall, "prompt_recall", prompt)
+    loop_thread = threading.get_ident()
+    async with running_app(daemon_config, daemon_store) as client:
+        for path, payload in (
+            ("/api/v1/hook/session-start", {"session_id": "s", "cwd": str(tmp_path)}),
+            (
+                "/api/v1/hook/prompt",
+                {"session_id": "s", "cwd": str(tmp_path), "prompt": "backup plan"},
+            ),
+        ):
+            response = await client.post(path, json=payload, headers=_auth())
+            assert response.status_code == 200, response.text
+    for name in ("session-start", "prompt"):
+        thread, store = seen[name]
+        assert thread != loop_thread, name
+        assert store is not daemon_store, name
+        assert store.path == daemon_store.path
+
+
+async def test_the_stop_endpoint_carries_the_fields_too(
+    daemon_config: Config, daemon_store: Store
+) -> None:
+    async with running_app(daemon_config, daemon_store) as client:
+        response = await client.post("/api/v1/hook/stop", json={}, headers=_auth())
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == _FIELDS | {"result"}
+    assert body["stdout"] == "" and body["surface"] == "turn_audit"
 
 
 async def test_session_start_endpoint_is_silent_on_an_empty_store(
@@ -205,6 +284,7 @@ async def test_session_start_endpoint_is_silent_on_an_empty_store(
         )
     assert response.status_code == 200
     assert response.json()["stdout"] == ""
+    assert response.json()["event_id"] is None
 
 
 async def test_prompt_endpoint_returns_nothing_without_a_miss(
@@ -220,8 +300,52 @@ async def test_prompt_endpoint_returns_nothing_without_a_miss(
             },
             headers=_auth(),
         )
+        bare = await client.post("/api/v1/hook/prompt", json={}, headers=_auth())
     assert response.status_code == 200
-    assert response.json()["stdout"] == ""
+    body = response.json()
+    assert set(body) == _FIELDS
+    assert body["stdout"] == "" and body["surface"] == "prompt_recall"
+    assert body["ids"] == [] and body["event_id"] is None
+    assert bare.status_code == 200 and bare.json()["stdout"] == ""
+
+
+async def test_prompt_endpoint_delivers_a_pointer(
+    daemon_config: Config, daemon_store: Store, tmp_path: Path
+) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    from bettermemory.origin import capture
+
+    from .test_verdict import _repo
+
+    repo = _repo(tmp_path)
+    written = daemon_store.write(
+        content="backup strategy uses triangular restic replication",
+        scopes=["projects:foo"],
+        origin=capture(repo),
+    )
+    stamp = datetime.now(timezone.utc) - timedelta(hours=1)
+    daemon_store.put_memory(
+        written.model_copy(update={"created": stamp, "updated": stamp})
+    )
+    payload = {
+        "cwd": str(repo),
+        "session_id": "sess_hook",
+        "prompt": "backup strategy",
+        "prompt_id": "turn-1",
+    }
+    async with running_app(daemon_config, daemon_store) as client:
+        first = await client.post("/api/v1/hook/prompt", json=payload, headers=_auth())
+        again = await client.post("/api/v1/hook/prompt", json=payload, headers=_auth())
+    body = first.json()
+    assert body["ids"] == [written.id]
+    assert body["stdout"].startswith("bettermemory recall: pointers, not instructions.")
+    assert body["chars"] == len(body["stdout"])
+    # The daemon's own state holds the id for the rest of the segment.
+    assert again.json()["stdout"] == ""
+    events = [e for e in daemon_store.iter_events() if e["kind"] == "prompt_recall"]
+    assert [e["event_id"] for e in events] == [body["event_id"]]
+    assert events[0]["prompt_id"] == "turn-1"
 
 
 async def test_stop_endpoint_audits_the_transcript(

@@ -826,9 +826,10 @@ def test_suppressed_by_stamps_retrieval_shield_and_stays_none_elsewhere() -> Non
 
 
 def test_prompt_recall_fields_carries_delivered_reason() -> None:
-    """The recall event stamps which predicate lane fired: default
-    "miss" keeps old call sites and replay readers unchanged; the
-    cohort lane passes "project_cohort" explicitly."""
+    """The recall event stamps the delivery mode that fired: default
+    "project" (the recall surface's default mode); "everywhere" is passed
+    explicitly. Events written before the recall surface carry "miss" or
+    "project_cohort", which eval keeps reading."""
     m = _memory("backup strategy uses triangular restic replication")
     report = probe_for_miss(
         [m],
@@ -840,15 +841,68 @@ def test_prompt_recall_fields_carries_delivered_reason() -> None:
     default_fields = prompt_recall_fields(
         report, session_id="sess_x", probe_mode="hybrid", injected_chars=100
     )
-    assert default_fields["delivered_reason"] == "miss"
-    cohort_fields = prompt_recall_fields(
+    assert default_fields["delivered_reason"] == "project"
+    wide_fields = prompt_recall_fields(
         report,
         session_id="sess_x",
         probe_mode="hybrid",
         injected_chars=100,
-        delivered_reason="project_cohort",
+        delivered_reason="everywhere",
     )
-    assert cohort_fields["delivered_reason"] == "project_cohort"
+    assert wide_fields["delivered_reason"] == "everywhere"
+
+
+def test_prompt_recall_fields_recall_surface_additions() -> None:
+    """The recall surface's fields ride beside the replay shape, each
+    omitted when the caller passes nothing (the builder's older call
+    shape keeps its exact output)."""
+    m = _memory("backup strategy uses triangular restic replication")
+    report = probe_for_miss(
+        [m],
+        "backup strategy",
+        recent_events=[],
+        session_id="sess_x",
+        now=_utc(2026, 5, 1),
+    )
+    bare = prompt_recall_fields(
+        report, session_id="sess_x", probe_mode="hybrid", injected_chars=100
+    )
+    for name in (
+        "shown_ids",
+        "suppressed_ids",
+        "rule",
+        "chars",
+        "segment",
+        "prompt_id",
+        "transcript_path",
+        "harness",
+    ):
+        assert name not in bare
+    full = prompt_recall_fields(
+        report,
+        session_id="sess_x",
+        probe_mode="hybrid",
+        injected_chars=100,
+        shown_ids=["a"],
+        suppressed=[{"id": "b", "reason": "seen_in_segment"}],
+        rule="rs-v1",
+        segment=2,
+        prompt_id="turn-1",
+        transcript_path="/tmp/t.jsonl",
+        harness="claude-code",
+    )
+    assert full["shown_ids"] == ["a"]
+    assert full["suppressed_ids"] == [{"id": "b", "reason": "seen_in_segment"}]
+    assert full["rule"] == "rs-v1"
+    assert full["chars"] == full["injected_chars"] == 100
+    assert full["segment"] == 2
+    assert full["prompt_id"] == "turn-1"
+    assert full["transcript_path"] == "/tmp/t.jsonl"
+    assert full["harness"] == "claude-code"
+    assert {k: v for k, v in full.items() if k != "event_id"} == {
+        **{k: v for k, v in bare.items() if k != "event_id"},
+        **{k: full[k] for k in full if k not in bare},
+    }
 
 
 def test_global_memory_top_hit_does_not_suppress() -> None:
@@ -1691,6 +1745,7 @@ _EXPECTED_VALID_TRIGGERED_FROM: tuple[str, ...] = (
     "mcp_tool",
     "prompt_hook",
     "session_capture",
+    "session_hook",
     "stop_hook",
 )
 

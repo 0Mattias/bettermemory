@@ -95,35 +95,32 @@ conversational = true
 # false to leave links to the writer's explicit `supersedes=` list.
 write_supersession = true
 
-# Score-gated recall at prompt time. The plugin's UserPromptSubmit hook
-# probes every submitted prompt with the SAME predicate the Stop hook's
-# silent-miss audit uses (same pool, ranker, threshold, shields); where
-# the audit would later have flagged "the model should have searched",
-# the hook instead injects the top hit's id + snippet into context
-# before the turn starts — a pointer, never a body, so the read path's
-# verify-before-relying discipline still runs through memory_show. The
-# predicate fires on ~2% of audited turns (docs/eval-results.md), which
-# is what keeps generic answers unpolluted. A delivered recall is
-# recorded as a `prompt_recall` event and counts as retrieval for the
-# audit's shield, so it also suppresses further injections for the
-# ~10-minute attribution window. Needs telemetry.enabled (off-the-books
-# injections are refused). Set false to return to purely opt-in
-# retrieval.
-prompt_recall = true
+# Recall at prompt time. The plugin's UserPromptSubmit hook probes every
+# submitted prompt with the production ranker (the pool and ranking the
+# silent-miss audit uses) and puts up to three pointers in front of the
+# model before the turn starts: an id, a relevance label, an 80-character
+# summary and the matched snippet, never a body, so the read path's
+# verify-before-relying discipline still runs through memory_show. A
+# pointer is a medium- or high-relevance hit written or imported here
+# (never a synced or unaccounted one), with no open contradiction, that
+# this session segment has not already been shown, retrieved or written.
+# At most twelve deliveries per segment; a compact or a clear opens a new
+# one. "project" (default) delivers only memories written in the
+# repository the prompt comes from; "everywhere" also delivers the rest
+# the probe ranks (globals, and from outside any repository everything);
+# "off" returns to purely opt-in retrieval. Each delivery is recorded as
+# a `prompt_recall` event, so it needs telemetry.enabled (off-the-books
+# injections are refused). true / false in an older config read as
+# "project" / "off".
+prompt_recall = "project"
 
-# Deliver recall inside the caller's own project. The silent-miss audit
-# deliberately declines to FLAG a turn whose top hit belongs to the git
-# project the caller is standing in ("update <repo>", "push it" — no
-# memory_search was owed with the source tree open). Delivery answers a
-# different question: memory-resident facts (decisions, run state,
-# rulings) are exactly what the source tree cannot serve, and measured
-# dogfood put ~95% of replayable misses in this cohort. With this on
-# (default), the prompt-recall hook also injects on those turns; the v1
-# "high" bar, the retrieval shield, and the attribution-window anti-spam
-# bound still apply unchanged. The audit lane is unaffected either way.
-# Set false to restore the strict fires-only-where-the-audit-would-flag
-# coupling.
-recall_in_project = true
+# The session brief: on SessionStart inside a repository, up to eight
+# pointers (id and an 80-character summary) to the newest memories written
+# in that repository whose staleness verdict is fresh as memory_show
+# computes it, no ambient notes and nothing with an open contradiction.
+# Pointers, not instructions; recorded as a `session_brief` event, so it
+# needs telemetry.enabled. Set false to open sessions with nothing.
+session_brief = true
 
 # Floor on `applied_count` for inclusion in `memory_health.heavily_used`.
 # Default 3 — at 1 the bucket is dominated by one-off acknowledgements
@@ -288,27 +285,20 @@ class BehaviorConfig:
     # corpus or the maintainer's store. False leaves links to the
     # writer's explicit `supersedes=` parameter.
     write_supersession: bool = True
-    # Score-gated recall at prompt time (`hook.run_prompt_recall`,
-    # wired to the plugin's UserPromptSubmit hook). Default ON — the
-    # delivery is gated by the silent-miss predicate itself (v1 top-1
-    # "high" plus its shields, ~2% of audited turns), which is the
-    # don't-pollute-generic-answers stance carried by a bar instead of
-    # by opt-in. Requires `telemetry.enabled` at the call site: an
-    # unlogged injection is invisible to the Stop-hook shield and
-    # unmeasurable, so the recall path refuses to fire rather than
-    # fire off the books. See DEFAULT_CONFIG for prose.
-    prompt_recall: bool = True
-    # Deliver prompt recall on the project cohort (`hook.run_prompt_recall`):
-    # when the caller works inside the git project the top hit was written
-    # from, the silent-miss AUDIT deliberately reports "ok" (no search was
-    # owed — the source tree is open), but the audit's premise does not
-    # transfer to DELIVERY: memory-resident facts (decisions, run state,
-    # rulings) are precisely what a source tree cannot serve, and dogfood
-    # measured ~95% of replayable misses in this cohort. Default ON — the
-    # v1 top-1 "high" bar, the retrieval shield, and the attribution-window
-    # anti-spam bound all still gate the injection. Set false to restore
-    # the strict fires-only-where-the-audit-would-flag coupling.
-    recall_in_project: bool = True
+    # Recall at prompt time (`recall.prompt_recall`, wired to the plugin's
+    # UserPromptSubmit hook): "project" (default) delivers pointers to
+    # memories written in the caller's repository, "everywhere" also the
+    # other candidates the probe ranks, "off" nothing. The loader reads a
+    # legacy boolean as "project" / "off" (`_coerce_prompt_recall`).
+    # Requires `telemetry.enabled` at the call site: an unlogged injection
+    # is invisible to the Stop-hook shield and unmeasurable, so the recall
+    # path refuses to fire rather than fire off the books. See
+    # DEFAULT_CONFIG for prose.
+    prompt_recall: str = "project"
+    # The session brief (`recall.session_brief`): pointers to the newest
+    # fresh memories of the caller's repository on SessionStart. Default
+    # ON; needs `telemetry.enabled` like the prompt recall.
+    session_brief: bool = True
     # Floor on `applied_count` for inclusion in the heavily_used report.
     # Default is 3 — at 1 the bucket is mostly noise (one acknowledgement
     # is not a usage pattern). Raising it sharpens the signal at the cost
@@ -642,6 +632,42 @@ def _coerce_search_mode(value: object, *, config_path: Path | None) -> str:
     return "hybrid"
 
 
+PROMPT_RECALL_MODES: tuple[str, ...] = ("project", "everywhere", "off")
+
+
+def _coerce_prompt_recall(value: object, *, config_path: Path | None) -> str:
+    """Normalise `[behavior] prompt_recall` to one of `PROMPT_RECALL_MODES`.
+
+    A config written before the recall surface took a mode carries a
+    boolean: ``true`` reads as ``"project"`` (the delivery it now names)
+    and ``false`` as ``"off"``, and the boolean spellings `_coerce_bool`
+    accepts in a string read the same way. Anything else falls back to
+    ``"project"`` with a warning, by `_coerce_search_mode`'s rule that a
+    bad value in one knob must not take the server down, and that the
+    fallback is loud."""
+    if value is None:
+        return "project"
+    if isinstance(value, bool):
+        return "project" if value else "off"
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in PROMPT_RECALL_MODES:
+            return token
+        if token in _TRUE_STRINGS:
+            return "project"
+        if token in _FALSE_STRINGS:
+            return "off"
+    import logging
+
+    logging.getLogger("bettermemory.config").warning(
+        "[behavior] prompt_recall = %r is not one of %s%s; falling back to 'project'.",
+        value,
+        ", ".join(PROMPT_RECALL_MODES),
+        f" (in {config_path})" if config_path is not None else "",
+    )
+    return "project"
+
+
 def _coerce_float(
     value: object, default: float, *, label: str, config_path: Path | None
 ) -> float:
@@ -780,6 +806,11 @@ _REMOVED_BEHAVIOR_KEYS: dict[str, tuple[str, str]] = {
         "9.0.0",
         "the one-shot curation hint on memory_write left with the nine-tool "
         "surface; `bettermemory health` carries the counts",
+    ),
+    "recall_in_project": (
+        "9.0.0",
+        "the prompt recall delivers in the caller's project by default now; "
+        '`prompt_recall = "everywhere"` widens it and `"off"` stops it',
     ),
 }
 
@@ -1068,8 +1099,10 @@ def load_config(path: Path | None = None) -> Config:
             write_supersession=_coerce_bool(
                 behavior_raw.get("write_supersession"), True
             ),
-            prompt_recall=_coerce_bool(behavior_raw.get("prompt_recall"), True),
-            recall_in_project=_coerce_bool(behavior_raw.get("recall_in_project"), True),
+            prompt_recall=_coerce_prompt_recall(
+                behavior_raw.get("prompt_recall"), config_path=config_path
+            ),
+            session_brief=_coerce_bool(behavior_raw.get("session_brief"), True),
             heavily_used_min_applied=_coerce_int(
                 behavior_raw.get("heavily_used_min_applied"),
                 3,

@@ -1,82 +1,48 @@
-"""`bettermemory session-start` — Claude Code SessionStart-hook context block.
+"""`bettermemory session-start` — the session brief, in process.
 
-Prints a three-line "what is stored for this repository" hint on stdout.
-Claude Code injects a SessionStart hook's stdout verbatim into the
-model's context, so the model opens every session already knowing the
-per-scope counts it would otherwise have had to ask the health report
-for — or, far more often, never learned at all because
-retrieval is opt-in and, between prompts the recall hook's high bar
-doesn't fire on (the ~98% common case), nothing prompted it.
+Prints the session brief (`recall.session_brief`) on stdout: up to eight
+pointers to the newest memories written in the current repository whose
+staleness verdict is fresh, under a header that says they are pointers,
+not instructions. Claude Code injects a SessionStart hook's stdout
+verbatim into the model's context. The installed hook runs `bettermemory
+hook session-start`, which the process entry point routes to the daemon
+before this package is imported; this subcommand is the same body run in
+process, for a caller with no daemon.
 
-THE NEGATIVE MANDATE — this command constructs no `Recorder` and calls
-no `.record()`, ever. Two independent failures follow from breaking it:
+It reads the SessionStart payload from stdin when one is piped
+(`session_id`, `source`, `cwd`, `transcript_path`); `--session-id` and
+`--source` stand in for it by hand. Without a session id it prints
+nothing: the brief is recorded at show time as a `session_brief` event
+under the session it was shown to, and an unrecorded injection is the
+one thing the recall surface never makes.
 
-1. Anchor hijack. `hook._latest_in_process_session` picks the most
-   recent session in the event log whose `triggered_from` is not in
-   `hook._OUT_OF_PROCESS_TRIGGERS` — it never reads `attribution`. A
-   session-start row
-   would therefore become the anchor the Stop hook's turn audit
-   attributes against, no matter how the row is stamped (this command
-   has no roster entry to hide behind — the recall hook records, but
-   it records AS a roster member). The familiar
-   "just mark it `cli_*` like the admin CLI commands do" workaround
-   fixes doctor's census and does NOT fix this.
-2. Phantom sessions. Every session open would publish a fresh session id
-   into the log with no turn that could ever produce `turn_audited`,
-   which is the exact denominator corruption `ADMIN_RECORDED_EVENT_KINDS`
-   was introduced to stop.
+The recording rules the old counts block lived by still hold, through
+the event's stamp rather than through silence. The row is stamped
+``triggered_from="session_hook"``, a member of
+`hook._OUT_OF_PROCESS_TRIGGERS`, so the turn audit's server-session
+anchor (`hook._latest_in_process_session`) skips it and cannot be
+hijacked by it; and it is recorded under the harness's own session id,
+the one that session's `turn_audited` rows carry, so it publishes no
+phantom session. The recorder lives in `recall.py`; this module names
+none (`tests/test_cli_smoke.py` reads its source to hold that).
 
-`tests/test_cli_smoke.py::test_session_start_records_nothing` is the
-standing guard: it asserts a byte-identical event log across a run.
-Without that test this docstring is only a wish.
-
-The read is deliberately cheap, and every step of it is a gate rather
-than a fallback:
-
-* `load_config().resolved_directory()` instead of `cli_context()` —
-  `cli_context()` opens the store through `Store.open()`, which
-  provisions (mkdir + chmod) and can kick off a full index rebuild. None
-  of that belongs in the critical path of opening a session. Since 7.17.0
-  a bare `Store(...)` would be inert enough to be safe here, but resolving
-  the directory directly stays the narrower dependency.
-* Counts come from the FTS index's columnar scan
-  (`index.scope_counts`), never from `Store.load_all()`. `load_all` is
-  ~74 % of the equivalent handler's cost, all of it per-file opens and
-  YAML parsing for bodies this surface does not print.
-* Anything unusable — no store, empty store, absent/corrupt index, an
-  index whose row count disagrees with what is on disk, or one whose
-  rows name a different SET of files than the listing does (equal
-  counts are the weaker claim: swap one memory for another out of band
-  and both sides still read N) — degrades to EMPTY stdout, never to the
-  expensive path. A session-start hook that stalls the session is worse
-  than one that says nothing.
-
-Diagnostics go to stderr (Claude Code routes it to the debug log, not
-the model's context) and the process always exits 0. `hooks.json` still
-appends `|| true` as belt-and-suspenders, because a `uvx` network
-failure or an older published wheel without this subcommand would
-otherwise surface as a hook-error banner.
+Every gate degrades to EMPTY stdout, never to a traceback: no store, an
+unreadable store, an empty one, a caller outside any repository, a
+selection with nothing fresh. Diagnostics go to stderr (Claude Code
+routes it to the debug log, not the model's context) and the process
+always exits 0. `hooks.json` still appends `|| true` as
+belt-and-suspenders, because a `uvx` network failure or an older
+published wheel without this subcommand would otherwise surface as a
+hook-error banner.
 """
 
 from __future__ import annotations
 
 import argparse
-from typing import TYPE_CHECKING
+from typing import Any
 
-if TYPE_CHECKING:  # pragma: no cover - typing only
-    # Type-only so the runtime import cost stays where it belongs: inside
-    # `run`. `cli/__init__.py` imports this module for every `bettermemory
-    # <anything>` invocation, so a top-level `from ..origin import Origin`
-    # would tax every other subcommand for a symbol only this one uses.
-
-    pass
-
-# How many scopes the context block names before collapsing the tail into
-# "+N more". The block is injected into EVERY session, so its cost is
-# paid per session forever; five is enough to characterise a store's
-# shape and short enough that a 40-scope store cannot flood the opening
-# context. The total is always exact — only the enumeration is capped.
-_MAX_SCOPES_SHOWN = 5
+# The stdin payload's bound, the hooks' (`hook._STDIN_PAYLOAD_CAP_BYTES`).
+_STDIN_CAP_BYTES = 64 * 1024
 
 
 def add_subparser(
@@ -84,17 +50,28 @@ def add_subparser(
 ) -> argparse.ArgumentParser:
     """Register the ``session-start`` subparser on the parent parser."""
     help_text = (
-        "Print the session-start memory hint on stdout. Intended as a "
-        "Claude Code SessionStart hook target: emits the per-scope "
-        "counts for the current repository so a fresh session starts "
-        "with them in context instead of spending a tool call to get "
-        "them (or never learning them at all). Reads the store's scope "
-        "counts, never the memory bodies. Records NOTHING — no event, no "
-        "session. Prints nothing when the store is empty or cannot be "
-        "opened, and always exits 0 so a hook misfire never breaks "
-        "session start."
+        "Print the session brief on stdout: up to eight pointers to the "
+        "newest fresh memories written in the current repository. "
+        "Intended as a Claude Code SessionStart hook target; reads the "
+        "hook's stdin JSON (`session_id`, `source`, `cwd`). Records the "
+        "show as a `session_brief` event under that session. Prints "
+        "nothing without a session id, outside a repository, or when "
+        "nothing is fresh, and always exits 0 so a hook misfire never "
+        "breaks session start."
     )
     parser = sub.add_parser("session-start", help=help_text, description=help_text)
+    parser.add_argument(
+        "--session-id",
+        type=str,
+        default=None,
+        help="Override the session id from the SessionStart payload.",
+    )
+    parser.add_argument(
+        "--source",
+        type=str,
+        default=None,
+        help="Override the SessionStart source (startup, resume, compact, clear).",
+    )
     return parser
 
 
@@ -118,11 +95,11 @@ def run(args: argparse.Namespace) -> None:
     """
     import sys
 
-    # `args` is unused: the subcommand takes no flags. It stays in the
-    # signature because `cli/__init__.py`'s dispatch calls every `run`
-    # the same way.
     try:
-        block = _build_context_block()
+        block = _build_context_block(
+            session_id=getattr(args, "session_id", None),
+            source=getattr(args, "source", None),
+        )
     except Exception as exc:  # noqa: BLE001
         _note_degraded(f"skipped: {exc.__class__.__name__}: {exc}")
         raise SystemExit(0) from None
@@ -204,40 +181,74 @@ def _blackhole_stdout() -> None:
         os.close(devnull)
 
 
-def _build_context_block() -> str | None:
-    """Return the block to print, or None to stay silent.
+def _read_payload() -> dict[str, Any]:
+    """The SessionStart payload piped on stdin, or ``{}``: nothing piped
+    (a terminal), an unreadable or oversized stream, or not a JSON
+    object."""
+    import json
+    import sys
+
+    try:
+        stream = sys.stdin
+        if stream is None or stream.isatty():
+            return {}
+        raw = stream.buffer.read(_STDIN_CAP_BYTES + 1)
+    except Exception:  # noqa: BLE001 - a captured or closed stdin reads as none
+        return {}
+    if len(raw) > _STDIN_CAP_BYTES:
+        return {}
+    try:
+        loaded = json.loads(raw.decode("utf-8", errors="replace") or "{}")
+    except ValueError:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _build_context_block(
+    *, session_id: str | None = None, source: str | None = None
+) -> str | None:
+    """Return the brief to print, or None to stay silent.
 
     Split from `run` so the gates are testable without capturing stdout,
     and so `run` holds nothing but the never-raise / always-exit-0
-    contract. The body is `hook.session_start_block`, shared with the
+    contract. The body is `recall.session_brief`, shared with the
     daemon's session-start endpoint; this in-process shape opens the
-    store read-only and prints the note on stderr.
+    store without a rekey, holds no state between calls (the session's
+    segment is read back from the log) and prints its note on stderr.
     """
     import sys
+    from pathlib import Path
 
     from ..config import load_config
-    from ..hook import session_start_block
-    from ..origin import capture as capture_origin
+    from ..recall import session_brief
     from ..store import STORE_FILENAME, Store
 
+    payload = _read_payload()
     config = load_config()
     directory = config.resolved_directory()
     store_path = directory / STORE_FILENAME
     if not store_path.is_file():
         return None
 
-    current = capture_origin()
+    def text(name: str) -> str | None:
+        value = payload.get(name)
+        return value if isinstance(value, str) and value else None
+
+    cwd = text("cwd")
     with Store.open(store_path, allow_rekey=False) as store:
-        block, note = session_start_block(store, origin=current)
-    if note:
-        print(note, file=sys.stderr)
-    return block
-
-
-def _render_block(total: int, scopes: dict[str, int]) -> str:
-    """The context block the model sees; `hook.render_session_start_block`
-    is the one renderer, kept here under its 8.x name for the tests that
-    hold the shape."""
-    from ..hook import render_session_start_block
-
-    return render_session_start_block(total, scopes)
+        result = session_brief(
+            session_id=session_id or text("session_id"),
+            source=source or text("source"),
+            harness=text("harness"),
+            transcript_path=text("transcript_path"),
+            cwd=Path(cwd) if cwd else None,
+            config=config,
+            store=store,
+        )
+    if result.stdout:
+        print(
+            f"[bettermemory] session-start: brief of {len(result.ids)} "
+            f"pointer(s) from {store_path.parent}.",
+            file=sys.stderr,
+        )
+    return result.stdout or None

@@ -34,7 +34,6 @@ from bettermemory.hook import (
     _latest_in_process_session,
     _pending_retrievals,
     _read_payload,
-    _render_recall_block,
     main as hook_main,
     prompt_main,
     run_audit,
@@ -1990,109 +1989,95 @@ def test_run_audit_ranks_productions_candidate_pool(
     assert len(misses) == 1
 
 
+def test_run_audit_declines_a_miss_when_git_could_not_be_asked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The Stop hook captures origin with `capture_origin()` and reads a
+    null `repo` as "the caller is nowhere", which drops the project-
+    cohort shield. When the null came from git not answering — no
+    binary, a timeout — the caller may well be inside the matching
+    repo, and the turn used to be logged as a `search_miss`. The
+    measured null (git said "not a repository") still misses."""
+    from bettermemory.origin import Origin
+
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    _write_miss_memory(mem_dir)
+
+    unknown = Origin(cwd=str(tmp_path))
+    unknown._git_indeterminate = True
+    monkeypatch.setattr("bettermemory.hook.capture_origin", lambda *a, **k: unknown)
+    result = run_audit(
+        user_message=_MISS_QUERY,
+        assistant_response=None,
+        session_id="claude-origin-unknown",
+        config=_miss_config(mem_dir),  # type: ignore[arg-type]
+    )
+    assert result["verdict"] == "ok"
+    assert not [e for e in _events(mem_dir) if e["kind"] == "search_miss"]
+
+    nowhere = Origin(cwd=str(tmp_path))
+    monkeypatch.setattr("bettermemory.hook.capture_origin", lambda *a, **k: nowhere)
+    result = run_audit(
+        user_message=_MISS_QUERY,
+        assistant_response=None,
+        session_id="claude-origin-nowhere",
+        config=_miss_config(mem_dir),  # type: ignore[arg-type]
+    )
+    assert result["verdict"] == "miss"
+
+
 # ---------------------------------------------------------------------------
-# UserPromptSubmit recall — the probe's verdict delivered before the turn.
+# UserPromptSubmit — the CLI shim over the recall surface.
 #
-# `run_prompt_recall` is `run_audit`'s predicate re-aimed (shared
-# `_probe_message`), so this family does not re-test the shields the
-# run_audit family above already pins. What it pins is the DELIVERY
-# contract: inject exactly on a would-be miss, record the injection as a
-# retrieval-kind event, refuse to fire off the books, and never disturb
-# the server-session anchor the Stop hook bridges through.
+# The delivery rules live in `recall.prompt_recall` and are pinned in
+# tests/test_recall_prompt.py. What this family pins is the hook's own
+# contract: payload on stdin, block on stdout, exit 0 always, and the
+# recall's event never disturbing the server-session anchor the Stop hook
+# bridges through.
 # ---------------------------------------------------------------------------
 
+_HOOK_REPO = "git@github.com:owner/foo.git"
 
-def test_run_prompt_recall_injects_on_would_be_miss(tmp_path: Path) -> None:
-    """Happy path: high-relevance hit, no recent retrieval — the recall
-    fires. The block carries the id (the pointer), the scopes, and the
-    verify-first instruction; the `prompt_recall` event carries
-    `injected_chars == len(block)` so the per-turn context cost the
-    resident-footprint suite deliberately does not measure stays
-    measurable from the log."""
+
+def _pin_caller_in_repo(monkeypatch: pytest.MonkeyPatch, worktree: Path) -> None:
+    """Stand the hook's caller in `_HOOK_REPO` at `worktree`, whatever
+    directory the payload names: the recall delivers only memories
+    written in the caller's project."""
+    from bettermemory.origin import Origin
+
+    caller = Origin(cwd=str(worktree), repo=_HOOK_REPO, worktree_root=str(worktree))
+    monkeypatch.setattr("bettermemory.hook.capture_origin", lambda *a, **k: caller)
+
+
+def _write_project_memory(mem_dir: Path, worktree: Path) -> str:
+    """The high-relevance memory, written in `_HOOK_REPO` at `worktree`
+    and backdated past the probe's creation shield."""
+    from bettermemory.origin import Origin
+
+    store = Store(mem_dir)
+    written = store.write(
+        content=_MISS_BODY,
+        scopes=["projects:foo"],
+        origin=Origin(cwd=str(worktree), repo=_HOOK_REPO, worktree_root=str(worktree)),
+    )
+    _backdate(store, written, timedelta(hours=1))
+    return written.id
+
+
+def test_stop_audit_reports_ok_after_recall(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """THE honesty property the design leans on: a turn served by a
+    delivery is not a SILENT miss. The Stop hook's audit of the same turn
+    sees the `prompt_recall` event through the retrieval shield and
+    reports `ok` with no `search_miss`."""
     mem_dir = tmp_path / "mem"
     mem_dir.mkdir()
-    memory_id = _write_miss_memory(mem_dir)
-
-    block = run_prompt_recall(
-        prompt=_MISS_QUERY,
-        session_id="transcript-recall",
-        config=_miss_config(mem_dir),  # type: ignore[arg-type]
-    )
-    assert block is not None
-    assert memory_id in block
-    assert "memory_show" in block
-    assert "infrastructure" in block
-
-    events = _events(mem_dir)
-    recalls = [e for e in events if e["kind"] == "prompt_recall"]
-    assert len(recalls) == 1
-    event = recalls[0]
-    assert event["triggered_from"] == "prompt_hook"
-    assert event["injected_chars"] == len(block)
-    assert event["top_hits"][0]["id"] == memory_id
-    assert event["session"] == "transcript-recall"
-
-
-def test_run_prompt_recall_silent_when_probe_says_ok(tmp_path: Path) -> None:
-    """A recent retrieval in the window means the probe reports `ok`,
-    and `ok` means NOTHING is injected and NOTHING is recorded — the
-    common case must leave the log byte-identical, because the recall
-    hook runs on every single prompt submission."""
-    mem_dir = tmp_path / "mem"
-    mem_dir.mkdir()
-    memory_id = _write_miss_memory(mem_dir)
-
-    recorder = Recorder(
-        store=Store(mem_dir), session_id="transcript-recall", enabled=True
-    )
-    recorder.record("search", query=_MISS_QUERY, returned=[memory_id])
-    before = _events(mem_dir)
-
-    block = run_prompt_recall(
-        prompt=_MISS_QUERY,
-        session_id="transcript-recall",
-        config=_miss_config(mem_dir),  # type: ignore[arg-type]
-    )
-    assert block is None
-    assert _events(mem_dir) == before
-
-
-def test_run_prompt_recall_self_suppresses_within_window(tmp_path: Path) -> None:
-    """The delivered recall is itself a retrieval-kind event, so an
-    immediate second high-scoring prompt probes `ok` — the anti-spam
-    bound is `_RETRIEVAL_EVENT_KINDS` membership plus the attribution
-    window, not a separate knob. One injection, then silence."""
-    mem_dir = tmp_path / "mem"
-    mem_dir.mkdir()
-    _write_miss_memory(mem_dir)
-    cfg = _miss_config(mem_dir)
-
-    first = run_prompt_recall(
-        prompt=_MISS_QUERY,
-        session_id="transcript-recall",
-        config=cfg,  # type: ignore[arg-type]
-    )
-    second = run_prompt_recall(
-        prompt=_MISS_QUERY,
-        session_id="transcript-recall",
-        config=cfg,  # type: ignore[arg-type]
-    )
-    assert first is not None
-    assert second is None
-    events = _events(mem_dir)
-    assert len([e for e in events if e["kind"] == "prompt_recall"]) == 1
-
-
-def test_stop_audit_reports_ok_after_recall(tmp_path: Path) -> None:
-    """THE honesty property the whole design leans on: a turn served by
-    an injection is not a SILENT miss. The Stop hook's audit of the
-    same turn must see the `prompt_recall` event through the retrieval
-    shield and report `ok` with no `search_miss` — otherwise every
-    delivery would be double-counted as a failure of the contract it
-    just fulfilled."""
-    mem_dir = tmp_path / "mem"
-    mem_dir.mkdir()
-    _write_miss_memory(mem_dir)
+    worktree = tmp_path / "foo"
+    worktree.mkdir()
+    _write_project_memory(mem_dir, worktree)
+    _pin_caller_in_repo(monkeypatch, worktree)
     cfg = _miss_config(mem_dir)
 
     block = run_prompt_recall(
@@ -2115,181 +2100,13 @@ def test_stop_audit_reports_ok_after_recall(tmp_path: Path) -> None:
     assert "turn_audited" in kinds
 
 
-def _write_project_memory(mem_dir: Path, repo: str) -> str:
-    """Seed a `projects:`-scoped high-relevance memory whose origin repo
-    matches `repo`, backdated past the creation shield — the shape the
-    project-cohort suppression keys on. Mirrors `_write_miss_memory`."""
-    from bettermemory.origin import Origin
-
-    store = Store(mem_dir)
-    written = store.write(
-        content=_MISS_BODY,
-        scopes=["projects:foo"],
-        origin=Origin(cwd="/tmp/foo", repo=repo, worktree_root="/tmp/foo"),
-    )
-    _backdate(store, written, timedelta(hours=1))
-    return written.id
-
-
-def test_run_prompt_recall_delivers_on_project_cohort(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The delivery lane's widening (v6.2.0): a caller standing in the
-    repo the top hit was written from gets the injection even though the
-    AUDIT reports that same turn `ok` (no search was owed). The premise
-    behind the audit's suppression — "the context is in the open source
-    tree" — does not hold for memory-resident facts, and dogfood put
-    ~95% of replayable misses in this cohort. The event stamps
-    `delivered_reason="project_cohort"` so eval can slice the lanes."""
-    from bettermemory.origin import Origin
-
-    repo = "git@github.com:owner/foo.git"
-    mem_dir = tmp_path / "mem"
-    mem_dir.mkdir()
-    memory_id = _write_project_memory(mem_dir, repo)
-    monkeypatch.setattr(
-        "bettermemory.hook.capture_origin",
-        lambda cwd=None: Origin(cwd="/tmp/foo", repo=repo, worktree_root="/tmp/foo"),
-    )
-
-    block = run_prompt_recall(
-        prompt=_MISS_QUERY,
-        session_id="transcript-cohort",
-        config=_miss_config(mem_dir),  # type: ignore[arg-type]
-    )
-    assert block is not None
-    assert memory_id in block
-    recalls = [e for e in _events(mem_dir) if e["kind"] == "prompt_recall"]
-    assert len(recalls) == 1
-    assert recalls[0]["delivered_reason"] == "project_cohort"
-
-
-def test_run_prompt_recall_project_cohort_respects_knob_off(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """`[behavior] recall_in_project = false` restores the strict
-    fires-only-where-the-audit-would-flag coupling: the cohort turn
-    gets no injection and the log stays empty."""
-    from bettermemory.config import (
-        BehaviorConfig,
-        Config,
-        StorageConfig,
-        TelemetryConfig,
-    )
-    from bettermemory.origin import Origin
-
-    repo = "git@github.com:owner/foo.git"
-    mem_dir = tmp_path / "mem"
-    mem_dir.mkdir()
-    _write_project_memory(mem_dir, repo)
-    monkeypatch.setattr(
-        "bettermemory.hook.capture_origin",
-        lambda cwd=None: Origin(cwd="/tmp/foo", repo=repo, worktree_root="/tmp/foo"),
-    )
-    cfg = Config(
-        storage=StorageConfig(directory=str(mem_dir)),
-        telemetry=TelemetryConfig(enabled=True),
-        behavior=BehaviorConfig(recall_in_project=False),
-    )
-    block = run_prompt_recall(
-        prompt=_MISS_QUERY, session_id="transcript-cohort-off", config=cfg
-    )
-    assert block is None
-    assert [e for e in _events(mem_dir) if e["kind"] == "prompt_recall"] == []
-
-
-def test_stop_audit_reports_ok_after_cohort_delivery(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The honesty property holds on the widened lane too: a cohort
-    delivery records a retrieval-kind event, so the Stop hook's audit
-    of the same turn reports `ok` without a `search_miss` — the two
-    lanes stay consistent even though only delivery widened."""
-    from bettermemory.origin import Origin
-
-    repo = "git@github.com:owner/foo.git"
-    mem_dir = tmp_path / "mem"
-    mem_dir.mkdir()
-    _write_project_memory(mem_dir, repo)
-    monkeypatch.setattr(
-        "bettermemory.hook.capture_origin",
-        lambda cwd=None: Origin(cwd="/tmp/foo", repo=repo, worktree_root="/tmp/foo"),
-    )
-    cfg = _miss_config(mem_dir)
-
-    block = run_prompt_recall(
-        prompt=_MISS_QUERY,
-        session_id="transcript-cohort-turn",
-        config=cfg,  # type: ignore[arg-type]
-    )
-    assert block is not None
-
-    result = run_audit(
-        user_message=_MISS_QUERY,
-        assistant_response="using the stored strategy",
-        session_id="transcript-cohort-turn",
-        config=cfg,  # type: ignore[arg-type]
-    )
-    assert result["verdict"] == "ok"
-    kinds = [e["kind"] for e in _events(mem_dir)]
-    assert "search_miss" not in kinds
-
-
-def test_run_prompt_recall_respects_knob_off(tmp_path: Path) -> None:
-    """`[behavior] prompt_recall = false` restores purely opt-in
-    retrieval: no injection, no probe side effects, no event log."""
-    from bettermemory.config import (
-        BehaviorConfig,
-        Config,
-        StorageConfig,
-        TelemetryConfig,
-    )
-
-    mem_dir = tmp_path / "mem"
-    mem_dir.mkdir()
-    _write_miss_memory(mem_dir)
-    cfg = Config(
-        storage=StorageConfig(directory=str(mem_dir)),
-        telemetry=TelemetryConfig(enabled=True),
-        behavior=BehaviorConfig(prompt_recall=False),
-    )
-    block = run_prompt_recall(
-        prompt=_MISS_QUERY, session_id="transcript-off", config=cfg
-    )
-    assert block is None
-    assert _events(mem_dir) == []
-
-
-def test_run_prompt_recall_refuses_without_telemetry(tmp_path: Path) -> None:
-    """With telemetry off the Recorder would drop the `prompt_recall`
-    event, the Stop-hook shield would never see the delivery, and the
-    same turn would re-flag as a miss — an unlogged injection is worse
-    than none, so the recall path refuses to fire at all."""
-    from bettermemory.config import Config, StorageConfig, TelemetryConfig
-
-    mem_dir = tmp_path / "mem"
-    mem_dir.mkdir()
-    _write_miss_memory(mem_dir)
-    cfg = Config(
-        storage=StorageConfig(directory=str(mem_dir)),
-        telemetry=TelemetryConfig(enabled=False),
-    )
-    block = run_prompt_recall(
-        prompt=_MISS_QUERY, session_id="transcript-quiet", config=cfg
-    )
-    assert block is None
-    assert _events(mem_dir) == []
-
-
 def test_recall_event_does_not_hijack_server_session_anchor() -> None:
-    """`_latest_in_process_session` must skip `prompt_recall` rows the
-    way it skips Stop-hook rows: both are stamped with members of
-    `_OUT_OF_PROCESS_TRIGGERS`, and both carry Claude Code's transcript
-    id — a different id space from the server's `sess_<hex>`. Admitting
-    one as the anchor would hand the retrieval shield a session id that
-    matches no server-emitted event, structurally killing it (the
-    pre-2.6.x dead-shield failure, reintroduced through the new
-    writer)."""
+    """`_latest_in_process_session` must skip `prompt_recall` and
+    `session_brief` rows the way it skips Stop-hook rows: all three are
+    stamped with members of `_OUT_OF_PROCESS_TRIGGERS` and carry Claude
+    Code's transcript id, a different id space from the server's
+    `sess_<hex>`. Admitting one as the anchor would hand the retrieval
+    shield a session id that matches no server-emitted event."""
     events = [
         {"ts": "2026-08-05T10:00:00Z", "session": "sess_server", "kind": "search"},
         {
@@ -2298,131 +2115,14 @@ def test_recall_event_does_not_hijack_server_session_anchor() -> None:
             "kind": "prompt_recall",
             "triggered_from": "prompt_hook",
         },
+        {
+            "ts": "2026-08-05T10:00:06Z",
+            "session": "transcript-abc",
+            "kind": "session_brief",
+            "triggered_from": "session_hook",
+        },
     ]
     assert _latest_in_process_session(events) == "sess_server"
-
-
-def test_render_recall_block_names_a_non_local_provenance() -> None:
-    """The pointer carries the provenance label only when it is NOT
-    `local`: a hand-planted or pulled record announces itself at the one
-    delivery that bypasses the tool surface, and a local one adds no
-    bytes to the common case."""
-    from bettermemory.audit import MissHit, MissReport, THRESHOLD_RULE_V1
-    from bettermemory.models import utcnow
-
-    hit = MissHit(
-        id="01TESTRECALLPROV000000000",
-        score=1.0,
-        relevance="high",
-        scopes=("tools",),
-        snippet="planted body",
-        matched_unique=2,
-        query_unique=2,
-        relevance_v2="high",
-    )
-    report = MissReport(
-        verdict="miss",
-        checked_at=utcnow(),
-        session_id="transcript-prov",
-        lookback_seconds=600,
-        recent_retrieval_count=0,
-        threshold_rule=THRESHOLD_RULE_V1,
-        top_hits=(hit,),
-        probe_query="prov probe",
-    )
-    flagged = _render_recall_block(report, provenance="unaccounted")
-    assert f"- {hit.id} [tools] [provenance: unaccounted]" in flagged
-    assert "provenance" not in _render_recall_block(report, provenance="local")
-    assert "provenance" not in _render_recall_block(report)
-
-
-def test_render_recall_block_caps_snippet_never_instructions() -> None:
-    """The cap truncates the SNIPPET, not the frame: a recall whose
-    verify-first instruction got cut would deliver a pointer without
-    the discipline that makes pointers safe. Pathological snippet in,
-    bounded block out, instructions intact."""
-    from bettermemory.audit import MissHit, MissReport, THRESHOLD_RULE_V1
-    from bettermemory.hook import _RECALL_BLOCK_CAP_CHARS
-    from bettermemory.models import utcnow
-
-    hit = MissHit(
-        id="01TESTRECALLCAP0000000000",
-        score=1.0,
-        relevance="high",
-        scopes=("infrastructure",),
-        snippet="x" * (3 * _RECALL_BLOCK_CAP_CHARS),
-        matched_unique=2,
-        query_unique=2,
-        relevance_v2="high",
-    )
-    report = MissReport(
-        verdict="miss",
-        checked_at=utcnow(),
-        session_id="transcript-cap",
-        lookback_seconds=600,
-        recent_retrieval_count=0,
-        threshold_rule=THRESHOLD_RULE_V1,
-        top_hits=(hit,),
-        probe_query="cap probe",
-    )
-    block = _render_recall_block(report)
-    assert len(block) <= _RECALL_BLOCK_CAP_CHARS
-    assert "…" in block
-    assert "memory_show" in block
-    assert 'outcome="ignored"' in block
-    assert hit.id in block
-
-
-def test_render_recall_block_cap_holds_against_pathological_scope_list() -> None:
-    """The cap guards the WHOLE block, scope list included. Scopes are
-    caller data living in the FRAME the snippet math measures around,
-    so pre-fix a pathological list pushed the render past the ceiling
-    no matter how hard the snippet was cut — the exact hole the cap's
-    comment claimed to cover. Post-fix the list is bounded to
-    `_RECALL_SCOPES_CAP_CHARS` (whole names, ellipsis tail) and the
-    verify-first instructions survive verbatim.
-
-    Mutation-soundness: reverting the scope bound makes the length
-    assertion fail (~4KB render); routing the bound through name
-    truncation instead of whole-name drops breaks the whole-name
-    assertion."""
-    from bettermemory.audit import MissHit, MissReport, THRESHOLD_RULE_V1
-    from bettermemory.hook import _RECALL_BLOCK_CAP_CHARS, _RECALL_SCOPES_CAP_CHARS
-    from bettermemory.models import utcnow
-
-    scopes = tuple(f"projects:very-long-scope-name-{i:04d}" for i in range(120))
-    hit = MissHit(
-        id="01TESTRECALLSCOPECAP00000",
-        score=1.0,
-        relevance="high",
-        scopes=scopes,
-        snippet="y" * 400,
-        matched_unique=2,
-        query_unique=2,
-        relevance_v2="high",
-    )
-    report = MissReport(
-        verdict="miss",
-        checked_at=utcnow(),
-        session_id="transcript-scope-cap",
-        lookback_seconds=600,
-        recent_retrieval_count=0,
-        threshold_rule=THRESHOLD_RULE_V1,
-        top_hits=(hit,),
-        probe_query="scope cap probe",
-    )
-    block = _render_recall_block(report)
-    assert len(block) <= _RECALL_BLOCK_CAP_CHARS, len(block)
-    # The rendered scope run is bounded and marked, with only WHOLE
-    # scope names kept ahead of the ellipsis.
-    assert ", \u2026" in block or ", …" in block
-    rendered_scopes = block.split("[", 1)[1].split("]", 1)[0]
-    assert len(rendered_scopes) <= _RECALL_SCOPES_CAP_CHARS + len(", …")
-    for name in rendered_scopes.split(", ")[:-1]:
-        assert name in scopes, name
-    assert "memory_show" in block
-    assert 'outcome="ignored"' in block
-    assert hit.id in block
 
 
 def test_prompt_main_injects_and_exits_zero(
@@ -2433,19 +2133,24 @@ def test_prompt_main_injects_and_exits_zero(
     """End-to-end through the CLI shim: UserPromptSubmit payload on
     stdin, block on stdout (Claude Code injects stdout verbatim), exit
     0. The printed text is the rendered block plus print's newline —
-    `injected_chars` on the event measures the block, not the pipe."""
+    `injected_chars` on the event measures the block, not the pipe. The
+    payload's `prompt_id` and `transcript_path` ride onto the event."""
     mem_dir = tmp_path / "mem"
     mem_dir.mkdir()
     monkeypatch.setenv("BETTERMEMORY_DIR", str(mem_dir))
-    memory_id = _write_miss_memory(mem_dir)
+    worktree = tmp_path / "foo"
+    worktree.mkdir()
+    memory_id = _write_project_memory(mem_dir, worktree)
+    _pin_caller_in_repo(monkeypatch, worktree)
 
     payload = json.dumps(
         {
             "session_id": "transcript-cli",
             "transcript_path": str(tmp_path / "t.jsonl"),
-            "cwd": str(tmp_path),
+            "cwd": str(worktree),
             "hook_event_name": "UserPromptSubmit",
             "prompt": _MISS_QUERY,
+            "prompt_id": "turn-7",
         }
     )
     monkeypatch.setattr("sys.stdin", _StdinMock(payload.encode("utf-8")))
@@ -2456,6 +2161,8 @@ def test_prompt_main_injects_and_exits_zero(
     recalls = [e for e in _events(mem_dir) if e["kind"] == "prompt_recall"]
     assert len(recalls) == 1
     assert recalls[0]["injected_chars"] == len(out.rstrip("\n"))
+    assert recalls[0]["prompt_id"] == "turn-7"
+    assert recalls[0]["transcript_path"] == str(tmp_path / "t.jsonl")
 
 
 def test_prompt_main_no_op_when_payload_empty(
@@ -2539,183 +2246,3 @@ def test_prompt_main_swallows_unexpected_errors(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "synthetic recall failure" in captured.err
-
-
-def test_render_recall_block_names_a_remote_stamp() -> None:
-    """`unverified here` rides inside the provenance bracket when the
-    record is synced, stamped, and never verified on this host; a local
-    record shows nothing even if the flag is set, because the label gate
-    comes first."""
-    from bettermemory.audit import MissHit, MissReport, THRESHOLD_RULE_V1
-    from bettermemory.models import utcnow
-
-    hit = MissHit(
-        id="01TESTRECALLREMOTE0000000",
-        score=1.0,
-        relevance="high",
-        scopes=("tools",),
-        snippet="pulled body",
-        matched_unique=2,
-        query_unique=2,
-        relevance_v2="high",
-    )
-    report = MissReport(
-        verdict="miss",
-        checked_at=utcnow(),
-        session_id="transcript-remote",
-        lookback_seconds=600,
-        recent_retrieval_count=0,
-        threshold_rule=THRESHOLD_RULE_V1,
-        top_hits=(hit,),
-        probe_query="remote probe",
-    )
-    flagged = _render_recall_block(report, provenance="synced", remote_stamp=True)
-    assert f"- {hit.id} [tools] [provenance: synced, unverified here]" in flagged
-    plain = _render_recall_block(report, provenance="synced")
-    assert f"- {hit.id} [tools] [provenance: synced]" in plain
-    assert "provenance" not in _render_recall_block(
-        report, provenance="local", remote_stamp=True
-    )
-
-
-def test_run_prompt_recall_names_a_remote_stamp_on_the_pointer(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """End to end: the top hit's row is synced with a stamp this host never
-    made (the shape a pull leaves), so the pointer says so. After a local
-    verify the qualifier is gone."""
-    from bettermemory.models import utcnow
-    from bettermemory.origin import Origin
-
-    mem_dir = tmp_path / "mem"
-    mem_dir.mkdir()
-    memory_id = _write_miss_memory(mem_dir)
-    store = Store(mem_dir)
-    # A pulled row: labelled synced, `last_verified_at` stamped by the
-    # other host, and no verification row of this host's own.
-    stamped = store.load_one(memory_id).model_copy(
-        update={"last_verified_at": utcnow()}
-    )
-    store.put_memory(stamped, provenance="synced")
-
-    block = run_prompt_recall(
-        prompt=_MISS_QUERY,
-        session_id="transcript-remote",
-        config=_miss_config(mem_dir),  # type: ignore[arg-type]
-    )
-    assert block is not None
-    assert (
-        f"- {memory_id} [infrastructure] [provenance: synced, unverified here]" in block
-    )
-
-    store.mark_verified(memory_id)
-    # The first delivery recorded a `prompt_recall` stamped with this
-    # worktree, and the hook self-suppresses within its window for the
-    # same worktree or session. The second probe runs as another session
-    # from another worktree, so it is judged on the store alone.
-    monkeypatch.setattr(
-        "bettermemory.hook.capture_origin",
-        lambda *a, **k: Origin(
-            cwd=str(tmp_path), worktree_root=str(tmp_path / "wt-two")
-        ),
-    )
-    block = run_prompt_recall(
-        prompt=_MISS_QUERY,
-        session_id="transcript-remote-two",
-        config=_miss_config(mem_dir),  # type: ignore[arg-type]
-    )
-    assert block is not None
-    assert f"- {memory_id} [infrastructure] [provenance: synced]" in block
-    assert "unverified here" not in block
-
-
-def test_run_audit_declines_a_miss_when_git_could_not_be_asked(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The Stop hook captures origin with `capture_origin()` and reads a
-    null `repo` as "the caller is nowhere", which drops the project-
-    cohort shield. When the null came from git not answering — no
-    binary, a timeout — the caller may well be inside the matching
-    repo, and the turn used to be logged as a `search_miss`. The
-    measured null (git said "not a repository") still misses."""
-    from bettermemory.origin import Origin
-
-    mem_dir = tmp_path / "mem"
-    mem_dir.mkdir()
-    _write_miss_memory(mem_dir)
-
-    unknown = Origin(cwd=str(tmp_path))
-    unknown._git_indeterminate = True
-    monkeypatch.setattr("bettermemory.hook.capture_origin", lambda *a, **k: unknown)
-    result = run_audit(
-        user_message=_MISS_QUERY,
-        assistant_response=None,
-        session_id="claude-origin-unknown",
-        config=_miss_config(mem_dir),  # type: ignore[arg-type]
-    )
-    assert result["verdict"] == "ok"
-    assert not [e for e in _events(mem_dir) if e["kind"] == "search_miss"]
-
-    nowhere = Origin(cwd=str(tmp_path))
-    monkeypatch.setattr("bettermemory.hook.capture_origin", lambda *a, **k: nowhere)
-    result = run_audit(
-        user_message=_MISS_QUERY,
-        assistant_response=None,
-        session_id="claude-origin-nowhere",
-        config=_miss_config(mem_dir),  # type: ignore[arg-type]
-    )
-    assert result["verdict"] == "miss"
-
-
-def test_run_prompt_recall_delivers_nothing_when_git_could_not_be_asked(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Delivery is scope-gated on the caller's repo and worktree. With
-    git unreachable a null repo would open the auto-scope filter to
-    every project's memories on a prompt that asked for none of them;
-    the recall lane delivers nothing and records nothing."""
-    from bettermemory.origin import Origin
-
-    mem_dir = tmp_path / "mem"
-    mem_dir.mkdir()
-    _write_miss_memory(mem_dir)
-
-    unknown = Origin(cwd=str(tmp_path))
-    unknown._git_indeterminate = True
-    monkeypatch.setattr("bettermemory.hook.capture_origin", lambda *a, **k: unknown)
-    block = run_prompt_recall(
-        prompt=_MISS_QUERY,
-        session_id="transcript-origin-unknown",
-        config=_miss_config(mem_dir),  # type: ignore[arg-type]
-    )
-    assert block is None
-    assert not [e for e in _events(mem_dir) if e["kind"] == "prompt_recall"]
-
-
-def test_run_prompt_recall_names_a_label_it_could_not_read(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The recall pointer carries `[provenance: <label>]` for a record that
-    did not enter through the store's own paths. A store opened without
-    its key cannot verify any row's pointer into the log (`trust_rows`
-    is None), so no label can be derived, and the pointer used to render
-    as a plain local record: the one delivery that reaches the model
-    without a tool call, announcing nothing. It now says so."""
-    mem_dir = tmp_path / "mem"
-    mem_dir.mkdir()
-    memory_id = _write_miss_memory(mem_dir)
-
-    def _open_blind(path: Path | str, *, keys_dir: Path | str | None = None) -> Store:
-        # The hook's own open, minus the key: `allow_rekey=False` keeps
-        # the store readable and unable to vouch for any row.
-        return Store.open(path, keys_dir=tmp_path / "elsewhere", allow_rekey=False)
-
-    monkeypatch.setattr(Store, "open_or_create", staticmethod(_open_blind))
-
-    block = run_prompt_recall(
-        prompt=_MISS_QUERY,
-        session_id="transcript-key-absent",
-        config=_miss_config(mem_dir),  # type: ignore[arg-type]
-    )
-    assert block is not None and memory_id in block
-    assert "[provenance: unknown, key absent]" in block

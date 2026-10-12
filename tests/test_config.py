@@ -202,7 +202,7 @@ def test_default_config_round_trips_through_load_config(tmp_path: Path) -> None:
     assert loaded.behavior.max_takeaway_bytes == 4_096
     assert loaded.behavior.conversational == fresh.behavior.conversational
     assert loaded.behavior.write_supersession == fresh.behavior.write_supersession
-    assert loaded.behavior.recall_in_project == fresh.behavior.recall_in_project
+    assert loaded.behavior.session_brief == fresh.behavior.session_brief
     assert loaded.behavior.min_content_tokens == fresh.behavior.min_content_tokens
     assert loaded.scopes.allowed == fresh.scopes.allowed
     assert loaded.telemetry.enabled == fresh.telemetry.enabled
@@ -324,13 +324,12 @@ def test_load_config_coerces_behavior_bool_fields(tmp_path: Path) -> None:
     pass every default-shaped test in this file)."""
     config_path = tmp_path / "config.toml"
     config_path.write_text(
-        "[behavior]\nprompt_recall = false\nrecall_in_project = false\n"
+        "[behavior]\nsession_brief = false\n"
         "conversational = false\nwrite_supersession = false\n",
         encoding="utf-8",
     )
     cfg = load_config(config_path)
-    assert cfg.behavior.prompt_recall is False
-    assert cfg.behavior.recall_in_project is False
+    assert cfg.behavior.session_brief is False
     assert cfg.behavior.conversational is False
     assert cfg.behavior.write_supersession is False
 
@@ -363,7 +362,7 @@ def test_load_config_quoted_false_bool_keeps_the_opt_out(tmp_path: Path) -> None
         "[behavior]\n"
         'conversational = "false"\n'
         'write_supersession = "off"\n'
-        'recall_in_project = "0"\n'
+        'session_brief = "0"\n'
         "[telemetry]\n"
         'enabled = "False"\n',
         encoding="utf-8",
@@ -371,16 +370,17 @@ def test_load_config_quoted_false_bool_keeps_the_opt_out(tmp_path: Path) -> None
     cfg = load_config(config_path)
     assert cfg.behavior.conversational is False
     assert cfg.behavior.write_supersession is False
-    assert cfg.behavior.recall_in_project is False
+    assert cfg.behavior.session_brief is False
     assert cfg.telemetry.enabled is False
 
-    # Quoted truthy spellings still coerce to True (case-insensitive).
+    # Quoted truthy spellings still coerce to True (case-insensitive);
+    # a quoted legacy boolean on `prompt_recall` reads as its mode.
     config_path.write_text(
         '[behavior]\nprompt_recall = "TRUE"\n[telemetry]\nenabled = "on"\n',
         encoding="utf-8",
     )
     cfg = load_config(config_path)
-    assert cfg.behavior.prompt_recall is True
+    assert cfg.behavior.prompt_recall == "project"
     assert cfg.telemetry.enabled is True
 
 
@@ -411,11 +411,11 @@ def test_load_config_missing_sections_use_defaults(tmp_path: Path) -> None:
     about flipping prompt_recall")."""
     config_path = tmp_path / "config.toml"
     config_path.write_text(
-        "[behavior]\nprompt_recall = false\n",
+        '[behavior]\nprompt_recall = "off"\n',
         encoding="utf-8",
     )
     cfg = load_config(config_path)
-    assert cfg.behavior.prompt_recall is False
+    assert cfg.behavior.prompt_recall == "off"
     # Untouched fields keep their dataclass defaults.
     assert cfg.behavior.default_max_results == 5
     assert cfg.behavior.write_supersession is True
@@ -1352,3 +1352,74 @@ def test_resolved_directory_falls_back_to_global_when_cwd_children_are_unstattab
     finally:
         cwd.chmod(0o755)
     assert resolved == (fake_home / ".claude-memory").resolve()
+
+
+# ---------------------------------------------------------------------------
+# The recall surface's settings
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ('"project"', "project"),
+        ('"everywhere"', "everywhere"),
+        ('"off"', "off"),
+        ('" Everywhere "', "everywhere"),
+        ("true", "project"),
+        ("false", "off"),
+        ('"yes"', "project"),
+        ('"no"', "off"),
+    ],
+)
+def test_prompt_recall_takes_a_mode_and_reads_a_legacy_boolean(
+    tmp_path: Path, raw: str, expected: str
+) -> None:
+    """`prompt_recall` names a delivery mode now. A config written when it
+    was a boolean keeps its meaning: true was "deliver", which is
+    "project" today, and false was "never", which is "off"."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(f"[behavior]\nprompt_recall = {raw}\n", encoding="utf-8")
+    assert load_config(config_path).behavior.prompt_recall == expected
+
+
+def test_prompt_recall_garbage_falls_back_to_project_loudly(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        '[behavior]\nprompt_recall = "sometimes"\n', encoding="utf-8"
+    )
+    with caplog.at_level("WARNING", logger="bettermemory.config"):
+        cfg = load_config(config_path)
+    assert cfg.behavior.prompt_recall == "project"
+    assert any("prompt_recall" in record.getMessage() for record in caplog.records)
+
+
+def test_prompt_recall_and_session_brief_defaults() -> None:
+    from bettermemory.config import BehaviorConfig
+
+    assert BehaviorConfig().prompt_recall == "project"
+    assert BehaviorConfig().session_brief is True
+    assert not hasattr(BehaviorConfig(), "recall_in_project")
+
+
+def test_recall_in_project_is_a_removed_key_with_a_notice(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`recall_in_project` retired with the recall surface: delivery in the
+    caller's project is the default mode. A config that still carries the
+    line loads, ignores it, and says so once."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[behavior]\nrecall_in_project = false\n", encoding="utf-8")
+    with caplog.at_level("WARNING", logger="bettermemory.config"):
+        cfg = load_config(config_path)
+        load_config(config_path)
+    assert cfg.behavior.prompt_recall == "project"
+    notices = [
+        record.getMessage()
+        for record in caplog.records
+        if "recall_in_project" in record.getMessage()
+    ]
+    assert len(notices) == 1
+    assert "removed" in notices[0]

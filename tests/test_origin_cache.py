@@ -194,28 +194,33 @@ def test_a_capture_after_a_lone_hooks_idle_gap_runs_no_git(
 def test_a_lone_session_start_block_after_idle_reuses_the_capture(
     tmp_path: Path, probes: list[tuple[str, ...]], clock: _Clock
 ) -> None:
-    """The daemon's session-start endpoint builds its block with
-    `hook.session_start_block`, which captures the caller's origin. Two
+    """The daemon's session-start endpoint builds the session brief with
+    `recall.session_brief`, which captures the caller's origin. Two
     session starts 2.2 s apart, the shape of a session-start firing alone,
-    run the four probes once, and read the same block."""
-    from bettermemory import hook
+    run the four probes once, and read the same brief. The memory cites
+    no path, so its verdict needs no git of its own."""
+    from bettermemory.config import Config, StorageConfig
+    from bettermemory.recall import session_brief
     from bettermemory.store import Store
 
     repo = _repo(tmp_path / "repo")
+    config = Config(storage=StorageConfig(directory=str(tmp_path / "store")))
     with Store(tmp_path / "store") as store:
-        store.write(
-            content="the release checklist lives in docs",
+        written = store.write(
+            content="prefer short release notes in this project",
             scopes=["tools"],
             origin=capture(repo),
         )
+        store.mark_verified(written.id)
         _caches.clear_all()
         probes.clear()
-        first = hook.session_start_block(store, cwd=repo)
+        first = session_brief(session_id="s", cwd=repo, config=config, store=store)
         assert probes == _PROBES
-        assert first[0] is not None
+        assert first.ids == (written.id,)
         probes.clear()
         clock.advance(2.2)
-        assert hook.session_start_block(store, cwd=repo) == first
+        again = session_brief(session_id="s", cwd=repo, config=config, store=store)
+        assert again.stdout == first.stdout
         assert probes == []
 
 

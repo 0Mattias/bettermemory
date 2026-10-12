@@ -57,20 +57,41 @@ def _hook(
     )
 
 
+def _briefable_repo(tmp_path: Path) -> Path:
+    """A git repository holding one memory the session brief shows:
+    written there and verified, its body citing no path."""
+    from bettermemory.origin import capture
+
+    from .test_verdict import _repo
+
+    repo = _repo(tmp_path)
+    with Store(tmp_path / "store") as store:
+        written = store.write(
+            content="prefer short release notes in this project",
+            scopes=["projects:foo"],
+            origin=capture(repo),
+        )
+        store.mark_verified(written.id)
+    return repo
+
+
+_BRIEF_HEAD = (
+    "bettermemory brief: the 1 newest checked memory written in this repository."
+)
+
+
 def test_session_start_prints_the_block_through_the_daemon(
     tmp_path: Path, daemon_env: dict[str, str]
 ) -> None:
-    with Store(tmp_path / "store") as store:
-        store.write(content="a global preference", scopes=["personal-context"])
+    repo = _briefable_repo(tmp_path)
     assert _cli(["up", "--port", "0"], daemon_env).returncode == 0
     _wait_running(tmp_path)
-    result = _hook(["hook", "session-start"], daemon_env, {"cwd": str(tmp_path)})
+    payload = {"cwd": str(repo), "session_id": "sess_brief", "source": "startup"}
+    result = _hook(["hook", "session-start"], daemon_env, payload)
     assert result.returncode == 0, result.stderr
-    assert result.stdout.startswith(
-        "bettermemory: 1 memory is in scope for this repository."
-    )
+    assert result.stdout.startswith(_BRIEF_HEAD)
     # The 8.x name is an alias of the same client.
-    alias = _hook(["session-start"], daemon_env, {"cwd": str(tmp_path)})
+    alias = _hook(["session-start"], daemon_env, payload)
     assert alias.returncode == 0, alias.stderr
     assert alias.stdout == result.stdout
 
@@ -78,11 +99,14 @@ def test_session_start_prints_the_block_through_the_daemon(
 def test_hook_starts_the_daemon_when_none_answers(
     tmp_path: Path, daemon_env: dict[str, str]
 ) -> None:
-    with Store(tmp_path / "store") as store:
-        store.write(content="a global preference", scopes=["personal-context"])
-    result = _hook(["hook", "session-start"], daemon_env, {"cwd": str(tmp_path)})
+    repo = _briefable_repo(tmp_path)
+    result = _hook(
+        ["hook", "session-start"],
+        daemon_env,
+        {"cwd": str(repo), "session_id": "sess_brief"},
+    )
     assert result.returncode == 0, result.stderr
-    assert result.stdout.startswith("bettermemory: 1 memory is in scope")
+    assert result.stdout.startswith(_BRIEF_HEAD)
     _wait_running(tmp_path)
 
 
@@ -274,8 +298,7 @@ def test_a_malformed_config_does_not_stop_a_hook_that_names_its_store(
     env = dict(daemon_env)
     env["HOME"] = str(home)
     env["XDG_CONFIG_HOME"] = str(home / ".config")
-    with Store(tmp_path / "store") as store:
-        store.write(content="a global preference", scopes=["personal-context"])
+    repo = _briefable_repo(tmp_path)
     assert _cli(["up", "--port", "0"], env).returncode == 0
     _wait_running(tmp_path)
     where = subprocess.run(
@@ -295,11 +318,13 @@ def test_a_malformed_config_does_not_stop_a_hook_that_names_its_store(
     good = config_path.read_text(encoding="utf-8")
     config_path.write_text("[behavior\n", encoding="utf-8")
     try:
-        result = _hook(["hook", "session-start"], env, {"cwd": str(tmp_path)})
-        assert result.returncode == 0
-        assert result.stdout.startswith("bettermemory: 1 memory is in scope"), (
-            result.stderr
+        result = _hook(
+            ["hook", "session-start"],
+            env,
+            {"cwd": str(repo), "session_id": "sess_brief"},
         )
+        assert result.returncode == 0
+        assert result.stdout.startswith(_BRIEF_HEAD), result.stderr
     finally:
         config_path.write_text(good, encoding="utf-8")
         _cli(["down"], env, timeout=30)
@@ -342,8 +367,8 @@ def test_the_hook_replaces_a_daemon_of_another_version_and_keeps_its_own(
     starts reports the version the hook compares against (the version
     file's, which is pyproject's), so the next hook keeps it rather than
     replacing it again."""
-    with Store(tmp_path / "store") as store:
-        store.write(content="a global preference", scopes=["personal-context"])
+    repo = _briefable_repo(tmp_path)
+    payload = {"cwd": str(repo), "session_id": "sess_brief"}
     stale = _StaleDaemon(("127.0.0.1", 0), _StaleHandler)
     thread = threading.Thread(target=stale.serve_forever, daemon=True)
     thread.start()
@@ -359,9 +384,9 @@ def test_the_hook_replaces_a_daemon_of_another_version_and_keeps_its_own(
                 "started": "2026-01-01T00:00:00Z",
             },
         )
-        first = _hook(["hook", "session-start"], daemon_env, {"cwd": str(tmp_path)})
+        first = _hook(["hook", "session-start"], daemon_env, payload)
         assert first.returncode == 0, first.stderr
-        assert first.stdout.startswith("bettermemory: 1 memory is in scope")
+        assert first.stdout.startswith(_BRIEF_HEAD)
         assert stale.shutdown_calls == 1
         state = _wait_running(tmp_path)
         assert state["version"] == _pyproject_version()
@@ -369,7 +394,7 @@ def test_the_hook_replaces_a_daemon_of_another_version_and_keeps_its_own(
         answer = _daemon_client.health(state["port"])
         assert answer is not None and answer["version"] == state["version"]
 
-        second = _hook(["hook", "session-start"], daemon_env, {"cwd": str(tmp_path)})
+        second = _hook(["hook", "session-start"], daemon_env, payload)
         assert second.stdout == first.stdout
         assert _wait_running(tmp_path)["pid"] == state["pid"], "kept, not replaced"
     finally:

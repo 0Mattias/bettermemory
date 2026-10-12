@@ -2412,6 +2412,22 @@ class TestComputeReport:
         doc = compute_report([], events, version="0-test")
         assert doc.distinct_session_count == 1
 
+    def test_a_session_brief_counts_its_session_and_no_tool(self) -> None:
+        """`session_brief` is recorded by the SessionStart hook INSIDE the
+        client's session, under the transcript id that session's
+        `turn_audited` rows carry: it must keep the session counted (an
+        in-session kind, not an admin one) and must not count as a tool
+        call or surface as unmapped."""
+        assert "session_brief" in _IN_SESSION_SIDE_EFFECT_KINDS
+        assert "session_brief" in _KNOWN_SIDE_EFFECT_KINDS
+        assert "session_brief" not in ADMIN_RECORDED_EVENT_KINDS
+        events = [_ev("session_brief", session="s-real", ids=["m1"])]
+        doc = compute_report([], events, version="0-test")
+        assert doc.distinct_session_count == 1
+        usage = compute_tool_usage(events)
+        assert usage.total_tool_calls == 0
+        assert usage.unmapped_event_kinds == {}
+
     def test_in_session_side_effects_still_count_as_sessions(self) -> None:
         """The complement of the exclusion above: side-effect kinds the
         recorder writes INSIDE a live client session carry that client's

@@ -11,9 +11,22 @@ model of a localhost daemon. The SDK's DNS-rebinding protection stays on
 The MCP app is the one `builder.build_server` returns, served stateless
 with JSON responses for 2026-07-28 clients; per-client session state is
 keyed by `identity.registry_key` on the ``x-bettermemory-session`` header
-the stdio shim sets per process (`shim.py`). The hook bodies are
-`hook.py`'s own functions on the daemon's store, so a hook is one HTTP
-round trip instead of a process that imports the SDK and opens the store.
+the stdio shim sets per process (`shim.py`). The hook bodies are the
+recall surface's (`recall.session_brief`, `recall.prompt_recall`) and the
+Stop audit's (`hook.audit_transcript`), so a hook is one HTTP round trip
+instead of a process that imports the SDK and opens the store.
+
+The session-start and prompt bodies run on a worker thread
+(`anyio.to_thread.run_sync`), so their store reads and their git work
+never block the event loop the MCP surface is served from. SQLite binds a
+connection to the thread that opened it, so each worker thread reads and
+records through its own connection to the store (`_WorkerStores`). The
+recall surface's per-session state (`recall.RecallState`) is the
+daemon's, one for its lifetime, lock-guarded.
+
+Every hook endpoint answers ``stdout`` (the text the harness injects,
+unchanged) and beside it ``surface``, ``ids``, ``chars``, ``rule`` and
+``event_id``: what an adapter for another harness wraps.
 """
 
 from __future__ import annotations
@@ -22,10 +35,12 @@ import logging
 import os
 import secrets
 import socket
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, cast
 
+import anyio.to_thread
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -94,6 +109,48 @@ def _cwd_of(payload: dict[str, Any]) -> Path | None:
     return Path(str(cwd)) if isinstance(cwd, str) and cwd else None
 
 
+def _text(payload: dict[str, Any], name: str) -> str | None:
+    value = payload.get(name)
+    return value if isinstance(value, str) and value else None
+
+
+class _WorkerStores:
+    """One connection to the daemon's store per worker thread.
+
+    SQLite refuses a connection on any thread but the one that opened it,
+    and the hook bodies run on `anyio`'s worker threads, so each thread
+    opens its own (`Store.reopen`) on first use and keeps it for the
+    thread's life. The connections share the file, its WAL and its key;
+    every write is its own ``BEGIN IMMEDIATE`` transaction, the same
+    discipline a CLI process writing beside the daemon already relies on."""
+
+    def __init__(self, store: Store) -> None:
+        self._store = store
+        self._local = threading.local()
+
+    def get(self) -> Store:
+        held = getattr(self._local, "store", None)
+        if held is None:
+            held = self._store.reopen()
+            self._local.store = held
+        return cast(Store, held)
+
+
+def _failed(surface: str, exc: Exception) -> Response:
+    return JSONResponse(
+        {
+            "stdout": "",
+            "surface": surface,
+            "ids": [],
+            "chars": 0,
+            "rule": None,
+            "event_id": None,
+            "error": f"{exc.__class__.__name__}: {exc}",
+        },
+        status_code=500,
+    )
+
+
 def build_app(
     *,
     config: Config,
@@ -106,9 +163,12 @@ def build_app(
     endpoints, ``/health`` and the shutdown endpoint, behind the bearer
     check. `shutdown` is called by ``POST /api/v1/admin/shutdown``."""
     from . import hook as _hook
+    from . import recall as _recall
 
     served_version = version if version is not None else _version()
     mcp = build_server(config=config, store=store)
+    recall_state = _recall.RecallState(background=True)
+    worker_stores = _WorkerStores(store)
 
     @_route(mcp, "/health", ["GET"])
     async def health(request: Request) -> Response:
@@ -124,50 +184,72 @@ def build_app(
     @_route(mcp, "/api/v1/hook/session-start", ["POST"])
     async def hook_session_start(request: Request) -> Response:
         payload = await _json_body(request)
+
+        def body() -> _recall.HookResult:
+            return _recall.session_brief(
+                session_id=_text(payload, "session_id"),
+                source=_text(payload, "source"),
+                harness=_text(payload, "harness"),
+                transcript_path=_text(payload, "transcript_path"),
+                cwd=_cwd_of(payload),
+                config=config,
+                store=worker_stores.get(),
+                state=recall_state,
+            )
+
         try:
-            block, note = _hook.session_start_block(store, cwd=_cwd_of(payload))
+            result = await anyio.to_thread.run_sync(body)
         except Exception as exc:  # noqa: BLE001 - reported, never raised at the hook
             log.warning(
                 "hook session-start failed: %s: %s", exc.__class__.__name__, exc
             )
-            return JSONResponse(
-                {"stdout": "", "error": f"{exc.__class__.__name__}: {exc}"},
-                status_code=500,
-            )
-        if note:
-            log.info("%s", note)
-        return JSONResponse({"stdout": block or ""})
+            return _failed("session_brief", exc)
+        return JSONResponse(result.to_response())
 
     @_route(mcp, "/api/v1/hook/prompt", ["POST"])
     async def hook_prompt(request: Request) -> Response:
         payload = await _json_body(request)
-        prompt = payload.get("prompt")
+        prompt = _text(payload, "prompt")
         session_id = payload.get("session_id")
-        if not isinstance(prompt, str) or not prompt or not session_id:
-            return JSONResponse({"stdout": ""})
-        try:
-            block = _hook.run_prompt_recall(
+        if prompt is None or not session_id:
+            return JSONResponse(_recall.HookResult.empty("prompt_recall").to_response())
+
+        def body() -> _recall.HookResult:
+            return _recall.prompt_recall(
                 prompt=prompt,
                 session_id=str(session_id),
-                config=config,
-                store=store,
+                harness=_text(payload, "harness"),
+                prompt_id=_text(payload, "prompt_id"),
+                transcript_path=_text(payload, "transcript_path"),
                 cwd=_cwd_of(payload),
+                config=config,
+                store=worker_stores.get(),
+                state=recall_state,
             )
+
+        try:
+            result = await anyio.to_thread.run_sync(body)
         except Exception as exc:  # noqa: BLE001
             log.warning("hook prompt failed: %s: %s", exc.__class__.__name__, exc)
-            return JSONResponse(
-                {"stdout": "", "error": f"{exc.__class__.__name__}: {exc}"},
-                status_code=500,
-            )
-        return JSONResponse({"stdout": block or ""})
+            return _failed("prompt_recall", exc)
+        return JSONResponse(result.to_response())
 
     @_route(mcp, "/api/v1/hook/stop", ["POST"])
     async def hook_stop(request: Request) -> Response:
         payload = await _json_body(request)
         transcript = payload.get("transcript_path")
         session_id = payload.get("session_id")
+        quiet_fields: dict[str, Any] = {
+            "stdout": "",
+            "result": None,
+            "surface": "turn_audit",
+            "ids": [],
+            "chars": 0,
+            "rule": None,
+            "event_id": None,
+        }
         if not transcript or not session_id:
-            return JSONResponse({"stdout": "", "result": None})
+            return JSONResponse(quiet_fields)
         try:
             result = _hook.audit_transcript(
                 transcript_path=Path(str(transcript)),
@@ -180,21 +262,25 @@ def build_app(
         except Exception as exc:  # noqa: BLE001
             log.warning("hook stop failed: %s: %s", exc.__class__.__name__, exc)
             return JSONResponse(
-                {
-                    "stdout": "",
-                    "result": None,
-                    "error": f"{exc.__class__.__name__}: {exc}",
-                },
+                {**quiet_fields, "error": f"{exc.__class__.__name__}: {exc}"},
                 status_code=500,
             )
         if result is None:
-            return JSONResponse({"stdout": "", "result": None})
+            return JSONResponse(quiet_fields)
         import json as _json
 
         stdout = (
             "" if payload.get("quiet", True) else _json.dumps(result, sort_keys=True)
         )
-        return JSONResponse({"stdout": stdout, "result": result})
+        return JSONResponse(
+            {
+                **quiet_fields,
+                "stdout": stdout,
+                "result": result,
+                "chars": len(stdout),
+                "rule": result.get("threshold_rule"),
+            }
+        )
 
     @_route(mcp, "/api/v1/admin/shutdown", ["POST"])
     async def admin_shutdown(request: Request) -> Response:
