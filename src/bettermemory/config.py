@@ -402,6 +402,14 @@ class Config:
 
     # ---- methods ----------------------------------------------------------
 
+    def default_directory(self) -> Path:
+        """The directory a shell with no `BETTERMEMORY_DIR` resolves outside
+        any project store: ``[storage] directory`` when set, else the
+        global default. Resolved, and nothing is warned about."""
+        if self.storage.directory:
+            return Path(self.storage.directory).expanduser().resolve()
+        return (Path.home() / GLOBAL_DIR_NAME).resolve()
+
     def resolved_directory(self, cwd: Path | None = None) -> Path:
         """Apply the resolution rule and return an absolute directory path."""
         env_override = os.environ.get(ENV_DIR_OVERRIDE)

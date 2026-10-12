@@ -167,7 +167,7 @@ def test_the_brief_of_a_fresh_store_leads_with_the_notice(
             store=store,
             state=RecallState(background=False),
         )
-        assert shown.stdout == orphan_notice(store)
+        assert shown.stdout == orphan_notice(store, _config(store_dir))
         assert "\n" not in shown.stdout
         assert "created fresh" in shown.stdout
         assert orphan.name in shown.stdout
@@ -176,7 +176,7 @@ def test_the_brief_of_a_fresh_store_leads_with_the_notice(
         assert shown.chars == len(shown.stdout)
         assert shown.ids == ()
         # Short: the paths aside, two sentences.
-        assert len(shown.stdout) - len(orphan.name) - len(str(store.path)) < 300
+        assert len(shown.stdout) - len(orphan.name) - len(str(store.path)) < 330
         orphan.unlink()
         again = session_brief(
             session_id="sess-2",
@@ -217,19 +217,19 @@ def test_the_notice_shortens_its_path(
     near.mkdir(parents=True)
     _orphan(near, "20261012T053900Z", keys)
     with Store(near, keys_dir=keys) as store:
-        notice = orphan_notice(store)
+        notice = orphan_notice(store, _config(near))
     assert "bettermemory: ~/.bettermemory/memory.sqlite was created" in notice
     assert str(home) not in notice
     deep = tmp_path / "/".join(["a-directory-name-of-some-length"] * 7)
     deep.mkdir(parents=True)
     _orphan(deep, "20261012T053900Z", keys)
     with Store(deep, keys_dir=keys) as store:
-        notice = orphan_notice(store)
+        notice = orphan_notice(store, _config(deep))
     assert len(str(deep / "memory.sqlite")) > 200
     assert "..." in notice
     assert str(deep / "memory.sqlite")[:90] in notice
     assert notice.split(" was created")[0].endswith("-of-some-length/memory.sqlite")
-    assert len(notice) < 540
+    assert len(notice) < 570
 
 
 @pytest.mark.parametrize("follows_the_steps", [True, False])
@@ -293,7 +293,7 @@ def test_the_notice_leads_a_brief_that_shows_memories(
     world.fresh("the deploy runs from the release branch")
     shown = world.brief()
     first, rest = shown.stdout.split("\n", 1)
-    assert first == orphan_notice(world.store)
+    assert first == orphan_notice(world.store, world.config)
     assert orphan.name in first
     assert len(shown.ids) == 1
     assert shown.ids[0] in rest
@@ -331,3 +331,35 @@ async def test_health_lists_no_orphans_for_an_ordinary_store(
         assert body["store_orphans"] == []
     finally:
         store.close()
+
+
+def test_the_notice_names_a_store_down_would_not_resolve(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`down` stops the daemon of the store its caller resolves: a store
+    other than the one a shell without ``BETTERMEMORY_DIR`` resolves is
+    named in the command, home as ``~`` and quoted for the shell; the
+    default store is not."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    keys = tmp_path / "keys"
+    default = home / ".bettermemory"
+    elsewhere = home / "scratch stores" / "one"
+    for directory in (default, elsewhere):
+        directory.mkdir(parents=True)
+        _orphan(directory, "20261012T053900Z", keys)
+    config = _config(default)
+    with Store(default, keys_dir=keys) as store:
+        notice = orphan_notice(store, config)
+    assert "run `bettermemory down`," in notice
+    assert "BETTERMEMORY_DIR" not in notice
+    with Store(elsewhere, keys_dir=keys) as store:
+        notice = orphan_notice(store, config)
+    assert "run `BETTERMEMORY_DIR='~/scratch stores/one' bettermemory down`," in notice
+    assert str(home) not in notice
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    _orphan(plain, "20261012T053900Z", keys)
+    with Store(plain, keys_dir=keys) as store:
+        notice = orphan_notice(store, Config())
+    assert f"run `BETTERMEMORY_DIR={plain.resolve()} bettermemory down`," in notice
