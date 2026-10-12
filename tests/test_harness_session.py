@@ -353,6 +353,57 @@ def test_a_window_whose_hooks_still_run_is_foreign() -> None:
     )
 
 
+def _race() -> list[dict[str, Any]]:
+    """The slice 4 verifier's race: a /clear in one window while another
+    window in the same checkout is in a turn that began before it."""
+    return [
+        _at("turn_audited", BEFORE_CLEAR, 0, triggered_from="stop_hook"),
+        _at("search", "sess_a", 1, harness_session=BEFORE_CLEAR),
+        _at("turn_audited", "window-b", 2, triggered_from="stop_hook"),
+        _at("search", "sess_b", 3, harness_session="window-b"),
+        _at("turn_audited", AFTER_CLEAR, 10, triggered_from="stop_hook"),
+        _at("search", "sess_a", 11, harness_session=BEFORE_CLEAR),
+        _at("search", "sess_b", 12, harness_session="window-b"),
+    ]
+
+
+def test_two_servers_the_log_cannot_tell_apart_are_never_chosen() -> None:
+    """Neither stamp's hooks run beside the new conversation and both
+    servers wrote in the checkout since it began: the bridge used to take
+    the latest, the other window's, and now sets both aside."""
+    events = _race()
+    assert bridged_session(events, harness_session=AFTER_CLEAR, worktree_root="/w") is (
+        None
+    )
+    assert joined_sessions(events, harness_session=AFTER_CLEAR, worktree_root="/w") == (
+        set()
+    )
+    # An unstamped server in the checkout is still the bridge's answer.
+    unstamped = events + [_at("search", "sess_plain", 13)]
+    assert (
+        bridged_session(unstamped, harness_session=AFTER_CLEAR, worktree_root="/w")
+        == "sess_plain"
+    )
+
+
+def test_the_other_windows_next_hook_row_restores_the_clear_join() -> None:
+    events = _race() + [
+        _at("turn_audited", "window-b", 14, triggered_from="stop_hook"),
+    ]
+    assert bridged_session(events, harness_session=AFTER_CLEAR, worktree_root="/w") == (
+        "sess_a"
+    )
+
+
+def test_an_idle_window_beside_a_clear_keeps_the_join() -> None:
+    """The other window's server wrote nothing since the clear: only this
+    window's server is a candidate, and the clear keeps its join."""
+    events = _race()[:-1]
+    assert bridged_session(events, harness_session=AFTER_CLEAR, worktree_root="/w") == (
+        "sess_a"
+    )
+
+
 def test_before_its_own_first_hook_row_any_hooked_conversation_is_live() -> None:
     events = [
         _at("turn_audited", BEFORE_CLEAR, 0, triggered_from="stop_hook"),

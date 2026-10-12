@@ -210,7 +210,17 @@ and `memory_show` read. The daemon serves all three bodies at
 `/api/v1/hook/`. They run out of process, so they read the store rather
 than the server's session state, and join the conversation's tool rows
 by the harness session stamp, the worktree bridge when nothing carries
-it. `recall_counters.py` and `recall_review.py` are the surface's
+it. Claude Code names the conversation anew on /clear and /resume while
+the server keeps the id it was spawned with, so a server stamped with
+another id is another window's only when that id's hooks run beside this
+conversation (a hook row at or after its first); otherwise the bridge
+may take it as this window's own (`hook.runs_beside`). Its costs: a
+/resume joins from its second hook call; and when another window in the
+same checkout is in a turn that began before a /clear, the two servers
+look alike until that window's next hook row, so the bridge sets both
+aside once both have written since the clear (a missed join) and takes
+the other window's while it alone has (a foreign join).
+`recall_counters.py` and `recall_review.py` are the surface's
 measurement: the eval's surfaces section and `bettermemory recall
 review`.
 

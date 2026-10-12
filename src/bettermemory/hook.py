@@ -105,7 +105,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Collection, Iterable
+from typing import TYPE_CHECKING, Any, Collection, Iterable, Mapping
 
 from ._fsutil import bounded_stream_read, bounded_tail_read
 from .attribution import attribute_uses
@@ -1053,12 +1053,33 @@ def harness_joined_sessions(
     return found
 
 
-def live_harness_sessions(
-    events: Iterable[dict[str, Any]], harness_session: str | None
-) -> set[str]:
-    """The other harness sessions whose hooks run beside `harness_session`
-    in `events`: those with a hook row of their own, and, once this
-    conversation has a hook row there, one at or after its first.
+def hook_spans(
+    events: Iterable[Mapping[str, Any]],
+) -> dict[str, tuple[datetime, datetime]]:
+    """Per harness session, the first and the last of its hook rows in
+    `events` (rows a hook wrote: `triggered_from` names one)."""
+    spans: dict[str, tuple[datetime, datetime]] = {}
+    for event in events:
+        if event.get("triggered_from") not in _OUT_OF_PROCESS_TRIGGERS:
+            continue
+        session = event.get("session") or event.get("session_id")
+        stamp = parse_event_ts(event.get("ts"))
+        if not isinstance(session, str) or not session or stamp is None:
+            continue
+        span = spans.get(session)
+        if span is None:
+            spans[session] = (stamp, stamp)
+        else:
+            spans[session] = (min(span[0], stamp), max(span[1], stamp))
+    return spans
+
+
+def runs_beside(
+    spans: Mapping[str, tuple[datetime, datetime]], other: str, conversation: str
+) -> bool:
+    """Whether harness session `other`'s hooks run beside `conversation`'s
+    (`spans` from `hook_spans`): it has a hook row of its own, and, once
+    `conversation` has one, a hook row at or after its first.
 
     A server's stamp is fixed when it is spawned (the in-process server
     reads CLAUDE_CODE_SESSION_ID once, the shim forwards what it was
@@ -1066,29 +1087,30 @@ def live_harness_sessions(
     and /resume. A stamp whose conversation shows no hook row, or went
     quiet before this one began, is this window's own server under its
     old id, not another window's; a conversation whose hooks still run
-    is another window. Before this conversation has a hook row of its own
-    any conversation with one counts as live, so a /resume whose brief
-    showed nothing joins through the bridge from its second hook call."""
+    is another window. Before `conversation` has a hook row of its own
+    any conversation with one counts as running beside it, so a /resume
+    whose brief showed nothing joins through the bridge from its second
+    hook call. The hooks' join (`bridged_session`) and the eval's
+    surfaces section (`recall_counters`) both read a stamp by this rule."""
+    span = spans.get(other)
+    if span is None:
+        return False
+    own = spans.get(conversation)
+    return own is None or span[1] >= own[0]
+
+
+def live_harness_sessions(
+    events: Iterable[dict[str, Any]], harness_session: str | None
+) -> set[str]:
+    """The other harness sessions whose hooks run beside `harness_session`
+    in `events` (`runs_beside`)."""
     if not harness_session:
         return set()
-    hook_rows: list[tuple[datetime, str]] = []
-    own_first: datetime | None = None
-    for event in events:
-        if event.get("triggered_from") not in _OUT_OF_PROCESS_TRIGGERS:
-            continue
-        session = _session_of(event)
-        stamp = parse_event_ts(event.get("ts"))
-        if session is None or stamp is None:
-            continue
-        if session == harness_session:
-            if own_first is None or stamp < own_first:
-                own_first = stamp
-            continue
-        hook_rows.append((stamp, session))
+    spans = hook_spans(events)
     return {
         session
-        for stamp, session in hook_rows
-        if own_first is None or stamp >= own_first
+        for session in spans
+        if session != harness_session and runs_beside(spans, session, harness_session)
     }
 
 
@@ -1106,10 +1128,31 @@ def bridged_session(
     the newest is the live one, the reset-on-restart the bridge keeps).
     With no such event, `_latest_in_process_session` answers, over the
     events of every session NOT stamped with another live harness session
-    (`live_harness_sessions`): a server that declared it serves another
-    window's conversation is never this one's bridge, while a server
-    stamped with this window's id from before a /clear or /resume is
-    found by the bridge as 9.0.0 found it."""
+    (`runs_beside`): a server that declared it serves another window's
+    conversation is never this one's bridge, while a server stamped with
+    this window's id from before a /clear or /resume is found by the
+    bridge as 9.0.0 found it.
+
+    The bridge never chooses between two such servers the log cannot
+    tell apart: when servers stamped with two or more ids that do not
+    run beside this conversation have written in this checkout since
+    its first hook row, every server stamped with another id is set
+    aside, as before the /clear repair. That is the case of a /clear in
+    one window while another window in the same checkout is in a turn
+    that began before the clear (its last hook row predates this
+    conversation's first): the other window's server looks exactly like
+    this window's own under its old id until that window's next hook
+    row, and the latest of the two would be a coin toss.
+
+    What remains: a /resume's conversation joins through the bridge only
+    from its second hook call (`runs_beside`); while another window's
+    turn that began before a /clear is still running, the clear loses
+    its join until that window's next hook row (a missed join, as before
+    the repair); and when this window's server has not written since the
+    clear while that turn's server has, that server is the only
+    candidate and the bridge takes it until that window's next hook row
+    (a foreign join: nothing on the log tells the two apart then; from
+    the first row this window's server writes, it is the missed join)."""
     if harness_session:
         stamped_by: dict[str, str] = {}
         for event in reversed(events):
@@ -1125,8 +1168,32 @@ def bridged_session(
                 return session
             stamped_by.setdefault(session, stamped)
         if stamped_by:
-            live = live_harness_sessions(events, harness_session)
-            foreign = {s for s, stamped in stamped_by.items() if stamped in live}
+            spans = hook_spans(events)
+            foreign = {
+                s
+                for s, stamped in stamped_by.items()
+                if runs_beside(spans, stamped, harness_session)
+            }
+            own = spans.get(harness_session)
+            if own is not None:
+                stamps: set[str] = set()
+                for event in events:
+                    if event.get("triggered_from") in _OUT_OF_PROCESS_TRIGGERS:
+                        continue
+                    session = _session_of(event)
+                    if session is None or session not in stamped_by:
+                        continue
+                    if session in foreign:
+                        continue
+                    if worktree_root is not None and (
+                        event.get("worktree_root") != worktree_root
+                    ):
+                        continue
+                    stamp = parse_event_ts(event.get("ts"))
+                    if stamp is not None and stamp >= own[0]:
+                        stamps.add(stamped_by[session])
+                if len(stamps) > 1:
+                    foreign = set(stamped_by)
             if foreign:
                 events = [e for e in events if _session_of(e) not in foreign]
     return _latest_in_process_session(events, worktree_root=worktree_root)
