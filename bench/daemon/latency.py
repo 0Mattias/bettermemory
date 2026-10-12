@@ -81,6 +81,33 @@ store (`~/.bettermemory`, `~/.claude-memory` or `$BETTERMEMORY_DIR`).
     python bench/daemon/latency.py --arm write \\
         --tgz ~/.cache/bettermemory-v9/live-copy-2026-09-25.tgz \\
         --out bench/daemon/results/latency-9.0.0-2026-09-30-write-baseline.json
+
+The prompt arm (`--arm prompt`, unit RS's RS-P3) times the per-prompt
+recall, each prompt PROMPT_GAP_SECONDS (3 s) after the last:
+
+  prompt_service_spaced    `/api/v1/hook/prompt` from a warm client in this
+                           process (`_daemon_client.post`), the daemon's own
+                           answer time; N prompts.
+  prompt_hook_wall_spaced  `bettermemory hook prompt` as the harness runs it:
+                           one process per call, the payload on stdin, wall
+                           time from spawn to exit; the same N prompts.
+
+The prompts are a fixed workload (`prompt_workload`): every third one a
+public question as written (under 200 characters), the others the public
+questions joined in a seeded order and cut at a length drawn uniformly
+from 200 to 2,000 characters, so the probe reads long prompts as well as
+short ones. They are sent from the repository's root, in sessions of
+PROMPT_SESSION_LEN prompts each, so the session cooldown sees a session's
+later prompts as well as its first, after PROMPT_WARM_UPS untimed prompts
+from a session of their own. The daemon is started with `up --port
+0` on the scratch store, never on the configured port. The artifact
+records the deliveries (prompts answered with at least one pointer), the
+pointers, and the ids a session was shown twice (which the cooldown
+forbids).
+
+    python bench/daemon/latency.py --arm prompt \\
+        --v8 ~/.cache/bettermemory-v9/live-copy \\
+        --out bench/daemon/results/latency-9.0.0-2026-10-11-prompt.json
 """
 
 from __future__ import annotations
@@ -114,6 +141,18 @@ PYTHON = sys.executable
 # so the numbers measure the same thing whatever the origin cache's
 # lifetime is.
 COLD_IDLE_SECONDS = 2.2
+
+# The prompt arm: the gap between prompts, the workload's seed, the share
+# of short prompts (every PROMPT_SHORT_EVERY-th is a question as written),
+# the long prompts' length range, and the prompts per session.
+PROMPT_GAP_SECONDS = 3.0
+PROMPT_SEED = 20261011
+PROMPT_SHORT_EVERY = 3
+PROMPT_LONG_RANGE = (200, 2_000)
+PROMPT_SESSION_LEN = 6
+# Untimed prompts sent first, from their own session, as the other arms
+# warm up with three calls.
+PROMPT_WARM_UPS = 3
 
 
 def _pct(values: list[float], pct: float) -> float:
@@ -363,6 +402,209 @@ def hook_service_lone(scratch: Path, n: int, cwd: Path, *, stale: bool) -> list[
         )
         times.append(time.perf_counter() - started)
     return times
+
+
+# ---------------------------------------------------------------------------
+# The prompt arm (unit RS, RS-P3)
+# ---------------------------------------------------------------------------
+
+
+def prompt_workload(n: int, seed: int = PROMPT_SEED) -> list[str]:
+    """`n` prompts: every PROMPT_SHORT_EVERY-th a public question as
+    written, the rest the questions joined in a seeded order and cut at a
+    length drawn uniformly from PROMPT_LONG_RANGE."""
+    pool = queries(10_000)
+    rng = random.Random(seed)
+    out: list[str] = []
+    for index in range(n):
+        if index % PROMPT_SHORT_EVERY == 0:
+            out.append(pool[rng.randrange(len(pool))])
+            continue
+        target = rng.randint(*PROMPT_LONG_RANGE)
+        order = list(pool)
+        rng.shuffle(order)
+        text = ""
+        for question in order:
+            text = f"{text} {question}" if text else question
+            if len(text) >= target:
+                break
+        out.append(text[:target])
+    return out
+
+
+def _prompt_session(index: int) -> str:
+    return f"bench-prompt-{index // PROMPT_SESSION_LEN:03d}"
+
+
+def prompt_service_spaced(
+    scratch: Path, prompts: list[str], cwd: Path, *, gap: float = PROMPT_GAP_SECONDS
+) -> tuple[list[float], list[dict[str, Any]]]:
+    """Each prompt posted to /api/v1/hook/prompt from a warm client, `gap`
+    seconds after the last answer. Returns the times and the replies."""
+    from bettermemory._daemon_client import post, read_state
+
+    state = read_state(scratch / "state", scratch / "store" / "memory.sqlite")
+    if state is None:
+        raise SystemExit("no daemon state for the prompt arm")
+    for prompt in prompts[:PROMPT_WARM_UPS]:
+        post(
+            state["port"],
+            state["token"],
+            "/api/v1/hook/prompt",
+            {"prompt": prompt, "session_id": "bench-prompt-warm-up", "cwd": str(cwd)},
+            timeout=30,
+        )
+    times: list[float] = []
+    replies: list[dict[str, Any]] = []
+    for index, prompt in enumerate(prompts):
+        time.sleep(gap)
+        payload = {
+            "prompt": prompt,
+            "session_id": f"{_prompt_session(index)}-service",
+            "cwd": str(cwd),
+        }
+        started = time.perf_counter()
+        reply = post(
+            state["port"], state["token"], "/api/v1/hook/prompt", payload, timeout=30
+        )
+        times.append(time.perf_counter() - started)
+        replies.append(reply)
+    return times, replies
+
+
+def prompt_hook_wall_spaced(
+    env: dict[str, str],
+    prompts: list[str],
+    cwd: Path,
+    *,
+    gap: float = PROMPT_GAP_SECONDS,
+) -> tuple[list[float], list[dict[str, Any]]]:
+    """`bettermemory hook prompt` once per prompt, the payload on stdin,
+    `gap` seconds after the last exit. Returns the times and the replies
+    (an empty one where the hook printed nothing)."""
+    for prompt in prompts[:PROMPT_WARM_UPS]:
+        _cli(
+            ["hook", "prompt"],
+            env,
+            stdin=json.dumps(
+                {
+                    "prompt": prompt,
+                    "session_id": "bench-prompt-warm-up",
+                    "cwd": str(cwd),
+                }
+            ),
+        )
+    times: list[float] = []
+    replies: list[dict[str, Any]] = []
+    for index, prompt in enumerate(prompts):
+        time.sleep(gap)
+        payload = json.dumps(
+            {
+                "prompt": prompt,
+                "session_id": f"{_prompt_session(index)}-wall",
+                "cwd": str(cwd),
+            }
+        )
+        started = time.perf_counter()
+        proc = _cli(["hook", "prompt"], env, stdin=payload)
+        times.append(time.perf_counter() - started)
+        if proc.returncode != 0:
+            raise SystemExit(f"hook exited {proc.returncode}: {proc.stderr[-500:]}")
+        replies.append({"stdout": proc.stdout})
+    return times, replies
+
+
+def prompt_deliveries(
+    prompts: list[str], replies: list[dict[str, Any]], suffix: str
+) -> dict[str, Any]:
+    """What the replies delivered: prompts answered with a pointer, the
+    pointers, and the ids a session was shown more than once."""
+    shown: dict[str, set[str]] = {}
+    delivered = pointers = twice = 0
+    for index, reply in enumerate(replies):
+        ids = [str(i) for i in reply.get("ids") or []]
+        if not ids:
+            continue
+        delivered += 1
+        pointers += len(ids)
+        seen = shown.setdefault(f"{_prompt_session(index)}-{suffix}", set())
+        twice += sum(1 for i in ids if i in seen)
+        seen.update(ids)
+    return {
+        "prompts": len(prompts),
+        "deliveries": delivered,
+        "pointers": pointers,
+        "ids_shown_twice_in_a_session": twice,
+    }
+
+
+def _length_buckets(prompts: list[str]) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for prompt in prompts:
+        size = len(prompt)
+        counts[
+            "under_200" if size < 200 else "200_999" if size < 1000 else "1000_2000"
+        ] += 1
+    return dict(counts)
+
+
+def run_prompt_arm(*, v8: Path, scratch: Path, n: int) -> dict[str, Any]:
+    refuse_live_store(scratch)
+    scratch.mkdir(parents=True, exist_ok=True)
+    env = _env(scratch)
+    prompts = prompt_workload(n)
+    report = migrate(v8, scratch, env)
+    print(f"migrated in {report['seconds']} s", file=sys.stderr)
+    up = _cli(["up", "--port", "0"], env)
+    if up.returncode != 0:
+        raise SystemExit(f"daemon did not start: {up.stderr[-500:]}")
+    results: dict[str, Any] = {}
+    try:
+        service, service_replies = prompt_service_spaced(scratch, prompts, ROOT)
+        results["prompt_service_spaced"] = _summary(service)
+        print(f"prompt service {results['prompt_service_spaced']}", file=sys.stderr)
+        wall, _ = prompt_hook_wall_spaced(env, prompts, ROOT)
+        results["prompt_hook_wall_spaced"] = _summary(wall)
+        print(f"prompt hook wall {results['prompt_hook_wall_spaced']}", file=sys.stderr)
+    finally:
+        _cli(["down"], env)
+
+    from bettermemory import __version__
+
+    return {
+        "kind": "daemon-latency-prompt",
+        "version": __version__,
+        "commit": _git("rev-parse", "HEAD"),
+        "run_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "machine": _machine(),
+        "store": {
+            "source": str(v8),
+            "memories_imported": report.get("memories", {}),
+            "events_imported": report.get("events", {}),
+            "migration_seconds": report["seconds"],
+        },
+        "method": {
+            "n": n,
+            "gap_seconds": PROMPT_GAP_SECONDS,
+            "seed": PROMPT_SEED,
+            "short_every": PROMPT_SHORT_EVERY,
+            "long_range": list(PROMPT_LONG_RANGE),
+            "session_len": PROMPT_SESSION_LEN,
+            "warm_ups": PROMPT_WARM_UPS,
+            "lengths": _length_buckets(prompts),
+            "cwd": "the repository root",
+            "prompt_service_spaced": (
+                "_daemon_client.post to /api/v1/hook/prompt from a warm client, "
+                "each prompt gap_seconds after the last answer"
+            ),
+            "prompt_hook_wall_spaced": (
+                "subprocess.run of `python -m bettermemory hook prompt`, wall "
+                "time, each prompt gap_seconds after the last exit"
+            ),
+        },
+        "results": results,
+        "deliveries": prompt_deliveries(prompts, service_replies, "service"),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -927,18 +1169,19 @@ def main() -> None:
     )
     parser.add_argument(
         "--arm",
-        choices=("read", "write"),
+        choices=("read", "write", "prompt"),
         default="read",
         help=(
             "read: the hook and memory_search arms (the default); write: the "
-            "memory_write arm on a copy imported from --tgz"
+            "memory_write arm on a copy imported from --tgz; prompt: the "
+            "per-prompt recall, prompts spaced 3 s apart"
         ),
     )
     parser.add_argument(
         "--v8",
         type=Path,
         default=None,
-        help="the v8 store directory to migrate into the scratch store (read arm)",
+        help="the v8 store directory to migrate into the scratch store (read and prompt arms)",
     )
     parser.add_argument(
         "--tgz",
@@ -991,7 +1234,15 @@ def main() -> None:
         print(f"wrote {args.out}", file=sys.stderr)
         return
     if args.v8 is None:
-        parser.error("the read arm needs --v8")
+        parser.error(f"the {args.arm} arm needs --v8")
+    if args.arm == "prompt":
+        scratch = args.scratch or Path(
+            tempfile.mkdtemp(prefix="bettermemory-daemon-prompt-bench-")
+        )
+        artifact = run_prompt_arm(v8=args.v8, scratch=scratch, n=args.n)
+        write_artifact(args.out, artifact)
+        print(f"wrote {args.out}", file=sys.stderr)
+        return
 
     scratch = args.scratch or Path(
         tempfile.mkdtemp(prefix="bettermemory-daemon-bench-")
