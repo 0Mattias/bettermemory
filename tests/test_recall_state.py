@@ -72,6 +72,20 @@ def test_no_id_twice_in_a_segment_and_again_after_a_compact(
     assert segments == [0, 1]
 
 
+def test_an_update_holds_the_pointer_back_in_its_segment_only(
+    world: PromptWorld,
+) -> None:
+    """An update the session made before a compact is the old segment's:
+    the new segment may point at the memory again."""
+    memory = world.write()
+    state = RecallState(background=False)
+    state.open_segment(world.store, KEY, source="startup", now=_now())
+    world.store.record_event("update", session="transcript-recall", id=memory.id)
+    assert world.recall(state=state).stdout == ""
+    state.open_segment(world.store, KEY, source="compact", now=_now())
+    assert world.recall(state=state).ids == (memory.id,)
+
+
 def test_a_brief_pointer_is_not_recalled_in_its_segment(world: PromptWorld) -> None:
     memory = world.write()
     state = RecallState(background=False)

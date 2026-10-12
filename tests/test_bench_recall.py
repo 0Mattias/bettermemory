@@ -199,13 +199,18 @@ def test_freeze_reads_read_only_and_writes_no_text(tmp_path: Path) -> None:
 
 
 def test_m4_rule_reproduces_the_session_touch_gate() -> None:
-    """M4 held an id back once an update (or show, write, verify, use)
+    """M4 held an id back once a verify (or show, write, update, use)
     under the session came before the turn; the built gate reads
-    retrievals and writes only, so the update does not hold it."""
+    retrievals, writes and updates only, so the verify does not hold it,
+    and the update holds it under both."""
+    verify = {"ts": _ts(1), "kind": "verify", "session": "sess_one", "id": A}
+    fixture = _fixture([_turn(2, [A])], events=[verify])
+    assert _deliveries(fixture, "m4") == 0
+    assert _deliveries(fixture, "rs-v1") == 1
     update = {"ts": _ts(1), "kind": "update", "session": "sess_one", "id": A}
     fixture = _fixture([_turn(2, [A])], events=[update])
     assert _deliveries(fixture, "m4") == 0
-    assert _deliveries(fixture, "rs-v1") == 1
+    assert _deliveries(fixture, "rs-v1") == 0
 
 
 def test_built_gate_holds_a_retrieved_hit_and_the_worktree_half() -> None:

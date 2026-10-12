@@ -500,3 +500,47 @@ def test_a_retrieval_stamped_before_a_clear_holds_the_pointer_back(
         store=world.store, session_id="sess_srv1", worktree_root=str(world.worktree)
     ).record("show", id=memory.id, harness_session="transcript-before")
     assert world.recall(state=RecallState(background=False)).stdout == ""
+
+
+def test_a_stamped_update_anywhere_holds_the_pointer_back(world: PromptWorld) -> None:
+    """An update joins by the stamp as a write does: this conversation's,
+    recorded from another worktree, counts."""
+    memory = world.write()
+    Recorder(store=world.store, session_id="sess_ours", worktree_root="/else").record(
+        "update", id=memory.id, harness_session="transcript-recall"
+    )
+    Recorder(
+        store=world.store, session_id="sess_newer", worktree_root=str(world.worktree)
+    ).record("scope_enable", scope="nothing")
+    assert world.recall(state=RecallState(background=False)).stdout == ""
+
+
+def test_another_conversations_stamped_update_does_not(world: PromptWorld) -> None:
+    """A concurrent conversation's stamped update in the same checkout says
+    nothing about this one, as for its write."""
+    memory = world.write()
+    Recorder(
+        store=world.store,
+        session_id="another-conversation",
+        worktree_root=str(world.worktree),
+        triggered_from="stop_hook",
+    ).record("turn_audited", verdict="ok")
+    Recorder(
+        store=world.store, session_id="sess_theirs", worktree_root=str(world.worktree)
+    ).record("update", id=memory.id, harness_session="another-conversation")
+    assert world.recall(state=RecallState(background=False)).ids == (memory.id,)
+
+
+def test_an_update_by_another_session_elsewhere_does_not(world: PromptWorld) -> None:
+    """Unstamped, an update by a session that is not this conversation's,
+    in another checkout, is neither half."""
+    memory = world.write()
+    Recorder(
+        store=world.store, session_id="sess_mine", worktree_root=str(world.worktree)
+    ).record("list", returned=[])
+    Recorder(
+        store=world.store,
+        session_id="sess_other",
+        worktree_root=str(world.tmp_path / "elsewhere"),
+    ).record("update", id=memory.id)
+    assert world.recall(state=RecallState(background=False)).ids == (memory.id,)

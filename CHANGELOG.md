@@ -236,9 +236,9 @@ surfaces leave with them. An 8.x directory is imported once by
     removed and cut at 2,000 characters, probed through the audit's own
     pool and ranker, and up to three hits delivered when they are
     relevant (medium or high), written in the caller's project, local or
-    imported, not contradicted and not already shown, retrieved or
-    written in the session segment; 900 characters at most, snippets of
-    at most 100. The one-hit miss lane is gone: `[behavior]
+    imported, not contradicted and not already shown, retrieved,
+    written or updated in the session segment; 900 characters at most,
+    snippets of at most 100. The one-hit miss lane is gone: `[behavior]
     prompt_recall` takes `project` (the default), `everywhere` or `off`
     (`true` and `false` read as `project` and `off`), and
     `recall_in_project` retires with a removed-key notice.

@@ -42,10 +42,10 @@ count that moves can be traced to the step that moved it:
              no ambient exclusion, which the built prompt recall does not
              make (the brief does).
   rs-v1      project with the built segment gate: the ids shown in the
-             segment, plus `recall._seen_in_log` over the retrievals and
-             writes before the turn (the session's own since the idle
-             window, the worktree's since the segment opened), the twelve
-             per segment and the three per block; the block rendered by
+             segment, plus `recall._seen_in_log` over the retrievals,
+             writes and updates before the turn (the session's own since
+             the idle window, the worktree's since the segment opened), the
+             twelve per segment and the three per block; the block rendered by
              `recall.render_recall_block` with the summary at its length,
              the snippet at its 100-character cap and the as-of disputed
              mark (`recall.disputed_marks` over the pairs pending at the
