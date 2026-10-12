@@ -131,6 +131,17 @@ def memory_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture(autouse=True)
+def no_harness_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test inherits the harness session of the Claude Code process
+    that may be running the suite: an in-process tool call would stamp
+    it on its events (`events.HARNESS_STAMPED_KINDS`). A test of the
+    join sets it explicitly."""
+    from bettermemory.identity import ENV_HARNESS_SESSION
+
+    monkeypatch.delenv(ENV_HARNESS_SESSION, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def keys_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Every store a test opens keeps its key under the test's own
     directory, never under the user's config directory."""

@@ -54,7 +54,7 @@ import re
 import threading
 from collections import OrderedDict
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -63,7 +63,7 @@ from . import identity
 from ._response import ResponseBuilder, isoformat_optional
 from .audit import REAUDIT_DEDUP_WINDOW_SECONDS, MissHit, prompt_recall_fields
 from .config import Config, load_config
-from .events import Recorder, _event_id_items
+from .events import HARNESS_SESSION_FIELD, Recorder, _event_id_items
 from .models import Category, Memory, generate_ulid, utcnow
 from .origin import (
     Origin,
@@ -89,17 +89,23 @@ __all__ = [
     "PROMPT_CUT_CHARS",
     "RECALL_CAP_CHARS",
     "RECALL_MAX_POINTERS",
+    "REVIEW_UNANSWERED",
     "RULE",
     "RecallPointer",
     "RecallState",
     "SEGMENT_DELIVERY_CAP",
+    "SURFACE_BRIEF",
+    "SURFACE_RECALL",
     "clean_prompt",
     "disputed_marks",
     "in_project",
+    "previous_audit_at",
     "prompt_recall",
     "render_brief",
     "render_recall_block",
+    "review_unanswered",
     "session_brief",
+    "settle_shown",
     "summarize",
 ]
 
@@ -159,9 +165,30 @@ STATE_IDLE_SECONDS = 24 * 3600
 STATE_MAX_SESSIONS = 1_000
 
 # The event kinds a session's state is rebuilt from: the two show
-# records, and the Stop audit's row, whose first stamp under a session id
-# is the earliest moment that session is known to have run.
-_STATE_KINDS: tuple[str, ...] = ("session_brief", "prompt_recall", "turn_audited")
+# records, the Stop audit's row, whose first stamp under a session id is
+# the earliest moment that session is known to have run, and the two
+# rows the Stop records about what was shown: a pointer's settlement (a
+# `use` carrying a `surface`) and the unanswered-review count.
+_STATE_KINDS: tuple[str, ...] = (
+    "session_brief",
+    "prompt_recall",
+    "turn_audited",
+    "use",
+    "review_unanswered",
+)
+
+# The surface a settled pointer was shown by, named on its `use` event.
+SURFACE_BRIEF = "brief"
+SURFACE_RECALL = "recall"
+_SURFACE_OF_KIND: dict[str, str] = {
+    "session_brief": SURFACE_BRIEF,
+    "prompt_recall": SURFACE_RECALL,
+}
+_SETTLEMENT_SURFACES: frozenset[str] = frozenset(_SURFACE_OF_KIND.values())
+
+#: The event kind the Stop records when reviews in the session went
+#: unanswered (`review_unanswered`).
+REVIEW_UNANSWERED = "review_unanswered"
 # The kinds whose ids count as retrieved or written in a segment.
 _SEEN_KINDS: frozenset[str] = frozenset(
     {"search", "show", "list", "list_active", "write"}
@@ -337,13 +364,22 @@ def _str_ids(value: Any) -> list[str]:
 class _SessionRecall:
     """One (harness, session id)'s cooldown: the segment it is in, when
     that segment opened, the ids shown in it and how many recalls it has
-    delivered, and when the session was last seen."""
+    delivered, and when the session was last seen.
+
+    For the Stop: `shown_by` names, per id shown in the segment, the
+    surface that showed it and that show's event id; `settled` holds the
+    ids whose show the Stop has already settled in the segment (at most
+    one settlement per id per segment); `review_roots` the review chain
+    roots already counted unanswered, for the whole session."""
 
     segment: int
     started_at: datetime
     shown: set[str]
     deliveries: int
     last_seen: datetime
+    shown_by: dict[str, tuple[str, str | None]] = field(default_factory=dict)
+    settled: set[str] = field(default_factory=set)
+    review_roots: set[str] = field(default_factory=set)
 
 
 @dataclass(frozen=True)
@@ -355,6 +391,9 @@ class SegmentView:
     started_at: datetime
     shown: frozenset[str]
     deliveries: int
+    shown_by: Mapping[str, tuple[str, str | None]] = field(default_factory=dict)
+    settled: frozenset[str] = frozenset()
+    review_roots: frozenset[str] = frozenset()
 
 
 def _view(entry: _SessionRecall) -> SegmentView:
@@ -363,6 +402,9 @@ def _view(entry: _SessionRecall) -> SegmentView:
         started_at=entry.started_at,
         shown=frozenset(entry.shown),
         deliveries=entry.deliveries,
+        shown_by=dict(entry.shown_by),
+        settled=frozenset(entry.settled),
+        review_roots=frozenset(entry.review_roots),
     )
 
 
@@ -382,11 +424,21 @@ def rebuild_session(
     adopts the newest segment number and keeps only that segment's shown
     ids and delivery count. A `prompt_recall` written before the recall
     surface carries no `shown_ids`; its one delivered hit is the first of
-    `top_hits`. A session the log does not know starts a segment now."""
+    `top_hits`. A session the log does not know starts a segment now.
+
+    The Stop's own rows are read too: a `use` with a `surface` is a
+    settlement, and carries its segment like a show does; a
+    `review_unanswered` names roots counted for the whole session. Any
+    other `use` under the session (the hook's attribution of a real
+    retrieval) is not the recall's and is skipped before it can stamp
+    the session's start."""
     harness, session_id = key
     segment = 0
     started: datetime | None = None
     shown: set[str] = set()
+    shown_by: dict[str, tuple[str, str | None]] = {}
+    settled: set[str] = set()
+    review_roots: set[str] = set()
     deliveries = 0
     for event in store.events_of_kinds(
         _STATE_KINDS, since=now - timedelta(seconds=idle_seconds)
@@ -399,17 +451,32 @@ def rebuild_session(
         stamp = parse_event_ts(event.get("ts"))
         if stamp is None:
             continue
+        kind = event.get("kind")
+        if kind == "use" and event.get("surface") not in _SETTLEMENT_SURFACES:
+            continue
+        if kind == REVIEW_UNANSWERED:
+            review_roots.update(_str_ids(event.get("root_ids")))
+            continue
         if started is None:
             started = stamp
-        kind = event.get("kind")
         if kind == "turn_audited":
             continue
         number = event.get("segment")
         if isinstance(number, int) and not isinstance(number, bool):
             if number != segment:
                 segment, shown, deliveries, started = number, set(), 0, stamp
+                shown_by, settled = {}, set()
+        if kind == "use":
+            settled.update(_str_ids(event.get("ids")))
+            continue
+        shown_event_id = event.get("event_id")
+        shown_event = shown_event_id if isinstance(shown_event_id, str) else None
+        surface = _SURFACE_OF_KIND.get(str(kind), SURFACE_RECALL)
         if kind == "session_brief":
-            shown.update(_str_ids(event.get("ids")))
+            brief_ids = _str_ids(event.get("ids"))
+            shown.update(brief_ids)
+            for memory_id in brief_ids:
+                shown_by.setdefault(memory_id, (surface, shown_event))
             continue
         if "shown_ids" in event:
             delivered = _str_ids(event.get("shown_ids"))
@@ -422,6 +489,8 @@ def rebuild_session(
                 else []
             )
         shown.update(delivered)
+        for memory_id in delivered:
+            shown_by.setdefault(memory_id, (surface, shown_event))
         deliveries += 1
     return _SessionRecall(
         segment=segment,
@@ -429,6 +498,9 @@ def rebuild_session(
         shown=shown,
         deliveries=deliveries,
         last_seen=now,
+        shown_by=shown_by,
+        settled=settled,
+        review_roots=review_roots,
     )
 
 
@@ -528,8 +600,23 @@ class RecallState:
                 entry.segment += 1
                 entry.started_at = now
                 entry.shown = set()
+                entry.shown_by = {}
+                entry.settled = set()
                 entry.deliveries = 0
             return _view(entry)
+
+    def _held(self, key: tuple[str, str], now: datetime) -> _SessionRecall:
+        """The session's entry, created empty when it is not held (lock
+        held), marked seen and moved to the back."""
+        entry = self._sessions.get(key)
+        if entry is None:
+            entry = _SessionRecall(0, now, set(), 0, now)
+            self._sessions[key] = entry
+        entry.last_seen = now
+        self._sessions.move_to_end(key)
+        while len(self._sessions) > self._max_sessions:
+            self._sessions.popitem(last=False)
+        return entry
 
     def note_shown(
         self,
@@ -538,21 +625,37 @@ class RecallState:
         *,
         delivery: bool,
         now: datetime,
+        surface: str | None = None,
+        event_id: str | None = None,
     ) -> None:
         """Record what a surface just showed in the session's segment; a
-        prompt recall also counts as a delivery."""
+        prompt recall also counts as a delivery. `surface` and `event_id`
+        name the show the Stop settles each id against."""
         with self._lock:
-            entry = self._sessions.get(key)
-            if entry is None:
-                entry = _SessionRecall(0, now, set(), 0, now)
-                self._sessions[key] = entry
-            entry.shown.update(ids)
+            entry = self._held(key, now)
+            shown = list(ids)
+            entry.shown.update(shown)
+            named = surface or (SURFACE_RECALL if delivery else SURFACE_BRIEF)
+            for memory_id in shown:
+                entry.shown_by.setdefault(memory_id, (named, event_id))
             if delivery:
                 entry.deliveries += 1
-            entry.last_seen = now
-            self._sessions.move_to_end(key)
-            while len(self._sessions) > self._max_sessions:
-                self._sessions.popitem(last=False)
+
+    def note_settled(
+        self, key: tuple[str, str], ids: Iterable[str], *, now: datetime
+    ) -> None:
+        """Record ids whose show the Stop settled in the session's
+        segment; none of them is settled again in it."""
+        with self._lock:
+            self._held(key, now).settled.update(ids)
+
+    def note_review_roots(
+        self, key: tuple[str, str], roots: Iterable[str], *, now: datetime
+    ) -> None:
+        """Record review chain roots counted unanswered in the session;
+        none of them is counted again in it."""
+        with self._lock:
+            self._held(key, now).review_roots.update(roots)
 
     # -- briefs ---------------------------------------------------------------
 
@@ -877,7 +980,9 @@ def session_brief(
     if transcript_path:
         fields["transcript_path"] = transcript_path
     recorder.record("session_brief", **fields)
-    state.note_shown(key, ids, delivery=False, now=now)
+    state.note_shown(
+        key, ids, delivery=False, now=now, surface=SURFACE_BRIEF, event_id=event_id
+    )
     return HookResult(
         stdout=text,
         surface="session_brief",
@@ -989,6 +1094,7 @@ def _seen_in_log(
     own_since: datetime,
     sessions: Collection[str],
     worktree_root: str | None,
+    harness_session: str | None = None,
 ) -> set[str]:
     """The ids retrieved (a search, list or show hit) or written in the
     segment, from the log.
@@ -1004,7 +1110,13 @@ def _seen_in_log(
     sessions there, and the first sight of the session for the worktree
     half, which would otherwise reach back into an earlier conversation
     in the same checkout. The worktree half errs toward holding a pointer
-    back: a concurrent session's retrieval in the same checkout counts."""
+    back: a concurrent session's retrieval in the same checkout counts.
+
+    An event stamped with a harness session (`events.HARNESS_SESSION_FIELD`)
+    is judged by that stamp alone: it is this conversation's when it names
+    `harness_session`, under the own cut, and never by worktree or session
+    otherwise. The two halves above are the bridge for events that carry
+    no stamp."""
     seen: set[str] = set()
     for event in events:
         kind = event.get("kind")
@@ -1013,15 +1125,20 @@ def _seen_in_log(
         stamp = parse_event_ts(event.get("ts"))
         if stamp is None:
             continue
-        session = event.get("session") or event.get("session_id")
-        own = session in sessions and stamp >= own_since
-        here = (
-            worktree_root is not None
-            and event.get("worktree_root") == worktree_root
-            and stamp >= since
-        )
-        if not (own or here):
-            continue
+        stamped = event.get(HARNESS_SESSION_FIELD)
+        if isinstance(stamped, str) and stamped:
+            if stamped != harness_session or stamp < own_since:
+                continue
+        else:
+            session = event.get("session") or event.get("session_id")
+            own = session in sessions and stamp >= own_since
+            here = (
+                worktree_root is not None
+                and event.get("worktree_root") == worktree_root
+                and stamp >= since
+            )
+            if not (own or here):
+                continue
         if kind in ("show", "write"):
             if kind == "write" and event.get("status", "committed") != "committed":
                 continue
@@ -1104,8 +1221,9 @@ def prompt_recall(
 
     from .hook import (
         _disabled_scopes_from_events,
-        _latest_in_process_session,
         _probe_message,
+        bridged_session,
+        joined_sessions,
     )
 
     state = state if state is not None else RecallState(background=False)
@@ -1119,11 +1237,14 @@ def prompt_recall(
         else now - timedelta(seconds=STATE_IDLE_SECONDS)
     )
     recent = list(store.events_since(recent_cut))
-    excluded_scopes = _disabled_scopes_from_events(
-        recent, worktree_root=caller.worktree_root
+    # The conversation's in-process rows: the harness join first (tool
+    # events stamped with this session id), the worktree bridge only
+    # when nothing is stamped with it.
+    server_session = bridged_session(
+        recent, harness_session=key[1], worktree_root=caller.worktree_root
     )
-    server_session = _latest_in_process_session(
-        recent, worktree_root=caller.worktree_root
+    excluded_scopes = _disabled_scopes_from_events(
+        recent, worktree_root=caller.worktree_root, server_session=server_session
     )
     report = _probe_message(
         cfg=cfg,
@@ -1138,13 +1259,16 @@ def prompt_recall(
     if report.verdict == "no_signal" or not report.top_hits:
         return empty
 
-    sessions = {key[1]} | ({server_session} if server_session else set())
+    sessions = {key[1]} | joined_sessions(
+        recent, harness_session=key[1], worktree_root=caller.worktree_root
+    )
     seen = set(view.shown) | _seen_in_log(
         store.events_of_kinds(_SEEN_KINDS, since=min(own_since, view.started_at)),
         since=view.started_at,
         own_since=own_since,
         sessions=sessions,
         worktree_root=caller.worktree_root,
+        harness_session=key[1],
     )
     hit_ids = [hit.id for hit in report.top_hits]
     memories = {memory.id: memory for memory in store.load_many(hit_ids)}
@@ -1216,7 +1340,14 @@ def prompt_recall(
         harness=key[0],
     )
     recorder.record("prompt_recall", **fields)
-    state.note_shown(key, shown_ids, delivery=True, now=now)
+    state.note_shown(
+        key,
+        shown_ids,
+        delivery=True,
+        now=now,
+        surface=SURFACE_RECALL,
+        event_id=str(fields["event_id"]),
+    )
     return HookResult(
         stdout=block,
         surface="prompt_recall",
@@ -1225,3 +1356,207 @@ def prompt_recall(
         rule=RULE,
         event_id=str(fields["event_id"]),
     )
+
+
+# ---------------------------------------------------------------------------
+# At Stop: settling what was shown, and the unanswered reviews
+# ---------------------------------------------------------------------------
+
+
+def _used_in_segment(
+    events: Iterable[dict[str, Any]],
+    *,
+    since: datetime,
+    harness_session: str,
+    sessions: Collection[str],
+) -> set[str]:
+    """The ids any `use` event of this conversation names at or after
+    `since` (the segment's start): an explicit `memory_record_use`, the
+    in-process fallback, or a Stop's attribution of a real retrieval.
+    Joined by harness stamp first, else by session (the joined in-process
+    sessions and the hook's own id)."""
+    from .hook import event_joined
+
+    used: set[str] = set()
+    for event in events:
+        if event.get("kind") != "use":
+            continue
+        stamp = parse_event_ts(event.get("ts"))
+        if stamp is None or stamp < since:
+            continue
+        if event_joined(event, harness_session=harness_session, sessions=sessions):
+            used.update(_str_ids(event.get("ids") or event.get("memory_ids")))
+    return used
+
+
+def settle_shown(
+    *,
+    store: Store,
+    recorder: Recorder,
+    state: RecallState,
+    session_id: str,
+    assistant_response: str,
+    sessions: Collection[str],
+    harness: str | None = None,
+    exclude: Collection[str] = (),
+    prompt_id: str | None = None,
+    client_model: str | None = None,
+    now: datetime | None = None,
+) -> list[str]:
+    """Settle the session segment's shown pointers against the turn's
+    reply; the ids settled.
+
+    Every id the brief or the prompt recall showed in the segment, not
+    settled in it yet, runs through the containment matcher
+    (`attribution.attribute_uses`) against `assistant_response`. A match
+    records ONE `use` event: outcome ``applied``, ``attribution="hook"``
+    (the matcher's tier), the matched sentence as its claim excerpt, the
+    ``surface`` that showed it (``brief`` or ``recall``), that show's
+    ``shown_event_id``, the segment, the harness, and the harness turn
+    (``prompt_id``) when the Stop named one. An unmatched id records
+    nothing: a pointer is not a retrieval, so the auto fallback never
+    applies to it.
+
+    Left out: ids in `exclude` (the real retrievals this Stop settled
+    through `hook._emit_hook_attributions`), and ids any `use` of this
+    conversation already named in the segment, joined by harness stamp
+    first and by `sessions` otherwise (`_used_in_segment`), so one reply
+    never credits a memory twice. With telemetry off the recorder writes
+    nothing and the state is left as it was."""
+    from .attribution import attribute_uses
+    from .store import MemoryNotFoundError, TombstonedError
+
+    now = now or utcnow()
+    key = (harness or DEFAULT_HARNESS, str(session_id))
+    view = state.segment(store, key, now=now)
+    skip = set(view.settled) | set(exclude)
+    pending = [memory_id for memory_id in view.shown_by if memory_id not in skip]
+    if not pending or not assistant_response:
+        return []
+    used = _used_in_segment(
+        store.events_of_kinds(("use",), since=view.started_at),
+        since=view.started_at,
+        harness_session=key[1],
+        sessions=set(sessions) | {key[1]},
+    )
+    bodies: dict[str, str] = {}
+    for memory_id in sorted(pending):
+        if memory_id in used:
+            continue
+        try:
+            bodies[memory_id] = store.load_one(memory_id).body
+        except (MemoryNotFoundError, TombstonedError):
+            continue
+    if not bodies:
+        return []
+    settled: list[str] = []
+    for match in attribute_uses(bodies, assistant_response):
+        surface, shown_event_id = view.shown_by[match.memory_id]
+        fields: dict[str, Any] = {
+            "ids": [match.memory_id],
+            "outcome": "applied",
+            "auto": False,
+            "attribution": "hook",
+            "claim_excerpts": [match.claim_excerpt],
+            "surface": surface,
+            "shown_event_id": shown_event_id,
+            "segment": view.segment,
+            "harness": key[0],
+            "triggered_from": "stop_hook",
+        }
+        if prompt_id:
+            fields["prompt_id"] = prompt_id
+        if client_model is not None:
+            fields["client_model"] = client_model
+        recorder.record("use", **fields)
+        settled.append(match.memory_id)
+    if settled and recorder.enabled:
+        state.note_settled(key, settled, now=now)
+    return settled
+
+
+def previous_audit_at(
+    store: Store, session_id: str, *, now: datetime
+) -> datetime | None:
+    """When the session's newest `turn_audited` was stamped, inside the
+    idle window; None when it has none there. Read before the Stop
+    records its own."""
+    latest: datetime | None = None
+    for event in store.events_of_kinds(
+        ("turn_audited",), since=now - timedelta(seconds=STATE_IDLE_SECONDS)
+    ):
+        if (event.get("session") or event.get("session_id")) != session_id:
+            continue
+        stamp = parse_event_ts(event.get("ts"))
+        if stamp is not None and (latest is None or stamp > latest):
+            latest = stamp
+    return latest
+
+
+def review_unanswered(
+    *,
+    store: Store,
+    recorder: Recorder,
+    state: RecallState,
+    session_id: str,
+    sessions: Collection[str],
+    since: datetime,
+    harness: str | None = None,
+    now: datetime | None = None,
+) -> list[str]:
+    """Count the review chains the conversation left open since its
+    previous turn; the roots counted.
+
+    Reads the `review_issued` rows recorded under `sessions` (the joined
+    in-process sessions: the harness join first, the bridge otherwise) at
+    or after `since`, takes each row's chain root (its
+    ``parent_review_id``, else its own ``review_id``), and counts each
+    root `review.find_chain` reads open: no write row carries any of the
+    chain's review ids. A re-send another gate refused before the review
+    decided anything carries no review id on its write row, so its chain
+    also reads open: the count means unanswered or refused. A root is
+    counted once per session (`RecallState.note_review_roots`, rebuilt
+    from these rows after a restart).
+
+    A non-zero count records one `review_unanswered` event: ``count``,
+    ``root_ids``, the hook's ``session_id``, the ``review_sessions`` read,
+    the ``segment`` and the ``harness``. Nothing is recorded for zero,
+    and nothing at all with telemetry off. No text is shown."""
+    from .review import REVIEW_ISSUED, find_chain
+    from .models import is_valid_ulid
+
+    if not recorder.enabled or not sessions:
+        return []
+    now = now or utcnow()
+    key = (harness or DEFAULT_HARNESS, str(session_id))
+    view = state.segment(store, key, now=now)
+    roots: list[str] = []
+    for event in store.events_of_kinds((REVIEW_ISSUED,), since=since):
+        if (event.get("session") or event.get("session_id")) not in sessions:
+            continue
+        stamp = parse_event_ts(event.get("ts"))
+        if stamp is None or stamp < since:
+            continue
+        parent = event.get("parent_review_id")
+        own = event.get("review_id")
+        root = parent if isinstance(parent, str) and is_valid_ulid(parent) else own
+        if not isinstance(root, str) or not is_valid_ulid(root):
+            continue
+        if root in view.review_roots or root in roots:
+            continue
+        roots.append(root)
+    open_roots = [root for root in roots if find_chain(store, root).open]
+    if not open_roots:
+        return []
+    recorder.record(
+        "review_unanswered",
+        count=len(open_roots),
+        root_ids=open_roots,
+        session_id=key[1],
+        review_sessions=sorted(sessions),
+        segment=view.segment,
+        harness=key[0],
+        triggered_from="stop_hook",
+    )
+    state.note_review_roots(key, open_roots, now=now)
+    return open_roots

@@ -465,11 +465,21 @@ def resolved_store_path() -> Path:
     return load_config().resolved_directory() / STORE_FILENAME
 
 
+#: `identity.ENV_HARNESS_SESSION`, spelled here because the hook path
+#: imports neither pydantic nor anything that pulls it in
+#: (`tests/test_hook_client.py`); a test pins the two equal.
+HARNESS_SESSION_ENV = "CLAUDE_CODE_SESSION_ID"
+
+
 def daemon_env_for(store_path: Path | str) -> dict[str, str]:
     """The environment a daemon for `store_path` is started with: the
-    store pinned, so the child resolves exactly the store the caller did."""
+    store pinned, so the child resolves exactly the store the caller did,
+    and the harness session id dropped: one daemon serves every
+    conversation, and the id of the one that happened to start it names
+    none of the others (each shim forwards its own as a header)."""
     env = dict(os.environ)
     env["BETTERMEMORY_DIR"] = str(Path(store_path).parent)
+    env.pop(HARNESS_SESSION_ENV, None)
     return env
 
 

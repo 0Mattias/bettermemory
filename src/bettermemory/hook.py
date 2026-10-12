@@ -105,7 +105,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, Collection, Iterable
 
 from ._fsutil import bounded_stream_read, bounded_tail_read
 from .attribution import attribute_uses
@@ -119,7 +119,12 @@ from .audit import (
     turn_audited_fields,
 )
 from .config import Config, load_config
-from .events import Recorder, redact_query
+from .events import (
+    HARNESS_SESSION_FIELD,
+    HARNESS_STAMPED_KINDS,
+    Recorder,
+    redact_query,
+)
 from .models import utcnow
 from . import identity
 from .origin import Origin, capture as capture_origin
@@ -130,6 +135,9 @@ from .store import (
     TombstonedError,
 )
 from .time_utils import parse_event_ts
+
+if TYPE_CHECKING:
+    from .recall import RecallState
 
 
 def _utcnow() -> datetime:
@@ -221,6 +229,12 @@ def _read_payload(stdin_text: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return loaded if isinstance(loaded, dict) else {}
+
+
+def _payload_text(payload: dict[str, Any], name: str) -> str | None:
+    """A non-empty string field of a hook payload, else None."""
+    value = payload.get(name)
+    return value if isinstance(value, str) and value else None
 
 
 def _extract_last_exchange(
@@ -463,16 +477,29 @@ def audit_transcript(
     store: Store | None = None,
     cwd: Path | None = None,
     dry_run: bool = False,
+    assistant_message: str | None = None,
+    harness: str | None = None,
+    prompt_id: str | None = None,
+    state: RecallState | None = None,
 ) -> dict[str, Any] | None:
     """`run_audit` over the last exchange of a Claude Code transcript:
     the body of the Stop hook, shared by the `audit-turn` process and
-    the daemon's stop endpoint. None when there is nothing to audit."""
+    the daemon's stop endpoint. None when there is nothing to audit.
+
+    `assistant_message` is the Stop payload's ``last_assistant_message``
+    (Claude Code sends the reply it just finished): when present it is
+    the reply every attribution reads, and the transcript tail is read
+    for the user's message and the model only; when absent the tail's
+    reply is used, as before. `harness`, `prompt_id` and `state` go to
+    `run_audit` for the settlement of shown pointers."""
     transcript_path = Path(transcript_path).expanduser()
     if not transcript_path.is_file():
         return None
     user, assistant, model = _extract_last_exchange(transcript_path)
     if not user:
         return None
+    if assistant_message:
+        assistant = assistant_message
     return run_audit(
         user_message=user,
         assistant_response=assistant,
@@ -482,6 +509,9 @@ def audit_transcript(
         dry_run=dry_run,
         store=store,
         cwd=cwd,
+        harness=harness,
+        prompt_id=prompt_id,
+        state=state,
     )
 
 
@@ -495,6 +525,9 @@ def run_audit(
     dry_run: bool = False,
     store: Store | None = None,
     cwd: Path | None = None,
+    harness: str | None = None,
+    prompt_id: str | None = None,
+    state: RecallState | None = None,
 ) -> dict[str, Any]:
     """Pure-function entry point: given a user message and session
     id, run the probe and emit events. Returns a small dict suitable
@@ -523,7 +556,23 @@ def run_audit(
     one applied event per retrieval. The dedup is deliberately NOT
     widened across sessions to paper over this — two sessions can
     legitimately retrieve the same memory, and suppressing one would
-    under-attribute real work. Inspection gets a dry run instead."""
+    under-attribute real work. Inspection gets a dry run instead.
+
+    After the real retrievals are settled, the recall surface's shown
+    pointers are (`recall.settle_shown`), and the reviews the session
+    left open since its previous turn are counted
+    (`recall.review_unanswered`). `state` is the daemon's recall state;
+    the in-process path passes None and the state is rebuilt from the
+    log. `harness` names the session's harness (the recall's key) and
+    `prompt_id` the harness turn, stamped on a settlement.
+
+    The in-process rows the hook joins are found by the harness join
+    first (`bridged_session`: tool events stamped with this hook's
+    session id as their ``harness_session``), the worktree bridge only
+    when none is stamped."""
+    from .recall import RecallState as _RecallState
+    from .recall import previous_audit_at, review_unanswered, settle_shown
+
     cfg = config or load_config(None)
     if dry_run:
         # Expressed as a telemetry override rather than a flag on the
@@ -581,9 +630,6 @@ def run_audit(
     # this, a scope the user disabled via `memory_scope_disable` (e.g.
     # "this is unrelated to project X") would still produce silent-miss
     # flags here, since the hook can't read the server's in-memory state.
-    excluded_scopes = _disabled_scopes_from_events(
-        recent, worktree_root=caller_origin.worktree_root
-    )
     # The probe's retrieval shield ("did the model already search this
     # turn?") must match the server's session id, not this hook's
     # `session_id` (which is Claude Code's transcript id — a different id
@@ -595,8 +641,13 @@ def run_audit(
     # turn could still emit a `search_miss`. Anchored to this hook's
     # worktree so a concurrent window's server can't hijack the bridge
     # (see `_latest_in_process_session`).
-    server_session = _latest_in_process_session(
-        recent, worktree_root=caller_origin.worktree_root
+    server_session = bridged_session(
+        recent, harness_session=session_id, worktree_root=caller_origin.worktree_root
+    )
+    excluded_scopes = _disabled_scopes_from_events(
+        recent,
+        worktree_root=caller_origin.worktree_root,
+        server_session=server_session,
     )
     report = _probe_message(
         cfg=cfg,
@@ -635,6 +686,11 @@ def run_audit(
     # `search_miss`. The hash is computed with the production
     # `redact_query` so it compares equal to what the Recorder wrote.
     probe_mode = cfg.behavior.search_mode or "hybrid"
+    now = utcnow()
+    recall_state = state if state is not None else _RecallState(background=False)
+    # The unanswered-review window opens at the session's previous
+    # turn, read before this turn's row lands.
+    previous_audit = previous_audit_at(store, session_id, now=now)
     repeat = is_duplicate_audit(
         recent,
         session_id=session_id,
@@ -687,8 +743,11 @@ def run_audit(
     #    deployments. `_advance_turn` reads these events off the log
     #    and purges the matching in-memory tokens, so each retrieval
     #    generates one applied event total.
+    sessions = joined_sessions(
+        recent, harness_session=session_id, worktree_root=caller_origin.worktree_root
+    )
     if assistant_response:
-        _emit_hook_attributions(
+        settled = _emit_hook_attributions(
             store=store,
             recorder=recorder,
             recent_events=recent,
@@ -696,6 +755,50 @@ def run_audit(
             assistant_response=assistant_response,
             worktree_root=caller_origin.worktree_root,
             client_model=client_model,
+            server_session=server_session,
+        )
+        # The pointers the brief and the prompt recall showed in this
+        # segment: a match is one applied `use` naming its surface; no
+        # match records nothing (never the auto fallback above).
+        settle_shown(
+            store=store,
+            recorder=recorder,
+            state=recall_state,
+            session_id=session_id,
+            harness=harness,
+            assistant_response=assistant_response,
+            sessions=sessions,
+            exclude=settled,
+            prompt_id=prompt_id,
+            client_model=client_model,
+            now=now,
+        )
+
+    if cfg.telemetry.enabled:
+        # The window opens at the previous turn; a session's first turn
+        # reads from when the recall state first saw it, at most the
+        # re-audit window back.
+        if previous_audit is not None:
+            since = previous_audit
+        else:
+            since = now - timedelta(seconds=REAUDIT_DEDUP_WINDOW_SECONDS)
+            first_seen = recall_state.segment(
+                store, (harness or "claude-code", session_id), now=now
+            ).started_at
+            if since < first_seen < now:
+                since = first_seen
+        review_sessions = harness_joined_sessions(
+            store.events_of_kinds(HARNESS_STAMPED_KINDS, since=since), session_id
+        ) or ({server_session} if server_session is not None else set())
+        review_unanswered(
+            store=store,
+            recorder=recorder,
+            state=recall_state,
+            session_id=session_id,
+            harness=harness,
+            sessions=review_sessions,
+            since=since,
+            now=now,
         )
 
     return report.to_dict()
@@ -816,6 +919,7 @@ def _disabled_scopes_from_events(
     events: list[dict[str, Any]],
     *,
     worktree_root: str | None = None,
+    server_session: str | None = None,
 ) -> set[str]:
     """Reconstruct the session-disabled scope set from the event log.
 
@@ -839,8 +943,11 @@ def _disabled_scopes_from_events(
     Returns the net disabled set: each `scope_disable` adds, each later
     `scope_enable` removes, walked in chronological (append) order. Empty
     when no in-process session is found or it toggled no scopes.
+    `server_session`, when given, is the anchor the caller already
+    resolved (`bridged_session`, the harness join first).
     """
-    server_session = _latest_in_process_session(events, worktree_root=worktree_root)
+    if server_session is None:
+        server_session = _latest_in_process_session(events, worktree_root=worktree_root)
     if server_session is None:
         return set()
     disabled: set[str] = set()
@@ -908,6 +1015,96 @@ def _latest_in_process_session(
     return fallback
 
 
+def _session_of(event: dict[str, Any]) -> str | None:
+    session = event.get("session") or event.get("session_id")
+    return session if isinstance(session, str) else None
+
+
+def harness_joined_sessions(
+    events: Iterable[dict[str, Any]], harness_session: str | None
+) -> set[str]:
+    """The in-process sessions whose tool events carry `harness_session`
+    (`events.HARNESS_SESSION_FIELD`, stamped from the shim's header or the
+    in-process server's environment): the server sessions that served
+    this conversation. Empty when nothing is stamped with it."""
+    if not harness_session:
+        return set()
+    found: set[str] = set()
+    for event in events:
+        if event.get("triggered_from") in _OUT_OF_PROCESS_TRIGGERS:
+            continue
+        if event.get(HARNESS_SESSION_FIELD) != harness_session:
+            continue
+        session = _session_of(event)
+        if session is not None:
+            found.add(session)
+    return found
+
+
+def bridged_session(
+    events: list[dict[str, Any]],
+    *,
+    harness_session: str | None,
+    worktree_root: str | None = None,
+) -> str | None:
+    """The in-process session a hook's rows join: the harness join first,
+    the 9.0.0 worktree bridge only when it has nothing.
+
+    The newest in-process event stamped with this hook's harness session
+    names the session (a restarted server stamps the same harness id, so
+    the newest is the live one, the reset-on-restart the bridge keeps).
+    With no such event, `_latest_in_process_session` answers, over the
+    events of every session NOT stamped with another harness session: a
+    server that declared it serves a different conversation is never this
+    one's bridge."""
+    if harness_session:
+        foreign: set[str] = set()
+        for event in reversed(events):
+            if event.get("triggered_from") in _OUT_OF_PROCESS_TRIGGERS:
+                continue
+            stamped = event.get(HARNESS_SESSION_FIELD)
+            if not isinstance(stamped, str) or not stamped:
+                continue
+            session = _session_of(event)
+            if session is None:
+                continue
+            if stamped == harness_session:
+                return session
+            foreign.add(session)
+        if foreign:
+            events = [e for e in events if _session_of(e) not in foreign]
+    return _latest_in_process_session(events, worktree_root=worktree_root)
+
+
+def joined_sessions(
+    events: list[dict[str, Any]],
+    *,
+    harness_session: str | None,
+    worktree_root: str | None = None,
+) -> set[str]:
+    """Every in-process session the harness join names, or the one the
+    bridge names when it names none (`bridged_session`)."""
+    found = harness_joined_sessions(events, harness_session)
+    if found:
+        return found
+    bridged = bridged_session(
+        events, harness_session=harness_session, worktree_root=worktree_root
+    )
+    return {bridged} if bridged is not None else set()
+
+
+def event_joined(
+    event: dict[str, Any], *, harness_session: str | None, sessions: Collection[str]
+) -> bool:
+    """Whether a tool event belongs to the hook's conversation: by its
+    harness stamp when it carries one, else by its session (one of
+    `sessions`, the joined in-process sessions and the hook's own id)."""
+    stamped = event.get(HARNESS_SESSION_FIELD)
+    if isinstance(stamped, str) and stamped:
+        return stamped == harness_session
+    return _session_of(event) in sessions
+
+
 def _emit_hook_attributions(
     *,
     store: Store,
@@ -917,10 +1114,15 @@ def _emit_hook_attributions(
     assistant_response: str,
     worktree_root: str | None = None,
     client_model: str | None = None,
-) -> None:
+    server_session: str | None = None,
+) -> set[str]:
     """Settle this turn's pending retrievals: emit attributed `applied`
     events for reply-matched memories and the plain auto-fallback
-    `applied` for the rest.
+    `applied` for the rest. Returns the ids it settled.
+
+    `server_session` is the joined in-process session when the caller
+    already resolved it (`bridged_session`: the harness join first); None
+    resolves it here through the worktree bridge, as before.
 
     `pending` is the set of memory_ids retrieved (via `search`, `show`,
     or `list`/`list_active`) within the lookback window, MINUS ids that
@@ -945,9 +1147,10 @@ def _emit_hook_attributions(
     `worktree_root` is this hook's worktree, threaded into the anchor so
     a concurrent window's server can't claim the attribution session.
     """
-    server_session = _latest_in_process_session(
-        recent_events, worktree_root=worktree_root
-    )
+    if server_session is None:
+        server_session = _latest_in_process_session(
+            recent_events, worktree_root=worktree_root
+        )
     retrieval_session = server_session or session_id
     pending = _pending_retrievals(
         recent_events,
@@ -956,7 +1159,7 @@ def _emit_hook_attributions(
         lookback_seconds=_ATTRIBUTION_LOOKBACK_SECONDS,
     )
     if not pending:
-        return
+        return set()
     bodies: dict[str, str] = {}
     # Sorted iteration: `pending` is a set, and both event payloads
     # below inherit this order — deterministic ids keep the log
@@ -970,7 +1173,7 @@ def _emit_hook_attributions(
             continue
         bodies[memory_id] = memory.body
     if not bodies:
-        return
+        return set()
     matches = attribute_uses(bodies, assistant_response)
     if matches:
         fields: dict[str, Any] = {
@@ -1006,6 +1209,7 @@ def _emit_hook_attributions(
         if client_model is not None:
             auto_fields["client_model"] = client_model
         recorder.record("use", **auto_fields)
+    return set(bodies)
 
 
 def _pending_retrievals(
@@ -1172,6 +1376,9 @@ def main(argv: list[str] | None = None) -> int:
             transcript_path=transcript_path,
             session_id=str(session_id),
             dry_run=args.dry_run,
+            assistant_message=_payload_text(payload, "last_assistant_message"),
+            harness=_payload_text(payload, "harness"),
+            prompt_id=_payload_text(payload, "prompt_id"),
         )
         if maybe is None:
             return 0

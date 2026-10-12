@@ -2428,6 +2428,36 @@ class TestComputeReport:
         assert usage.total_tool_calls == 0
         assert usage.unmapped_event_kinds == {}
 
+    def test_a_review_unanswered_counts_its_session_and_no_tool(self) -> None:
+        """`review_unanswered` is recorded by the Stop hook INSIDE the
+        client's session, under the transcript id its `turn_audited` rows
+        carry: an in-session kind, never a tool call or an unmapped kind,
+        and a log holding one renders the existing kinds' report exactly
+        as the log without it does."""
+        assert "review_unanswered" in _IN_SESSION_SIDE_EFFECT_KINDS
+        assert "review_unanswered" in _KNOWN_SIDE_EFFECT_KINDS
+        assert "review_unanswered" not in ADMIN_RECORDED_EVENT_KINDS
+        base = [_ev("search", session="s-real", returned=["m1"])]
+        events = base + [
+            _ev("review_unanswered", session="s-real", count=1, root_ids=["r"])
+        ]
+        now = datetime(2026, 10, 11, tzinfo=timezone.utc)
+        doc = compute_report([], events, version="0-test", now=now)
+        assert doc.distinct_session_count == 1
+        usage = compute_tool_usage(events)
+        assert usage.total_tool_calls == 1
+        assert usage.unmapped_event_kinds == {}
+        without = compute_report([], base, version="0-test", now=now)
+
+        def body(report: Any) -> dict[str, Any]:
+            out = dict(report.to_dict())
+            out.pop("total_events_scanned")
+            out.pop("events_in_window")
+            return out
+
+        assert body(doc.window_eval) == body(without.window_eval)
+        assert body(doc.alltime_eval) == body(without.alltime_eval)
+
     def test_in_session_side_effects_still_count_as_sessions(self) -> None:
         """The complement of the exclusion above: side-effect kinds the
         recorder writes INSIDE a live client session carry that client's

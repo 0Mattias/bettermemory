@@ -258,6 +258,10 @@ def build_app(
                 store=store,
                 cwd=_cwd_of(payload),
                 dry_run=bool(payload.get("dry_run", False)),
+                assistant_message=_text(payload, "last_assistant_message"),
+                harness=_text(payload, "harness"),
+                prompt_id=_text(payload, "prompt_id"),
+                state=recall_state,
             )
         except Exception as exc:  # noqa: BLE001
             log.warning("hook stop failed: %s: %s", exc.__class__.__name__, exc)

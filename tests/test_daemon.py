@@ -412,3 +412,69 @@ async def test_a_cli_write_is_visible_to_the_next_request(
     assert "written by another process" in "".join(
         getattr(block, "text", "") for block in found.content
     )
+
+
+async def test_stop_endpoint_settles_from_last_assistant_message(
+    daemon_config: Config, daemon_store: Store, tmp_path: Path
+) -> None:
+    """The stop endpoint reads Claude Code's ``last_assistant_message``:
+    a brief pointer the reply used is settled with its surface, and an
+    open review chain of the bridged server session is counted."""
+    from bettermemory.events import Recorder
+    from bettermemory.models import generate_ulid
+
+    sentence = (
+        "The deploy pipeline signs every release artifact with the hardware "
+        "key kept in the vault on the third floor."
+    )
+    memory = daemon_store.write(content=sentence, scopes=["tools"])
+    brief_event = generate_ulid()
+    Recorder(
+        store=daemon_store, session_id="sess_hook", triggered_from="session_hook"
+    ).record(
+        "session_brief",
+        event_id=brief_event,
+        session_id="sess_hook",
+        harness="claude-code",
+        segment=0,
+        ids=[memory.id],
+    )
+    root = generate_ulid()
+    Recorder(store=daemon_store, session_id="sess_srv").record(
+        "review_issued", review_id=root, related=[], parent_review_id=None
+    )
+    transcript = tmp_path / "transcript.jsonl"
+    rows: list[dict[str, Any]] = [
+        {"type": "user", "message": {"role": "user", "content": "ship the release"}},
+        {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        },
+    ]
+    transcript.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+    async with running_app(daemon_config, daemon_store) as client:
+        response = await client.post(
+            "/api/v1/hook/stop",
+            json={
+                "cwd": str(tmp_path),
+                "session_id": "sess_hook",
+                "transcript_path": str(transcript),
+                "last_assistant_message": f"Shipped. {sentence}",
+                "prompt_id": "turn-3",
+            },
+            headers=_auth(),
+        )
+    assert response.status_code == 200
+    events = list(daemon_store.iter_events())
+    [use] = [e for e in events if e["kind"] == "use"]
+    assert (use["ids"], use["surface"], use["shown_event_id"], use["prompt_id"]) == (
+        [memory.id],
+        "brief",
+        brief_event,
+        "turn-3",
+    )
+    [unanswered] = [e for e in events if e["kind"] == "review_unanswered"]
+    assert unanswered["root_ids"] == [root]

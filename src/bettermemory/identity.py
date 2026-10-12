@@ -112,11 +112,23 @@ HEADER_MCP_SESSION = "mcp-session-id"
 #: stdio shim sets it per process, so two shims against one stateless
 #: daemon keep separate session state (`session.SessionRegistry`).
 HEADER_SESSION = "x-bettermemory-session"
+#: The harness's own session id, as the stdio shim found it in the
+#: client's environment (`ENV_HARNESS_SESSION`). It is the id the hooks
+#: name in their payloads, so a tool event stamped with it joins the hook
+#: rows of the same conversation without the worktree bridge.
+HEADER_HARNESS_SESSION = "x-bettermemory-harness-session"
 
 ENV_CLIENT = "BETTERMEMORY_CLIENT"
 ENV_CLIENT_VERSION = "BETTERMEMORY_CLIENT_VERSION"
 ENV_MODEL = "BETTERMEMORY_MODEL"
 ENV_WORKSPACE = "BETTERMEMORY_WORKSPACE"
+#: The harness session id Claude Code sets in the environment of every
+#: process it starts, the MCP server's among them. Read by the shim (to
+#: forward as `HEADER_HARNESS_SESSION`) and by an in-process server with
+#: no daemon in front of it; never by the daemon, whose environment is
+#: whichever client happened to start it (`_daemon_client.daemon_env_for`
+#: drops it).
+ENV_HARNESS_SESSION = "CLAUDE_CODE_SESSION_ID"
 
 #: Declared values are client input and land in YAML frontmatter, which
 #: has a hard byte cap. Anything longer than this is not an identity.
@@ -232,11 +244,18 @@ class Workspace(BaseModel):
 
 class Caller(BaseModel):
     """One request's resolved identity: actor and workspace, plus the
-    request id the resolution was made for (None outside a request)."""
+    request id the resolution was made for (None outside a request) and
+    the harness session it came from (None when nothing declared one).
+
+    `harness_session` stays off `Actor` on purpose: the actor is written
+    into memory frontmatter and onto every event, and this id is a join
+    key the recorder stamps on a few tool kinds only
+    (`events.HARNESS_STAMPED_KINDS`)."""
 
     actor: Actor = Field(default_factory=Actor)
     workspace: Workspace = Field(default_factory=Workspace)
     request_id: str | None = None
+    harness_session: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -279,6 +298,14 @@ def _headers_of(request_context: Any) -> dict[str, str]:
         if isinstance(key, str) and isinstance(value, str):
             out[key.lower()] = value
     return out
+
+
+def _carries_http(request_context: Any) -> bool:
+    """Whether the request came over HTTP (the daemon), where the headers
+    are the client's only channel and the server's environment belongs to
+    someone else."""
+    request = getattr(request_context, "request", None)
+    return getattr(request, "headers", None) is not None
 
 
 def _client_info_of(request_context: Any) -> tuple[str | None, str | None]:
@@ -435,8 +462,19 @@ def resolve(
                 except (FileNotFoundError, OSError):
                     workspace = Workspace(path=None, source=SOURCE_PROCESS_CWD)
 
+    # The harness session: the shim's header over HTTP; the environment
+    # only off HTTP (a stdio server or a CLI process, which Claude Code
+    # started itself). The daemon's environment is inherited from
+    # whichever client started it, so it is never read there.
+    harness_session = _clean(headers.get(HEADER_HARNESS_SESSION))
+    if harness_session is None and not _carries_http(request_context):
+        harness_session = _clean(env.get(ENV_HARNESS_SESSION))
+
     return Caller(
-        actor=actor, workspace=workspace, request_id=_request_id_of(request_context)
+        actor=actor,
+        workspace=workspace,
+        request_id=_request_id_of(request_context),
+        harness_session=harness_session,
     )
 
 
@@ -508,6 +546,8 @@ def bind_transcript(
         sources=sources,
     )
     workspace = resolve(None).workspace
+    # No harness session: the hooks name their session in the payload and
+    # record under it, so their rows need no join key.
     caller = Caller(actor=actor, workspace=workspace)
     publish(caller)
     return caller
@@ -521,6 +561,13 @@ def current_actor() -> Actor | None:
     if caller is None or caller.actor.is_empty():
         return None
     return caller.actor
+
+
+def current_harness_session() -> str | None:
+    """The harness session of the published caller, None when no caller is
+    published or it declared none."""
+    caller = _CURRENT.get()
+    return caller.harness_session if caller is not None else None
 
 
 def workspace_declaration() -> tuple[Path, str] | None:
@@ -653,10 +700,13 @@ __all__ = [
     "HEADER_MODEL",
     "HEADER_WORKSPACE",
     "HEADER_MCP_SESSION",
+    "HEADER_SESSION",
+    "HEADER_HARNESS_SESSION",
     "ENV_CLIENT",
     "ENV_CLIENT_VERSION",
     "ENV_MODEL",
     "ENV_WORKSPACE",
+    "ENV_HARNESS_SESSION",
     "MAX_DECLARED_LEN",
     "ROOTS_TIMEOUT_SECONDS",
     "resolve",
@@ -666,6 +716,7 @@ __all__ = [
     "bind",
     "bind_transcript",
     "current_actor",
+    "current_harness_session",
     "workspace_declaration",
     "registry_key",
     "prime_roots",

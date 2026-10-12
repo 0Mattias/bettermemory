@@ -7,7 +7,8 @@ instructions and this package's version, its ``tools/list`` is the
 daemon's, and its ``tools/call`` forwards over streamable HTTP with the
 headers `identity` reads: ``x-bettermemory-session`` (this process's
 session id, so two shims against one daemon keep separate session
-state), the client's ``clientInfo`` as ``x-bettermemory-client`` and
+state), the harness's own session id (``CLAUDE_CODE_SESSION_ID`` in the
+client's environment) as ``x-bettermemory-harness-session``, the client's ``clientInfo`` as ``x-bettermemory-client`` and
 ``-client-version`` unless the environment declared them, and this
 process's working directory as ``x-bettermemory-workspace`` unless one
 was declared, because the daemon's own working directory says nothing
@@ -73,6 +74,7 @@ def _forward_headers(ctx: Any) -> dict[str, str]:
         (identity.ENV_CLIENT_VERSION, identity.HEADER_CLIENT_VERSION),
         (identity.ENV_MODEL, identity.HEADER_MODEL),
         (identity.ENV_WORKSPACE, identity.HEADER_WORKSPACE),
+        (identity.ENV_HARNESS_SESSION, identity.HEADER_HARNESS_SESSION),
     ):
         value = env.get(env_key)
         if value:
@@ -92,6 +94,20 @@ def _forward_headers(ctx: Any) -> dict[str, str]:
         except OSError:
             pass
     return headers
+
+
+def _rebind(headers: httpx2.Headers, forwarded: dict[str, str]) -> None:
+    """Replace the client's identity headers with one call's: every
+    ``x-bettermemory-*`` header but the per-process session goes, then
+    the call's own (`_forward_headers`, the harness session among them)
+    are set. A header the call does not carry is not left over from the
+    previous one."""
+    from .identity import HEADER_SESSION
+
+    for key in list(headers):
+        if key.lower().startswith("x-bettermemory-") and key.lower() != HEADER_SESSION:
+            del headers[key]
+    headers.update(forwarded)
 
 
 def _error_reply(request: httpx2.Request, message: str) -> httpx2.Response:
@@ -242,14 +258,7 @@ async def _serve_through_daemon(
                 init = await upstream.initialize()
 
                 def _bind(ctx: Any) -> None:
-                    forwarded = _forward_headers(ctx)
-                    for key in list(http.headers):
-                        if (
-                            key.lower().startswith("x-bettermemory-")
-                            and key.lower() != HEADER_SESSION
-                        ):
-                            del http.headers[key]
-                    http.headers.update(forwarded)
+                    _rebind(http.headers, _forward_headers(ctx))
 
                 async def on_list_tools(ctx: Any, params: Any) -> types.ListToolsResult:
                     _bind(ctx)

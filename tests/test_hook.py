@@ -2246,3 +2246,185 @@ def test_prompt_main_swallows_unexpected_errors(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "synthetic recall failure" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# review_unanswered: the review chains the conversation left open (D19)
+# ---------------------------------------------------------------------------
+
+#: The Stop audit's two rows keep their field sets exactly: the
+#: unanswered-review count is its own kind, never a field on these.
+_TURN_AUDITED_KEYS = {
+    "actor",
+    "assistant_present",
+    "kind",
+    "lookback_seconds",
+    "probe_mode",
+    "probe_query",
+    "recent_retrieval_count",
+    "session",
+    "session_id",
+    "threshold_rule",
+    "top_hits",
+    "triggered_from",
+    "ts",
+    "verdict",
+    "worktree_root",
+}
+_SEARCH_MISS_KEYS = {
+    "actor",
+    "event_id",
+    "kind",
+    "lookback_seconds",
+    "probe_query",
+    "recent_retrieval_count",
+    "session",
+    "session_id",
+    "threshold_rule",
+    "top_hits",
+    "triggered_from",
+    "ts",
+    "worktree_root",
+}
+
+
+@pytest.fixture
+def review_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
+    from bettermemory import hook as hook_module
+
+    from .test_recall_prompt import PromptWorld
+
+    world = PromptWorld(tmp_path)
+    monkeypatch.setattr(hook_module, "capture_origin", lambda *a, **k: world.caller)
+    return world
+
+
+def _review_row(
+    store: Store, *, session: str = "sess_srv", parent: str | None = None
+) -> str:
+    from bettermemory.models import generate_ulid
+
+    review_id = generate_ulid()
+    Recorder(store=store, session_id=session).record(
+        "review_issued",
+        review_id=review_id,
+        related=[],
+        client="none",
+        model="none",
+        pre_answered=False,
+        parent_review_id=parent,
+    )
+    return review_id
+
+
+def _write_row(store: Store, *, session: str = "sess_srv", **fields: Any) -> None:
+    Recorder(store=store, session_id=session).record("write", **fields)
+
+
+def _stop(world: Any, **kw: Any) -> dict[str, Any]:
+    from .test_recall_prompt import QUERY
+
+    kw.setdefault("session_id", "transcript-review")
+    kw.setdefault("config", world.config)
+    kw.setdefault("store", world.store)
+    return run_audit(user_message=QUERY, assistant_response=None, **kw)
+
+
+def _unanswered(store: Store) -> list[dict[str, Any]]:
+    return [e for e in store.iter_events() if e["kind"] == "review_unanswered"]
+
+
+def test_an_open_review_chain_is_counted(review_world: Any) -> None:
+    root = _review_row(review_world.store)
+    _stop(review_world)
+    [row] = _unanswered(review_world.store)
+    assert row["count"] == 1
+    assert row["root_ids"] == [root]
+    assert row["session_id"] == "transcript-review"
+    assert row["session"] == "transcript-review"
+    assert row["review_sessions"] == ["sess_srv"]
+    assert row["segment"] == 0
+    assert row["harness"] == "claude-code"
+    # A hook row: the in-process anchor walk must skip it.
+    assert row["triggered_from"] == "stop_hook"
+
+
+def test_a_decided_chain_is_not_counted(review_world: Any) -> None:
+    root = _review_row(review_world.store)
+    _write_row(review_world.store, status="committed", review_id=root)
+    child_root = _review_row(review_world.store)
+    child = _review_row(review_world.store, parent=child_root)
+    _write_row(review_world.store, status="committed", review_id=child)
+    _stop(review_world)
+    assert _unanswered(review_world.store) == []
+
+
+def test_a_resend_refused_by_another_gate_reads_open(review_world: Any) -> None:
+    """The dedup gate refused the re-send before the review decided: its
+    write row carries no review id, so the chain is still open, and the
+    count means unanswered or refused."""
+    root = _review_row(review_world.store)
+    _write_row(review_world.store, status="duplicate", scopes=["tools"])
+    _stop(review_world)
+    [row] = _unanswered(review_world.store)
+    assert row["root_ids"] == [root]
+
+
+def test_a_root_is_counted_once_per_session(review_world: Any) -> None:
+    from bettermemory.recall import RecallState
+
+    root = _review_row(review_world.store)
+    state = RecallState(background=False)
+    _stop(review_world, state=state)
+    # The next turn re-sends and meets a follow-up review of the same
+    # chain: same root, not counted again, with the daemon's state or
+    # with the state rebuilt from the log.
+    _review_row(review_world.store, parent=root)
+    _stop(review_world, state=state)
+    _review_row(review_world.store, parent=root)
+    _stop(review_world)
+    assert [r["root_ids"] for r in _unanswered(review_world.store)] == [[root]]
+
+
+def test_the_window_opens_at_the_previous_turn(review_world: Any) -> None:
+    _stop(review_world)
+    assert _unanswered(review_world.store) == []
+    root = _review_row(review_world.store)
+    _stop(review_world)
+    assert [r["root_ids"] for r in _unanswered(review_world.store)] == [[root]]
+
+
+def test_nothing_is_counted_with_telemetry_off(review_world: Any) -> None:
+    from .test_recall_prompt import config
+
+    _review_row(review_world.store)
+    _stop(review_world, config=config(review_world.store_dir, telemetry=False))
+    assert _unanswered(review_world.store) == []
+
+
+def test_the_harness_join_reads_this_conversations_server(review_world: Any) -> None:
+    """The rows are read under the session the harness stamp names; a
+    later server of another conversation (the one the worktree bridge
+    would pick) and its open review are left alone."""
+    Recorder(store=review_world.store, session_id="sess_ours").record(
+        "show", id="m-1", harness_session="transcript-review"
+    )
+    ours = _review_row(review_world.store, session="sess_ours")
+    _review_row(review_world.store, session="sess_theirs")
+    _stop(review_world)
+    [row] = _unanswered(review_world.store)
+    assert row["root_ids"] == [ours]
+    assert row["review_sessions"] == ["sess_ours"]
+
+
+def test_the_stop_rows_keep_their_field_sets(review_world: Any) -> None:
+    review_world.write(origin=None, scopes=["infrastructure"])
+    _review_row(review_world.store)
+    result = _stop(review_world)
+    assert result["verdict"] == "miss"
+    events = list(review_world.store.iter_events())
+    [audited] = [e for e in events if e["kind"] == "turn_audited"]
+    [miss] = [e for e in events if e["kind"] == "search_miss"]
+    assert set(audited) == _TURN_AUDITED_KEYS
+    assert set(miss) == _SEARCH_MISS_KEYS
+    assert len(_unanswered(review_world.store)) == 1

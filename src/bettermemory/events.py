@@ -62,6 +62,19 @@ _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 
+# The tool kinds stamped with the caller's harness session
+# (`identity.Caller.harness_session`) when it declared one: the reads and
+# writes the recall surface and the Stop settlement join to the hook rows
+# of the same conversation. Every other kind keeps its field set; the
+# Stop audit's own rows (`turn_audited`, `search_miss`) above all.
+HARNESS_STAMPED_KINDS: frozenset[str] = frozenset(
+    {"show", "search", "use", "write", "update", "verify"}
+)
+
+#: The field the harness session is stamped under.
+HARNESS_SESSION_FIELD = "harness_session"
+
+
 def _strip_known_secrets(text: str) -> str:
     """Replace known secret token shapes with redaction markers.
 
@@ -148,6 +161,10 @@ class Recorder:
             fields.setdefault("triggered_from", self.triggered_from)
         if self.worktree_root is not None:
             fields.setdefault("worktree_root", self.worktree_root)
+        if kind in HARNESS_STAMPED_KINDS:
+            harness_session = identity.current_harness_session()
+            if harness_session is not None:
+                fields.setdefault(HARNESS_SESSION_FIELD, harness_session)
         # A handler that names the actor itself wins over the published
         # one; the field must leave `fields`, or the store sees it twice.
         actor = fields.pop("actor", None)
@@ -201,6 +218,8 @@ def _event_id_list(value: Any) -> list[str]:
 
 
 __all__ = [
+    "HARNESS_SESSION_FIELD",
+    "HARNESS_STAMPED_KINDS",
     "Recorder",
     "redact_query",
 ]
