@@ -2433,7 +2433,8 @@ class TestComputeReport:
         client's session, under the transcript id its `turn_audited` rows
         carry: an in-session kind, never a tool call or an unmapped kind,
         and a log holding one renders the existing kinds' report exactly
-        as the log without it does."""
+        as the log without it does (beside the surfaces section, which
+        counts it)."""
         assert "review_unanswered" in _IN_SESSION_SIDE_EFFECT_KINDS
         assert "review_unanswered" in _KNOWN_SIDE_EFFECT_KINDS
         assert "review_unanswered" not in ADMIN_RECORDED_EVENT_KINDS
@@ -2453,10 +2454,13 @@ class TestComputeReport:
             out = dict(report.to_dict())
             out.pop("total_events_scanned")
             out.pop("events_in_window")
+            out.pop("surfaces", None)
             return out
 
         assert body(doc.window_eval) == body(without.window_eval)
         assert body(doc.alltime_eval) == body(without.alltime_eval)
+        assert doc.alltime_eval.surfaces is not None
+        assert doc.alltime_eval.surfaces["review_unanswered"]["chains"] == 1
 
     def test_a_segment_opened_counts_its_session_and_no_tool(self) -> None:
         """`segment_opened` is recorded by the SessionStart hook INSIDE the

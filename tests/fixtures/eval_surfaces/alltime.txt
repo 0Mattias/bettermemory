@@ -1,0 +1,24 @@
+bettermemory eval — last all time
+────────────────────────────────────────────────────────────
+Events scanned                         47
+Retrieval occurrences                  35
+Applied use events (auto+explicit)      4
+Turns audited                           3
+Turns no-signal (excluded)              1
+Repeat audits (deduped, excluded)       1
+
+memory_helped_rate   0.06 [0.02, 0.19]   ▇▁▁▁▁▁▁▁▁▁   (k=2, n=35)
+endorsement_rate     0.50 [0.15, 0.85]   ▇▇▇▇▇▁▁▁▁▁   (k=2, n=4)
+silent_miss_rate     0.33 [0.06, 0.79]   ▇▇▇▁▁▁▁▁▁▁   (k=1, n=3)
+
+Per-model audit telemetry (Stop-hook `client_model` stamp):
+  claude-other                 audited=1     misses=1    no_signal=0
+  claude-test                  audited=2     misses=0    no_signal=1
+
+Cold-endorsement memories (retrievals ≥ 30, 0 explicit applied): 1
+  01JAAAAAAAAAAAAAAAAAAAAAA1  projects:foo        "The deploy pipeline signs every release"  (32 retrievals)
+
+Silent-miss candidates (last 1):
+  2026-10-09 12:00  session=tr-3…  missed=01JAAAAAAAAAAAAAAAAAAAAAA3 relevance=high
+
+Threshold rule: v1_top1_high

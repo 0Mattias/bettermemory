@@ -391,9 +391,15 @@ class EvalReport:
     # two surfaces cannot derive three tiers two ways.
     applied_model: int = 0
     applied_hook: int = 0
+    # The recall surface's section over the same window (D11):
+    # `recall_counters.compute_surface_report`. None when the window holds
+    # none of the surface's rows, and then the key is left out of
+    # `to_dict` and no line of it is rendered, so a log written before
+    # the surface reports byte for byte as it did.
+    surfaces: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "generated_at": self.generated_at.isoformat(),
             "window_seconds": self.window_seconds,
             "window": {
@@ -434,6 +440,9 @@ class EvalReport:
             "silent_miss_recent": [c.to_dict() for c in self.silent_miss_recent],
             "review": self.review,
         }
+        if self.surfaces is not None:
+            out["surfaces"] = self.surfaces
+        return out
 
 
 # ---------------------------------------------------------------------------
@@ -610,6 +619,7 @@ def compute_eval(
     ``explicit_applied_count == 0`` is uninformative when nothing was
     ever in a position to attribute an apply.
     """
+    from .recall_counters import compute_surface_report, is_surface_row
     from .review_counters import compute_review_report, is_review_row
 
     now = now or datetime.now(timezone.utc)
@@ -619,6 +629,9 @@ def compute_eval(
     # past the window's end (a chain is judged from rows up to 30
     # minutes after it), so they are collected before the window filter.
     review_rows: list[dict[str, Any]] = []
+    # The recall surface's rows, kept the same way: what a conversation
+    # did after a show is read from rows outside the window's start.
+    surface_rows: list[dict[str, Any]] = []
 
     # Live store: id → memory, for cold-endorsement rows + scope filter.
     by_id: dict[str, Memory] = {m.id: m for m in memories}
@@ -732,6 +745,8 @@ def compute_eval(
             events_in_window += 1
         if is_review_row(ev):
             review_rows.append(ev)
+        if is_surface_row(ev):
+            surface_rows.append(ev)
 
         kind = ev.get("kind")
         # Coverage tally — like the markers below, deliberately ahead
@@ -808,6 +823,12 @@ def compute_eval(
         elif kind == "use":
             outcome = ev.get("outcome")
             if outcome != "applied":
+                continue
+            if ev.get("surface") is not None:
+                # A pointer's settlement (`recall.settle_shown`): the
+                # surfaces section counts it, the trio does not, so the
+                # published series keeps one definition across the
+                # recall surface's arrival.
                 continue
             ids = ev.get("ids") or ev.get("memory_ids") or []
             if not isinstance(ids, list):
@@ -1021,6 +1042,7 @@ def compute_eval(
         review=compute_review_report(
             review_rows, start=cutoff, end=window_end, now=now
         ).to_dict(),
+        surfaces=compute_surface_report(surface_rows, start=cutoff, end=window_end),
         scope_filter=scope,
         threshold_rule=threshold_rule,
         total_events_scanned=total_events_scanned,
@@ -1143,6 +1165,7 @@ def render_text(report: EvalReport) -> str:
         lines.append("")
         lines.append(f"Threshold rule: {report.threshold_rule}")
     lines.extend(_review_text_lines(report.review))
+    lines.extend(_surface_text_lines(report.surfaces))
     if (
         report.memory_helped_rate.torn_read
         or report.endorsement_rate.torn_read
@@ -1199,6 +1222,69 @@ def _review_text_lines(review: dict[str, Any] | None) -> list[str]:
             f"  grades n={grades['n']} right_both={grades['right_both']} "
             f"pre_answered_n={grades['pre_answered_n']}"
         )
+    return lines
+
+
+def _rate_from_dict(rate: dict[str, Any]) -> RateCI:
+    """A `RateCI` back from its `to_dict` form."""
+    return RateCI(
+        numerator=rate["numerator"],
+        denominator=rate["denominator"],
+        rate=rate["rate"],
+        lower=rate["ci95_lower"],
+        upper=rate["ci95_upper"],
+        torn_read=rate["torn_read"],
+    )
+
+
+_SURFACE_RATES: tuple[str, ...] = (
+    "shown_opened_rate",
+    "shown_used_rate",
+    "ignored_rate",
+    "delivery_helped_rate",
+)
+
+
+def _surface_text_lines(surfaces: dict[str, Any] | None) -> list[str]:
+    """The text form of the surfaces section; nothing when the window
+    holds none of the recall surface's rows."""
+    if surfaces is None:
+        return []
+    rules = ", ".join(surfaces["rules"]) or "none"
+    lines = ["", f"Recall surfaces (rule {rules}):"]
+    for surface in ("brief", "recall"):
+        tally = surfaces[surface]
+        lines.append(
+            f"  {surface}: deliveries={tally['deliveries']} shown={tally['shown']} "
+            f"opened={tally['opened']} used={tally['used']} "
+            f"ignored={tally['ignored']} helped={tally['deliveries_helped']}"
+        )
+        for name in _SURFACE_RATES:
+            lines.append("    " + _format_rate(name, _rate_from_dict(tally[name])))
+    suppressed = surfaces["recall"]["suppressed"]
+    if suppressed:
+        lines.append(
+            "  recall held back "
+            + " ".join(f"{reason}={count}" for reason, count in suppressed.items())
+        )
+    settled = surfaces["settlements"]
+    segments = surfaces["segments"]
+    unanswered = surfaces["review_unanswered"]
+    lines.append(
+        f"  settled brief={settled['brief']} recall={settled['recall']} · "
+        f"sessions={segments['sessions']} segments_opened={segments['opened']} · "
+        f"review_unanswered turns={unanswered['turns']} "
+        f"chains={unanswered['chains']}"
+    )
+    for stratum, grade in surfaces["grades"].items():
+        if grade["graded"]:
+            lines.append(
+                "  "
+                + _format_rate(
+                    f"graded {stratum}", _rate_from_dict(grade["relevant_rate"])
+                )
+            )
+    lines.append(f"  {surfaces['note']}")
     return lines
 
 
@@ -3001,6 +3087,10 @@ def compute_tool_usage(
         kind = ev.get("kind")
         if not isinstance(kind, str):
             continue
+        if kind == "use" and ev.get("surface") is not None:
+            # A pointer's settlement, recorded by the Stop
+            # (`recall.settle_shown`): no tool was called.
+            continue
         mapped_tool = _TOOL_EVENT_KIND_TO_TOOL.get(kind)
         if mapped_tool is not None:
             per_tool[mapped_tool] += 1
@@ -3301,13 +3391,99 @@ def _md_denominator_note(label: str, report: EvalReport) -> str:
     return f"- {label}: " + " · ".join(parts) + "."
 
 
+def _surface_markdown_lines(
+    window: dict[str, Any] | None,
+    alltime: dict[str, Any] | None,
+    *,
+    window_label: str,
+    single_window: bool,
+) -> list[str]:
+    """The report's recall surfaces section: each surface's four rates,
+    the window beside all time, and the counts under them. Nothing when
+    neither column holds the surface's rows."""
+    if alltime is None:
+        return []
+    empty = RateCI(0, 0, None, None, None)
+    lines = ["## Recall surfaces", ""]
+    if single_window:
+        lines.append("| surface | rate | all time |")
+        lines.append("|---|---|---|")
+    else:
+        lines.append(f"| surface | rate | {window_label} | all time |")
+        lines.append("|---|---|---|---|")
+    for surface in ("brief", "recall"):
+        for name in _SURFACE_RATES:
+            whole = _rate_from_dict(alltime[surface][name])
+            if single_window:
+                lines.append(
+                    f"| {surface} | `{name}` | {_md_rate_cell(whole, bold=True)} |"
+                )
+                continue
+            part = (
+                _rate_from_dict(window[surface][name]) if window is not None else empty
+            )
+            lines.append(
+                f"| {surface} | `{name}` | {_md_rate_cell(part, bold=True)} | "
+                f"{_md_rate_cell(whole)} |"
+            )
+    lines.append("")
+    for label, surfaces in ([] if single_window else [(window_label, window)]) + [
+        ("all time", alltime)
+    ]:
+        if surfaces is None:
+            continue
+        brief, recall = surfaces["brief"], surfaces["recall"]
+        settled = surfaces["settlements"]
+        lines.append(
+            f"- {label}: "
+            + " · ".join(
+                [
+                    _count_phrase(brief["deliveries"], "brief", "briefs"),
+                    _count_phrase(
+                        recall["deliveries"], "recall delivery", "recall deliveries"
+                    ),
+                    _count_phrase(
+                        brief["shown"] + recall["shown"],
+                        "pointer shown",
+                        "pointers shown",
+                    ),
+                    _count_phrase(
+                        settled["brief"] + settled["recall"],
+                        "pointer settled",
+                        "pointers settled",
+                    ),
+                    _count_phrase(
+                        surfaces["segments"]["opened"],
+                        "segment opened",
+                        "segments opened",
+                    ),
+                    _count_phrase(
+                        surfaces["review_unanswered"]["chains"],
+                        "review chain unanswered",
+                        "review chains unanswered",
+                    ),
+                ]
+            )
+            + "."
+        )
+    lines.append("")
+    lines.append(
+        "Use after a show, not because of it: an open is a `memory_show` of "
+        "a shown id later in the same conversation, a use an attested "
+        "applied `use` of it. " + alltime["note"]
+    )
+    lines.append("")
+    return lines
+
+
 def render_report_markdown(doc: ReportDocument) -> str:
     """Render the composed document as publishable markdown.
 
     Content contract (the canary test pins it): rates, counts, CIs,
     model names, and static registry names only. Sections, top to
     bottom: header, rate trio (window vs all-time), reading guide,
-    per-model table, threshold sweep, tool-usage top 10, methodology
+    per-model table, the recall surfaces (only when the log holds the
+    surface's rows), threshold sweep, tool-usage top 10, methodology
     footer.
     """
     single_window = doc.window_seconds is None
@@ -3451,6 +3627,17 @@ def render_report_markdown(doc: ReportDocument) -> str:
             "stamp arrived with 3.14 events)."
         )
     lines.append("")
+
+    # 4b. The recall surfaces, when either column holds the surface's
+    # rows. Counts and rates only, like every section here.
+    lines.extend(
+        _surface_markdown_lines(
+            doc.window_eval.surfaces,
+            doc.alltime_eval.surfaces,
+            window_label=window_label,
+            single_window=single_window,
+        )
+    )
 
     # 5. Threshold-sweep counterfactual. Rule names/descriptions come
     # from the rows compute_threshold_sweep built off the static

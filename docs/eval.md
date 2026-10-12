@@ -37,7 +37,11 @@ Two attestation tiers feed the numerator:
   still slip through; thresholds precision-tuned so false positives
   stay rare.
 
-The bare auto-fallback (`attribution="auto"`, no excerpt) is excluded.
+The bare auto-fallback (`attribution="auto"`, no excerpt) is excluded,
+and so is a `use` carrying `surface` (the Stop's settlement of a pointer
+the recall surface showed, which no retrieval stands behind): the
+surfaces section below counts it, and none of the three rates or the
+tool-call count does.
 The CLI's `applied_explicit` count is everything non-auto; recompute
 from the raw events' `attribution` field for a stricter model-only cut.
 
@@ -101,6 +105,13 @@ trends toward zero for reasons unrelated to model behaviour; read
 are not comparable across the 3.41.0 line, the same way the audited
 denominators are not comparable across a
 `--acknowledge-misses-before` cutoff.
+
+**And again with the recall surface (9.0).** The prompt recall no longer
+has a miss lane: it delivers memories written in the caller's project
+only, so a would-be miss on another project's memory is flagged again
+where the old lane delivered it. A delivered recall still shields the
+Stop's audit of its turn. Do not compare the rate across the switch; the
+surfaces section says so whenever it is printed.
 
 **Read this rate as a floor, not a health score.** The v1 verdict fires
 on a *coverage* label — the top hit matched ≥75% of the query's
@@ -203,6 +214,39 @@ other refusal shows the body from the transcripts under
 refusal from any other host shows none. `bettermemory review grade
 <review_id> --answers right|wrong --action right|wrong` records a grade
 as a `review_grade` event; the latest grade of a write counts.
+
+When the window holds any row of the recall surface (a `session_brief`,
+a `prompt_recall` carrying `rule`, a settlement, a `segment_opened`, a
+`review_unanswered` or a `recall_grade`), the report carries a
+`surfaces` section; otherwise it is left out and the report reads byte
+for byte as it did before the surface. For the brief and the prompt
+recall apart:
+
+- `deliveries` (shows), `shown` (pointers, one per id per show),
+  `opened`, `used`, `ignored`, `deliveries_helped` and `chars_p50`;
+- `shown_opened_rate`, `shown_used_rate` and `ignored_rate` over shown
+  pointers, and `delivery_helped_rate` (a show with at least one pointer
+  opened or used) over deliveries, with Wilson intervals;
+- for the recall, `suppressed`: the candidates held back beside a
+  delivery, by reason.
+
+An open is a `memory_show` of the shown id later in the same
+conversation, a use an applied `use` of it that is not the auto fallback
+and carries an excerpt (the Stop's settlement included), an ignore a
+`use` with outcome `ignored`. They count use after a show, not because
+of it. A row belongs to the conversation by its `harness_session` stamp,
+by its own session for the hooks' rows, and otherwise by the worktree
+bridge: the conversation whose hook row was the latest in the row's
+worktree. Rows after a show are read up to `--until`.
+
+Beside them: `settlements` by surface; `segments` (the conversations
+the surface spoke in, and the segments a compact or clear opened);
+`review_unanswered` (the Stop turns that counted open review chains, and
+the chains); and `grades`, per stratum of `bettermemory recall review`,
+the ids graded and how many were relevant, the latest grade of an id in
+a sample counting. `--scope` does not filter the section.
+`recall_counters.py` holds the computation. The `--report` markdown
+carries the four rates per surface and the counts, never an id.
 
 Reads the active event log — the sharded `<store>/.events.00.jsonl` …
 `.events.15.jsonl` segments, plus a pre-3.24 `<store>/.events.jsonl` on

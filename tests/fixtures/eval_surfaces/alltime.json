@@ -1,0 +1,149 @@
+{
+  "generated_at": "2026-10-11T12:00:00+00:00",
+  "window_seconds": null,
+  "window": {
+    "since": null,
+    "until": null
+  },
+  "scope_filter": null,
+  "threshold_rule": "v1_top1_high",
+  "total_events_scanned": 47,
+  "events_in_window": 47,
+  "counts": {
+    "retrieval_occurrences": 35,
+    "explicit_endorsements_with_excerpt": 2,
+    "applied_total": 4,
+    "applied_explicit": 2,
+    "applied_model": 1,
+    "applied_hook": 1,
+    "turns_audited": 3,
+    "turns_no_signal": 1,
+    "silent_misses": 1,
+    "repeat_audits": 1
+  },
+  "by_model": {
+    "claude-test": {
+      "audited": 2,
+      "no_signal": 1,
+      "misses": 0
+    },
+    "claude-other": {
+      "audited": 1,
+      "no_signal": 0,
+      "misses": 1
+    }
+  },
+  "memory_helped_rate": {
+    "numerator": 2,
+    "denominator": 35,
+    "rate": 0.05714285714285714,
+    "ci95_lower": 0.015812829614043955,
+    "ci95_upper": 0.1860738073937003,
+    "torn_read": false
+  },
+  "endorsement_rate": {
+    "numerator": 2,
+    "denominator": 4,
+    "rate": 0.5,
+    "ci95_lower": 0.15003570882017148,
+    "ci95_upper": 0.8499642911798285,
+    "torn_read": false
+  },
+  "silent_miss_rate": {
+    "numerator": 1,
+    "denominator": 3,
+    "rate": 0.3333333333333333,
+    "ci95_lower": 0.0614903152761605,
+    "ci95_upper": 0.7923450448735121,
+    "torn_read": false
+  },
+  "cold_endorsement_memories": {
+    "min_retrievals": 30,
+    "total": 1,
+    "rows": [
+      {
+        "id": "01JAAAAAAAAAAAAAAAAAAAAAA1",
+        "scopes": [
+          "projects:foo"
+        ],
+        "summary": "The deploy pipeline signs every release",
+        "retrieval_count": 32,
+        "auto_applied_count": 2,
+        "explicit_applied_count": 0
+      }
+    ],
+    "suppressed": false,
+    "suppressed_reason": null
+  },
+  "silent_miss_recent": [
+    {
+      "ts": "2026-10-09T12:00:00+00:00",
+      "session_id": "tr-3",
+      "top_missed_id": "01JAAAAAAAAAAAAAAAAAAAAAA3",
+      "top_missed_relevance": "high",
+      "threshold_rule": "v1_top1_high",
+      "recent_retrieval_count": 0
+    }
+  ],
+  "review": {
+    "answer_window_minutes": 30,
+    "judged_through": "2026-10-11T12:00:00Z",
+    "chains": {
+      "issued": 0,
+      "answered": 0,
+      "unanswered": 0,
+      "pending": 0,
+      "closed_by_call": 0
+    },
+    "unanswered_share": null,
+    "pre_answered": 0,
+    "pre_answered_share": null,
+    "pre_answered_zero": {
+      "total": 0,
+      "by_client": {},
+      "by_model": {}
+    },
+    "actions": {
+      "committed": 0,
+      "refused_secret": 0,
+      "refused_unsafe": 0,
+      "restates": 0
+    },
+    "links": 0,
+    "update_suggested": 0,
+    "filings": {
+      "review": 0,
+      "review-disagrees": 0
+    },
+    "response_chars_p50": null,
+    "response_chars_n": 0,
+    "calls_per_committed_write": null,
+    "committed_chains": {
+      "chains": 0,
+      "calls": 0
+    },
+    "refused_chains": {
+      "chains": 0,
+      "calls": 0
+    },
+    "unanswered_chains": {
+      "chains": 0,
+      "calls": 0
+    },
+    "filings_per_100_committed": {
+      "review": null,
+      "review-disagrees": null,
+      "total": null
+    },
+    "filings_by_week": {},
+    "by_client": {},
+    "by_model": {},
+    "grades": {
+      "n": 0,
+      "right_both": 0,
+      "right_answers": 0,
+      "right_action": 0,
+      "pre_answered_n": 0
+    }
+  }
+}

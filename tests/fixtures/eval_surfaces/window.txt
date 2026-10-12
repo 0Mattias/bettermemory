@@ -1,0 +1,21 @@
+bettermemory eval — last 30d
+────────────────────────────────────────────────────────────
+Events scanned                         14
+Retrieval occurrences                   4
+Applied use events (auto+explicit)      3
+Turns audited                           2
+Turns no-signal (excluded)              1
+Repeat audits (deduped, excluded)       1
+
+memory_helped_rate   0.50 [0.15, 0.85]   ▇▇▇▇▇▁▁▁▁▁   (k=2, n=4)
+endorsement_rate     0.67 [0.21, 0.94]   ▇▇▇▇▇▇▇▁▁▁   (k=2, n=3)
+silent_miss_rate     0.50 [0.09, 0.91]   ▇▇▇▇▇▁▁▁▁▁   (k=1, n=2)
+
+Per-model audit telemetry (Stop-hook `client_model` stamp):
+  claude-other                 audited=1     misses=1    no_signal=0
+  claude-test                  audited=1     misses=0    no_signal=1
+
+Silent-miss candidates (last 1):
+  2026-10-09 12:00  session=tr-3…  missed=01JAAAAAAAAAAAAAAAAAAAAAA3 relevance=high
+
+Threshold rule: v1_top1_high
