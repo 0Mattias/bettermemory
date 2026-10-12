@@ -39,6 +39,7 @@ import os
 import queue
 import secrets
 import socket
+import sys
 import threading
 import time
 from collections.abc import AsyncIterator
@@ -385,6 +386,97 @@ def build_app(
     return app
 
 
+#: How often, in seconds, the daemon checks that the store file it opened
+#: is still linked (`_StoreWatch`). Read when `serve` starts; tests lower it.
+STORE_WATCH_SECONDS = 30.0
+
+
+class _StoreWatch:
+    """Stops the daemon once the store file it opened is unlinked.
+
+    The watch holds its own descriptor on the store file and reads the
+    file's link count every `interval` seconds. Zero means the file was
+    removed, or replaced by a rename over its path (the inode the daemon
+    opened loses its last link), and a daemon left running would serve a
+    store no other process can open again, under a state file that may
+    be gone with it. A copy over the path writes into the same inode and
+    keeps it linked, so it does not count. Only an observed count of zero
+    stops the daemon: a stat that fails is logged and the next tick
+    checks again. The WAL and SHM files are never looked at.
+
+    Not on Windows, where SQLite's own handle already refuses an unlink
+    or a rename over the open store, so there is nothing to watch for."""
+
+    def __init__(
+        self, path: Path, on_removed: Callable[[], None], *, interval: float
+    ) -> None:
+        self._path = path
+        self._on_removed = on_removed
+        self._interval = interval
+        self._stop = threading.Event()
+        self._fd: int | None = None
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> bool:
+        """Open the descriptor and start the thread; False when the
+        platform has nothing to watch or the store cannot be opened."""
+        if sys.platform == "win32":
+            return False
+        try:
+            self._fd = os.open(str(self._path), os.O_RDONLY)
+        except OSError as exc:
+            log.warning(
+                "cannot watch the store %s: %s: %s",
+                self._path,
+                exc.__class__.__name__,
+                exc,
+            )
+            return False
+        self._thread = threading.Thread(
+            target=self._run, name="bettermemory-store-watch", daemon=True
+        )
+        self._thread.start()
+        return True
+
+    def _run(self) -> None:
+        assert self._fd is not None
+        while not self._stop.wait(self._interval):
+            try:
+                links = os.fstat(self._fd).st_nlink
+            except OSError as exc:
+                log.warning(
+                    "could not stat the store %s: %s: %s",
+                    self._path,
+                    exc.__class__.__name__,
+                    exc,
+                )
+                continue
+            if links == 0:
+                log.warning(
+                    "the store %s was removed or replaced; the daemon stops",
+                    self._path,
+                )
+                self._on_removed()
+                return
+
+    def stop(self, timeout: float = 1.0) -> None:
+        """Stop the thread and close the descriptor. The thread waits on
+        an event, so this never waits out an interval."""
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout)
+            if self._thread.is_alive():
+                # Never close a descriptor a live thread may still stat:
+                # its number could be reused for another file.
+                return
+        if self._fd is not None:
+            try:
+                os.close(self._fd)
+            except OSError:
+                pass
+            self._fd = None
+
+
 def bind(host: str, port: int) -> socket.socket:
     """A bound, non-listening socket on `host`: `port` when it is free,
     else an ephemeral one. The caller reads the port it got."""
@@ -409,9 +501,10 @@ def serve(
     port: int | None = None,
     host: str = HOST,
 ) -> int:
-    """Run the daemon in this process until the shutdown endpoint or a
-    signal stops it. Writes the state file after the socket is bound and
-    removes it on the way out. Returns the exit status."""
+    """Run the daemon in this process until the shutdown endpoint, a
+    signal, or the removal of its store file (`_StoreWatch`) stops it.
+    Writes the state file after the socket is bound and removes it on the
+    way out. Returns the exit status."""
     import uvicorn
 
     requested = config.daemon.port if port is None else port
@@ -452,12 +545,22 @@ def serve(
     )
     server = uvicorn.Server(uv_config)
     holder["server"] = server
+    watch = _StoreWatch(Path(store.path), shutdown, interval=STORE_WATCH_SECONDS)
     try:
+        watch.start()
         server.run(sockets=[sock])
     finally:
+        watch.stop()
         remove_state(state_dir, store.path, pid=os.getpid())
         sock.close()
     return 0
 
 
-__all__ = ["BearerAuthMiddleware", "OPEN_PATHS", "bind", "build_app", "serve"]
+__all__ = [
+    "BearerAuthMiddleware",
+    "OPEN_PATHS",
+    "STORE_WATCH_SECONDS",
+    "bind",
+    "build_app",
+    "serve",
+]

@@ -190,6 +190,10 @@ surfaces leave with them. An 8.x directory is imported once by
   report its exit status and the last line of its log
   (`DaemonExited`), where they used to wait out the eight-second start
   timeout and name no cause.
+  A daemon whose store file is removed, or replaced by a rename over
+  its path, stops through its normal shutdown at its next check (every
+  30 s) and logs one line; a copy over the store keeps it running. An
+  open shim starts a new one on its next call.
   `session-start`, `audit-turn` and `prompt-recall` stay as aliases of
   it, and the plugin's `hooks.json` names the new commands.
   (`src/bettermemory/daemon.py`, `shim.py`, `_daemon_client.py`,

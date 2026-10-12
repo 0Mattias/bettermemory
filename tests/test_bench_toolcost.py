@@ -13,8 +13,16 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+import tempfile
 from pathlib import Path
 from types import ModuleType
+from typing import Any
+
+import pytest
+
+from bettermemory._daemon_client import pid_alive
+
+from .conftest import shielded_child_env
 
 _ROOT = Path(__file__).resolve().parents[1]
 _RUNNER = _ROOT / "bench" / "toolcost" / "run.py"
@@ -129,3 +137,61 @@ def test_published_result_is_internally_consistent() -> None:
             other = next(v for k, v in rows.items() if "bettermemory" not in k)
             expected = round(bm["full_bytes"] / other["full_bytes"], 3)
             assert abs(data["ratio_full_bytes"] - expected) < 0.002
+
+
+def test_a_failed_spawn_leaves_no_sandbox(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sandbox is made before the spawn, so a spawn that fails must
+    still remove it: the missing-binary probe above used to leave one
+    empty `toolcost-home-*` directory in $TMPDIR on every run."""
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    with pytest.raises(OSError):
+        toolcost.probe_tools(["/nonexistent/binary"], timeout=5)
+    assert list(tmp_path.glob("toolcost-home-*")) == []
+
+
+def test_probing_the_shim_leaves_no_daemon_and_no_sandbox(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """bettermemory's shim starts a detached daemon for the sandbox store.
+    The probe must stop it before it removes the sandbox: removing the
+    state file first left a daemon `bettermemory down` could not reach,
+    serving a deleted store, one per probe."""
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    seen: list[dict[str, Any]] = []
+    original = toolcost.sandbox_daemons
+
+    def recording(sandbox: str, env: dict[str, str]) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = original(sandbox, env)
+        seen.extend(records)
+        return records
+
+    monkeypatch.setattr(toolcost, "sandbox_daemons", recording)
+    # Overrides only: `env` is laid over the sandbox's HOME, so a whole
+    # environment here would hand the child the real HOME back. The
+    # sandbox decides the store, the state directory and the keys,
+    # whatever the environment running the suite names (empty is unset),
+    # and the working directory has no project store.
+    env = {
+        "PYTHONPATH": shielded_child_env()["PYTHONPATH"],
+        "BETTERMEMORY_DIR": "",
+        "BETTERMEMORY_STATE_DIR": "",
+        "BETTERMEMORY_KEYS_DIR": "",
+    }
+    workdir = tmp_path / "cwd"
+    workdir.mkdir()
+    probe = toolcost.probe_tools(
+        [sys.executable, "-m", "bettermemory"],
+        env=env,
+        cwd=str(workdir),
+        timeout=60,
+    )
+    assert probe.tools, "the shim served no tools"
+    pids = {record["pid"] for record in seen}
+    assert pids, "no daemon state was found in the sandbox"
+    for record in seen:
+        assert Path(record["store"]).resolve().is_relative_to(tmp_path.resolve())
+    for pid in pids:
+        assert not pid_alive(pid), f"daemon pid {pid} outlived the probe"
+    assert list(tmp_path.glob("toolcost-home-*")) == []
