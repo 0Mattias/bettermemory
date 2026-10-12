@@ -1,0 +1,153 @@
+{
+  "commit": "384dfd88b7bfefdd076788062ff771ec201d5ce7",
+  "fixture": {
+    "callers": {
+      "memories": 4,
+      "none": 3
+    },
+    "name": "replay-fixture-backup-post.json",
+    "sha256": "0a03a29f677937093a99f33abf6645ab54d0bcb5f980544ee62a2c2de9c50936",
+    "store_sha256": "4f45e89edee3d089ff636074fca4879d542726d3e94dd155edf2ce687b96dd4c",
+    "turns": 237,
+    "window": {
+      "since": "2026-09-26",
+      "until": "2026-10-12"
+    }
+  },
+  "kind": "recall-replay",
+  "note": "out of sample: the same backup copy, the turns after M4's window",
+  "rules": {
+    "asof": {
+      "block_chars_max": 764,
+      "block_chars_p50": 542.0,
+      "candidates_histogram": {
+        "1": 37,
+        "2": 32,
+        "3": 36
+      },
+      "candidates_per_delivery": 1.99,
+      "counts": {
+        "deliveries": 105,
+        "in_repository": 218,
+        "no_candidate": 100,
+        "no_signal": 9,
+        "outside_repository": 19,
+        "segment_cap": 4,
+        "turns": 237
+      },
+      "deliveries_per_session_max": 12,
+      "deliveries_per_session_p50": 2.0,
+      "delivering_sessions": 32,
+      "fire_rate_in_repository": 0.482,
+      "held_back": {
+        "low_relevance": 108,
+        "other_project": 102,
+        "seen_in_segment": 200,
+        "segment_cap": 8
+      },
+      "ids_shown_twice_in_a_segment": 0,
+      "rule": "asof",
+      "sessions_with_turns": 45
+    },
+    "m4": {
+      "block_chars_max": 764,
+      "block_chars_p50": 542.0,
+      "candidates_histogram": {
+        "1": 37,
+        "2": 32,
+        "3": 36
+      },
+      "candidates_per_delivery": 1.99,
+      "counts": {
+        "deliveries": 105,
+        "in_repository": 218,
+        "no_candidate": 100,
+        "no_signal": 9,
+        "outside_repository": 19,
+        "segment_cap": 4,
+        "turns": 237
+      },
+      "deliveries_per_session_max": 12,
+      "deliveries_per_session_p50": 2.0,
+      "delivering_sessions": 32,
+      "fire_rate_in_repository": 0.482,
+      "held_back": {
+        "low_relevance": 108,
+        "other_project": 102,
+        "seen_in_segment": 200,
+        "segment_cap": 8
+      },
+      "ids_shown_twice_in_a_segment": 0,
+      "rule": "m4",
+      "sessions_with_turns": 45
+    },
+    "project": {
+      "block_chars_max": 764,
+      "block_chars_p50": 542.0,
+      "candidates_histogram": {
+        "1": 37,
+        "2": 32,
+        "3": 36
+      },
+      "candidates_per_delivery": 1.99,
+      "counts": {
+        "deliveries": 105,
+        "in_repository": 218,
+        "no_candidate": 100,
+        "no_signal": 9,
+        "outside_repository": 19,
+        "segment_cap": 4,
+        "turns": 237
+      },
+      "deliveries_per_session_max": 12,
+      "deliveries_per_session_p50": 2.0,
+      "delivering_sessions": 32,
+      "fire_rate_in_repository": 0.482,
+      "held_back": {
+        "low_relevance": 108,
+        "other_project": 102,
+        "seen_in_segment": 200,
+        "segment_cap": 8
+      },
+      "ids_shown_twice_in_a_segment": 0,
+      "rule": "project",
+      "sessions_with_turns": 45
+    },
+    "rs-v1": {
+      "block_chars_max": 839,
+      "block_chars_p50": 590.0,
+      "candidates_histogram": {
+        "1": 36,
+        "2": 29,
+        "3": 42
+      },
+      "candidates_per_delivery": 2.06,
+      "counts": {
+        "deliveries": 107,
+        "deliveries_with_mark": 0,
+        "in_repository": 218,
+        "no_candidate": 95,
+        "no_signal": 9,
+        "outside_repository": 19,
+        "pointers_cut_by_cap": 0,
+        "segment_cap": 7,
+        "turns": 237
+      },
+      "deliveries_per_session_max": 12,
+      "deliveries_per_session_p50": 2.5,
+      "delivering_sessions": 32,
+      "fire_rate_in_repository": 0.491,
+      "held_back": {
+        "low_relevance": 108,
+        "other_project": 102,
+        "seen_in_segment": 184,
+        "segment_cap": 13
+      },
+      "ids_shown_twice_in_a_segment": 0,
+      "rule": "rs-v1",
+      "sessions_with_turns": 45
+    }
+  },
+  "run_at": "2026-10-12T01:51:21.515032Z",
+  "version": "8.0.0"
+}

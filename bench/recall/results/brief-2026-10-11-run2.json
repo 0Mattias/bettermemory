@@ -1,0 +1,382 @@
+{
+  "commit": "384dfd88b7bfefdd076788062ff771ec201d5ce7",
+  "kind": "recall-brief",
+  "machine": {
+    "cpu_count": 12,
+    "platform": "macOS-27.0.1-arm64-arm-64bit",
+    "python": "3.11.15"
+  },
+  "method": {
+    "checkouts": "the 7 repositories with the most memories",
+    "fill_quiet_seconds": 2.0,
+    "first_call": "a fresh RecallState (in process) or a fresh daemon: no HEAD noted, no commit leg memoised; stands in for the first call after a head move",
+    "warm_n": 20
+  },
+  "note": "RS-P1 and RS-P2, second run, with the fill diagnostics; run 1 is brief-2026-10-11.json",
+  "results": {
+    "daemon": [
+      {
+        "fill_wait_seconds": 8.6,
+        "first_call_git_processes": 13,
+        "first_call_ms": 529.4,
+        "first_call_pointers": 4,
+        "is_this_repository": true,
+        "local_worktree": true,
+        "rank": 0,
+        "repoless": false,
+        "rows": 320,
+        "warm": {
+          "max_ms": 277.39,
+          "min_ms": 163.97,
+          "n": 20,
+          "p50_ms": 225.71,
+          "p95_ms": 269.9
+        },
+        "warm_git_processes": 0,
+        "warm_pointers": {
+          "8": 20
+        }
+      },
+      {
+        "fill_wait_seconds": 2.0,
+        "first_call_git_processes": 4,
+        "first_call_ms": 637.7,
+        "first_call_pointers": 2,
+        "is_this_repository": false,
+        "local_worktree": true,
+        "rank": 1,
+        "repoless": true,
+        "rows": 53,
+        "warm": {
+          "max_ms": 376.68,
+          "min_ms": 50.17,
+          "n": 20,
+          "p50_ms": 59.49,
+          "p95_ms": 135.2
+        },
+        "warm_git_processes": 0,
+        "warm_pointers": {
+          "5": 20
+        }
+      },
+      {
+        "fill_wait_seconds": 2.8,
+        "first_call_git_processes": 27,
+        "first_call_ms": 1417.2,
+        "first_call_pointers": 8,
+        "is_this_repository": false,
+        "local_worktree": true,
+        "rank": 2,
+        "repoless": false,
+        "rows": 38,
+        "warm": {
+          "max_ms": 240.56,
+          "min_ms": 51.05,
+          "n": 20,
+          "p50_ms": 60.39,
+          "p95_ms": 86.83
+        },
+        "warm_git_processes": 0,
+        "warm_pointers": {
+          "8": 20
+        }
+      },
+      {
+        "fill_wait_seconds": 2.3,
+        "first_call_git_processes": 28,
+        "first_call_ms": 1276.9,
+        "first_call_pointers": 8,
+        "is_this_repository": false,
+        "local_worktree": true,
+        "rank": 4,
+        "repoless": false,
+        "rows": 31,
+        "warm": {
+          "max_ms": 65.45,
+          "min_ms": 34.6,
+          "n": 20,
+          "p50_ms": 46.94,
+          "p95_ms": 64.42
+        },
+        "warm_git_processes": 0,
+        "warm_pointers": {
+          "8": 20
+        }
+      },
+      {
+        "fill_wait_seconds": 2.0,
+        "first_call_git_processes": 19,
+        "first_call_ms": 647.1,
+        "first_call_pointers": 5,
+        "is_this_repository": false,
+        "local_worktree": true,
+        "rank": 5,
+        "repoless": false,
+        "rows": 20,
+        "warm": {
+          "max_ms": 88.1,
+          "min_ms": 37.64,
+          "n": 20,
+          "p50_ms": 44.62,
+          "p95_ms": 60.34
+        },
+        "warm_git_processes": 0,
+        "warm_pointers": {
+          "5": 20
+        }
+      },
+      {
+        "fill_wait_seconds": 2.0,
+        "first_call_git_processes": 22,
+        "first_call_ms": 849.7,
+        "first_call_pointers": 7,
+        "is_this_repository": false,
+        "local_worktree": true,
+        "rank": 6,
+        "repoless": false,
+        "rows": 18,
+        "warm": {
+          "max_ms": 56.06,
+          "min_ms": 29.1,
+          "n": 20,
+          "p50_ms": 30.49,
+          "p95_ms": 52.26
+        },
+        "warm_git_processes": 0,
+        "warm_pointers": {
+          "7": 20
+        }
+      }
+    ],
+    "in_process": [
+      {
+        "fill_finished": true,
+        "first_call": {
+          "chars": 600,
+          "git_processes": 17,
+          "line_faults": 0,
+          "ms": 669.9,
+          "pointers": 4,
+          "rows_examined": 24,
+          "unresolved": 176
+        },
+        "first_call_within_full_scan": true,
+        "full_scan_pointers": 8,
+        "is_this_repository": true,
+        "local_worktree": true,
+        "memo_unresolved_after_fill": 0,
+        "rank": 0,
+        "repoless": false,
+        "repository_signature_held": true,
+        "rows": 320,
+        "warm": {
+          "chars": 1039,
+          "git_processes": 0,
+          "line_faults": 0,
+          "ms": 161.2,
+          "pointers": 8,
+          "rows_examined": 107,
+          "unresolved": 0
+        },
+        "warm_equals_full_scan": true
+      },
+      {
+        "fill_finished": true,
+        "first_call": {
+          "chars": 381,
+          "git_processes": 4,
+          "line_faults": 0,
+          "ms": 107.5,
+          "pointers": 2,
+          "rows_examined": 24,
+          "unresolved": 28
+        },
+        "first_call_within_full_scan": true,
+        "full_scan_pointers": 5,
+        "is_this_repository": false,
+        "local_worktree": true,
+        "memo_unresolved_after_fill": 0,
+        "rank": 1,
+        "repoless": true,
+        "repository_signature_held": true,
+        "rows": 53,
+        "warm": {
+          "chars": 711,
+          "git_processes": 0,
+          "line_faults": 0,
+          "ms": 45.2,
+          "pointers": 5,
+          "rows_examined": 52,
+          "unresolved": 0
+        },
+        "warm_equals_full_scan": true
+      },
+      {
+        "fill_finished": true,
+        "first_call": {
+          "chars": 1039,
+          "git_processes": 27,
+          "line_faults": 0,
+          "ms": 835.0,
+          "pointers": 8,
+          "rows_examined": 24,
+          "unresolved": 14
+        },
+        "first_call_within_full_scan": true,
+        "full_scan_pointers": 8,
+        "is_this_repository": false,
+        "local_worktree": true,
+        "memo_unresolved_after_fill": 0,
+        "rank": 2,
+        "repoless": false,
+        "repository_signature_held": true,
+        "rows": 38,
+        "warm": {
+          "chars": 1039,
+          "git_processes": 0,
+          "line_faults": 0,
+          "ms": 51.2,
+          "pointers": 8,
+          "rows_examined": 9,
+          "unresolved": 0
+        },
+        "warm_equals_full_scan": true
+      },
+      {
+        "fill_finished": true,
+        "first_call": {
+          "chars": 0,
+          "git_processes": 0,
+          "line_faults": 0,
+          "ms": 27.8,
+          "pointers": 0,
+          "rows_examined": null,
+          "unresolved": null
+        },
+        "first_call_within_full_scan": true,
+        "full_scan_pointers": 0,
+        "is_this_repository": false,
+        "local_worktree": false,
+        "memo_unresolved_after_fill": 0,
+        "rank": 3,
+        "repoless": false,
+        "repository_signature_held": true,
+        "rows": 35,
+        "warm": {
+          "chars": 0,
+          "git_processes": 0,
+          "line_faults": 0,
+          "ms": 25.0,
+          "pointers": 0,
+          "rows_examined": null,
+          "unresolved": null
+        },
+        "warm_equals_full_scan": true
+      },
+      {
+        "fill_finished": true,
+        "first_call": {
+          "chars": 1041,
+          "git_processes": 29,
+          "line_faults": 0,
+          "ms": 738.9,
+          "pointers": 8,
+          "rows_examined": 24,
+          "unresolved": 7
+        },
+        "first_call_within_full_scan": true,
+        "full_scan_pointers": 8,
+        "is_this_repository": false,
+        "local_worktree": true,
+        "memo_unresolved_after_fill": 0,
+        "rank": 4,
+        "repoless": false,
+        "repository_signature_held": true,
+        "rows": 31,
+        "warm": {
+          "chars": 1041,
+          "git_processes": 0,
+          "line_faults": 0,
+          "ms": 36.3,
+          "pointers": 8,
+          "rows_examined": 15,
+          "unresolved": 0
+        },
+        "warm_equals_full_scan": true
+      },
+      {
+        "fill_finished": true,
+        "first_call": {
+          "chars": 710,
+          "git_processes": 19,
+          "line_faults": 0,
+          "ms": 379.4,
+          "pointers": 5,
+          "rows_examined": 20,
+          "unresolved": 0
+        },
+        "first_call_within_full_scan": true,
+        "full_scan_pointers": 5,
+        "is_this_repository": false,
+        "local_worktree": true,
+        "memo_unresolved_after_fill": 0,
+        "rank": 5,
+        "repoless": false,
+        "repository_signature_held": true,
+        "rows": 20,
+        "warm": {
+          "chars": 710,
+          "git_processes": 0,
+          "line_faults": 0,
+          "ms": 35.3,
+          "pointers": 5,
+          "rows_examined": 20,
+          "unresolved": 0
+        },
+        "warm_equals_full_scan": true
+      },
+      {
+        "fill_finished": true,
+        "first_call": {
+          "chars": 930,
+          "git_processes": 22,
+          "line_faults": 0,
+          "ms": 462.2,
+          "pointers": 7,
+          "rows_examined": 18,
+          "unresolved": 0
+        },
+        "first_call_within_full_scan": true,
+        "full_scan_pointers": 7,
+        "is_this_repository": false,
+        "local_worktree": true,
+        "memo_unresolved_after_fill": 0,
+        "rank": 6,
+        "repoless": false,
+        "repository_signature_held": true,
+        "rows": 18,
+        "warm": {
+          "chars": 930,
+          "git_processes": 0,
+          "line_faults": 0,
+          "ms": 30.5,
+          "pointers": 7,
+          "rows_examined": 18,
+          "unresolved": 0
+        },
+        "warm_equals_full_scan": true
+      }
+    ]
+  },
+  "run_at": "2026-10-12T01:57:21.812724Z",
+  "store": {
+    "memories_imported": {
+      "found": 662,
+      "imported": 662,
+      "present": 0,
+      "unparseable": 0
+    },
+    "source": "the sealed live copy, migrated into a scratch store"
+  },
+  "version": "8.0.0"
+}

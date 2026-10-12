@@ -1,0 +1,17 @@
+{
+  "kind": "recall-rs-p10",
+  "commit_before": "0df5dc9",
+  "commit_after": "384dfd8",
+  "store": "the sealed live copy (live-copy-2026-09-25, tgz sha 311495f1), migrated by each commit's own code into its own scratch store",
+  "eval": {
+    "rate_mode_since_2026-08-26_until_2026-09-26": "byte-identical",
+    "rate_mode_since_all_until_2026-09-26": "byte-identical",
+    "tool_usage_since_all": "byte-identical",
+    "json_since_all_until_2026-09-26": "identical but for generated_at",
+    "report_since_2026-08-26": "identical but for the Generated stamp and the window's length in seconds, both read from the clock at run time",
+    "bytes": {"rate_mode_window": 1590, "json": 4097, "report": 3127, "tool_usage": 1707}
+  },
+  "tools_list_full_bytes": {"before": 8144, "after": 8144, "method": "bench/toolcost/run.py, the default spawn (python -m bettermemory: the shim, forwarding to a daemon it starts, HOME redirected)", "predicted": 8188},
+  "instructions_chars": {"before": 1000, "after": 1000, "predicted": 1000},
+  "field_sets": "not measured by a run; read from the diff 0df5dc9..384dfd8: turn_audited and search_miss emit the same fields; prompt_recall gains decision 8's fields; show, search, use, write, update and verify gain harness_session when the harness declares a session (decision 10, events.HARNESS_STAMPED_KINDS)"
+}

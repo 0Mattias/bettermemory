@@ -1,0 +1,151 @@
+{
+  "commit": "384dfd88b7bfefdd076788062ff771ec201d5ce7",
+  "fixture": {
+    "callers": {
+      "memories": 6,
+      "none": 3
+    },
+    "name": "replay-fixture-backup-window.json",
+    "sha256": "c271c7f0c3f4afb51c4feef9651fdd197fcf7d54ef8f3f8a1c038497cd1ef358",
+    "store_sha256": "4f45e89edee3d089ff636074fca4879d542726d3e94dd155edf2ce687b96dd4c",
+    "turns": 648,
+    "window": {
+      "since": "2026-08-26",
+      "until": "2026-09-26"
+    }
+  },
+  "kind": "recall-replay",
+  "note": "cross-check: a copy of the owner's online backup of 2026-10-11, M4's window",
+  "rules": {
+    "asof": {
+      "block_chars_max": 764,
+      "block_chars_p50": 539.0,
+      "candidates_histogram": {
+        "1": 87,
+        "2": 59,
+        "3": 44
+      },
+      "candidates_per_delivery": 1.77,
+      "counts": {
+        "deliveries": 190,
+        "in_repository": 600,
+        "no_candidate": 365,
+        "no_signal": 45,
+        "outside_repository": 48,
+        "turns": 648
+      },
+      "deliveries_per_session_max": 10,
+      "deliveries_per_session_p50": 1.0,
+      "delivering_sessions": 92,
+      "fire_rate_in_repository": 0.317,
+      "held_back": {
+        "absent": 16,
+        "ambient": 2,
+        "low_relevance": 339,
+        "other_project": 635,
+        "seen_in_segment": 309
+      },
+      "ids_shown_twice_in_a_segment": 0,
+      "rule": "asof",
+      "sessions_with_turns": 126
+    },
+    "m4": {
+      "block_chars_max": 764,
+      "block_chars_p50": 539.0,
+      "candidates_histogram": {
+        "1": 87,
+        "2": 59,
+        "3": 44
+      },
+      "candidates_per_delivery": 1.77,
+      "counts": {
+        "deliveries": 190,
+        "in_repository": 600,
+        "no_candidate": 365,
+        "no_signal": 45,
+        "outside_repository": 48,
+        "turns": 648
+      },
+      "deliveries_per_session_max": 10,
+      "deliveries_per_session_p50": 1.0,
+      "delivering_sessions": 92,
+      "fire_rate_in_repository": 0.317,
+      "held_back": {
+        "absent": 16,
+        "ambient": 2,
+        "low_relevance": 339,
+        "other_project": 635,
+        "seen_in_segment": 309
+      },
+      "ids_shown_twice_in_a_segment": 0,
+      "rule": "m4",
+      "sessions_with_turns": 126
+    },
+    "project": {
+      "block_chars_max": 764,
+      "block_chars_p50": 539.0,
+      "candidates_histogram": {
+        "1": 86,
+        "2": 60,
+        "3": 44
+      },
+      "candidates_per_delivery": 1.78,
+      "counts": {
+        "deliveries": 190,
+        "in_repository": 600,
+        "no_candidate": 365,
+        "no_signal": 45,
+        "outside_repository": 48,
+        "turns": 648
+      },
+      "deliveries_per_session_max": 10,
+      "deliveries_per_session_p50": 1.0,
+      "delivering_sessions": 92,
+      "fire_rate_in_repository": 0.317,
+      "held_back": {
+        "absent": 16,
+        "low_relevance": 339,
+        "other_project": 635,
+        "seen_in_segment": 310
+      },
+      "ids_shown_twice_in_a_segment": 0,
+      "rule": "project",
+      "sessions_with_turns": 126
+    },
+    "rs-v1": {
+      "block_chars_max": 839,
+      "block_chars_p50": 590.0,
+      "candidates_histogram": {
+        "1": 79,
+        "2": 63,
+        "3": 35
+      },
+      "candidates_per_delivery": 1.75,
+      "counts": {
+        "deliveries": 177,
+        "deliveries_with_mark": 0,
+        "in_repository": 600,
+        "no_candidate": 378,
+        "no_signal": 45,
+        "outside_repository": 48,
+        "pointers_cut_by_cap": 0,
+        "turns": 648
+      },
+      "deliveries_per_session_max": 10,
+      "deliveries_per_session_p50": 1,
+      "delivering_sessions": 89,
+      "fire_rate_in_repository": 0.295,
+      "held_back": {
+        "absent": 16,
+        "low_relevance": 339,
+        "other_project": 635,
+        "seen_in_segment": 338
+      },
+      "ids_shown_twice_in_a_segment": 0,
+      "rule": "rs-v1",
+      "sessions_with_turns": 126
+    }
+  },
+  "run_at": "2026-10-12T01:51:19.934340Z",
+  "version": "8.0.0"
+}
