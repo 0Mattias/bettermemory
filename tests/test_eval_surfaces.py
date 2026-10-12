@@ -435,6 +435,27 @@ def test_a_settlement_moves_no_rate_and_no_tool_call() -> None:
     assert report.surfaces["settlements"] == {"brief": 1, "recall": 0}
 
 
+def test_the_trio_drops_exactly_the_rows_the_section_counts() -> None:
+    """One predicate names a settlement: a `use` whose `surface` is one
+    the recall surface settles under. The trio and the tool count used
+    to drop any `use` carrying a `surface` while the section counted only
+    the two names, so a row with another value was in neither."""
+    from bettermemory.eval import compute_report, compute_tool_usage
+
+    base = [
+        _brief(_ts(1), ["m2"]),
+        _tool("search", _ts(1, 1), stamp=None, returned=["m1"]),
+    ]
+    for surface, settled in (("brief", 1), ("recall", 1), ("prompt_recall", 0)):
+        row = _settle(_ts(1, 2), "m1", surface, "e1")
+        report = compute_report([], base + [row], version="t", now=NOW).alltime_eval
+        assert report.surfaces is not None
+        counted = sum(report.surfaces["settlements"].values())
+        assert counted == settled, surface
+        assert report.applied_total == 1 - settled, surface
+        assert compute_tool_usage(base + [row]).total_tool_calls == 2 - settled
+
+
 # ---------------------------------------------------------------------------
 # What the conversation did after a show
 # ---------------------------------------------------------------------------

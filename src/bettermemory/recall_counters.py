@@ -37,7 +37,7 @@ from datetime import datetime
 from typing import Any
 
 from .events import HARNESS_SESSION_FIELD, HARNESS_STAMPED_KINDS
-from .recall import SURFACE_BRIEF, SURFACE_RECALL
+from .recall import SURFACE_BRIEF, SURFACE_RECALL, is_settlement
 from .time_utils import parse_event_ts
 
 #: The event kind `bettermemory recall grade` writes.
@@ -309,11 +309,7 @@ def compute_surface_report(
         row for row in rows if _in_window(parse_event_ts(row.get("ts")), start, end)
     ]
     shows = [row for row in in_window if is_surface_show(row)]
-    settlements = [
-        row
-        for row in in_window
-        if row.get("kind") == "use" and row.get("surface") in SURFACES
-    ]
+    settlements = [row for row in in_window if is_settlement(row)]
     opened_rows = [row for row in in_window if row.get("kind") == "segment_opened"]
     unanswered = [row for row in in_window if row.get("kind") == "review_unanswered"]
     grades = [row for row in in_window if row.get("kind") == RECALL_GRADE]
