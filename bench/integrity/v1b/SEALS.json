@@ -1,0 +1,39 @@
+{
+ "seed": 20261011,
+ "version": "v1b-test",
+ "dev_sha256": "bcef2801c9d4df5ee2f691c25ed4bdf7b2e300094db43f00b31f0cc83f7ce800",
+ "dev_split": "bench/integrity/v1/dev.json",
+ "test_sha256": "bff0e90bf55ba811f7e21ea570b976e9713b0f03c4e0910cfcd55476c2aa3e55",
+ "vocab_tables_sha256": "b0a4d97d9d263db164c92e48db989ca95e714fdb740e9df685e320822acb4fb0",
+ "plan_sha256": "c43ae9686247a111636be82b93b592259e087247fc0f0b8b3d78b865b6741976",
+ "cycle_offsets": {
+  "ff": 1,
+  "in": 1,
+  "se": 5,
+  "shape": 0,
+  "harm": 0,
+  "he": 2
+ },
+ "withheld": {
+  "count": 473,
+  "sha256": "d59dd3ec8581cdb2897a7e3749a72fe8149ed1a35ba4d76e80b2a34e49e36a99"
+ },
+ "generator_commit": "39f3deb5d6b24698d0fcd8172a147d269af5f75f",
+ "authors": {
+  "kst": "openai/gpt-6-sol",
+  "hlv": "openai/gpt-6-sol",
+  "mrw": "openai/gpt-6-sol",
+  "pdn": "openai/gpt-6-sol"
+ },
+ "author_models_returned": [
+  "openai/gpt-6-sol"
+ ],
+ "authoring_usd": 1.164239,
+ "auditor_models_returned": [
+  "z-ai/glm-5.3"
+ ],
+ "audit_usd": 0.520503,
+ "operating_points": "bench/integrity/v1/operating-points.json",
+ "operating_points_sha256": "6bac1f8a698696ac02d185664cdf89a62f14ae4260ac070eba3352e99f89d8e5",
+ "sealed_at": "2026-10-12T00:31:03+00:00"
+}

@@ -1,0 +1,37 @@
+{
+ "instrument": "chat-review",
+ "kind": "export_stamp",
+ "corpus_sha256": "bff0e90bf55ba811f7e21ea570b976e9713b0f03c4e0910cfcd55476c2aa3e55",
+ "test_guard": {
+  "seals": {
+   "path": "bench/integrity/v1b/SEALS.json",
+   "sha256": "8dfe58bb8dbd0275025d536e19a31ddf70f841a93102b82737afadbff8843bd4"
+  },
+  "review_seals": {
+   "path": "bench/integrity/v1/SEALS-review.json",
+   "sha256": "58eda394ab9e500ea41a59b34fac5a6329b97a17cf94a98afc2e9b932d992ecf"
+  },
+  "review_shas": {
+   "questions_sha256": "79fa9c21b1309f9c94a4e3ca892bfa54664b3421f6cf1b5e70f32e4f3d97ab92",
+   "prompt_sha256": "265a1bf5d571d677b95892efe4229ee162586871cf98e45c6bfb9b1cb61e7d5c",
+   "constants_sha256": "b7db125da5d87aa40699042774e929d2914eabde768a907beb900dc84b745f1f"
+  },
+  "operating_points": {
+   "path": "bench/integrity/v1/operating-points-review.json",
+   "sha256": "0e4a0b71689dfe82eae1e6e2f5321c3954b2df2e111d843bde4ab4b6145145a7"
+  },
+  "export": true
+ },
+ "items": 232,
+ "chunks": 8,
+ "seals": {
+  "questions_sha256": "79fa9c21b1309f9c94a4e3ca892bfa54664b3421f6cf1b5e70f32e4f3d97ab92",
+  "prompt_sha256": "265a1bf5d571d677b95892efe4229ee162586871cf98e45c6bfb9b1cb61e7d5c",
+  "constants_sha256": "b7db125da5d87aa40699042774e929d2914eabde768a907beb900dc84b745f1f"
+ },
+ "export": {
+  "receipts": "/Users/mattias/.cache/bettermemory-v9/receipts/d1-2026-10-11/v1b",
+  "sha256": "4046e22933a76d6f7ac74afa0e33dac4ae1de6f98398d1f2a5005dc62461e40c"
+ },
+ "run_at": "2026-10-12T00:31:57Z"
+}

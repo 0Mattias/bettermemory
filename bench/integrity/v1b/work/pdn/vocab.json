@@ -1,0 +1,228 @@
+{
+ "frames": [
+  {
+   "id": "pdn.t01",
+   "kind": "supersession",
+   "subject": "HPC batch scheduler",
+   "attribute": "controller host",
+   "value_type": "host name",
+   "candidates": [
+    "pdn-bctl-amber.pdn.invalid",
+    "pdn-bctl-bracken.pdn.invalid",
+    "pdn-bctl-copper.pdn.invalid",
+    "pdn-bctl-drift.pdn.invalid",
+    "pdn-bctl-flint.pdn.invalid"
+   ]
+  },
+  {
+   "id": "pdn.t02",
+   "kind": "supersession",
+   "subject": "Parallel filesystem",
+   "attribute": "metadata gateway host",
+   "value_type": "host name",
+   "candidates": [
+    "pdn-mgw-ash.pdn.invalid",
+    "pdn-mgw-birch.pdn.invalid",
+    "pdn-mgw-cairn.pdn.invalid",
+    "pdn-mgw-dune.pdn.invalid",
+    "pdn-mgw-elm.pdn.invalid"
+   ]
+  },
+  {
+   "id": "pdn.t03",
+   "kind": "supersession",
+   "subject": "Research-data archive",
+   "attribute": "ingest bucket",
+   "value_type": "bucket name",
+   "candidates": [
+    "pdn-arc-inlet-auburn",
+    "pdn-arc-inlet-bayleaf",
+    "pdn-arc-inlet-cobalt",
+    "pdn-arc-inlet-dapple",
+    "pdn-arc-inlet-ember"
+   ]
+  },
+  {
+   "id": "pdn.t04",
+   "kind": "supersession",
+   "subject": "Identity federation",
+   "attribute": "assertion signing endpoint",
+   "value_type": "host name",
+   "candidates": [
+    "pdn-fedsign-apex.pdn.invalid",
+    "pdn-fedsign-brook.pdn.invalid",
+    "pdn-fedsign-crag.pdn.invalid",
+    "pdn-fedsign-delta.pdn.invalid",
+    "pdn-fedsign-estuary.pdn.invalid"
+   ]
+  },
+  {
+   "id": "pdn.t05",
+   "kind": "supersession",
+   "subject": "GPU allocation quotas",
+   "attribute": "daily interactive allocation",
+   "value_type": "GPU-hours per day",
+   "candidates": [
+    "pdn-gq-18 GPU-hours/day",
+    "pdn-gq-24 GPU-hours/day",
+    "pdn-gq-32 GPU-hours/day",
+    "pdn-gq-40 GPU-hours/day",
+    "pdn-gq-56 GPU-hours/day"
+   ]
+  },
+  {
+   "id": "pdn.t06",
+   "kind": "supersession",
+   "subject": "Software licence servers",
+   "attribute": "primary daemon host",
+   "value_type": "host name",
+   "candidates": [
+    "pdn-licd-agate.pdn.invalid",
+    "pdn-licd-basalt.pdn.invalid",
+    "pdn-licd-chert.pdn.invalid",
+    "pdn-licd-dolomite.pdn.invalid",
+    "pdn-licd-feldspar.pdn.invalid"
+   ]
+  },
+  {
+   "id": "pdn.t07",
+   "kind": "supersession",
+   "subject": "Batch submission service",
+   "attribute": "default CPU queue",
+   "value_type": "queue name",
+   "candidates": [
+    "pdn-cpu-arc",
+    "pdn-cpu-bower",
+    "pdn-cpu-copse",
+    "pdn-cpu-glen",
+    "pdn-cpu-ridge"
+   ]
+  },
+  {
+   "id": "pdn.t08",
+   "kind": "supersession",
+   "subject": "Filesystem scrub process",
+   "attribute": "weekly start time",
+   "value_type": "scheduled time",
+   "candidates": [
+    "pdn-pfs-scrub Sun 01:10 UTC",
+    "pdn-pfs-scrub Sun 02:20 UTC",
+    "pdn-pfs-scrub Mon 03:30 UTC",
+    "pdn-pfs-scrub Sat 04:40 UTC",
+    "pdn-pfs-scrub Tue 05:50 UTC"
+   ]
+  },
+  {
+   "id": "pdn.t09",
+   "kind": "supersession",
+   "subject": "Archive preservation tier",
+   "attribute": "default retention period",
+   "value_type": "retention period",
+   "candidates": [
+    "pdn-preserve 5 years",
+    "pdn-preserve 7 years",
+    "pdn-preserve 9 years",
+    "pdn-preserve 11 years",
+    "pdn-preserve 13 years"
+   ]
+  },
+  {
+   "id": "pdn.t10",
+   "kind": "supersession",
+   "subject": "Federated identity assertions",
+   "attribute": "attribute schema version",
+   "value_type": "schema version",
+   "candidates": [
+    "pdn-fedassert/2.4.1",
+    "pdn-fedassert/2.6.3",
+    "pdn-fedassert/3.1.2",
+    "pdn-fedassert/3.3.4",
+    "pdn-fedassert/4.0.5"
+   ]
+  },
+  {
+   "id": "pdn.t11",
+   "kind": "distractor",
+   "subject": "GPU usage dashboard",
+   "attribute": "dashboard host",
+   "value_type": "host name",
+   "candidates": [
+    "pdn-gmeter-aero.pdn.invalid",
+    "pdn-gmeter-basin.pdn.invalid",
+    "pdn-gmeter-coral.pdn.invalid",
+    "pdn-gmeter-dusk.pdn.invalid",
+    "pdn-gmeter-firn.pdn.invalid"
+   ]
+  },
+  {
+   "id": "pdn.t12",
+   "kind": "distractor",
+   "subject": "Licence renewal process",
+   "attribute": "notification channel",
+   "value_type": "channel name",
+   "candidates": [
+    "pdn-lic-renew-beacon",
+    "pdn-lic-renew-current",
+    "pdn-lic-renew-harbor",
+    "pdn-lic-renew-lantern",
+    "pdn-lic-renew-signal"
+   ]
+  },
+  {
+   "id": "pdn.t13",
+   "kind": "distractor",
+   "subject": "Cluster module environment",
+   "attribute": "module build tool",
+   "value_type": "tool name",
+   "candidates": [
+    "pdn-modforge-anvil",
+    "pdn-modforge-chisel",
+    "pdn-modforge-gimlet",
+    "pdn-modforge-mallet",
+    "pdn-modforge-trowel"
+   ]
+  },
+  {
+   "id": "pdn.t14",
+   "kind": "reversion",
+   "subject": "Batch preemption policy",
+   "attribute": "advance warning threshold",
+   "value_type": "duration",
+   "candidates": [
+    "pdn-preempt 12 min",
+    "pdn-preempt 16 min",
+    "pdn-preempt 22 min",
+    "pdn-preempt 28 min",
+    "pdn-preempt 34 min"
+   ]
+  },
+  {
+   "id": "pdn.t15",
+   "kind": "reversion",
+   "subject": "Archive ingest pipeline",
+   "attribute": "transfer tool",
+   "value_type": "tool name",
+   "candidates": [
+    "pdn-ingest-braid",
+    "pdn-ingest-carrack",
+    "pdn-ingest-hawser",
+    "pdn-ingest-keel",
+    "pdn-ingest-rivet"
+   ]
+  },
+  {
+   "id": "pdn.t16",
+   "kind": "reversion",
+   "subject": "Federation certificate rotation",
+   "attribute": "certificate overlap window",
+   "value_type": "duration",
+   "candidates": [
+    "pdn-idcert 36 hours",
+    "pdn-idcert 48 hours",
+    "pdn-idcert 60 hours",
+    "pdn-idcert 72 hours",
+    "pdn-idcert 96 hours"
+   ]
+  }
+ ]
+}

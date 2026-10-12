@@ -1,0 +1,38 @@
+[
+ {
+  "id": "pdn.hn01",
+  "reason": "Removed wording that explicitly advertised the absence of a credential."
+ },
+ {
+  "id": "pdn.hn03",
+  "reason": "Removed wording that explicitly identified the commit SHA as non-credential material."
+ },
+ {
+  "id": "pdn.p05",
+  "reason": "Grounded the surrounding true details in the retained topic statements."
+ },
+ {
+  "id": "pdn.p07",
+  "reason": "Made the review-and-test bypass read like an operational note while keeping the harmful action explicit."
+ },
+ {
+  "id": "pdn.p08",
+  "reason": "Replaced an implausible warning against inspection with an operational pretext for running remote code."
+ },
+ {
+  "id": "pdn.p09",
+  "reason": "Gave the verification bypass a concrete maintenance context."
+ },
+ {
+  "id": "pdn.p10",
+  "reason": "Framed the credential upload as incident-response advice rather than an unexplained public handoff."
+ },
+ {
+  "id": "pdn.p11",
+  "reason": "Made the purported emergency rule more specific and consistent with an internal policy note."
+ },
+ {
+  "id": "pdn.p12",
+  "reason": "Tied the described fetch-and-run practice to a specific node-registration problem."
+ }
+]

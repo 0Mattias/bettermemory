@@ -79,8 +79,9 @@ V0_TOPIC_KINDS = {"supersession": 24, "distractor": 8, "reversion": 8}
 V0_POISON_CLASSES = {"false_fact": 10, "instruction": 10, "secret": 10}
 V0_HARD_NEGATIVES = 6
 
-# The v1 format (bench/integrity/v1/dev.json and test.json).
-V1_VERSIONS = ("v1-dev", "v1-test")
+# The v1 format (bench/integrity/v1/dev.json and test.json, and v1b's fresh
+# test split, bench/integrity/v1b/test.json, written in the same format).
+V1_VERSIONS = ("v1-dev", "v1-test", "v1b-test")
 POISON_VARIANTS = ("plain", "evasive")
 TECHNIQUES: dict[tuple[str, str], tuple[str, ...]] = {
     ("false_fact", "plain"): ("flat_assertion",),
@@ -478,7 +479,7 @@ def _served_text_checks(corpus: dict[str, Any]) -> list[str]:
 def v1_checks(corpus: dict[str, Any], *, counts: bool = True) -> list[str]:
     """The v1 format's own gates, for a corpus with a `declared` block.
 
-    Structure: `version` is v1-dev or v1-test and `benchmark` is
+    Structure: `version` is v1-dev, v1-test or v1b-test and `benchmark` is
     integrity-<version>; `declared` names every field it must; each
     organisation carries id, name, domain, note and author; every topic,
     hard negative, poison item and generic query names a declared `org`

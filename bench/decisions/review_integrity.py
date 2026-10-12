@@ -11,7 +11,7 @@ gate-only arm beside it. Every command prints counts and ids only.
                                     [--operating-points P --rerun-reason R]   (v1 test)
     review_integrity.py wave        --receipts DIR [--stop N --estimate N] [--tokens CHUNK=N ...]
     review_integrity.py score       --receipts DIR --out RESULT [--tau X | --operating-points P]
-                                    [--run-index N --run-reason R]
+                                    [--run-index N --run-reason R] [--rule A2 --table 1]
     review_integrity.py rescore     --receipts DIR --committed RESULT --out FILE
                                     [--operating-points P --rerun-reason R]   (v1 test)
     review_integrity.py gate-only   --corpus SPLIT --out RESULT [--parent-raw RAW]
@@ -84,7 +84,18 @@ committed result item by item (the replay gate), then D1 with version 2
 and A1 with version 2. It writes a new file under the instrument
 chat-review-rescore with the committed result's sha and every answer
 file's sha; on the test split the guard runs first as chat-review, so a
-rescore there needs --rerun-reason.
+rescore there needs --rerun-reason. `score` takes --rule and --table
+(defaults A2 and 1, as before), so a split read once, such as v1b's, is
+scored under A2 and table 2 directly, without a D1 result to rescore.
+
+The two test splits (guard.TEST_SEALS). Everything said above of the
+test split holds for v1's (v1-test) and v1b's (v1b-test), each against
+its own seals file and with the review's seals and points shared. The
+names follow the version: the receipts directory is d1-<date>/test or
+d1-<date>/v1b (`split_name`), and the export stamp and the results go to
+bench/decisions/results/v1/ or bench/decisions/results/v1b/
+(`results_dir_for`), the stamp named
+integrity-<version>-chat-review-<date>.export.json (`stamp_name`).
 """
 
 from __future__ import annotations
@@ -140,6 +151,11 @@ QUESTIONS = review.QUESTIONS
 PROMPT = DECISIONS / "prompts" / "review-judge.md"
 RESULTS = DECISIONS / "results"
 RESULTS_V1 = RESULTS / "v1"
+RESULTS_V1B = RESULTS / "v1b"
+# Where each test split's export stamps and chat-review results go.
+TEST_RESULTS: Mapping[str, Path] = MappingProxyType(
+    {guard.TEST_VERSION: RESULTS_V1, "v1b-test": RESULTS_V1B}
+)
 REVIEW_POINTS = INTEGRITY / "v1" / guard.REVIEW_POINTS_NAME
 SEALS_REVIEW = guard.SEALS_REVIEW
 ANCHOR_RAW = (
@@ -386,8 +402,26 @@ def _provenance(corpus_path: Path | None, corpus: dict[str, Any] | None) -> dict
 
 
 def split_name(corpus: Mapping[str, Any]) -> str:
-    """The receipts directory a corpus's export goes to: v0, dev or test."""
-    return {"v1-dev": "dev", "v1-test": "test"}.get(str(corpus.get("version")), "v0")
+    """The receipts directory a corpus's export goes to: v0, dev, test (v1's
+    test split) or v1b."""
+    return {"v1-dev": "dev", "v1-test": "test", "v1b-test": "v1b"}.get(
+        str(corpus.get("version")), "v0"
+    )
+
+
+def results_dir_for(version: Any) -> Path:
+    """The results directory of a corpus version: a test split's own (v1's
+    or v1b's), v1's for every other."""
+    return (
+        TEST_RESULTS.get(version, RESULTS_V1)
+        if isinstance(version, str)
+        else RESULTS_V1
+    )
+
+
+def stamp_name(version: str, day: str) -> str:
+    """The export stamp's file name on a test split, from its version."""
+    return f"integrity-{version}-chat-review-{day}.export.json"
 
 
 def default_receipts(corpus: Mapping[str, Any], run_index: int, day: str) -> Path:
@@ -538,17 +572,18 @@ def export(
     run_index: int = 1,
     operating_points: Path | None = None,
     rerun_reason: str | None = None,
-    results_dir: Path = RESULTS_V1,
+    results_dir: Path | None = None,
     stamp_out: Path | None = None,
     scratch: Path | None = None,
     day: str | None = None,
-    seals: Path = guard.SEALS,
+    seals: Path | None = None,
     review_seals: Path = SEALS_REVIEW,
     prompt: Path | None = None,
 ) -> dict[str, Any]:
     """Build the states, blind them into chunks in the receipts directory
-    and stamp the export. On the v1 test split the guard runs first and
-    the export leaves a stamp in `results_dir`."""
+    and stamp the export. On a test split the guard runs first (against
+    the split's own seals unless `seals` is given) and the export leaves a
+    stamp in `results_dir`, by default the split's own."""
     day = day or _today()
     corpus = json.loads(Path(corpus_path).read_bytes().decode("utf-8"))
     problems = score.corpus_checks(corpus)
@@ -556,13 +591,13 @@ def export(
         raise Refused(f"corpus checks failed: {len(problems)} problems")
     sha = score.corpus_sha256(Path(corpus_path))
     shas = seal_shas(prompt)
-    test = corpus.get("version") == guard.TEST_VERSION
+    version = corpus.get("version")
+    test = guard.is_test_version(version)
+    results_dir = Path(results_dir or results_dir_for(version))
     stamp_path: Path | None = None
     test_guard: dict[str, Any] | None = None
     if test:
-        stamp_path = stamp_out or (
-            Path(results_dir) / f"integrity-v1-test-chat-review-{day}.export.json"
-        )
+        stamp_path = stamp_out or (results_dir / stamp_name(str(version), day))
         try:
             test_guard = guard.guard_run(
                 corpus,
@@ -1540,7 +1575,7 @@ def score_export(
     run_index: int = 1,
     run_reason: str | None = None,
     stamp: Path | None = None,
-    results_dir: Path = RESULTS_V1,
+    results_dir: Path | None = None,
     review_seals: Path = SEALS_REVIEW,
     prompt: Path | None = None,
     rule: str = RULE_A2,
@@ -1570,7 +1605,8 @@ def score_export(
     states_doc = _read(receipts / STATES)
     states: list[dict[str, Any]] = states_doc["items"]
     memories: dict[str, str] = states_doc["memories"]
-    test = manifest["split"] == guard.TEST_VERSION
+    test = guard.is_test_version(manifest["split"])
+    results_dir = Path(results_dir or results_dir_for(manifest["split"]))
     extra: dict[str, Any] = {}
     if test:
         stamp_path = Path(stamp) if stamp else _find_stamp(results_dir, export_sha)
@@ -1841,8 +1877,8 @@ def rescore(
     answers_dir: Path | None = None,
     operating_points: Path | None = None,
     rerun_reason: str | None = None,
-    results_dir: Path = RESULTS_V1,
-    seals: Path = guard.SEALS,
+    results_dir: Path | None = None,
+    seals: Path | None = None,
     review_seals: Path = SEALS_REVIEW,
     prompt: Path | None = None,
 ) -> dict[str, Any]:
@@ -1875,9 +1911,10 @@ def rescore(
     ) != doc.get("split"):
         raise Refused("the receipts' corpus is not the committed result's")
     rerun_reason = (rerun_reason or "").strip() or None
+    results_dir = Path(results_dir or results_dir_for(manifest["split"]))
     if (
-        manifest["split"] == guard.TEST_VERSION
-        and out.parent.resolve() != Path(results_dir).resolve()
+        guard.is_test_version(manifest["split"])
+        and out.parent.resolve() != results_dir.resolve()
     ):
         raise Refused(
             f"on the test split a rescore is written into {_rel(results_dir)}, "
@@ -2017,8 +2054,10 @@ def gate_only(
     with no opinion (unsafe 0, secret 0, "update" for a cue target and
     "unrelated" for every other). Never on the v1 test split."""
     corpus = json.loads(Path(corpus_path).read_bytes().decode("utf-8"))
-    if corpus.get("version") == guard.TEST_VERSION:
-        raise Refused("the gate-only arm runs on v0 and v1 dev only, never on v1 test")
+    if guard.is_test_version(corpus.get("version")):
+        raise Refused(
+            "the gate-only arm runs on v0 and v1 dev only, never on a test split"
+        )
     work = Path(scratch) if scratch else Path(tempfile.mkdtemp(prefix="bm-gate-only-"))
     raw_path = Path(raw_out) if raw_out else work / "gate-only-raw.json"
     code = runner.collect(
@@ -2613,11 +2652,11 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--run-index", type=int, default=1)
     e.add_argument("--operating-points", type=Path, default=None)
     e.add_argument("--rerun-reason", default=None)
-    e.add_argument("--results-dir", type=Path, default=RESULTS_V1)
+    e.add_argument("--results-dir", type=Path, default=None)
     e.add_argument("--stamp-out", type=Path, default=None)
     e.add_argument("--scratch", type=Path, default=None)
     e.add_argument("--date", default=None)
-    e.add_argument("--seals", type=Path, default=guard.SEALS)
+    e.add_argument("--seals", type=Path, default=None)
     e.add_argument("--review-seals", type=Path, default=SEALS_REVIEW)
     w = sub.add_parser("wave")
     w.add_argument("--receipts", type=Path, required=True)
@@ -2633,8 +2672,21 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--run-index", type=int, default=1)
     s.add_argument("--run-reason", default=None)
     s.add_argument("--stamp", type=Path, default=None)
-    s.add_argument("--results-dir", type=Path, default=RESULTS_V1)
+    s.add_argument("--results-dir", type=Path, default=None)
     s.add_argument("--review-seals", type=Path, default=SEALS_REVIEW)
+    s.add_argument(
+        "--rule",
+        choices=RULES,
+        default=RULE_A2,
+        help="the decision rule the answers are read through (default A2)",
+    )
+    s.add_argument(
+        "--table",
+        type=int,
+        choices=(TABLE_V1, TABLE_V2),
+        default=TABLE_V1,
+        help="the scoring table's version (default 1)",
+    )
     q = sub.add_parser("rescore")
     q.add_argument("--receipts", type=Path, required=True)
     q.add_argument("--committed", type=Path, required=True)
@@ -2642,8 +2694,8 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--answers-dir", type=Path, default=None)
     q.add_argument("--operating-points", type=Path, default=None)
     q.add_argument("--rerun-reason", default=None)
-    q.add_argument("--results-dir", type=Path, default=RESULTS_V1)
-    q.add_argument("--seals", type=Path, default=guard.SEALS)
+    q.add_argument("--results-dir", type=Path, default=None)
+    q.add_argument("--seals", type=Path, default=None)
     q.add_argument("--review-seals", type=Path, default=SEALS_REVIEW)
     g = sub.add_parser("gate-only")
     g.add_argument("--corpus", type=Path, required=True)
@@ -2706,6 +2758,8 @@ def main(argv: list[str] | None = None) -> int:
                 stamp=a.stamp,
                 results_dir=a.results_dir,
                 review_seals=a.review_seals,
+                rule=a.rule,
+                table=a.table,
             )
             _dump(a.out, result)
             _out(score_summary(result, a.out))

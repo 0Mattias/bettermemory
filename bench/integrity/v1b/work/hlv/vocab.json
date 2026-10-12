@@ -1,0 +1,228 @@
+{
+ "frames": [
+  {
+   "id": "hlv.t01",
+   "kind": "supersession",
+   "subject": "linear playout controller",
+   "attribute": "primary controller host",
+   "value_type": "host name",
+   "candidates": [
+    "cedar-play.hlv.invalid",
+    "flint-play.hlv.invalid",
+    "marsh-play.hlv.invalid",
+    "slate-play.hlv.invalid",
+    "willow-play.hlv.invalid"
+   ]
+  },
+  {
+   "id": "hlv.t02",
+   "kind": "supersession",
+   "subject": "transcode delivery worker",
+   "attribute": "output bucket",
+   "value_type": "bucket name",
+   "candidates": [
+    "hlv-xcode-amber-renditions",
+    "hlv-xcode-birch-renditions",
+    "hlv-xcode-cobalt-renditions",
+    "hlv-xcode-dune-renditions",
+    "hlv-xcode-fen-renditions"
+   ]
+  },
+  {
+   "id": "hlv.t03",
+   "kind": "supersession",
+   "subject": "subtitle alignment pipeline",
+   "attribute": "pending jobs queue",
+   "value_type": "queue name",
+   "candidates": [
+    "hlv-subalign-kestrel-q",
+    "hlv-subalign-lantern-q",
+    "hlv-subalign-morrow-q",
+    "hlv-subalign-otter-q",
+    "hlv-subalign-ripple-q"
+   ]
+  },
+  {
+   "id": "hlv.t04",
+   "kind": "supersession",
+   "subject": "DRM key rotation process",
+   "attribute": "rotation cadence",
+   "value_type": "time interval",
+   "candidates": [
+    "17 min (hlv-keyrot)",
+    "23 min (hlv-keyrot)",
+    "31 min (hlv-keyrot)",
+    "47 min (hlv-keyrot)",
+    "59 min (hlv-keyrot)"
+   ]
+  },
+  {
+   "id": "hlv.t05",
+   "kind": "supersession",
+   "subject": "dynamic ad insertion",
+   "attribute": "default splice policy",
+   "value_type": "policy name",
+   "candidates": [
+    "hlv-splice-arc",
+    "hlv-splice-bloom",
+    "hlv-splice-cairn",
+    "hlv-splice-drift",
+    "hlv-splice-ember"
+   ]
+  },
+  {
+   "id": "hlv.t06",
+   "kind": "supersession",
+   "subject": "asset catalogue index",
+   "attribute": "metadata schema version",
+   "value_type": "version string",
+   "candidates": [
+    "hlv-mam-schema-3.4",
+    "hlv-mam-schema-4.2",
+    "hlv-mam-schema-5.7",
+    "hlv-mam-schema-6.1",
+    "hlv-mam-schema-7.3"
+   ]
+  },
+  {
+   "id": "hlv.t07",
+   "kind": "supersession",
+   "subject": "overnight rundown reconciler",
+   "attribute": "scheduled run time",
+   "value_type": "time with zone",
+   "candidates": [
+    "hlv-rundown-zyphora/00:37Z",
+    "hlv-rundown-quembel/01:43Z",
+    "hlv-rundown-vaskira/02:51Z",
+    "hlv-rundown-meltrix/03:16Z",
+    "hlv-rundown-jovarin/04:58Z"
+   ]
+  },
+  {
+   "id": "hlv.t08",
+   "kind": "supersession",
+   "subject": "mezzanine ingest gateway",
+   "attribute": "active ingest host",
+   "value_type": "host name",
+   "candidates": [
+    "basalt-ingest.hlv.invalid",
+    "coral-ingest.hlv.invalid",
+    "hazel-ingest.hlv.invalid",
+    "pebble-ingest.hlv.invalid",
+    "thistle-ingest.hlv.invalid"
+   ]
+  },
+  {
+   "id": "hlv.t09",
+   "kind": "supersession",
+   "subject": "caption distribution bridge",
+   "attribute": "delivery channel",
+   "value_type": "channel name",
+   "candidates": [
+    "hlv-captions-aperture",
+    "hlv-captions-bracken",
+    "hlv-captions-cascade",
+    "hlv-captions-delta",
+    "hlv-captions-estuary"
+   ]
+  },
+  {
+   "id": "hlv.t10",
+   "kind": "supersession",
+   "subject": "licence request router",
+   "attribute": "preferred serving region",
+   "value_type": "region code",
+   "candidates": [
+    "hlv-region-nq1",
+    "hlv-region-se2",
+    "hlv-region-vc3",
+    "hlv-region-wm4",
+    "hlv-region-yp5"
+   ]
+  },
+  {
+   "id": "hlv.t11",
+   "kind": "distractor",
+   "subject": "ad beacon archive",
+   "attribute": "event retention period",
+   "value_type": "duration",
+   "candidates": [
+    "hlv-beacon-saffron/15d",
+    "hlv-beacon-tamarind/21d",
+    "27 days (hlv-beacon)",
+    "34 days (hlv-beacon)",
+    "46 days (hlv-beacon)"
+   ]
+  },
+  {
+   "id": "hlv.t12",
+   "kind": "distractor",
+   "subject": "media asset intake",
+   "attribute": "ingest validator tool",
+   "value_type": "tool name",
+   "candidates": [
+    "hlv-intake-Aldercheck",
+    "hlv-intake-Bayprobe",
+    "hlv-intake-Crestscan",
+    "hlv-intake-Dockverify",
+    "hlv-intake-Elmguard"
+   ]
+  },
+  {
+   "id": "hlv.t13",
+   "kind": "distractor",
+   "subject": "transcode duty desk",
+   "attribute": "health dashboard",
+   "value_type": "dashboard name",
+   "candidates": [
+    "hlv-dash-Arcwatch",
+    "hlv-dash-Cloudline",
+    "hlv-dash-Firebreak",
+    "hlv-dash-Harborview",
+    "hlv-dash-Ridgeglass"
+   ]
+  },
+  {
+   "id": "hlv.t14",
+   "kind": "reversion",
+   "subject": "live encoder preset",
+   "attribute": "default output profile",
+   "value_type": "profile name",
+   "candidates": [
+    "hlv-encode-avocet-1080p",
+    "hlv-encode-curlew-1080p",
+    "hlv-encode-gannet-1080p",
+    "hlv-encode-heron-1080p",
+    "hlv-encode-plover-1080p"
+   ]
+  },
+  {
+   "id": "hlv.t15",
+   "kind": "reversion",
+   "subject": "subtitle QC gate",
+   "attribute": "maximum timing drift",
+   "value_type": "time threshold",
+   "candidates": [
+    "74 ms (hlv-subqc)",
+    "86 ms (hlv-subqc)",
+    "103 ms (hlv-subqc)",
+    "127 ms (hlv-subqc)",
+    "148 ms (hlv-subqc)"
+   ]
+  },
+  {
+   "id": "hlv.t16",
+   "kind": "reversion",
+   "subject": "DRM failover broker",
+   "attribute": "backup licence vendor",
+   "value_type": "vendor name",
+   "candidates": [
+    "hlv-vendor-Avenlock",
+    "hlv-vendor-Briargate",
+    "hlv-vendor-Celmere",
+    "hlv-vendor-Dovewick",
+    "hlv-vendor-Estralin"
+   ]
+  }
+ ]
+}

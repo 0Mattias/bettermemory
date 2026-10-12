@@ -1,5 +1,17 @@
-"""The guard on the v1 test split, shared by bench/integrity/run.py
-(`collect`) and bench/decisions/decisions_integrity.py.
+"""The guard on the test splits, shared by bench/integrity/run.py
+(`collect`, a table-2 `score`), bench/decisions/decisions_integrity.py
+and bench/decisions/review_integrity.py.
+
+There are two test splits, each read once and each with its own seals
+file (TEST_SEALS): v1's ("v1-test", bench/integrity/v1/SEALS.json) and
+v1b's ("v1b-test", bench/integrity/v1b/SEALS.json), a fresh held-out split
+authored later with v1's machinery (bench/integrity/v1b/gen.py). v1b has
+no dev split: its seal names v1's dev split as dev_sha256 and v1's
+operating points as operating_points_sha256, which it reuses, and the
+review's seals below serve both. Everything said of "the test split"
+below holds for each, against its own seals file; `is_test_version`
+names them. A caller that passes no `seals` gets the corpus version's
+own file.
 
 The test split is read once, after the operating points were frozen on
 the dev split. bench/integrity/v1/SEALS.json records that freeze. It is
@@ -16,7 +28,7 @@ read, and a file lacking one of the three refuses every test run.
 check reports a v1 split that differs from its seal); `test_sha256` and
 `operating_points_sha256` by `guard_run`.
 
-A corpus whose `version` is "v1-test" is refused unless (a) its file's
+A corpus whose `version` is a test version is refused unless (a) its file's
 sha256 equals `test_sha256` and (b) --operating-points names a file whose
 sha256 equals `operating_points_sha256`. A run that writes a result is
 also refused when its output directory already holds a result for the
@@ -66,12 +78,22 @@ _HERE = Path(__file__).resolve().parent
 _ROOT = _HERE.parents[1]
 
 SEALS = _HERE / "v1" / "SEALS.json"
+SEALS_V1B = _HERE / "v1b" / "SEALS.json"
+# v1's test version, kept for the callers that name it.
 TEST_VERSION = "v1-test"
+# Every read-once test split, by corpus version, with its seals file.
+TEST_SEALS: dict[str, Path] = {
+    TEST_VERSION: SEALS,
+    "v1b-test": SEALS_V1B,
+}
 SEAL_FIELDS = {
     "v1-dev": "dev_sha256",
     "v1-test": "test_sha256",
+    "v1b-test": "test_sha256",
 }
 OPERATING_POINTS_FIELD = "operating_points_sha256"
+# The fields a test run needs, in the order a missing one is reported.
+SEALED_FIELDS = ("dev_sha256", "test_sha256", OPERATING_POINTS_FIELD)
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 # The write review's seals (unit D1).
@@ -94,6 +116,17 @@ EXPORT_STAMP_KIND = "export_stamp"
 
 class Refused(Exception):
     """The guard refuses the run; the message says why."""
+
+
+def is_test_version(version: Any) -> bool:
+    """Whether a corpus `version` names a read-once test split."""
+    return isinstance(version, str) and version in TEST_SEALS
+
+
+def seals_for(version: Any) -> Path:
+    """The seals file of a corpus version: a test split's own, v1's for
+    every other version (v1 dev's sha is sealed there)."""
+    return TEST_SEALS.get(version, SEALS) if isinstance(version, str) else SEALS
 
 
 def file_sha256(path: Path) -> str:
@@ -123,7 +156,7 @@ def read_seals(
     if not isinstance(doc, dict):
         raise Refused(f"seals file {_rel(seals)} is not a JSON object")
     out: dict[str, str] = {}
-    for field in fields or (*SEAL_FIELDS.values(), OPERATING_POINTS_FIELD):
+    for field in fields or SEALED_FIELDS:
         value = doc.get(field)
         if not isinstance(value, str) or not _SHA256.match(value):
             raise Refused(f"seals file {_rel(seals)} has no valid {field}")
@@ -167,14 +200,18 @@ def check_review_shas(
     return out
 
 
-def seal_status(corpus: dict[str, Any], sha: str, seals: Path = SEALS) -> list[str]:
-    """For `check`: the problem when a v1 split's sha differs from its
-    seal. Nothing before the seals file exists, and nothing for v0. Only
-    the split's own field is required: the corpus is sealed before any arm
-    runs, and the operating points' sha joins the seals after the dev
-    runs."""
-    field = SEAL_FIELDS.get(str(corpus.get("version")))
-    if field is None or not Path(seals).is_file():
+def seal_status(
+    corpus: dict[str, Any], sha: str, seals: Path | None = None
+) -> list[str]:
+    """For `check`: the problem when a v1 or v1b split's sha differs from
+    its seal (in `seals`, by default the version's own file). Nothing
+    before the seals file exists, and nothing for v0. Only the split's own
+    field is required: the corpus is sealed before any arm runs, and the
+    operating points' sha joins v1's seals after the dev runs."""
+    version = corpus.get("version")
+    field = SEAL_FIELDS.get(str(version))
+    seals = Path(seals) if seals is not None else seals_for(version)
+    if field is None or not seals.is_file():
         return []
     try:
         sealed = read_seals(seals, fields=(field,))[field]
@@ -247,15 +284,17 @@ def guard_run(
     out: Path | None,
     operating_points: Path | None,
     rerun_reason: str | None,
-    seals: Path = SEALS,
+    seals: Path | None = None,
     review_seals: Path = SEALS_REVIEW,
     review_shas: Mapping[str, str] | None = None,
     export: bool = False,
     results_dirs: Iterable[Path] = (),
 ) -> dict[str, Any] | None:
-    """Pass or refuse a run. None for any corpus but the v1 test split;
-    for it, the record the run's output carries (its `test_guard` field),
-    or Refused.
+    """Pass or refuse a run. None for any corpus but a test split (v1's
+    or v1b's); for one, the record the run's output carries (its
+    `test_guard` field), or Refused. `seals` defaults to the split's own
+    seals file (TEST_SEALS); the rerun rule is per corpus sha, so a read
+    of one split never counts against the other.
 
     `out` is the file the run will write, None for a run that writes none,
     which skips the rerun rule unless `export` is set: an export is a read
@@ -264,8 +303,10 @@ def guard_run(
     `results_dirs`. `review_shas` are the run's question, prompt and
     constants shas, checked against `review_seals` when --operating-points
     names the review points or the arm is chat-review."""
-    if corpus.get("version") != TEST_VERSION:
+    version = corpus.get("version")
+    if not is_test_version(version):
         return None
+    seals = Path(seals) if seals is not None else seals_for(version)
     rerun_reason = (rerun_reason or "").strip() or None
     sealed = read_seals(seals)
     if corpus_sha != sealed["test_sha256"]:
