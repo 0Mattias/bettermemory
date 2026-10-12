@@ -1,5 +1,6 @@
 {
-  "commit": null,
+  "commit": "d2ce29b1544f4cfd08235f38b48dd5347501a4fc",
+  "commit_source": "stamped 2026-10-12 from the note the run wrote; it ran from an exported tree, so the commit was not read at run time",
   "fixture": {
     "callers": {
       "git_remote": 1,

@@ -1,5 +1,6 @@
 {
-  "commit": null,
+  "commit": "f8639b0ce823ac58da92740b43e1a49583b75872",
+  "commit_source": "stamped 2026-10-12 from the note the run wrote; it ran from an exported tree, so the commit was not read at run time",
   "kind": "recall-brief",
   "machine": {
     "cpu_count": 12,
