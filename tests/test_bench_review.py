@@ -609,7 +609,7 @@ def test_scoring_table_maps_every_outcome() -> None:
 
 # Table version 2 (unit D1b, B1): every row of version 1 but
 # committed_review_filed, which splits by how the add was filed.
-TABLE_V2 = {
+TABLE_V2: dict[tuple[str, str | None], tuple[str, str]] = {
     **{(outcome, None): row for outcome, row in TABLE.items()},
     ("committed_review_filed", "review"): ("filed", "false_alarm"),
     ("committed_review_filed", "review-disagrees, cue right"): (

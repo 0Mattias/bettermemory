@@ -29,7 +29,7 @@ from typing import Any
 
 import pytest
 
-from bettermemory.models import Origin
+from bettermemory.origin import Origin
 from bettermemory.recall import RECALL_CAP_CHARS, SEGMENT_DELIVERY_CAP, HookResult
 
 _ROOT = Path(__file__).resolve().parents[1]
