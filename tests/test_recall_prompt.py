@@ -418,9 +418,16 @@ def test_annotations_for_non_local_provenance() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_everywhere_also_delivers_other_projects(world: PromptWorld) -> None:
+def test_everywhere_also_delivers_global_memories(world: PromptWorld) -> None:
+    """ "everywhere" adds global memories (no repository of their own);
+    another repository's memory stays out, as the probe's auto-scope
+    keeps it."""
     mine = world.write()
     stray = world.write(f"{BODY} globally", origin=None, scopes=["tools"])
+    world.write(
+        f"{BODY} elsewhere",
+        origin=Origin(cwd="/bar", repo=OTHER_REPO, worktree_root="/bar"),
+    )
     result = world.recall(config=config(world.store_dir, mode="everywhere"))
     assert set(result.ids) == {mine.id, stray.id}
     assert world.recalls()[0]["delivered_reason"] == "everywhere"
@@ -467,3 +474,23 @@ def test_the_state_is_shared_across_calls(world: PromptWorld) -> None:
     assert world.recall(state=state).ids
     assert world.recall(state=state).stdout == ""
     assert world.recall().stdout == ""  # the log says the same
+
+
+def test_contradicted_at_reads_contradicted_uses_only(world: PromptWorld) -> None:
+    """`Store.contradicted_at` filters the outcome in SQL: other outcomes,
+    other ids and a payload with no outcome never answer."""
+    from bettermemory.events import Recorder
+
+    recorder = Recorder(store=world.store, session_id="sess_x")
+    recorder.record("use", ids=["a", "b"], outcome="applied")
+    recorder.record("use", ids=["a"], outcome="contradicted")
+    recorder.record("use", ids=["b"])
+    recorder.record("use", ids=["a", "c"], outcome="contradicted")
+    found = world.store.contradicted_at(["a", "b"])
+    assert set(found) == {"a"}
+    stamps = [
+        e["ts"]
+        for e in world.store.iter_events()
+        if e["kind"] == "use" and e.get("outcome") == "contradicted"
+    ]
+    assert found["a"].isoformat().startswith(stamps[-1][:19])

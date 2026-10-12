@@ -409,21 +409,45 @@ def test_a_head_move_resolves_at_most_24_and_fills_the_rest(
     assert events[-1]["unresolved"] == 0
 
 
-def test_a_warm_brief_skips_unresolved_rows_and_fills_them(
+def test_a_warm_brief_resolves_the_rows_its_memo_cannot_answer(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """A warm call that would show fewer than eight because the memo
+    cannot answer some rows resolves them on the request path, at most
+    24, as a cold call does: the pointer is not held back a call."""
     first = world.fresh("prefer short release notes in this project")
     assert world.brief().ids == (first.id,)
     world.state.wait_for_fills()
     # Verified after the last brief: its commit leg is not in the memo.
     late = world.fresh("the widget rule lives in notes.md")
-    with _git_calls(monkeypatch) as calls:
-        warm = world.brief()
-    assert calls == []
-    assert warm.ids == (first.id,)
-    assert world.briefs()[-1]["unresolved"] == 1
-    assert world.state.wait_for_fills()
-    assert world.brief().ids == (late.id, first.id)
+    calls = _spy_resolve(monkeypatch)
+    warm = world.brief()
+    assert warm.ids == (late.id, first.id)
+    assert calls == [(threading.current_thread().name, 1)]
+    assert world.briefs()[-1]["unresolved"] == 0
+
+
+def test_a_brief_from_a_subdirectory_shows_the_same_pointers(
+    world: _World,
+) -> None:
+    """The drift memo keys on the directory the caller stands in, so a
+    brief from a subdirectory is not warm off one from the root: it
+    resolves, and shows what the root's brief showed, at once."""
+    tethered = world.fresh("the widget rule lives in notes.md")
+    untethered = world.fresh("prefer short release notes in this project")
+    at_root = world.brief()
+    assert set(at_root.ids) == {tethered.id, untethered.id}
+    world.state.wait_for_fills()
+    pkg = world.repo / "pkg"
+    pkg.mkdir()
+    below = Origin(
+        cwd=str(pkg),
+        repo=world.caller.repo,
+        branch="main",
+        worktree_root=str(world.repo),
+    )
+    from_pkg = world.brief(origin=below)
+    assert from_pkg.ids == at_root.ids
 
 
 def test_one_fill_per_repository_at_a_time(
@@ -500,8 +524,49 @@ def test_an_update_and_a_verify_move_the_selection(
     assert calls == []
     assert after_update.ids == (kept.id,)
 
-    # Re-verified, it keys on new anchors: skipped warm, filled, back in.
+    # Re-verified, it keys on new anchors the memo cannot answer: the
+    # warm call resolves it on the request path, back in at once.
     world.store.mark_verified(edited.id)
-    assert world.brief().ids == (kept.id,)
-    assert world.state.wait_for_fills()
     assert set(world.brief().ids) == {kept.id, edited.id}
+
+
+def test_a_failed_fill_is_logged(
+    world: _World, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def broken(memories: Any, **kw: Any) -> Any:
+        raise RuntimeError("git went away")
+
+    memory = world.fresh("the widget rule lives in notes.md")
+    monkeypatch.setattr(recall_module, "resolve_verdicts", broken)
+    with caplog.at_level("WARNING", logger="bettermemory.recall"):
+        assert world.state.schedule_fill(
+            "repo",
+            [memory],
+            caller_origin=world.caller,
+            now=datetime.now(timezone.utc),
+            stale_after_days=30,
+        )
+        assert world.state.wait_for_fills()
+    assert "brief fill for repo failed: RuntimeError: git went away" in caplog.text
+
+
+def test_the_brief_tables_are_bounded(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(recall_module, "resolve_verdicts", lambda m, **kw: [])
+    memory = world.fresh("the widget rule lives in notes.md")
+    state = RecallState(background=True)
+    for i in range(recall_module.STATE_MAX_BRIEF_KEYS + 10):
+        state.note_brief_head(f"repo-{i}", "head")
+        state.schedule_fill(
+            f"repo-{i}",
+            [memory],
+            caller_origin=world.caller,
+            now=datetime.now(timezone.utc),
+            stale_after_days=30,
+        )
+    assert state.wait_for_fills()
+    assert len(state._heads) == recall_module.STATE_MAX_BRIEF_KEYS
+    assert len(state._fills) <= recall_module.STATE_MAX_BRIEF_KEYS
+    assert not state.brief_is_warm("repo-0", "head")
+    assert state.brief_is_warm(f"repo-{recall_module.STATE_MAX_BRIEF_KEYS + 9}", "head")

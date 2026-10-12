@@ -478,3 +478,69 @@ async def test_stop_endpoint_settles_from_last_assistant_message(
     )
     [unanswered] = [e for e in events if e["kind"] == "review_unanswered"]
     assert unanswered["root_ids"] == [root]
+
+
+async def test_the_stop_body_runs_on_a_hook_worker(
+    daemon_config: Config,
+    daemon_store: Store,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+
+    from bettermemory import hook
+
+    seen: list[tuple[int, Store]] = []
+
+    def audit(**kw: Any) -> dict[str, Any] | None:
+        seen.append((threading.get_ident(), kw["store"]))
+        return None
+
+    monkeypatch.setattr(hook, "audit_transcript", audit)
+    loop_thread = threading.get_ident()
+    async with running_app(daemon_config, daemon_store) as client:
+        response = await client.post(
+            "/api/v1/hook/stop",
+            json={"session_id": "s", "transcript_path": str(tmp_path / "t.jsonl")},
+            headers=_auth(),
+        )
+    assert response.status_code == 200
+    [(thread, store)] = seen
+    assert thread != loop_thread
+    assert store is not daemon_store
+
+
+async def test_hook_workers_keep_their_connections_and_close_them(
+    daemon_config: Config,
+    daemon_store: Store,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A worker opens its connection once and keeps it across hooks, so a
+    burst of hooks reopens the store at most once per worker; the app's
+    shutdown closes every one of them."""
+    import sqlite3
+
+    from bettermemory import daemon as daemon_module
+
+    opened: list[Store] = []
+    real_reopen = Store.reopen
+
+    def reopen(self: Store) -> Store:
+        other = real_reopen(self)
+        opened.append(other)
+        return other
+
+    monkeypatch.setattr(Store, "reopen", reopen)
+    async with running_app(daemon_config, daemon_store) as client:
+        for _ in range(12):
+            response = await client.post(
+                "/api/v1/hook/prompt",
+                json={"session_id": "s", "cwd": str(tmp_path), "prompt": "backup plan"},
+                headers=_auth(),
+            )
+            assert response.status_code == 200
+    assert 1 <= len(opened) <= daemon_module.HOOK_WORKERS
+    for store in opened:
+        with pytest.raises(sqlite3.ProgrammingError):
+            store._conn.execute("SELECT 1")

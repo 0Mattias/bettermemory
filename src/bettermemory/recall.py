@@ -39,17 +39,20 @@ nothing is shown, since an unlogged injection could be neither measured
 nor seen by the audit.
 
 The brief's verdicts come from `verdict.py`. A warm call (the
-repository's HEAD unchanged since the last brief for it in this process)
-reads `memoised_verdicts` only and runs no git process; rows the memo
-cannot answer are skipped and handed to a background fill (one in-flight
-fill per repository, `resolve_verdicts` on a worker thread). A cold call
-resolves the 24 newest eligible rows synchronously and hands the rest to
-the fill. The in-process CLI path has no background: its process exits
+repository's HEAD unchanged since the last brief for that repository and
+directory in this process) reads `memoised_verdicts` and runs no git
+process while the memo answers; when rows it cannot answer would leave
+the brief short of eight, the first 24 of them are resolved on the
+request path and the rest handed to a background fill (one in-flight
+fill per repository and directory, `resolve_verdicts` on a worker
+thread). A cold call resolves the 24 newest eligible rows synchronously
+and hands the rest to the fill. The in-process CLI path has no background: its process exits
 after printing, so it resolves its 24 and stops.
 """
 
 from __future__ import annotations
 
+import logging
 import re
 import threading
 from collections import OrderedDict
@@ -79,6 +82,8 @@ from .verdict import (
     memoised_verdicts,
     resolve_verdicts,
 )
+
+log = logging.getLogger("bettermemory.recall")
 
 __all__ = [
     "BRIEF_CAP_CHARS",
@@ -163,18 +168,24 @@ _RELEVANT: frozenset[str] = frozenset({"medium", "high"})
 SEGMENT_DELIVERY_CAP = 12
 STATE_IDLE_SECONDS = 24 * 3600
 STATE_MAX_SESSIONS = 1_000
+# The most brief keys (a repository and the directory the caller stands
+# in) whose HEAD and fill the state remembers, least recently used out.
+STATE_MAX_BRIEF_KEYS = 256
 
 # The event kinds a session's state is rebuilt from: the two show
 # records, the Stop audit's row, whose first stamp under a session id is
 # the earliest moment that session is known to have run, and the two
 # rows the Stop records about what was shown: a pointer's settlement (a
-# `use` carrying a `surface`) and the unanswered-review count.
+# `use` carrying a `surface`) and the unanswered-review count. A compact
+# or clear whose brief showed nothing leaves a `segment_opened` row, so
+# the segment it opened is read back too.
 _STATE_KINDS: tuple[str, ...] = (
     "session_brief",
     "prompt_recall",
     "turn_audited",
     "use",
     "review_unanswered",
+    "segment_opened",
 )
 
 # The surface a settled pointer was shown by, named on its `use` event.
@@ -466,6 +477,8 @@ def rebuild_session(
             if number != segment:
                 segment, shown, deliveries, started = number, set(), 0, stamp
                 shown_by, settled = {}, set()
+        if kind == "segment_opened":
+            continue
         if kind == "use":
             settled.update(_str_ids(event.get("ids")))
             continue
@@ -529,8 +542,8 @@ class RecallState:
     ) -> None:
         self._lock = threading.Lock()
         self._sessions: OrderedDict[tuple[str, str], _SessionRecall] = OrderedDict()
-        self._heads: dict[str, str] = {}
-        self._fills: dict[str, threading.Thread] = {}
+        self._heads: OrderedDict[str, str] = OrderedDict()
+        self._fills: OrderedDict[str, threading.Thread] = OrderedDict()
         self._background = background
         self._max_sessions = max_sessions
         self._idle_seconds = idle_seconds
@@ -641,6 +654,34 @@ class RecallState:
             if delivery:
                 entry.deliveries += 1
 
+    def claim_delivery(
+        self,
+        key: tuple[str, str],
+        ids: Sequence[str],
+        *,
+        now: datetime,
+        event_id: str | None = None,
+    ) -> tuple[list[str], int]:
+        """Check and note one prompt recall's delivery under one lock: the
+        ids not yet shown in the session's segment, in order, and the
+        segment they were counted in; no ids when the segment has had its
+        `SEGMENT_DELIVERY_CAP`. What the caller read before (`segment`)
+        may be stale by the time it delivers when two prompts of one
+        session run at once; this is the step that decides, so no id is
+        shown twice in a segment and no segment passes its cap."""
+        with self._lock:
+            entry = self._held(key, now)
+            if entry.deliveries >= SEGMENT_DELIVERY_CAP:
+                return [], entry.segment
+            kept = [memory_id for memory_id in ids if memory_id not in entry.shown]
+            if not kept:
+                return [], entry.segment
+            entry.shown.update(kept)
+            for memory_id in kept:
+                entry.shown_by.setdefault(memory_id, (SURFACE_RECALL, event_id))
+            entry.deliveries += 1
+            return kept, entry.segment
+
     def note_settled(
         self, key: tuple[str, str], ids: Iterable[str], *, now: datetime
     ) -> None:
@@ -672,8 +713,20 @@ class RecallState:
         with self._lock:
             if head is None:
                 self._heads.pop(repo_key, None)
-            else:
-                self._heads[repo_key] = head
+                return
+            self._heads[repo_key] = head
+            self._heads.move_to_end(repo_key)
+            while len(self._heads) > STATE_MAX_BRIEF_KEYS:
+                self._heads.popitem(last=False)
+
+    def _prune_fills(self) -> None:
+        """Drop finished fills, then the oldest beyond the bound (lock
+        held). A running fill dropped from the table runs on; it is only
+        no longer the one a new fill for its key waits behind."""
+        for key in [k for k, thread in self._fills.items() if not thread.is_alive()]:
+            del self._fills[key]
+        while len(self._fills) > STATE_MAX_BRIEF_KEYS:
+            self._fills.popitem(last=False)
 
     def schedule_fill(
         self,
@@ -706,12 +759,18 @@ class RecallState:
                         now=now,
                         stale_after_days=stale_after_days,
                     )
-                except Exception:  # noqa: BLE001 - a fill is best effort
-                    pass
+                except Exception as exc:  # noqa: BLE001 - a fill is best effort
+                    log.warning(
+                        "brief fill for %s failed: %s: %s",
+                        repo_key,
+                        exc.__class__.__name__,
+                        exc,
+                    )
 
             thread = threading.Thread(
                 target=fill, name=f"bettermemory-brief-fill:{repo_key}", daemon=True
             )
+            self._prune_fills()
             self._fills[repo_key] = thread
             thread.start()
             return True
@@ -782,8 +841,16 @@ def _select_brief(
     verified label local or imported, category not ambient, no open
     contradiction; within the newest `BRIEF_WINDOW`. Shown: the first
     `BRIEF_MAX_POINTERS` of those `memory_show` would read fresh. A store
-    opened without its key verifies no label, so it shows nothing."""
-    repo_key = caller.worktree_root or caller.repo or ""
+    opened without its key verifies no label, so it shows nothing.
+
+    Warmth is keyed on the repository AND the directory the caller stands
+    in, since the drift memo keys on that directory too: a brief from a
+    subdirectory is cold until a brief from there has run. A warm call
+    whose memo cannot answer some rows, and would therefore show fewer
+    than `BRIEF_MAX_POINTERS`, resolves the first `BRIEF_SYNC_RESOLVE` of
+    them on the request path, as a cold call does, and hands the rest to
+    the fill."""
+    repo_key = f"{caller.worktree_root or caller.repo or ''}\0{caller.cwd or ''}"
     ids = store.brief_rows(
         admit=lambda memory_origin: in_project(memory_origin, caller),
         provenance=_DELIVERED_PROVENANCE,
@@ -815,6 +882,10 @@ def _select_brief(
     pending: list[Memory] = []
     examined = 0
     if state.brief_is_warm(repo_key, head):
+        # Each examined row in order, with whether it reads fresh (None
+        # while the memo cannot say).
+        ordered: list[tuple[Memory, bool | None]] = []
+        fresh_count = 0
         for start in range(0, len(ids), _BRIEF_CHUNK):
             chunk = eligible(ids[start : start + _BRIEF_CHUNK])
             verdicts = memoised_verdicts(
@@ -827,13 +898,36 @@ def _select_brief(
                 examined += 1
                 if isinstance(verdict, UnresolvedVerdict):
                     pending.append(memory)
+                    ordered.append((memory, None))
                     continue
-                if _fresh(memory, verdict, trust[memory.id], responses):
-                    picked.append(memory)
-                    if len(picked) >= BRIEF_MAX_POINTERS:
+                fresh = _fresh(memory, verdict, trust[memory.id], responses)
+                ordered.append((memory, fresh))
+                if fresh:
+                    fresh_count += 1
+                    if fresh_count >= BRIEF_MAX_POINTERS:
                         break
-            if len(picked) >= BRIEF_MAX_POINTERS:
+            if fresh_count >= BRIEF_MAX_POINTERS:
                 break
+        if pending and fresh_count < BRIEF_MAX_POINTERS:
+            on_request = pending[:BRIEF_SYNC_RESOLVE]
+            pending = pending[BRIEF_SYNC_RESOLVE:]
+            settled = {
+                memory.id: _fresh(memory, full, trust[memory.id], responses)
+                for memory, full in zip(
+                    on_request,
+                    resolve_verdicts(
+                        on_request,
+                        caller_origin=caller,
+                        now=now,
+                        stale_after_days=stale_after_days,
+                    ),
+                )
+            }
+            ordered = [
+                (memory, settled.get(memory.id) if fresh is None else fresh)
+                for memory, fresh in ordered
+            ]
+        picked = [memory for memory, fresh in ordered if fresh][:BRIEF_MAX_POINTERS]
     else:
         synchronous: list[Memory] = []
         cursor = 0
@@ -921,7 +1015,13 @@ def session_brief(
     anchor (`hook._latest_in_process_session`) skips it like every other
     out-of-process row; it is not a retrieval kind, so the Stop audit's
     shield does not count it. Its ids join the segment's shown set, so the
-    prompt recall does not point at them again."""
+    prompt recall does not point at them again.
+
+    A ``compact`` or ``clear`` that shows no brief, with telemetry on,
+    records a `segment_opened` row instead (the session id, harness,
+    source and the new segment's number), so the segment is read back
+    after a restart and on the in-process path, which rebuilds the state
+    from the log on every call."""
     empty = HookResult.empty("session_brief")
     if not session_id:
         return empty
@@ -935,6 +1035,60 @@ def session_brief(
     key = (harness or DEFAULT_HARNESS, str(session_id))
     opened_by = source if source in _SESSION_SOURCES else "startup"
     view = state.open_segment(store, key, source=opened_by, now=now)
+    result = _brief_in_segment(
+        key=key,
+        view=view,
+        opened_by=opened_by,
+        transcript_path=transcript_path,
+        cwd=cwd,
+        origin=origin,
+        cfg=cfg,
+        store=store,
+        state=state,
+        now=now,
+    )
+    if (
+        result.event_id is None
+        and opened_by in _NEW_SEGMENT_SOURCES
+        and cfg.telemetry.enabled
+    ):
+        # No brief carried the new segment's number to the log: record
+        # it alone, or a restarted daemon and the in-process path (which
+        # rebuilds on every call) would never see the compact.
+        caller = origin if origin is not None else _origin_for(cwd)
+        Recorder(
+            store=store,
+            session_id=key[1],
+            enabled=cfg.telemetry.enabled,
+            worktree_root=caller.worktree_root,
+            triggered_from="session_hook",
+        ).record(
+            "segment_opened",
+            session_id=key[1],
+            harness=key[0],
+            source=opened_by,
+            segment=view.segment,
+            rule=RULE,
+        )
+    return result
+
+
+def _brief_in_segment(
+    *,
+    key: tuple[str, str],
+    view: SegmentView,
+    opened_by: str,
+    transcript_path: str | None,
+    cwd: Path | None,
+    origin: Origin | None,
+    cfg: Config,
+    store: Store,
+    state: RecallState,
+    now: datetime,
+) -> HookResult:
+    """The brief for the segment `session_brief` just opened or resumed,
+    recorded when shown; empty when nothing is."""
+    empty = HookResult.empty("session_brief")
     if not cfg.behavior.session_brief or not cfg.telemetry.enabled:
         return empty
     caller = origin if origin is not None else _origin_for(cwd)
@@ -1319,6 +1473,18 @@ def prompt_recall(
     block, shown_ids = render_recall_block(pointers)
     if not shown_ids:
         return empty
+    # The cooldown decides atomically: a concurrent prompt of the same
+    # session may have shown some of these ids, or used the last of the
+    # segment's deliveries, since `view` was read.
+    event_id = generate_ulid()
+    claimed, segment = state.claim_delivery(key, shown_ids, now=now, event_id=event_id)
+    if not claimed:
+        return empty
+    if claimed != shown_ids:
+        kept = set(claimed)
+        block, shown_ids = render_recall_block([p for p in pointers if p.id in kept])
+        if not shown_ids:
+            return empty
     recorder = Recorder(
         store=store,
         session_id=key[1],
@@ -1334,20 +1500,13 @@ def prompt_recall(
         shown_ids=shown_ids,
         suppressed=suppressed,
         rule=RULE,
-        segment=view.segment,
+        segment=segment,
         prompt_id=prompt_id,
         transcript_path=transcript_path,
         harness=key[0],
     )
+    fields["event_id"] = event_id
     recorder.record("prompt_recall", **fields)
-    state.note_shown(
-        key,
-        shown_ids,
-        delivery=True,
-        now=now,
-        surface=SURFACE_RECALL,
-        event_id=str(fields["event_id"]),
-    )
     return HookResult(
         stdout=block,
         surface="prompt_recall",

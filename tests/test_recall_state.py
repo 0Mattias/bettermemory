@@ -243,3 +243,130 @@ def test_the_state_is_thread_safe(tmp_path: Path) -> None:
     view = state.segment(store, KEY, now=now)
     assert view.deliveries == workers * rounds
     assert len(view.shown) == workers * rounds
+
+
+# ---------------------------------------------------------------------------
+# A compact with an empty brief still opens a segment the log remembers
+# ---------------------------------------------------------------------------
+
+
+def test_an_empty_compact_brief_opens_a_segment_on_the_cli_path(
+    world: PromptWorld,
+) -> None:
+    """The CLI path holds no state between calls: the compact must be
+    read back from the log even when its brief showed nothing, or the ids
+    shown before it stay held and the cap carries over."""
+    from bettermemory.config import BehaviorConfig, Config, StorageConfig
+    from bettermemory.recall import session_brief
+
+    memory = world.write()
+    assert world.recall().ids == (memory.id,)
+    assert world.recall().stdout == ""
+    no_brief = Config(
+        storage=StorageConfig(directory=str(world.store_dir)),
+        behavior=BehaviorConfig(session_brief=False),
+    )
+    shown = session_brief(
+        session_id=KEY[1],
+        source="compact",
+        origin=world.caller,
+        config=no_brief,
+        store=world.store,
+    )
+    assert shown.stdout == ""
+    [opened] = [e for e in world.store.iter_events() if e["kind"] == "segment_opened"]
+    assert (opened["segment"], opened["source"], opened["session_id"]) == (
+        1,
+        "compact",
+        KEY[1],
+    )
+    assert opened["triggered_from"] == "session_hook"
+    assert world.recall().ids == (memory.id,)
+    assert [e["segment"] for e in world.recalls()] == [0, 1]
+
+
+def test_a_restarted_daemon_reads_the_empty_compact(world: PromptWorld) -> None:
+    from bettermemory.config import BehaviorConfig, Config, StorageConfig
+    from bettermemory.recall import session_brief
+
+    memory = world.write()
+    before = RecallState(background=False)
+    assert world.recall(state=before).ids == (memory.id,)
+    session_brief(
+        session_id=KEY[1],
+        source="clear",
+        origin=world.caller,
+        config=Config(
+            storage=StorageConfig(directory=str(world.store_dir)),
+            behavior=BehaviorConfig(session_brief=False),
+        ),
+        store=world.store,
+        state=before,
+    )
+    after = RecallState(background=False)
+    view = after.segment(world.store, KEY, now=_now())
+    assert (view.segment, set(view.shown), view.deliveries) == (1, set(), 0)
+
+
+def test_no_segment_row_with_telemetry_off_or_on_startup(world: PromptWorld) -> None:
+    from bettermemory.config import Config, StorageConfig, TelemetryConfig
+    from bettermemory.recall import session_brief
+
+    off = Config(
+        storage=StorageConfig(directory=str(world.store_dir)),
+        telemetry=TelemetryConfig(enabled=False),
+    )
+    session_brief(session_id=KEY[1], source="compact", config=off, store=world.store)
+    session_brief(
+        session_id=KEY[1],
+        source="startup",
+        origin=world.caller,
+        config=world.config,
+        store=world.store,
+    )
+    assert [e for e in world.store.iter_events() if e["kind"] == "segment_opened"] == []
+
+
+# ---------------------------------------------------------------------------
+# The delivery is decided under one lock
+# ---------------------------------------------------------------------------
+
+
+def test_a_claim_keeps_unshown_ids_and_honours_the_cap(world: PromptWorld) -> None:
+    state = RecallState(background=False)
+    now = _now()
+    assert state.claim_delivery(KEY, ["a", "b"], now=now) == (["a", "b"], 0)
+    assert state.claim_delivery(KEY, ["a", "c"], now=now) == (["c"], 0)
+    assert state.claim_delivery(KEY, ["a"], now=now) == ([], 0)
+    for i in range(SEGMENT_DELIVERY_CAP - 2):
+        state.claim_delivery(KEY, [f"x{i}"], now=now)
+    assert state.segment(world.store, KEY, now=now).deliveries == SEGMENT_DELIVERY_CAP
+    assert state.claim_delivery(KEY, ["fresh"], now=now) == ([], 0)
+
+
+def test_concurrent_prompts_deliver_an_id_once(world: PromptWorld) -> None:
+    """Two prompts of one session at once: both may read the segment
+    before either delivers, and the claim still lets one through."""
+    memory = world.write()
+    state = RecallState(background=False)
+    barrier = threading.Barrier(6)
+    results: list[tuple[str, ...]] = []
+    original = state.claim_delivery
+
+    def gated(*args: object, **kwargs: object) -> tuple[list[str], int]:
+        barrier.wait(10)
+        return original(*args, **kwargs)  # type: ignore[arg-type]
+
+    state.claim_delivery = gated  # type: ignore[method-assign]
+
+    def run() -> None:
+        with Store.open(world.store_dir) as store:
+            results.append(world.recall(state=state, store=store).ids)
+
+    threads = [threading.Thread(target=run) for _ in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+    assert sorted(results).count((memory.id,)) == 1
+    assert len(world.recalls()) == 1

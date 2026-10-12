@@ -16,11 +16,12 @@ recall surface's (`recall.session_brief`, `recall.prompt_recall`) and the
 Stop audit's (`hook.audit_transcript`), so a hook is one HTTP round trip
 instead of a process that imports the SDK and opens the store.
 
-The session-start and prompt bodies run on a worker thread
-(`anyio.to_thread.run_sync`), so their store reads and their git work
-never block the event loop the MCP surface is served from. SQLite binds a
-connection to the thread that opened it, so each worker thread reads and
-records through its own connection to the store (`_WorkerStores`). The
+The three hook bodies run on the daemon's own hook workers
+(`_HookWorkers`): a few long-lived threads, so their store reads and
+their git work never block the event loop the MCP surface is served
+from. SQLite binds a connection to the thread that opened it, so each
+worker opens its own connection to the store once (`Store.reopen`), keeps
+it for the daemon's life and closes it when the app shuts down. The
 recall surface's per-session state (`recall.RecallState`) is the
 daemon's, one for its lifetime, lock-guarded.
 
@@ -31,16 +32,20 @@ unchanged) and beside it ``surface``, ``ids``, ``chars``, ``rule`` and
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import logging
 import os
+import queue
 import secrets
 import socket
 import threading
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Awaitable, Callable, cast
+from typing import Any, Awaitable, Callable, TypeVar, cast
 
-import anyio.to_thread
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -114,26 +119,87 @@ def _text(payload: dict[str, Any], name: str) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-class _WorkerStores:
-    """One connection to the daemon's store per worker thread.
+_T = TypeVar("_T")
 
-    SQLite refuses a connection on any thread but the one that opened it,
-    and the hook bodies run on `anyio`'s worker threads, so each thread
-    opens its own (`Store.reopen`) on first use and keeps it for the
-    thread's life. The connections share the file, its WAL and its key;
-    every write is its own ``BEGIN IMMEDIATE`` transaction, the same
-    discipline a CLI process writing beside the daemon already relies on."""
+#: How many hook workers the daemon runs: enough that a cold brief's git
+#: work does not hold up another session's prompt.
+HOOK_WORKERS = 4
 
-    def __init__(self, store: Store) -> None:
+
+class _HookWorkers:
+    """The threads the hook bodies run on, each with its own connection.
+
+    SQLite refuses a connection on any thread but the one that opened
+    it, and a pool that retires idle threads (anyio's, after ten seconds)
+    would reopen the store on most hooks. These threads live as long as
+    the app: each opens its connection (`Store.reopen`) on its first job,
+    keeps it, and closes it itself when `close` asks every worker to
+    stop. The connections share the file, its WAL and its key; every
+    write is its own ``BEGIN IMMEDIATE`` transaction, the discipline a
+    CLI process writing beside the daemon already relies on."""
+
+    def __init__(self, store: Store, *, count: int = HOOK_WORKERS) -> None:
         self._store = store
-        self._local = threading.local()
+        self._count = count
+        self._jobs: queue.Queue[
+            tuple[Callable[[Store], Any], concurrent.futures.Future[Any]] | None
+        ] = queue.Queue()
+        self._threads: list[threading.Thread] = []
+        self._lock = threading.Lock()
+        self._closed = False
 
-    def get(self) -> Store:
-        held = getattr(self._local, "store", None)
-        if held is None:
-            held = self._store.reopen()
-            self._local.store = held
-        return cast(Store, held)
+    def _loop(self) -> None:
+        held: Store | None = None
+        try:
+            while True:
+                job = self._jobs.get()
+                if job is None:
+                    return
+                body, future = job
+                if not future.set_running_or_notify_cancel():
+                    continue
+                try:
+                    if held is None:
+                        held = self._store.reopen()
+                    future.set_result(body(held))
+                except BaseException as exc:  # noqa: BLE001 - handed to the caller
+                    future.set_exception(exc)
+        finally:
+            if held is not None:
+                held.close()
+
+    def _start(self) -> None:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("the daemon's hook workers are stopped")
+            if self._threads:
+                return
+            for index in range(self._count):
+                thread = threading.Thread(
+                    target=self._loop,
+                    name=f"bettermemory-hook-{index}",
+                    daemon=True,
+                )
+                thread.start()
+                self._threads.append(thread)
+
+    async def run(self, body: Callable[[Store], _T]) -> _T:
+        """Run `body` on a worker, with that worker's store."""
+        self._start()
+        future: concurrent.futures.Future[_T] = concurrent.futures.Future()
+        self._jobs.put((body, future))
+        return await asyncio.wrap_future(future)
+
+    def close(self, timeout: float = 10.0) -> None:
+        """Stop every worker; each closes its own connection on the way
+        out, after the job it is running."""
+        with self._lock:
+            self._closed = True
+            threads = list(self._threads)
+        for _ in threads:
+            self._jobs.put(None)
+        for thread in threads:
+            thread.join(timeout)
 
 
 def _failed(surface: str, exc: Exception) -> Response:
@@ -168,7 +234,7 @@ def build_app(
     served_version = version if version is not None else _version()
     mcp = build_server(config=config, store=store)
     recall_state = _recall.RecallState(background=True)
-    worker_stores = _WorkerStores(store)
+    workers = _HookWorkers(store)
 
     @_route(mcp, "/health", ["GET"])
     async def health(request: Request) -> Response:
@@ -185,7 +251,7 @@ def build_app(
     async def hook_session_start(request: Request) -> Response:
         payload = await _json_body(request)
 
-        def body() -> _recall.HookResult:
+        def body(worker_store: Store) -> _recall.HookResult:
             return _recall.session_brief(
                 session_id=_text(payload, "session_id"),
                 source=_text(payload, "source"),
@@ -193,12 +259,12 @@ def build_app(
                 transcript_path=_text(payload, "transcript_path"),
                 cwd=_cwd_of(payload),
                 config=config,
-                store=worker_stores.get(),
+                store=worker_store,
                 state=recall_state,
             )
 
         try:
-            result = await anyio.to_thread.run_sync(body)
+            result = await workers.run(body)
         except Exception as exc:  # noqa: BLE001 - reported, never raised at the hook
             log.warning(
                 "hook session-start failed: %s: %s", exc.__class__.__name__, exc
@@ -214,7 +280,7 @@ def build_app(
         if prompt is None or not session_id:
             return JSONResponse(_recall.HookResult.empty("prompt_recall").to_response())
 
-        def body() -> _recall.HookResult:
+        def body(worker_store: Store) -> _recall.HookResult:
             return _recall.prompt_recall(
                 prompt=prompt,
                 session_id=str(session_id),
@@ -223,12 +289,12 @@ def build_app(
                 transcript_path=_text(payload, "transcript_path"),
                 cwd=_cwd_of(payload),
                 config=config,
-                store=worker_stores.get(),
+                store=worker_store,
                 state=recall_state,
             )
 
         try:
-            result = await anyio.to_thread.run_sync(body)
+            result = await workers.run(body)
         except Exception as exc:  # noqa: BLE001
             log.warning("hook prompt failed: %s: %s", exc.__class__.__name__, exc)
             return _failed("prompt_recall", exc)
@@ -250,12 +316,13 @@ def build_app(
         }
         if not transcript or not session_id:
             return JSONResponse(quiet_fields)
-        try:
-            result = _hook.audit_transcript(
+
+        def body(worker_store: Store) -> dict[str, Any] | None:
+            return _hook.audit_transcript(
                 transcript_path=Path(str(transcript)),
                 session_id=str(session_id),
                 config=config,
-                store=store,
+                store=worker_store,
                 cwd=_cwd_of(payload),
                 dry_run=bool(payload.get("dry_run", False)),
                 assistant_message=_text(payload, "last_assistant_message"),
@@ -263,6 +330,9 @@ def build_app(
                 prompt_id=_text(payload, "prompt_id"),
                 state=recall_state,
             )
+
+        try:
+            result = await workers.run(body)
         except Exception as exc:  # noqa: BLE001
             log.warning("hook stop failed: %s: %s", exc.__class__.__name__, exc)
             return JSONResponse(
@@ -298,6 +368,17 @@ def build_app(
         host=HOST,
     )
     app.add_middleware(BearerAuthMiddleware, token=token, open_paths=OPEN_PATHS)
+    served_lifespan = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def lifespan(served: Any) -> AsyncIterator[Any]:
+        try:
+            async with served_lifespan(served) as state:
+                yield state
+        finally:
+            workers.close()
+
+    app.router.lifespan_context = lifespan
     return app
 
 

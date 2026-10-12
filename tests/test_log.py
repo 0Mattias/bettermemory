@@ -194,6 +194,25 @@ def test_reopening_uses_the_same_key_and_appends_no_rekey_row(
         again.close()
 
 
+def test_a_reopened_connection_shares_the_unaccounted_ids(
+    tmp_path: Path, keys_dir: Path
+) -> None:
+    """A refold on the main connection reaches a worker's connection: the
+    daemon's hook workers read and record through `reopen`ed stores."""
+    path = tmp_path / "memory.sqlite"
+    main = Store.create(path, keys_dir=keys_dir)
+    worker = main.reopen()
+    try:
+        assert worker._unaccounted_memory_ids is main._unaccounted_memory_ids
+        main._unaccounted_memory_ids.add("stale")
+        main.refold()
+        assert worker._unaccounted_memory_ids is main._unaccounted_memory_ids
+        assert "stale" not in worker._unaccounted_memory_ids
+    finally:
+        worker.close()
+        main.close()
+
+
 def test_the_head_follows_every_append_and_never_moves_backwards(
     store: Store,
 ) -> None:

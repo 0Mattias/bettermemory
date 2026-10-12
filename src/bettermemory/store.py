@@ -2997,13 +2997,16 @@ class Store:
         Reads the ``use`` rows through the log's kind index, every
         session and the whole log, since a contradiction stays open until
         the record is updated or verified, however long ago it was
-        recorded."""
+        recorded. The outcome is filtered in SQL, so the rows of every
+        other outcome (nearly all of them) are never parsed here."""
         wanted = set(memory_ids)
         if not wanted:
             return {}
         out: dict[str, datetime] = {}
         for row in self._conn.execute(
-            "SELECT ts, payload FROM log WHERE kind = 'use' ORDER BY seq"
+            "SELECT ts, payload FROM log WHERE kind = 'use' "
+            "AND json_valid(payload) "
+            "AND json_extract(payload, '$.outcome') = 'contradicted' ORDER BY seq"
         ):
             try:
                 fields = json.loads(row["payload"])
@@ -3052,10 +3055,14 @@ class Store:
         binds a connection to the thread that opened it, so a worker
         thread reads and records through its own. The same key directory,
         and never a rekey: a store this process opened without its key
-        stays unable to mutate on the new connection too."""
-        return Store.open(
+        stays unable to mutate on the new connection too. The set of
+        memory ids a refold found unaccounted is shared, not copied, so a
+        refold on either connection reaches the other."""
+        other = Store.open(
             self._path, keys_dir=self._keyring.keys_dir, allow_rekey=False
         )
+        other._unaccounted_memory_ids = self._unaccounted_memory_ids
+        return other
 
     def links_with_status(
         self, memory_id: str
@@ -3418,7 +3425,9 @@ class Store:
                     "missing": missing,
                     "rows": len(live),
                 }
-            self._unaccounted_memory_ids = set(tables["memories"]["unaccounted"])
+            # In place: a connection `reopen` made shares this set.
+            self._unaccounted_memory_ids.clear()
+            self._unaccounted_memory_ids.update(tables["memories"]["unaccounted"])
             return {
                 "status": "diverged" if diverged else "ok",
                 "tables": tables,

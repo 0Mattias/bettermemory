@@ -106,8 +106,10 @@ write_supersession = true
 # this session segment has not already been shown, retrieved or written.
 # At most twelve deliveries per segment; a compact or a clear opens a new
 # one. "project" (default) delivers only memories written in the
-# repository the prompt comes from; "everywhere" also delivers the rest
-# the probe ranks (globals, and from outside any repository everything);
+# repository the prompt comes from; "everywhere" also delivers global
+# memories (no repository of their own; the probe's auto-scope still
+# keeps other repositories' memories out), and works outside any
+# repository;
 # "off" returns to purely opt-in retrieval. Each delivery is recorded as
 # a `prompt_recall` event, so it needs telemetry.enabled (off-the-books
 # injections are refused). true / false in an older config read as
@@ -287,8 +289,9 @@ class BehaviorConfig:
     write_supersession: bool = True
     # Recall at prompt time (`recall.prompt_recall`, wired to the plugin's
     # UserPromptSubmit hook): "project" (default) delivers pointers to
-    # memories written in the caller's repository, "everywhere" also the
-    # other candidates the probe ranks, "off" nothing. The loader reads a
+    # memories written in the caller's repository, "everywhere" also
+    # global memories (the probe's auto-scope still excludes other
+    # repositories' memories), "off" nothing. The loader reads a
     # legacy boolean as "project" / "off" (`_coerce_prompt_recall`).
     # Requires `telemetry.enabled` at the call site: an unlogged injection
     # is invisible to the Stop-hook shield and unmeasurable, so the recall

@@ -2761,6 +2761,12 @@ TOOLS_WITHOUT_TELEMETRY: tuple[str, ...] = ()
 # the conversation left open since its previous turn
 # (`recall.review_unanswered`). A hook record, not a tool call, and not a
 # retrieval kind.
+#
+# ``segment_opened`` is the SessionStart hook's record that a compact or
+# clear opened a new recall segment whose brief showed nothing
+# (`recall.session_brief`): it carries the segment number a restarted
+# daemon or the in-process path reads back. A hook record, not a tool
+# call, and not a retrieval kind.
 _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
     {
         "turn_audited",
@@ -2771,6 +2777,7 @@ _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
         "session_brief",
         "review_grade",
         "review_unanswered",
+        "segment_opened",
     }
 )
 
@@ -2783,7 +2790,8 @@ _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
 # carry, ``session_brief`` comes off the SessionStart hook's recorder
 # (recall.py) under that same transcript session id,
 # ``review_unanswered`` comes off the Stop hook's recorder under that
-# same transcript session id too, and
+# same transcript session id too, ``segment_opened`` off the SessionStart
+# hook's recorder under it as well, and
 # ``use_token_expired`` is drained handler-side through the
 # live session's recorder (handlers/_shared.py), at the entry of the
 # very tool call that noticed the eviction. ``silent_miss_cutoff`` stays
@@ -2811,6 +2819,7 @@ _IN_SESSION_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
         "prompt_recall",
         "session_brief",
         "review_unanswered",
+        "segment_opened",
     }
 )
 

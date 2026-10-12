@@ -2458,6 +2458,20 @@ class TestComputeReport:
         assert body(doc.window_eval) == body(without.window_eval)
         assert body(doc.alltime_eval) == body(without.alltime_eval)
 
+    def test_a_segment_opened_counts_its_session_and_no_tool(self) -> None:
+        """`segment_opened` is recorded by the SessionStart hook INSIDE the
+        client's session, under its transcript id: an in-session kind,
+        never a tool call or an unmapped kind."""
+        assert "segment_opened" in _IN_SESSION_SIDE_EFFECT_KINDS
+        assert "segment_opened" in _KNOWN_SIDE_EFFECT_KINDS
+        assert "segment_opened" not in ADMIN_RECORDED_EVENT_KINDS
+        events = [_ev("segment_opened", session="s-real", segment=1)]
+        doc = compute_report([], events, version="0-test")
+        assert doc.distinct_session_count == 1
+        usage = compute_tool_usage(events)
+        assert usage.total_tool_calls == 0
+        assert usage.unmapped_event_kinds == {}
+
     def test_in_session_side_effects_still_count_as_sessions(self) -> None:
         """The complement of the exclusion above: side-effect kinds the
         recorder writes INSIDE a live client session carry that client's
