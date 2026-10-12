@@ -215,6 +215,23 @@ refusal from any other host shows none. `bettermemory review grade
 <review_id> --answers right|wrong --action right|wrong` records a grade
 as a `review_grade` event; the latest grade of a write counts.
 
+`bettermemory recall review [--since 7d] [--until] [--deliveries 12]
+[--briefs 4] [--silent 4] [--seed 0]` draws what the recall surface
+showed for the owner to grade: prompt recall deliveries, session briefs,
+and silent prompts (Stop turns the recall delivered nothing on, in which
+the conversation then retrieved a memory written in its project). Each
+sample shows its pointers with a summary from the store and the prompt
+it answered, read from the session's transcript under
+`~/.claude/projects` (`--transcripts DIR`) at review time and never
+stored: a delivery's by its prompt id, a brief's as the first prompt
+after it, a silent turn's as the latest before its Stop; a sample from
+another harness shows none. A sample already graded is not drawn again.
+`bettermemory recall grade <sample_id> --relevant ID... --irrelevant
+ID...` records a grade as a `recall_grade` event (for a silent prompt,
+relevant means the recall should have pointed at the memory); the
+latest grade of an id in a sample counts. The draw is meant every three
+to four days for two weeks, then weekly. `recall_review.py` holds it.
+
 When the window holds any row of the recall surface (a `session_brief`,
 a `prompt_recall` carrying `rule`, a settlement, a `segment_opened`, a
 `review_unanswered` or a `recall_grade`), the report carries a

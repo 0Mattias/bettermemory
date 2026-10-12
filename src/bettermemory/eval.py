@@ -2843,6 +2843,11 @@ TOOLS_WITHOUT_TELEMETRY: tuple[str, ...] = ()
 # ``bettermemory review grade`` under a throwaway CLI session. No tool
 # call is behind it, and it is admin-recorded by kind.
 #
+# ``recall_grade`` is the owner's grade of one recall sample's pointers,
+# written by ``bettermemory recall grade`` under a throwaway CLI session
+# and counted by the surfaces section. Admin-recorded by kind, like
+# ``review_grade``.
+#
 # ``review_unanswered`` is the Stop's count of the write-review chains
 # the conversation left open since its previous turn
 # (`recall.review_unanswered`). A hook record, not a tool call, and not a
@@ -2862,6 +2867,7 @@ _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
         "prompt_recall",
         "session_brief",
         "review_grade",
+        "recall_grade",
         "review_unanswered",
         "segment_opened",
     }

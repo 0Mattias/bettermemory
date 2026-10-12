@@ -347,6 +347,8 @@ The JSON export writes every active memory (and, unless `--no-tombstones`, every
 | `migrate v8 …` | The 8.x migration, above. |
 | `log verify [--json]` | The chain audit, above. |
 | `eval [--since TS] [--scope S] [--report] [--tool-usage] [--threshold-sweep] [--widening-preview [--detail]] [--json] [--output FILE]` | The three effectiveness rates and their diagnostics ([eval.md](eval.md)). |
+| `review samples …`, `review grade REVIEW_ID …` | Draw reviewed writes to grade and record a grade ([eval.md](eval.md)). |
+| `recall review [--since 7d] [--deliveries N] [--briefs N] [--silent N] [--json]`, `recall grade SAMPLE_ID --relevant ID… --irrelevant ID…` | Draw what the recall surface showed, with the prompt read from the transcript, and record a grade ([eval.md](eval.md)). |
 | `up [--foreground] [--port N]`, `down`, `status` | The local daemon for this store: one process that owns the store and serves the nine tools at `http://127.0.0.1:<port>/mcp` and the hook bodies under `/api/v1/hook/`. `bettermemory` with no arguments is the stdio shim in front of it; `serve` runs the in-process stdio server without it. |
 | `hook session-start\|stop\|prompt [--quiet] [--dry-run]` | The Claude Code hook command; the plugin wires it. Reads the hook's stdin JSON, posts it to the daemon (starting one when none answers), prints the answer, always exits 0. `session-start`, `audit-turn` and `prompt-recall` are its 8.x aliases. |
 

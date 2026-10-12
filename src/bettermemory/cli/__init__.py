@@ -40,6 +40,7 @@ from . import (
     log_cmd,
     migrate,
     prompt_recall_cmd,
+    recall_cmd,
     rename_scope,
     review_cmd,
     rollback,
@@ -122,6 +123,7 @@ def _build_parser() -> tuple[
         "prompt-recall": prompt_recall_cmd.add_subparser(sub),
         "eval": eval_cmd.add_subparser(sub),
         "review": review_cmd.add_subparser(sub),
+        "recall": recall_cmd.add_subparser(sub),
         "rename-scope": rename_scope.add_subparser(sub),
         "try": try_cmd.add_subparser(sub),
         "up": daemon_cmd.add_up(sub),
@@ -241,6 +243,9 @@ def main() -> None:
         return
     if cmd == "review":
         review_cmd.run(args, sub_parser=subparsers["review"])
+        return
+    if cmd == "recall":
+        recall_cmd.run(args, sub_parser=subparsers["recall"])
         return
     if cmd == "rename-scope":
         rename_scope.run(args, root_parser=parser)

@@ -324,30 +324,42 @@ def _extract_last_exchange(
             if assistant is None:
                 assistant = _flatten_assistant_content(message.get("content"))
         elif user is None and row_type == "user":
-            # Harness-injected rows: skill/command expansions are stamped
-            # `isMeta: true` at the row level. Keep walking — the human's
-            # message sits below the expansion.
-            if row.get("isMeta"):
-                continue
-            content = message.get("content")
-            candidate: str | None = None
-            if isinstance(content, str):
-                candidate = content
-            elif isinstance(content, list):
-                candidate = _flatten_assistant_content(content)
-            if candidate is None or not candidate.strip():
-                # Empty/whitespace-only user rows occur in real
-                # transcripts; capturing one used to silently drop the
-                # whole audit at main()'s `if not user`. Keep walking.
-                continue
-            if candidate.lstrip().startswith(_SYNTHETIC_USER_PREFIXES):
-                # Envelope-tagged synthetic payload (see the constant's
-                # comment) — not the user's words. Keep walking.
+            # A row the human did not type (`human_prompt` says which)
+            # is skipped: the human's message sits a few rows earlier.
+            candidate = human_prompt(row)
+            if candidate is None:
                 continue
             user = candidate
         if user is not None and assistant is not None:
             break
     return user, assistant, model
+
+
+def human_prompt(row: dict[str, Any]) -> str | None:
+    """The text of a transcript row the human typed, or None for any
+    other row.
+
+    Harness-injected rows are not the human's: skill and command
+    expansions carry `isMeta: true` at the row level, and envelope-tagged
+    payloads (`_SYNTHETIC_USER_PREFIXES`) open with a tag. Empty and
+    whitespace-only user rows occur in real transcripts too; capturing
+    one used to drop the whole audit at main()'s `if not user`."""
+    if row.get("type") != "user" or row.get("isMeta"):
+        return None
+    message = row.get("message")
+    if not isinstance(message, dict):
+        return None
+    content = message.get("content")
+    candidate: str | None = None
+    if isinstance(content, str):
+        candidate = content
+    elif isinstance(content, list):
+        candidate = _flatten_assistant_content(content)
+    if candidate is None or not candidate.strip():
+        return None
+    if candidate.lstrip().startswith(_SYNTHETIC_USER_PREFIXES):
+        return None
+    return candidate
 
 
 def _flatten_assistant_content(content: Any) -> str | None:
