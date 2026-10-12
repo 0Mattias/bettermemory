@@ -21,7 +21,11 @@ that is the conversation's (the hooks' rows), and otherwise by the
 worktree bridge: the conversation whose hook row (a show or a Stop's
 `turn_audited`) was the latest in the row's worktree before it. A
 conversation any row is stamped for is joined by the stamp only, as the
-hooks join it.
+hooks join it. A stamp is read by the hooks' rule (`hook.runs_beside`):
+Claude Code names the conversation anew on /clear and /resume while the
+server keeps the id it was spawned with, so a row stamped with an id
+whose hooks do not run beside the bridge's conversation (none at or
+after its first hook row) joins that conversation.
 
 Every count is over shows inside the window; the rows after a show are
 read up to the window's end. Rows carry ids, counts and labels, never a
@@ -37,6 +41,7 @@ from datetime import datetime
 from typing import Any
 
 from .events import HARNESS_SESSION_FIELD, HARNESS_STAMPED_KINDS
+from .hook import hook_spans, runs_beside
 from .recall import SURFACE_BRIEF, SURFACE_RECALL, is_settlement
 from .time_utils import parse_event_ts
 
@@ -219,9 +224,12 @@ def _conversation_rows(
 
     Walks the rows in log order, holding per worktree the conversation of
     the latest hook row there (the bridge); a row stamped with a harness
-    session joins that one, a row recorded under a conversation's own id
-    joins it, and any other row joins the bridge's answer for its
-    worktree unless that conversation is joined by stamps. Rows at or
+    session joins that one unless its hooks do not run beside the
+    bridge's answer (`hook.runs_beside`: the stamp is that window's own
+    server under the id it had before a /clear or /resume), a row
+    recorded under a conversation's own id joins it, and any other row
+    joins the bridge's answer for its worktree. The bridge never answers
+    with a conversation any row is stamped for. Rows at or
     after `end` take no part, so a window's report does not move when the
     log grows past it."""
     bounded: list[Mapping[str, Any]] = []
@@ -239,6 +247,7 @@ def _conversation_rows(
         harness = _str(row.get(HARNESS_SESSION_FIELD))
         if harness is not None:
             stamped.add(harness)
+    spans = hook_spans(bounded)
     latest: dict[str, str] = {}
     out: dict[str, list[_After]] = {}
     for row in bounded:
@@ -253,13 +262,24 @@ def _conversation_rows(
             continue
         if kind not in ("show", "use"):
             continue
+        bridged = latest.get(worktree) if worktree is not None else None
+        if bridged in stamped:
+            bridged = None
         conversation = _str(row.get(HARNESS_SESSION_FIELD))
-        if conversation is None and session in conversations:
-            conversation = session
-        if conversation is None and worktree is not None:
-            bridged = latest.get(worktree)
-            if bridged is not None and bridged not in stamped:
+        if conversation is not None:
+            # A server keeps the id it was spawned with across a /clear or
+            # /resume: a stamp whose hooks do not run beside the bridged
+            # conversation is that window's own server under its old id.
+            if (
+                bridged is not None
+                and conversation != bridged
+                and not runs_beside(spans, conversation, bridged)
+            ):
                 conversation = bridged
+        elif session in conversations:
+            conversation = session
+        else:
+            conversation = bridged
         if conversation is None:
             continue
         ids = (

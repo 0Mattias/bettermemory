@@ -254,7 +254,11 @@ and carries an excerpt (the Stop's settlement included), an ignore a
 of it. A row belongs to the conversation by its `harness_session` stamp,
 by its own session for the hooks' rows, and otherwise by the worktree
 bridge: the conversation whose hook row was the latest in the row's
-worktree. Rows after a show are read up to `--until`.
+worktree. A stamp naming an id whose hooks went quiet before that
+conversation's first hook row is the window's own server under the id
+it had before a /clear or /resume, and its row joins that conversation,
+as the hooks join it. Rows after a show are read up to `--until`, and
+the join reads only rows before it.
 
 Beside them: `settlements` by surface; `segments` (the conversations
 the surface spoke in, and the segments a compact or clear opened);

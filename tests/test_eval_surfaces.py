@@ -553,11 +553,47 @@ def test_an_unstamped_row_joins_by_the_worktree_bridge() -> None:
 
 
 def test_a_row_stamped_for_another_conversation_does_not_count() -> None:
+    """Another window's row: its conversation's hooks run beside this
+    one (a hook row at or after this one's first), so its stamp holds."""
     events = [
         _brief(_ts(1), [MEM_A]),
         _tool("show", _ts(1, 1), stamp="transcript-2", id=MEM_A),
+        _brief(_ts(1, 2), [MEM_B], session="transcript-2", event_id="e2"),
     ]
     assert _surfaces(events)["brief"]["opened"] == 0
+
+
+def test_a_stamp_from_before_a_clear_joins_the_conversation_after_it() -> None:
+    """The slice 4 verifier's repro: after a /clear the server still
+    stamps the old id, whose hooks went quiet before the new conversation
+    began, so its rows are the new conversation's. They used to be filed
+    under the old id, and the new conversation's shows counted no open."""
+    before = [
+        _brief(_ts(1), [MEM_A], session="transcript-0", event_id="e0"),
+        {
+            "ts": _ts(1, 1),
+            "session": "transcript-0",
+            "kind": "turn_audited",
+            "triggered_from": "stop_hook",
+            "worktree_root": WORKTREE,
+        },
+    ]
+    after = [
+        _brief(_ts(1, 10), [MEM_B]),
+        _tool("show", _ts(1, 11), stamp="transcript-0", id=MEM_B),
+    ]
+    brief = _surfaces(before + after)["brief"]
+    assert (brief["shown"], brief["opened"]) == (2, 1)
+    # A stamp no hook row names at all is read the same way.
+    unnamed = _surfaces(after)["brief"]
+    assert (unnamed["shown"], unnamed["opened"]) == (1, 1)
+    # Once the old id's hooks run again it is another window, and its
+    # stamp holds.
+    again = before + after
+    again.append(
+        _brief(_ts(1, 12), [MEM_C], session="transcript-0", event_id="e3"),
+    )
+    assert _surfaces(again)["brief"]["opened"] == 0
 
 
 def test_rows_after_the_window_do_not_count() -> None:
