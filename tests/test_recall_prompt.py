@@ -315,6 +315,35 @@ def test_written_in_the_segment_is_held(world: PromptWorld) -> None:
     assert _suppressed(world) == {written.id: "seen_in_segment"}
 
 
+def test_updated_in_the_segment_is_held(world: PromptWorld) -> None:
+    """A memory the session only updated is seen, like one it wrote; an
+    update a gate refused (it carries a status) changed nothing."""
+    updated = world.write()
+    refused = world.write(f"{BODY} refused")
+    world.store.record_event(
+        "update", session="transcript-recall", status="transient_warning", id=refused.id
+    )
+    world.store.record_event(
+        "update", session="transcript-recall", id=updated.id, fields=["content"]
+    )
+    assert world.recall().ids == (refused.id,)
+    assert _suppressed(world) == {updated.id: "seen_in_segment"}
+
+
+def test_an_update_in_the_worktree_holds_the_pointer_back(world: PromptWorld) -> None:
+    """The worktree half reads an update under another session, as it
+    reads a write."""
+    memory = world.write()
+    world.store.record_event(
+        "update",
+        session="sess_server",
+        id=memory.id,
+        fields=["scopes"],
+        worktree_root=str(world.worktree),
+    )
+    assert world.recall().stdout == ""
+
+
 def test_another_worktree_retrieval_does_not_count(world: PromptWorld) -> None:
     """A retrieval stamped with another checkout, under another server
     session, is another conversation's. (This worktree's own server

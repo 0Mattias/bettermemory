@@ -1,0 +1,152 @@
+{
+  "commit": null,
+  "fixture": {
+    "callers": {
+      "git_remote": 1,
+      "memories": 5,
+      "none": 3
+    },
+    "name": "replay-fixture-sealed.json",
+    "sha256": "8b2556ac72b5da423fdc133b0622cde04678bb346e43a4a3c543b0067c0f84d4",
+    "store_sha256": "6e4d48e471ac5c8600f6c3c016bfe2e028d3907fe7aaa6ac8fcb74010fe227b4",
+    "turns": 645,
+    "window": {
+      "since": "2026-08-26",
+      "until": "2026-09-26"
+    }
+  },
+  "kind": "recall-replay",
+  "note": "US-P1 before: v9 d2ce29b, updates not seen, run from an exported tree so the commit field is empty; the sealed fixture of RS-P4",
+  "rules": {
+    "asof": {
+      "block_chars_max": 764,
+      "block_chars_p50": 539.0,
+      "candidates_histogram": {
+        "1": 87,
+        "2": 59,
+        "3": 43
+      },
+      "candidates_per_delivery": 1.77,
+      "counts": {
+        "deliveries": 189,
+        "in_repository": 597,
+        "no_candidate": 363,
+        "no_signal": 45,
+        "outside_repository": 48,
+        "turns": 645
+      },
+      "deliveries_per_session_max": 10,
+      "deliveries_per_session_p50": 1,
+      "delivering_sessions": 91,
+      "fire_rate_in_repository": 0.317,
+      "held_back": {
+        "absent": 16,
+        "ambient": 2,
+        "low_relevance": 339,
+        "other_project": 635,
+        "seen_in_segment": 303
+      },
+      "ids_shown_twice_in_a_segment": 0,
+      "rule": "asof",
+      "sessions_with_turns": 125
+    },
+    "m4": {
+      "block_chars_max": 764,
+      "block_chars_p50": 539.0,
+      "candidates_histogram": {
+        "1": 87,
+        "2": 59,
+        "3": 43
+      },
+      "candidates_per_delivery": 1.77,
+      "counts": {
+        "deliveries": 189,
+        "in_repository": 597,
+        "no_candidate": 363,
+        "no_signal": 45,
+        "outside_repository": 48,
+        "turns": 645
+      },
+      "deliveries_per_session_max": 10,
+      "deliveries_per_session_p50": 1,
+      "delivering_sessions": 91,
+      "fire_rate_in_repository": 0.317,
+      "held_back": {
+        "absent": 16,
+        "ambient": 2,
+        "low_relevance": 339,
+        "other_project": 635,
+        "seen_in_segment": 303
+      },
+      "ids_shown_twice_in_a_segment": 0,
+      "rule": "m4",
+      "sessions_with_turns": 125
+    },
+    "project": {
+      "block_chars_max": 764,
+      "block_chars_p50": 539.0,
+      "candidates_histogram": {
+        "1": 86,
+        "2": 60,
+        "3": 43
+      },
+      "candidates_per_delivery": 1.77,
+      "counts": {
+        "deliveries": 189,
+        "in_repository": 597,
+        "no_candidate": 363,
+        "no_signal": 45,
+        "outside_repository": 48,
+        "turns": 645
+      },
+      "deliveries_per_session_max": 10,
+      "deliveries_per_session_p50": 1,
+      "delivering_sessions": 91,
+      "fire_rate_in_repository": 0.317,
+      "held_back": {
+        "absent": 16,
+        "low_relevance": 339,
+        "other_project": 635,
+        "seen_in_segment": 304
+      },
+      "ids_shown_twice_in_a_segment": 0,
+      "rule": "project",
+      "sessions_with_turns": 125
+    },
+    "rs-v1": {
+      "block_chars_max": 839,
+      "block_chars_p50": 590.0,
+      "candidates_histogram": {
+        "1": 79,
+        "2": 63,
+        "3": 34
+      },
+      "candidates_per_delivery": 1.74,
+      "counts": {
+        "deliveries": 176,
+        "deliveries_with_mark": 0,
+        "in_repository": 597,
+        "no_candidate": 376,
+        "no_signal": 45,
+        "outside_repository": 48,
+        "pointers_cut_by_cap": 0,
+        "turns": 645
+      },
+      "deliveries_per_session_max": 10,
+      "deliveries_per_session_p50": 1.0,
+      "delivering_sessions": 88,
+      "fire_rate_in_repository": 0.295,
+      "held_back": {
+        "absent": 16,
+        "low_relevance": 339,
+        "other_project": 635,
+        "seen_in_segment": 332
+      },
+      "ids_shown_twice_in_a_segment": 0,
+      "rule": "rs-v1",
+      "sessions_with_turns": 125
+    }
+  },
+  "run_at": "2026-10-12T03:34:45.088188Z",
+  "version": "8.0.0"
+}

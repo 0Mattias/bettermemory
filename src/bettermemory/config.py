@@ -103,7 +103,8 @@ write_supersession = true
 # verify-before-relying discipline still runs through memory_show. A
 # pointer is a medium- or high-relevance hit written or imported here
 # (never a synced or unaccounted one), with no open contradiction, that
-# this session segment has not already been shown, retrieved or written.
+# this session segment has not already been shown, retrieved, written or
+# updated.
 # At most twelve deliveries per segment; a compact or a clear opens a new
 # one. "project" (default) delivers only memories written in the
 # repository the prompt comes from; "everywhere" also delivers global

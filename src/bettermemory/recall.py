@@ -14,8 +14,8 @@ a tool call, on two hook moments.
   ranker, top three), and up to three of those hits delivered as
   pointers when they are relevant (medium or high), written or imported
   here, in the caller's project (under the default `prompt_recall =
-  "project"`), not contradicted, and not already shown, retrieved or
-  written in this session segment.
+  "project"`), not contradicted, and not already shown, retrieved,
+  written or updated in this session segment.
 
 Both are pointers by construction. The read path's staleness machinery
 lives on `memory_show`; a body delivered around it would be the one read
@@ -215,9 +215,9 @@ def is_settlement(event: Mapping[str, Any]) -> bool:
 #: The event kind the Stop records when reviews in the session went
 #: unanswered (`review_unanswered`).
 REVIEW_UNANSWERED = "review_unanswered"
-# The kinds whose ids count as retrieved or written in a segment.
+# The kinds whose ids count as retrieved, written or updated in a segment.
 _SEEN_KINDS: frozenset[str] = frozenset(
-    {"search", "show", "list", "list_active", "write"}
+    {"search", "show", "list", "list_active", "write", "update"}
 )
 
 _PASTED_CONTENT = re.compile(
@@ -1277,8 +1277,8 @@ def _seen_in_log(
     worktree_root: str | None,
     harness_session: str | None = None,
 ) -> set[str]:
-    """The ids retrieved (a search, list or show hit) or written in the
-    segment, from the log.
+    """The ids retrieved (a search, list or show hit), written or updated
+    in the segment, from the log.
 
     Two halves, the union the audit's retrieval shield counts
     (`audit._count_recent_retrievals`): events recorded under one of
@@ -1327,8 +1327,10 @@ def _seen_in_log(
             )
             if not (own or here):
                 continue
-        if kind in ("show", "write"):
-            if kind == "write" and event.get("status", "committed") != "committed":
+        if kind in ("show", "write", "update"):
+            # A refused write or update carries a status; a committed
+            # update carries none, a committed write may say so.
+            if kind != "show" and event.get("status", "committed") != "committed":
                 continue
             memory_id = event.get("id")
             if isinstance(memory_id, str):
@@ -1367,8 +1369,8 @@ def prompt_recall(
     high), ``other_project`` (not written in the caller's project, under
     the default `prompt_recall = "project"`), ``provenance`` (not local or
     imported, or unverifiable), ``contradicted`` (an open contradiction),
-    ``seen_in_segment`` (shown, retrieved or written in this session
-    segment) or ``segment_cap`` (the segment has had its twelve). The
+    ``seen_in_segment`` (shown, retrieved, written or updated in this
+    session segment) or ``segment_cap`` (the segment has had its twelve). The
     probe's verdict and its retrieval shield do not gate delivery; the
     segment does.
 

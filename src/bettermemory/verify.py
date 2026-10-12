@@ -91,14 +91,18 @@ Excluded by design:
 from __future__ import annotations
 
 import bisect
+import hashlib
 import os
 import re
+import threading
+from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from . import _caches
 from .claims import (
     Claim,
     build_binding_index,
@@ -1306,6 +1310,66 @@ def _normalize_for_compare(raw: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+# The body parse memo. A verdict parses a memory's body twice: the path
+# drift leg extracts its path candidates (`detect_path_drift`), and the
+# commit leg extracts them again, with the relative citations, for the
+# claim anchors (`commit_drift_anchor_paths`). Both results are functions
+# of the body alone (the anchors also of the attestations), and of the
+# home directory `~` expands to when candidates are compared; a body
+# changes only when its memory is written or updated, so a warm brief or
+# search parsed every row again for the same answer. The memo keeps each
+# result keyed on a digest of the body, the attestations the anchors read,
+# and the home directory: an edited body digests differently and is
+# parsed afresh, so no result is served for a body it was not computed
+# from. Results are tuples and each caller gets its own list, so no caller
+# can change a kept one. Bounded to the most recently used
+# BODY_PARSE_ENTRIES results of each kind (0 keeps nothing); a key holds a
+# 16-byte digest, never the body. The lock guards each look-up and each
+# store, the parse runs outside it: two threads that miss on the same body
+# parse it once each and store equal values. Registered with `_caches`,
+# which empties it before each test.
+BODY_PARSE_ENTRIES = 4096
+
+_BodyKey = tuple[bytes, tuple[str, ...], str]
+_CANDIDATES: OrderedDict[_BodyKey, tuple[tuple[str, bool, bool], ...]] = OrderedDict()
+_ANCHORS: OrderedDict[_BodyKey, tuple[str, ...]] = OrderedDict()
+_BODY_PARSE_LOCK = threading.Lock()
+
+
+@_caches.register
+def _clear_body_parses() -> None:
+    with _BODY_PARSE_LOCK:
+        _CANDIDATES.clear()
+        _ANCHORS.clear()
+
+
+def _body_key(body: str, attested: tuple[str, ...] = ()) -> _BodyKey:
+    """The memo key for `body` read with `attested`: the body's digest,
+    the attestations, and the directory `~` expands to now."""
+    digest = hashlib.blake2b(
+        body.encode("utf-8", "surrogatepass"), digest_size=16
+    ).digest()
+    return (digest, attested, os.path.expanduser("~"))
+
+
+def _recall_parse(memo: OrderedDict[_BodyKey, Any], key: _BodyKey) -> Any | None:
+    with _BODY_PARSE_LOCK:
+        found = memo.get(key)
+        if found is not None:
+            memo.move_to_end(key)
+        return found
+
+
+def _keep_parse(memo: OrderedDict[_BodyKey, Any], key: _BodyKey, value: Any) -> None:
+    if BODY_PARSE_ENTRIES <= 0:
+        return
+    with _BODY_PARSE_LOCK:
+        memo[key] = value
+        memo.move_to_end(key)
+        while len(memo) > BODY_PARSE_ENTRIES:
+            memo.popitem(last=False)
+
+
 def _bounded_scan_text(body: str) -> str:
     """Truncate `body` to `_MAX_BODY_SCAN_BYTES` before any regex scan.
 
@@ -1327,6 +1391,19 @@ def _bounded_scan_text(body: str) -> str:
 
 
 def _extract_candidates(body: str) -> list[tuple[str, bool, bool]]:
+    """`_scan_candidates(body)`, through the body parse memo
+    (`_CANDIDATES`)."""
+    if not body:
+        return []
+    key = _body_key(body)
+    found: tuple[tuple[str, bool, bool], ...] | None = _recall_parse(_CANDIDATES, key)
+    if found is None:
+        found = tuple(_scan_candidates(body))
+        _keep_parse(_CANDIDATES, key, found)
+    return list(found)
+
+
+def _scan_candidates(body: str) -> list[tuple[str, bool, bool]]:
     """Pull validated, deduplicated path candidates from `body`.
 
     Returns `(path, drop_if_missing, bare_spaced)` triples:
@@ -2293,7 +2370,24 @@ def commit_drift_anchor_paths(
     the caller's repo is deliberately not decided here — that's
     `resolve_repo_pathspecs`' job at the git boundary
     (`resolve_commit_drift_count`).
+
+    Served through the body parse memo (`_ANCHORS`), keyed on the body
+    and the attestations that count (the non-empty strings, in order).
     """
+    attested = tuple(raw for raw in verified_paths if isinstance(raw, str) and raw)
+    if not body:
+        return _anchor_paths(body, attested)
+    key = _body_key(body, attested)
+    found: tuple[str, ...] | None = _recall_parse(_ANCHORS, key)
+    if found is None:
+        found = _anchor_paths(body, attested)
+        _keep_parse(_ANCHORS, key, found)
+    return found
+
+
+def _anchor_paths(body: str, attested: tuple[str, ...]) -> tuple[str, ...]:
+    """`commit_drift_anchor_paths` uncached, for the attestations already
+    filtered to the non-empty strings."""
     anchors: list[str] = []
     seen: set[str] = set()
 
@@ -2304,9 +2398,8 @@ def commit_drift_anchor_paths(
         seen.add(key)
         anchors.append(candidate)
 
-    for raw in verified_paths:
-        if isinstance(raw, str) and raw:
-            _add(raw)
+    for raw in attested:
+        _add(raw)
     if body:
         for path, _, _ in _extract_candidates(body):
             _add(path)

@@ -39,7 +39,7 @@ The plugin bundles five things:
    the prompt through the production search pool and ranker and prints
    up to three pointers (id, relevance, summary and snippet, never a
    body) to relevant memories written in this project and not already
-   shown, retrieved or written in the session. Records a
+   shown, retrieved, written or updated in the session. Records a
    `prompt_recall` event the audit counts as retrieval. `[behavior]
    prompt_recall` takes `project` (the default), `everywhere` or
    `off`. Always exits 0.
