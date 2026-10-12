@@ -786,7 +786,7 @@ def test_the_next_daemon_reports_the_store_it_replaced(
     brief = _session_start(watched_env, workdir)
     assert "created fresh" in brief
     assert orphans[0].name in brief
-    assert str(store) in brief
+    assert "memory.sqlite-wal" in brief
     orphans[0].unlink()
     answered = health(second["port"])
     assert answered is not None
