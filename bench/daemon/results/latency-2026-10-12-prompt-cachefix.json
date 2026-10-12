@@ -1,0 +1,72 @@
+{
+  "commit": "6e30c6b19111df11358480f0703b552498f42f87",
+  "deliveries": {
+    "deliveries": 36,
+    "ids_shown_twice_in_a_session": 0,
+    "pointers": 55,
+    "prompts": 50
+  },
+  "kind": "daemon-latency-prompt",
+  "machine": {
+    "cpu_count": 12,
+    "machine": "arm64",
+    "platform": "macOS-27.0.1-arm64-arm-64bit",
+    "python": "3.11.15"
+  },
+  "method": {
+    "cwd": "the repository root",
+    "gap_seconds": 3.0,
+    "lengths": {
+      "1000_2000": 16,
+      "200_999": 17,
+      "under_200": 17
+    },
+    "long_range": [
+      200,
+      2000
+    ],
+    "n": 50,
+    "prompt_hook_wall_spaced": "subprocess.run of `python -m bettermemory hook prompt`, wall time, each prompt gap_seconds after the last exit",
+    "prompt_service_spaced": "_daemon_client.post to /api/v1/hook/prompt from a warm client, each prompt gap_seconds after the last answer",
+    "seed": 20261011,
+    "session_len": 6,
+    "short_every": 3,
+    "warm_ups": 3
+  },
+  "results": {
+    "prompt_hook_wall_spaced": {
+      "max_ms": 167.68,
+      "min_ms": 69.36,
+      "n": 50,
+      "p50_ms": 111.07,
+      "p95_ms": 145.24
+    },
+    "prompt_service_spaced": {
+      "max_ms": 121.38,
+      "min_ms": 30.47,
+      "n": 50,
+      "p50_ms": 74.18,
+      "p95_ms": 107.49
+    }
+  },
+  "run_at": "2026-10-12T02:35:30.399680Z",
+  "store": {
+    "events_imported": {
+      "found": 15871,
+      "imported": 15871,
+      "malformed": 0,
+      "present": 0,
+      "redacted": 123,
+      "unstamped": 0
+    },
+    "memories_imported": {
+      "found": 662,
+      "imported": 662,
+      "present": 0,
+      "unparseable": 0
+    },
+    "migration_seconds": 2.43,
+    "source": "/Users/mattias/.cache/bettermemory-v9/live-copy"
+  },
+  "version": "8.0.0"
+}
