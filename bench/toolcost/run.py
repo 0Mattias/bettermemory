@@ -42,6 +42,7 @@ import json
 import os
 import select
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -83,14 +84,42 @@ def probe_tools(
     # instead of 18 because it picked up the author's own
     # `full_tool_surface = true`. A benchmark that reads the operator's
     # config is measuring the operator.
+    #
+    # Everything after the mkdtemp sits inside the try, so the sandbox
+    # goes even when the spawn itself fails (a missing binary used to
+    # leave one empty `toolcost-home-*` directory per probe in $TMPDIR).
     sandbox = tempfile.mkdtemp(prefix="toolcost-home-")
-    child_env = {
-        **os.environ,
-        "HOME": sandbox,
-        "XDG_CONFIG_HOME": str(Path(sandbox) / ".config"),
-        "XDG_DATA_HOME": str(Path(sandbox) / ".local" / "share"),
-        **(env or {}),
-    }
+    child_env: dict[str, str] = {}
+    try:
+        child_env = {
+            **os.environ,
+            "HOME": sandbox,
+            "XDG_CONFIG_HOME": str(Path(sandbox) / ".config"),
+            "XDG_DATA_HOME": str(Path(sandbox) / ".local" / "share"),
+            # The state and cache directories too: bettermemory's daemon
+            # writes its state file (port, token) under the user state
+            # directory, and an operator's XDG_STATE_HOME would put the
+            # sandbox daemon's record outside the sandbox.
+            "XDG_STATE_HOME": str(Path(sandbox) / ".local" / "state"),
+            "XDG_CACHE_HOME": str(Path(sandbox) / ".cache"),
+            **(env or {}),
+        }
+        return _probe(command, child_env=child_env, cwd=cwd, timeout=timeout)
+    finally:
+        if child_env:
+            stop_sandbox_daemons(command, sandbox=sandbox, env=child_env, cwd=cwd)
+        shutil.rmtree(sandbox, ignore_errors=True)
+
+
+def _probe(
+    command: list[str],
+    *,
+    child_env: dict[str, str],
+    cwd: str | None,
+    timeout: float,
+) -> ProbeResult:
+    """The JSON-RPC exchange itself: spawn, initialize, tools/list, and
+    stop the server process whatever happened."""
     proc = subprocess.Popen(
         command,
         stdin=subprocess.PIPE,
@@ -142,7 +171,145 @@ def probe_tools(
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             proc.kill()
-        shutil.rmtree(sandbox, ignore_errors=True)
+            proc.wait(timeout=10)
+
+
+# ---------------------------------------------------------------------------
+# The daemon a probed bettermemory leaves behind
+# ---------------------------------------------------------------------------
+#
+# bettermemory's stdio shim starts a DETACHED daemon for the store it
+# resolves (`_daemon_client.start_daemon`: `bettermemory up --foreground`
+# in a new session), and that daemon outlives the shim by design. Under
+# the sandbox HOME the store, and the state file naming the daemon's port
+# and token, are inside the sandbox, so removing the sandbox without
+# stopping the daemon first leaves a process `bettermemory down` can no
+# longer find, serving a deleted store. The probe therefore stops every
+# daemon whose state file is inside the sandbox before it removes it. A
+# state file inside a fresh sandbox can only have been written by a
+# daemon started during this probe, so nothing else is ever stopped, and
+# nothing is ever matched by process name.
+
+#: The daemon's state file name (`_daemon_client.state_file_for`).
+_STATE_GLOB = "daemon-*.json"
+#: The keys every state record carries (`_daemon_client._STATE_KEYS`).
+_STATE_KEYS = ("pid", "port", "token", "version", "store", "started")
+_STOP_TIMEOUT = 10.0
+
+
+def _down_command(command: list[str]) -> list[str] | None:
+    """`bettermemory down` spelled with the binary `command` ran, or None
+    when `command` is not recognisably bettermemory."""
+    if len(command) >= 3 and command[1:3] == ["-m", "bettermemory"]:
+        return [*command[:3], "down"]
+    if command and Path(command[0]).name in ("bettermemory", "bettermemory.exe"):
+        return [command[0], "down"]
+    return None
+
+
+def _within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def sandbox_daemons(sandbox: str, env: dict[str, str]) -> list[dict[str, Any]]:
+    """The state records of the daemons whose state file is inside the
+    sandbox: under the sandbox HOME, or under `BETTERMEMORY_STATE_DIR` when
+    the environment points it inside the sandbox. One pointed outside is
+    not searched: a daemon recorded there stays reachable by `bettermemory
+    down` after the sandbox goes, and need not be this probe's."""
+    root = Path(sandbox)
+    named = env.get("BETTERMEMORY_STATE_DIR")
+    search = Path(named).expanduser() if named else root
+    if not _within(search, root) or not search.is_dir():
+        return []
+    records = []
+    for path in sorted(search.rglob(_STATE_GLOB)):
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(raw, dict) or any(key not in raw for key in _STATE_KEYS):
+            continue
+        if not isinstance(raw["pid"], int) or raw["pid"] <= 0:
+            continue
+        records.append({**raw, "state_file": str(path)})
+    return records
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _wait_gone(pid: int, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while _pid_alive(pid):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+    return True
+
+
+def stop_sandbox_daemons(
+    command: list[str], *, sandbox: str, env: dict[str, str], cwd: str | None
+) -> list[int]:
+    """Stop every daemon started for the sandbox; the pids found.
+
+    `bettermemory down` first, with the binary the spec ran and the
+    probe's own environment and working directory, so it resolves the
+    store and state directory the shim did and stops the daemon the
+    supported way (its shutdown endpoint, then a signal). A state record
+    still in the sandbox afterwards (a `down` that failed, or a command
+    not recognisably bettermemory) has its pid signalled, that pid only.
+    Returns once every pid found is gone, so the sandbox is not removed
+    from under a daemon still closing its store."""
+    found = sandbox_daemons(sandbox, env)
+    if not found:
+        return []
+    down = _down_command(command)
+    if down is not None:
+        try:
+            subprocess.run(
+                down,
+                env=env,
+                cwd=cwd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=30,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            print(f"toolcost: `{' '.join(down)}` failed: {exc}", file=sys.stderr)
+    for record in sandbox_daemons(sandbox, env):
+        pid = int(record["pid"])
+        if not _pid_alive(pid):
+            continue
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            continue
+        if not _wait_gone(pid, _STOP_TIMEOUT) and hasattr(signal, "SIGKILL"):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+    pids = [int(record["pid"]) for record in found]
+    for pid in pids:
+        if not _wait_gone(pid, _STOP_TIMEOUT):
+            print(f"toolcost: daemon pid {pid} did not stop", file=sys.stderr)
+    return pids
 
 
 def _read_response(
