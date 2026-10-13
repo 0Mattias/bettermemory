@@ -469,6 +469,11 @@ def resolved_store_path() -> Path:
 #: imports neither pydantic nor anything that pulls it in
 #: (`tests/test_hook_client.py`); a test pins the two equal.
 HARNESS_SESSION_ENV = "CLAUDE_CODE_SESSION_ID"
+#: Set by Claude Code in every hook's environment: "1" when a person is
+#: attending the session, "0" for `claude -p` and SDK runs. The hook
+#: forwards `attended` only for exactly "1" (`capture_hook`), so an older
+#: host, another harness and a scripted run all read as unattended.
+ATTENDED_ENV = "CLAUDE_CODE_SESSION_ATTENDED"
 
 
 def daemon_env_for(store_path: Path | str) -> dict[str, str]:
@@ -476,10 +481,13 @@ def daemon_env_for(store_path: Path | str) -> dict[str, str]:
     store pinned, so the child resolves exactly the store the caller did,
     and the harness session id dropped: one daemon serves every
     conversation, and the id of the one that happened to start it names
-    none of the others (each shim forwards its own as a header)."""
+    none of the others (each shim forwards its own as a header). The
+    attended mark is dropped for the same reason: it describes the session
+    whose hook started the daemon, and each hook forwards its own."""
     env = dict(os.environ)
     env["BETTERMEMORY_DIR"] = str(Path(store_path).parent)
     env.pop(HARNESS_SESSION_ENV, None)
+    env.pop(ATTENDED_ENV, None)
     return env
 
 
@@ -573,6 +581,9 @@ def hook_main(argv: list[str]) -> int:
         payload.update(flags)
         payload.setdefault("cwd", os.getcwd())
         payload["quiet"] = quiet
+        payload.pop("attended", None)
+        if os.environ.get(ATTENDED_ENV) == "1":
+            payload["attended"] = "1"
         store_path = resolved_store_path()
         state = ensure_daemon(
             resolve_state_dir(),
@@ -599,8 +610,13 @@ def hook_main(argv: list[str]) -> int:
             file=sys.stderr,
         )
         return 0
-    out = reply.get("stdout")
-    if isinstance(out, str) and out and not quiet:
+    # A hook's JSON for the harness (the Stop's capture instruction) is
+    # printed even under --quiet, and alone: Claude Code reads stdout as
+    # one JSON object.
+    out = reply.get("hook_output")
+    if not (isinstance(out, str) and out):
+        out = None if quiet else reply.get("stdout")
+    if isinstance(out, str) and out:
         try:
             sys.stdout.write(out if out.endswith("\n") else out + "\n")
             sys.stdout.flush()
