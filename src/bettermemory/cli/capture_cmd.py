@@ -38,8 +38,9 @@ def add_subparser(
         "Tombstone the memories one capture batch saved and record the undo, "
         "so the same body is not captured again; `tombstones restore` puts "
         "one back. Refuses while a member was since updated, verified, "
-        "linked to from outside the batch or filed in a conflict, unless "
-        "--skip-changed, which leaves those and reports them."
+        "linked to from outside the batch or filed in a conflict its own "
+        "write did not file, unless --skip-changed, which leaves those and "
+        "reports them."
     )
     undo = capture_sub.add_parser("undo", help=undo_text, description=undo_text)
     undo.add_argument("batch", help="The batch id, as `capture review` lists it.")

@@ -10,7 +10,10 @@ a later capture of an undone body is refused as previously undone.
 
 A member someone has since relied on is not undone silently: one later
 updated, verified, linked to by a memory outside the batch, or filed in a
-conflict is refused, and with `--skip-changed` left in place and reported.
+conflict its own write did not file is refused, and with `--skip-changed`
+left in place and reported. The check runs again inside the transaction
+that applies the undo, and the conflict rows the members' own writes
+filed are deleted in it.
 Members come from the membership rows, so an interrupted batch, which has
 no settled close, is undoable too.
 """
@@ -21,20 +24,26 @@ import json
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from . import capture as cap
 from .log import CAPTURE_UNDO
 from .models import utcnow
 from .store import NotFoundError, Store, TombstonedError
-from .time_utils import isoformat_utc
+from .time_utils import isoformat_utc, parse_event_ts
 
 # Why a member is not undone, by the name the report carries.
 CHANGED_UPDATED = "updated"
 CHANGED_VERIFIED = "verified"
 CHANGED_LINKED = "linked"
 CHANGED_CONFLICT = "conflict"
+
+# The write path files a member's own conflict pairs just after its commit
+# (`handlers.write._file_conflicts`, `_file_review_pairs`), the member as
+# `a_id`. A pending row filed this soon is the capture's own, not a sign
+# anyone relied on the member.
+OWN_FILING_WINDOW = timedelta(minutes=1)
 
 
 def refusal_rules(event: Mapping[str, Any]) -> list[str]:
@@ -142,6 +151,9 @@ class UndoReport:
     to_undo: list[str] = field(default_factory=list)
     changed: dict[str, list[str]] = field(default_factory=dict)
     gone: list[str] = field(default_factory=list)
+    # The conflict rows the undone members' own writes filed, deleted with
+    # them.
+    own_conflicts: list[str] = field(default_factory=list)
     skip_changed: bool = False
     refusal_reason: str | None = None
     committed: bool = False
@@ -178,9 +190,13 @@ def plan_undo(
         except (NotFoundError, TombstonedError):
             continue
     links = store.links_for_many(list(active))
-    conflicted = {
-        str(c[side]) for c in store.list_conflicts() for side in ("a_id", "b_id")
-    }
+    conflicted: set[str] = set()
+    own: list[dict[str, Any]] = []
+    for conflict in store.list_conflicts():
+        if _filed_by_own_write(conflict, active):
+            own.append(conflict)
+        else:
+            conflicted.update(str(conflict[side]) for side in ("a_id", "b_id"))
     for memory_id in ids:
         memory = active.get(memory_id)
         if memory is None:
@@ -199,6 +215,10 @@ def plan_undo(
             report.changed[memory_id] = why
         else:
             report.to_undo.append(memory_id)
+    undone = set(report.to_undo)
+    report.own_conflicts = [
+        str(c["id"]) for c in own if undone & {str(c["a_id"]), str(c["b_id"])}
+    ]
     if report.changed and not skip_changed:
         report.refusal_reason = (
             f"{len(report.changed)} member(s) changed since the capture; "
@@ -207,15 +227,44 @@ def plan_undo(
     return report
 
 
+def _filed_by_own_write(conflict: Mapping[str, Any], active: Mapping[str, Any]) -> bool:
+    """Whether `conflict` is one a member's own write filed: still pending,
+    with the member as `a_id`, created within `OWN_FILING_WINDOW` of it."""
+    filer = active.get(str(conflict["a_id"]))
+    created = parse_event_ts(conflict.get("created"))
+    return (
+        filer is not None
+        and conflict.get("status") == "pending"
+        and created is not None
+        and filer.created <= created <= filer.created + OWN_FILING_WINDOW
+    )
+
+
 def apply_undo(store: Store, report: UndoReport) -> UndoReport:
-    """Tombstone the planned members and record the undo, in one
-    transaction. Refuses a report that carries a refusal."""
+    """Tombstone the planned members, delete the conflict rows their own
+    writes filed and record the undo, in one transaction. Refuses a report
+    that carries a refusal. The members are checked again inside the
+    transaction, under the write lock: one changed since the plan refuses
+    the undo, or under `skip_changed` is left in place, as a plan made
+    then would have said."""
     if report.refusal_reason is not None:
         raise ValueError(report.refusal_reason)
     reason = f"capture undo: batch {report.batch}"
     with store.batch():
+        fresh = plan_undo(store, report.batch, skip_changed=report.skip_changed)
+        report.to_undo, report.changed, report.gone = (
+            fresh.to_undo,
+            fresh.changed,
+            fresh.gone,
+        )
+        report.own_conflicts = fresh.own_conflicts
+        report.refusal_reason = fresh.refusal_reason
+        if report.refusal_reason is not None:
+            return report
         for memory_id in report.to_undo:
             store.tombstone(memory_id, reason=reason)
+        for conflict_id in report.own_conflicts:
+            store.delete_conflict(conflict_id)
         cap.record_undo(store, report.batch, report.to_undo)
     report.committed = True
     return report
@@ -233,6 +282,11 @@ def render_undo(report: UndoReport) -> str:
         lines.append(f"  changed since: {memory_id} ({', '.join(why)})")
     if report.gone:
         lines.append(f"Already gone ({len(report.gone)}): {' '.join(report.gone)}")
+    if report.own_conflicts:
+        lines.append(
+            f"Conflicts their own writes filed, deleted with them "
+            f"({len(report.own_conflicts)}): {' '.join(report.own_conflicts)}"
+        )
     if report.refusal_reason:
         lines.append(f"Refused: {report.refusal_reason}")
     elif not report.committed:
