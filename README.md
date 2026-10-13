@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/0Mattias/bettermemory/main/docs/assets/banner.svg" alt="bettermemory: memory that is checked before it is believed" width="100%">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/0Mattias/bettermemory/main/docs/assets/banner-night.svg">
+    <img src="https://raw.githubusercontent.com/0Mattias/bettermemory/main/docs/assets/banner.svg" alt="bettermemory" width="100%">
+  </picture>
 </p>
 
 <p align="center">
