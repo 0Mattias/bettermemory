@@ -7,9 +7,13 @@ a batch (`capture.open_batch`) and answer with the instruction as the
 hook's `additionalContext`, which Claude Code hands the model as it
 continues the turn. The next Stop arrives with `stop_hook_active` set and
 settles the batch: the stretch up to the transcript's size then is
-captured. A Stop without the flag that finds the batch still open means
-the user interrupted the capture turn: it closes as interrupted, nothing
+captured. A Stop without the flag that finds the batch still open, with
+the transcript moved past where it opened (at the same size it is a
+duplicate call of the Stop that opened it), means the user interrupted
+the capture turn: it closes as interrupted, nothing
 is captured, and the session is left alone for `QUIET_AFTER_INTERRUPT`.
+A batch whose instruction never reached the model closes as failed
+instead (`close_failed`), which neither goes quiet nor counts.
 Its stretch is asked for again after that; writes that landed before the
 interrupt rely on the dedup gates.
 
@@ -212,8 +216,8 @@ def on_stop(
     when = now or utcnow()
     _close_expired(store, when)
     size = path.stat().st_size
-    mine = cap.open_batch_for_session(store, session_id, now=when)
     if payload.get("stop_hook_active") is True:
+        mine = cap.open_batch_for_session(store, session_id, now=when)
         if mine is None:
             return None
         try:
@@ -228,8 +232,14 @@ def on_stop(
         except cap.BatchClosedError:
             return None
         return StopStep(SETTLED, mine.batch)
-    if mine is not None:
-        try:
+    # Decided under the write lock the open takes. A batch opened at this
+    # very transcript size was opened in this same Stop round, by a sibling
+    # call (a Stop hook registered twice), and stands; one the transcript
+    # has moved past since is the capture turn the user interrupted.
+    with store.batch():
+        mine = cap.open_batch_for_session(store, session_id, now=when)
+        same_round = mine is not None and mine.transcript_bytes == size
+        if mine is not None and not same_round:
             cap.close_batch(
                 store,
                 mine,
@@ -238,9 +248,8 @@ def on_stop(
                 transcript_bytes=size,
                 now=when,
             )
-        except cap.BatchClosedError:
-            return None
-        return StopStep(INTERRUPTED, mine.batch)
+    if mine is not None:
+        return None if same_round else StopStep(INTERRUPTED, mine.batch)
     last = cap.last_close(store, session_id)
     if (
         last is not None
@@ -254,7 +263,10 @@ def on_stop(
     if offset > size:
         # The transcript was rewritten under the watermark: start over.
         offset = 0
-    threshold = config.capture.checkpoint_tokens * CHARS_PER_TOKEN
+    from .config import MIN_CHECKPOINT_TOKENS
+
+    tokens = max(config.capture.checkpoint_tokens, MIN_CHECKPOINT_TOKENS)
+    threshold = tokens * CHARS_PER_TOKEN
     if size - offset < threshold:
         return None
     stretch = read_stretch(path, offset)
@@ -265,6 +277,16 @@ def on_stop(
     raw_cwd = payload.get("cwd")
     cwd = raw_cwd if isinstance(raw_cwd, str) and raw_cwd else None
     origin = _origin_for(Path(cwd)) if cwd else None
+    # Everything that can fail runs before the batch opens: a batch whose
+    # instruction was never built would read as interrupted at the next Stop.
+    token = cap.mint_token()
+    instruction = cap.in_session_instruction(
+        token=token,
+        since=stretch.since if offset else None,
+        scopes=_project_scopes(store, cwd),
+        prompt_times=stretch.prompt_times,
+        compacted=stretch.compacted,
+    )
     try:
         batch = cap.open_batch(
             store,
@@ -278,18 +300,32 @@ def on_stop(
                 if stretch.compacted
                 else cap.MODE_CHECKPOINT
             ),
+            token=token,
             now=when,
         )
     except cap.BatchAlreadyOpenError:
         return None
-    instruction = cap.in_session_instruction(
-        token=batch.token,
-        since=stretch.since if offset else None,
-        scopes=_project_scopes(store, cwd),
-        prompt_times=stretch.prompt_times,
-        compacted=stretch.compacted,
-    )
     return StopStep(OPENED, batch.batch, instruction)
+
+
+def close_failed(store: Store, batch_id: str, *, now: datetime | None = None) -> None:
+    """Close an opened batch whose instruction never reached the model
+    (the reply carrying it failed) as failed: nothing is captured, no quiet
+    hour starts and no `daily_cap` slot is spent. A no-op once closed."""
+    batch = next((b for b in cap.batches(store) if b.batch == batch_id), None)
+    if batch is None:
+        return
+    try:
+        cap.close_batch(
+            store,
+            batch,
+            outcome=cap.OUTCOME_FAILED,
+            watermark=batch.offset,
+            transcript_bytes=batch.transcript_bytes,
+            now=now,
+        )
+    except cap.BatchClosedError:
+        return
 
 
 __all__ = [
@@ -301,6 +337,7 @@ __all__ = [
     "SETTLED",
     "StopStep",
     "Stretch",
+    "close_failed",
     "hook_output",
     "on_stop",
     "read_stretch",

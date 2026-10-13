@@ -128,6 +128,20 @@ def test_nothing_is_asked_below_the_threshold(
     assert cap.batches(store) == []
 
 
+def test_a_checkpoint_below_the_floor_waits_for_the_floor(
+    store: Store, transcript: Path, tmp_path: Path
+) -> None:
+    """A config built in code skips the loader's clamp: the Stop applies
+    the same floor, so a zero checkpoint never asks on an empty stretch."""
+    zero = Config(
+        storage=StorageConfig(directory=str(tmp_path / "store")),
+        capture=CaptureConfig(stop_checkpoint=True, checkpoint_tokens=0),
+    )
+    append(transcript, [user("hi"), assistant("Hello.")])
+    assert stop(zero, store, transcript) is None
+    assert cap.batches(store) == []
+
+
 def test_bytes_alone_are_not_a_stretch(
     enabled: Config, store: Store, transcript: Path
 ) -> None:
@@ -280,6 +294,53 @@ def test_an_interrupted_capture_captures_nothing_and_goes_quiet(
     assert cap.batches(store)[-1].offset == 0
 
 
+def test_a_duplicate_stop_in_the_same_round_leaves_the_new_batch_open(
+    enabled: Config, store: Store, transcript: Path
+) -> None:
+    """A Stop hook registered twice fires twice per turn end. The second
+    call finds the batch the first just opened, at the same transcript
+    size and without the flag: that is the same Stop round, not an
+    interrupt, so the batch stands and its continuation settles it."""
+    append(transcript, long_session(3))
+    opened = stop(enabled, store, transcript)
+    assert opened is not None and opened.action == ch.OPENED
+    assert stop(enabled, store, transcript) is None
+    assert cap.closes(store) == {}
+    append(transcript, [assistant("Saved one memory.")])
+    settled = stop(enabled, store, transcript, active=True)
+    assert settled is not None and settled.action == ch.SETTLED
+
+
+def test_racing_duplicate_stops_open_one_batch_and_interrupt_none(
+    enabled: Config, transcript: Path, tmp_path: Path
+) -> None:
+    import threading
+
+    append(transcript, long_session(3))
+    Store(tmp_path / "store").close()
+    barrier = threading.Barrier(4)
+    steps: list[ch.StopStep | None] = []
+
+    def call() -> None:
+        own = Store(tmp_path / "store")
+        barrier.wait()
+        try:
+            steps.append(stop(enabled, own, transcript))
+        finally:
+            own.close()
+
+    threads = [threading.Thread(target=call) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    actions = sorted(s.action for s in steps if s is not None)
+    assert actions == [ch.OPENED]
+    check = Store(tmp_path / "store")
+    assert len(cap.batches(check)) == 1 and cap.closes(check) == {}
+    check.close()
+
+
 def test_an_expired_batch_closes_as_expired(
     enabled: Config, store: Store, transcript: Path
 ) -> None:
@@ -409,3 +470,132 @@ async def test_a_capture_failure_never_costs_the_audit(
     )
     assert reply["result"] is not None
     assert "hook_output" not in reply
+
+
+# ---------------------------------------------------------------------------
+# An instruction that never reached the model is not an interrupt
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("broken", ["_project_scopes", "in_session_instruction"])
+def test_a_failure_building_the_instruction_opens_nothing(
+    enabled: Config,
+    store: Store,
+    transcript: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    broken: str,
+) -> None:
+    """The scopes and the instruction are built before the batch opens, so
+    a failure in either leaves no open batch for the next Stop to close as
+    interrupted."""
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("broke")
+
+    monkeypatch.setattr(ch if broken == "_project_scopes" else cap, broken, boom)
+    append(transcript, long_session(3))
+    payload = {
+        "session_id": SESSION,
+        "transcript_path": str(transcript),
+        "cwd": str(tmp_path),
+        "attended": ch.ATTENDED,
+    }
+    with pytest.raises(RuntimeError):
+        ch.on_stop(enabled, store, payload, now=NOW)
+    assert cap.batches(store) == []
+    monkeypatch.undo()
+    step = ch.on_stop(enabled, store, payload, now=NOW + timedelta(minutes=1))
+    assert step is not None and step.action == ch.OPENED
+
+
+def test_a_failed_batch_neither_goes_quiet_nor_counts_toward_the_cap(
+    enabled: Config, store: Store, transcript: Path
+) -> None:
+    capped = Config(
+        storage=enabled.storage,
+        capture=CaptureConfig(stop_checkpoint=True, checkpoint_tokens=500, daily_cap=1),
+    )
+    append(transcript, long_session(3))
+    opened = stop(capped, store, transcript)
+    assert opened is not None and opened.action == ch.OPENED
+    ch.close_failed(store, opened.batch, now=NOW)
+    close = _close(store, opened.batch)
+    assert (close.outcome, close.watermark) == (cap.OUTCOME_FAILED, 0)
+    assert cap.daily_count(store, now=NOW) == 0
+    # Asked again at once, inside what would be the quiet hour and the cap.
+    again = stop(capped, store, transcript, now=NOW + timedelta(minutes=1))
+    assert again is not None and again.action == ch.OPENED
+    # A second close of the same batch is a no-op.
+    ch.close_failed(store, opened.batch, now=NOW)
+
+
+async def test_an_audit_failure_still_hands_the_model_its_instruction(
+    enabled: Config,
+    store: Store,
+    transcript: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from bettermemory import hook
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("audit broke")
+
+    monkeypatch.setattr(hook, "audit_transcript", boom)
+    append(transcript, long_session(3))
+    reply = json.loads(
+        await _post_stop(
+            enabled,
+            store,
+            {
+                "session_id": SESSION,
+                "transcript_path": str(transcript),
+                "cwd": str(tmp_path),
+                "attended": "1",
+            },
+        )
+    )
+    assert reply["capture"]["action"] == ch.OPENED
+    assert "additionalContext" in json.loads(reply["hook_output"])["hookSpecificOutput"]
+    assert "audit broke" in reply["error"]
+    assert cap.closes(store) == {}
+
+
+async def test_a_reply_that_cannot_carry_the_instruction_fails_the_batch(
+    enabled: Config,
+    store: Store,
+    transcript: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def boom(instruction: str) -> str:
+        raise RuntimeError("reply broke")
+
+    monkeypatch.setattr(ch, "hook_output", boom)
+    append(transcript, long_session(3))
+    async with running_app(enabled, store) as client:
+        response = await client.post(
+            "/api/v1/hook/stop",
+            json={
+                "session_id": SESSION,
+                "transcript_path": str(transcript),
+                "cwd": str(tmp_path),
+                "attended": "1",
+            },
+            headers=_auth(),
+        )
+    assert response.status_code == 500
+    [batch] = cap.batches(store)
+    assert _close(store, batch.batch).outcome == cap.OUTCOME_FAILED
+    monkeypatch.undo()
+    step = ch.on_stop(
+        enabled,
+        store,
+        {
+            "session_id": SESSION,
+            "transcript_path": str(transcript),
+            "attended": ch.ATTENDED,
+        },
+    )
+    assert step is not None and step.action == ch.OPENED

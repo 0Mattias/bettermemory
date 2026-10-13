@@ -334,6 +334,7 @@ def build_app(
         }
         if not transcript or not session_id:
             return JSONResponse(quiet_fields)
+        audit_error: list[str] = []
 
         def body(
             worker_store: Store,
@@ -342,7 +343,8 @@ def build_app(
             # ended a turn the model spent saving memories, not one the
             # user asked for, so the audit leaves it out of turn_audited,
             # search_miss and the helped rate. A capture failure is logged
-            # and never costs the audit.
+            # and never costs the audit, and an audit failure never costs an
+            # opened capture its instruction: the reply still carries it.
             step: _capture_hook.StopStep | None = None
             try:
                 step = _capture_hook.on_stop(config, worker_store, payload)
@@ -352,18 +354,27 @@ def build_app(
                 )
             if step is not None and step.action == _capture_hook.SETTLED:
                 return None, step
-            return _hook.audit_transcript(
-                transcript_path=Path(str(transcript)),
-                session_id=str(session_id),
-                config=config,
-                store=worker_store,
-                cwd=_cwd_of(payload),
-                dry_run=bool(payload.get("dry_run", False)),
-                assistant_message=_text(payload, "last_assistant_message"),
-                harness=_text(payload, "harness"),
-                prompt_id=_text(payload, "prompt_id"),
-                state=recall_state,
-            ), step
+            try:
+                return _hook.audit_transcript(
+                    transcript_path=Path(str(transcript)),
+                    session_id=str(session_id),
+                    config=config,
+                    store=worker_store,
+                    cwd=_cwd_of(payload),
+                    dry_run=bool(payload.get("dry_run", False)),
+                    assistant_message=_text(payload, "last_assistant_message"),
+                    harness=_text(payload, "harness"),
+                    prompt_id=_text(payload, "prompt_id"),
+                    state=recall_state,
+                ), step
+            except Exception as exc:  # noqa: BLE001
+                if step is None or step.instruction is None:
+                    raise
+                log.warning(
+                    "hook stop audit failed: %s: %s", exc.__class__.__name__, exc
+                )
+                audit_error.append(f"{exc.__class__.__name__}: {exc}")
+                return None, step
 
         try:
             result, step = await workers.run(body)
@@ -379,9 +390,26 @@ def build_app(
         if step is not None:
             quiet_fields["capture"] = step.to_dict()
             if step.instruction is not None:
-                quiet_fields["hook_output"] = _capture_hook.hook_output(
-                    step.instruction
-                )
+                try:
+                    quiet_fields["hook_output"] = _capture_hook.hook_output(
+                        step.instruction
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    # The model never sees this batch's instruction: closed
+                    # as failed, the next Stop does not read it as an
+                    # interrupt.
+                    error = f"{exc.__class__.__name__}: {exc}"
+                    log.warning("capture reply failed: %s", error)
+                    batch_id = step.batch
+                    with contextlib.suppress(Exception):
+                        await workers.run(
+                            lambda s: _capture_hook.close_failed(s, batch_id)
+                        )
+                    return JSONResponse(
+                        {**quiet_fields, "error": error}, status_code=500
+                    )
+        if audit_error:
+            quiet_fields["error"] = audit_error[0]
         if result is None:
             return JSONResponse(quiet_fields)
         import json as _json

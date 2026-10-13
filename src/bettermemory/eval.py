@@ -2849,6 +2849,10 @@ TOOLS_WITHOUT_TELEMETRY: tuple[str, ...] = ()
 # and counted by the surfaces section. Admin-recorded by kind, like
 # ``review_grade``.
 #
+# ``capture_grade`` is the owner's grade of one captured memory against
+# the capture rules, written by ``bettermemory capture grade`` under a
+# throwaway CLI session. Admin-recorded by kind, like ``review_grade``.
+#
 # ``review_unanswered`` is the Stop's count of the write-review chains
 # the conversation left open since its previous turn
 # (`recall.review_unanswered`). A hook record, not a tool call, and not a
@@ -2869,6 +2873,7 @@ _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
         "session_brief",
         "review_grade",
         "recall_grade",
+        "capture_grade",
         "review_unanswered",
         "segment_opened",
     }
