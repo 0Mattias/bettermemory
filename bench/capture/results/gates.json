@@ -1,0 +1,414 @@
+{
+  "kind": "capture-gates",
+  "prediction": "CAPS-P2",
+  "commit": "611782789a4ec8ff5cd5ecc47065f4a4f631b217",
+  "run_at": "2026-10-13T05:07:14Z",
+  "gate": "bettermemory.durability.find_capture_rule_hits (CaptureRulesGate)",
+  "sets": {
+    "known_bad": {
+      "n": 10,
+      "refused_by_own_rule_only": 10,
+      "by_intended_rule": {
+        "plain_subject": 2,
+        "no_todo": 2,
+        "drifting_count": 2,
+        "test_total": 2,
+        "absolute_date": 2
+      },
+      "write_path_status": {
+        "capture_rule": 10
+      },
+      "with_transient_markers": 1,
+      "rows": [
+        {
+          "index": 0,
+          "intended_rule": "plain_subject",
+          "gate_rules": [
+            "plain_subject"
+          ],
+          "own_rule_only": true,
+          "transient_markers": [],
+          "write_status": "capture_rule",
+          "write_rules": [
+            "plain_subject"
+          ]
+        },
+        {
+          "index": 1,
+          "intended_rule": "plain_subject",
+          "gate_rules": [
+            "plain_subject"
+          ],
+          "own_rule_only": true,
+          "transient_markers": [],
+          "write_status": "capture_rule",
+          "write_rules": [
+            "plain_subject"
+          ]
+        },
+        {
+          "index": 2,
+          "intended_rule": "no_todo",
+          "gate_rules": [
+            "no_todo"
+          ],
+          "own_rule_only": true,
+          "transient_markers": [],
+          "write_status": "capture_rule",
+          "write_rules": [
+            "no_todo"
+          ]
+        },
+        {
+          "index": 3,
+          "intended_rule": "no_todo",
+          "gate_rules": [
+            "no_todo"
+          ],
+          "own_rule_only": true,
+          "transient_markers": [],
+          "write_status": "capture_rule",
+          "write_rules": [
+            "no_todo"
+          ]
+        },
+        {
+          "index": 4,
+          "intended_rule": "drifting_count",
+          "gate_rules": [
+            "drifting_count"
+          ],
+          "own_rule_only": true,
+          "transient_markers": [],
+          "write_status": "capture_rule",
+          "write_rules": [
+            "drifting_count"
+          ]
+        },
+        {
+          "index": 5,
+          "intended_rule": "drifting_count",
+          "gate_rules": [
+            "drifting_count"
+          ],
+          "own_rule_only": true,
+          "transient_markers": [],
+          "write_status": "capture_rule",
+          "write_rules": [
+            "drifting_count"
+          ]
+        },
+        {
+          "index": 6,
+          "intended_rule": "test_total",
+          "gate_rules": [
+            "test_total"
+          ],
+          "own_rule_only": true,
+          "transient_markers": [],
+          "write_status": "capture_rule",
+          "write_rules": [
+            "test_total"
+          ]
+        },
+        {
+          "index": 7,
+          "intended_rule": "test_total",
+          "gate_rules": [
+            "test_total"
+          ],
+          "own_rule_only": true,
+          "transient_markers": [],
+          "write_status": "capture_rule",
+          "write_rules": [
+            "test_total"
+          ]
+        },
+        {
+          "index": 8,
+          "intended_rule": "absolute_date",
+          "gate_rules": [
+            "absolute_date"
+          ],
+          "own_rule_only": true,
+          "transient_markers": [
+            "was recently"
+          ],
+          "write_status": "capture_rule",
+          "write_rules": [
+            "absolute_date"
+          ]
+        },
+        {
+          "index": 9,
+          "intended_rule": "absolute_date",
+          "gate_rules": [
+            "absolute_date"
+          ],
+          "own_rule_only": true,
+          "transient_markers": [],
+          "write_status": "capture_rule",
+          "write_rules": [
+            "absolute_date"
+          ]
+        }
+      ]
+    },
+    "good": {
+      "n": 30,
+      "passed_gate": 30,
+      "refused_by_rule": {},
+      "write_path_status": {
+        "committed": 30
+      },
+      "batch_members": 30,
+      "with_transient_markers": 0,
+      "rows": [
+        {
+          "index": 0,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 1,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 2,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 3,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 4,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 5,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 6,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 7,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 8,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 9,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 10,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 11,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 12,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 13,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 14,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 15,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 16,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 17,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 18,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 19,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 20,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 21,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 22,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 23,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 24,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 25,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 26,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 27,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 28,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        },
+        {
+          "index": 29,
+          "gate_rules": [],
+          "transient_markers": [],
+          "write_status": "committed",
+          "write_rule": null
+        }
+      ]
+    },
+    "integrity": {
+      "n": 94,
+      "source": {
+        "path": "bench/integrity/corpus.json",
+        "sha256": "39e7ed5bc31ac8f5d69086c9b8bd29af43a7fc8faccca92c35225e36175b96ad",
+        "read_at": "2026-10-13T05:07:14Z",
+        "reads": 1
+      },
+      "refused": 1,
+      "refused_by_rule": {
+        "absolute_date": 1
+      },
+      "refused_ids": [
+        "hn03"
+      ],
+      "with_transient_markers": 1
+    }
+  },
+  "bounds": {
+    "known_bad_all_refused_own_rule": {
+      "bound": "10 of 10",
+      "observed": 10,
+      "verdict": "HIT"
+    },
+    "good_all_pass": {
+      "bound": "30 of 30",
+      "observed": 30,
+      "verdict": "HIT"
+    },
+    "integrity_at_most_2_refused": {
+      "bound": "<= 2 of 94",
+      "observed": 1,
+      "verdict": "HIT"
+    }
+  }
+}
