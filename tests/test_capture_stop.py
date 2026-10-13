@@ -100,6 +100,7 @@ def stop(
     active: bool = False,
     attended: str | None = ch.ATTENDED,
     now: datetime = NOW,
+    reply: str | None = None,
 ) -> ch.StopStep | None:
     payload: dict[str, Any] = {
         "session_id": session,
@@ -108,6 +109,8 @@ def stop(
     }
     if attended is not None:
         payload["attended"] = attended
+    if reply is not None:
+        payload["last_assistant_message"] = reply
     return ch.on_stop(config, store, payload, now=now)
 
 
@@ -176,6 +179,60 @@ def test_past_the_threshold_the_model_is_asked_from_its_own_context(
             "additionalContext": step.instruction,
         }
     }
+
+
+def test_a_reply_not_yet_in_the_transcript_counts_toward_the_checkpoint(
+    enabled: Config, store: Store, transcript: Path
+) -> None:
+    """The scratch proof's first message: 1,759 characters of prompt, short
+    of the 2,000-character checkpoint in the file alone, crosses it with
+    the reply the Stop payload carries but the transcript does not hold
+    yet, and the batch opens."""
+    append(transcript, [user("u" * 1_759)])
+    assert transcript.stat().st_size < 2_000
+    assert stop(enabled, store, transcript) is None
+    assert cap.batches(store) == []
+    step = stop(enabled, store, transcript, reply="r" * 400)
+    assert step is not None and step.action == ch.OPENED
+    assert len(cap.batches(store)) == 1
+
+
+def test_a_reply_already_in_the_transcript_counts_once(
+    enabled: Config, store: Store, transcript: Path
+) -> None:
+    """When the reply reached the transcript before the Stop ran, the
+    payload's copy of it adds nothing: 1,500 characters of prompt and the
+    reply of about 400 stay under 2,000, whitespace aside, and with the
+    reply's two text blocks flushed as two rows."""
+    reply = "first part of the reply " * 10 + "\n\n" + "second part " * 13
+    assert 390 < len(reply) < 450
+    head, tail = reply.split("\n\n")
+    append(transcript, [user("u" * 1_500), assistant(head), assistant(tail)])
+    assert stop(enabled, store, transcript, reply=reply) is None
+    assert stop(enabled, store, transcript, reply=reply.strip() + "  ") is None
+    assert cap.batches(store) == []
+    # A reply that is not the turn's own text does count.
+    step = stop(enabled, store, transcript, reply="an unflushed reply " * 20)
+    assert step is not None and step.action == ch.OPENED
+
+
+def test_a_reply_after_an_earlier_prompt_is_not_found_in_its_turn() -> None:
+    """Only the assistant text since the stretch's last prompt is the
+    reply's turn: the same words answered to an earlier prompt are not
+    this Stop's reply, so the reply counts."""
+    reply = "r" * 400
+    earlier = ch.Stretch(chars=1_900, tail="")
+    assert ch.unflushed_reply(earlier, reply) == len(reply)
+    flushed = ch.Stretch(chars=1_900, tail="intro\n" + reply)
+    assert ch.unflushed_reply(flushed, reply) == 0
+    assert ch.unflushed_reply(flushed, "  ") == 0
+
+
+def test_the_stretch_tail_restarts_at_each_prompt(transcript: Path) -> None:
+    append(transcript, [user("a"), assistant("old"), user("b"), assistant("new")])
+    assert ch.read_stretch(transcript, 0).tail == "new"
+    append(transcript, [user("c")])
+    assert ch.read_stretch(transcript, 0).tail == ""
 
 
 def test_a_payload_must_name_its_own_transcript(
@@ -416,6 +473,20 @@ async def test_off_and_unattended_replies_are_byte_identical(
     assert (
         "additionalContext" in json.loads(attended["hook_output"])["hookSpecificOutput"]
     )
+
+
+async def test_the_reply_field_reaches_the_capture_through_the_endpoint(
+    enabled: Config, store: Store, transcript: Path
+) -> None:
+    """The hook client forwards Claude Code's stdin JSON whole and the
+    stop endpoint hands it to the capture half: a stretch that crosses the
+    checkpoint only with `last_assistant_message` opens a batch."""
+    append(transcript, [user("u" * 1_759)])
+    base = {"session_id": SESSION, "transcript_path": str(transcript), "attended": "1"}
+    reply = json.loads(
+        await _post_stop(enabled, store, {**base, "last_assistant_message": "r" * 400})
+    )
+    assert reply["capture"]["action"] == ch.OPENED
 
 
 async def test_the_audit_leaves_out_the_settling_stop(

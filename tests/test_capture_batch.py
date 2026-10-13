@@ -280,6 +280,55 @@ async def test_capture_rules_refuse_with_the_rule_and_no_flag_passes(
     assert (await world.write(body))["status"] == "committed"
 
 
+async def test_a_capture_about_another_project_takes_its_own_scope(
+    world: World,
+) -> None:
+    """The scratch proof: a chat in the bettermemory folder about kettle, a
+    tea timer. The folder's project is known to the store (a memory under
+    `projects:bettermemory` written here), and a capture write filed under
+    `projects:kettle` commits with that scope alone."""
+    seeded = await world.write(
+        "The bettermemory daemon binds 127.0.0.1 only.",
+        scopes=["projects:bettermemory"],
+    )
+    assert seeded["status"] == "committed", seeded
+    batch = world.open()
+    body = "kettle, the tea timer, rings three times when a steep ends."
+    result = await world.capture_write(batch, body, scopes=["projects:kettle"])
+    assert result["status"] == "committed", result
+    assert world.store.load_one(result["id"]).scopes == ["projects:kettle"]
+
+
+async def test_a_capture_scope_mismatch_is_answered_by_the_scope_it_suggests(
+    world: World,
+) -> None:
+    """A capture body that also names the folder's project is refused as a
+    scope mismatch. The flag the general hint offers is ignored on a
+    capture, so the capture's hint does not offer it; adding the suggested
+    scope is the answer, and the same write then commits."""
+    await world.write(
+        "The bettermemory daemon binds 127.0.0.1 only.",
+        scopes=["projects:bettermemory"],
+    )
+    batch = world.open()
+    body = "kettle, the tea timer, keeps its presets in a bettermemory store."
+    refused = await world.capture_write(batch, body, scopes=["projects:kettle"])
+    assert refused["status"] == "scope_mismatch", refused
+    assert "projects:bettermemory" in refused["suggested_scopes"]
+    assert "A capture ignores acknowledge_scope_mismatch" in refused["hint"]
+    assert "pass acknowledge_scope_mismatch=True" not in refused["hint"]
+    again = await world.capture_write(
+        batch, body, scopes=["projects:kettle"], acknowledge_scope_mismatch=True
+    )
+    assert again["status"] == "scope_mismatch", again
+    answered = await world.capture_write(
+        batch, body, scopes=["projects:kettle", "projects:bettermemory"]
+    )
+    assert answered["status"] == "committed", answered
+    [member] = capture.members(world.store, batch.batch)
+    assert member.memory_id == answered["id"]
+
+
 async def test_the_transient_and_credential_flags_are_ignored(world: World) -> None:
     batch = world.open()
     transient = await world.capture_write(

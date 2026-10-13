@@ -57,7 +57,16 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from ._daemon_client import HOST, remove_state, write_state
+from ._daemon_client import (
+    DAEMON_HELD_STATUS,
+    HOST,
+    LOCK_WAIT_SECONDS,
+    acquire_lock,
+    lock_file_for,
+    release_lock,
+    remove_state,
+    write_state,
+)
 from ._fsutil import ensure_owner_only_dir, fsync_dir, replace_atomic
 from .builder import build_server
 from .config import Config
@@ -808,7 +817,42 @@ def serve(
     after the server returns when the loop left the app's tasks
     running. Writes the state file after the
     socket is bound and removes it on the way out. Returns the exit
-    status."""
+    status.
+
+    One daemon per store: before anything else it takes the store's lock
+    (`_daemon_client.lock_file_for`, beside the state file) and holds it
+    until it returns, so the OS gives it back however the process ends.
+    When another daemon holds it past `LOCK_WAIT_SECONDS` (two clients
+    that each found no daemon and each started one), this one logs a line
+    and returns `DAEMON_HELD_STATUS` without binding, serving or writing
+    the state file, which stays the serving daemon's."""
+    lock_path = lock_file_for(state_dir, store.path)
+    lock = acquire_lock(lock_path, wait=LOCK_WAIT_SECONDS)
+    if lock is None:
+        log.error(
+            "another bettermemory daemon already serves %s (it holds %s); "
+            "this one exits",
+            store.path,
+            lock_path,
+        )
+        return DAEMON_HELD_STATUS
+    try:
+        return _serve_locked(
+            config=config, store=store, state_dir=state_dir, port=port, host=host
+        )
+    finally:
+        release_lock(lock)
+
+
+def _serve_locked(
+    *,
+    config: Config,
+    store: Store,
+    state_dir: Path,
+    port: int | None,
+    host: str,
+) -> int:
+    """`serve`, with the store's lock held."""
     import uvicorn
 
     requested = config.daemon.port if port is None else port

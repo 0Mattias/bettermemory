@@ -98,8 +98,18 @@ _SETUP_NOTE = (
 
 
 def _scopes_line(scopes: Sequence[str]) -> str:
+    """The scope of the project the session's folder belongs to, offered
+    for memories about that project only: a chat run in one repository
+    is often about another project or a tool, and a memory filed under
+    the folder's scope by default would surface in the wrong project."""
     named = ", ".join(f'"{s}"' for s in scopes if s)
-    return f"Scopes for these memories: {named}." if named else ""
+    if not named:
+        return ""
+    return (
+        f"This folder's project scope is {named}: use it only for memories "
+        "about that project. A memory about another project or tool takes "
+        "its subject's own scope (projects:<name>), wherever this chat runs."
+    )
 
 
 def in_session_instruction(
@@ -114,11 +124,14 @@ def in_session_instruction(
     its last capture has grown past the checkpoint: save what is worth
     keeping, from its own context, into the batch `token` names.
 
-    Around the bar it carries the batch token, the project scope, the
-    rule 9 amendment for a capture (supersedes, never an update, so an
-    undo restores exactly what was there), the times of the user's
-    messages to date events by, and how to answer the write review: the
-    two scores on each write, the relations in one closing call."""
+    Around the bar it carries the batch token, the folder's project scope
+    for memories about that project, the rule 9 amendment for a capture
+    (supersedes, never an update, so an undo restores exactly what was
+    there), whose words a body records (rule 10 read for one body: what
+    the user said, decided or adopted, not the assistant's own
+    suggestions or caveats), the times of the user's messages to date
+    events by, and how to answer the write review: the two scores on each
+    write, the relations in one closing call."""
     stretch = f"this conversation since {since}" if since else "this conversation"
     times = [t for t in prompt_times if t][-MAX_PROMPT_TIMES:]
     parts = [
@@ -126,6 +139,8 @@ def in_session_instruction(
         "and save what it established that is worth keeping, with memory_write. "
         f"Skip anything you already saved. {_SETUP_NOTE}",
         CAPTURE_RULES,
+        "A body records what the user said, decided or adopted, never your "
+        "own suggestions or caveats unless the user adopted them.",
         f'Save each memory with memory_write and source="{SOURCE_PREFIX}{token}". '
         + _scopes_line(scopes),
         "Do not update, remove or verify stored memories during this capture. "
