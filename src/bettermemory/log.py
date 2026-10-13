@@ -71,10 +71,23 @@ KEY_BYTES = 32
 # of a table, and none is telemetry. The migration row is not named
 # `migrate` because v8 had a telemetry kind of that name (the origin
 # backfill), and imported events keep their kinds.
+#
+# The capture rows are control rows too, so a capture batch is on the log
+# with telemetry off: `capture_open` when the daemon asks the chat model
+# to save a stretch, `capture_member` for each write the batch's token
+# committed (written with the memory, so an interrupted batch is still
+# undoable), `capture_close` when the batch settles, with the transcript
+# offset it captured to, and `capture_undo` when the owner reverts one.
+# Everything capture keeps across a restart is read back from these.
 STORE_CREATED = "store_created"
 REKEY = "rekey"
 MIGRATE_V8 = "migrate_v8"
-CONTROL_KINDS = frozenset({STORE_CREATED, REKEY, MIGRATE_V8})
+CAPTURE_OPEN = "capture_open"
+CAPTURE_MEMBER = "capture_member"
+CAPTURE_CLOSE = "capture_close"
+CAPTURE_UNDO = "capture_undo"
+CAPTURE_KINDS = frozenset({CAPTURE_OPEN, CAPTURE_MEMBER, CAPTURE_CLOSE, CAPTURE_UNDO})
+CONTROL_KINDS = frozenset({STORE_CREATED, REKEY, MIGRATE_V8}) | CAPTURE_KINDS
 
 # A retired key is filed under the first characters of its fingerprint.
 _RETIRED_PREFIX_CHARS = 16
@@ -470,6 +483,11 @@ def verify_chain(
 
 
 __all__ = [
+    "CAPTURE_CLOSE",
+    "CAPTURE_KINDS",
+    "CAPTURE_MEMBER",
+    "CAPTURE_OPEN",
+    "CAPTURE_UNDO",
     "CONTROL_KINDS",
     "GENESIS_MAC",
     "KEY_BYTES",

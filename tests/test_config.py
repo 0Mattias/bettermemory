@@ -1456,8 +1456,7 @@ def test_capture_defaults_are_off_with_the_declared_bounds(tmp_path: Path) -> No
 def test_capture_keys_load_as_written(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     config_path.write_text(
-        "[capture]\nstop_checkpoint = true\ncheckpoint_tokens = 8000\n"
-        "daily_cap = 3\n",
+        "[capture]\nstop_checkpoint = true\ncheckpoint_tokens = 8000\ndaily_cap = 3\n",
         encoding="utf-8",
     )
     capture = load_config(config_path).capture
