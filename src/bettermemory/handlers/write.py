@@ -557,10 +557,11 @@ class DedupActiveGate(WriteGate):
         similar = find_similar(gc.payload["content"], existing)
         high = [h for h in similar if h.relevance == "high"]
         if high:
+            response: dict[str, Any] = {"status": "duplicate"}
+            deps.responses.add_similar(response, "matches", high)
             return Reject(
                 response={
-                    "status": "duplicate",
-                    "matches": [deps.responses.similar_to_dict(h) for h in high],
+                    **response,
                     "hint": (
                         "An existing memory has high content overlap with "
                         "this write. Prefer memory_update on the matched "
@@ -597,12 +598,11 @@ class DedupTombstoneGate(WriteGate):
         )
         high_removed = [h for h in tombstone_similar if h.relevance == "high-removed"]
         if high_removed:
+            response: dict[str, Any] = {"status": "previously_removed"}
+            deps.responses.add_similar(response, "removed_matches", high_removed)
             return Reject(
                 response={
-                    "status": "previously_removed",
-                    "removed_matches": [
-                        deps.responses.similar_to_dict(h) for h in high_removed
-                    ],
+                    **response,
                     "hint": (
                         "A previously-removed memory has high content overlap "
                         "with this write. Inspect each `removed_reason` — if "
