@@ -41,9 +41,11 @@ NINE = {
 # description's copy of the handoff-first sentence, which the instructions
 # carry, back to 7,998 (owner decision O6: trim, keep the ceiling). The
 # capture's closing call (memory_admin action "relations" and its
-# `relations` object) added 134 (8,132) under the owner's allowance of at
-# most 400 bytes of tools/list for it, so the ceiling is 8,150.
-SESSION_BUDGET_CHARS = 8_150
+# `relations` object) added 134 (8,132); under O6 the admin description
+# lost its per-call lead and the closing call's sentence (the hint and the
+# capture instruction teach it) and verify its audit-trail clause, back to
+# 8,000.
+SESSION_BUDGET_CHARS = 8_000
 
 # The parameters D1 removed with the groundedness gate. None may return.
 REMOVED_WRITE_PARAMETERS = {

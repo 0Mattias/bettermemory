@@ -237,8 +237,8 @@ def _refuse_evidence_free_stamp(
 DESC_MEMORY_VERIFY = (
     "Attest a memory after checking a claim against ground truth; resets "
     "last_verified_at. `verified_paths` resolve now and are anchored for "
-    "drift; `verified_absent_paths` are absent on purpose; commits and "
-    "versions are audit trail; `claims` replaces the checked bindings. "
+    "drift; `verified_absent_paths` are absent on purpose; `claims` "
+    "replaces the checked bindings. "
     "Refused without evidence when nothing cited resolves."
 )
 
