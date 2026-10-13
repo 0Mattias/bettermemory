@@ -8,8 +8,8 @@
     "OC-P5",
     "OC-P6"
   ],
-  "commit": "0f77f5552a0327bcbe8b7996b2c8eff32f1daa43",
-  "run_at": "2026-10-13T18:44:19Z",
+  "commit": "6a7f728587d30d3e81ad519c9e5d1b6fd47877da",
+  "run_at": "2026-10-13T18:49:28Z",
   "fixture": "tests/fixtures/v8/store",
   "tau": {
     "unsafe": 0.3,
@@ -231,8 +231,8 @@
         "shim": {
           "tools_list_bytes": {
             "baseline": 8144,
-            "head": 8278,
-            "delta": 134
+            "head": 8146,
+            "delta": 2
           },
           "instructions_bytes": 1000,
           "instructions_sha256": {
@@ -245,8 +245,8 @@
         "serve": {
           "tools_list_bytes": {
             "baseline": 8144,
-            "head": 8278,
-            "delta": 134
+            "head": 8146,
+            "delta": 2
           },
           "instructions_bytes": 1000,
           "instructions_sha256": {
