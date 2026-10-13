@@ -876,8 +876,7 @@ _CAPTURE_TOKEN_HINTS: dict[str, str] = {
         + _END_CAPTURE
     ),
     _capture.BATCH_EXPIRED: (
-        "Not written. This capture batch expired before it settled. "
-        + _END_CAPTURE
+        "Not written. This capture batch expired before it settled. " + _END_CAPTURE
     ),
     "capture_session_mismatch": (
         "Not written. This capture batch belongs to another conversation. "
