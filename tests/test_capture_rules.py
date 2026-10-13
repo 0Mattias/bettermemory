@@ -53,6 +53,13 @@ def test_the_instruction_carries_the_bar_and_the_added_lines() -> None:
     assert '"projects:bettermemory"' in text
     assert "use it only for memories about that project" in text
     assert "its subject's own scope (projects:<name>)" in text
+    # A body is what the user said or adopted, never the assistant's own
+    # caveat; the line stands outside the owner's bar.
+    assert (
+        "A body records what the user said, decided or adopted, never your "
+        "own suggestions or caveats unless the user adopted them."
+    ) in text
+    assert "caveats" not in capture.CAPTURE_RULES
     # Rule 9 amended for a capture: supersedes, never an update.
     assert "supersedes" in text
     assert "Do not update, remove or verify" in text

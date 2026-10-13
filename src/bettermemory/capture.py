@@ -127,9 +127,11 @@ def in_session_instruction(
     Around the bar it carries the batch token, the folder's project scope
     for memories about that project, the rule 9 amendment for a capture
     (supersedes, never an update, so an undo restores exactly what was
-    there), the times of the user's messages to date events by, and how
-    to answer the write review: the two scores on each write, the
-    relations in one closing call."""
+    there), whose words a body records (rule 10 read for one body: what
+    the user said, decided or adopted, not the assistant's own
+    suggestions or caveats), the times of the user's messages to date
+    events by, and how to answer the write review: the two scores on each
+    write, the relations in one closing call."""
     stretch = f"this conversation since {since}" if since else "this conversation"
     times = [t for t in prompt_times if t][-MAX_PROMPT_TIMES:]
     parts = [
@@ -137,6 +139,8 @@ def in_session_instruction(
         "and save what it established that is worth keeping, with memory_write. "
         f"Skip anything you already saved. {_SETUP_NOTE}",
         CAPTURE_RULES,
+        "A body records what the user said, decided or adopted, never your "
+        "own suggestions or caveats unless the user adopted them.",
         f'Save each memory with memory_write and source="{SOURCE_PREFIX}{token}". '
         + _scopes_line(scopes),
         "Do not update, remove or verify stored memories during this capture. "
