@@ -128,6 +128,20 @@ def test_nothing_is_asked_below_the_threshold(
     assert cap.batches(store) == []
 
 
+def test_a_checkpoint_below_the_floor_waits_for_the_floor(
+    store: Store, transcript: Path, tmp_path: Path
+) -> None:
+    """A config built in code skips the loader's clamp: the Stop applies
+    the same floor, so a zero checkpoint never asks on an empty stretch."""
+    zero = Config(
+        storage=StorageConfig(directory=str(tmp_path / "store")),
+        capture=CaptureConfig(stop_checkpoint=True, checkpoint_tokens=0),
+    )
+    append(transcript, [user("hi"), assistant("Hello.")])
+    assert stop(zero, store, transcript) is None
+    assert cap.batches(store) == []
+
+
 def test_bytes_alone_are_not_a_stretch(
     enabled: Config, store: Store, transcript: Path
 ) -> None:

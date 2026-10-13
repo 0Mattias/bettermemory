@@ -256,7 +256,10 @@ def on_stop(
     if offset > size:
         # The transcript was rewritten under the watermark: start over.
         offset = 0
-    threshold = config.capture.checkpoint_tokens * CHARS_PER_TOKEN
+    from .config import MIN_CHECKPOINT_TOKENS
+
+    tokens = max(config.capture.checkpoint_tokens, MIN_CHECKPOINT_TOKENS)
+    threshold = tokens * CHARS_PER_TOKEN
     if size - offset < threshold:
         return None
     stretch = read_stretch(path, offset)

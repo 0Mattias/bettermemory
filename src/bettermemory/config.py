@@ -611,6 +611,30 @@ def _coerce_int(
     raise ValueError(_malformed_config_msg(label, value, config_path, "an integer"))
 
 
+#: The smallest `[capture] checkpoint_tokens`: below it every attended
+#: Stop would ask for a capture of an all-but-empty stretch, up to the
+#: daily cap. `capture_hook` applies it to a config built in code too.
+MIN_CHECKPOINT_TOKENS = 500
+
+
+def _clamp_checkpoint_tokens(value: int, *, config_path: Path | None) -> int:
+    """Raise `[capture] checkpoint_tokens` to `MIN_CHECKPOINT_TOKENS`,
+    loudly, rather than reject it: by `default_max_results`' rule a bad
+    value in one knob must not take the server down."""
+    if value >= MIN_CHECKPOINT_TOKENS:
+        return value
+    import logging
+
+    logging.getLogger("bettermemory.config").warning(
+        "[capture] checkpoint_tokens = %d%s is below %d; using %d.",
+        value,
+        f" (in {config_path})" if config_path is not None else "",
+        MIN_CHECKPOINT_TOKENS,
+        MIN_CHECKPOINT_TOKENS,
+    )
+    return MIN_CHECKPOINT_TOKENS
+
+
 #: The four modes `search.search` dispatches on. Duplicated from the
 #: `SearchMode` Literal rather than imported because `config` is imported
 #: by `search`, not the other way round; `test_config.py` cross-pins the
@@ -1231,10 +1255,13 @@ def load_config(path: Path | None = None) -> Config:
         ),
         capture=CaptureConfig(
             stop_checkpoint=_coerce_bool(capture_raw.get("stop_checkpoint"), False),
-            checkpoint_tokens=_coerce_int(
-                capture_raw.get("checkpoint_tokens"),
-                12_000,
-                label="[capture] checkpoint_tokens",
+            checkpoint_tokens=_clamp_checkpoint_tokens(
+                _coerce_int(
+                    capture_raw.get("checkpoint_tokens"),
+                    12_000,
+                    label="[capture] checkpoint_tokens",
+                    config_path=config_path,
+                ),
                 config_path=config_path,
             ),
             daily_cap=_coerce_int(

@@ -1484,6 +1484,24 @@ def test_capture_keys_load_as_written(tmp_path: Path) -> None:
     assert capture.daily_cap == 3
 
 
+@pytest.mark.parametrize("written", [0, -5, 1, 499])
+def test_a_checkpoint_below_the_floor_is_clamped_with_a_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, written: int
+) -> None:
+    """Below the floor every attended Stop would open a capture on an
+    all-but-empty stretch, up to the daily cap."""
+    from bettermemory.config import MIN_CHECKPOINT_TOKENS
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        f"[capture]\ncheckpoint_tokens = {written}\n", encoding="utf-8"
+    )
+    with caplog.at_level("WARNING", logger="bettermemory.config"):
+        capture = load_config(config_path).capture
+    assert capture.checkpoint_tokens == MIN_CHECKPOINT_TOKENS == 500
+    assert "[capture] checkpoint_tokens" in caplog.text
+
+
 def test_capture_bad_numbers_raise_a_located_error(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     config_path.write_text('[capture]\ndaily_cap = "many"\n', encoding="utf-8")
