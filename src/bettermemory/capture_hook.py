@@ -10,6 +10,8 @@ settles the batch: the stretch up to the transcript's size then is
 captured. A Stop without the flag that finds the batch still open means
 the user interrupted the capture turn: it closes as interrupted, nothing
 is captured, and the session is left alone for `QUIET_AFTER_INTERRUPT`.
+A batch whose instruction never reached the model closes as failed
+instead (`close_failed`), which neither goes quiet nor counts.
 Its stretch is asked for again after that; writes that landed before the
 interrupt rely on the dedup gates.
 
@@ -265,6 +267,16 @@ def on_stop(
     raw_cwd = payload.get("cwd")
     cwd = raw_cwd if isinstance(raw_cwd, str) and raw_cwd else None
     origin = _origin_for(Path(cwd)) if cwd else None
+    # Everything that can fail runs before the batch opens: a batch whose
+    # instruction was never built would read as interrupted at the next Stop.
+    token = cap.mint_token()
+    instruction = cap.in_session_instruction(
+        token=token,
+        since=stretch.since if offset else None,
+        scopes=_project_scopes(store, cwd),
+        prompt_times=stretch.prompt_times,
+        compacted=stretch.compacted,
+    )
     try:
         batch = cap.open_batch(
             store,
@@ -278,18 +290,32 @@ def on_stop(
                 if stretch.compacted
                 else cap.MODE_CHECKPOINT
             ),
+            token=token,
             now=when,
         )
     except cap.BatchAlreadyOpenError:
         return None
-    instruction = cap.in_session_instruction(
-        token=batch.token,
-        since=stretch.since if offset else None,
-        scopes=_project_scopes(store, cwd),
-        prompt_times=stretch.prompt_times,
-        compacted=stretch.compacted,
-    )
     return StopStep(OPENED, batch.batch, instruction)
+
+
+def close_failed(store: Store, batch_id: str, *, now: datetime | None = None) -> None:
+    """Close an opened batch whose instruction never reached the model
+    (the reply carrying it failed) as failed: nothing is captured, no quiet
+    hour starts and no `daily_cap` slot is spent. A no-op once closed."""
+    batch = next((b for b in cap.batches(store) if b.batch == batch_id), None)
+    if batch is None:
+        return
+    try:
+        cap.close_batch(
+            store,
+            batch,
+            outcome=cap.OUTCOME_FAILED,
+            watermark=batch.offset,
+            transcript_bytes=batch.transcript_bytes,
+            now=now,
+        )
+    except cap.BatchClosedError:
+        return
 
 
 __all__ = [
@@ -301,6 +327,7 @@ __all__ = [
     "SETTLED",
     "StopStep",
     "Stretch",
+    "close_failed",
     "hook_output",
     "on_stop",
     "read_stretch",

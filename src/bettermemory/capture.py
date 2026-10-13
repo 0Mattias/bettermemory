@@ -188,7 +188,12 @@ MODE_CHECKPOINT_COMPACTED = "checkpoint_compacted"
 OUTCOME_SETTLED = "settled"
 OUTCOME_INTERRUPTED = "interrupted"
 OUTCOME_EXPIRED = "expired"
-_OUTCOMES = frozenset({OUTCOME_SETTLED, OUTCOME_INTERRUPTED, OUTCOME_EXPIRED})
+# The batch opened but its instruction never reached the model: nothing
+# was asked, so no quiet hour follows and it takes no `daily_cap` slot.
+OUTCOME_FAILED = "failed"
+_OUTCOMES = frozenset(
+    {OUTCOME_SETTLED, OUTCOME_INTERRUPTED, OUTCOME_EXPIRED, OUTCOME_FAILED}
+)
 
 # How a capture write's harness session was accepted.
 JOINED_BY_STOP_SESSION = "stop_session"
@@ -411,9 +416,12 @@ def open_batch(
     transcript_path: str | None = None,
     worktree_root: str | None = None,
     mode: str = MODE_CHECKPOINT,
+    token: str | None = None,
     now: datetime | None = None,
 ) -> Batch:
-    """Open a batch for the Stop session `session_id` and mint its token.
+    """Open a batch for the Stop session `session_id` with `token`, or a
+    token minted here. The Stop mints it first, so the instruction that
+    carries it is built before anything is on the log.
 
     Atomic per session: the check for an open batch and the row run in one
     transaction under the store's write lock, so two Stops racing for one
@@ -428,7 +436,7 @@ def open_batch(
 
     payload = {
         "batch": generate_ulid(),
-        "token": mint_token(),
+        "token": token or mint_token(),
         "session_id": session_id,
         "mode": mode,
         "offset": int(offset),
@@ -454,8 +462,8 @@ def close_batch(
     now: datetime | None = None,
 ) -> Close:
     """Close `batch`: settled (the capture turn came back to a stop; the
-    stretch up to `watermark` is captured), interrupted or expired (pass
-    the batch's own offset, nothing is captured). A second close raises
+    stretch up to `watermark` is captured), interrupted, expired or failed
+    (pass the batch's own offset, nothing is captured). A second close raises
     `BatchClosedError`."""
     if outcome not in _OUTCOMES:
         raise ValueError(f"outcome must be one of {sorted(_OUTCOMES)}")
@@ -559,16 +567,16 @@ def last_close(store: Store, session_id: str) -> Close | None:
     return found[-1] if found else None
 
 
-def opened_since(store: Store, since: datetime) -> int:
-    """How many batches were opened at or after `since`."""
-    return sum(1 for b in batches(store) if b.opened_at >= since)
-
-
 def daily_count(store: Store, *, now: datetime | None = None) -> int:
-    """The batches opened since the start of the current UTC day: what
-    `[capture] daily_cap` bounds."""
+    """The batches opened since the start of the current UTC day, but for
+    those that failed before the model was asked: what `[capture]
+    daily_cap` bounds."""
     when = (now or utcnow()).astimezone(timezone.utc)
-    return opened_since(store, when.replace(hour=0, minute=0, second=0, microsecond=0))
+    start = when.replace(hour=0, minute=0, second=0, microsecond=0)
+    failed = {b for b, c in closes(store).items() if c.outcome == OUTCOME_FAILED}
+    return sum(
+        1 for b in batches(store) if b.opened_at >= start and b.batch not in failed
+    )
 
 
 def joined_by(
