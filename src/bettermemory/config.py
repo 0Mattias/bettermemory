@@ -392,12 +392,27 @@ class TelemetryConfig:
 
 
 @dataclass
+class CaptureConfig:
+    """The turn-end capture checkpoint: at a Stop the daemon may ask the
+    chat model to save the stretch since its last capture. Off unless
+    `stop_checkpoint` is set; 8.x's `enabled` never sets it, because it
+    switched on a capture that called a model of its own."""
+
+    stop_checkpoint: bool = False
+    # The stretch a checkpoint waits for, in tokens of four characters.
+    checkpoint_tokens: int = 12_000
+    # At most this many capture requests per store per UTC day.
+    daily_cap: int = 12
+
+
+@dataclass
 class Config:
     storage: StorageConfig = field(default_factory=StorageConfig)
     behavior: BehaviorConfig = field(default_factory=BehaviorConfig)
     scopes: ScopesConfig = field(default_factory=ScopesConfig)
     telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
+    capture: CaptureConfig = field(default_factory=CaptureConfig)
     config_path: Path | None = None
 
     # ---- methods ----------------------------------------------------------
@@ -833,6 +848,22 @@ _REMOVED_TELEMETRY_KEYS: dict[str, tuple[str, str]] = {
     ),
 }
 
+# `[capture]` keys 8.x shipped that 9.0 does not read. `enabled` switched
+# on a capture that called a model of its own; the 9.0 checkpoint asks the
+# chat model instead and has its own key, so an 8.x `enabled = true` must
+# not turn it on unseen.
+_REMOVED_CAPTURE_KEYS: dict[str, tuple[str, str]] = {
+    "enabled": (
+        "9.0.0",
+        "the 9.0 capture checkpoint asks the chat model at a turn end and is "
+        "switched on by `stop_checkpoint`, which this line does not set",
+    ),
+    "idle_minutes": (
+        "9.0.0",
+        "capture no longer catches up sessions that went quiet",
+    ),
+}
+
 # Whole sections a major removed: section -> (the release, why). Every key
 # the section still carries is dropped with its own notice, so an operator
 # who set three of them learns about all three in one load.
@@ -845,10 +876,6 @@ _REMOVED_SECTIONS: dict[str, tuple[str, str]] = {
     "proposals": (
         "9.0.0",
         "the write-reflex proposal queue left with the nine-tool surface",
-    ),
-    "capture": (
-        "9.0.0",
-        "session capture from the hooks left with the nine-tool surface",
     ),
 }
 
@@ -1053,6 +1080,9 @@ def load_config(path: Path | None = None) -> Config:
     daemon_raw = data.get("daemon", {})
     if not isinstance(daemon_raw, dict):
         daemon_raw = {}
+    capture_raw = data.get("capture", {})
+    if not isinstance(capture_raw, dict):
+        capture_raw = {}
 
     # T9: back-compat for the 3.1.x -> 3.2.0 TOML key rename. Mutates
     # `behavior_raw` so the downstream `behavior_raw.get(...)` lookups
@@ -1071,6 +1101,12 @@ def load_config(path: Path | None = None) -> Config:
         telemetry_raw,
         section="telemetry",
         registry=_REMOVED_TELEMETRY_KEYS,
+        config_path=config_path,
+    )
+    _drop_removed_keys(
+        capture_raw,
+        section="capture",
+        registry=_REMOVED_CAPTURE_KEYS,
         config_path=config_path,
     )
     _drop_removed_sections(data, config_path)
@@ -1176,6 +1212,21 @@ def load_config(path: Path | None = None) -> Config:
                 daemon_raw.get("port"),
                 7397,
                 label="[daemon] port",
+                config_path=config_path,
+            ),
+        ),
+        capture=CaptureConfig(
+            stop_checkpoint=_coerce_bool(capture_raw.get("stop_checkpoint"), False),
+            checkpoint_tokens=_coerce_int(
+                capture_raw.get("checkpoint_tokens"),
+                12_000,
+                label="[capture] checkpoint_tokens",
+                config_path=config_path,
+            ),
+            daily_cap=_coerce_int(
+                capture_raw.get("daily_cap"),
+                12,
+                label="[capture] daily_cap",
                 config_path=config_path,
             ),
         ),

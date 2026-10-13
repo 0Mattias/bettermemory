@@ -59,6 +59,7 @@ from .identity import Actor
 from . import log as _chain
 from .config import KEYS_DIR_ENV, STORE_FILENAME
 from .log import (
+    CAPTURE_KINDS,
     CONTROL_KINDS,
     MIGRATE_V8,
     REKEY,
@@ -2314,6 +2315,53 @@ class Store:
         }
         with self._transaction() as tx:
             return self._append(tx, MIGRATE_V8, payload, session=session)
+
+    def record_capture(
+        self,
+        kind: str,
+        payload: Mapping[str, Any],
+        *,
+        session: str | None = None,
+        ts: str | None = None,
+        guard: Callable[[], None] | None = None,
+    ) -> LogRow:
+        """One capture control row (`log.CAPTURE_KINDS`), written whether or
+        not telemetry is on: `record_event` refuses control kinds, and the
+        event readers skip them, so capture has this writer and
+        `capture_rows` as its reader. `guard` runs inside the transaction,
+        under the write lock, before the row is appended; whatever it
+        raises aborts the write, which is how opening a batch is atomic
+        per session. Inside a `batch` the row commits with the batch."""
+        if kind not in CAPTURE_KINDS:
+            raise ValueError(f"{kind!r} is not a capture kind")
+        with self._transaction() as tx:
+            if guard is not None:
+                guard()
+            return self._append(tx, kind, dict(payload), session=session, ts=ts)
+
+    def capture_rows(
+        self, kinds: Collection[str], *, since_seq: int = 0
+    ) -> Iterator[LogRow]:
+        """The capture rows of `kinds` after `since_seq`, in log order,
+        read through the log's kind index."""
+        names = sorted(set(kinds) & CAPTURE_KINDS)
+        if not names:
+            return
+        placeholders = ",".join("?" * len(names))
+        for raw in self._conn.execute(
+            "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log "
+            f"WHERE kind IN ({placeholders}) AND seq > ? ORDER BY seq",
+            (*names, int(since_seq)),
+        ):
+            yield LogRow(
+                int(raw[0]),
+                str(raw[1]),
+                None if raw[2] is None else str(raw[2]),
+                str(raw[3]),
+                str(raw[4]),
+                str(raw[5]),
+                str(raw[6]),
+            )
 
     # -- search seams ---------------------------------------------------------
 

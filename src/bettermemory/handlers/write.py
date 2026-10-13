@@ -44,7 +44,12 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from ..conflicts import ConflictCandidate, ConflictQueue, _pair_id
 from ..credentials import find_credential_markers
-from ..durability import find_transient_markers, in_quoted_span, quoted_spans
+from ..durability import (
+    find_capture_rule_hits,
+    find_transient_markers,
+    in_quoted_span,
+    quoted_spans,
+)
 from ..models import (
     Category,
     Memory,
@@ -65,6 +70,7 @@ from ..search import (
     find_similar_tombstones,
     raw_content_tokens,
 )
+from .. import capture as _capture
 from .. import identity
 from .. import review as _review
 from .. import supersession as _supersession
@@ -151,6 +157,10 @@ class GateContext:
     acknowledge_scope_mismatch: bool
     acknowledge_credential: bool
     acknowledge_user_claim: bool = False
+    # The open batch a capture write's token named, or None for every other
+    # write. Set, it turns on the capture gates; the orchestrator has
+    # already cleared `force` and the acknowledge flags.
+    capture: _capture.Batch | None = None
     # Outputs the gates accumulate as they pass — read by later gates
     # or the final commit step.
     credential_hits: list[Any] = None  # type: ignore[assignment]
@@ -617,6 +627,70 @@ class DedupTombstoneGate(WriteGate):
         return Continue()
 
 
+class CaptureRulesGate(WriteGate):
+    """The enforced half of the capture bar (`capture.CAPTURE_RULES`), on
+    capture writes only, with no acknowledge flag: a plain subject, no
+    to-dos, no counts that drift, absolute dates. Every rule a body breaks
+    is named, with its number in the bar and the phrase, so the model can
+    rephrase once for all of them."""
+
+    def evaluate(self, deps: GateDeps, gc: GateContext) -> GateResult:
+        if gc.capture is None:
+            return Continue()
+        hits = find_capture_rule_hits(gc.payload["content"])
+        if not hits:
+            return Continue()
+        return Reject(
+            response={
+                "status": "capture_rule",
+                "rules": [hit.to_dict() for hit in hits],
+                "hint": (
+                    "Not written. The body breaks the capture rules named by "
+                    "number above. Rephrase it to meet them, or skip it; no "
+                    "flag passes a capture rule."
+                ),
+            },
+            event_kwargs={
+                "status": "capture_rule",
+                "scopes": gc.payload["scopes"],
+                "forced": False,
+                "capture_batch": gc.capture.batch,
+                "capture_rules": [hit.name for hit in hits],
+            },
+        )
+
+
+class PreviouslyUndoneGate(WriteGate):
+    """A capture write whose body a capture undo already reverted: the
+    owner said no to that body once, so no capture writes it again. An
+    exact match on the normalized body (`capture.body_hash`); near
+    restatements are the dedup gates' to catch."""
+
+    def evaluate(self, deps: GateDeps, gc: GateContext) -> GateResult:
+        if gc.capture is None:
+            return Continue()
+        digest = _capture.body_hash(gc.payload["content"])
+        if digest not in _capture.undone_hashes(deps.store):
+            return Continue()
+        return Reject(
+            response={
+                "status": "capture_refused",
+                "rule": "previously_undone",
+                "hint": (
+                    "Not written. The owner undid a capture of this body "
+                    "before; do not capture it again."
+                ),
+            },
+            event_kwargs={
+                "status": "capture_refused",
+                "scopes": gc.payload["scopes"],
+                "forced": False,
+                "capture_batch": gc.capture.batch,
+                "capture_rule": "previously_undone",
+            },
+        )
+
+
 # Order matters: credential before everything so a secret is refused
 # before any other gate records body-derived data in the event log;
 # transient before dedup so the writer isn't routed to memory_update on a
@@ -624,9 +698,13 @@ class DedupTombstoneGate(WriteGate):
 # BODY, and before dedup for the same reason transient is (a re-categorized
 # re-issue must not be routed to memory_update on a mis-filed parent);
 # scope-mismatch before dedup so the writer doesn't get a
-# duplicate hit on a memory tagged for a different scope.
+# duplicate hit on a memory tagged for a different scope. The two capture
+# gates pass every write but a capture's; on a capture they run right
+# after credential, so the bar is what a capture hears about first.
 _WRITE_GATES: tuple[WriteGate, ...] = (
     CredentialGate(),
+    CaptureRulesGate(),
+    PreviouslyUndoneGate(),
     TransientGate(),
     UserClaimGate(),
     ScopeMismatchGate(),
@@ -769,6 +847,81 @@ def _corroborate_duplicate(
     result.event_kwargs["corroborated_id"] = top_id
 
 
+@dataclass(frozen=True)
+class _CaptureWrite:
+    """A capture write admitted to its batch: the batch, and the session
+    evidence its member row records."""
+
+    batch: _capture.Batch
+    harness_session: str | None
+    server_session: str | None
+    joined_by: str
+
+
+_CAPTURE_TOKEN_HINTS: dict[str, str] = {
+    _capture.TOKEN_UNKNOWN: (
+        "Not written. No capture batch has this token. Copy the token exactly "
+        "from the capture instruction, or drop the capture: source if you "
+        "were not asked to capture."
+    ),
+    _capture.BATCH_CLOSED: (
+        "Not written. This capture batch has settled and takes no more writes. "
+        "Drop the capture: source to write it as an ordinary memory."
+    ),
+    _capture.BATCH_EXPIRED: (
+        "Not written. This capture batch expired before it settled. Drop the "
+        "capture: source to write it as an ordinary memory."
+    ),
+    "capture_session_mismatch": (
+        "Not written. This capture batch belongs to another conversation. "
+        "Drop the capture: source to write it as an ordinary memory."
+    ),
+}
+
+
+def _admit_capture(
+    deps: ToolHandlers, state: SessionState, token: str, scopes: list[str]
+) -> tuple[dict[str, Any] | None, _CaptureWrite | None]:
+    """Resolve a capture write's token: the refusal to return, or the
+    batch it joins with the session evidence. The token is the binding;
+    the harness session must also be the batch's Stop session or one the
+    /clear bridge joins to it (`capture.joined_by`)."""
+    batch, why = _capture.batch_for_token(deps.store, token)
+    joined: str | None = None
+    caller = identity.current()
+    harness_session = caller.harness_session if caller is not None else None
+    if batch is not None:
+        joined = _capture.joined_by(
+            deps.store,
+            batch,
+            harness_session=harness_session,
+            server_session=state.session_id,
+        )
+        if joined is None:
+            why = "capture_session_mismatch"
+    if batch is None or joined is None:
+        rule = why or _capture.TOKEN_UNKNOWN
+        deps.recorder.record(
+            "write",
+            status="capture_refused",
+            scopes=scopes,
+            forced=False,
+            capture_rule=rule,
+            **({"capture_batch": batch.batch} if batch is not None else {}),
+        )
+        return {
+            "status": "capture_refused",
+            "rule": rule,
+            "hint": _CAPTURE_TOKEN_HINTS[rule],
+        }, None
+    return None, _CaptureWrite(
+        batch=batch,
+        harness_session=harness_session,
+        server_session=state.session_id,
+        joined_by=joined,
+    )
+
+
 async def memory_write(
     deps: ToolHandlers,
     content: str,
@@ -794,6 +947,18 @@ async def memory_write(
 
     state = deps.sessions.for_request(ctx)
     _advance_turn(state, deps.recorder)
+    # A capture write (`source="capture:<token>"`) joins the open batch its
+    # token names, or is refused before anything else runs. On a capture
+    # `force` and every acknowledge flag are ignored: no flag passes the
+    # capture bar, and a captured memory never skips a gate.
+    captured: _CaptureWrite | None = None
+    token = _capture.token_of(source)
+    if token is not None:
+        refused, captured = _admit_capture(deps, state, token, scopes)
+        if refused is not None:
+            return refused
+        force = acknowledge_transient = acknowledge_scope_mismatch = False
+        acknowledge_credential = acknowledge_user_claim = False
     payload = _validate_write_payload(
         content=content,
         scopes=scopes,
@@ -804,7 +969,10 @@ async def memory_write(
         max_content_bytes=deps.config.behavior.max_content_bytes,
         min_content_tokens=deps.config.behavior.min_content_tokens,
         max_scopes_per_write=deps.config.behavior.max_scopes_per_write,
+        capture=captured is not None,
     )
+    if captured is not None:
+        payload["capture"] = captured
 
     # Origin is captured before the gate chain: it is part of the payload
     # the commit writes, and its repo and worktree filter the review's
@@ -848,6 +1016,7 @@ async def memory_write(
         acknowledge_scope_mismatch=acknowledge_scope_mismatch,
         acknowledge_credential=acknowledge_credential,
         acknowledge_user_claim=acknowledge_user_claim,
+        capture=captured.batch if captured is not None else None,
     )
 
     decision = apply_write_gates(deps, gc)
@@ -855,9 +1024,14 @@ async def memory_write(
         # Recurrence-as-evidence: a duplicate rejection IS the stored
         # claim re-entering a conversation. Record the corroboration
         # on the matched memory (once per session per memory) before
-        # the reject event goes out, so the event carries the id.
-        if decision.response.get("status") == "duplicate":
+        # the reject event goes out, so the event carries the id. Not
+        # for a capture: the model restating its own context is not an
+        # independent recurrence, and the bump would change a record an
+        # undo of the batch could not restore.
+        if decision.response.get("status") == "duplicate" and captured is None:
             _corroborate_duplicate(deps, state, decision)
+        if captured is not None:
+            decision.event_kwargs.setdefault("capture_batch", captured.batch.batch)
         deps.recorder.record("write", **decision.event_kwargs)
         return decision.response
 
@@ -1198,8 +1372,10 @@ def _reviewed_write(
                 **review_fields,
             },
         )
-        # The dedup gate's recurrence-as-evidence, recorded the same way.
-        _corroborate_duplicate(deps, state, reject)
+        # The dedup gate's recurrence-as-evidence, recorded the same way,
+        # and skipped for a capture the same way.
+        if payload.get("capture") is None:
+            _corroborate_duplicate(deps, state, reject)
         deps.recorder.record("write", **reject.event_kwargs)
         return reject.response
 
@@ -1377,6 +1553,7 @@ def _persist(
     write propagates so each caller can name its own remedy.
     """
     payload = dict(payload)
+    captured: _CaptureWrite | None = payload.pop("capture", None)
     declared_links = list(payload.pop("links", None) or [])
     declared_ids = [str(link["target_id"]) for link in declared_links]
     detected: list[SupersessionMatch] = []
@@ -1414,7 +1591,23 @@ def _persist(
             for target in reviewed
         ]
     )
-    memory = deps.store.write(**payload, links=links)
+    if captured is None:
+        memory = deps.store.write(**payload, links=links)
+    else:
+        # A capture write and its member row commit in one transaction, so
+        # a batch interrupted at any point still names every memory it
+        # wrote and an undo can find them all.
+        with deps.store.batch():
+            memory = deps.store.write(**payload, links=links)
+            _capture.record_member(
+                deps.store,
+                captured.batch,
+                memory_id=memory.id,
+                body=memory.body,
+                harness_session=captured.harness_session,
+                server_session=captured.server_session,
+                joined_by=captured.joined_by,
+            )
     # The cue code files first: where it fires its row stands (DESIGN
     # item 6), so the review then skips the pairs it queued.
     conflicts = _file_conflicts(deps, memory, disagreements)
@@ -1542,6 +1735,7 @@ def _commit_write(
     the answers and the action, never a body) join the commit event of a
     reviewed write."""
     category_enum: Category = payload["category"]
+    captured: _CaptureWrite | None = payload.get("capture")
     try:
         memory, supersession = _persist(
             deps,
@@ -1583,6 +1777,7 @@ def _commit_write(
         # declared, which is the only telemetry the backfill pass and a
         # future coverage measurement can be built from.
         **({"claims": list(memory.claims)} if memory.claims else {}),
+        **({"capture_batch": captured.batch.batch} if captured is not None else {}),
         **supersession.event_fields(),
         **(review_fields or {}),
     )

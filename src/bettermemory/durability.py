@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass
 
 
@@ -637,11 +638,233 @@ def find_transient_markers(content: str) -> list[TransientMatch]:
     return hits
 
 
+# ---------------------------------------------------------------------------
+# Capture rules
+# ---------------------------------------------------------------------------
+#
+# The part of the owner's capture bar (`capture.CAPTURE_RULES`) a regex can
+# hold a capture write to. They run on capture writes only, the writes the
+# chat model makes at a turn end because the daemon asked (a `source` of
+# `capture:<token>`), and no acknowledge flag passes them: a capture is the
+# model filing what a conversation established without anyone watching,
+# so the bar is the gate. Every other write keeps the marker list above as
+# its only body check. Each rule carries its number in the bar so a refusal
+# can cite it, and quoted spans are exempt as they are for the markers.
+#
+# Measured on a prototype (2026-09-26) over 49,933 frozen 8.0.0 capture
+# bodies: 22.3% refused, most for rule 3 ("The assistant ..." 8,002,
+# "The user's" 1,206), then rule 5 (1,587), to-dos 24, drifting counts 23.
+
+
+@dataclass(frozen=True)
+class CaptureRuleHit:
+    """One capture rule a body breaks: the rule's number in
+    `CAPTURE_RULES`, a short name, and the phrase that fired with a few
+    words around it."""
+
+    rule: int
+    name: str
+    snippet: str
+
+    def to_dict(self) -> dict[str, object]:
+        return {"rule": self.rule, "name": self.name, "snippet": self.snippet}
+
+
+_SAYING_VERBS = (
+    "said|says|suggested|suggests|recommended|recommends|explained|explains|"
+    "noted|notes|provided|provides|stated|states|mentioned|mentions|proposed|"
+    "proposes|told|tells|answered|answers|replied|replies|gave|gives|advised|"
+    "advises|claimed|claims|offered|offers|confirmed|confirms|described|"
+    "describes|reported|reports|shared|shares|wrote|writes|pointed out"
+)
+
+# Rule 3, a plain subject: never "The user's project ..." nor what the
+# assistant said. "The user prefers ..." is the plain form and passes.
+_USERS_OPENER_RE = re.compile(r"\bThe user['’]s\b")
+_ASSISTANT_SAID_RE = re.compile(
+    rf"\bthe assistant\b(?:\s+[\w'’-]+){{0,2}}?\s+(?:{_SAYING_VERBS})\b",
+    re.IGNORECASE,
+)
+_ASSISTANTS_ANSWER_RE = re.compile(
+    r"\bthe assistant['’]s\s+(?:recommendation|answer|suggestion|advice|"
+    r"response|reply|explanation|proposal|view|opinion|summary)s?\b",
+    re.IGNORECASE,
+)
+
+# Rule 1, durable: no to-dos. A heading of open work, the TODO tag, an
+# unfinished "still to" or "yet to be", an unchecked box, a pointer at a
+# later session, and a body that opens on an order ("Fix the hook test").
+_TODO_HEADING_RE = re.compile(
+    r"^[ \t>#*_-]*(?:to-?dos?|next steps?|action items?|follow-?ups?|"
+    r"remaining work|open items?)[*_]*\s*:",
+    re.IGNORECASE | re.MULTILINE,
+)
+_TODO_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bTODO\b"),
+    re.compile(r"\bstill (?:needs? to|to) [a-z]+", re.IGNORECASE),
+    re.compile(r"\byet to be [a-z]+", re.IGNORECASE),
+    re.compile(r"\bleft to do\b", re.IGNORECASE),
+    re.compile(r"^[ \t]*[-*+] \[ \]", re.MULTILINE),
+    re.compile(
+        r"\bin the next session\b|\bnext time\b|\bwhen we resume\b", re.IGNORECASE
+    ),
+)
+# An order is an imperative verb on a determined object, at the body's
+# start. A bare noun after the verb ("Fix ownership lies with ...",
+# "Release 8.0.0 shipped ...") is the noun reading and passes, and a
+# **How to apply:** line is never the opening.
+_IMPERATIVE_OPENER_RE = re.compile(
+    r"\A[ \t>#*_-]*(?:release|ship|fix|add|delete|remove|run|rerun|push|tag|merge|"
+    r"deploy|update|write|create|rename|revert|bump|publish|commit|file|close|"
+    r"check|test|investigate|move|finish|implement|port|revisit|wire|land|"
+    r"document|refactor|clean up|drop|retry)\s+(?:the|a|an|this|that|these|"
+    r"those|it|them|all|every|each|our|my|your|its)\b",
+    re.IGNORECASE,
+)
+
+# Rule 5, absolute dates. "recently" fires bare here, unlike the marker
+# list, minus its durable uses ("least recently used", "recently viewed").
+_WEEKDAYS = "monday|tuesday|wednesday|thursday|friday|saturday|sunday"
+_RELATIVE_DATE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"(?<!least )(?<!most )(?<!least-)(?<!most-)\brecently\b"
+        r"(?![ -](?:used|viewed|opened|accessed|added|closed|modified|played|"
+        r"visited|edited))",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:lately|nowadays|these days|the other day|just now|a while ago|"
+        r"not long ago)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:\d+|an?|one|two|three|four|five|six|seven|eight|nine|ten|a few|"
+        r"several|a couple of)\s+(?:seconds?|minutes?|hours?|days?|weeks?|"
+        r"months?|years?)\s+ago\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"\b(?:last|next|this|coming|past)\s+(?:{_WEEKDAYS}|weekend|night|week|"
+        r"month|year|quarter|season|spring|summer|autumn|fall|winter)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"(?<!what )\b(?:is|are) now\b(?! known as)", re.IGNORECASE),
+)
+
+# Rule 1 again: a number that drifts. A count of stars, forks, followers,
+# downloads or open issues needs an ISO date in its sentence; a test total
+# beside a suite word needs a commit hash or an ISO date.
+_ISO_DATE_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+_COMMIT_HASH_RE = re.compile(r"\b(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b")
+_NUMBER = r"(?:\d[\d,.]*k?|zero|one|two|three|four|five|six|seven|eight|nine|ten)"
+_DRIFTING_COUNT_RE = re.compile(
+    rf"\b{_NUMBER}\s+(?:GitHub\s+)?(?:stars?|forks?|followers?|downloads?|"
+    r"open issues|watchers?)\b",
+    re.IGNORECASE,
+)
+_TEST_TOTAL_RE = re.compile(
+    r"\b\d[\d,]*\s+(?:tests?\s+)?(?:passed|failed|skipped|passing|failing|"
+    r"errors?)\b",
+    re.IGNORECASE,
+)
+_SUITE_WORD_RE = re.compile(r"\b(?:tests?|suite|pytest|CI)\b", re.IGNORECASE)
+
+
+def _first_unquoted(
+    patterns: tuple[re.Pattern[str], ...],
+    text: str,
+    spans: tuple[tuple[int, int], ...],
+    keep: Callable[[re.Match[str]], bool] | None = None,
+) -> re.Match[str] | None:
+    """The earliest match of any of `patterns` outside a quoted span, for
+    which `keep` holds when one is given."""
+    best: re.Match[str] | None = None
+    for pattern in patterns:
+        for match in pattern.finditer(text):
+            if in_quoted_span(spans, match.start(), match.end()):
+                continue
+            if keep is not None and not keep(match):
+                continue
+            if best is None or match.start() < best.start():
+                best = match
+            break
+    return best
+
+
+def _unanchored_test_total(sentence: str) -> bool:
+    """A test total beside a suite word, with no commit or date to say
+    when it was read."""
+    if not _SUITE_WORD_RE.search(sentence):
+        return False
+    return not (_ISO_DATE_RE.search(sentence) or _COMMIT_HASH_RE.search(sentence))
+
+
+def find_capture_rule_hits(content: str) -> list[CaptureRuleHit]:
+    """The capture rules `content` breaks, one hit per rule name with the
+    first phrase that fired. Empty means the body passes the enforced part
+    of the bar; the rest (one claim, specific, true to the conversation)
+    is the model's to keep."""
+    spans = quoted_spans(content)
+    found: tuple[tuple[int, str, re.Match[str] | None], ...] = (
+        (
+            3,
+            "plain_subject",
+            _first_unquoted(
+                (_USERS_OPENER_RE,),
+                content,
+                spans,
+                lambda m: _at_sentence_start(content, m.start()),
+            )
+            or _first_unquoted(
+                (_ASSISTANT_SAID_RE, _ASSISTANTS_ANSWER_RE), content, spans
+            ),
+        ),
+        (
+            1,
+            "no_todo",
+            _first_unquoted((_TODO_HEADING_RE, *_TODO_PATTERNS), content, spans)
+            or _first_unquoted((_IMPERATIVE_OPENER_RE,), content, spans),
+        ),
+        (
+            1,
+            "drifting_count",
+            _first_unquoted(
+                (_DRIFTING_COUNT_RE,),
+                content,
+                spans,
+                lambda m: not _ISO_DATE_RE.search(sentence_around(content, m.start())),
+            ),
+        ),
+        (
+            1,
+            "test_total",
+            _first_unquoted(
+                (_TEST_TOTAL_RE,),
+                content,
+                spans,
+                lambda m: _unanchored_test_total(sentence_around(content, m.start())),
+            ),
+        ),
+        (5, "absolute_date", _first_unquoted(_RELATIVE_DATE_PATTERNS, content, spans)),
+    )
+    return [
+        CaptureRuleHit(
+            rule=rule,
+            name=name,
+            snippet=_snippet_around(content, match.start(), match.end()),
+        )
+        for rule, name, match in found
+        if match is not None
+    ]
+
+
 __all__ = [
     "SHA_MARKER",
     "TRANSIENT_PHRASE_MARKERS",
+    "CaptureRuleHit",
     "TransientMatch",
     "canonical_marker",
+    "find_capture_rule_hits",
     "find_transient_markers",
     "in_quoted_span",
     "quoted_spans",

@@ -1230,6 +1230,7 @@ def test_config_without_the_removed_key_is_silent(
         ("consolidate", "auto_apply = true", "auto_apply"),
         ("proposals", "auto_propose = true", "auto_propose"),
         ("capture", "enabled = true", "enabled"),
+        ("capture", "idle_minutes = 30", "idle_minutes"),
     ],
 )
 def test_every_9_0_removal_loads_with_one_warning_and_no_error(
@@ -1258,6 +1259,9 @@ def test_every_9_0_removal_loads_with_one_warning_and_no_error(
         assert not hasattr(cfg.behavior, key)
     elif section == "telemetry":
         assert not hasattr(cfg.telemetry, key)
+    elif section == "capture":
+        assert not hasattr(cfg.capture, key)
+        assert cfg.capture.stop_checkpoint is False
     else:
         assert not hasattr(cfg, section)
     messages = _removed_key_warnings(caplog, f"[{section}] `{key}`")
@@ -1296,8 +1300,10 @@ def test_every_removed_key_is_gone_from_the_config_surface() -> None:
     gone while the field and the shipped prose say otherwise."""
     from bettermemory.config import (
         _REMOVED_BEHAVIOR_KEYS,
+        _REMOVED_CAPTURE_KEYS,
         _REMOVED_SECTIONS,
         _REMOVED_TELEMETRY_KEYS,
+        CaptureConfig,
         TelemetryConfig,
     )
 
@@ -1308,6 +1314,8 @@ def test_every_removed_key_is_gone_from_the_config_surface() -> None:
     for key in _REMOVED_TELEMETRY_KEYS:
         assert not hasattr(TelemetryConfig(), key), key
         assert key not in DEFAULT_CONFIG, key
+    for key in _REMOVED_CAPTURE_KEYS:
+        assert not hasattr(CaptureConfig(), key), key
     for section in _REMOVED_SECTIONS:
         assert not hasattr(Config(), section), section
         assert f"[{section}]" not in DEFAULT_CONFIG, section
@@ -1423,3 +1431,73 @@ def test_recall_in_project_is_a_removed_key_with_a_notice(
     ]
     assert len(notices) == 1
     assert "removed" in notices[0]
+
+
+# ---------------------------------------------------------------------------
+# [capture]: the turn-end checkpoint, off unless switched on by its v9 key
+# ---------------------------------------------------------------------------
+
+
+def test_capture_defaults_are_off_with_the_declared_bounds(tmp_path: Path) -> None:
+    """No `[capture]` section: the checkpoint is off, at 12,000 tokens and
+    12 requests per store per day, the same as the dataclass."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[behavior]\ndefault_max_results = 5\n", encoding="utf-8")
+    loaded = load_config(config_path).capture
+    fresh = Config().capture
+    assert (loaded.stop_checkpoint, loaded.checkpoint_tokens, loaded.daily_cap) == (
+        False,
+        12_000,
+        12,
+    )
+    assert loaded == fresh
+
+
+def test_capture_keys_load_as_written(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[capture]\nstop_checkpoint = true\ncheckpoint_tokens = 8000\ndaily_cap = 3\n",
+        encoding="utf-8",
+    )
+    capture = load_config(config_path).capture
+    assert capture.stop_checkpoint is True
+    assert capture.checkpoint_tokens == 8_000
+    assert capture.daily_cap == 3
+
+
+def test_capture_bad_numbers_raise_a_located_error(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('[capture]\ndaily_cap = "many"\n', encoding="utf-8")
+    with pytest.raises(ValueError, match=r"\[capture\] daily_cap"):
+        load_config(config_path)
+
+
+def test_a_pre_v9_capture_enabled_never_turns_capture_on(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """8.x shipped `[capture] enabled` for a capture that called a model.
+    The v9 checkpoint asks the chat model at a turn end, a different
+    thing, so an 8.x `enabled = true` must not switch it on: the line is
+    ignored with one notice naming the key that does, and the rest of
+    the section still loads."""
+    _reset_deprecated_key_guard()
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[capture]\nenabled = true\ncheckpoint_tokens = 40000\nidle_minutes = 30\n",
+        encoding="utf-8",
+    )
+    with caplog.at_level("WARNING", logger="bettermemory.config"):
+        cfg = load_config(config_path)
+        load_config(config_path)
+    assert cfg.capture.stop_checkpoint is False
+    assert cfg.capture.checkpoint_tokens == 40_000
+    enabled = _removed_key_warnings(caplog, "[capture] `enabled`")
+    assert len(enabled) == 1, enabled
+    assert "stop_checkpoint" in enabled[0]
+    assert len(_removed_key_warnings(caplog, "[capture] `idle_minutes`")) == 1
+
+
+def test_capture_is_no_longer_a_removed_section() -> None:
+    from bettermemory.config import _REMOVED_SECTIONS
+
+    assert "capture" not in _REMOVED_SECTIONS

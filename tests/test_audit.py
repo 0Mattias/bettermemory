@@ -1744,7 +1744,6 @@ def test_turn_audited_fields_omits_no_signal_reason_when_none() -> None:
 _EXPECTED_VALID_TRIGGERED_FROM: tuple[str, ...] = (
     "mcp_tool",
     "prompt_hook",
-    "session_capture",
     "session_hook",
     "stop_hook",
 )

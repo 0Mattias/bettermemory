@@ -3608,17 +3608,23 @@ def test_write_gates_match_expected_types_in_order() -> None:
     transient-before-dedup, user-claim-before-dedup,
     scope-before-dedup, and dedup-last."""
     from bettermemory.handlers.write import (
+        CaptureRulesGate,
         CredentialGate,
         DedupActiveGate,
         DedupTombstoneGate,
+        PreviouslyUndoneGate,
         ScopeMismatchGate,
         TransientGate,
         UserClaimGate,
         _WRITE_GATES,
     )
 
+    # The two capture gates pass every write but a capture's, and on a
+    # capture they run right after credential (tests/test_capture_batch.py).
     expected: tuple[type, ...] = (
         CredentialGate,
+        CaptureRulesGate,
+        PreviouslyUndoneGate,
         TransientGate,
         UserClaimGate,
         ScopeMismatchGate,
