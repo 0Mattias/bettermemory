@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import signal
 import subprocess
 import sys
 import time
@@ -189,3 +191,145 @@ def test_foreground_serves_until_shutdown(
     assert proc.returncode == 0
     assert not pid_alive(state["pid"])
     assert not _state_path(tmp_path).exists()
+
+
+# The line a daemon logs once it has bound its port and written its state
+# file (`daemon.serve`).
+_STARTED = re.compile(r"bettermemory daemon \S+ on ")
+
+
+# A client of its own: waits for the go file, so the clients reach
+# `ensure_daemon` together, then prints the pid and port it got.
+_ENSURE_CLIENT = """
+import json, sys, time
+from pathlib import Path
+from bettermemory._daemon_client import (
+    daemon_env_for, ensure_daemon, package_version, resolve_state_dir,
+    resolved_store_path,
+)
+go = Path(sys.argv[1])
+while not go.exists():
+    time.sleep(0.002)
+store = resolved_store_path()
+state = ensure_daemon(
+    resolve_state_dir(), store, version=package_version(), port=0,
+    env=daemon_env_for(store), timeout=30.0,
+)
+print(json.dumps(None if state is None else [state["pid"], state["port"]]))
+"""
+
+
+def test_concurrent_clients_on_a_fresh_store_start_one_daemon(
+    tmp_path: Path, daemon_env: dict[str, str]
+) -> None:
+    """Six processes that each find no daemon and call `ensure_daemon` at
+    once end with one daemon for the store: every caller got the same pid
+    and port, the state file names it, /health answers with it, and the
+    log the clients' daemons share holds one daemon's start line once any
+    daemon that lost the lock has had its grace to leave."""
+    from bettermemory._daemon_client import LOCK_WAIT_SECONDS, log_file_for
+
+    go = tmp_path / "go"
+    clients = [
+        subprocess.Popen(
+            [sys.executable, "-c", _ENSURE_CLIENT, str(go)],
+            env=daemon_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for _ in range(6)
+    ]
+    pids: set[int] = set()
+    try:
+        time.sleep(1.0)
+        go.write_text("go")
+        answers = []
+        for client in clients:
+            out, err = client.communicate(timeout=60)
+            assert client.returncode == 0, err
+            answers.append(json.loads(out))
+        pids = {answer[0] for answer in answers if answer is not None}
+        assert None not in answers, answers
+        assert len({tuple(answer) for answer in answers}) == 1, answers
+        pid, port = answers[0]
+        state = read_state(tmp_path / "state", _store_path(tmp_path))
+        assert state is not None and (state["pid"], state["port"]) == (pid, port)
+        answer = health(port)
+        assert answer is not None and answer["pid"] == pid
+        time.sleep(LOCK_WAIT_SECONDS + 1.0)
+        log = log_file_for(tmp_path / "state", _store_path(tmp_path)).read_text(
+            encoding="utf-8"
+        )
+        assert len(_STARTED.findall(log)) == 1, log
+        assert read_state(tmp_path / "state", _store_path(tmp_path)) == state
+    finally:
+        for client in clients:
+            if client.poll() is None:
+                client.kill()
+        # The fixture's `down` stops the daemon the state file names; a pid
+        # a client reported that the file does not name is stopped here.
+        state = read_state(tmp_path / "state", _store_path(tmp_path))
+        for pid in pids - ({state["pid"]} if state else set()):
+            if pid_alive(pid):
+                os.kill(pid, signal.SIGTERM)
+
+
+def test_a_second_foreground_daemon_on_a_served_store_exits(
+    tmp_path: Path, daemon_env: dict[str, str]
+) -> None:
+    """`up --foreground` on a store a daemon already serves takes no port
+    and writes no state file: it waits out the lock's grace, logs one line
+    naming the store, and exits with `DAEMON_HELD_STATUS`, while the first
+    daemon keeps serving under its own state file."""
+    from bettermemory._daemon_client import DAEMON_HELD_STATUS
+
+    assert _cli(["up", "--port", "0"], daemon_env).returncode == 0
+    state = _wait_running(tmp_path)
+    before = _state_path(tmp_path).read_bytes()
+    second = _cli(["up", "--foreground", "--port", "0"], daemon_env)
+    assert second.returncode == DAEMON_HELD_STATUS, second.stderr
+    lines = [line for line in second.stderr.splitlines() if "already serves" in line]
+    assert len(lines) == 1, second.stderr
+    assert "memory.sqlite" in lines[0]
+    assert not _STARTED.search(second.stderr), second.stderr
+    assert _state_path(tmp_path).read_bytes() == before
+    answer = health(state["port"])
+    assert answer is not None and answer["pid"] == state["pid"]
+
+
+def test_the_wait_goes_on_when_the_started_child_found_the_store_held(
+    tmp_path: Path,
+) -> None:
+    """A child that exits with `DAEMON_HELD_STATUS` lost the store's lock to
+    a daemon that is starting or busy: `wait_for_daemon` keeps polling for
+    that daemon rather than raising `DaemonExited`, and returns None when
+    none answers within the timeout."""
+    from bettermemory._daemon_client import (
+        DAEMON_HELD_STATUS,
+        Started,
+        log_file_for,
+        wait_for_daemon,
+    )
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    store_path = _store_path(tmp_path)
+    log_path = log_file_for(state_dir, store_path)
+    with log_path.open("ab") as log:
+        child = subprocess.Popen(
+            [sys.executable, "-c", f"import sys; sys.exit({DAEMON_HELD_STATUS})"],
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            env=shielded_child_env(),
+        )
+    child.wait(timeout=30)
+    started = time.monotonic()
+    answered = wait_for_daemon(
+        state_dir,
+        store_path,
+        timeout=0.5,
+        started=Started(child=child, log=log_path, log_offset=0),
+    )
+    assert answered is None
+    assert time.monotonic() - started >= 0.5

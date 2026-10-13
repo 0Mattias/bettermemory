@@ -65,6 +65,17 @@ _POLL_SECONDS = 0.02
 _STDIN_CAP_BYTES = 1 << 20
 _STATE_KEYS = ("pid", "port", "token", "version", "store", "started")
 
+#: The exit status of a daemon that found its store already served: another
+#: process holds the store's lock (`acquire_lock`). EX_TEMPFAIL, so it reads
+#: apart from a daemon that failed to start (status 1, or whatever the
+#: interpreter exits with).
+DAEMON_HELD_STATUS = 75
+#: How long a starting daemon waits for the store's lock before it gives
+#: up: long enough for a daemon just asked to stop (a version replaced, a
+#: `down`) to finish exiting, short enough that a second daemon started
+#: beside a serving one leaves promptly.
+LOCK_WAIT_SECONDS = 2.0
+
 
 # ---------------------------------------------------------------------------
 # The state file
@@ -145,6 +156,75 @@ def remove_state(
         if current is not None and current["pid"] != pid:
             return
     path.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# The store's locks
+# ---------------------------------------------------------------------------
+
+
+def lock_file_for(state_dir: Path, store_path: Path | str) -> Path:
+    """The lock a daemon holds for its whole life while it serves
+    `store_path`, beside its state file. The file is never removed: a
+    process that unlinked it could let two lockers hold two inodes."""
+    return state_file_for(state_dir, store_path).with_suffix(".lock")
+
+
+def spawn_lock_file_for(state_dir: Path, store_path: Path | str) -> Path:
+    """The lock a client holds while it starts a daemon for `store_path`
+    and waits for it, so concurrent clients spawn one daemon, not one each."""
+    return state_file_for(state_dir, store_path).with_suffix(".spawn.lock")
+
+
+def try_lock(path: Path) -> Any | None:
+    """An exclusive, non-blocking advisory lock on `path`: the open file
+    that holds it, or None when another process (or another open of the
+    file in this one) holds it. `flock` on POSIX, `msvcrt.locking` on one
+    byte on Windows; either way the OS drops the lock with the process, so
+    a lock never outlives its holder and needs no stale-lock handling.
+    `release_lock` gives it back early."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(path, "a+b")  # noqa: SIM115 - held for the lock's life
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    return handle
+
+
+def acquire_lock(path: Path, *, wait: float) -> Any | None:
+    """`try_lock`, retried for up to `wait` seconds: the held lock, or None
+    when another process still holds it then."""
+    deadline = time.monotonic() + wait
+    while True:
+        handle = try_lock(path)
+        if handle is not None or time.monotonic() >= deadline:
+            return handle
+        time.sleep(_POLL_SECONDS)
+
+
+def release_lock(handle: Any) -> None:
+    """Give back a lock `try_lock` took."""
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    except OSError:
+        pass
+    finally:
+        handle.close()
 
 
 # ---------------------------------------------------------------------------
@@ -338,7 +418,10 @@ def wait_for_daemon(
     has exited and still no daemon answers (another client's daemon may
     have come up meanwhile, and is then the answer), the wait ends at once
     with `DaemonExited`, which carries the child's exit status and the
-    last line of its log, instead of running out the timeout."""
+    last line of its log, instead of running out the timeout. A child that
+    exited with `DAEMON_HELD_STATUS` found the store already served by a
+    daemon that holds its lock, one still starting or busy, so the wait
+    goes on for that daemon to answer."""
     deadline = time.monotonic() + timeout
     while True:
         state = _answering(state_dir, store_path)
@@ -348,6 +431,9 @@ def wait_for_daemon(
             state = _answering(state_dir, store_path)
             if state is not None:
                 return state
+            if started.child.returncode == DAEMON_HELD_STATUS:
+                started = None
+                continue
             raise DaemonExited(
                 store_path,
                 started.child.returncode,
@@ -416,10 +502,20 @@ def ensure_daemon(
 ) -> dict[str, Any] | None:
     """The state of a running daemon of `version` for `store_path`,
     starting one when `start` and none answers. A daemon of another
-    version is stopped and replaced; a stale state file is removed. None
-    when no daemon can be reached, or none answers within `timeout` of the
-    start. Raises `DaemonExited` when the daemon it started exited before
-    any answered, naming that daemon's error."""
+    version is stopped and replaced. None when no daemon can be reached, or
+    none answers within `timeout` of the start. Raises `DaemonExited` when
+    the daemon it started exited before any answered, naming that daemon's
+    error.
+
+    A state file whose daemon does not answer is left for the daemon
+    started next to overwrite, not removed: it may name a daemon that is
+    still starting (the file is written before the port listens) or busy,
+    and removing it would leave that daemon serving unseen. The daemon's
+    own lock (`lock_file_for`) is what keeps a second one from serving the
+    store; the client side only keeps concurrent clients from each
+    spawning one: whoever takes the spawn lock spawns and waits, and the
+    others wait for the lock or for a daemon to answer, whichever comes
+    first."""
     state = read_state(state_dir, store_path)
     if state is not None:
         answer = health(state["port"], timeout=0.5)
@@ -427,14 +523,37 @@ def ensure_daemon(
             return state
         if answer is not None:
             shutdown_daemon(state)
-        remove_state(state_dir, store_path)
+            remove_state(state_dir, store_path, pid=int(state["pid"]))
     if not start:
         return None
+    deadline = time.monotonic() + timeout
+    spawn_lock = try_lock(spawn_lock_file_for(state_dir, store_path))
+    while spawn_lock is None:
+        state = _answering(state_dir, store_path)
+        if state is not None:
+            return state
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(_POLL_SECONDS)
+        spawn_lock = try_lock(spawn_lock_file_for(state_dir, store_path))
     try:
-        started = _spawn(state_dir, store_path, port=port, env=env)
-    except OSError:
-        return None
-    return wait_for_daemon(state_dir, store_path, timeout=timeout, started=started)
+        # A client that held the lock before this one may have started a
+        # daemon that answers by now.
+        state = _answering(state_dir, store_path)
+        if state is not None and state.get("version") == version:
+            return state
+        try:
+            started = _spawn(state_dir, store_path, port=port, env=env)
+        except OSError:
+            return None
+        return wait_for_daemon(
+            state_dir,
+            store_path,
+            timeout=max(deadline - time.monotonic(), _POLL_SECONDS),
+            started=started,
+        )
+    finally:
+        release_lock(spawn_lock)
 
 
 def resolved_store_path() -> Path:
@@ -631,30 +750,37 @@ def hook_main(argv: list[str]) -> int:
 
 
 __all__ = [
+    "DAEMON_HELD_STATUS",
     "DEFAULT_PORT",
     "DaemonExited",
+    "LOCK_WAIT_SECONDS",
     "HOOK_EVENTS",
     "HOOK_WORDS",
     "HOST",
     "STATE_DIR_ENV",
     "STORE_FILENAME",
     "Started",
+    "acquire_lock",
     "daemon_env_for",
     "ensure_daemon",
     "health",
     "hook_main",
+    "lock_file_for",
     "log_file_for",
     "package_version",
     "pid_alive",
     "post",
     "read_state",
     "read_state_file",
+    "release_lock",
     "remove_state",
     "resolve_state_dir",
     "resolved_store_path",
     "shutdown_daemon",
+    "spawn_lock_file_for",
     "start_daemon",
     "state_file_for",
+    "try_lock",
     "wait_for_daemon",
     "write_state",
 ]
