@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import importlib.util
 import inspect
 import io
 import os
@@ -1903,9 +1904,12 @@ class TestRenameSiteDetector:
             "residual backstopped by ruff. Update the docstring."
         )
 
-        ruff = shutil.which("ruff")
-        if ruff is None:  # pragma: no cover - ruff is a dev dependency
-            pytest.skip("ruff not on PATH")
+        # The project's own ruff, not whichever one PATH finds first: the
+        # default rule set is version-dependent (ruff 0.17 dropped F403
+        # from it), so a newer system ruff would answer a different
+        # question than the pinned one this repo actually lints with.
+        if importlib.util.find_spec("ruff") is None:  # pragma: no cover
+            pytest.skip(f"ruff is not installed for {sys.executable}")
 
         repo_root = Path(__file__).resolve().parent.parent
         config = repo_root / "pyproject.toml"
@@ -1915,7 +1919,9 @@ class TestRenameSiteDetector:
 
         result = subprocess.run(
             [
-                ruff,
+                sys.executable,
+                "-m",
+                "ruff",
                 "check",
                 "--config",
                 str(config),
