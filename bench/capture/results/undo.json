@@ -1,0 +1,113 @@
+{
+  "kind": "capture-undo",
+  "prediction": "CAPS-P3",
+  "commit": "3397968410d56cf208295e2a947f167b309c35fc",
+  "run_at": "2026-10-13T05:08:53Z",
+  "method": {
+    "writes": 10,
+    "seed": 20261013,
+    "workload_sha256": "50a4bd83cd41e1ce7c2fad8dbe5fdb4f5298ce27dd6978eb938b0bfbc358deda",
+    "path": "open_batch, tagged memory_write through build_server's call_tool, close_batch settled, `capture undo --apply`",
+    "compare": "export --mirror before and after, all files but .mirror.json and the batch's tombstone files"
+  },
+  "stores": {
+    "fixture": {
+      "migration": {
+        "memories": {
+          "found": 3,
+          "imported": 3,
+          "present": 0,
+          "unparseable": 0
+        },
+        "seconds": 0.02
+      },
+      "mirror_files_before": 8,
+      "capture_writes": {
+        "committed": 10
+      },
+      "undo": {
+        "exit": 0,
+        "undone": 10,
+        "fields": [
+          "batch",
+          "changed",
+          "committed",
+          "gone",
+          "outcome",
+          "own_conflicts",
+          "refusal_reason",
+          "skip_changed",
+          "to_undo"
+        ]
+      },
+      "tombstone_files_added": 10,
+      "files_differing": 0,
+      "files_added": 0,
+      "files_removed": 0,
+      "byte_identical_but_marker_and_tombstones": true,
+      "log_verify": {
+        "exit": 0,
+        "status": "ok"
+      },
+      "restore": {
+        "commands_ok": 10,
+        "members_back_with_body": 10,
+        "log_verify_after": "ok"
+      },
+      "verdict": "HIT",
+      "restore_verdict": "HIT"
+    },
+    "backup": {
+      "migration": {
+        "memories": {
+          "found": 925,
+          "imported": 925,
+          "present": 0,
+          "unparseable": 0
+        },
+        "seconds": 1.99
+      },
+      "mirror_files_before": 1339,
+      "capture_writes": {
+        "committed": 10
+      },
+      "undo": {
+        "exit": 0,
+        "undone": 10,
+        "fields": [
+          "batch",
+          "changed",
+          "committed",
+          "gone",
+          "outcome",
+          "own_conflicts",
+          "refusal_reason",
+          "skip_changed",
+          "to_undo"
+        ]
+      },
+      "tombstone_files_added": 10,
+      "files_differing": 0,
+      "files_added": 0,
+      "files_removed": 0,
+      "byte_identical_but_marker_and_tombstones": true,
+      "log_verify": {
+        "exit": 0,
+        "status": "ok"
+      },
+      "restore": {
+        "commands_ok": 10,
+        "members_back_with_body": 10,
+        "log_verify_after": "ok"
+      },
+      "verdict": "HIT",
+      "restore_verdict": "HIT",
+      "source": {
+        "path": "~/.cache/bettermemory-v9/live-backup-2026-10-11/memory.sqlite",
+        "sha256": "f43f9626cbfd7831af0aae66cae5f632bda50d36b56be9c3f364c686acbb1caf",
+        "route": "sqlite backup (immutable) -> export --mirror -> migrate_v8"
+      }
+    }
+  },
+  "scratch_removed": true
+}
