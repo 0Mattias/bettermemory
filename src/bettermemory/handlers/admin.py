@@ -3,9 +3,9 @@
 Each action is a former tool of its own, folded here so the served
 surface stays at nine tools without losing the work: restore, tombstones,
 health, rename_scope, conflicts, acknowledge_miss, disable_scope and
-enable_scope. The bodies keep their modules; this module is the dispatch
-the served tool is built from, and every action returns the keys its
-former tool returned (`tombstones` wraps its list under one key, since a
+enable_scope; relations is the capture's closing call. The bodies keep
+their modules; this module is the dispatch the served tool is built from,
+and every action returns the keys its former tool returned (`tombstones` wraps its list under one key, since a
 dict is the tool's shape).
 """
 
@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from ._shared import Context
 from .acknowledge_miss import acknowledge_misses_before, memory_acknowledge_miss
+from .capture_relations import capture_relations
 from .conflicts import memory_conflicts
 from .health import memory_health
 from .rename_scope import memory_rename_scope
@@ -35,6 +36,7 @@ AdminAction = Literal[
     "acknowledge_miss",
     "disable_scope",
     "enable_scope",
+    "relations",
 ]
 
 DESC_MEMORY_ADMIN = (
@@ -44,7 +46,8 @@ DESC_MEMORY_ADMIN = (
     "contradiction pairs; scan=True detects, `id` with `verdict` (a, b, "
     "both, neither) and `note` resolves. acknowledge_miss: search_miss `id` "
     "with `reason`, or all misses before ISO `before`. disable_scope, "
-    "enable_scope: hide or unhide `scope` this session."
+    "enable_scope: hide or unhide `scope` this session. relations: answer "
+    "a capture's relations_pending in `relations`."
 )
 
 
@@ -67,6 +70,7 @@ async def memory_admin(
     note: str | None = None,
     reason: str | None = None,
     before: str | None = None,
+    relations: dict[str, Any] | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     if action == "restore":
@@ -97,6 +101,8 @@ async def memory_admin(
         return await memory_scope_disable(deps, _need(scope, "scope", action), ctx=ctx)
     if action == "enable_scope":
         return await memory_scope_enable(deps, _need(scope, "scope", action), ctx=ctx)
+    if action == "relations":
+        return await capture_relations(deps, relations, ctx=ctx)
     raise ValueError(f"unknown memory_admin action {action!r}")
 
 
