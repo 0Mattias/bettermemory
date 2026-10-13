@@ -78,7 +78,9 @@ def refusals_by_batch(events: Iterable[Mapping[str, Any]]) -> dict[str, Counter[
 
 def review(store: Store, *, now: datetime | None = None) -> dict[str, Any]:
     """Every batch with its outcome (`open` while it takes writes), member
-    count, refusals by rule and undone state, and the totals."""
+    count, refusals by rule, undone state and the relations its writes left
+    unanswered (as the close recorded them, or as they stand while open),
+    and the totals."""
     when = now or utcnow()
     closed = cap.closes(store)
     members = cap.members(store)
@@ -93,6 +95,11 @@ def review(store: Store, *, now: datetime | None = None) -> dict[str, Any]:
         if close is None and batch.expired(when):
             outcome = cap.OUTCOME_EXPIRED
         ids = [m.memory_id for m in members if m.batch == batch.batch]
+        pending = (
+            close.relations_pending
+            if close is not None
+            else cap.relations_pending(store, batch.batch)
+        )
         rows.append(
             {
                 "batch": batch.batch,
@@ -102,6 +109,7 @@ def review(store: Store, *, now: datetime | None = None) -> dict[str, Any]:
                 "outcome": outcome,
                 "members": len(ids),
                 "undone": sum(1 for i in ids if i in undone),
+                "relations_pending": sum(len(v) for v in pending.values()),
                 "refusals": dict(sorted(refused.get(batch.batch, Counter()).items())),
             }
         )
@@ -131,6 +139,11 @@ def render_review(doc: Mapping[str, Any]) -> str:
             f"  {row['batch']}  {row['opened_at']}  {row['outcome']}  "
             f"{row['members']} saved"
             + (f", {row['undone']} undone" if row["undone"] else "")
+            + (
+                f", {row['relations_pending']} relations pending"
+                if row["relations_pending"]
+                else ""
+            )
             + (f", refused: {refusals}" if refusals else "")
         )
     if doc["refusals_by_rule"]:
@@ -197,8 +210,11 @@ def plan_undo(
     links = store.links_for_many(list(active))
     conflicted: set[str] = set()
     own: list[dict[str, Any]] = []
+    closing = _closing_filed(store, batch_id)
     for conflict in store.list_conflicts():
-        if _filed_by_own_write(conflict, active):
+        if _filed_by_own_write(conflict, active) or (
+            conflict["id"] in closing and conflict.get("status") == "pending"
+        ):
             own.append(conflict)
         else:
             conflicted.update(str(conflict[side]) for side in ("a_id", "b_id"))
@@ -230,6 +246,19 @@ def plan_undo(
             "re-run with --skip-changed to undo the rest and leave those"
         )
     return report
+
+
+def _closing_filed(store: Store, batch_id: str) -> set[str]:
+    """The pair ids the batch's closing calls filed (`capture_relations`
+    rows): the members' own, like the pairs their writes filed."""
+    out: set[str] = set()
+    for row in cap.relations_rows(store, batch_id):
+        applied = row.get("applied")
+        for result in (applied if isinstance(applied, dict) else {}).values():
+            for filed in result.get("conflicts_filed") or []:
+                if isinstance(filed, dict) and isinstance(filed.get("pair_id"), str):
+                    out.add(filed["pair_id"])
+    return out
 
 
 def _filed_by_own_write(conflict: Mapping[str, Any], active: Mapping[str, Any]) -> bool:
