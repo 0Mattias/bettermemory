@@ -578,3 +578,97 @@ class _AnsweringHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(body)
+
+
+# ---------------------------------------------------------------------------
+# Capture at Stop: the attended mark and the hook's own JSON
+# ---------------------------------------------------------------------------
+
+
+def _run_client(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    *,
+    attended: str | None,
+    reply: dict[str, Any],
+    payload: dict[str, Any] | None = None,
+    argv: tuple[str, ...] = ("hook", "stop", "--quiet"),
+) -> tuple[dict[str, Any], str]:
+    """`hook_main` in process against a stand-in daemon: what it posted, and
+    what it printed."""
+    import io
+
+    sent: dict[str, Any] = {}
+    if attended is None:
+        monkeypatch.delenv(_daemon_client.ATTENDED_ENV, raising=False)
+    else:
+        monkeypatch.setenv(_daemon_client.ATTENDED_ENV, attended)
+    monkeypatch.setattr(
+        _daemon_client, "resolved_store_path", lambda: tmp_path / "store.db"
+    )
+    monkeypatch.setattr(
+        _daemon_client, "ensure_daemon", lambda *a, **k: {"port": 1, "token": "t"}
+    )
+
+    def fake_post(port: int, token: str, path: str, body: dict, **kw: Any) -> dict:
+        sent.update(body)
+        return reply
+
+    monkeypatch.setattr(_daemon_client, "post", fake_post)
+    stdin = io.TextIOWrapper(io.BytesIO(json.dumps(payload or {}).encode()))
+    monkeypatch.setattr(sys, "stdin", stdin)
+    assert _daemon_client.hook_main(list(argv)) == 0
+    return sent, capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("value", "forwarded"),
+    [("1", True), ("0", False), ("", False), ("true", False), (None, False)],
+)
+def test_the_hook_forwards_attended_only_for_exactly_1(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    value: str | None,
+    forwarded: bool,
+) -> None:
+    # A payload that claims attended itself is never believed.
+    sent, _ = _run_client(
+        monkeypatch,
+        capsys,
+        tmp_path,
+        attended=value,
+        reply={"stdout": ""},
+        payload={"session_id": "s", "attended": "1"},
+    )
+    assert ("attended" in sent) is forwarded
+    if forwarded:
+        assert sent["attended"] == "1"
+
+
+def test_the_hook_prints_hook_output_alone_even_under_quiet(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    output = json.dumps({"hookSpecificOutput": {"hookEventName": "Stop"}})
+    reply = {"stdout": '{"verdict": "ok"}', "hook_output": output}
+    for argv in (("hook", "stop", "--quiet"), ("hook", "stop")):
+        _, printed = _run_client(
+            monkeypatch, capsys, tmp_path, attended="1", reply=reply, argv=argv
+        )
+        assert printed == output + "\n"
+    # Without it, --quiet still prints nothing.
+    _, printed = _run_client(
+        monkeypatch, capsys, tmp_path, attended="1", reply={"stdout": "x"}
+    )
+    assert printed == ""
+
+
+def test_a_daemon_started_from_an_attended_shell_never_inherits_the_mark(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv(_daemon_client.ATTENDED_ENV, "1")
+    env = _daemon_client.daemon_env_for(tmp_path / "store.db")
+    assert _daemon_client.ATTENDED_ENV not in env

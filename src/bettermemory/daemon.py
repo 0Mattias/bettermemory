@@ -238,6 +238,7 @@ def build_app(
     """The daemon's ASGI app: the MCP surface at ``/mcp``, the hook
     endpoints, ``/health`` and the shutdown endpoint, behind the bearer
     check. `shutdown` is called by ``POST /api/v1/admin/shutdown``."""
+    from . import capture_hook as _capture_hook
     from . import hook as _hook
     from . import recall as _recall
 
@@ -334,7 +335,23 @@ def build_app(
         if not transcript or not session_id:
             return JSONResponse(quiet_fields)
 
-        def body(worker_store: Store) -> dict[str, Any] | None:
+        def body(
+            worker_store: Store,
+        ) -> tuple[dict[str, Any] | None, _capture_hook.StopStep | None]:
+            # The capture half runs first: a Stop that settles a capture
+            # ended a turn the model spent saving memories, not one the
+            # user asked for, so the audit leaves it out of turn_audited,
+            # search_miss and the helped rate. A capture failure is logged
+            # and never costs the audit.
+            step: _capture_hook.StopStep | None = None
+            try:
+                step = _capture_hook.on_stop(config, worker_store, payload)
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "capture at stop failed: %s: %s", exc.__class__.__name__, exc
+                )
+            if step is not None and step.action == _capture_hook.SETTLED:
+                return None, step
             return _hook.audit_transcript(
                 transcript_path=Path(str(transcript)),
                 session_id=str(session_id),
@@ -346,16 +363,25 @@ def build_app(
                 harness=_text(payload, "harness"),
                 prompt_id=_text(payload, "prompt_id"),
                 state=recall_state,
-            )
+            ), step
 
         try:
-            result = await workers.run(body)
+            result, step = await workers.run(body)
         except Exception as exc:  # noqa: BLE001
             log.warning("hook stop failed: %s: %s", exc.__class__.__name__, exc)
             return JSONResponse(
                 {**quiet_fields, "error": f"{exc.__class__.__name__}: {exc}"},
                 status_code=500,
             )
+        # Only a Stop capture acted on carries these, so a reply with
+        # capture off or unattended is the one it always was. The client
+        # prints `hook_output` even under --quiet, for Claude Code to read.
+        if step is not None:
+            quiet_fields["capture"] = step.to_dict()
+            if step.instruction is not None:
+                quiet_fields["hook_output"] = _capture_hook.hook_output(
+                    step.instruction
+                )
         if result is None:
             return JSONResponse(quiet_fields)
         import json as _json
