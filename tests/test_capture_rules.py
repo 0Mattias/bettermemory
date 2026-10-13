@@ -48,8 +48,11 @@ def test_the_instruction_carries_the_bar_and_the_added_lines() -> None:
     assert capture.CAPTURE_RULES in text
     # The batch token, as the source every capture write carries.
     assert f'source="capture:{TOKEN}"' in text
-    # The project scope from the hook's cwd.
+    # The project scope from the hook's cwd, for that project's memories
+    # only: another project's memory takes its own scope.
     assert '"projects:bettermemory"' in text
+    assert "use it only for memories about that project" in text
+    assert "its subject's own scope (projects:<name>)" in text
     # Rule 9 amended for a capture: supersedes, never an update.
     assert "supersedes" in text
     assert "Do not update, remove or verify" in text
@@ -58,6 +61,11 @@ def test_the_instruction_carries_the_bar_and_the_added_lines() -> None:
     # The write review is answered, source included.
     assert "review" in text
     assert "from the user's memory setup" in text
+
+
+def test_without_a_folder_scope_no_scope_line_is_offered() -> None:
+    text = capture.in_session_instruction(token=TOKEN, since=None, scopes=[])
+    assert "This folder's project scope" not in text
 
 
 def test_the_instruction_keeps_at_most_twenty_prompt_times() -> None:

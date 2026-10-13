@@ -860,6 +860,19 @@ class _CaptureWrite:
     review: dict[str, Any] | None = None
 
 
+# A capture's scope_mismatch refusal, answerable without the flag a capture
+# ignores: the body names another project's name or path, so the memory
+# takes that project's scope too, or loses the reference when the claim
+# does not need it.
+_CAPTURE_SCOPE_MISMATCH_HINT = (
+    "The body cites paths or project names that suggest this memory belongs "
+    "to another scope as well. A capture ignores acknowledge_scope_mismatch: "
+    "add the scope of the project the body names from `suggested_scopes` to "
+    "the declared list, or leave that reference out of the body when the "
+    "claim does not need it, and write it again with the same source."
+)
+
+
 # Inside a capture a refusal ends the capture: a write re-sent without the
 # tag would skip the capture rules, the undone gate and the membership an
 # undo reaches. Only an unknown token may be a write that was never one.
@@ -1040,6 +1053,11 @@ async def memory_write(
             _corroborate_duplicate(deps, state, decision)
         if captured is not None:
             decision.event_kwargs.setdefault("capture_batch", captured.batch.batch)
+            if decision.response.get("status") == "scope_mismatch":
+                # The general hint offers acknowledge_scope_mismatch, which
+                # a capture ignores: a model that took it would be refused
+                # again. Adding the subject's scope is the answer here.
+                decision.response["hint"] = _CAPTURE_SCOPE_MISMATCH_HINT
         deps.recorder.record("write", **decision.event_kwargs)
         return decision.response
 
