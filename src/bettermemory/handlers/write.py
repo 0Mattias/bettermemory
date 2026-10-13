@@ -878,11 +878,11 @@ _CAPTURE_REFUSAL_HINTS: dict[str, str] = {
         "the same source, or skip it."
     ),
     "user_claim_warning": (
-        "Not written. The body reads as a claim about the user, and a claim "
-        'about the user is filed as category "user-inference" (rule 8). '
-        'Write it again with category="user-inference" and the same source. '
-        "If it is about someone or something else, rephrase it so it does "
-        "not read as a claim about the user."
+        "Not written. The body reads as a claim about the user. When it "
+        "records a project or tool fact, rephrase it with that subject "
+        'instead of the user ("the tool needs ...", not "the user '
+        'wants ..."). When it is about the user, write it again with '
+        'category="user-inference" (rule 8). Either way, keep the same source.'
     ),
     # The body names another project's name or path, so the memory takes
     # that project's scope too, or loses the reference when the claim does

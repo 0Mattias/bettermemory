@@ -438,7 +438,8 @@ async def test_an_ordinary_refusal_keeps_its_hint(
 async def test_a_capture_user_claim_commits_as_the_hint_says(world: World) -> None:
     """The scratch run met user_claim_warning twice, each time told to pass
     acknowledge_user_claim, which a capture ignores. The capture's hint
-    says to file it as user-inference, and that write commits."""
+    says to file a claim about the user as user-inference, and that write
+    commits."""
     batch = world.open()
     body = "The user prefers tabs over spaces in Python files."
     refused = await world.capture_write(batch, body, category="fact")
@@ -448,6 +449,26 @@ async def test_a_capture_user_claim_commits_as_the_hint_says(world: World) -> No
     assert answered["status"] == "committed", answered
     [member] = capture.members(world.store, batch.batch)
     assert member.memory_id == answered["id"]
+
+
+async def test_a_capture_project_fact_read_as_a_user_claim_is_rephrased(
+    world: World,
+) -> None:
+    """The scratch run's two refusals were project facts put as what the
+    user wants. The capture's hint leads with the rephrase, and the
+    rephrased fact commits as a fact."""
+    batch = world.open()
+    refused = await world.capture_write(
+        batch,
+        "The user wants kettle to ship as a single static binary under 2 MB.",
+        category="fact",
+    )
+    assert refused["status"] == "user_claim_warning", refused
+    assert refused["hint"].index("rephrase") < refused["hint"].index("user-inference")
+    answered = await world.capture_write(
+        batch, "kettle ships as a single static binary under 2 MB.", category="fact"
+    )
+    assert answered["status"] == "committed", answered
 
 
 async def test_an_undone_body_is_refused_as_previously_undone(world: World) -> None:
