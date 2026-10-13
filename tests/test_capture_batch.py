@@ -12,6 +12,7 @@ so they exist with telemetry off.
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -315,8 +316,8 @@ async def test_a_capture_scope_mismatch_is_answered_by_the_scope_it_suggests(
     refused = await world.capture_write(batch, body, scopes=["projects:kettle"])
     assert refused["status"] == "scope_mismatch", refused
     assert "projects:bettermemory" in refused["suggested_scopes"]
-    assert "A capture ignores acknowledge_scope_mismatch" in refused["hint"]
-    assert "pass acknowledge_scope_mismatch=True" not in refused["hint"]
+    assert "acknowledge_" not in refused["hint"]
+    assert "suggested_scopes" in refused["hint"]
     again = await world.capture_write(
         batch, body, scopes=["projects:kettle"], acknowledge_scope_mismatch=True
     )
@@ -356,6 +357,97 @@ async def test_force_is_ignored_and_a_duplicate_records_no_corroboration(
     assert "corroboration_recorded" not in result
     assert world.store.load_one(first["id"]).corroborations == 0
     assert world.store.count_memories() == 1
+
+
+# Each gate refusal a capture write can meet: the status, a body that
+# meets it, and what the store holds first. The sha256 prefix is the
+# general hint's text at 7c14b8b1, which an ordinary write still returns.
+_SEEDED_PROJECT = (
+    "The bettermemory daemon binds 127.0.0.1 only.",
+    "projects:bettermemory",
+)
+_CAPTURE_REFUSALS: list[tuple[str, str, str, str]] = [
+    (
+        "credential_warning",
+        "The deploy key is AKIAIOSFODNN7EXAMPLE for the staging bucket.",
+        "",
+        "2d09f667ccc9760b",
+    ),
+    (
+        "transient_warning",
+        "The bettermemory daemon is currently bound to port 7397.",
+        "",
+        "c106ea3577745dba",
+    ),
+    (
+        "user_claim_warning",
+        "The user prefers tabs over spaces in Python files.",
+        "",
+        "4e607e3916fa782a",
+    ),
+    (
+        "scope_mismatch",
+        "kettle, the tea timer, keeps its presets in a bettermemory store.",
+        "project",
+        "67822625d4c97458",
+    ),
+    ("duplicate", BODY, "active", "3ddaa9661a70b0f5"),
+    ("previously_removed", BODY, "removed", "cf4139baca641ec5"),
+]
+
+
+async def _refused(
+    world: World, body: str, seed: str, *, captured: bool
+) -> dict[str, Any]:
+    """Seed the store, then send `body` once, captured or not."""
+    if seed == "project":
+        content, scope = _SEEDED_PROJECT
+        await world.write(content, scopes=[scope])
+    elif seed:
+        seeded = await world.write(BODY)
+        if seed == "removed":
+            await call_tool(
+                world.server, "memory_remove", {"id": seeded["id"], "reason": "wrong"}
+            )
+    scopes = ["projects:kettle"] if seed == "project" else ["tools"]
+    if not captured:
+        return await world.write(body, scopes=scopes)
+    return await world.capture_write(world.open(), body, scopes=scopes)
+
+
+@pytest.mark.parametrize(("status", "body", "seed", "pin"), _CAPTURE_REFUSALS)
+async def test_a_capture_refusal_names_no_flag_a_capture_ignores(
+    world: World, status: str, body: str, seed: str, pin: str
+) -> None:
+    refused = await _refused(world, body, seed, captured=True)
+    assert refused["status"] == status, refused
+    assert "force" not in refused["hint"]
+    assert "acknowledge_" not in refused["hint"]
+
+
+@pytest.mark.parametrize(("status", "body", "seed", "pin"), _CAPTURE_REFUSALS)
+async def test_an_ordinary_refusal_keeps_its_hint(
+    world: World, status: str, body: str, seed: str, pin: str
+) -> None:
+    refused = await _refused(world, body, seed, captured=False)
+    assert refused["status"] == status, refused
+    digest = hashlib.sha256(refused["hint"].encode("utf-8")).hexdigest()
+    assert digest[:16] == pin, status
+
+
+async def test_a_capture_user_claim_commits_as_the_hint_says(world: World) -> None:
+    """The scratch run met user_claim_warning twice, each time told to pass
+    acknowledge_user_claim, which a capture ignores. The capture's hint
+    says to file it as user-inference, and that write commits."""
+    batch = world.open()
+    body = "The user prefers tabs over spaces in Python files."
+    refused = await world.capture_write(batch, body, category="fact")
+    assert refused["status"] == "user_claim_warning", refused
+    assert 'category="user-inference"' in refused["hint"]
+    answered = await world.capture_write(batch, body, category="user-inference")
+    assert answered["status"] == "committed", answered
+    [member] = capture.members(world.store, batch.batch)
+    assert member.memory_id == answered["id"]
 
 
 async def test_an_undone_body_is_refused_as_previously_undone(world: World) -> None:

@@ -860,17 +860,48 @@ class _CaptureWrite:
     review: dict[str, Any] | None = None
 
 
-# A capture's scope_mismatch refusal, answerable without the flag a capture
-# ignores: the body names another project's name or path, so the memory
-# takes that project's scope too, or loses the reference when the claim
-# does not need it.
-_CAPTURE_SCOPE_MISMATCH_HINT = (
-    "The body cites paths or project names that suggest this memory belongs "
-    "to another scope as well. A capture ignores acknowledge_scope_mismatch: "
-    "add the scope of the project the body names from `suggested_scopes` to "
-    "the declared list, or leave that reference out of the body when the "
-    "claim does not need it, and write it again with the same source."
-)
+# A capture's refusals, by status, answerable without the flags a capture
+# ignores: the general hints offer `force` or an acknowledge flag, and a
+# model that took one would be refused again. Each says what to do inside
+# the capture instead, which for a body the store holds is to skip it
+# (rule 9: a capture does not update). The review's own secret and
+# restates refusals share the gates' statuses and take the same answers.
+_CAPTURE_REFUSAL_HINTS: dict[str, str] = {
+    "credential_warning": (
+        "Not written. The body holds a secret-shaped value (an API key, "
+        "private key, token or password). Leave the value out of the body "
+        "and write it again with the same source, or skip it."
+    ),
+    "transient_warning": (
+        "Not written. The body holds state that will not be true in a week. "
+        "Write only the durable part, without the time-bound words, and with "
+        "the same source, or skip it."
+    ),
+    "user_claim_warning": (
+        "Not written. The body reads as a claim about the user, and a claim "
+        'about the user is filed as category "user-inference" (rule 8). '
+        'Write it again with category="user-inference" and the same source. '
+        "If it is about someone or something else, rephrase it so it does "
+        "not read as a claim about the user."
+    ),
+    # The body names another project's name or path, so the memory takes
+    # that project's scope too, or loses the reference when the claim does
+    # not need it.
+    "scope_mismatch": (
+        "The body cites paths or project names that suggest this memory "
+        "belongs to another scope as well. Add the scope of the project the "
+        "body names from `suggested_scopes` to the declared list, or leave "
+        "that reference out of the body when the claim does not need it, and "
+        "write it again with the same source."
+    ),
+    "duplicate": (
+        "Not written. The store already holds this memory. Skip it: a "
+        "capture does not update stored memories."
+    ),
+    "previously_removed": (
+        "Not written. A memory saying this was removed before. Skip it."
+    ),
+}
 
 
 # Inside a capture a refusal ends the capture: a write re-sent without the
@@ -1053,11 +1084,7 @@ async def memory_write(
             _corroborate_duplicate(deps, state, decision)
         if captured is not None:
             decision.event_kwargs.setdefault("capture_batch", captured.batch.batch)
-            if decision.response.get("status") == "scope_mismatch":
-                # The general hint offers acknowledge_scope_mismatch, which
-                # a capture ignores: a model that took it would be refused
-                # again. Adding the subject's scope is the answer here.
-                decision.response["hint"] = _CAPTURE_SCOPE_MISMATCH_HINT
+            _capture_refusal_hint(decision.response)
         deps.recorder.record("write", **decision.event_kwargs)
         return decision.response
 
@@ -1105,7 +1132,7 @@ async def memory_write(
         return _commit_write(
             deps, payload=payload, commit=commit, active_snapshot=gc.active_snapshot
         )
-    return _reviewed_write(
+    response = _reviewed_write(
         deps,
         state,
         payload=payload,
@@ -1114,6 +1141,16 @@ async def memory_write(
         tau=tau,
         active_snapshot=gc.active_snapshot,
     )
+    if captured is not None:
+        _capture_refusal_hint(response)
+    return response
+
+
+def _capture_refusal_hint(response: dict[str, Any]) -> None:
+    """Swap a capture refusal's hint for the one a capture can follow."""
+    hint = _CAPTURE_REFUSAL_HINTS.get(response.get("status", ""))
+    if hint is not None:
+        response["hint"] = hint
 
 
 # ---------------------------------------------------------------------------
