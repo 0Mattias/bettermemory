@@ -54,12 +54,18 @@ KNOWN_BAD: tuple[tuple[str, str], ...] = (
         "the proxies argument.",
     ),
     ("no_todo", "TODO: the migration script for the billing tables is unfinished."),
-    ("no_todo", "Fix the flaky retry case in tests/test_sync.py before the 2.4 release."),
+    (
+        "no_todo",
+        "Fix the flaky retry case in tests/test_sync.py before the 2.4 release.",
+    ),
     ("drifting_count", "The acme-sync repository on GitHub has 1,240 stars."),
     ("drifting_count", "The ruff-lsp package sees 50k downloads a month on PyPI."),
     ("test_total", "The pytest suite for acme-sync reports 412 passed and 3 skipped."),
     ("test_total", "CI for the parser package ends with 1,038 tests passing."),
-    ("absolute_date", "The staging cluster was recently moved to the eu-west-2 region."),
+    (
+        "absolute_date",
+        "The staging cluster was recently moved to the eu-west-2 region.",
+    ),
     ("absolute_date", "The billing service moved off Heroku three weeks ago."),
 )
 
@@ -115,8 +121,7 @@ GOOD: tuple[str, ...] = (
     "overrides that path.",
     "The Rust crate acme-core uses edition 2021 and forbids unsafe code at the "
     "crate root.",
-    "Payments go through Stripe test mode on staging and live mode only in "
-    "production.",
+    "Payments go through Stripe test mode on staging and live mode only in production.",
 )
 
 
@@ -252,7 +257,9 @@ def main() -> None:
                 "refused_by_own_rule_only": bad_ok,
                 "by_intended_rule": dict(Counter(r["intended_rule"] for r in bad_rows)),
                 "write_path_status": dict(Counter(r["write_status"] for r in bad_rows)),
-                "with_transient_markers": sum(bool(r["transient_markers"]) for r in bad_rows),
+                "with_transient_markers": sum(
+                    bool(r["transient_markers"]) for r in bad_rows
+                ),
                 "rows": bad_rows,
             },
             "good": {
@@ -261,7 +268,9 @@ def main() -> None:
                 "refused_by_rule": dict(
                     Counter(x for r in good_rows for x in r["gate_rules"])
                 ),
-                "write_path_status": dict(Counter(r["write_status"] for r in good_rows)),
+                "write_path_status": dict(
+                    Counter(r["write_status"] for r in good_rows)
+                ),
                 "batch_members": path["good_batch_members"],
                 "with_transient_markers": sum(
                     bool(r["transient_markers"]) for r in good_rows
@@ -300,7 +309,9 @@ def main() -> None:
     for name, bound in doc["bounds"].items():
         print(f"{name}: {bound['observed']} ({bound['bound']}) {bound['verdict']}")
     print(f"integrity refused by rule: {dict(by_rule)}")
-    print(f"integrity read: {read['path']} sha256 {read['sha256']} at {read['read_at']}")
+    print(
+        f"integrity read: {read['path']} sha256 {read['sha256']} at {read['read_at']}"
+    )
 
 
 if __name__ == "__main__":

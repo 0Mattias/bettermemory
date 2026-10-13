@@ -1,0 +1,109 @@
+{
+  "bounds": {
+    "open_decision": {
+      "missed_if": "p50 over 120 ms",
+      "observed_ms": 14.58,
+      "prediction": "p50 under 60 ms",
+      "verdict": "HIT"
+    },
+    "service_delta": {
+      "missed_if": "capture-on p50 more than 10 ms above capture-off",
+      "observed_ms": 1.9,
+      "prediction": "capture-on p50 within 5 ms of capture-off",
+      "verdict": "HIT"
+    }
+  },
+  "commit": "cf406280ad8b776c5a9055377fc7195bd05bcbf4",
+  "daemon_pids": [
+    15085,
+    15095,
+    15105
+  ],
+  "kind": "daemon-latency-stop",
+  "machine": {
+    "cpu_count": 12,
+    "machine": "arm64",
+    "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+    "python": "3.13.13"
+  },
+  "method": {
+    "big_transcript": {
+      "assistant": 524,
+      "bytes": 5249704,
+      "text_chars": 953750,
+      "tool_result": 524,
+      "user": 524
+    },
+    "n": 200,
+    "open_decision": "capture_hook.on_stop in this process on the scratch store, capture on, a fresh session per sample over a hard link of the 5 MB transcript, so each reads the whole stretch and opens a batch",
+    "open_endpoint": "the same kind of opening Stop posted to the daemon's /api/v1/hook/stop, which also runs the turn audit",
+    "seed": 20261013,
+    "service": "_daemon_client.post to /api/v1/hook/stop from a warm client, attended '1', one session over a transcript below the checkpoint; capture off on one daemon start, then on (daily_cap 100000) on the next",
+    "small_transcript": {
+      "assistant": 3,
+      "bytes": 27631,
+      "text_chars": 5103,
+      "tool_result": 3,
+      "user": 3
+    },
+    "transcript_shape": "2.1.295",
+    "warm_ups": 5
+  },
+  "prediction": "CAPS-P4",
+  "results": {
+    "open_decision": {
+      "max_ms": 17.55,
+      "min_ms": 12.63,
+      "n": 200,
+      "p50_ms": 14.58,
+      "p95_ms": 16.33
+    },
+    "open_decision_actions": {
+      "opened": 200
+    },
+    "open_endpoint_opened": 200,
+    "open_endpoint_service": {
+      "max_ms": 38.76,
+      "min_ms": 18.29,
+      "n": 200,
+      "p50_ms": 22.17,
+      "p95_ms": 24.87
+    },
+    "read_stretch_5mb": {
+      "max_ms": 8.89,
+      "min_ms": 7.41,
+      "n": 200,
+      "p50_ms": 7.64,
+      "p95_ms": 8.06
+    },
+    "stop_service_capture_off": {
+      "max_ms": 4.73,
+      "min_ms": 2.09,
+      "n": 200,
+      "p50_ms": 3.36,
+      "p95_ms": 4.27
+    },
+    "stop_service_capture_on": {
+      "max_ms": 6.35,
+      "min_ms": 4.17,
+      "n": 200,
+      "p50_ms": 5.26,
+      "p95_ms": 6.13
+    },
+    "stop_service_on_replies_with_capture": 0,
+    "stop_service_p50_delta_ms": 1.9
+  },
+  "run_at": "2026-10-13T05:12:47.380003Z",
+  "scratch_removed": true,
+  "store": {
+    "memories_imported": {
+      "found": 3,
+      "imported": 3,
+      "present": 0,
+      "unparseable": 0
+    },
+    "migration_seconds": 0.92,
+    "source": "tests/fixtures/v8/store"
+  },
+  "version": "9.0.0.dev0"
+}

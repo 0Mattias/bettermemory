@@ -108,6 +108,26 @@ forbids).
     python bench/daemon/latency.py --arm prompt \\
         --v8 ~/.cache/bettermemory-v9/live-copy \\
         --out bench/daemon/results/latency-9.0.0-2026-10-11-prompt.json
+
+The stop arm (`--arm stop`, unit CAPS's CAPS-P4) times the Stop endpoint
+and the capture open decision (`run_stop_arm`):
+
+  stop_service_capture_off/on  `/api/v1/hook/stop` from a warm client,
+                               attended "1", one session over a transcript
+                               below the checkpoint, on one daemon start
+                               with `[capture] stop_checkpoint` off and the
+                               next with it on; N each.
+  open_decision                `capture_hook.on_stop` in this process over a
+                               synthetic 5 MB transcript in Claude Code
+                               2.1.295's row shape, a fresh session per
+                               sample so each one opens a batch; N.
+  open_endpoint_service        the same opening Stop through the daemon.
+
+The config lives under a scratch HOME, and the scratch directory is removed
+at the end.
+
+    python bench/daemon/latency.py --arm stop --v8 tests/fixtures/v8/store \\
+        --n 200 --out bench/daemon/results/latency-9.0.0-2026-10-13-stop.json
 """
 
 from __future__ import annotations
@@ -120,6 +140,7 @@ import json
 import os
 import platform
 import random
+import shutil
 import statistics
 import subprocess
 import sys
@@ -1163,18 +1184,376 @@ def write_artifact(out: Path, artifact: dict[str, Any]) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# The stop arm (unit CAPS, CAPS-P4)
+# ---------------------------------------------------------------------------
+
+#: Untimed warm-ups before each stop pass, the workload seed, and the size
+#: of the synthetic transcript the open decision reads.
+STOP_WARM_UPS = 5
+STOP_SEED = 20261013
+STOP_TRANSCRIPT_BYTES = 5 * 1024 * 1024
+#: The Claude Code version whose transcript rows the synthetic one copies.
+STOP_TRANSCRIPT_VERSION = "2.1.295"
+STOP_SESSION = "c4b1e2d3-0000-4a5b-8c6d-stopbench0001"
+STOP_WORDS = (
+    "daemon store batch capture hook transcript session config release branch "
+    "schema index migration parser token cache worker request reply mirror "
+    "tombstone review gate rule scope project service endpoint latency sample"
+).split()
+
+
+def _stop_text(rng: random.Random, words: int) -> str:
+    return " ".join(rng.choice(STOP_WORDS) for _ in range(words)) + "."
+
+
+def stop_transcript(
+    path: Path, target_bytes: int, seed: int = STOP_SEED
+) -> dict[str, int]:
+    """A synthetic transcript of about `target_bytes` in Claude Code
+    2.1.295's row shape: user rows whose message.content is the prompt
+    string, assistant rows whose message.content is a list of thinking,
+    text and tool_use blocks, and user rows carrying a tool_result, the
+    bulk of a real transcript's bytes. Returns the row counts, the bytes,
+    and the characters of prompt and assistant text (what the checkpoint
+    counts)."""
+    rng = random.Random(seed)
+    counts = {"user": 0, "assistant": 0, "tool_result": 0, "text_chars": 0}
+    written = 0
+    turn = 0
+    parent: str | None = None
+
+    def row(kind: str, message: dict[str, Any], **extra: Any) -> dict[str, Any]:
+        nonlocal parent
+        uuid = f"{turn:08x}-0000-4000-8000-{rng.getrandbits(48):012x}"
+        doc = {
+            "parentUuid": parent,
+            "isSidechain": False,
+            "userType": "external",
+            "cwd": "/work/stop-bench",
+            "sessionId": STOP_SESSION,
+            "version": STOP_TRANSCRIPT_VERSION,
+            "gitBranch": "main",
+            "type": kind,
+            "message": message,
+            "uuid": uuid,
+            "timestamp": (
+                f"2026-10-13T{(turn // 60) % 24:02d}:{turn % 60:02d}:00.000Z"
+            ),
+            **extra,
+        }
+        parent = uuid
+        return doc
+
+    with path.open("w", encoding="utf-8") as fh:
+        while written < target_bytes:
+            prompt = _stop_text(rng, rng.randint(20, 120))
+            answer = _stop_text(rng, rng.randint(60, 300))
+            tool_id = f"toolu_{turn:010d}"
+            rows = [
+                row("user", {"role": "user", "content": prompt}),
+                row(
+                    "assistant",
+                    {
+                        "id": f"msg_{turn:010d}",
+                        "type": "message",
+                        "role": "assistant",
+                        "model": "claude-opus-5-5",
+                        "content": [
+                            {
+                                "type": "thinking",
+                                "thinking": _stop_text(rng, 40),
+                                "signature": "s",
+                            },
+                            {"type": "text", "text": answer},
+                            {
+                                "type": "tool_use",
+                                "id": tool_id,
+                                "name": "Read",
+                                "input": {"file_path": "/work/stop-bench/app.py"},
+                            },
+                        ],
+                        "stop_reason": "tool_use",
+                        "usage": {"input_tokens": 1200, "output_tokens": 300},
+                    },
+                    requestId=f"req_{turn:010d}",
+                ),
+                row(
+                    "user",
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tool_id,
+                                "content": _stop_text(rng, rng.randint(300, 1500)),
+                            }
+                        ],
+                    },
+                    toolUseResult={"type": "text"},
+                ),
+            ]
+            for doc in rows:
+                line = json.dumps(doc) + "\n"
+                fh.write(line)
+                written += len(line.encode("utf-8"))
+            counts["user"] += 1
+            counts["assistant"] += 1
+            counts["tool_result"] += 1
+            counts["text_chars"] += len(prompt) + len(answer)
+            turn += 1
+    counts["bytes"] = written
+    return counts
+
+
+def _stop_config(env: dict[str, str], *, enabled: bool) -> None:
+    """The scratch HOME's config.toml with `[capture]` on or off."""
+    proc = subprocess.run(
+        [
+            PYTHON,
+            "-c",
+            "from bettermemory.config import default_config_path; "
+            "print(default_config_path())",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    path = Path(proc.stdout.strip())
+    if not str(path).startswith(env["HOME"]):
+        raise SystemExit(f"config path {path} is outside the scratch HOME")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flag = "true" if enabled else "false"
+    path.write_text(
+        f"[capture]\nstop_checkpoint = {flag}\ndaily_cap = 100000\n", encoding="utf-8"
+    )
+
+
+def _stop_pass(
+    env: dict[str, str],
+    scratch: Path,
+    *,
+    enabled: bool,
+    payloads: list[dict[str, Any]],
+    warm_ups: list[dict[str, Any]],
+) -> tuple[list[float], list[dict[str, Any]], int | None]:
+    """One daemon start with capture on or off: the warm-ups, then each
+    payload posted to /api/v1/hook/stop and timed; the daemon is stopped
+    with `down` under the scratch env. Returns the times, replies and pid."""
+    from bettermemory._daemon_client import post, read_state
+
+    _stop_config(env, enabled=enabled)
+    up = _cli(["up", "--port", "0"], env)
+    if up.returncode != 0:
+        raise SystemExit(f"daemon did not start: {up.stderr[-500:]}")
+    state = read_state(scratch / "state", scratch / "store" / "memory.sqlite")
+    if state is None:
+        _cli(["down"], env)
+        raise SystemExit("no daemon state for the stop arm")
+    times: list[float] = []
+    replies: list[dict[str, Any]] = []
+    try:
+        for payload in warm_ups:
+            post(
+                state["port"], state["token"], "/api/v1/hook/stop", payload, timeout=30
+            )
+        for payload in payloads:
+            started = time.perf_counter()
+            reply = post(
+                state["port"], state["token"], "/api/v1/hook/stop", payload, timeout=30
+            )
+            times.append(time.perf_counter() - started)
+            replies.append(reply)
+    finally:
+        _cli(["down"], env)
+    return times, replies, state.get("pid")
+
+
+def run_stop_arm(*, v8: Path, scratch: Path, n: int) -> dict[str, Any]:
+    """CAPS-P4. The /hook/stop service time with `[capture] stop_checkpoint`
+    off against on (attended "1", nothing due: one session over a transcript
+    far below the threshold), each from a warm client on its own daemon
+    start; then the open decision over a 5 MB transcript, as
+    `capture_hook.on_stop` in this process (the graded number: a fresh
+    session per sample, so each reads the whole stretch and opens a batch)
+    and as the daemon's service time for the same kind of opening Stop."""
+    refuse_live_store(scratch)
+    scratch.mkdir(parents=True, exist_ok=True)
+    # Resolved: the daemon keys its state file by the resolved store path
+    # (/var is /private/var on macOS).
+    scratch = scratch.resolve()
+    env = _env(scratch)
+    env["HOME"] = str(scratch / "home")
+    env.pop("CLAUDE_CODE_SESSION_ATTENDED", None)
+    (scratch / "home").mkdir(parents=True, exist_ok=True)
+    report = migrate(v8, scratch, env)
+    print(f"migrated in {report['seconds']} s", file=sys.stderr)
+
+    tdir = scratch / "transcripts"
+    tdir.mkdir()
+    small = tdir / f"{STOP_SESSION}.jsonl"
+    small_shape = stop_transcript(small, 20_000)
+
+    def stop(session: str, path: Path) -> dict[str, Any]:
+        return {
+            "session_id": session,
+            "transcript_path": str(path),
+            "cwd": str(ROOT),
+            "attended": "1",
+            "quiet": True,
+        }
+
+    idle = [stop(STOP_SESSION, small) for _ in range(n)]
+    warm = idle[:STOP_WARM_UPS]
+    pids: list[int | None] = []
+    off, _, pid = _stop_pass(env, scratch, enabled=False, payloads=idle, warm_ups=warm)
+    pids.append(pid)
+    print(f"stop service, capture off {_summary(off)}", file=sys.stderr)
+    on, on_replies, pid = _stop_pass(
+        env, scratch, enabled=True, payloads=idle, warm_ups=warm
+    )
+    pids.append(pid)
+    print(f"stop service, capture on {_summary(on)}", file=sys.stderr)
+
+    # A transcript is acted on only when its file is named for its session,
+    # so each fresh session gets a hard link to the one 5 MB file.
+    big = tdir / "big.jsonl"
+    big_shape = stop_transcript(big, STOP_TRANSCRIPT_BYTES)
+
+    def linked(prefix: str) -> list[dict[str, Any]]:
+        out = []
+        for i in range(n + STOP_WARM_UPS):
+            session = f"c4b1e2d3-{prefix}-4a5b-8c6d-{i:012d}"
+            os.link(big, tdir / f"{session}.jsonl")
+            out.append(stop(session, tdir / f"{session}.jsonl"))
+        return out
+
+    opening = linked("0000")
+    open_times, open_replies, pid = _stop_pass(
+        env,
+        scratch,
+        enabled=True,
+        payloads=opening[STOP_WARM_UPS:],
+        warm_ups=opening[:STOP_WARM_UPS],
+    )
+    pids.append(pid)
+    print(f"opening stop service {_summary(open_times)}", file=sys.stderr)
+
+    # The decision itself, in this process, on the same store with the
+    # daemon down.
+    for name in ("HOME", "BETTERMEMORY_DIR", "BETTERMEMORY_KEYS_DIR"):
+        os.environ[name] = env[name]
+    from bettermemory import capture_hook
+    from bettermemory.config import CaptureConfig, Config, StorageConfig
+    from bettermemory.store import Store
+
+    config = Config(
+        storage=StorageConfig(directory=str(scratch / "store")),
+        capture=CaptureConfig(stop_checkpoint=True, daily_cap=100_000),
+    )
+    store = Store(scratch / "store")
+    decision: list[float] = []
+    decided = Counter[str]()
+    for index, payload in enumerate(linked("1111")):
+        started = time.perf_counter()
+        step = capture_hook.on_stop(config, store, payload)
+        elapsed = time.perf_counter() - started
+        if index >= STOP_WARM_UPS:
+            decision.append(elapsed)
+            decided[step.action if step else "none"] += 1
+    read_only: list[float] = []
+    for _ in range(n):
+        started = time.perf_counter()
+        capture_hook.read_stretch(big, 0)
+        read_only.append(time.perf_counter() - started)
+    store.close()
+
+    from bettermemory import __version__
+
+    off_s, on_s, decision_s = _summary(off), _summary(on), _summary(decision)
+    delta = round(on_s["p50_ms"] - off_s["p50_ms"], 2)
+    return {
+        "kind": "daemon-latency-stop",
+        "prediction": "CAPS-P4",
+        "version": __version__,
+        "commit": _git("rev-parse", "HEAD"),
+        "run_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "machine": _machine(),
+        "store": {
+            "source": str(v8),
+            "memories_imported": report.get("memories", {}),
+            "migration_seconds": report["seconds"],
+        },
+        "method": {
+            "n": n,
+            "warm_ups": STOP_WARM_UPS,
+            "seed": STOP_SEED,
+            "transcript_shape": STOP_TRANSCRIPT_VERSION,
+            "small_transcript": small_shape,
+            "big_transcript": big_shape,
+            "service": (
+                "_daemon_client.post to /api/v1/hook/stop from a warm client, "
+                "attended '1', one session over a transcript below the "
+                "checkpoint; capture off on one daemon start, then on "
+                "(daily_cap 100000) on the next"
+            ),
+            "open_decision": (
+                "capture_hook.on_stop in this process on the scratch store, "
+                "capture on, a fresh session per sample over a hard link of the "
+                "5 MB transcript, so each reads the whole stretch and opens a batch"
+            ),
+            "open_endpoint": (
+                "the same kind of opening Stop posted to the daemon's "
+                "/api/v1/hook/stop, which also runs the turn audit"
+            ),
+        },
+        "results": {
+            "stop_service_capture_off": off_s,
+            "stop_service_capture_on": on_s,
+            "stop_service_p50_delta_ms": delta,
+            "stop_service_on_replies_with_capture": sum(
+                "capture" in r for r in on_replies
+            ),
+            "open_decision": decision_s,
+            "open_decision_actions": dict(decided),
+            "open_endpoint_service": _summary(open_times),
+            "open_endpoint_opened": sum(
+                (r.get("capture") or {}).get("action") == "opened" for r in open_replies
+            ),
+            "read_stretch_5mb": _summary(read_only),
+        },
+        "bounds": {
+            "service_delta": {
+                "prediction": "capture-on p50 within 5 ms of capture-off",
+                "missed_if": "capture-on p50 more than 10 ms above capture-off",
+                "observed_ms": delta,
+                "verdict": "MISSED" if delta > 10 else "HIT",
+            },
+            "open_decision": {
+                "prediction": "p50 under 60 ms",
+                "missed_if": "p50 over 120 ms",
+                "observed_ms": decision_s["p50_ms"],
+                "verdict": "MISSED" if decision_s["p50_ms"] > 120 else "HIT",
+            },
+        },
+        "daemon_pids": pids,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
         "--arm",
-        choices=("read", "write", "prompt"),
+        choices=("read", "write", "prompt", "stop"),
         default="read",
         help=(
             "read: the hook and memory_search arms (the default); write: the "
             "memory_write arm on a copy imported from --tgz; prompt: the "
-            "per-prompt recall, prompts spaced 3 s apart"
+            "per-prompt recall, prompts spaced 3 s apart; stop: the /hook/stop "
+            "service time with capture off and on, and the capture open decision"
         ),
     )
     parser.add_argument(
@@ -1240,6 +1619,18 @@ def main() -> None:
             tempfile.mkdtemp(prefix="bettermemory-daemon-prompt-bench-")
         )
         artifact = run_prompt_arm(v8=args.v8, scratch=scratch, n=args.n)
+        write_artifact(args.out, artifact)
+        print(f"wrote {args.out}", file=sys.stderr)
+        return
+    if args.arm == "stop":
+        scratch = args.scratch or Path(
+            tempfile.mkdtemp(prefix="bettermemory-daemon-stop-bench-")
+        )
+        try:
+            artifact = run_stop_arm(v8=args.v8, scratch=scratch, n=args.n)
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
+        artifact["scratch_removed"] = not scratch.exists()
         write_artifact(args.out, artifact)
         print(f"wrote {args.out}", file=sys.stderr)
         return

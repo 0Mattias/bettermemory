@@ -49,7 +49,9 @@ import _common  # noqa: E402
 CAPTURE_N = 10
 CAPTURE_SEED = 20261013
 FIXTURE = _common.ROOT / "tests" / "fixtures" / "v8" / "store"
-BACKUP = Path("~/.cache/bettermemory-v9/live-backup-2026-10-11/memory.sqlite").expanduser()
+BACKUP = Path(
+    "~/.cache/bettermemory-v9/live-backup-2026-10-11/memory.sqlite"
+).expanduser()
 
 
 def _files(root: Path) -> dict[str, bytes]:
@@ -127,7 +129,9 @@ def run_store(name: str, v8_root: Path, scratch: Path, bodies: list[str]) -> dic
     tombs = {
         k
         for k in new
-        if k.startswith(TOMBSTONE_DIR + "/") and any(i in k for i in ids) and k not in old
+        if k.startswith(TOMBSTONE_DIR + "/")
+        and any(i in k for i in ids)
+        and k not in old
     }
     rest = {k: v for k, v in new.items() if k not in tombs}
     differing = sum(old[k] != rest[k] for k in old.keys() & rest.keys())
