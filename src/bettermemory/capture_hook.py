@@ -32,6 +32,12 @@ batch the log shows open for the session is settled), at most
 since the watermark holds `checkpoint_tokens` of human prompts and
 assistant text. The file must first have grown by that many tokens'
 bytes, so nothing is parsed until a checkpoint could be due.
+
+THE REPLY. Claude Code may run the Stop hook before the turn's last reply
+reaches the transcript; the payload's `last_assistant_message` carries
+its text. When the stretch read from the file does not already hold that
+text, its length counts toward both measures, so a first message that
+crosses the checkpoint only together with its reply still opens a batch.
 """
 
 from __future__ import annotations
@@ -89,6 +95,9 @@ class Stretch:
     since: str | None = None
     prompt_times: list[str] = field(default_factory=list)
     compacted: bool = False
+    # The assistant text since the stretch's last human prompt, joined, the
+    # turn a Stop's `last_assistant_message` ends (`unflushed_reply`).
+    tail: str = ""
 
 
 def hook_output(instruction: str) -> str:
@@ -150,14 +159,36 @@ def read_stretch(path: Path, offset: int) -> Stretch:
         if row.get("type") == "assistant":
             message = row.get("message")
             content = message.get("content") if isinstance(message, dict) else None
-            out.chars += len(_flatten_assistant_content(content) or "")
+            text = _flatten_assistant_content(content) or ""
+            out.chars += len(text)
+            if text:
+                out.tail = f"{out.tail}\n{text}" if out.tail else text
             continue
         prompt = human_prompt(row)
         if prompt is not None:
             out.chars += len(prompt)
+            out.tail = ""
             if isinstance(stamp, str):
                 out.prompt_times.append(stamp)
     return out
+
+
+def _reply_of(payload: Mapping[str, Any]) -> str:
+    """The Stop payload's `last_assistant_message`, "" when absent or not
+    a string."""
+    reply = payload.get("last_assistant_message")
+    return reply if isinstance(reply, str) else ""
+
+
+def unflushed_reply(stretch: Stretch, reply: str) -> int:
+    """The characters of the Stop's last reply the stretch does not hold:
+    its length, or 0 when the turn's assistant text in the file already
+    holds it (whitespace aside, since the transcript keeps a message's
+    text blocks as separate rows) or the reply is empty."""
+    wanted = " ".join(reply.split())
+    if not wanted:
+        return 0
+    return 0 if wanted in " ".join(stretch.tail.split()) else len(reply)
 
 
 def _close_expired(store: Store, now: datetime) -> None:
@@ -267,10 +298,13 @@ def on_stop(
 
     tokens = max(config.capture.checkpoint_tokens, MIN_CHECKPOINT_TOKENS)
     threshold = tokens * CHARS_PER_TOKEN
-    if size - offset < threshold:
+    # The reply bounds the file's growth from above before the file is
+    # read; once it is, the reply counts only when the file lacks it.
+    reply = _reply_of(payload)
+    if size - offset + len(reply) < threshold:
         return None
     stretch = read_stretch(path, offset)
-    if stretch.chars < threshold:
+    if stretch.chars + unflushed_reply(stretch, reply) < threshold:
         return None
     from .hook import _origin_for
 
@@ -341,4 +375,5 @@ __all__ = [
     "hook_output",
     "on_stop",
     "read_stretch",
+    "unflushed_reply",
 ]
