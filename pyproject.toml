@@ -273,6 +273,12 @@ filterwarnings = [
 # sha chain that makes its reads auditable. The emitters own their style.
 extend-exclude = ["bench/w/artifacts/w3c_table_*.py"]
 
+[tool.ruff.lint]
+# Pinned to ruff 0.15's default set. 0.17 dropped F403 and the E7xx rules
+# from its defaults, which would silently remove the star-import backstop
+# _rename_call_kind's docstring relies on (tests/test_fsutil.py checks it).
+select = ["E4", "E7", "E9", "F"]
+
 [tool.ruff.lint.per-file-ignores]
 # conftest.py does sys.path manipulation before imports as a belt-and-suspenders
 # fix for the iCloud UF_HIDDEN .venv issue — see the comment in conftest.py.
