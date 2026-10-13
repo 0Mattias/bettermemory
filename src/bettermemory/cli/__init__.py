@@ -31,6 +31,7 @@ import argparse
 
 from . import (
     audit_turn_cmd,
+    capture_cmd,
     daemon_cmd,
     episodes,
     eval as eval_cmd,
@@ -123,6 +124,7 @@ def _build_parser() -> tuple[
         "prompt-recall": prompt_recall_cmd.add_subparser(sub),
         "eval": eval_cmd.add_subparser(sub),
         "review": review_cmd.add_subparser(sub),
+        "capture": capture_cmd.add_subparser(sub),
         "recall": recall_cmd.add_subparser(sub),
         "rename-scope": rename_scope.add_subparser(sub),
         "try": try_cmd.add_subparser(sub),
@@ -243,6 +245,9 @@ def main() -> None:
         return
     if cmd == "review":
         review_cmd.run(args, sub_parser=subparsers["review"])
+        return
+    if cmd == "capture":
+        capture_cmd.run(args, sub_parser=subparsers["capture"])
         return
     if cmd == "recall":
         recall_cmd.run(args, sub_parser=subparsers["recall"])
