@@ -7,8 +7,10 @@ a batch (`capture.open_batch`) and answer with the instruction as the
 hook's `additionalContext`, which Claude Code hands the model as it
 continues the turn. The next Stop arrives with `stop_hook_active` set and
 settles the batch: the stretch up to the transcript's size then is
-captured. A Stop without the flag that finds the batch still open means
-the user interrupted the capture turn: it closes as interrupted, nothing
+captured. A Stop without the flag that finds the batch still open, with
+the transcript moved past where it opened (at the same size it is a
+duplicate call of the Stop that opened it), means the user interrupted
+the capture turn: it closes as interrupted, nothing
 is captured, and the session is left alone for `QUIET_AFTER_INTERRUPT`.
 A batch whose instruction never reached the model closes as failed
 instead (`close_failed`), which neither goes quiet nor counts.
@@ -214,8 +216,8 @@ def on_stop(
     when = now or utcnow()
     _close_expired(store, when)
     size = path.stat().st_size
-    mine = cap.open_batch_for_session(store, session_id, now=when)
     if payload.get("stop_hook_active") is True:
+        mine = cap.open_batch_for_session(store, session_id, now=when)
         if mine is None:
             return None
         try:
@@ -230,8 +232,14 @@ def on_stop(
         except cap.BatchClosedError:
             return None
         return StopStep(SETTLED, mine.batch)
-    if mine is not None:
-        try:
+    # Decided under the write lock the open takes. A batch opened at this
+    # very transcript size was opened in this same Stop round, by a sibling
+    # call (a Stop hook registered twice), and stands; one the transcript
+    # has moved past since is the capture turn the user interrupted.
+    with store.batch():
+        mine = cap.open_batch_for_session(store, session_id, now=when)
+        same_round = mine is not None and mine.transcript_bytes == size
+        if mine is not None and not same_round:
             cap.close_batch(
                 store,
                 mine,
@@ -240,9 +248,8 @@ def on_stop(
                 transcript_bytes=size,
                 now=when,
             )
-        except cap.BatchClosedError:
-            return None
-        return StopStep(INTERRUPTED, mine.batch)
+    if mine is not None:
+        return None if same_round else StopStep(INTERRUPTED, mine.batch)
     last = cap.last_close(store, session_id)
     if (
         last is not None

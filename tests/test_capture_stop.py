@@ -294,6 +294,53 @@ def test_an_interrupted_capture_captures_nothing_and_goes_quiet(
     assert cap.batches(store)[-1].offset == 0
 
 
+def test_a_duplicate_stop_in_the_same_round_leaves_the_new_batch_open(
+    enabled: Config, store: Store, transcript: Path
+) -> None:
+    """A Stop hook registered twice fires twice per turn end. The second
+    call finds the batch the first just opened, at the same transcript
+    size and without the flag: that is the same Stop round, not an
+    interrupt, so the batch stands and its continuation settles it."""
+    append(transcript, long_session(3))
+    opened = stop(enabled, store, transcript)
+    assert opened is not None and opened.action == ch.OPENED
+    assert stop(enabled, store, transcript) is None
+    assert cap.closes(store) == {}
+    append(transcript, [assistant("Saved one memory.")])
+    settled = stop(enabled, store, transcript, active=True)
+    assert settled is not None and settled.action == ch.SETTLED
+
+
+def test_racing_duplicate_stops_open_one_batch_and_interrupt_none(
+    enabled: Config, transcript: Path, tmp_path: Path
+) -> None:
+    import threading
+
+    append(transcript, long_session(3))
+    Store(tmp_path / "store").close()
+    barrier = threading.Barrier(4)
+    steps: list[ch.StopStep | None] = []
+
+    def call() -> None:
+        own = Store(tmp_path / "store")
+        barrier.wait()
+        try:
+            steps.append(stop(enabled, own, transcript))
+        finally:
+            own.close()
+
+    threads = [threading.Thread(target=call) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    actions = sorted(s.action for s in steps if s is not None)
+    assert actions == [ch.OPENED]
+    check = Store(tmp_path / "store")
+    assert len(cap.batches(check)) == 1 and cap.closes(check) == {}
+    check.close()
+
+
 def test_an_expired_batch_closes_as_expired(
     enabled: Config, store: Store, transcript: Path
 ) -> None:
