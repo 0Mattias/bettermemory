@@ -177,6 +177,29 @@ async def test_a_closed_or_expired_batch_takes_no_more_writes(world: World) -> N
     assert world.store.count_memories() == 0
 
 
+def test_a_refusal_inside_a_capture_ends_it_rather_than_routing_around() -> None:
+    """A write refused by a closed, expired or mismatched batch must not
+    be re-sent without the tag, which would skip the capture rules, the
+    undone gate and membership. Only an unknown token may mean the model
+    was never asked to capture."""
+    from bettermemory.handlers.write import _CAPTURE_TOKEN_HINTS
+
+    inside = (
+        capture.BATCH_CLOSED,
+        capture.BATCH_EXPIRED,
+        "capture_session_mismatch",
+    )
+    assert set(_CAPTURE_TOKEN_HINTS) == {capture.TOKEN_UNKNOWN, *inside}
+    for rule in inside:
+        hint = _CAPTURE_TOKEN_HINTS[rule]
+        assert "Drop the" not in hint and "ordinary memory" not in hint, rule
+        assert "Do not write it without the capture: source" in hint, rule
+        assert "End the capture" in hint, rule
+    unknown = _CAPTURE_TOKEN_HINTS[capture.TOKEN_UNKNOWN]
+    assert "If you were not asked to capture, drop the capture: source" in unknown
+    assert "Copy the token exactly" in unknown
+
+
 async def test_a_clear_shaped_write_is_joined_by_the_bridge(
     world: World, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -858,23 +858,30 @@ class _CaptureWrite:
     joined_by: str
 
 
+# Inside a capture a refusal ends the capture: a write re-sent without the
+# tag would skip the capture rules, the undone gate and the membership an
+# undo reaches. Only an unknown token may be a write that was never one.
+_END_CAPTURE = (
+    "Do not write it without the capture: source. End the capture: write "
+    "nothing more, stop, and tell the user in one short line what you saved."
+)
 _CAPTURE_TOKEN_HINTS: dict[str, str] = {
     _capture.TOKEN_UNKNOWN: (
         "Not written. No capture batch has this token. Copy the token exactly "
-        "from the capture instruction, or drop the capture: source if you "
-        "were not asked to capture."
+        "from the capture instruction. If you were not asked to capture, drop "
+        "the capture: source."
     ),
     _capture.BATCH_CLOSED: (
         "Not written. This capture batch has settled and takes no more writes. "
-        "Drop the capture: source to write it as an ordinary memory."
+        + _END_CAPTURE
     ),
     _capture.BATCH_EXPIRED: (
-        "Not written. This capture batch expired before it settled. Drop the "
-        "capture: source to write it as an ordinary memory."
+        "Not written. This capture batch expired before it settled. "
+        + _END_CAPTURE
     ),
     "capture_session_mismatch": (
         "Not written. This capture batch belongs to another conversation. "
-        "Drop the capture: source to write it as an ordinary memory."
+        + _END_CAPTURE
     ),
 }
 
