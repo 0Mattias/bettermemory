@@ -16,11 +16,16 @@ that applies the undo, and the conflict rows the members' own writes
 filed are deleted in it.
 Members come from the membership rows, so an interrupted batch, which has
 no settled close, is undoable too.
+
+`capture sample` draws live members for the owner to grade against the
+bar, and `capture grade` records each grade as a `capture_grade` event,
+which `grade_tally` counts per ISO week.
 """
 
 from __future__ import annotations
 
 import json
+import random
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field
@@ -29,7 +34,7 @@ from typing import Any
 
 from . import capture as cap
 from .log import CAPTURE_UNDO
-from .models import utcnow
+from .models import Memory, utcnow
 from .store import NotFoundError, Store, TombstonedError
 from .time_utils import isoformat_utc, parse_event_ts
 
@@ -296,12 +301,86 @@ def render_undo(report: UndoReport) -> str:
     return "\n".join(lines) + "\n"
 
 
+# ---------------------------------------------------------------------------
+# Grading
+# ---------------------------------------------------------------------------
+
+# The owner grades a sample of captured memories against `CAPTURE_RULES`
+# (`bettermemory capture sample` / `capture grade`); CAPS-P9 reads the
+# tally: from week 2, at least 16 of 20 meet all ten rules.
+DEFAULT_SAMPLE_SIZE = 20
+CAPTURE_GRADE = "capture_grade"
+
+
+def live_members(store: Store) -> list[tuple[cap.Member, Memory]]:
+    """Each captured memory still active and not undone, with its record,
+    in log order."""
+    undone: set[str] = set()
+    for row in store.capture_rows({CAPTURE_UNDO}):
+        undone.update(json.loads(row.payload).get("memory_ids") or [])
+    out: list[tuple[cap.Member, Memory]] = []
+    seen: set[str] = set()
+    for member in cap.members(store):
+        if member.memory_id in undone or member.memory_id in seen:
+            continue
+        seen.add(member.memory_id)
+        try:
+            out.append((member, store.load_one(member.memory_id)))
+        except (NotFoundError, TombstonedError):
+            continue
+    return out
+
+
+def draw_members(
+    population: list[tuple[cap.Member, Memory]], *, n: int, seed: int
+) -> list[tuple[cap.Member, Memory]]:
+    """A seeded random draw of `n`, in log order."""
+    picked = random.Random(seed).sample(population, min(max(0, n), len(population)))
+    return sorted(picked, key=lambda pair: pair[0].seq)
+
+
+def grade_tally(events: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, int]]:
+    """Graded and meets-all-rules counts per ISO week (`2026-W42`), the
+    latest grade of a memory in a week counting once."""
+    latest: dict[tuple[str, str], bool] = {}
+    for event in events:
+        stamp = parse_event_ts(event.get("ts"))
+        memory_id = event.get("memory_id")
+        if event.get("kind") != CAPTURE_GRADE or stamp is None:
+            continue
+        if not isinstance(memory_id, str):
+            continue
+        year, number, _ = stamp.isocalendar()
+        latest[(f"{year}-W{number:02d}", memory_id)] = event.get("meets") is True
+    out: dict[str, dict[str, int]] = {}
+    for (week, _memory), meets in sorted(latest.items()):
+        counts = out.setdefault(week, {"graded": 0, "meets": 0})
+        counts["graded"] += 1
+        counts["meets"] += int(meets)
+    return out
+
+
+def render_tally(tally: Mapping[str, Mapping[str, int]]) -> str:
+    if not tally:
+        return "No capture grades yet.\n"
+    return "".join(
+        f"{week}: {c['meets']} of {c['graded']} meet all ten rules\n"
+        for week, c in tally.items()
+    )
+
+
 __all__ = [
+    "CAPTURE_GRADE",
+    "DEFAULT_SAMPLE_SIZE",
     "UndoReport",
     "apply_undo",
+    "draw_members",
+    "grade_tally",
+    "live_members",
     "plan_undo",
     "refusal_rules",
     "render_review",
+    "render_tally",
     "render_undo",
     "review",
 ]
