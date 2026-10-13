@@ -1,0 +1,60 @@
+{
+  "kind": "capture-surface",
+  "prediction": "CAPS-P6",
+  "run_at": "2026-10-13T05:14:59Z",
+  "head": "f1f67cd87c790c334db940789ade1ad5fab1db74",
+  "baseline": {
+    "rev": "eceb9a5",
+    "commit": "eceb9a589faed9edc9d326c64a8f5b5ebb18358f"
+  },
+  "method": "bench/toolcost/run.py probe_tools (sandbox HOME, raw JSON-RPC); bytes and sha256 of the tools array serialized with sort_keys and compact separators (toolcost's full_bytes blob) and of the instructions string as UTF-8",
+  "at_head": {
+    "shim": {
+      "tool_count": 9,
+      "tools_list_bytes": 8144,
+      "tools_list_sha256": "3a0870d4a06cc696779f7df6e5936bba2b3eb536c16d65ed3e57c4e6f9f9ef17",
+      "instructions_bytes": 1000,
+      "instructions_sha256": "cd2ff0132fa4fe8268b3e5944af81406104f7faec238f2b5b80620940af3e5e4",
+      "session_bytes": 9144
+    },
+    "serve": {
+      "tool_count": 9,
+      "tools_list_bytes": 8144,
+      "tools_list_sha256": "3a0870d4a06cc696779f7df6e5936bba2b3eb536c16d65ed3e57c4e6f9f9ef17",
+      "instructions_bytes": 1000,
+      "instructions_sha256": "cd2ff0132fa4fe8268b3e5944af81406104f7faec238f2b5b80620940af3e5e4",
+      "session_bytes": 9144
+    }
+  },
+  "at_baseline": {
+    "shim": {
+      "tool_count": 9,
+      "tools_list_bytes": 8144,
+      "tools_list_sha256": "3a0870d4a06cc696779f7df6e5936bba2b3eb536c16d65ed3e57c4e6f9f9ef17",
+      "instructions_bytes": 1000,
+      "instructions_sha256": "cd2ff0132fa4fe8268b3e5944af81406104f7faec238f2b5b80620940af3e5e4",
+      "session_bytes": 9144
+    },
+    "serve": {
+      "tool_count": 9,
+      "tools_list_bytes": 8144,
+      "tools_list_sha256": "3a0870d4a06cc696779f7df6e5936bba2b3eb536c16d65ed3e57c4e6f9f9ef17",
+      "instructions_bytes": 1000,
+      "instructions_sha256": "cd2ff0132fa4fe8268b3e5944af81406104f7faec238f2b5b80620940af3e5e4",
+      "session_bytes": 9144
+    }
+  },
+  "identical": {
+    "shim": {
+      "tools_list": true,
+      "instructions": true
+    },
+    "serve": {
+      "tools_list": true,
+      "instructions": true
+    }
+  },
+  "revision_2_tools_list_bytes": 8144,
+  "head_matches_revision_2_length": true,
+  "verdict": "HIT"
+}
