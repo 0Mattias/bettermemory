@@ -103,6 +103,13 @@ isoformat_optional = _isoformat_utc_optional
 # Ranking never reads it: the usage multipliers left in 9.0.0.
 NEGATIVE_OUTCOME_WINDOW_DAYS = 30
 
+# A write response lists at most this many similar memories per list, the
+# most similar first, and counts the rest in a `<list>_more` field. On a
+# store of a thousand memories a short body grazes dozens as "medium", and
+# the full lists outgrew the clients' tool-output limits. The write event
+# keeps every id.
+SIMILAR_HITS_SHOWN = 5
+
 # The per-hit commit-drift memo of
 # `ResponseBuilder.attach_commit_drift_counts`: one hit's resolution, keyed
 # on every input of it. `memory_show` and the session brief read and fill
@@ -846,9 +853,9 @@ class ResponseBuilder:
         if actor is not None:
             out["actor"] = actor
         if related:
-            out["related"] = [self.similar_to_dict(h) for h in related]
+            self.add_similar(out, "related", related)
         if removed_related:
-            out["removed_related"] = [self.similar_to_dict(h) for h in removed_related]
+            self.add_similar(out, "removed_related", removed_related)
         if warnings:
             out["warnings"] = list(warnings)
         if supersedes:
@@ -909,6 +916,16 @@ class ResponseBuilder:
         if hit.removed_reason is not None:
             out["removed_reason"] = hit.removed_reason
         return out
+
+    def add_similar(
+        self, out: dict[str, Any], key: str, hits: Sequence[SimilarHit]
+    ) -> None:
+        """Set `out[key]` to the first `SIMILAR_HITS_SHOWN` hits, already
+        sorted most similar first, and `out[key + "_more"]` to the count
+        left out, only when some were."""
+        out[key] = [self.similar_to_dict(h) for h in hits[:SIMILAR_HITS_SHOWN]]
+        if len(hits) > SIMILAR_HITS_SHOWN:
+            out[f"{key}_more"] = len(hits) - SIMILAR_HITS_SHOWN
 
     def transient_to_dict(self, hit: TransientMatch) -> dict[str, Any]:
         """Serialize a transient-marker match for the tool response."""

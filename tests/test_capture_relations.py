@@ -241,9 +241,28 @@ async def test_a_score_at_tau_refuses_as_the_two_call_path_does(
         assert len(world.store.load_all()) == 1
         assert capture.members(world.store) == []
         assert all("deferred" not in e for e in world.events(review.REVIEW_ISSUED))
+    # The same refusal, but the capture's hint names no flag a capture
+    # ignores (`_CAPTURE_REFUSAL_HINTS`).
+    hints = [reply.pop("hint") for reply in replies]
     assert replies[0] == replies[1]
     assert replies[0]["status"] == status
+    assert "acknowledge_" not in hints[0]
     assert rows[0] == rows[1]
+
+
+async def test_a_capture_restates_refusal_says_to_skip_not_update(
+    world: World,
+) -> None:
+    """The review's restates refusal tells an ordinary write to use
+    memory_update, which a capture does not do: the capture's says skip."""
+    old = world.seed(BACKUP_OLD)
+    batch = world.open()
+    res = await world.scored(batch, BACKUP_NEW, relation={old: "restates"})
+    assert res["status"] == "duplicate", res
+    assert res["evidence"] == "review"
+    assert "memory_update" not in res["hint"]
+    assert "force" not in res["hint"] and "acknowledge_" not in res["hint"]
+    assert "Skip it" in res["hint"]
 
 
 # ---------------------------------------------------------------------------
