@@ -38,13 +38,21 @@ import hashlib
 import json
 import re
 import secrets
-from collections.abc import Collection, Sequence
-from dataclasses import dataclass
+from collections.abc import Collection, Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
-from .log import CAPTURE_CLOSE, CAPTURE_MEMBER, CAPTURE_OPEN, CAPTURE_UNDO, LogRow
+from .log import (
+    CAPTURE_CLOSE,
+    CAPTURE_MEMBER,
+    CAPTURE_OPEN,
+    CAPTURE_RELATIONS,
+    CAPTURE_UNDO,
+    LogRow,
+)
 from .models import generate_ulid, utcnow
+from .review import SECRET_STATEMENT, UNSAFE_STATEMENT
 from .time_utils import isoformat_utc, parse_event_ts
 
 if TYPE_CHECKING:
@@ -109,7 +117,8 @@ def in_session_instruction(
     Around the bar it carries the batch token, the project scope, the
     rule 9 amendment for a capture (supersedes, never an update, so an
     undo restores exactly what was there), the times of the user's
-    messages to date events by, and how to answer the write review."""
+    messages to date events by, and how to answer the write review: the
+    two scores on each write, the relations in one closing call."""
     stretch = f"this conversation since {since}" if since else "this conversation"
     times = [t for t in prompt_times if t][-MAX_PROMPT_TIMES:]
     parts = [
@@ -135,8 +144,10 @@ def in_session_instruction(
             if compacted
             else ""
         ),
-        "When memory_write answers with a review, answer it as its hint says and "
-        "re-send the same call with the same source.",
+        'Pass review={"unsafe": <0 to 1>, "secret": <0 to 1>} with each write, '
+        f"the probability that each holds. unsafe: {UNSAFE_STATEMENT} secret: "
+        f"{SECRET_STATEMENT} Once all are saved, answer every relations_pending "
+        "in one closing call, as its hint says.",
         "When you are done, stop, and tell the user in one short line what you "
         "saved, or that nothing new was worth saving.",
     ]
@@ -243,7 +254,8 @@ class Batch:
 class Close:
     """One `capture_close` row: how the batch ended and the transcript
     offset it captured to (`watermark`; the batch's own `offset` when
-    nothing was captured)."""
+    nothing was captured), and the relations its members left unanswered,
+    by member id."""
 
     batch: str
     session_id: str
@@ -251,12 +263,15 @@ class Close:
     watermark: int
     transcript_bytes: int
     closed_at: datetime
+    relations_pending: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class Member:
     """One `capture_member` row: a memory a batch's token committed, its
-    normalized body hash, and the session evidence it was accepted on."""
+    normalized body hash, and the session evidence it was accepted on.
+    `review` is the deferred review of a write that committed with its
+    relations pending (`deferred_review`), None for every other write."""
 
     batch: str
     memory_id: str
@@ -265,6 +280,7 @@ class Member:
     server_session: str | None
     joined_by: str
     seq: int
+    review: Mapping[str, Any] | None = None
 
 
 def _payload(row: LogRow) -> dict[str, Any]:
@@ -285,6 +301,17 @@ def _int(value: object) -> int:
 
 def _str(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _id_lists(value: object) -> dict[str, tuple[str, ...]]:
+    """A {member id: [ids]} payload field, malformed entries dropped."""
+    if not isinstance(value, dict):
+        return {}
+    return {
+        k: tuple(i for i in v if isinstance(i, str))
+        for k, v in value.items()
+        if isinstance(k, str) and isinstance(v, list)
+    }
 
 
 def _batch_of(row: LogRow) -> Batch | None:
@@ -322,6 +349,7 @@ def _close_of(row: LogRow) -> Close | None:
         watermark=_int(fields.get("watermark")),
         transcript_bytes=_int(fields.get("transcript_bytes")),
         closed_at=_stamp(row),
+        relations_pending=_id_lists(fields.get("relations_pending")),
     )
 
 
@@ -342,6 +370,7 @@ def _member_of(row: LogRow) -> Member | None:
         server_session=_str(fields.get("server_session")),
         joined_by=_str(fields.get("joined_by")) or JOINED_BY_STOP_SESSION,
         seq=row.seq,
+        review=review if isinstance(review := fields.get("review"), dict) else None,
     )
 
 
@@ -473,13 +502,18 @@ def close_batch(
         if batch.batch in closes(store):
             raise BatchClosedError(f"capture batch {batch.batch} is already closed")
 
-    payload = {
+    payload: dict[str, Any] = {
         "batch": batch.batch,
         "session_id": batch.session_id,
         "outcome": outcome,
         "watermark": int(watermark),
         "transcript_bytes": int(transcript_bytes),
     }
+    # A batch that settles with relations unanswered keeps its commits and
+    # names every id it left pending; nothing is filed for them.
+    pending = relations_pending(store, batch.batch)
+    if pending:
+        payload["relations_pending"] = {k: list(v) for k, v in pending.items()}
     row = store.record_capture(
         CAPTURE_CLOSE,
         payload,
@@ -501,11 +535,13 @@ def record_member(
     harness_session: str | None,
     server_session: str | None,
     joined_by: str,
+    review: Mapping[str, Any] | None = None,
 ) -> LogRow:
     """The member row for a memory `batch`'s token committed. The write
     path calls this inside the `Store.batch` that puts the memory, so the
-    two commit together. Never the body: its normalized hash."""
-    payload = {
+    two commit together. Never the body: its normalized hash. `review` is
+    a deferred review (`deferred_review`), kept for the closing call."""
+    payload: dict[str, Any] = {
         "batch": batch.batch,
         "memory_id": memory_id,
         "body_hash": body_hash(body),
@@ -513,7 +549,94 @@ def record_member(
         "server_session": server_session,
         "joined_by": joined_by,
     }
+    if review is not None:
+        payload["review"] = dict(review)
     return store.record_capture(CAPTURE_MEMBER, payload, session=server_session)
+
+
+# ---------------------------------------------------------------------------
+# Relations answered at the end
+# ---------------------------------------------------------------------------
+#
+# A capture write that carries its two scores commits in one call even when
+# its related set is unanswered. Its member row then holds the deferred
+# review: the review_id, the scores and the thresholds they were judged by,
+# the relation answers it gave, the related ids with their claim_sized
+# flags, the cue code's links among them, the declared supersedes targets
+# and the ids still pending. Ids, flags and scores only, never a body. The
+# closing call (memory_admin action "relations") answers the rest; each one
+# is a `capture_relations` row per batch naming what it answered and what it
+# changed, which is what an undo of the batch reverts.
+
+
+def deferred_review(
+    *,
+    review_id: str,
+    unsafe: float,
+    secret: float,
+    tau: Sequence[float],
+    relation: Mapping[str, str],
+    related: Sequence[tuple[str, bool]],
+    cue_linked: Sequence[str],
+    claim_sized: bool,
+    declared: Sequence[str],
+    pending: Sequence[str],
+) -> dict[str, Any]:
+    """The deferred review a member row carries."""
+    return {
+        "review_id": review_id,
+        "unsafe": unsafe,
+        "secret": secret,
+        "tau": list(tau),
+        "relation": dict(relation),
+        "related": [[memory_id, bool(sized)] for memory_id, sized in related],
+        "cue_linked": list(cue_linked),
+        "claim_sized": bool(claim_sized),
+        "declared": list(declared),
+        "pending": list(pending),
+    }
+
+
+def relations_rows(store: Store, batch: str | None = None) -> list[dict[str, Any]]:
+    """The `capture_relations` payloads of `batch`, or of every batch."""
+    rows = (_payload(row) for row in store.capture_rows({CAPTURE_RELATIONS}))
+    return [r for r in rows if batch is None or r.get("batch") == batch]
+
+
+def relations_answered(store: Store, batch: str) -> dict[str, dict[str, str]]:
+    """The relation answers the closing calls gave, by member id."""
+    out: dict[str, dict[str, str]] = {}
+    for row in relations_rows(store, batch):
+        answers = row.get("answers")
+        for member_id, given in (answers if isinstance(answers, dict) else {}).items():
+            if isinstance(given, dict):
+                out.setdefault(member_id, {}).update(given)
+    return out
+
+
+def relations_pending(store: Store, batch: str) -> dict[str, tuple[str, ...]]:
+    """The related ids each member of `batch` still has unanswered."""
+    answered = relations_answered(store, batch)
+    out: dict[str, tuple[str, ...]] = {}
+    for member in members(store, batch):
+        pending = (member.review or {}).get("pending")
+        if not isinstance(pending, list):
+            continue
+        done = answered.get(member.memory_id, {})
+        left = tuple(i for i in pending if isinstance(i, str) and i not in done)
+        if left:
+            out[member.memory_id] = left
+    return out
+
+
+def record_relations(
+    store: Store, batch: str, payload: Mapping[str, Any], *, session: str | None
+) -> LogRow:
+    """One closing call's `capture_relations` row for `batch`. Call it
+    inside the `Store.batch` that applies the answers."""
+    return store.record_capture(
+        CAPTURE_RELATIONS, {"batch": batch, **payload}, session=session
+    )
 
 
 def record_undo(
@@ -629,6 +752,7 @@ __all__ = [
     "body_hash",
     "close_batch",
     "daily_count",
+    "deferred_review",
     "in_session_instruction",
     "joined_by",
     "members",
@@ -637,7 +761,11 @@ __all__ = [
     "open_batch_for_session",
     "open_batches",
     "record_member",
+    "record_relations",
     "record_undo",
+    "relations_answered",
+    "relations_pending",
+    "relations_rows",
     "token_of",
     "undone_hashes",
     "watermark",
