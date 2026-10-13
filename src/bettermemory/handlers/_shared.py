@@ -24,6 +24,7 @@ from typing import Any, TypeAlias
 
 from mcp.server.mcpserver import Context as _SDKContext
 
+from ..capture import token_of
 from ..claims import check_claim, claim_reason_is_indeterminate, parse_claims
 from ..events import Recorder
 from ..models import Category, Confidence, Source, validate_scope
@@ -214,6 +215,7 @@ def _validate_write_payload(
     max_content_bytes: int = 0,
     min_content_tokens: int = 0,
     max_scopes_per_write: int = 0,
+    capture: bool = False,
 ) -> dict[str, Any]:
     """Validate and normalise the kwargs for `Store.write`.
 
@@ -250,10 +252,25 @@ def _validate_write_payload(
         raise ValueError(
             f"confidence must be one of {[c.value for c in Confidence]}"
         ) from exc
-    try:
-        src_enum = Source(source)
-    except ValueError as exc:
-        raise ValueError(f"source must be one of {[s.value for s in Source]}") from exc
+    if token_of(source) is not None:
+        # A capture write's tag (`capture:<token>`). The write handler
+        # resolves the token before it gets here and passes `capture` only
+        # for an open batch; anywhere else the tag is refused, so no other
+        # surface can file a memory as captured. A captured memory is the
+        # model's inference from the conversation, and is stored as one.
+        if not capture:
+            raise ValueError(
+                f"source {source!r} names a capture batch, which only "
+                "memory_write accepts, and only while the batch is open"
+            )
+        src_enum = Source.INFERRED
+    else:
+        try:
+            src_enum = Source(source)
+        except ValueError as exc:
+            raise ValueError(
+                f"source must be one of {[s.value for s in Source]}"
+            ) from exc
 
     if category not in _WRITE_CATEGORIES:
         raise ValueError(f"category must be one of {sorted(_WRITE_CATEGORIES)}")
