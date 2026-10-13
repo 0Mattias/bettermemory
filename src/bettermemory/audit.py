@@ -271,12 +271,9 @@ _ACK_TOKENS: frozenset[str] = frozenset(
 # Closed set of `triggered_from` discriminator values for `turn_audited`,
 # `search_miss`, and `prompt_recall` events. The Stop hook emits
 # `"stop_hook"`; the in-process MCP handler emits `"mcp_tool"`; the
-# UserPromptSubmit hook emits `"prompt_hook"`. `"session_capture"`
-# emits none of the three kinds today; it is listed because every
-# out-of-process trigger is, and `bettermemory capture` stamps it on
-# the writes it records. `"session_hook"` is the SessionStart hook's
-# stamp on its `session_brief` event (`recall.session_brief`). Pinning the set at the
-# builder boundary mirrors the search-mode runtime guard in
+# UserPromptSubmit hook emits `"prompt_hook"`. `"session_hook"` is the
+# SessionStart hook's stamp on its `session_brief` event
+# (`recall.session_brief`). Pinning the set at the builder boundary mirrors the search-mode runtime guard in
 # `search.py:761` — without this check, a typo elsewhere silently
 # produces unsplittable eval rows (downstream consumers `groupby`-split
 # on this field). Mirrors the same Literal-at-types-only situation:
@@ -285,7 +282,7 @@ _ACK_TOKENS: frozenset[str] = frozenset(
 # events become false anchors for `hook._latest_in_process_session`
 # (the server-session bridge skips on that set alone).
 _VALID_TRIGGERED_FROM: frozenset[str] = frozenset(
-    {"stop_hook", "mcp_tool", "prompt_hook", "session_capture", "session_hook"}
+    {"stop_hook", "mcp_tool", "prompt_hook", "session_hook"}
 )
 
 

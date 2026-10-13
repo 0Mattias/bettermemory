@@ -206,12 +206,12 @@ _STDIN_PAYLOAD_CAP_BYTES = 64 * 1024
 # server-emitted retrieval event, silently killing it (the same
 # structurally-dead-shield failure the `retrieval_session_id` bridge
 # exists to prevent). `audit._VALID_TRIGGERED_FROM` cross-references
-# this set; extend both together. `session_capture` is the third
-# out-of-process writer: `bettermemory capture` records its writes under
-# the captured transcript's session id, from a process that is not the
-# server. `session_hook` is the fourth: the SessionStart hook's
-# `session_brief` row (`recall.session_brief`), recorded under the
-# transcript id like the prompt hook's.
+# this set; extend both together. `session_hook` is the third: the
+# SessionStart hook's `session_brief` row (`recall.session_brief`),
+# recorded under the transcript id like the prompt hook's.
+# `session_capture` stays for the rows 8.x's `bettermemory capture`
+# recorded under a transcript id, which a migrated store still holds;
+# nothing writes it now, so it is no longer a valid trigger to stamp.
 _OUT_OF_PROCESS_TRIGGERS: frozenset[str] = frozenset(
     {"stop_hook", "prompt_hook", "session_capture", "session_hook"}
 )
