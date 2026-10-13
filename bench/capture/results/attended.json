@@ -1,0 +1,111 @@
+{
+  "kind": "capture-attended",
+  "prediction": "CAPS-P5",
+  "commit": "7927e941561399ff722309b52441d1aaebdaa2d5",
+  "run_at": "2026-10-13T05:13:53Z",
+  "method": {
+    "store": "tests/fixtures/v8/store migrated into a scratch store",
+    "memories": {
+      "found": 3,
+      "imported": 3,
+      "present": 0,
+      "unparseable": 0
+    },
+    "config": "[capture] stop_checkpoint = true, daily_cap = 100000",
+    "daemon": "python -m bettermemory up --foreground --port 0, its environment carrying CLAUDE_CODE_SESSION_ATTENDED=1",
+    "client": "python -m bettermemory hook stop (hook_main), Stop payload on stdin",
+    "transcript": {
+      "user": 103,
+      "assistant": 103,
+      "tool_result": 103,
+      "text_chars": 189468,
+      "bytes": 1052354
+    },
+    "checkpoint_chars": 48000
+  },
+  "cases": [
+    {
+      "case": "env_absent",
+      "env": "absent",
+      "payload_attended": null,
+      "hook_exit": 0,
+      "hook_stdout": true,
+      "hook_capture_instruction": false,
+      "hook_stderr": false,
+      "capture_open_rows": 0
+    },
+    {
+      "case": "env_0",
+      "env": "0",
+      "payload_attended": null,
+      "hook_exit": 0,
+      "hook_stdout": true,
+      "hook_capture_instruction": false,
+      "hook_stderr": false,
+      "capture_open_rows": 0
+    },
+    {
+      "case": "env_empty",
+      "env": "",
+      "payload_attended": null,
+      "hook_exit": 0,
+      "hook_stdout": true,
+      "hook_capture_instruction": false,
+      "hook_stderr": false,
+      "capture_open_rows": 0
+    },
+    {
+      "case": "env_true",
+      "env": "true",
+      "payload_attended": null,
+      "hook_exit": 0,
+      "hook_stdout": true,
+      "hook_capture_instruction": false,
+      "hook_stderr": false,
+      "capture_open_rows": 0
+    },
+    {
+      "case": "env_absent_payload_claims_1",
+      "env": "absent",
+      "payload_attended": "1",
+      "hook_exit": 0,
+      "hook_stdout": true,
+      "hook_capture_instruction": false,
+      "hook_stderr": false,
+      "capture_open_rows": 0
+    },
+    {
+      "case": "env_0_payload_claims_1",
+      "env": "0",
+      "payload_attended": "1",
+      "hook_exit": 0,
+      "hook_stdout": true,
+      "hook_capture_instruction": false,
+      "hook_stderr": false,
+      "capture_open_rows": 0
+    },
+    {
+      "case": "control_env_1",
+      "env": "1",
+      "payload_attended": null,
+      "hook_exit": 0,
+      "hook_stdout": true,
+      "hook_capture_instruction": true,
+      "hook_stderr": false,
+      "capture_open_rows": 1
+    }
+  ],
+  "daemon": {
+    "started": 15307,
+    "state_before": 15307,
+    "state_after": 15307,
+    "exit_code": 0,
+    "down_exit": 0,
+    "same_daemon_throughout": true
+  },
+  "capture_open_rows_without_attended_1": 0,
+  "control_opened": 1,
+  "verdict": "HIT",
+  "valid": true,
+  "scratch_removed": true
+}
