@@ -1453,6 +1453,25 @@ def test_capture_defaults_are_off_with_the_declared_bounds(tmp_path: Path) -> No
     assert loaded == fresh
 
 
+def test_the_shipped_config_documents_capture_off(tmp_path: Path) -> None:
+    """The first-run file carries `[capture]` with the checkpoint off, and
+    loading it gives the dataclass defaults; none of the keys 8.x shipped
+    in the section comes back."""
+    from bettermemory.config import _REMOVED_CAPTURE_KEYS
+
+    section = tomllib.loads(DEFAULT_CONFIG)["capture"]
+    assert section == {
+        "stop_checkpoint": False,
+        "checkpoint_tokens": 12_000,
+        "daily_cap": 12,
+    }
+    assert not set(section) & set(_REMOVED_CAPTURE_KEYS)
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(DEFAULT_CONFIG, encoding="utf-8")
+    assert load_config(config_path).capture == Config().capture
+    assert "capture undo" in DEFAULT_CONFIG.split("[capture]")[1]
+
+
 def test_capture_keys_load_as_written(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     config_path.write_text(

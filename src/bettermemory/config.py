@@ -245,6 +245,20 @@ port = 7397
 # marker list against real traffic. Lives next to the memories — same trust
 # boundary, no new permissions story. Set `enabled = false` to opt out.
 enabled = true
+
+[capture]
+# Session capture at a turn end, Claude Code only, and off by default.
+# With `stop_checkpoint = true`, once the conversation since the last
+# capture holds `checkpoint_tokens` of your prompts and the assistant's
+# text, the Stop hook asks the chat model in the session to save what the
+# stretch established, with memory_write. No other model and no API key
+# is involved, and only a session a person is attending is ever asked.
+# Each capture is a batch: `bettermemory capture review` lists them and
+# `bettermemory capture undo <batch>` takes one back.
+stop_checkpoint = false
+checkpoint_tokens = 12000
+# At most this many capture requests per store per UTC day.
+daily_cap = 12
 """
 
 
