@@ -1,0 +1,264 @@
+{
+  "kind": "capture-one-call",
+  "predictions": [
+    "OC-P1",
+    "OC-P2",
+    "OC-P3",
+    "OC-P4",
+    "OC-P5",
+    "OC-P6"
+  ],
+  "commit": "6a7f728587d30d3e81ad519c9e5d1b6fd47877da",
+  "run_at": "2026-10-13T18:49:28Z",
+  "fixture": "tests/fixtures/v8/store",
+  "tau": {
+    "unsafe": 0.3,
+    "secret": 0.3
+  },
+  "good_set_sha256": "7371cdd92abaf3da4b8b99e44bbe1feaee17b7b3258068ac1bb123737732fc54",
+  "results": {
+    "OC-P1": {
+      "bound": "deferred at most N+1 calls (N+1 when any relation is pending), two-call 2N, all committed",
+      "rows": [
+        {
+          "n": 1,
+          "base_calls": 2,
+          "base_committed": 1,
+          "deferred_calls": 1,
+          "deferred_committed": 1,
+          "pending_ids": 0,
+          "closing_left": 0,
+          "exactly_n_plus_1": false,
+          "hit": true
+        },
+        {
+          "n": 3,
+          "base_calls": 6,
+          "base_committed": 3,
+          "deferred_calls": 4,
+          "deferred_committed": 3,
+          "pending_ids": 1,
+          "closing_left": 0,
+          "exactly_n_plus_1": true,
+          "hit": true
+        },
+        {
+          "n": 5,
+          "base_calls": 10,
+          "base_committed": 5,
+          "deferred_calls": 6,
+          "deferred_committed": 5,
+          "pending_ids": 4,
+          "closing_left": 0,
+          "exactly_n_plus_1": true,
+          "hit": true
+        }
+      ],
+      "verdict": "HIT"
+    },
+    "OC-P2": {
+      "writes": 35,
+      "labels_scripted": [
+        "conflict",
+        "restates",
+        "unrelated",
+        "update"
+      ],
+      "two_call_status": {
+        "committed": 34,
+        "duplicate": 1
+      },
+      "deferred_status": {
+        "committed": 35
+      },
+      "closing_left_pending": 0,
+      "end_state": {
+        "active": 41,
+        "links": {
+          "cue": 0,
+          "review": 9
+        },
+        "conflicts_by_detector": {
+          "polarity": 1,
+          "review": 11,
+          "review-disagrees": 1,
+          "value": 1
+        },
+        "update_suggested": 2
+      },
+      "equal": {
+        "active": true,
+        "links": true,
+        "conflicts": true,
+        "update_suggested": true,
+        "related_sets": true
+      },
+      "restating_write": {
+        "two_call_not_written": [
+          "The acme databases are backed up every night with Restic."
+        ],
+        "deferred_tombstoned_member": [
+          "The acme databases are backed up every night with Restic."
+        ],
+        "match": true
+      },
+      "covered": {
+        "update_link": true,
+        "update_suggested": true,
+        "conflict": true,
+        "cue_disagree": true,
+        "restates": true
+      },
+      "bound": "end state equal on both paths, the restating write a tombstoned member on the deferred path only",
+      "verdict": "HIT"
+    },
+    "OC-P3": {
+      "bound": "10 of 10 refused, nothing written",
+      "rows": [
+        {
+          "unsafe": 0.0,
+          "secret": 0.3,
+          "status": "credential_warning",
+          "members": 0
+        },
+        {
+          "unsafe": 0.0,
+          "secret": 0.5,
+          "status": "credential_warning",
+          "members": 0
+        },
+        {
+          "unsafe": 0.0,
+          "secret": 0.9,
+          "status": "credential_warning",
+          "members": 0
+        },
+        {
+          "unsafe": 0.1,
+          "secret": 1.0,
+          "status": "credential_warning",
+          "members": 0
+        },
+        {
+          "unsafe": 0.29,
+          "secret": 0.31,
+          "status": "credential_warning",
+          "members": 0
+        },
+        {
+          "unsafe": 0.3,
+          "secret": 0.0,
+          "status": "instruction_warning",
+          "members": 0
+        },
+        {
+          "unsafe": 0.5,
+          "secret": 0.0,
+          "status": "instruction_warning",
+          "members": 0
+        },
+        {
+          "unsafe": 0.9,
+          "secret": 0.1,
+          "status": "instruction_warning",
+          "members": 0
+        },
+        {
+          "unsafe": 1.0,
+          "secret": 0.0,
+          "status": "instruction_warning",
+          "members": 0
+        },
+        {
+          "unsafe": 0.31,
+          "secret": 0.29,
+          "status": "instruction_warning",
+          "members": 0
+        }
+      ],
+      "memories_before": 3,
+      "memories_after": 3,
+      "verdict": "HIT"
+    },
+    "OC-P4": {
+      "bound": "commits kept, nothing filed from relations, close names every pending id",
+      "writes": 10,
+      "committed_kept": 10,
+      "pending_returned": 10,
+      "pending_on_close": 10,
+      "ids_match": true,
+      "capture_review_pending": 10,
+      "conflicts_before": 1,
+      "conflicts_after": 1,
+      "filed_from_relations": 0,
+      "verdict": "HIT"
+    },
+    "OC-P5": {
+      "bound": "mirror identical but marker and batch tombstones, log verify ok",
+      "closing_call_did": {
+        "tombstoned": 1,
+        "linked": 1,
+        "filed": 1
+      },
+      "undo": {
+        "exit": 0,
+        "committed": true,
+        "undone": 2,
+        "gone": 1,
+        "own_conflicts": 1,
+        "refusal": null
+      },
+      "mirror_files_before": 10,
+      "tombstone_files_added": 3,
+      "files_differing": 0,
+      "files_added": 0,
+      "files_removed": 0,
+      "conflicts_before": 1,
+      "conflicts_after": 1,
+      "conflicts_restored": true,
+      "log_verify": {
+        "exit": 0,
+        "status": "ok"
+      },
+      "verdict": "HIT"
+    },
+    "OC-P6": {
+      "bound": "tools/list delta <= 400 bytes, instructions identical",
+      "baseline_rev": "28eae04c",
+      "baseline_commit": "28eae04ca55b88bd18af8bbdc7466fcb28349082",
+      "method": "bench/capture/surface.py probe_tree (toolcost probe_tools, sandbox HOME, raw JSON-RPC); baseline src from git archive",
+      "rows": {
+        "shim": {
+          "tools_list_bytes": {
+            "baseline": 8144,
+            "head": 8146,
+            "delta": 2
+          },
+          "instructions_bytes": 1000,
+          "instructions_sha256": {
+            "baseline": "cd2ff0132fa4fe8268b3e5944af81406104f7faec238f2b5b80620940af3e5e4",
+            "head": "cd2ff0132fa4fe8268b3e5944af81406104f7faec238f2b5b80620940af3e5e4",
+            "identical": true
+          },
+          "tool_count": 9
+        },
+        "serve": {
+          "tools_list_bytes": {
+            "baseline": 8144,
+            "head": 8146,
+            "delta": 2
+          },
+          "instructions_bytes": 1000,
+          "instructions_sha256": {
+            "baseline": "cd2ff0132fa4fe8268b3e5944af81406104f7faec238f2b5b80620940af3e5e4",
+            "head": "cd2ff0132fa4fe8268b3e5944af81406104f7faec238f2b5b80620940af3e5e4",
+            "identical": true
+          },
+          "tool_count": 9
+        }
+      },
+      "verdict": "HIT"
+    }
+  },
+  "scratch_removed": true
+}

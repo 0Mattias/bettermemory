@@ -39,7 +39,12 @@ NINE = {
 # surface to 7,991, so the ceiling is the declared 8,000. The write
 # review's `review` parameter added 55 (8,046), and D1 trimmed the episode
 # description's copy of the handoff-first sentence, which the instructions
-# carry, back to 7,998 (owner decision O6: trim, keep the ceiling).
+# carry, back to 7,998 (owner decision O6: trim, keep the ceiling). The
+# capture's closing call (memory_admin action "relations" and its
+# `relations` object) added 134 (8,132); under O6 the admin description
+# lost its per-call lead and the closing call's sentence (the hint and the
+# capture instruction teach it) and verify its audit-trail clause, back to
+# 8,000.
 SESSION_BUDGET_CHARS = 8_000
 
 # The parameters D1 removed with the groundedness gate. None may return.
@@ -140,6 +145,7 @@ async def test_dispatch_actions_are_enumerated(tmp_path: Path) -> None:
         "acknowledge_miss",
         "disable_scope",
         "enable_scope",
+        "relations",
     ]
     assert by_name["episode"].input_schema["required"] == ["action"]
     assert by_name["memory_admin"].input_schema["required"] == ["action"]

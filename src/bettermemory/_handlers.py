@@ -407,9 +407,14 @@ class ToolHandlers:
         note: str | None = None,
         reason: str | None = None,
         before: str | None = None,
+        # The capture's closing call: member id -> {related id: label}.
+        # Served as a plain object, as `review` is.
+        relations: dict[str, Any] = Field(default_factory=dict),
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         deps = self.for_request(ctx)
+        if isinstance(relations, FieldInfo):
+            relations = {}
         return await _handlers_pkg.memory_admin(
             deps,
             action,
@@ -423,6 +428,7 @@ class ToolHandlers:
             note=note,
             reason=reason,
             before=before,
+            relations=relations,
             ctx=ctx,
         )
 

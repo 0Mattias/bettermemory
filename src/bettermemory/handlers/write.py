@@ -39,7 +39,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ..conflicts import ConflictCandidate, ConflictQueue, _pair_id
@@ -849,13 +849,15 @@ def _corroborate_duplicate(
 
 @dataclass(frozen=True)
 class _CaptureWrite:
-    """A capture write admitted to its batch: the batch, and the session
-    evidence its member row records."""
+    """A capture write admitted to its batch: the batch, the session
+    evidence its member row records, and the deferred review it carries
+    when it commits with relations pending."""
 
     batch: _capture.Batch
     harness_session: str | None
     server_session: str | None
     joined_by: str
+    review: dict[str, Any] | None = None
 
 
 # Inside a capture a refusal ends the capture: a write re-sent without the
@@ -1135,6 +1137,12 @@ _REVIEW_UNSAFE_HINT = (
     "where), or drop it."
 )
 
+_RELATIONS_PENDING_HINT = (
+    "Written. Once the capture is saved, answer relations_pending for every "
+    'write in one call: memory_admin(action="relations", relations={<this '
+    'id>: {<related id>: "update" | "conflict" | "restates" | "unrelated"}}).'
+)
+
 _REVIEW_RESTATES_HINT = (
     "Not written. The review answered that a stored memory already says "
     "this; the recurrence is recorded on it. Use memory_update on the "
@@ -1182,10 +1190,13 @@ def _record_review_issued(
     parent_review_id: str | None,
     response_chars: int | None,
     sent_review_id: str | None = None,
+    deferred: bool = False,
 ) -> None:
     """The review_issued row: ids, the actor's client and model, and the
     chain fields. Never a body. `sent_review_id` is a review_id the call
-    carried that the log holds no open chain for, kept for correlation."""
+    carried that the log holds no open chain for, kept for correlation.
+    `deferred` marks a capture write that committed with relations pending
+    for the batch's closing call."""
     fields: dict[str, Any] = {
         "review_id": review_id,
         "related": related_ids,
@@ -1193,6 +1204,8 @@ def _record_review_issued(
         "pre_answered": pre_answered,
         "parent_review_id": parent_review_id,
     }
+    if deferred:
+        fields["deferred"] = True
     if response_chars is not None:
         fields["response_chars"] = response_chars
     if sent_review_id is not None:
@@ -1283,10 +1296,19 @@ def _reviewed_write(
 
     # A score at or above its threshold refuses whatever the relation
     # answers say, so it needs no coverage; anything else is decided only
-    # when every related id is answered.
+    # when every related id is answered. A capture write that carries its
+    # scores without a review_id is the exception: it commits now, and the
+    # ids it left unanswered wait for the batch's closing call.
     refused = answers.secret >= tau.secret or answers.unsafe >= tau.unsafe
     missing = [i for i in related.ids if i not in answers.relation]
-    if missing and not refused:
+    captured: _CaptureWrite | None = payload.get("capture")
+    deferred = (
+        bool(missing)
+        and not refused
+        and captured is not None
+        and answers.review_id is None
+    )
+    if missing and not refused and not deferred:
         return _issue_review(
             deps,
             related.only(missing),
@@ -1308,6 +1330,7 @@ def _reviewed_write(
             parent_review_id=None,
             response_chars=None,
             sent_review_id=stray_id,
+            deferred=deferred,
         )
 
     decision = _review.apply_review(
@@ -1327,6 +1350,25 @@ def _reviewed_write(
         # A commit that also restates (unit D1b): the ids only, kept on the
         # log so these commits can be counted. They get no corroboration.
         review_fields["review_restated"] = list(decision.restated)
+    pending: list[_review.RelatedEntry] = []
+    if deferred and captured is not None and decision.action == _review.ACTION_COMMIT:
+        pending = list(related.only(missing).entries)
+        review_fields["relations_pending"] = missing
+        payload["capture"] = replace(
+            captured,
+            review=_capture.deferred_review(
+                review_id=review_id,
+                unsafe=answers.unsafe,
+                secret=answers.secret,
+                tau=tau,
+                relation=answers.relation,
+                related=[(e.id, e.claim_sized) for e in related.entries],
+                cue_linked=[i for i in related.cue_supersedes if i in related.ids],
+                claim_sized=_supersession.claim_sized(payload["content"]),
+                declared=declared_ids,
+                pending=missing,
+            ),
+        )
 
     if decision.action == _review.ACTION_SECRET:
         deps.recorder.record(
@@ -1393,6 +1435,7 @@ def _reviewed_write(
         report=related.report,
         decision=decision,
         review_fields=review_fields,
+        pending=pending,
     )
 
 
@@ -1613,6 +1656,7 @@ def _persist(
                 harness_session=captured.harness_session,
                 server_session=captured.server_session,
                 joined_by=captured.joined_by,
+                review=captured.review,
             )
     # The cue code files first: where it fires its row stands (DESIGN
     # item 6), so the review then skips the pairs it queued.
@@ -1684,12 +1728,15 @@ def _file_review_pairs(
     active: list[Memory],
     *,
     cue_filed: set[str],
+    in_batch: bool = False,
 ) -> list[tuple[str, str, str]]:
     """Queue each pair the review's answers file, with detector
     ``review`` or ``review-disagrees``. Best-effort and a separate log
     transaction, as `_file_conflicts` is. A pair in `cue_filed` (the pair
     ids the cue code queued on this write) keeps the cue code's row and
-    is neither filed again nor reported twice."""
+    is neither filed again nor reported twice. `in_batch` puts each row
+    straight into the caller's open `Store.batch`, for a caller whose
+    `cue_filed` already holds every queued pair id."""
     queue = ConflictQueue(deps.store)
     created = utcnow().isoformat()
     by_id = {m.id: m for m in active}
@@ -1717,7 +1764,10 @@ def _file_review_pairs(
             created=created,
         )
         try:
-            queue.file_pair(candidate)
+            if in_batch:
+                deps.store.put_conflict(candidate.to_dict())
+            else:
+                queue.file_pair(candidate)
         except OSError as exc:
             log.warning("review filing for %s / %s failed: %s", memory.id, target, exc)
             continue
@@ -1734,12 +1784,14 @@ def _commit_write(
     report: SupersessionReport | None = None,
     decision: _review.ReviewDecision | None = None,
     review_fields: dict[str, Any] | None = None,
+    pending: list[_review.RelatedEntry] | None = None,
 ) -> dict[str, Any]:
     """Persist the memory, record the commit event, return the
     committed response. Surfaces the ambient long-body warning as a
     non-blocking advisory when applicable. `review_fields` (the review id,
     the answers and the action, never a body) join the commit event of a
-    reviewed write."""
+    reviewed write. `pending` are the related entries a capture write left
+    for the closing call, shown as the review shows them."""
     category_enum: Category = payload["category"]
     captured: _CaptureWrite | None = payload.get("capture")
     try:
@@ -1787,13 +1839,19 @@ def _commit_write(
         **supersession.event_fields(),
         **(review_fields or {}),
     )
-    return deps.responses.committed(
+    response = deps.responses.committed(
         memory,
         related=commit.related,
         removed_related=commit.removed_related,
         warnings=warnings,
         **supersession.response_fields(),
     )
+    if pending:
+        response["relations_pending"] = [entry.to_dict() for entry in pending]
+        response["hint"] = " ".join(
+            filter(None, [response.get("hint"), _RELATIONS_PENDING_HINT])
+        )
+    return response
 
 
 __all__ = ["DESC_MEMORY_WRITE", "memory_write"]
