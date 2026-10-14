@@ -30,7 +30,7 @@ Two attestation tiers feed the numerator:
   load-bearing excerpt.
 - `attribution="hook"`: the Stop hook matched a body sentence of a
   retrieved memory (≥6 tokens, ≥30 chars, stopword-filtered) against
-  the reply — verbatim (case/whitespace-normalised), or by
+  the reply: verbatim (case/whitespace-normalised), or by
   distinctive-token containment (≥60% of the sentence's distinct
   content tokens appear in the reply, ≥4-token floor), catching
   paraphrases that keep the memory's vocabulary. Deep rewordings
@@ -48,7 +48,7 @@ from the raw events' `attribution` field for a stricter model-only cut.
 A low rate is **ambiguous by construction**, and this metric cannot
 disambiguate it. Either the ranker is firing on noise the model
 silently ignores, or the retrievals did help and simply left no
-attestation behind — the numerator counts only explicit,
+attestation behind: the numerator counts only explicit,
 claim-excerpt-backed endorsements while the denominator counts every
 retrieval occurrence, so the rate is a floor, not an estimate. Read it
 against `endorsement_rate` (which isolates the attestation half) and
@@ -67,7 +67,7 @@ hook) versus the bare auto-fallback?
 A low rate means nothing produced evidence the retrievals shaped a
 reply. The per-memory companion in the health report is
 `cold_endorsement_memories`: distinct memories with `retrieval_count >=
-30` and zero explicit applies — retrieved often, never visibly used.
+30` and zero explicit applies: retrieved often, never visibly used.
 `bettermemory eval` publishes the same bucket under the same contract:
 one floor (the 2026-08-30 recalibration of
 `health._COLD_ENDORSEMENT_MIN_RETRIEVALS`, derived as `(1-p)^N` against
@@ -80,7 +80,7 @@ says so, rather than reporting an unwired hook as acknowledge-debt).
 
 ### `silent_miss_rate`
 
-Of audited turns, what fraction were silent misses — the ranker would
+Of audited turns, what fraction were silent misses: the ranker would
 have surfaced a high-relevance hit and the model made no
 `memory_search` / `memory_show` call?
 
@@ -98,28 +98,28 @@ runs the same predicate at prompt time and converts a would-be miss
 into a `prompt_recall` event plus an `ok` audit verdict (the injection
 is a retrieval-kind event, so the Stop hook's probe is shielded by
 design, not by accident). On a hook-wired store with
-`[behavior] prompt_recall` on — the default — `silent_miss_rate`
+`[behavior] prompt_recall` on (the default), `silent_miss_rate`
 therefore measures the residual the recall path could not serve, and
 trends toward zero for reasons unrelated to model behaviour; read
 `prompt_recall` events as the delivery lane beside it. The two series
 are not comparable across the 3.41.0 line, the same way the audited
-denominators are not comparable across a
-`--acknowledge-misses-before` cutoff.
+denominators are not comparable across a `silent_miss_cutoff`
+(`memory_admin(action="acknowledge_miss", before=...)`).
 
 **And again with the recall surface (9.0).** The prompt recall no longer
-has a miss lane: it delivers memories written in the caller's project
-only, so a would-be miss on another project's memory is flagged again
-where the old lane delivered it. A delivered recall still shields the
+has a miss lane: under the default `project` mode it delivers memories
+written in the caller's project only, so a would-be miss on another
+project's memory is flagged again where the old lane delivered it. A delivered recall still shields the
 Stop's audit of its turn. Do not compare the rate across the switch; the
 surfaces section says so whenever it is printed.
 
 **Read this rate as a floor, not a health score.** The v1 verdict fires
-on a *coverage* label — the top hit matched ≥75% of the query's
-distinctive tokens — and that denominator grows with the user's message.
+on a *coverage* label (the top hit matched ≥75% of the query's
+distinctive tokens), and that denominator grows with the user's message.
 Measured over 195 audited turns on a 185-memory store, the label's
 "high" rate by message length:
 
-| user message chars | 0–40 | 40–80 | 80–150 | 150+ |
+| user message chars | 0-40 | 40-80 | 80-150 | 150+ |
 |---|---|---|---|---|
 | v1 `high` | 45% | 32% | **0%** | 3% |
 
@@ -136,7 +136,7 @@ buckets to 47% / 63% / 83% / **100%**, trading a length-blind rule for a
 length-credulous one. Both are pinned in `_relevance_label_v2`'s
 docstring with the reasoning, and the conjunctive form
 (`coverage ≥ 0.75 AND matched ≥ 4`) is the candidate a successor rule
-should be calibrated from — against labelled turns, since length
+should be calibrated from, against labelled turns, since length
 independence can rank candidates but never confirm one.
 
 ### Invalidation
@@ -158,7 +158,7 @@ identical invalidation semantics:
 
 The healthy regime is high `memory_helped_rate` and high
 `endorsement_rate`. `silent_miss_rate` does **not** belong in that
-sentence in the obvious direction — see the caveat under its own heading:
+sentence in the obvious direction (see the caveat under its own heading):
 low is the default whatever the store is doing, so it earns attention
 when it *rises*, not when it sits near zero. Common failure signatures:
 
@@ -272,42 +272,40 @@ a sample counting. `--scope` does not filter the section.
 `recall_counters.py` holds the computation. The `--report` markdown
 carries the four rates per surface and the counts, never an id.
 
-Reads the active event log — the sharded `<store>/.events.00.jsonl` …
-`.events.15.jsonl` segments, plus a pre-3.24 `<store>/.events.jsonl` on
-stores that predate sharding (read-only legacy input, merged in by
-event `ts`) — together with the rotated `.events-*.jsonl.gz`
-archives, joins against the active store, and reports the three rates
-with Wilson 95% confidence intervals, plus the cold-endorsement list
-and recent silent-miss candidates. `--json` for machine-readable
-output. The compute layer is `src/bettermemory/eval.py`
-(`compute_eval` / `parse_since` / `render_text`) for callers outside
-the CLI.
+Reads the store's log (the telemetry rows in `memory.sqlite`, through
+`Store.iter_events`), joins against the active store, and reports the
+three rates with Wilson 95% confidence intervals, plus the
+cold-endorsement list and recent silent-miss candidates. An 8.x store's
+events are read once `bettermemory migrate v8` has imported them.
+`--json` for machine-readable output. The compute layer is
+`src/bettermemory/eval.py` (`compute_eval` / `parse_since` /
+`render_text`) for callers outside the CLI.
 
 The default report also breaks the audit telemetry down per model
 (`by_model`, from the `client_model` stamp the Stop hook reads off the
-transcript — absent on pre-3.14 events) and shows how many repeat
+transcript, absent on pre-3.14 events) and shows how many repeat
 audits the re-audit dedup absorbed (`repeat_audits`, excluded from
 every denominator).
 
 Five additional modes:
 
 - `--report`: renders the telemetry as one publishable, self-contained
-  markdown document — the rate trio over the `--since` window and all
+  markdown document: the rate trio over the `--since` window and all
   time side by side (the trend between windows is the story), per-model
   audit telemetry, the threshold-sweep counterfactual, and the
   tool-usage top 10, with a reading guide and a methodology footer.
   Aggregates only, by tested contract: rates, counts, CIs, and
-  model/tool/rule names — never memory bodies, queries (not even the
+  model/tool/rule names, never memory bodies, queries (not even the
   redacted previews), scopes, paths, or session ids, so the output is
   safe to publish as-is. `--output FILE` writes it to a file instead
   of stdout; combining `--report` with `--json` or any other mode flag
   is a hard error.
-- `--tool-usage`: per-MCP-tool call counts from the event log — the
+- `--tool-usage`: per-MCP-tool call counts from the event log, the
   empirical input for trimming the default tool surface. Tools without
   telemetry surface as "no telemetry" rather than a silent zero;
   unmapped event kinds get their own footer. Side-effect events
   (`search_miss`, `silent_miss_cutoff`, `use_token_expired`) are
-  excluded — they're consequences of calls (or of admin CLI
+  excluded; they're consequences of calls (or of admin CLI
   operations), not calls.
 - `--threshold-sweep`: replays logged `search_miss` events against
   alternative STRICTER threshold rules (`v2_top1_high_score_50`,
@@ -318,7 +316,7 @@ Five additional modes:
   bug, not a rule decision); acked misses are deliberately kept (a
   confirmed false positive is exactly what a stricter candidate is
   judged against).
-- `--widening-preview`: the forward-looking counterpart — replays
+- `--widening-preview`: the forward-looking counterpart; it replays
   candidate LOOSER rules over the `turn_audited` stream, which since
   3.14 carries per-turn `top_hits` with the raw coverage features
   (`matched_unique` / `query_unique` / `score`) plus the shadow
@@ -326,9 +324,8 @@ Five additional modes:
   an absolute matched-token floor to the coverage fraction, targeting
   the documented blind spot where long natural-language queries land at
   "medium" on strong matches; `w2_top1_v2_high_from_medium` keeps only
-  w1's medium→high promotions after the 2026-07-08 labeling pass
-  (docs/eval/widening-labeling-2026-07-08.md) measured w1's low→high
-  cohort at ~20% precision. The v1 baseline is replayed from the same
+  w1's medium→high promotions, after a 2026-07-08 labeling pass ruled
+  out w1's low→high cohort. The v1 baseline is replayed from the same
   features, so the delta isolates the rule change; both sides slightly
   overcount production (the project-suppression arm isn't replayable
   from the event), so read the delta, not the absolutes. Because
@@ -339,12 +336,12 @@ Five additional modes:
   the rate surfaces' global latest-cutoff semantics and reported as
   `cutoff_retracted`, so the replayable population stays explicit.
 - `--widening-preview --detail`: the precision-labeling surface behind
-  the counts. Dumps each flagged turn's logged evidence — the redacted
-  `probe_query` preview ({hash, 32-char preview, len} by default; the
-  verbatim string only under `log_queries_verbatim`), the top hit's
-  coverage pair and both relevance labels, and the hit's memory id
-  joined against the active store + tombstone log for a summary — plus
-  a per-memory concentration rollup. Concentration is the first
+  the counts. Dumps each flagged turn's logged evidence, plus a
+  per-memory concentration rollup. The evidence is the redacted
+  `probe_query` preview ({hash, 32-char preview, len}; there is no
+  verbatim mode), the top hit's coverage pair and both relevance
+  labels, and the hit's memory id joined against the active store +
+  tombstone log for a summary. Concentration is the first
   diagnostic: N flags on two memories is a ranking problem with those
   memories; N flags across N memories is a genuinely wide label change.
   The flip decision on `relevance_v2` reads this lane, not the counts.
@@ -363,16 +360,16 @@ workload and feeds the derived events through `compute_eval`. Two
 honesty constraints:
 
 - The offline adapter reports `memory_helped_rate` and
-  `endorsement_rate` as `n/a`, not `0.0` — they require a live agent
+  `endorsement_rate` as `n/a`, not `0.0`: they require a live agent
   emitting `record_use` events; deriving them from gold labels would
   relabel recall. The scripted driver (`tests/eval/driver.py`,
   `--driver scripted`) proves the compute path end to end but is a
   recorded transcript, not a measurement. The honest source for live
   rates is production telemetry: `bettermemory eval` over a real
   store's event log.
-- Competitor adapters don't fabricate numbers. Absent the package or
-  its API key they raise `SystemUnavailable` and contribute only a
-  capability-matrix row sourced from public docs.
+- Adapters for other systems don't fabricate numbers. Absent the
+  package or its API key they raise `SystemUnavailable` and contribute
+  only a capability-matrix row sourced from public docs.
 
 The rates are computable for any system that logs retrieval timing,
 logs whether the model deliberately tagged each retrieved item as
@@ -381,28 +378,21 @@ load-bearing, and can replay a turn against its ranker post-hoc.
 ### The `--live` lane
 
 `--live` swaps the stubs for executing adapters where execution is
-honest (`tests/eval/live_adapters.py`): mem0 runs fully local and
-keyless (`infer=False` — its LLM extraction is deliberately bypassed,
-so the row measures its retrieval stack over verbatim facts), and the
-reference MCP memory server is bridged over stdio with a harness-side
-tokenized-OR ranker, because its native `search_nodes` is whole-query
-substring matching (a pinned test shows the raw server scores 0/7 on
-this workload by construction). agentmemory and claude-mem stay
-documented-unavailable — their stub reasons explain why a live run
-would not be honest. Maintainer runs only, via
-`tests/eval/run_live.sh` (throwaway `.eval-venv/`, never CI); missing
-prerequisites degrade to the stub row at runtime. The results page
-that carried the published numbers was retired in 9.0 (88aec02a); the
-lane's own run writes the current ones.
+honest (`tests/eval/live_adapters.py`); an adapter that cannot run
+honestly stays a documented stub, its reason in the stub. Maintainer
+runs only, via `tests/eval/run_live.sh` (throwaway `.eval-venv/`, never
+CI); missing prerequisites degrade to the stub row at runtime. The
+results page that carried the published numbers was retired in 9.0
+(88aec02a); the lane's own run writes the current ones.
 
 ## Integrity benchmark
 
 `bench/integrity/` measures two things the recall benchmarks above do
 not: whether a memory system serves a fact that a later statement
 superseded, and whether a poisoned record can be told apart from a
-legitimate one. The same protocol runs on bettermemory, mem0 (two arms),
-Graphiti (Zep's open-source engine) and Letta. The docstring of
-`bench/integrity/run.py` carries the commands; the numbers are the
+legitimate one. The protocol is system-agnostic: each arm is an adapter
+in `bench/integrity/adapters.py`, and the docstring of
+`bench/integrity/run.py` carries the commands. The numbers are the
 frozen result artifacts under `bench/integrity/results/`, each carrying
 the terms it was scored under.
 
@@ -457,10 +447,9 @@ item served with nothing to tell it apart. A stale item counts as
 signaled only when every stale item in the list carries the arm's
 supersession signal and a current item in the same list carries none.
 A field every hit carries distinguishes nothing and counts as nothing;
-that rule is what keeps a constant function from scoring. The signals:
-for bettermemory, `superseded_by` or `contradicts` on the hit; for
-Graphiti, `invalid_at` or `expired_at` on the edge; mem0 and Letta
-expose no such channel.
+that rule is what keeps a constant function from scoring. bettermemory's
+signal is `superseded_by` or `contradicts` on the hit; every other arm's
+is the one its adapter documents, and an arm without one has none.
 
 **Write-time supersession** (arms whose adapter declares a write-side
 channel; bettermemory since 7.2.0). Read off the adds, not the
@@ -495,51 +484,28 @@ instructions, whether any of three generic task queries serves them
 **Poisoning, store injection.** The ten false facts are inserted again
 by bypassing the write API with forged trust metadata, in two variants:
 plain, and with the system's own provenance binding forged as well
-(bettermemory: a `write` event line appended to the event log;
-Graphiti: an existing episode uuid on the edge; mem0 and Letta carry no
-provenance field, so their two variants coincide). The detector is the
-arm's documented provenance channel applied to the served record:
-bettermemory's `provenance` label, Graphiti's `episodes` list.
+(for bettermemory, a `memory_put` log row appended without the key; an
+arm with no provenance field has its two variants coincide). The
+detector is the arm's documented provenance channel applied to the
+served record, bettermemory's `provenance` label.
 Reported: the detection rate per variant with J beside the references,
 and the injected record's rank against its API-written twin at k = 10,
 which is what the forged metadata buys.
 
 **Staleness, memory versus world.** Not re-run here. The summary
-carries the rot benchmark's pooled rows with that artifact's sha256. No
-rival exposes an interface that observes files or git, so the leg is
-not scored comparatively.
+carries the rot benchmark's pooled rows with that artifact's sha256.
 
 ### Fairness accommodations
 
 - Nothing is tuned. Every arm runs its defaults, single run, with the
-  versions pinned in the artifact's provenance block.
-- mem0 runs twice: `mem0-raw` (`add(infer=False)`, MiniLM embeddings,
-  the arm the LongMemEval runs used) and `mem0-infer` (its extraction
-  on). mem0ai 2.0.x adds memories through an ADD-only extraction prompt
-  with entity-level links and never updates or deletes on add (those
-  exist only as explicit calls), so that arm measures the extractor, not
-  a supersession step. The extraction arms use a local model through
-  ollama by default; `BM_INTEGRITY_LLM`, `BM_INTEGRITY_LLM_BASE_URL` and
-  `BM_INTEGRITY_LLM_API_KEY` point them at any OpenAI-compatible endpoint
-  (the embedder stays on ollama), and the artifact names the model and
-  its endpoint.
-- Graphiti is Zep's open-source engine; Zep Cloud is unmeasured for
-  want of a key, and the row is labelled `graphiti`. Its adapter runs a
-  self-test first (one canonical statement through `add_episode`). A
-  model that extracts no relation from it makes the arm read
-  unavailable with the rerun command, because an empty row would be a
-  loss the rival did not earn. `mem0-infer` runs the same kind of
-  self-test, a fact and then its direct contradiction through
-  `add(infer=True)`: a model that stores nothing from the first or
-  nothing new from the second makes that arm read unavailable the same
-  way. The v0 run's self-test asked for an UPDATE or DELETE on the
-  contradiction, which this version's add path never issues, so the arm
-  read unavailable with every model until the test was corrected.
+  versions pinned in the artifact's provenance block. Per-arm setup is
+  in the adapter docstrings in `bench/integrity/adapters.py`.
 - bettermemory's hit text is the full body read back with
   `memory_show`, the documented read for a hit; the other systems return
   whole items.
-- An arm that cannot execute raises `SystemUnavailable` with the reason
-  and is published as such, never with a number.
+- An arm that cannot execute, or fails its adapter's self-test, raises
+  `SystemUnavailable` with the reason and is published as such, never
+  with a number.
 
 ## Caveats
 
