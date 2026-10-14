@@ -1,8 +1,8 @@
-# YYYY-MM-DD — short-slug
+# YYYY-MM-DD: short-slug
 
 **Reported by:** issue link or "private report"
 **bettermemory version at time of report:** vX.Y.Z
-**Fixed in:** vX.Y.Z (or "open — see Status")
+**Fixed in:** vX.Y.Z (or "open, see Status")
 **Status:** open / fixed / wontfix-with-rationale
 
 ## Symptom
@@ -13,10 +13,10 @@ What the user observed. The reply that referenced the stale claim, the verdict t
 
 Which of the verification signals failed, and why:
 
-- **Calendar age** — was `last_verified_at` reasonable, or was the threshold tuned wrong?
-- **Path drift** — did the extractor miss a path? Misclassify a URL route as a file? Tokenize incorrectly?
-- **Commit drift** — was the origin field missing, the verified-paths attestation stale, or the commit attribution wrong?
-- **Threshold rule** — did `v1_top1_high` (silent-miss probe) fire on noise or miss real signal?
+- **Calendar age**: was `last_verified_at` reasonable, or was the threshold tuned wrong?
+- **Path drift**: did the extractor miss a path? Misclassify a URL route as a file? Tokenize incorrectly?
+- **Commit drift**: was the origin field missing, the verified-paths attestation stale, or the commit attribution wrong?
+- **Threshold rule**: did `v1_top1_high` (silent-miss probe) fire on noise or miss real signal?
 
 Cite the file and line where the bug lives.
 
@@ -30,7 +30,7 @@ Tests added or updated. The regression case should be reproducible from the test
 
 ## What the surface should do differently
 
-The lesson generalised. Did the bug suggest a new signal (a fifth drift axis), a wider threshold, a better extractor grammar, or a documentation gap? This is the section that compounds — read together, the "differently" notes are the roadmap for the verification surface.
+The lesson generalised. Did the bug suggest a new signal (a fifth drift axis), a wider threshold, a better extractor grammar, or a documentation gap? This is the section that compounds: read together, the "differently" notes are the roadmap for the verification surface.
 
 ## References
 
