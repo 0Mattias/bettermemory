@@ -79,7 +79,12 @@ verification policy:
 
 - **Claude Code**: install the [plugin](../plugin/README.md). Its skill
   ships the policy without Claude Code's `instructions` truncation, and
-  its hooks settle retrievals at turn end.
+  its three hooks carry the recall surface: the session brief at
+  session start, up to three pointers per submitted prompt, and the
+  turn-end settlement of what was shown and retrieved. Session capture,
+  where the Stop hook asks the chat model to save what a stretch of
+  conversation established, rides the same hook and is off until
+  `[capture] stop_checkpoint = true`.
 - **Other clients**: paste the fenced block from
   [system_prompt.md](system_prompt.md) into your `CLAUDE.md` or
   equivalent, or print it with `bettermemory init --with-addendum`.
@@ -99,15 +104,24 @@ The 8.x files are never written; `bettermemory export --mirror DIR`
 writes the store back out as an 8.x directory whenever you want one.
 [api.md](api.md#the-store) has the details.
 
+Until the migration has run, a server pointed at the 8.x directory
+refuses to start rather than open an empty store beside your memories;
+its one error line names the directory and the command above. Client
+registrations do not change: the server key, the binary and the
+`instructions` block are served as before, and the plugin's hooks find
+the migrated store on their own.
+
 ## Troubleshooting
 
 - **`bettermemory` not found** when the client starts the server: use
   the absolute path (`bettermemory init --client X` does this).
 - **Memories not found by `memory_search`**: check `BETTERMEMORY_DIR`
   and the startup-log "memory directory" line. Project-scoped
-  `./.claude-memory/` overrides global `~/.claude-memory/`. An 8.x
-  directory that has not been migrated has no `memory.sqlite`, so the
-  server starts with an empty store there.
+  `./.claude-memory/` overrides global `~/.claude-memory/`.
+- **The server refuses to start, naming `bettermemory migrate v8`**: the
+  store directory holds an 8.x store (memory files, event shards or a
+  tombstone directory) and no `memory.sqlite`. Run the migration once
+  (section 5); nothing in the directory is written.
 - **Every hit reads `trust_unavailable`**: this machine does not hold
   the store's key, which lives under the user config directory
   (`keys/<store_id>.key`, or under `BETTERMEMORY_KEYS_DIR` when that is

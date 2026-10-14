@@ -18,6 +18,12 @@ surfaces leave with them. An 8.x directory is imported once by
 `bettermemory migrate v8` and never written again; `bettermemory export
 --mirror` writes the store back out as that directory, byte for byte.
 
+Release candidate `9.0.0rc1` is cut from the `v9` branch: a PEP 440
+pre-release, so `pip install bettermemory`, `uv tool install
+bettermemory` and the plugin's `uvx bettermemory` keep resolving 8.0.0
+until the stable `9.0.0` is tagged after the merge to `main`. Ask for it
+by version (`uvx bettermemory==9.0.0rc1`) to run it.
+
 ### Added
 
 - **The bettermemory 9 store and its hash-chained log.** One SQLite
@@ -337,6 +343,51 @@ surfaces leave with them. An 8.x directory is imported once by
   to serve an empty store and say nothing.
 - `[daemon] port` in `config.toml`; `BETTERMEMORY_STATE_DIR` for the
   daemon's state files, the shape `BETTERMEMORY_KEYS_DIR` set.
+- **Session capture at the Stop hook, by the model in the session.** Off
+  by default; `[capture] stop_checkpoint = true` switches it on, for
+  Claude Code only. Once the conversation since the last capture holds
+  `checkpoint_tokens` (12,000, in tokens of four characters) of the
+  user's prompts and the assistant's text, the Stop hook answers with an
+  instruction as the hook's `additionalContext`, and the chat model saves
+  what the stretch established with `memory_write` from its own context,
+  under ten numbered rules (`capture.CAPTURE_RULES`: durable, one claim,
+  a plain subject, specific, dated, the why, the user's own words for
+  rulings, the category, new, true to the conversation), then tells the
+  user in one line what it saved. No other model runs and no API key is
+  involved; only a session a person is attending is asked
+  (`CLAUDE_CODE_SESSION_ATTENDED` read as `1`, forwarded by the hook
+  client), at most `daily_cap` (12) requests per store per UTC day, and
+  never while another hook is continuing the turn. A capture is a batch
+  on the log: a `capture_open` control row with an unguessable token, a
+  `capture_member` row per write in the memory's own transaction, a
+  `capture_close` recording the transcript offset captured to, and
+  `capture_relations` and `capture_undo` rows for what follows. The
+  writes carry the token as `source="capture:<token>"`, which is what
+  joins them to the batch and keeps a subagent's writes out; a capture
+  write passes every write gate, with no `force` and no acknowledge
+  flag honoured, plus the enforced half of the bar
+  (`durability.find_capture_rule_hits`, refused as `capture_rule` with
+  the rules by number) and a check against bodies an undo reverted
+  (`capture_refused`, `previously_undone`). Each capture write carries
+  the review's `unsafe` and `secret` scores and commits in one call; the
+  related statements it did not answer come back as `relations_pending`,
+  answered once for the whole batch with
+  `memory_admin(action="relations", relations={...})`, the batch's
+  closing call, which applies the review's decisions after the commit. A
+  Stop that finds the batch open with the transcript moved on closes it
+  as interrupted and leaves the session alone for an hour. The CLI:
+  `bettermemory capture review` lists the batches with their outcomes,
+  counts, refusals by rule and undos; `capture undo BATCH [--apply]
+  [--skip-changed]` tombstones a batch's memories and records the undo
+  so the same body is not captured again, refusing a member since
+  updated, verified, linked to from outside the batch or filed in a
+  conflict unless `--skip-changed`; `capture sample [--n N] [--seed S]
+  [--tally]` draws captured memories to grade and `capture grade ID
+  --meets | --fails [--rule N]...` records the owner's grade as a
+  `capture_grade` event. `bench/capture` measures the gates, the one-call
+  review, the attended switch, the undo and the served surface.
+  (`src/bettermemory/capture.py`, `capture_hook.py`, `capture_review.py`,
+  `handlers/capture_relations.py`, `cli/capture_cmd.py`)
 
 ### Changed
 
@@ -367,8 +418,9 @@ surfaces leave with them. An 8.x directory is imported once by
   package (`bettermemory`, `_entry`, `_daemon_client`, `_version`);
   without the first it loads the config as well, and without the second
   it imports `platformdirs` for the state directory.
-- The plugin's SessionEnd hook is gone with session capture; the Stop,
-  SessionStart and UserPromptSubmit hooks stay.
+- The plugin's SessionEnd hook is gone: session capture runs at the
+  Stop hook (under Added). The Stop, SessionStart and UserPromptSubmit
+  hooks stay.
 - A config file that still sets a removed key or section loads with one
   logged warning per key and the line ignored.
 - **Write-time supersession links one stored claim per cue.**
@@ -397,14 +449,19 @@ surfaces leave with them. An 8.x directory is imported once by
   labelled replay), `standing_tier`, `full_tool_surface`,
   `curation_hint_enabled` and `curation_hint_threshold`;
   `[telemetry] log_queries_verbatim` and `max_bytes`; the
-  `[consolidate]`, `[proposals]` and `[capture]` sections whole.
+  `[consolidate]` and `[proposals]` sections whole; and the 8.x
+  `[capture]` keys (`enabled`, `idle_minutes` and their siblings), which
+  switched on a capture that called a model of its own. The 9.0
+  `[capture]` section carries `stop_checkpoint`, `checkpoint_tokens` and
+  `daily_cap` (under Added), and 8.x's `enabled = true` never sets it.
 - **The modules that served them.** `consolidate`, `proposals`,
-  `patterns`, `capture`, `capture_hook`, `session_capture`, `llm`,
-  `doctor`, `sync`, `ingest`, `migrate` (the origin backfill),
-  `quarantine`, `provenance`, `index`, the v8 `episodes` and `store`,
-  and the `doctor`, `reindex`, `sync`, `consolidate`, `ingest`,
-  `capture`, `session-end` and `proposals` commands. Session capture
-  returns in a later release from its own design.
+  `patterns`, `session_capture`, `llm`, `doctor`, `sync`, `ingest`,
+  `migrate` (the origin backfill), `quarantine`, `provenance`, `index`,
+  the v8 `episodes` and `store`, and the `doctor`, `reindex`, `sync`,
+  `consolidate`, `ingest`, `session-end` and `proposals` commands. The
+  8.x `capture` and `capture_hook` modules and the `capture` command are
+  replaced by the in-session capture under Added, which shares their
+  names and nothing else.
 - **The groundedness gate.** `memory_write` loses `groundedness_check`,
   `source_transcript` and `acknowledge_ungrounded`, and the
   `groundedness` module and the `"ungrounded"` status go with them. The

@@ -3462,7 +3462,7 @@ def render_text(report: HealthReport) -> str:
             f"miss={sm.miss_total}  "
             f"no_signal={sm.no_signal_total}  "
             f"unique_memories={sm.unique_miss_memories}  "
-            f"(emit via memory_audit_turn from a client-side end-of-turn hook):"
+            f"(recorded by the Stop hook, `bettermemory hook stop`):"
         )
         if sm.audited_total == 0 and sm.no_signal_total > 0:
             lines.append(

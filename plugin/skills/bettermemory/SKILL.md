@@ -1,6 +1,6 @@
 ---
 name: bettermemory
-description: Memory between sessions that you can verify. Use bettermemory's MCP tools (memory_search, memory_show, memory_write, memory_update, memory_verify, memory_record_use, episode, memory_admin) instead of writing to files when the user asks you to remember something or references shared context from a past session. Retrieval is opt-in; search only when the user references context you lack or a request is ambiguous in a way stored preferences could resolve. Every hit carries a staleness_verdict; when it is not fresh, check one claim before relying and call memory_verify to attest. Writing is proactive: store durable facts as they enter the conversation.
+description: Memory between sessions that you can verify. Use bettermemory's MCP tools (memory_search, memory_show, memory_write, memory_update, memory_remove, memory_verify, memory_record_use, episode, memory_admin) instead of writing to files when the user asks you to remember something or references shared context from a past session. Retrieval is opt-in; search only when the user references context you lack or a request is ambiguous in a way stored preferences could resolve. Every hit carries a staleness_verdict; when it is not fresh, check one claim before relying and call memory_verify to attest. Writing is proactive: store durable facts as they enter the conversation.
 ---
 
 # bettermemory: memory you can verify
@@ -22,7 +22,7 @@ This skill is the long-form companion to the server's `instructions` block, whic
 
 ## The nine tools
 
-`memory_search`, `memory_show`, `memory_write`, `memory_update`, `memory_remove`, `memory_verify`, `memory_record_use`, `episode` (actions `write` and `handoff`) and `memory_admin` (actions `restore`, `tombstones`, `health`, `rename_scope`, `conflicts`, `acknowledge_miss`, `disable_scope`, `enable_scope`). The `bettermemory` command carries the offline work: `health`, `eval`, `export`, `tombstones`, `episodes`, `rename-scope`, `migrate`, `log verify`.
+`memory_search`, `memory_show`, `memory_write`, `memory_update`, `memory_remove`, `memory_verify`, `memory_record_use`, `episode` (actions `write` and `handoff`) and `memory_admin` (actions `restore`, `tombstones`, `health`, `rename_scope`, `conflicts`, `acknowledge_miss`, `disable_scope`, `enable_scope`, and `relations`, a session capture's closing call). The `bettermemory` command carries the offline work: `health`, `eval`, `export`, `tombstones`, `episodes`, `rename-scope`, `migrate`, `log verify`, `capture`.
 
 ## When to retrieve
 

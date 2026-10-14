@@ -30,7 +30,7 @@ The `pypi` and `testpypi` environment names match the `environment:` blocks in `
 
 ## Cutting a release
 
-Working tree clean, on `main`, all CI green.
+Working tree clean, on the branch the tag will point at (`main`; the 9.0 release candidates were cut from `v9`), all CI green.
 
 A release version has to land on **seven fields across six files**.
 Miss one and the version-sync suite in step 5 fails rather than the
@@ -64,7 +64,11 @@ $EDITOR server.json                          # `.version` AND
                                              # `.packages[0].version`
 
 # 3. Move the relevant entries from the "Unreleased" section of
-#    CHANGELOG.md into a new `## <X.Y.Z> - <date>` heading.
+#    CHANGELOG.md into a new `## <X.Y.Z> - <date>` heading. Read
+#    `git log <previous tag>..` beside it: every commit that changed
+#    behaviour is represented in the entry, by phrase or by short SHA.
+#    (The test that used to check this window, tests/test_changelog.py,
+#    was retired in 9.0 with the ratchet-test genre.)
 $EDITOR CHANGELOG.md
 
 # 4. Refresh uv.lock so its editable self-entry tracks the new version.
@@ -83,32 +87,23 @@ uv lock
 #    check that all version surfaces agree (pyproject.toml is the source
 #    of truth for `bettermemory.__version__`, which the plugin
 #    manifests, both server.json fields, and uv.lock's self-entry must
-#    match). test_changelog.py is included because it pins the
-#    `## <X.Y.Z> - <date>` heading from step 3 — a
-#    forgotten heading otherwise passes here and only trips in the full
-#    release-workflow suite. Its release-window coverage check is inert
-#    at this point (the new tag doesn't exist yet), which is why step 6
-#    re-runs the file after tagging.
-pytest tests/test_plugin.py tests/test_version.py tests/test_changelog.py -q
+#    match). `uv sync` first: `bettermemory/_version.py` is written by
+#    the build hook at install time, and a stale one fails
+#    test_version.py until the editable install is refreshed.
+uv sync --locked --extra dev
+pytest tests/test_plugin.py tests/test_version.py -q
 
-# 5b. IF THIS RELEASE BUMPS `index.SCHEMA_VERSION`, it is a COORDINATED
-#     upgrade, not a library upgrade. After re-pointing the editable
-#     server venv and `uv tool` at the new version, RESTART the MCP
-#     clients. A running server keeps the code it imported, so the
-#     first upgraded process to touch the index migrates it out from
-#     under every still-running one; from that moment those servers are
-#     readers too old for the file. Since 7.13.0 they say so accurately
-#     (`schema_skew`, remedy: restart) instead of reporting the store
-#     as corrupt, but the fix is still the restart, and only a restart.
+# 5b. IF THIS RELEASE CHANGES THE STORE (`store.SCHEMA_VERSION`, a table,
+#     a fold), it ships a `bettermemory migrate <subcommand>` and the
+#     release notes say so (CONTRIBUTING.md, the compatibility
+#     contract); `bettermemory migrate v8` is the pattern. The daemon
+#     needs no restart ritual: the first call from an upgraded shim or
+#     hook replaces a running daemon of another version.
 
-# 6. Commit, tag, re-check the changelog against the tag, then push.
-#    The tag-window coverage check only sees the new tag once it
-#    exists, and a coverage gap caught here costs a local re-tag
-#    (`git tag -d v<X.Y.Z>`) instead of a post-release erratum.
+# 6. Commit, tag, push the branch, then the tag.
 git commit -am "release: <X.Y.Z>"
 git tag -a v<X.Y.Z> -m "v<X.Y.Z>"
-pytest tests/test_changelog.py -q
-git push origin main
+git push origin <branch>
 git push origin v<X.Y.Z>
 ```
 
@@ -116,6 +111,16 @@ The tag push triggers the `Release` workflow. Watch it from the Actions tab. On 
 
 - `bettermemory==<X.Y.Z>` is on PyPI.
 - A GitHub release with auto-generated notes appears on the Releases page, with the sdist and wheel attached as assets.
+
+## Pre-release tags
+
+A tag whose version carries a letter after the digits (`v9.0.0rc1`, `v9.0.0b1`, `v9.0.0.dev1`; PEP 440 pre-releases) runs the same workflow with three differences, each keyed on that letter rather than on a flag:
+
+- PyPI gets the version, and resolvers skip it: `pip install bettermemory`, `uv tool install bettermemory` and the plugin's `uvx bettermemory` keep resolving the latest stable release until a stable tag follows. Asking for it by version (`uvx bettermemory==9.0.0rc1`) installs it.
+- The GitHub release is created marked **pre-release**, so it never takes the "latest" slot (`release.yml`, the "Read the tag's kind" step).
+- The MCP registry listing is skipped (`publish-mcp.yml`): the registry carries one version per server and a listing is what registry clients install by default. The stable tag that follows lists as usual.
+
+The 9.0 release candidates were cut this way from the `v9` branch, with the stable `v9.0.0` tag following the merge to `main`.
 
 ## Dry run via TestPyPI
 
@@ -135,15 +140,7 @@ The build job verifies that the pyproject.toml version matches the tag (`v<X.Y.Z
 
 ## Release-window CHANGELOG coverage
 
-`test_newest_tag_window_commits_are_represented` in `tests/test_changelog.py` guards the omission class where a commit ships inside a release tag with no trace in that release's notes — the way `096218e` shipped inside `v3.24.0` and had to be repaired by erratum. For the newest `v<X.Y.Z>` tag it walks every non-merge commit in the window from the previous tag and requires each one to be represented in that release's `## <X.Y.Z> - <date>` entry. Commits whose conventional-commit type is trivial (docs, style, test, chore, ci, build, bench, release), or whose every scope is test/docs/ci/bench tooling, are exempt. Every other commit has to clear one of three tiers, checked in this order:
-
-1. **Its short SHA appears in the entry** — the deterministic escape hatch for when the entry deliberately paraphrases, or groups several commits under one bullet (the shape the erratum bullets already use).
-2. **A two-word phrase from its subject is reused in the entry.** This is the primary lexical path: notes that genuinely document a commit almost always echo one of its phrases, and requiring a *pair* is what keeps the tier honest.
-3. **Near-total single-word overlap** — at least four distinctive subject words, and no more than one of them missing. A deliberately weak fallback for a subject the entry rewrote wholesale. It takes a pair or a near-complete sentence precisely because single generic words (`search`, `verdict`, `memory`) recur in every entry this project has ever written, so one of them matching is not evidence of anything.
-
-Writing the entry in prose that reuses the commits' own phrasing is what clears tier 2 for most of a window. Reach for a SHA citation in the two cases prose cannot cover: a bullet that intentionally covers several commits at once, and a subject that cannot produce a matchable pair at all. The second is not rare — the judge drops stopwords and any token under three characters *before* forming pairs, so a short or glue-heavy subject may have no two adjacent distinctive words left to echo. When that happens the entry is not deficient; cite the short SHA. Since the SHA has to exist first, that means a follow-up `docs(changelog):` commit, which is how `3ea1ffe` and `9b68e74` were written.
-
-The check needs the tag to exist: during step 5 it evaluates the previous, already-frozen window, and on CI's shallow checkouts — which lack the tag pair and the window's history — it skips. The moment it has teeth is between `git tag` and `git push origin v<X.Y.Z>`, which is exactly where step 6 re-runs it.
+`tests/test_changelog.py` used to walk every non-merge commit between the previous tag and the new one and require each to be represented in the release's entry, by a reused two-word phrase or a short SHA citation; 9.0 retired it with the ratchet-test genre. The check is now the reviewer's: step 3 reads `git log <previous tag>..` beside the entry, and a bullet that covers several commits at once cites their short SHAs, the shape the erratum bullets already use. The GitHub release notes are generated from the commits (`generate_release_notes` in `release.yml`) and do not depend on the CHANGELOG entry.
 
 ## Yanking a bad release
 

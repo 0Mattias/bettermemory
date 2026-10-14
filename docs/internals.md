@@ -144,12 +144,21 @@ open one.
 
 ## Module map
 
-Eighty-five Python files under `src/bettermemory/`, its `handlers/`
+Ninety-nine Python files under `src/bettermemory/`, its `handlers/`
 and `cli/`. A tool call crosses them in one order, and the map is that
 order.
 
-**Entry.** `cli/` is the `bettermemory` command; `cli/serve.py` is the
-no-argument default and hands off to `builder.build_server`, which
+**Entry.** `cli/` is the `bettermemory` command, entered through
+`_entry.py`, which imports nothing it does not need so a hook process
+stays small. With no arguments it runs the stdio shim (`shim.py`): a
+real stdio MCP server whose `tools/list` and `tools/call` forward to
+the local daemon (`daemon.py`, one process per store on 127.0.0.1 that
+owns the store and serves the nine tools over streamable HTTP and the
+hook bodies under `/api/v1/hook/`), started on first use through the
+client in `_daemon_client.py`, which the hook command shares;
+`cli/daemon_cmd.py` is `up`, `down` and `status`. `cli/serve.py` is
+the in-process server the shim falls back to when no daemon can be
+reached or started; both hand off to `builder.build_server`, which
 instantiates the MCP SDK server and binds the nine tools. `server.py`
 is a re-export shim kept for callers that import `build_server` from
 there. `__main__.py` covers `python -m bettermemory`.
@@ -188,9 +197,10 @@ calendar drift, with `symbols.py` for advisory symbol citations, and
 the store's `trust_rows` supplies the provenance label and this host's
 stamp. The warm daemon's caches sit on this path and keep every answer
 bit-identical: `origin.py` keeps the captured origin per directory for
-two seconds under a signature of the repository's HEAD bytes, config
-and environment; `_response.py` and `origin.py` memoise the commit-drift
-work per repository root and commit HEAD names, which `githead.py`
+ten minutes under a signature of the repository's HEAD bytes, config
+and environment, validated on every lookup; `_response.py` and
+`origin.py` memoise the commit-drift work per repository root and
+commit HEAD names, which `githead.py`
 reads from the repository files without a git process; `search.py`
 memoises the token streams per body and scopes. Every cache registers
 its clearer with `_caches.py`, and `_caches.clear_all` empties them.
@@ -224,6 +234,19 @@ while it alone has (a foreign join).
 `recall_counters.py` and `recall_review.py` are the surface's
 measurement: the eval's surfaces section and `bettermemory recall
 review`.
+
+**The write review and session capture.** `review.py` is the write
+review: the questions, the related set and the pure decision, with
+`handlers/write.py` as the daemon's side of it (the review response,
+the `review_issued` row, the refusals and the commit) and
+`review_samples.py` and `review_counters.py` as its grading surface
+(`cli/review_cmd.py`). `capture.py` is session capture's bar, its
+instruction and its batches on the log; `capture_hook.py` is the Stop
+endpoint's capture half, when a turn end asks the chat model to save
+the stretch since its last capture and how the batch settles;
+`handlers/capture_relations.py` is a batch's closing call, the
+relations answered at once; `capture_review.py` is `bettermemory
+capture` (`cli/capture_cmd.py`): review, undo, sample and grade.
 
 **Offline.** `migrate_v8.py` reads an 8.x directory through the frozen
 readers in `v8.py` and writes the store; `mirror.py` writes the store
@@ -267,7 +290,8 @@ Nine MCP tools, all registered on every start: `memory_search`,
 `memory_show`, `memory_write`, `memory_update`, `memory_remove`,
 `memory_verify`, `memory_record_use`, `episode` (write, handoff) and
 `memory_admin` (restore, tombstones, health, rename_scope, conflicts,
-acknowledge_miss, disable_scope, enable_scope). Signatures, defaults and
+acknowledge_miss, disable_scope, enable_scope, and relations, a session
+capture's closing call). Signatures, defaults and
 return shapes: [api.md](api.md).
 
 The surface is charged on every turn whether a memory tool is called or
@@ -298,6 +322,10 @@ bettermemory export                # JSON, or --mirror DIR for 8.x files
 bettermemory migrate v8            # import an 8.x directory
 bettermemory log verify            # audit the hash chain
 bettermemory eval                  # the three metrics, with CIs
+bettermemory review samples        # grade reviewed writes; review grade
+bettermemory recall review         # grade what the hooks showed; recall grade
+bettermemory capture review        # session capture's batches; undo, sample, grade
+bettermemory up                    # the local daemon; down, status
 ```
 
 `bettermemory <command> --help` for flags. `hook session-start|stop|prompt`
@@ -314,8 +342,10 @@ the knobs (`default_max_results`, `search_mode`, `conversational`,
 `write_supersession`, `prompt_recall`, `session_brief`,
 `verification_stale_days`, `tombstone_retention_days`, the size caps),
 `[scopes]` the allowed list and typo exceptions, `[telemetry]` the one
-switch, `enabled`. A key 9.0 removed loads with one logged warning and
-is ignored; the file's own comments say which.
+switch, `enabled`, `[daemon]` the port (7397 by default), and
+`[capture]` session capture's switch and bounds (`stop_checkpoint`,
+`checkpoint_tokens`, `daily_cap`). A key 9.0 removed loads with one
+logged warning and is ignored; the file's own comments say which.
 
 ## Limitations
 

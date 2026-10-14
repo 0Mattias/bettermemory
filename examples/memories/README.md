@@ -1,10 +1,13 @@
 # Example memories
 
-These files illustrate the on-disk shape of a bettermemory store and
-how each differentiated feature surfaces in the frontmatter. They are
-not meant to be loaded into your real store as-is — drop them into a
-throwaway `BETTERMEMORY_DIR` if you want to poke at them with
-`memory_search`, or just read them.
+These files illustrate the 8.x on-disk shape of a bettermemory store,
+one markdown file per memory, and how each differentiated feature
+surfaces in the frontmatter. The 9.0 store is one SQLite file; the
+markdown directory is what `bettermemory migrate v8` reads and what
+`bettermemory export --mirror` writes. They are not meant to be loaded
+into your real store as-is: copy them into a throwaway directory, point
+`BETTERMEMORY_DIR` at it, run `bettermemory migrate v8` there to poke at
+them with `memory_search`, or just read them.
 
 ## Files
 
@@ -24,10 +27,9 @@ throwaway `BETTERMEMORY_DIR` if you want to poke at them with
   — a superseded/superseding pair. The May file carries
   `links: [{type: supersedes, target_id: <feb file's id>}]`. The
   edge is advisory in `memory_search` (ranking doesn't auto-demote
-  the older id), but `memory_show` surfaces the link and the
-  `consolidate --apply` pass uses it as a demotion candidate. Drop
-  both into a throwaway `BETTERMEMORY_DIR` to see how the link
-  renders end-to-end.
+  the older id, and the stale hit carries `superseded_by`), and
+  `memory_show` surfaces the link both ways. Migrate both into a
+  throwaway store to see how the link renders end-to-end.
 
 ## How the model uses these
 

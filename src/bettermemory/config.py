@@ -91,7 +91,7 @@ conversational = true
 # memory_conflicts instead of guessing which side is current. Measured
 # on bench/integrity's sealed corpus: 27 of the 40 update statements
 # link to the statement they replace and nothing links a distractor,
-# a hard negative or a cross-topic pair (docs/eval-results.md). Set
+# a hard negative or a cross-topic pair (bench/integrity/results/). Set
 # false to leave links to the writer's explicit `supersedes=` list.
 write_supersession = true
 
@@ -239,11 +239,13 @@ typo_exceptions = []
 port = 7397
 
 [telemetry]
-# Append-only JSONL event log at <storage>/.events.jsonl. One line per tool
-# call: search queries, returned IDs, write/update/remove events. Used by the
-# memory_health view, by use-recording feedback, and to tune the durability
-# marker list against real traffic. Lives next to the memories — same trust
-# boundary, no new permissions story. Set `enabled = false` to opt out.
+# Telemetry events are rows of the store's own signed log: one per tool
+# call (search queries redacted to a hash and a short preview, returned
+# ids, write, update and remove events) and one per hook show. The health
+# report, `bettermemory eval` and the use-recording feedback read them.
+# Same file, same trust boundary, no new permissions story. Set
+# `enabled = false` to opt out; the recall surface then shows nothing,
+# since an off-the-books delivery is refused.
 enabled = true
 
 [capture]

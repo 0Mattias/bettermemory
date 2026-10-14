@@ -391,8 +391,9 @@ this workload by construction). agentmemory and claude-mem stay
 documented-unavailable — their stub reasons explain why a live run
 would not be honest. Maintainer runs only, via
 `tests/eval/run_live.sh` (throwaway `.eval-venv/`, never CI); missing
-prerequisites degrade to the stub row at runtime. Published numbers
-live in [eval-results.md](eval-results.md).
+prerequisites degrade to the stub row at runtime. The results page
+that carried the published numbers was retired in 9.0 (88aec02a); the
+lane's own run writes the current ones.
 
 ## Integrity benchmark
 
@@ -401,8 +402,9 @@ not: whether a memory system serves a fact that a later statement
 superseded, and whether a poisoned record can be told apart from a
 legitimate one. The same protocol runs on bettermemory, mem0 (two arms),
 Graphiti (Zep's open-source engine) and Letta. The docstring of
-`bench/integrity/run.py` carries the commands; the numbers are in
-[eval-results.md](eval-results.md#integrity-benchmark).
+`bench/integrity/run.py` carries the commands; the numbers are the
+frozen result artifacts under `bench/integrity/results/`, each carrying
+the terms it was scored under.
 
 The threat model is memory poisoning as the OWASP agentic top ten frames
 it (ASI06). The axes are three of the four intervention points the

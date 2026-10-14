@@ -1,7 +1,7 @@
 {
   "name": "bettermemory",
   "version": "9.0.0.dev0",
-  "description": "A trust layer between Claude Code and its own past: memory with per-hit staleness verdicts, claim-level use attribution, measured effectiveness, and episodic run-state. Retrieval is opt-in at the tool surface, plus a score-gated recall hook that injects a single stored pointer on the ~2% of prompts the silent-miss probe flags.",
+  "description": "Memory you can verify, between Claude Code and its own past: every retrieved fact carries a staleness verdict checked against the filesystem and git, every use an attribution, and a signed store that shows how each record arrived. Retrieval is opt-in at the tool surface; three hooks add the session brief at session start, up to three pointers per prompt, turn-end settlement, and session capture by the model in the session, off by default.",
   "author": {
     "name": "Mattias Rask",
     "url": "https://github.com/0Mattias"

@@ -23,7 +23,14 @@ The plugin bundles five things:
    turn's retrievals, settle the pointers the brief and the prompt
    recall showed when the reply used them, and log silent retrieval
    misses. Always exits 0, so a transient failure never surfaces as a
-   hook-error banner.
+   hook-error banner. Session capture rides this hook and is off until
+   `[capture] stop_checkpoint = true` in `config.toml`: once the
+   conversation since the last capture holds 12,000 tokens of prompts
+   and replies, the hook hands the model in the session an instruction
+   to save what that stretch established, under ten rules, with
+   `memory_write`. No other model and no API key; every capture is a
+   batch that `bettermemory capture review` lists and `capture undo`
+   takes back.
 4. **SessionStart hook** (same file): runs
    `uvx bettermemory hook session-start` when a conversation opens and
    prints the session brief: up to eight pointers (id and summary,

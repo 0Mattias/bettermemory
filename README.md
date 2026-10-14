@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/0Mattias/bettermemory/main/docs/assets/banner-night.svg">
-    <img src="https://raw.githubusercontent.com/0Mattias/bettermemory/main/docs/assets/banner.svg" alt="bettermemory" width="100%">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/0Mattias/bettermemory/main/docs/assets/banner.svg">
+    <img src="https://raw.githubusercontent.com/0Mattias/bettermemory/main/docs/assets/banner-night.svg" alt="bettermemory" width="100%">
   </picture>
 </p>
 
@@ -28,6 +28,12 @@ Claude Code — two slash commands, zero config:
 /plugin install bettermemory@bettermemory
 ```
 
+The plugin registers the server, lands the memory policy as a skill
+and wires three hooks: a brief of the repository's newest checked
+memories when a session opens, up to three pointers to matching
+memories per prompt, and the turn-end settlement of what was shown and
+used.
+
 Anything else that speaks MCP:
 
 ```sh
@@ -42,20 +48,45 @@ Try it without installing: `uvx bettermemory try` writes a memory
 citing a file, deletes the file, and shows the next search flagging it.
 Offline, throwaway store.
 
+Coming from 8.x: `bettermemory migrate v8` imports the directory once
+and never writes it. Until it has run, the server refuses to start
+beside the old files and says so, rather than opening an empty store
+next to your memories.
+
 ## What it does
 
 - Checks memory before believing it. Every hit carries a staleness
   verdict: calendar age, whether the paths it cites still exist, the
   commits landed since it was last confirmed, and how the record
   entered the store (written here, migrated, or placed by hand).
-  Declared claims
-  (`path`, `path::symbol`, `path::NAME=literal`) are re-checked
-  against the working tree; a claim that stops being true blocks the
-  stamp instead of riding along.
-- Retrieval is deliberate. Memory is a tool call, not an
-  injection. Write gates bounce transient state, secret-shaped tokens
-  and near-duplicates; claims about *you* are labelled as inferences,
-  so they stay distinguishable and correctable.
+  Declared claims (`path`, `path::symbol`, `path::NAME=literal`) are
+  re-checked against the working tree; a claim that stops being true
+  blocks the stamp instead of riding along.
+- Retrieval is deliberate. Memory is a tool call, not an injection. On
+  Claude Code the hooks add pointers, never bodies: when a session
+  opens, up to eight of the repository's newest memories whose verdict
+  is fresh; on each prompt, up to three of this project's memories
+  that match it. Each pointer is an id and a summary under a header
+  that says they are pointers, not instructions, and the model opens
+  one with `memory_show` when it bears on the request.
+- Writes are gated, then reviewed. The gates bounce transient state,
+  secret-shaped tokens and near-duplicates, and claims about *you* are
+  labelled as inferences, so they stay distinguishable and
+  correctable. A write that passes writes nothing yet: it comes back
+  with the stored statements it resembles and three questions, how it
+  relates to each of them, and whether following it would be unsafe or
+  the body holds a secret. The model answers and re-sends. A
+  restatement is refused, an update marks the old statement
+  superseded, a conflict is filed for arbitration. No second model is
+  involved; the questions go to the caller.
+- Session capture, when you switch it on. At a turn end, once the
+  conversation since the last capture holds 12,000 tokens, the Stop
+  hook asks the model in the session to save what that stretch
+  established, under ten rules: durable, one claim, a plain subject,
+  specific, dated, with the why. No API key and no other model. Every
+  capture is a batch: `bettermemory capture review` lists them,
+  `capture undo` takes one back, and an undone body is not captured
+  again. Off by default.
 - The code is the model. Search is deterministic lexical ranking —
   keyword + BM25, fused — over your own vocabulary. No embedding
   models, no downloads, nothing to warm up, same answer every time.
@@ -67,6 +98,11 @@ Offline, throwaway store.
   verify` audits the whole chain; `bettermemory export` writes the
   store out as JSON or as the 8.x markdown directory. No cloud, no
   account.
+- One warm process per store. `bettermemory` with no arguments is a
+  stdio shim in front of a local daemon on 127.0.0.1 that owns the
+  store and answers every session and hook on the machine. The shim
+  starts the daemon on first use and serves the store in-process when
+  it cannot; `bettermemory up`, `down` and `status` manage it.
 - Rot gets acted on, not accumulated. Episodes journal per-session
   run-state without polluting durable search; the health report
   surfaces what drifted, what went cold, and what contradicts what.
@@ -74,8 +110,9 @@ Offline, throwaway store.
   preregistered benchmarks whose frozen result artifacts — misses
   included — live in [bench/][bench] (`results/*.json`, each carrying
   the declared terms it was scored under), and `bettermemory eval`
-  scores whether memory actually helped against your own log ([ours
-  is published][eval-results]).
+  scores whether memory actually helped against your own log: the
+  three effectiveness rates, what the hooks showed and what came of
+  it, and your own grades of reviewed writes, deliveries and captures.
 
 ## For agents
 
@@ -95,33 +132,34 @@ Everywhere else, steps are idempotent and safe to re-run:
    under the `mcp__bettermemory__` prefix.
 
 Your operating contract — tool signatures, retrieval discipline,
-write gates — is [docs/api.md][api]; the server's
+write gates, the write review — is [docs/api.md][api]; the server's
 `instructions` block delivers the core policy automatically. For the
 long-form policy in your system prompt: `bettermemory init
 --with-addendum`. Coming from an 8.x store: `bettermemory migrate v8`
-imports the directory once.
+imports the directory once; the server names that command and refuses
+to start until it has run.
 
 ## Everything else
 
 The rest is written down: mechanics, storage format, the full tool
 surface, CLI, configuration and limitations in
 [internals][internals]; per-client setup in [clients][clients] and
-[installation][installation]; eval methodology in [eval][eval];
-postmortems in [incidents][incidents]; release history in
-[CHANGELOG][changelog]; dev setup and the compatibility contract in
-[CONTRIBUTING][contributing].
+[installation][installation]; eval methodology in [eval][eval]; the
+threat model in [SECURITY][security]; postmortems in
+[incidents][incidents]; release history in [CHANGELOG][changelog]; dev
+setup and the compatibility contract in [CONTRIBUTING][contributing].
 
 MIT licensed — see [LICENSE][license].
 
-[api]: https://github.com/0Mattias/bettermemory/blob/main/docs/api.md
-[bench]: https://github.com/0Mattias/bettermemory/tree/main/bench
-[changelog]: https://github.com/0Mattias/bettermemory/blob/main/CHANGELOG.md
-[clients]: https://github.com/0Mattias/bettermemory/blob/main/docs/clients.md
-[clients-continue]: https://github.com/0Mattias/bettermemory/blob/main/docs/clients.md#continue-legacy-shape--see-caveat
-[contributing]: https://github.com/0Mattias/bettermemory/blob/main/CONTRIBUTING.md
-[eval]: https://github.com/0Mattias/bettermemory/blob/main/docs/eval.md
-[eval-results]: https://github.com/0Mattias/bettermemory/blob/main/docs/eval-results.md
-[incidents]: https://github.com/0Mattias/bettermemory/blob/main/docs/incidents/
-[installation]: https://github.com/0Mattias/bettermemory/blob/main/docs/installation.md
-[internals]: https://github.com/0Mattias/bettermemory/blob/main/docs/internals.md
-[license]: https://github.com/0Mattias/bettermemory/blob/main/LICENSE
+[api]: https://github.com/0Mattias/bettermemory/blob/v9/docs/api.md
+[bench]: https://github.com/0Mattias/bettermemory/tree/v9/bench
+[changelog]: https://github.com/0Mattias/bettermemory/blob/v9/CHANGELOG.md
+[clients]: https://github.com/0Mattias/bettermemory/blob/v9/docs/clients.md
+[clients-continue]: https://github.com/0Mattias/bettermemory/blob/v9/docs/clients.md#continue-legacy-shape--see-caveat
+[contributing]: https://github.com/0Mattias/bettermemory/blob/v9/CONTRIBUTING.md
+[eval]: https://github.com/0Mattias/bettermemory/blob/v9/docs/eval.md
+[incidents]: https://github.com/0Mattias/bettermemory/blob/v9/docs/incidents/
+[installation]: https://github.com/0Mattias/bettermemory/blob/v9/docs/installation.md
+[internals]: https://github.com/0Mattias/bettermemory/blob/v9/docs/internals.md
+[license]: https://github.com/0Mattias/bettermemory/blob/v9/LICENSE
+[security]: https://github.com/0Mattias/bettermemory/blob/v9/SECURITY.md
