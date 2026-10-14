@@ -12,9 +12,10 @@ spells out exactly what's stable.
 A major by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract),
 and the first one to change the store. The markdown directory with a
 derived index becomes one SQLite file whose tables are the fold of a
-hash-chained log; the twenty-seven tools become nine; ten off-by-default
-flags leave with their code; and the modules that served the removed
-surfaces leave with them. An 8.x directory is imported once by
+hash-chained log; the twenty-seven tools, eighteen of them registered
+by default, become nine; ten off-by-default flags leave with their
+code; and the modules that served the removed surfaces leave with
+them. An 8.x directory is imported once by
 `bettermemory migrate v8` and never written again; `bettermemory export
 --mirror` writes the store back out as that directory, byte for byte.
 
