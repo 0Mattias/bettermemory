@@ -352,42 +352,9 @@ markdown by construction). Rules live in `eval.THRESHOLD_RULES` /
 `eval.WIDENING_RULES`; adding one is a checker function plus a registry
 entry.
 
-## Comparative harness
-
-`tests/eval/` (`python -m tests.eval.comparative`, `--json` available)
-runs the real `search` and `probe_for_miss` code over a fixed synthetic
-workload and feeds the derived events through `compute_eval`. Two
-honesty constraints:
-
-- The offline adapter reports `memory_helped_rate` and
-  `endorsement_rate` as `n/a`, not `0.0`: they require a live agent
-  emitting `record_use` events; deriving them from gold labels would
-  relabel recall. The scripted driver (`tests/eval/driver.py`,
-  `--driver scripted`) proves the compute path end to end but is a
-  recorded transcript, not a measurement. The honest source for live
-  rates is production telemetry: `bettermemory eval` over a real
-  store's event log.
-- Adapters for other systems don't fabricate numbers. Absent the
-  package or its API key they raise `SystemUnavailable` and contribute
-  only a capability-matrix row sourced from public docs.
-
-The rates are computable for any system that logs retrieval timing,
-logs whether the model deliberately tagged each retrieved item as
-load-bearing, and can replay a turn against its ranker post-hoc.
-
-### The `--live` lane
-
-`--live` swaps the stubs for executing adapters where execution is
-honest (`tests/eval/live_adapters.py`); an adapter that cannot run
-honestly stays a documented stub, its reason in the stub. Maintainer
-runs only, via `tests/eval/run_live.sh` (throwaway `.eval-venv/`, never
-CI); missing prerequisites degrade to the stub row at runtime. The
-results page that carried the published numbers was retired in 9.0
-(88aec02a); the lane's own run writes the current ones.
-
 ## Integrity benchmark
 
-`bench/integrity/` measures two things the recall benchmarks above do
+`bench/integrity/` measures two things the rates above do
 not: whether a memory system serves a fact that a later statement
 superseded, and whether a poisoned record can be told apart from a
 legitimate one. The protocol is system-agnostic: each arm is an adapter

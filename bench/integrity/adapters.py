@@ -31,8 +31,8 @@ review is a defect (the product arm runs with tau unset), and so is the
 retired "pending" status, which no write returns.
 
 An adapter that cannot run raises `SystemUnavailable` with the reason,
-the same discipline as tests/eval/adapters.py: the row is published as
-unavailable with the blocker, never with a fabricated number.
+and the row is published as unavailable with the blocker, never with a
+fabricated number.
 
 The bettermemory adapter imports the package lazily so the rival arms
 can be collected from a venv that does not carry it.

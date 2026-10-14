@@ -477,6 +477,14 @@ until the stable `9.0.0` is tagged. Ask for a candidate by version
 - The ratchet-test genre (`test_doc_claims`, `test_symbol_citations`,
   `test_resident_footprint`, `test_changelog` and their siblings) and
   the tests of the removed modules.
+- The comparative harness under `tests/eval/` (`python -m
+  tests.eval.comparative`, its `--live` lane and `run_live.sh`), the
+  MSC loader under `bench/msc/` and the seven retrieval census scripts
+  under `bench/` that nothing pinned. The receipts under each program's
+  `results/` stay, and `bench/README.md` indexes what is live and what
+  is closed. Releases before 8.0.0 moved from this file to
+  `docs/changelog-history.md`, unchanged.
+
 ### Migration
 
 Run `bettermemory migrate v8` once per store directory (`--dry-run`
