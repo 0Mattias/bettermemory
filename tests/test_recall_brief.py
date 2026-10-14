@@ -24,6 +24,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -66,6 +67,13 @@ pytestmark = pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
 
 _FUTURE = datetime(2099, 1, 1, tzinfo=timezone.utc)
 _OTHER_REMOTE = "git@github.com:example/other.git"
+
+# The drift memo and the origin cache key on `githead.signature`, which
+# declines file discovery off POSIX: on Windows every signature is
+# undetermined, nothing is memoised and git runs on every call.
+_MEMO_IS_POSIX = pytest.mark.skipif(
+    sys.platform == "win32", reason="githead declines file discovery off POSIX"
+)
 
 
 def _origin(repo: Path, remote: str | None = _REMOTE) -> Origin:
@@ -351,6 +359,7 @@ def test_off_switches(world: _World) -> None:
 # ---------------------------------------------------------------------------
 
 
+@_MEMO_IS_POSIX
 def test_a_warm_brief_runs_no_git(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -387,6 +396,7 @@ def _spy_resolve(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, int]]:
     return calls
 
 
+@_MEMO_IS_POSIX
 def test_a_head_move_resolves_at_most_24_and_fills_the_rest(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -425,6 +435,7 @@ def test_a_head_move_resolves_at_most_24_and_fills_the_rest(
     assert events[-1]["unresolved"] == 0
 
 
+@_MEMO_IS_POSIX
 def test_a_warm_brief_resolves_the_rows_its_memo_cannot_answer(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -598,6 +609,7 @@ def _fill_then_warm(
     return warm, [rows for name, rows in calls if name == request_thread]
 
 
+@_MEMO_IS_POSIX
 def test_a_fill_keeps_its_rows_when_a_root_file_comes_and_goes(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -630,6 +642,7 @@ def test_a_fill_keeps_its_rows_when_a_root_file_comes_and_goes(
     assert seen[0] == _FILL_ROWS + 1  # the discarded row, resolved again
 
 
+@_MEMO_IS_POSIX
 def test_a_fill_keeps_its_rows_when_the_index_is_rewritten(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -664,6 +677,7 @@ def test_a_fill_keeps_its_rows_when_the_index_is_rewritten(
     assert report.kept == report.resolved == _FILL_ROWS
 
 
+@_MEMO_IS_POSIX
 def test_a_quiet_fill_keeps_every_row(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -678,6 +692,7 @@ def test_a_quiet_fill_keeps_every_row(
     assert (report.retried, report.lost) == (0, 0)
 
 
+@_MEMO_IS_POSIX
 def test_a_fill_never_memoises_a_verdict_computed_across_a_claimed_change(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:

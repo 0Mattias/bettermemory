@@ -360,7 +360,7 @@ def test_a_log_without_the_surface_renders_every_body_as_before() -> None:
     the files the code before the section wrote."""
     rendered = _render_all(legacy_memories(), legacy_log())
     for name, text in rendered.items():
-        assert text == (FIXTURES / name).read_text(), name
+        assert text == (FIXTURES / name).read_text(encoding="utf-8"), name
     assert "Recall surfaces" not in rendered["report.md"]
 
 

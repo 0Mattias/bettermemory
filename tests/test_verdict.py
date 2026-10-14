@@ -24,6 +24,7 @@ git subprocess in the package is spawned.
 from __future__ import annotations
 
 import shutil
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -62,6 +63,13 @@ pytestmark = pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
 _STALE_AFTER_DAYS = Config().behavior.verification_stale_days
 _ANCIENT = datetime(2020, 1, 1, tzinfo=timezone.utc)
 _FUTURE = datetime(2099, 1, 1, tzinfo=timezone.utc)
+
+# The drift memo and the origin cache key on `githead.signature`, which
+# declines file discovery off POSIX: on Windows every signature is
+# undetermined, nothing is memoised and git runs on every call.
+_MEMO_IS_POSIX = pytest.mark.skipif(
+    sys.platform == "win32", reason="githead declines file discovery off POSIX"
+)
 
 
 @contextmanager
@@ -235,6 +243,7 @@ async def test_verdict_agrees_with_show_and_search(
 
 @pytest.mark.parametrize("basis", ["reachability", "author-date"])
 @pytest.mark.parametrize("drifted", [False, True])
+@_MEMO_IS_POSIX
 async def test_second_memory_show_spawns_no_git(
     server_with_fake_origin: Any,  # noqa: F811
     tmp_path: Path,
@@ -277,6 +286,7 @@ async def test_second_memory_show_spawns_no_git(
     assert warm == cold
 
 
+@_MEMO_IS_POSIX
 async def test_show_reads_the_row_a_search_resolved(
     server_with_fake_origin: Any,  # noqa: F811
     tmp_path: Path,
@@ -305,6 +315,7 @@ async def test_show_reads_the_row_a_search_resolved(
 # ---------------------------------------------------------------------------
 
 
+@_MEMO_IS_POSIX
 async def test_memoised_verdicts_resolve_nothing_then_match_a_full_computation(
     server_with_fake_origin: Any,  # noqa: F811
     memory_dir: Path,
@@ -419,6 +430,7 @@ async def _resolved_row(
     return written["id"], verdict
 
 
+@_MEMO_IS_POSIX
 async def test_a_commit_moves_the_verdict(
     server_with_fake_origin: Any,  # noqa: F811
     memory_dir: Path,
@@ -445,6 +457,7 @@ async def test_a_commit_moves_the_verdict(
     assert shown["commit_drift"]["status"] == "drift"
 
 
+@_MEMO_IS_POSIX
 async def test_a_body_update_moves_the_verdict(
     server_with_fake_origin: Any,  # noqa: F811
     memory_dir: Path,
@@ -520,6 +533,7 @@ async def test_a_verify_moves_the_verdict(
 
 
 @pytest.mark.parametrize("drifted", [False, True])
+@_MEMO_IS_POSIX
 async def test_a_warm_expanded_search_spawns_no_git(
     server_with_fake_origin: Any,  # noqa: F811
     tmp_path: Path,

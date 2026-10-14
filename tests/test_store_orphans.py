@@ -14,6 +14,8 @@ no such names, and nothing here deletes, restores or asks.
 from __future__ import annotations
 
 import json
+import os
+import shlex
 import shutil
 import sqlite3
 from pathlib import Path
@@ -49,6 +51,16 @@ def _meta_store_id(path: Path) -> str:
     finally:
         conn.close()
     return str(value)
+
+
+def _home(monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
+    """Point `Path.home()` at `home` on every platform: HOME for the POSIX
+    `expanduser`, USERPROFILE for the Windows one, with HOMEDRIVE and
+    HOMEPATH cleared so USERPROFILE wins."""
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.delenv("HOMEDRIVE", raising=False)
+    monkeypatch.delenv("HOMEPATH", raising=False)
 
 
 @pytest.fixture
@@ -153,11 +165,14 @@ def _outside_a_repository(tmp_path: Path) -> Origin:
 
 
 def test_the_brief_of_a_fresh_store_leads_with_the_notice(
-    store_dir: Path, tmp_path: Path
+    store_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The fresh store is empty and the caller may stand outside any
     repository, where the brief shows nothing else; the line still
     shows, on one line, naming the orphan and the store."""
+    # The store's path shows whole only outside the home directory, and
+    # the Windows runner's temporary directory lies inside it.
+    _home(monkeypatch, tmp_path / "home")
     orphan = _orphan(store_dir, "20261012T053900Z", tmp_path / "keys")
     with Store(store_dir, keys_dir=tmp_path / "keys") as store:
         shown = session_brief(
@@ -211,16 +226,17 @@ def test_the_notice_shortens_its_path(
     """The home directory shows as ``~``, and a path too long for one
     line keeps its two ends."""
     home = tmp_path / "home"
-    monkeypatch.setenv("HOME", str(home))
+    _home(monkeypatch, home)
     keys = tmp_path / "keys"
     near = home / ".bettermemory"
     near.mkdir(parents=True)
     _orphan(near, "20261012T053900Z", keys)
     with Store(near, keys_dir=keys) as store:
         notice = orphan_notice(store)
-    assert "bettermemory: ~/.bettermemory/memory.sqlite was created" in notice
+    tilde = f"~{os.sep}.bettermemory{os.sep}memory.sqlite"
+    assert f"bettermemory: {tilde} was created" in notice
     assert str(home) not in notice
-    deep = tmp_path / "/".join(["a-directory-name-of-some-length"] * 7)
+    deep = tmp_path.joinpath(*["a-directory-name-of-some-length"] * 7)
     deep.mkdir(parents=True)
     _orphan(deep, "20261012T053900Z", keys)
     with Store(deep, keys_dir=keys) as store:
@@ -228,7 +244,9 @@ def test_the_notice_shortens_its_path(
     assert len(str(deep / "memory.sqlite")) > 200
     assert "..." in notice
     assert str(deep / "memory.sqlite")[:90] in notice
-    assert notice.split(" was created")[0].endswith("-of-some-length/memory.sqlite")
+    assert notice.split(" was created")[0].endswith(
+        f"-of-some-length{os.sep}memory.sqlite"
+    )
     # the command names the directory whole, so only the rest is bounded
     assert len(notice) - len(str(deep.resolve())) < 600
 
@@ -342,7 +360,7 @@ def test_the_notice_always_names_the_store_for_down(
     project store), so the command always names the store's directory,
     home as ``~`` and quoted for the shell."""
     home = tmp_path / "home"
-    monkeypatch.setenv("HOME", str(home))
+    _home(monkeypatch, home)
     keys = tmp_path / "keys"
     default = home / ".claude-memory"
     elsewhere = home / "scratch stores" / "one"
@@ -351,14 +369,18 @@ def test_the_notice_always_names_the_store_for_down(
         _orphan(directory, "20261012T053900Z", keys)
     with Store(default, keys_dir=keys) as store:
         notice = orphan_notice(store)
-    assert "run `BETTERMEMORY_DIR='~/.claude-memory' bettermemory down`," in notice
+    assert (
+        f"run `BETTERMEMORY_DIR='~{os.sep}.claude-memory' bettermemory down`," in notice
+    )
     with Store(elsewhere, keys_dir=keys) as store:
         notice = orphan_notice(store)
-    assert "run `BETTERMEMORY_DIR='~/scratch stores/one' bettermemory down`," in notice
+    spaced = f"~{os.sep}scratch stores{os.sep}one"
+    assert f"run `BETTERMEMORY_DIR='{spaced}' bettermemory down`," in notice
     assert str(home) not in notice
     plain = tmp_path / "plain"
     plain.mkdir()
     _orphan(plain, "20261012T053900Z", keys)
     with Store(plain, keys_dir=keys) as store:
         notice = orphan_notice(store)
-    assert f"run `BETTERMEMORY_DIR={plain.resolve()} bettermemory down`," in notice
+    quoted = shlex.quote(str(plain.resolve()))
+    assert f"run `BETTERMEMORY_DIR={quoted} bettermemory down`," in notice

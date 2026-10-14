@@ -439,7 +439,11 @@ def test_down_runs_when_its_state_dir_is_in_the_sandbox(
             env=env,
             cwd=None,
         )
-    assert calls == [[sys.executable, "-m", "bettermemory", "down"]] * 2
+    # `_down_state_dirs` names no directory from XDG_STATE_HOME on Windows
+    # (the user state directory is not the environment's there), so the
+    # second `down` is skipped on that platform.
+    runs = 1 if sys.platform == "win32" else 2
+    assert calls == [[sys.executable, "-m", "bettermemory", "down"]] * runs
 
 
 def test_down_is_skipped_when_its_state_dir_is_outside_the_sandbox(

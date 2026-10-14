@@ -123,15 +123,25 @@ def test_the_attestations_are_in_the_anchor_key() -> None:
     assert commit_drift_anchor_paths(body, ["", 3]) == ("src/pkg/mod.py",)  # type: ignore[list-item]
 
 
+def _home(monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
+    """Point `Path.home()` at `home` on every platform: HOME for the POSIX
+    `expanduser`, USERPROFILE for the Windows one, with HOMEDRIVE and
+    HOMEPATH cleared so USERPROFILE wins."""
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.delenv("HOMEDRIVE", raising=False)
+    monkeypatch.delenv("HOMEPATH", raising=False)
+
+
 def test_the_home_directory_is_in_the_key(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """`~/x` and the expanded spelling are one claim only under the home
     that expands to it: the dedup reads the home, so the key does too."""
     body = f"Both ~/notes/a.txt and {tmp_path}/one/notes/a.txt are cited."
-    monkeypatch.setenv("HOME", str(tmp_path / "one"))
+    _home(monkeypatch, tmp_path / "one")
     assert len(verify._extract_candidates(body)) == 1
-    monkeypatch.setenv("HOME", str(tmp_path / "two"))
+    _home(monkeypatch, tmp_path / "two")
     assert len(verify._extract_candidates(body)) == 2
     assert verify._extract_candidates(body) == verify._scan_candidates(body)
 
