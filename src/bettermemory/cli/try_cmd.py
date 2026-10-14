@@ -1,12 +1,12 @@
-"""`bettermemory try` — an instant, zero-network demo of the staleness verdict.
+"""`bettermemory try`: an instant, zero-network demo of the staleness verdict.
 
-bettermemory's headline differentiator — every retrieved fact carries a
-freshness signal (path drift / commit drift / calendar age) — is invisible on
-a fresh store, because nothing has drifted yet. A new evaluator can run for
-weeks before a real path moves. This command makes it happen on demand: it
-writes a memory that cites a file, attests it while the file exists, then
-deletes the file — and shows the very next search flagging the memory
-(`staleness_verdict: spot_check_recommended`, `path_drift.missing` populated).
+Every retrieved fact carries a freshness signal (path drift, commit drift,
+calendar age), and on a fresh store that signal is invisible, because nothing
+has drifted yet. A new evaluator can run for weeks before a real path moves.
+This command makes it happen on demand: it writes a memory that cites a file,
+attests it while the file exists, then deletes the file, and shows the very
+next search flagging the memory (`staleness_verdict: spot_check_recommended`,
+`path_drift.missing` populated).
 
 Everything runs in an isolated temp store; the user's real store is never
 touched, and nothing hits the network.
