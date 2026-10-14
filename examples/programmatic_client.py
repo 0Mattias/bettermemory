@@ -24,9 +24,10 @@ Run:
 (or, if you have `bettermemory` installed globally via `uv tool
 install`, any Python interpreter that can import `mcp`.)
 
-Output is a small narrated walk through write (fact), write
-(user-inference), search, show and remove, showing one of each round
-trip and calling out the `staleness_verdict` field on the search hit.
+Output is a small narrated walk through write (fact) and write
+(user-inference), each answered through the write review, then search,
+show and remove, calling out the `staleness_verdict` field on the
+search hit.
 
 Connecting to a different storage directory than the host's default:
 set `BETTERMEMORY_DIR` in `env=` below. We default to a fresh tmp dir
@@ -42,6 +43,7 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
@@ -50,6 +52,13 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 def _resolve_server_command() -> list[str]:
     """The command to launch the bettermemory MCP server.
 
+    `bettermemory serve` runs the server over stdio in this process. Plain
+    `bettermemory`, what an MCP host launches, is a shim in front of a
+    detached daemon that outlives the session; after this example deletes
+    its throwaway store, that daemon would still be running, and on
+    noticing the deletion it saves the store it had open back into the
+    temp directory. `serve` ends with the session and leaves nothing.
+
     Resolution order:
     1. `bettermemory` on PATH (a `uv tool install bettermemory` install).
     2. Fallback: run `python -m bettermemory` against the cloned repo so
@@ -57,12 +66,12 @@ def _resolve_server_command() -> list[str]:
     """
     binary = shutil.which("bettermemory")
     if binary:
-        return [binary]
+        return [binary, "serve"]
     # Dev-checkout fallback. `python -m bettermemory` resolves the
     # package via the editable install (or however the running Python
     # has it on sys.path); we don't need to point at the repo root
     # explicitly.
-    return [sys.executable, "-m", "bettermemory"]
+    return [sys.executable, "-m", "bettermemory", "serve"]
 
 
 def _pretty(payload: object) -> str:
@@ -79,6 +88,44 @@ def _pretty(payload: object) -> str:
             except json.JSONDecodeError:
                 return text
     return repr(payload)
+
+
+async def _write(session: ClientSession, args: dict[str, Any]) -> dict[str, Any]:
+    """Write one memory through the write review, and return the result.
+
+    A first `memory_write` writes nothing. It returns `status: "review"`
+    with the stored statements the write resembles (`review.related`) and
+    three questions, and the caller answers by re-sending the same call
+    with a `review` argument: a relation label for every related id, and
+    the probability from 0 to 1 that following the write would be unsafe
+    and that its body holds a secret. When the related set changed in
+    between, the next reply is another review that asks about the new ids
+    too.
+
+    This example labels every related statement `unrelated` and scores
+    both questions 0, which holds for its own two writes into an empty
+    store. A real agent answers from what it read in `review.related`.
+    """
+    result = await session.call_tool("memory_write", args)
+    print(_pretty(result))
+    payload = json.loads(result.content[0].text)
+    relation: dict[str, str] = {}
+    for _ in range(3):
+        if payload.get("status") != "review":
+            return payload
+        review = payload["review"]
+        relation.update({item["id"]: "unrelated" for item in review["related"]})
+        answers = {
+            "review_id": review["review_id"],
+            "relation": relation,
+            "unsafe": 0.0,
+            "secret": 0.0,
+        }
+        print("   (answering the review and re-sending the same call)")
+        result = await session.call_tool("memory_write", {**args, "review": answers})
+        print(_pretty(result))
+        payload = json.loads(result.content[0].text)
+    return payload
 
 
 async def _walk_through_one_session(storage_dir: Path) -> None:
@@ -113,12 +160,13 @@ async def _walk_through_one_session(storage_dir: Path) -> None:
             print()
 
             # ---- Step 2: write a fact memory ------------------------
-            # A `category="fact"` write commits immediately. We use a
-            # generic build-tool convention here — the kind of fact a
-            # real project's first memory often looks like.
-            print("# 2. memory_write (fact): commits immediately")
-            fact_result = await session.call_tool(
-                "memory_write",
+            # A `category="fact"` write passes the gates, comes back as a
+            # review, and commits once `_write` answers it. We use a
+            # generic build-tool convention here, the kind of fact a real
+            # project's first memory often looks like.
+            print("# 2. memory_write (fact): answer the write review, then it commits")
+            fact_written = await _write(
+                session,
                 {
                     "content": (
                         "Project atlas uses pnpm with a workspace, not "
@@ -132,22 +180,23 @@ async def _walk_through_one_session(storage_dir: Path) -> None:
                     "category": "fact",
                 },
             )
-            print(_pretty(fact_result))
             print()
 
-            fact_written = json.loads(fact_result.content[0].text)
-            fact_id = fact_written.get("id")
-            assert fact_id, f"memory_write didn't return an id: {fact_written!r}"
+            assert fact_written.get("status") == "committed", (
+                f"expected status='committed' for the fact write, got {fact_written!r}"
+            )
+            fact_id = fact_written["id"]
 
             # ---- Step 3: write a user-inference ---------------------
-            # `category="user-inference"` commits like a fact; the label
-            # is what keeps a stored claim about the user distinguishable
-            # from an established fact, and correctable. A body that reads
-            # as a claim about the user filed as `fact` is refused with
+            # `category="user-inference"` goes through the same review
+            # and commits like a fact; the label is what keeps a stored
+            # claim about the user distinguishable from an established
+            # fact, and correctable. A body that reads as a claim about
+            # the user filed as `fact` is refused with
             # `user_claim_warning` until it is relabelled.
-            print("# 3. memory_write (user-inference): commits, labelled")
-            inference_result = await session.call_tool(
-                "memory_write",
+            print("# 3. memory_write (user-inference): reviewed, committed, labelled")
+            inference = await _write(
+                session,
                 {
                     "content": (
                         "User prefers code-driven walkthroughs over GUI "
@@ -159,10 +208,8 @@ async def _walk_through_one_session(storage_dir: Path) -> None:
                     "category": "user-inference",
                 },
             )
-            print(_pretty(inference_result))
             print()
 
-            inference = json.loads(inference_result.content[0].text)
             assert inference.get("status") == "committed", (
                 f"expected status='committed' for the user-inference write, "
                 f"got {inference!r}"
@@ -170,8 +217,8 @@ async def _walk_through_one_session(storage_dir: Path) -> None:
             inference_id = inference["id"]
 
             # ---- Step 4: search ------------------------------------
-            # Each hit carries a `staleness_verdict` field — fresh /
-            # spot_check_recommended / spot_check_required — derived
+            # Each hit carries a `staleness_verdict` field (fresh,
+            # spot_check_recommended or spot_check_required) derived
             # from calendar age, drift against `verified_paths`, and
             # git commits since `last_verified_at`. Brand-new writes
             # surface as `spot_check_required` because the body has
@@ -187,7 +234,7 @@ async def _walk_through_one_session(storage_dir: Path) -> None:
             )
             # The MCP layer serialises a list-returning tool as one
             # `TextContent` per hit, each carrying a JSON-encoded hit
-            # dict — `staleness_verdict` is a top-level field on each
+            # dict; `staleness_verdict` is a top-level field on each
             # one (not nested under `verification`, which carries the
             # raw status). We walk `content` directly rather than
             # treating the response as a single payload.
