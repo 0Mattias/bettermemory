@@ -5,19 +5,22 @@
     "url": "https://github.com/0Mattias"
   },
   "metadata": {
-    "description": "Memory you can verify: a trust layer between an agent and its own past. Per-hit staleness verdicts, claim-level use attribution, a signed store that shows how each record arrived, episodic run-state. Local-first, no cloud.",
+    "description": "Memory for Claude Code, checked against your files and git history on every read, with a session brief and recall on each prompt.",
     "version": "9.0.0rc1"
   },
   "plugins": [
     {
       "name": "bettermemory",
       "source": "./plugin",
-      "description": "Verification-grade memory for Claude Code. Every retrieved fact carries a staleness verdict (calendar age, filesystem path drift, git commit drift) so the model knows when a stored memory has rotted before relying on it, and a provenance label read off a signed, hash-chained log so a record planted around the tool reads unaccounted on the next search. Retrievals are logged with three attribution tiers (model-explicit with claim-level excerpts, Stop-hook match, or auto-fallback) so a reply months later can be traced back to the load-bearing stored claim. The store is one SQLite file in ~/.claude-memory/, served by one local daemon per store that the stdio server fronts; retrieval is opt-in per turn, with the session brief (up to eight pointers to the repository's newest fresh memories) at session start and up to three pointers per submitted prompt, never a body; claims about you commit labelled as inferences; writes pass the gates and then a review whose questions are put to the model, with no second model in the product. Session capture, off by default, has the Stop hook ask the model in the session to save what a stretch of conversation established, as an undoable batch. An episode journal gives /loop iterations and subagent handoffs a home for run-state the durability gate rejects. Bundles nine MCP tools (memory_search, memory_show, memory_write, memory_update, memory_remove, memory_verify, memory_record_use, episode and memory_admin) and a memory-discipline skill that lands the policy in the system prompt.",
+      "description": "Memory for Claude Code, checked against your files and git history on every read, with a session brief and recall on each prompt. It adds nine MCP tools, a skill that carries the memory policy, and three hooks.",
       "category": "memory",
       "tags": [
         "memory",
         "mcp",
-        "retrieval"
+        "retrieval",
+        "agent-memory",
+        "coding-agents",
+        "hooks"
       ],
       "homepage": "https://github.com/0Mattias/bettermemory"
     }
