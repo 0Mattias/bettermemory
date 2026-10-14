@@ -642,7 +642,7 @@ library module that nothing calls yet.
 
 ## 7.19.2 - 2026-09-20
 
-Teams Phase 1 / D2: the per-request store seam. **The mechanism only —
+Teams Phase 1 / D2: the per-request store seam. **The mechanism only:
 this release is not team support, and nothing here serves two tenants at
 once.** The shipped store source answers the same store for every
 request; what ships is the rule that a request can be ASKED which store
@@ -660,7 +660,7 @@ path.
   where a request's `ctx` and the bundle are both in hand. Resolving
   THERE is what lets all 71 request-path `deps.store` reads, the 18
   `deps.episode_store` reads, and the `deps.store.root` fan-outs follow
-  the rebound bundle with **zero edits at the read sites** — including
+  the rebound bundle with **zero edits at the read sites**, including
   the 19 reads inside the twelve ctx-less helpers (`conflicts.
   _resolve_verdict`, `show._links_payload`, `write._persist` and
   siblings), which hold no `ctx` and so could never resolve a store
@@ -668,13 +668,13 @@ path.
   episodes are a sibling subtree of the memory root, and it is not
   confined to the `episode_*` tools, since `memory_write_confirm`
   reaches `deps.episode_store` privately to delete a promoted source
-  episode. The recorder is deliberately NOT rebound — its root comes
+  episode. The recorder is deliberately NOT rebound: its root comes
   from config, never from the store, and a recorder that followed a
   per-request store would be a per-tenant event log, which is a policy
   this release does not make. That split is pinned by a test rather
   than left to be discovered. `StoreRegistry` copies
-  `SessionRegistry`'s discipline — `OrderedDict`, a lock, touch-on-
-  access, LRU eviction at 256 roots — and opens each root once through
+  `SessionRegistry`'s discipline (`OrderedDict`, a lock, touch-on-
+  access, LRU eviction at 256 roots) and opens each root once through
   `Store.open`, never per request, since that call provisions and can
   reach a `git` subprocess. A single-store caller is unaffected: the
   default source returns the process store, so `for_request` returns
@@ -693,7 +693,7 @@ path.
   `index.filenames_for_ids` binds one SQL host parameter per id and does
   not chunk itself. Index failures PROPAGATE rather than degrading to
   "whichever candidates resolved", which the caller could not tell apart
-  from a complete pool — it would still set `prefiltered=True` and
+  from a complete pool: it would still set `prefiltered=True` and
   silently narrow the BM25 corpus-IDF denominator. The quarantine
   predicate and the index-drift guard moved with the loop.
 
@@ -721,7 +721,7 @@ path.
 - **A delegation line that forgot to resolve the bundle is now a test
   failure.** All 27 facade methods called `sessions.for_request(ctx)`
   and none read `deps.store` before it, which is why the bundle shape
-  works — but that was true by convention. `tests/test_store_source.py`
+  works, but that was true by convention. `tests/test_store_source.py`
   AST-walks the class and fails if a method delegates without resolving
   first, delegates with `self` rather than the bundle it just resolved,
   or if the class stops carrying 27 of them, so a tool added later
@@ -730,7 +730,7 @@ path.
   the ordering check alone cannot see it. The facade
   SIGNATURES are unchanged and proven so: the SDK reads
   `inspect.signature` for the JSON schema on every tool, so a stray
-  parameter would move the wire contract silently — the AST comparison
+  parameter would move the wire contract silently; the AST comparison
   over the class's arguments is byte-identical before and after.
 
 - **`/tmp` literals in the new fixtures**, caught by
@@ -743,7 +743,7 @@ path.
   sits on, so the quotes bought nothing. Nothing was broken by them:
   `UP037` is preview-gated, and the locked ruff 0.15.12 does not fire
   it under `linter.preview = false`, so no matrix ever saw them. Stated
-  as the partial pass it is rather than a hazard retired — 121 `UP037`
+  as the partial pass it is rather than a hazard retired: 121 `UP037`
   violations remain repo-wide under `--preview` (60 under `handlers/`,
   31 in the package root, 26 under `cli/`, 4 across tests and bench),
   so a lock bump that turns preview rules on is a project-wide cleanup,
@@ -760,7 +760,7 @@ path.
   every read path answer "index unusable": SQLite opened the file
   read-only by itself, then the WAL pragma or the `-wal`/`-shm`
   siblings it needs failed with `unable to open database file`, and
-  `status()` reported the intact index corrupt — so `session-start`
+  `status()` reported the intact index corrupt, so `session-start`
   skipped every hint and pointed at a `reindex` that could not help.
   `_connect` now falls back to a read-only connection when the error
   says the file or its siblings could not be written: `mode=ro` first,
@@ -790,13 +790,13 @@ which is the system working as designed.
   a caller-supplied `--session-id` also defeats the settlement dedup,
   because `_emit_hook_attributions` builds `used_session_ids` from the
   retrieval session and the supplied id while prior hook attributions
-  were recorded under the REAL transcript id — so a fabricated id hides
+  were recorded under the REAL transcript id, so a fabricated id hides
   them and already-settled retrievals settle a second time, against the
   exactly-one-applied-event-per-retrieval invariant in docs/api.md.
   Found by doing it: a review agent was told to "run the read-only CLI
   commands, and the hook commands", a brief that contradicts itself,
   and re-settled 17 of 23 ids on the live store. Those events stay in
-  the log — it is append-only by design. `--dry-run` runs the whole
+  the log: it is append-only by design. `--dry-run` runs the whole
   audit, returns the same summary with `dry_run: true`, and writes
   nothing; it is a per-invocation telemetry override rather than a flag
   on the Recorder call, so every emit site short-circuits at one switch
@@ -819,8 +819,8 @@ which is the system working as designed.
   checkouts as though they were the estate. They are counted as
   `unanchorable` now, and an estate where NOTHING is groupable returns a
   payload carrying the count instead of None. Framed as coverage, never
-  debt: an origin-less record is a legitimate class — a write from
-  outside any checkout — so this is a figure to state, not one to drive
+  debt: an origin-less record is a legitimate class (a write from
+  outside any checkout), so this is a figure to state, not one to drive
   to zero.
 
 - `c038d76` **four resident descriptions say what the surface reports.**
@@ -829,7 +829,7 @@ which is the system working as designed.
   two buckets. `memory_scope_overview` published `dead` and
   `cold_endorsement_memories` as measured zeros with
   `curation_unmeasured: []` on a hookless store, where both legs are
-  gated on exactly the telemetry that store lacks — and the test
+  gated on exactly the telemetry that store lacks; and the test
   asserted that empty list in exactly that state, pinning the gap rather
   than catching it. `DESC_MEMORY_LIST` never said a row's
   `staleness_verdict` is calendar-only, though 70 rows on the
@@ -842,7 +842,7 @@ which is the system working as designed.
 
 - `1647eaf` **the docs claim that produced the quarantine leak.**
   `internals.md` said the sidecar skip had one definition. It has three,
-  and the third — `load_search_candidates` — is the one that served
+  and the third, `load_search_candidates`, is the one that served
   quarantined bodies through `memory_search` from 6.6.0 to 7.17.1. The
   document asserted a uniqueness the code did not have and a later read
   path was written against the document, so the paragraph now names all
@@ -853,8 +853,8 @@ which is the system working as designed.
 
 - `66f168e` **the consolidate CLI tests run from the tree, not a frozen
   wheel.** Three `*_via_subprocess` tests spawned the bare name
-  `bettermemory`, which resolves against $PATH — on the maintainer's
-  host a symlink into a non-editable `uv tool` snapshot. Invisible only
+  `bettermemory`, which resolves against $PATH (on the maintainer's
+  host a symlink into a non-editable `uv tool` snapshot). Invisible only
   while the two agreed; cutting 7.18.0 desynchronised them, so the
   argparse surface those tests guard was being checked against the
   previous release. Now `sys.executable -m` under
@@ -877,7 +877,7 @@ the sharpest defects it found were ours.
   and recommends folding it with `memory_rename_scope`. The heuristic
   cannot tell "typo of a sibling" from "two projects that legitimately
   share a name stem", and it had no off switch, so a confirmed false
-  positive re-fired on every curation pass — each pass re-adjudicating
+  positive re-fired on every curation pass, each pass re-adjudicating
   the same question, against an asymmetric cost: acting on it wrongly
   fuses two unrelated scopes, acting on it rightly saves a tag. That
   asymmetry landed on 2026-09-15, when a client folded a scope the
@@ -899,7 +899,7 @@ the sharpest defects it found were ours.
   query token as scaffold and floored its document frequency to the whole
   collection, collapsing its IDF to roughly 0.001. Correct for "3 months
   ago", where the numeral is the question's syntax; wrong for "schema 8",
-  "port 80", "issue 12" — this store's everyday identifiers, where the
+  "port 80", "issue 12": this store's everyday identifiers, where the
   numeral is the one discriminating term, and flooring it drops the
   single memory naming the number off a five-result page. Default ON
   since 6.1.0, so every hybrid search since has paid it. The L1 gate that
@@ -917,7 +917,7 @@ the sharpest defects it found were ours.
 
 - `999e340` **episode patterns rank by co-occurrence, and are scored
   before they are capped.** `episode_patterns` surfaced nothing but
-  English function words — `both`, `before`, `first`, `new` — and
+  English function words (`both`, `before`, `first`, `new`), and
   promoting the top candidate would have deleted 44% of the journal,
   with no tombstone tier to recover it. Two independent causes. Ranking
   used raw distinct-session spread, which function words maximise by
@@ -928,14 +928,14 @@ the sharpest defects it found were ours.
   CO-OCCURRENCE, which the member-set Jaccard merge already computed and
   nothing consumed. Separately, `patterns[: max_patterns * 2]` truncated
   in SEED order before any score existed, discarding every genuine
-  multi-term theme — the prefilter-narrower-than-its-check shape in
-  another costume. Also: both the tool description and `docs/api.md`
+  multi-term theme (the prefilter-narrower-than-its-check shape in
+  another costume). Also: both the tool description and `docs/api.md`
   promised "one snippet per member episode", while the cap is 8, so on a
   61-member cluster a reader judged 13% of what promote deletes.
   Candidates now carry `episode_count` beside `snippets_shown`.
 
 - `365d3d8` **a swallowed index write marks the index stale.**
-  `@best_effort` logs and continues, which is right — the `.md` on disk
+  `@best_effort` logs and continues, which is right: the `.md` on disk
   is canonical and a corrupt FTS5 database must not block it. But "log
   and continue" is only honest when something downstream notices, and on
   a stdio server the warning goes nowhere a human reads. Nothing
@@ -947,7 +947,7 @@ the sharpest defects it found were ours.
   trust for ~133 sessions. `best_effort` grows a contained `on_failure`
   hook and the three index MUTATORS now flag for rebuild, which
   self-heals: search routes to the full scan, and the next `Store.open()`
-  rebuilds. `_indexed_path_for_id` deliberately does not flag — it is a
+  rebuilds. `_indexed_path_for_id` deliberately does not flag: it is a
   read with an authoritative fallback. The upsert's `id_getter` had also
   been dead since the keyword arguments grew past it, so every warning
   degraded to the id-less shape the parameter exists to prevent.
@@ -960,8 +960,8 @@ the sharpest defects it found were ours.
   to itself. Release `d555025` shipped a 6.2.0 pyproject against a 6.1.0
   lock entry with every leg green. `--locked` adds the check and restores
   that test in one move. Every `uses:` on the publish path also ran from
-  a mutable ref, including `pypa/gh-action-pypi-publish@release/v1` — a
-  branch — in the two jobs holding the PyPI OIDC token; those, the
+  a mutable ref, including `pypa/gh-action-pypi-publish@release/v1` (a
+  branch) in the two jobs holding the PyPI OIDC token; those, the
   release-creating action and the `uv build` setup are now SHA-pinned.
   Recorded at its declaration that `environment: pypi` reads like an
   approval gate and is not one: it carries no protection rules and no
@@ -988,7 +988,7 @@ the sharpest defects it found were ours.
   too.** `quarantine.py` opens by stating the contract: a pulled file
   the admission chain refused "never reaches the index, a search hit,
   a listing, `memory_show`, `memory_health` or the recall hook." Three
-  paths turn ids into records and only two honoured it — the walk
+  paths turn ids into records and only two honoured it: the walk
   behind `load_all`, and `_indexed_path_for_id` behind `load_one`,
   which carries a comment naming this exact hazard ("a quarantined
   file can still have a row until the next rebuild"). The third,
@@ -1008,7 +1008,7 @@ the sharpest defects it found were ours.
   promised "every disk walk the store performs" and covered two of the
   three; the new guard pins the third and asserts the fast path was
   actually taken, because every fallback in `load_search_candidates`
-  routes to `load_all` — which does honour the sidecar — so a test
+  routes to `load_all`, which does honour the sidecar, so a test
   that lets the fast path slip away passes while proving nothing.
 
 ## 7.17.1 - 2026-09-12
@@ -1017,21 +1017,21 @@ the sharpest defects it found were ours.
 
 - `cc40497` fix(episodes): don't inherit a provisioning promise from a
   sibling class. `EpisodeStore.__post_init__` carried "Don't create the
-  directory eagerly. `Store.__post_init__` already made `root` exist" —
+  directory eagerly. `Store.__post_init__` already made `root` exist",
   true until 7.17.0 made construction pure, and silently false after.
   That sentence was the stated reason `episodes_dir.mkdir` had no
   `parents=True`, so writing an episode to a store nobody had
   provisioned raised `FileNotFoundError`. **Not reachable from any
-  shipped entry point** — `build_server` and `cli_context` both open
-  through `Store.open()` and `memory_health`'s use is read-only — so no
+  shipped entry point** (`build_server` and `cli_context` both open
+  through `Store.open()` and `memory_health`'s use is read-only), so no
   user could hit it; the hole was in the library contract.
 - `d3ffe50` **owner-only provisioning, including the ancestors we
-  create** — provisioning no longer leaves a directory world-readable.
+  create**: provisioning no longer leaves a directory world-readable.
   `Path.mkdir(parents=True, mode=...)` applies the mode to the LEAF only;
   every intermediate directory it creates is made at the caller's umask.
   Two ways in, from opposite directions: `Store.ensure` has always passed
   `parents=True`, so a store whose parent directories did not exist got
-  them at 0o755 (latent — the usual root's parent is `$HOME`, which
+  them at 0o755 (latent; the usual root's parent is `$HOME`, which
   already exists); and the `parents=True` added above made the memory
   ROOT an intermediate directory for the first time, so an episode-first
   write created it world-readable. That root is the access-control
@@ -1040,8 +1040,8 @@ the sharpest defects it found were ours.
   definition, `_fsutil.ensure_owner_only_dir`, which tightens every
   ancestor it creates and deliberately leaves alone any it did not.
 - `d90e994` fix(tests): pin utf-8 when a test reads source files. A bare
-  `Path.read_text()` uses the locale codec — cp1252 on the Windows
-  runner, which has no mapping for bytes in six files under `src/` — so
+  `Path.read_text()` uses the locale codec (cp1252 on the Windows
+  runner, which has no mapping for bytes in six files under `src/`), so
   the ratchets added above turned the windows-latest leg red. Reproducible
   locally by reading the same files with `encoding="cp1252"`; `mypy
   --platform win32` cannot see it, because encoding is runtime behaviour
@@ -1049,8 +1049,8 @@ the sharpest defects it found were ours.
 - Ten further sites across `index.py`, `migrate.py`, `doctor.py`,
   `cli/session_start_cmd.py` and `store.py` still described
   `Store.__post_init__` as mkdir'ing, chmod'ing or auto-rebuilding. Each
-  now names whichever half actually does it — `Store.ensure()` for
-  provisioning, `Store.open()` for the startup checks — or says plainly
+  now names whichever half actually does it (`Store.ensure()` for
+  provisioning, `Store.open()` for the startup checks) or says plainly
   that the behaviour is historical. A content-keyed ratchet fails on any
   new one, with a companion test that fails on an allowlist entry
   matching nothing.
@@ -1061,7 +1061,7 @@ the sharpest defects it found were ours.
 
 - `f4fc399` feat(store): construction is pure; writing provisions.
   `Store.__post_init__` created two directories, chmod'd both, rebuilt a
-  flagged index, and printed a divergence warning to stderr — a
+  flagged index, and printed a divergence warning to stderr: a
   filesystem write, a possible `git` subprocess, and user-facing output,
   all from a constructor. There are three things now where there was
   one: `Store(root)` is pure and touches nothing, `store.ensure()` is
@@ -1069,7 +1069,7 @@ the sharpest defects it found were ours.
   `Store.open(root)` construct-provisions and runs the startup checks
   (the schema-upgrade auto-heal and the S4 divergence warning).
   Provisioning rides the eight mutators rather than the constructor
-  because it is a precondition of WRITING, not of existing — which is
+  because it is a precondition of WRITING, not of existing, which is
   why no existing write caller had to change. The five process entry
   points take `Store.open()`; the eleven derived and diagnostic sites do
   not. **`bettermemory doctor` no longer rebuilds the index it was asked
@@ -1078,7 +1078,7 @@ the sharpest defects it found were ours.
   437-memory store: 0.60 ms → 0.0105 ms.
 - A store root that **does not exist** now reads as an **empty store**
   rather than being created as a side effect of looking at it. Every
-  other `OSError` — `PermissionError` above all — still propagates. That
+  other `OSError`, `PermissionError` above all, still propagates. That
   split is the could-not-ask rule this project has drained three times
   (7.13.0 verdicts, 7.14.0 censuses, 7.15.0 selection): "absent" is
   knowable and means zero, "cannot read" is the third value and must
@@ -1087,7 +1087,7 @@ the sharpest defects it found were ours.
 
 ### Added
 
-- `MemoryStore` — a protocol naming the store surface the rest of
+- `MemoryStore`: a protocol naming the store surface the rest of
   bettermemory depends on, defined in `store.py` beside the
   implementation rather than in a new module, because `migrate.py` and
   `doctor.py` import ten module-level privates from there and a split
@@ -1096,7 +1096,7 @@ the sharpest defects it found were ours.
   ten `monkeypatch.setattr(Store, ...)` failure-injection sites keep
   patching a class. Nothing is typed to it yet: doing so reaches a real
   seam violation on the hot search path, which is the next step's work.
-- `tests/test_store_provisioning.py` — construction is pure and silent;
+- `tests/test_store_provisioning.py`: construction is pure and silent;
   each of the eight mutators provisions; absent reads empty while
   unreadable raises; the startup checks fire from `Store.open()` and not
   from `Store()`; `bettermemory doctor` does not mutate what it inspects
@@ -1109,7 +1109,7 @@ the sharpest defects it found were ours.
 
 - feat(descriptions): a resident description pays for what decides a
   call. The lean default-on tool surface is billed in context on every
-  turn, and it had reached 26,485 characters against a 26,500 ceiling —
+  turn, and it had reached 26,485 characters against a 26,500 ceiling,
   fifteen characters of slack, for the second time in six days. A
   maximal-substring sweep against `docs/api.md` found 1,825 characters
   carried verbatim, most of it one shape: a `Returns {...}` key list
@@ -1117,8 +1117,8 @@ the sharpest defects it found were ours.
   moment it is handed over. Four descriptions
   (`memory_scope_overview`, `episode_write`, `episode_search`,
   `episode_promote`) lose their return-shape enumerations and their
-  per-field readback; the prose that decides something — what to pass,
-  which end of an over-cap window survives, how to read a zero — stays.
+  per-field readback; the prose that decides something (what to pass,
+  which end of an over-cap window survives, how to read a zero) stays.
   The surface drops to 24,824 and the ceiling ratchets 26,500 -> 25,300,
   holding 476 characters of slack, deliberately the same width the last
   two recalibrations held so the ratchet tightens the budget without
@@ -1126,7 +1126,7 @@ the sharpest defects it found were ours.
 
 ### Added
 
-- `tests/test_desc_residency_rule.py` — the half of the ratchet that was
+- `tests/test_desc_residency_rule.py`: the half of the ratchet that was
   missing. The budget test's own docstring names the gap: the ceiling
   "only ever measures size, never whether the surface still teaches what
   it must", so its rule 3 asks a ratchet-down to prove the cut prose is
@@ -1150,7 +1150,7 @@ the sharpest defects it found were ours.
 - `_DESC_BASELINE` (`tests/test_server.py`) stops being diagnostic. It
   has carried the rule "re-measure in the same commit as any
   description edit" for four releases with nothing checking it, and it
-  rotted twice in that window — four rows once, three rows again by
+  rotted twice in that window: four rows once, three rows again by
   7.15.1. Its sum is now asserted against the live surface, so an edit
   that does not move its row fails by name. `_FOOTPRINT_BASELINE` is
   re-measured in the same commit, including a +377 drift in
@@ -1182,7 +1182,7 @@ the sharpest defects it found were ours.
   roadmap"; they now call them known gaps, which is what they are.
   `docs/swarm-convergence-plan.md` called the per-actor `memory_health`
   slice and the targeted rollback unshipped and pointed at the retired
-  file for them — both shipped, generalized to the actor axis that
+  file for them; both shipped, generalized to the actor axis that
   section already describes, as 7.14.0 and 7.15.0.
 
   `tests/test_roadmap_citations.py` ratchets the class. The doc-claims
@@ -1205,7 +1205,7 @@ the sharpest defects it found were ours.
   removes by it. One agent's contributions leave the active set, every
   other actor's stay, and because each removal is an ordinary tombstone
   `bettermemory tombstones restore <ID>` puts a record back with its
-  `actor` intact — so it is selectable by the same filter again.
+  `actor` intact, so it is selectable by the same filter again.
 
   Deliberately its own command rather than a `consolidate` flag.
   `consolidate` runs its four structural passes unconditionally before
@@ -1218,16 +1218,16 @@ the sharpest defects it found were ours.
 
   `--apply` alone does not commit: it requires `--yes` as well and
   otherwise exits non-zero. This is the widest-blast-radius command in
-  the tool — one flag value can select every record an agent ever wrote
-  — so it takes the accept-gate posture `consolidate --llm --apply`
+  the tool (one flag value can select every record an agent ever wrote),
+  so it takes the accept-gate posture `consolidate --llm --apply`
   already carries rather than a weaker one.
 
   Selection reads `identity.actor_matches` rather than respelling the
   rule, which means a record declaring no client is never selected: an
   absent actor is not evidence of some other writer. On any store with
   history that is the overwhelming majority, so the report prints the
-  declined count as a first-class line — the same value
-  `memory_health.actor_slices.undeclared` carries — and a small
+  declined count as a first-class line (the same value
+  `memory_health.actor_slices.undeclared` carries), and a small
   selection cannot be misread as "the store is mostly this actor's".
   The report's four populations partition the active set exactly
   (`selected + declined_undeclared + other_actor + out_of_window ==
@@ -1247,8 +1247,8 @@ the sharpest defects it found were ours.
   century would hide the audit log indefinitely, and a warning here,
   where it selects nothing and destroys nothing.
 
-  No schema bump (index stays at 11), no migration, and no MCP surface
-  — a targeted destructive rollback driven by an in-session model is a
+  No schema bump (index stays at 11), no migration, and no MCP surface:
+  a targeted destructive rollback driven by an in-session model is a
   different risk posture, so this is CLI-only.
 
 ## 7.14.0 - 2026-09-11
@@ -1259,7 +1259,7 @@ the sharpest defects it found were ours.
   census. The identity resolver's second consumer. 7.10.0 stamped a
   per-request actor on every record and event and 7.12.0 read it back
   as `client` / `model` filters; `memory_health` now answers the
-  question those filters deliberately refuse — who wrote what, and
+  question those filters deliberately refuse: who wrote what, and
   which spellings exist to filter on. The new `actor_slices` field is
   `{declared, undeclared}`, each entry `{client, memories,
   memories_in_window, events, searches, applies, models, principals}`,
@@ -1275,7 +1275,7 @@ the sharpest defects it found were ours.
   `memories_in_window` is the separate "written this run" read.
 
   `undeclared` is a first-class bucket and is always present,
-  including at zero. On any store with history it is the majority —
+  including at zero. On any store with history it is the majority:
   every record written before 7.10.0 carries no actor block, and an
   actor that declared only a model has no client, so it lands there
   too while its model spelling still surfaces in that bucket's
@@ -1289,7 +1289,7 @@ the sharpest defects it found were ours.
   those serve the search prefilter, and an index may legitimately sit
   a row behind disk between a write and a rebuild, which would put the
   two invariants above in disagreement with themselves. The spelling
-  census reports declared values only — an empty dict means this
+  census reports declared values only: an empty dict means this
   client declared none, never a manufactured `<unset>` key.
 
   Additive: no schema bump, no migration, no reindex. `memory_health`
@@ -1303,8 +1303,8 @@ the sharpest defects it found were ours.
 - `5ccb89c` fix(index): version skew is not corruption, and restart is
   not reindex. A schema bump is a coordinated upgrade, not a library
   upgrade: the first upgraded process to touch the store migrates the
-  index, and every already-running server — which keeps the code it
-  imported until its client restarts — becomes a reader too old for the
+  index, and every already-running server, which keeps the code it
+  imported until its client restarts, becomes a reader too old for the
   file in front of it. `index.status()` folded that state into the same
   `corrupt=True` shape as a torn database, so a store with nothing wrong
   with it reported as damaged on every surface that reads the index, and
@@ -1334,8 +1334,8 @@ the sharpest defects it found were ours.
   announce a divergence between an index that was fine and a disk that
   was fine.
 
-  The remedy is two constants rather than one — `SCHEMA_SKEW_REMEDY` and
-  `INDEX_CORRUPT_REMEDY` — and `doctor`, the Store startup warning, the
+  The remedy is two constants rather than one (`SCHEMA_SKEW_REMEDY` and
+  `INDEX_CORRUPT_REMEDY`), and `doctor`, the Store startup warning, the
   session-start hint and the trust surfaces select between them on the
   cause. Under skew `doctor` reports the two schema versions and never
   says "corrupt"; a stamped row demoted by an unreadable index carries
@@ -1362,7 +1362,7 @@ the sharpest defects it found were ours.
 
   Schema v11 carries `actor_client` / `actor_model` on the index row,
   straight off the record at every upsert and re-read from frontmatter
-  at every rebuild — so, like `verified_head`, they need no carry across
+  at every rebuild, so, like `verified_head`, they need no carry across
   the drop a version bump performs, and an existing store repopulates
   them on its next automatic rebuild with no `reindex` asked of anyone.
   Unlike `origin_repo`, which `index.py` documents as deliberately NOT a
@@ -1370,7 +1370,7 @@ the sharpest defects it found were ours.
   by `identity._clean` to a bounded exact string, so `index.query`'s
   `WHERE` and the Python predicate are provably the same set. That is
   what earns the `WHERE`, and the reason it is worth having is the
-  candidate cap — the FTS prefilter hands the ranker at most 50 rows by
+  candidate cap: the FTS prefilter hands the ranker at most 50 rows by
   relevance, so a store dominated by one writer would spend the whole
   cap on that writer and a filtered search for a rarer one would come
   back empty with the match sitting on disk. No folding is applied on
@@ -1381,7 +1381,7 @@ the sharpest defects it found were ours.
 
   `identity.actor_matches` is the single definition of the rule.
   `search.candidate_admitted` reads it, which is what keeps the ranked
-  set and the BM25 corpus-IDF denominator narrowing together —
+  set and the BM25 corpus-IDF denominator narrowing together:
   `corpus_document_frequencies` selects the two new columns and binds
   them into the same predicate, so document frequencies are never
   computed over a collection the caller cannot retrieve. `memory_list`
@@ -1390,15 +1390,15 @@ the sharpest defects it found were ours.
   pre-selection would save no reads and would only add a second place
   the rule is spelled.
 
-  A record whose writer declared nothing matches NO value — every
+  A record whose writer declared nothing matches NO value: every
   memory written before 7.10.0, and any written since by a client that
   names itself in no channel. This is selection, not admission: a repo
   filter deliberately passes an origin-less memory as global, but "what
   did this client write" must not answer with everything recorded
   before writers were recorded at all. A filtered result is therefore a
   listing of labelled memories and never a census of who wrote what;
-  the census — how many records carry no actor, and which spellings
-  exist — belongs to the `memory_health` per-actor slice that follows
+  the census (how many records carry no actor, and which spellings
+  exist) belongs to the `memory_health` per-actor slice that follows
   this unit. So that an exact-match filter is not a guessing game in
   the meantime, `memory_list`'s body-stripped rows now carry a compact
   `actor` (`{client, model}`, each key present only when declared, the
@@ -1406,8 +1406,8 @@ the sharpest defects it found were ours.
   the spellings are read rather than guessed.
 
   The values are DECLARED by the calling client and therefore
-  forgeable. These filters are evidence — for attribution, per-model
-  telemetry and the targeted rollback still to come — and never a
+  forgeable. These filters are evidence (for attribution, per-model
+  telemetry and the targeted rollback still to come) and never a
   permission boundary: `principal`, the one attested field, stays
   deliberately unfilterable, being `null` on every unauthenticated
   transport. `SECURITY.md` continues to record what that means for a
@@ -1419,14 +1419,14 @@ the sharpest defects it found were ours.
 
 - `6c4eda5` feat(init): a Hermes Agent target that splices its YAML
   config. 7.10.0 built the identity resolver for the shape Hermes Agent
-  has — one gateway process serving many chat platforms from `$HOME`,
-  stdio servers launched with `command`, `args` and `env` and no cwd —
+  has (one gateway process serving many chat platforms from `$HOME`,
+  stdio servers launched with `command`, `args` and `env` and no cwd),
   and `bettermemory init` could not register the server with it: every
   target in `KNOWN_CLIENTS` was a JSON `mcpServers` object written by
   `patch_client_config`, and Hermes reads a YAML map under a top-level
   `mcp_servers` key in `~/.hermes/config.yaml`. `bettermemory init
-  --client hermes` writes that entry — the stdio keys Hermes documents,
-  and no `type` — with `BETTERMEMORY_CLIENT: hermes` in its `env`
+  --client hermes` writes that entry (the stdio keys Hermes documents,
+  and no `type`) with `BETTERMEMORY_CLIENT: hermes` in its `env`
   block, so a Hermes write on a shared store carries `actor.client:
   hermes` with `source: env` while Claude Code's carry `client-info`.
 
@@ -1434,14 +1434,14 @@ the sharpest defects it found were ours.
   same discipline: the private `<target>.bettermemory.lock` sidecar,
   the pre-read signature re-checked before the write (both arms now
   live in one `_refuse_if_moved`, shared by both paths), the atomic
-  replace, and the same merge rules — init owns `command`, `args` and
+  replace, and the same merge rules. Init owns `command`, `args` and
   `env`, the user's other keys survive, `env` deep-merges, a
   `BETTERMEMORY_CLIENT` the user set wins, and the keys that would make
   the entry an HTTP server (`url`, `headers`, `auth`, `identity_header`)
   are shed. The edit is a splice, not a round-trip: PyYAML drops
   comments, and a Hermes config is a commented, hand-ordered document
   its owner maintains, so `yaml.compose` locates the `mcp_servers` key
-  and the entry and only that region changes — a missing block is
+  and the entry and only that region changes; a missing block is
   appended after the last line, a missing entry is inserted as the
   block's first child at the children's indentation, an existing entry
   is replaced in place with the blank and comment lines after it left
@@ -1477,7 +1477,7 @@ the sharpest defects it found were ours.
 
 - `916b4eb` feat(identity): resolve who is calling, and from where.
   Until now a memory carried `origin{cwd, repo, branch, worktree_root}`
-  and no actor at all — on the live store, 367 of 371 active memories
+  and no actor at all; on the live store, 367 of 371 active memories
   named a directory and not one said which client, model or person
   wrote it; the workspace was the server's own working directory,
   reached from every handler through `capture_origin`; and the
@@ -1488,7 +1488,7 @@ the sharpest defects it found were ours.
   platforms from `$HOME` (Hermes Agent: stdio servers take `command`,
   `args`, `env` and no `cwd`) breaks all three assumptions at once.
 
-  `bettermemory.identity` — a leaf module beside `origin.py` — resolves
+  `bettermemory.identity`, a leaf module beside `origin.py`, resolves
   one `Caller` per request with two blocks that are never merged.
   `actor{client, client_version, model, principal, session, sources}`:
   `principal` is attested, read solely through the SDK's
@@ -1522,8 +1522,8 @@ the sharpest defects it found were ours.
   `claude-code`, the transcript's model, the transcript id as the
   session) beside the `client_model` field eval already slices on.
   `SessionRegistry` keys on what can differ between two requests
-  reaching one process — the principal, the transport session, and
-  header-declared `client` / `model`, as a prefixed composite — and
+  reaching one process (the principal, the transport session, and
+  header-declared `client` / `model`, as a prefixed composite) and
   never on the per-process channels (`env`, `client-info`), so a stdio
   client keeps the default bucket its sidecar rows are filed under.
   The `_meta.client_id` read is retired; the suite's forged `Context`
@@ -1533,7 +1533,7 @@ the sharpest defects it found were ours.
 
   Four gates, each pinned in `tests/test_identity.py`. G1, silence is
   unchanged: a client that declares nothing produces frontmatter
-  byte-identical to 7.9.0 — the `actor` block is emitted only when
+  byte-identical to 7.9.0; the `actor` block is emitted only when
   something is set and `origin.source` only when it is not
   `process-cwd`, proven by comparing the written file to a document
   rebuilt from the 7.9.0 key set alone. G2, the registry separates:
@@ -1541,9 +1541,9 @@ the sharpest defects it found were ours.
   two `SessionState`s, pending writes and disabled scopes cannot cross,
   and env / `clientInfo` do not split the bucket. G3, the source is
   honest: each channel resolves with its own label, the cwd fallback
-  reads `process-cwd` on every surface, and the Hermes shape — a server
+  reads `process-cwd` on every surface, and the Hermes shape (a server
   started in a home directory with `BETTERMEMORY_WORKSPACE` naming a
-  git checkout — records the checkout, its remote and branch, and
+  git checkout) records the checkout, its remote and branch, and
   `source: env` in the file. G4, attestation cannot be forged: a
   request carrying a declared client, a declared model, a
   `x-bettermemory-principal` header and a bearer token that no verifier
@@ -1552,17 +1552,17 @@ the sharpest defects it found were ours.
   appears in `sources`. The one visible change on existing records:
   `memory_show`, `memory_list(with_bodies=True)` and the `committed`
   response now carry `source: "process-cwd"` inside a non-null
-  `origin` that names no channel — the read surfaces label the fallback
-  the file leaves implicit — and `actor` (the full shape, nulls
+  `origin` that names no channel (the read surfaces label the fallback
+  the file leaves implicit) and `actor` (the full shape, nulls
   included) when the writer declared something.
 
-  Identity is evidence — for attribution, filtering, per-model
-  telemetry and targeted rollback — and never a permission boundary:
+  Identity is evidence (for attribution, filtering, per-model
+  telemetry and targeted rollback) and never a permission boundary:
   no RBAC, no per-agent auth, no tenant isolation, and `memory_show`
   stays unrestricted. `SECURITY.md` records what a client that lies
   about itself can and cannot do; `docs/api.md` (Identity) carries the
   precedence table and the on-disk shape; `docs/clients.md` the
-  declaration recipe. Nothing yet selects on the actor — the filters,
+  declaration recipe. Nothing yet selects on the actor: the filters,
   the `memory_health` slice and the per-actor rollback are the next
   units in `docs/ROADMAP.md`. `docs/swarm-convergence-plan.md` Phase 2
   (swarm provenance on durable memory) ships here, generalized.
@@ -1575,9 +1575,9 @@ The remaining nineteen findings of the "cannot tell" sweep are closed.
 The class, once more: a probe that cannot distinguish "the condition is
 false" from "I could not determine the condition", whose negative branch
 then publishes a finding, verdict, refusal or stand-down as knowledge.
-The through-line from 7.7.0 and 7.8.0 held on every one — **`Path.exists()`
+The through-line from 7.7.0 and 7.8.0 held on every one (**`Path.exists()`
 and `Path.is_file()` re-raise EACCES and friends on Python 3.11 through
-3.13 and swallow them on 3.14** — and every fix below was re-run on 3.11
+3.13 and swallow them on 3.14**), and every fix below was re-run on 3.11
 and 3.14, with its test asserted to fail against the reverted source.
 Where a probe's answer had to become three-valued, the third value is
 published, never folded into a zero or a null that already meant
@@ -1586,8 +1586,8 @@ something else.
 **The trust index** (`68945da`). `index.trust_for` returned `{}` both for
 "these rows are not classified yet" and for "the index could not be
 opened", and the read surfaces treated `{}` as the first: the 6.6.0 rule
-stood down per row, and the file's own `last_verified_at` — of unknown
-origin — read `fresh` on `memory_search`, `memory_show` and `memory_list`
+stood down per row, and the file's own `last_verified_at`, of unknown
+origin, read `fresh` on `memory_search`, `memory_show` and `memory_list`
 alike, with no warning anywhere. A truncated index, a deleted one (the
 product's own advice on a version skew) and a newer-schema one produced
 identical false-fresh output. `trust_for` now returns None when the index
@@ -1595,11 +1595,11 @@ could not be read; every row then carries `trust_unavailable: true`, no
 label is invented, and a row whose file carries a stamp drops to
 `spot_check_required` with `verification.recommendation` naming
 `bettermemory reindex`. The `expand_top` re-derivation keeps the demotion
-the way it keeps `remote`, and the recall pointer — the one delivery that
-reaches the model without a tool call — renders `[provenance: unknown,
+the way it keeps `remote`, and the recall pointer, the one delivery that
+reaches the model without a tool call, renders `[provenance: unknown,
 index unreadable]` instead of a plain local record. The session-start
-standing tier — the one consumer the first sweep of callers missed, and
-the type checkers caught (`133153f`) — renders every candidate as a
+standing tier (the one consumer the first sweep of callers missed, and
+the type checkers caught (`133153f`)) renders every candidate as a
 pointer under the same label when the index could not be read, since a
 body is delivered only for a row known to be `local`.
 
@@ -1623,8 +1623,8 @@ read the null as "the caller is nowhere": the project-cohort shield
 dropped, so a turn asked from inside the matching repo while git was
 unreachable was logged as a `search_miss` against the model, and the
 recall lane's auto-scope filter opened to every project's memories.
-`Origin.git_indeterminate` — a private attribute, never serialised into
-frontmatter or an event — now says which it was; `probe_for_miss`
+`Origin.git_indeterminate` (a private attribute, never serialised into
+frontmatter or an event) now says which it was; `probe_for_miss`
 declines to declare a miss on it (`suppressed_by: "origin_indeterminate"`)
 and `run_prompt_recall` delivers nothing. `commit_reachable` no longer
 turns a merge-base timeout into the False that `memory_restore` reads as
@@ -1646,7 +1646,7 @@ stored-list arm and the restore strip already applied, so a synced
 record's relative attestations no longer read as fabricated all at once.
 
 **Provenance** (`4a1100a`). `Evidence.tracked_files` was None for one
-documented meaning — "not a sync repo" — and silently carried three more:
+documented meaning, "not a sync repo", and silently carried three more:
 git missing, a non-zero exit (`dubious ownership` on a bind-mounted or
 sudo-created store), a timeout. Rule 6 was skipped and every uncommitted
 file fell through to `unaccounted`, the hand-planted label doctor
@@ -1667,7 +1667,7 @@ down as before and carry git's words.
 
 **Doctor** (`7f2e6c4`). `memory_content_evidence` fell through to "All N
 memory files match the bytes the store last wrote" after its walk aborted
-— the store's one tamper-evidence surface; an aborted walk is now `fail`
+(the store's one tamper-evidence surface); an aborted walk is now `fail`
 with `changed: None`. `_readable_anchor`'s `is_file()` sat outside its
 `try`, so one unstattable attested path turned `attestation_anchors` into
 "this is a bettermemory bug"; it is `os.path.isfile` and the None it always
@@ -1696,15 +1696,15 @@ directory this process cannot stat; it is `os.path.isdir` and the None
 "none found" already means. `_session_cwds` collapsed "no transcripts",
 "could not read them" and "read the first twenty of two hundred" into one
 empty set, and `apply_ingest_plan` stamped `origin = capture(cwd)` on all
-three — the guard exists for the many-to-one sanitisation hazard and its
+three; the guard exists for the many-to-one sanitisation hazard and its
 own contract is conservative on ambiguity. The scan reports whether it
 was complete, an incomplete scan withholds the stamp, and the file
 ceiling moves from a sample of 20 to a cost bound of 2000.
 
 **Config** (`48a6126`). `Config.resolved_directory` probed
 `<cwd>/.claude-memory` with `Path.is_dir()`, so a cwd whose children
-cannot be stat'd aborted every entry path — CLI, server startup, both
-hooks — on three of the four interpreters, while the deleted-cwd branch
+cannot be stat'd aborted every entry path (CLI, server startup, both
+hooks) on three of the four interpreters, while the deleted-cwd branch
 four lines earlier already took the global store. It takes the same
 fallback now.
 
@@ -1738,12 +1738,12 @@ the others; each fix below was re-run on 3.11, 3.13 and 3.14.
 `iter_active_memory_paths` asked `entry.is_file()` before
 `entry.is_symlink()`. `is_file()` FOLLOWS the link and stats the target,
 which may live anywhere, so a symlink into an unreadable directory
-raised from wherever it pointed — and `load_all` calls `next()` on the
+raised from wherever it pointed; and `load_all` calls `next()` on the
 generator outside its own `try`, so `PARSE_SKIP_EXCEPTIONS` never saw
 it. `memory_search`, `memory_list` and `memory_health` died together on
 one bad entry, and a `sync pull` landing `note.md -> /root/x` is enough
-to produce it. Testing the link first excludes it — which the function
-already wanted — without ever following it, and the remaining
+to produce it. Testing the link first excludes it, which the function
+already wanted, without ever following it, and the remaining
 `os.path.isfile` covers the plain-file case. Reproduced on 3.11.15 and
 3.13.13; 3.14 silently skipped the entry, which is the answer we want
 but only by accident of version.
@@ -1753,8 +1753,8 @@ but only by accident of version.
 `check_claim`'s `absent` branch AFFIRMS its claim on the negative arm,
 and `Path.exists()` cannot express "could not tell". On 3.14 an
 unreadable-but-occupied path read as an empty one, so a deleted file
-that later came back — a revert, a cherry-pick, a restored vendored
-copy — under a directory that had since become unreadable kept its
+that later came back (a revert, a cherry-pick, a restored vendored
+copy) under a directory that had since become unreadable kept its
 `!path` claim affirmed while the file sat on disk. That is a false clean
 on the trust path, not a missed alarm. Occupancy is now three-valued
 (`_occupancy`: occupied / nothing there / cannot tell) over an explicit
@@ -1762,15 +1762,15 @@ on the trust path, not a missed alarm. Occupancy is now three-valued
 `origin._WORKTREE_GONE_ERRNOS` uses, so an unclassified errno holds the
 boundary instead of opening it. The positive kinds gained the matching
 half: an unreadable path used to raise outright on 3.11-3.13 and to
-publish "does not exist in the worktree" on 3.14 — an accusation about a
-tree nothing had read — and now reports that it could not be read.
+publish "does not exist in the worktree" on 3.14 (an accusation about a
+tree nothing had read) and now reports that it could not be read.
 
 **A pulled file whose name git quotes is no longer invisible to
 admission** (`3f5c5da`). Under the default `core.quotePath`, `git diff --name-only`
 and `git ls-tree --name-only` C-QUOTE any path needing escaping, so
 `café.md` arrives as `"caf\303\251.md"`. Split on newlines that name
 ends with `.md"`, the `.md` filter dropped it, and the file was then
-absent from `incoming` — so `_admit_pulled_files` NEVER JUDGED it and
+absent from `incoming`, so `_admit_pulled_files` NEVER JUDGED it and
 the size cap, the store parser, the id-alias anti-shadowing check and
 the credential scan all stood down together, for exactly the file a
 hostile push would want them to. Both listings now use `-z` and split on
@@ -1780,12 +1780,12 @@ NUL, which no config setting can turn off. The test asserts the
 **And the name git returned still had to survive the decode**
 (`856afb7`). The windows CI leg failed on the test above and was right
 to: `sync._run_git` passed `text=True` with no `encoding`, so it decoded
-git's output with the LOCALE codepage — cp1252 on a stock runner — and
+git's output with the LOCALE codepage, cp1252 on a stock runner, and
 the `café.md` that `-z` had just recovered came back as `cafÃ©.md`, a
 name matching no file on disk. Fixing one half of a path without the
 other would have shipped a green macOS run over a still-broken
 admission gate. The codec is now pinned to UTF-8, with the existing
-`errors="replace"` leniency kept and its own reason restated —
+`errors="replace"` leniency kept and its own reason restated:
 `--porcelain -z` emits path bytes verbatim, so strict decoding would
 raise inside `subprocess.run` before this function could return.
 `origin.py` already pinned the codec on its git calls; `sync.py` was
@@ -1802,7 +1802,7 @@ any-touch leg and scores it through the claim tiers instead. That trade
 holds only while the detector can see the binding move, and for a
 literal claim whose value is a CONTAINER it cannot: the source may span
 physical lines, and all three literal routes in `claim_level_drift` are
-blind to an interior one — `anchors_from_value` returns () for a
+blind to an interior one. `anchors_from_value` returns () for a
 non-str, the `changed_fragments` route is gated on `isinstance(claimed,
 str)`, and `_binding_token` matches at column 0, which an indented
 element never is. The file lost its alarm and got nothing in return.
@@ -1811,7 +1811,7 @@ Measured end to end: declare `cfg.py::TIMEOUTS={"connect": 5, "read":
 30, "write": 15}` against a multi-line dict, then edit `"read": 30` to
 `"read": 300`. `check_claim` calls the claim false in as many words,
 `claim_level_drift` reports strict=False and weak=False, and the
-commit-drift count goes from 1 without the claim to 0 with it — the
+commit-drift count goes from 1 without the claim to 0 with it: the
 record reads FRESH across the commit that falsified its own claim,
 worse than never having declared it.
 
@@ -1819,7 +1819,7 @@ The fix is at the governance boundary, not in the scoring: the detector
 reported "I saw nothing", which was the truth, and what was wrong is
 the product reading that as "nothing happened". `claim_paths` gains a
 sibling, `governed_claim_paths`, that drops any path carrying a claim
-`claim_is_addressable` refuses, and the two narrowing sites use it —
+`claim_is_addressable` refuses, and the two narrowing sites use it;
 the union in `_quiescent_drift_applicable` deliberately does not,
 because widening was never the problem. Scalars stay narrowed (an int,
 bool or None has nowhere to live but the assignment line) and so do
@@ -1828,8 +1828,8 @@ strings, multi-line included, which is what `anchors_from_value` and
 untouched.
 
 One consequence is worth stating because it changes a verdict rather
-than a count. A memory whose ONLY anchor is a container claim — no
-other cited path — used to read a measured `0` on the reachability
+than a count. A memory whose ONLY anchor is a container claim, no
+other cited path, used to read a measured `0` on the reachability
 path, and a measured zero stands the calendar leg down. It now reads
 `None`, commit drift not applicable, which by this project's own rule
 deliberately does NOT stand that leg down. Strictly the more
@@ -1840,7 +1840,7 @@ staleness alarm.
 The cost is bounded and named: a container occupying ONE source line is
 addressable in fact, and the predicate cannot tell, because a claim
 record stores the canonical repr and not the source layout. Its file
-falls back to the incumbent alert rate — a precision cost on a file the
+falls back to the incumbent alert rate, a precision cost on a file the
 caller already cited, paid to remove a silent false-fresh, landing on
 the floor the feature must never breach: never worse than not
 declaring. `claim_level_drift` is byte-identical, so `bench/rot` and
@@ -1860,14 +1860,14 @@ set, so a foreign checkout behind a permission-denied parent, on a
 dropped network mount, or on failing media propagated out of
 `_compute_cross_repo_drift`, out of `compute_health`, and took
 `memory_health`, the full `memory_scope_overview` report and
-`bettermemory health` down with it — one directory nobody could stat
+`bettermemory health` down with it: one directory nobody could stat
 blanked the whole health surface, including every memory it says
 nothing about. Where it does answer, it folds a slice of "I could not
 find out" into "nothing is there" (Windows ERROR_NOT_READY, a removable
 or disconnected volume), published as the positive finding "worktree
 missing on disk"; an unreadable root then fell through to `capture()`,
 came back with `repo=None` because git could not speak either, and was
-reported as "no longer a checkout of the recorded repo" — a claim about
+reported as "no longer a checkout of the recorded repo", a claim about
 the contents of a tree nobody had read.
 
 The probe now reads three states where it read two. Positively absent
@@ -1879,12 +1879,12 @@ comment claimed it was (`866abb5`). `origin._git` folds a missing
 binary, a timeout at its 1.0s ceiling and a non-zero exit into one
 `None`, and `capture` gates `repo` on `worktree_root`, so "git never
 answered" still arrived indistinguishable from "git answered: not a
-checkout" — and a server spawned from a GUI with a minimal PATH, having
+checkout"; and a server spawned from a GUI with a minimal PATH, having
 no git at all, had every foreign group in the estate libeled at once.
 `worktree_root` is the discriminator, since `capture` sets it from the
 first probe and only when that probe succeeded. So the skip reasons are
 three: nothing identified a checkout here, a checkout whose repo could
-not be identified because its remotes are gone, and the reuse verdict —
+not be identified because its remotes are gone, and the reuse verdict,
 which now fires only when git read a remote and it named a different
 repository, which is what makes it true. None of this is new doctrine:
 `origin._worktree_root_is_gone` is the package's settled answer to the
@@ -1897,7 +1897,7 @@ adopted it.
 **The same probe on the write/verify path** (`27e064e`). Three call
 sites asked `Path.is_dir()` about a recorded worktree root.
 `_validate_declared_claims` already had the right answer one line below
-the probe — "the origin worktree is not visible from this machine" —
+the probe ("the origin worktree is not visible from this machine"),
 and an unreadable tree is exactly that, yet a claims-carrying
 `memory_verify` raised PermissionError out of the tool instead. The two
 read-side legs, the stored-claim re-check and the attestation check,
@@ -1914,7 +1914,7 @@ read at this release: sweeping every recorded `origin.worktree_root`
 against disk gives 369 memories across 4 recorded roots with **0**
 gone, and the claims census gives 181 memories carrying 1,057 claims
 (515 path, 464 symbol, 45 literal, 33 absent) with **0**
-unaddressable — every literal value in that store is a scalar or a
+unaddressable; every literal value in that store is a scalar or a
 string. Both defects are latent: correctness for anyone who moves a
 checkout, loses access to one, or declares a container-valued claim.
 
@@ -1923,7 +1923,7 @@ re-read of the code refuted, both corrected: "absent from
 `curation_pending`" is scoping rather than orphaning (that rollup's
 `drifted` leg is caller-repo gated by design and its other legs carry
 no origin term at all, so every foreign memory is outside it), and
-`migrate origin --repair`'s demote rule does pop `worktree_root` — what
+`migrate origin --repair`'s demote rule does pop `worktree_root`; what
 is true is that neither rule rewrites it to a corrected path, and
 neither can fire in this shape. The entry now also names the sharper
 cost it had missed: `memory_verify`'s caller-checkout fallback fires
@@ -1944,13 +1944,13 @@ not occur. It is the second, and the reason is structural rather than
 circumstantial.
 
 A corroboration bumps only when a `memory_write` is dedup-rejected,
-which needs a `high` hit from `find_similar` — raw Jaccard at or above
+which needs a `high` hit from `find_similar`: raw Jaccard at or above
 `HIGH_SIMILARITY` (0.75) between two independently written bodies. The
 containment leg cannot reach that bar by construction:
 `_CONTAINMENT_CEILING` is 0.575, placed below it precisely so advisory
 similarity never blocks a write. Measured on the dogfood store, 639
 production writes over four months produced three `duplicate`
-rejections, all three from test scopes — and the recording path worked
+rejections, all three from test scopes; and the recording path worked
 correctly on all three, so this was never a broken recorder. Across the
 367-memory corpus, whose median body runs about 460 words, all 67,161
 pairs fell short of the bar; the closest sat at 0.575, pinned exactly at
@@ -1960,7 +1960,7 @@ being a copy-paste.
 
 Both ways to close the gap are worse than retiring the flag. Lowering
 `HIGH_SIMILARITY` would make the write gate reject legitimate distinct
-writes in order to feed a ranking nudge — the tail wagging the dog.
+writes in order to feed a ranking nudge, the tail wagging the dog.
 Redefining corroboration onto the `medium` band would fire on 49% of
 writes, boosting nearly everything, which is worse than off.
 
@@ -1973,7 +1973,7 @@ through `_score_keyword` / `_score_bm25` and `search()`, the
 `USAGE_FLAG_NAMES` entry, the `BehaviorConfig` field, and the TOML key.
 
 The `corroborations` / `last_corroborated` rollup is **not** deprecated.
-Recording stays on — it is cheap, additive telemetry — and
+Recording stays on (it is cheap, additive telemetry), and
 `health._freshest_touch_ts` still reads `last_corroborated` to keep a
 corroborated memory out of dead-weight curation, with `memory_show` and
 `memory_list` still surfacing both fields.
@@ -1983,8 +1983,8 @@ corroborated memory out of dead-weight curation, with `memory_show` and
 A retired symbol is not a mis-anchored one (`5f474cf`). `doctor`'s
 `attestation_anchors` check asks whether an attested file CARRIES the
 body's distinctive symbols, so a memory that names a symbol precisely to
-record that it is GONE could never satisfy it — no live file will ever
-contain it — and a correctly-anchored record was flagged for being
+record that it is GONE could never satisfy it (no live file will ever
+contain it), and a correctly-anchored record was flagged for being
 accurate about a removal. Two of the store's four findings were that
 shape. Symbols the body retires are now dropped from the requirement,
 and when nothing live is left the check stays silent, which is the
@@ -1993,8 +1993,8 @@ a case it had not anticipated. It only ever narrows the alarm.
 
 The vocabulary excludes "dropped" on measured grounds: it produced the
 only false exemption in the store, on a live function in a sentence that
-later mentioned rescuing dropped co-evidence — data being discarded, not
-code removed. A semicolon between cue and symbol also disqualifies the
+later mentioned rescuing dropped co-evidence (data being discarded, not
+code removed). A semicolon between cue and symbol also disqualifies the
 pairing whatever the distance, because the sentence splitter does not
 treat one as a boundary. Classification is all-occurrences: a symbol
 described live anywhere in the body is a live claim, however many other
@@ -2003,7 +2003,7 @@ sentences retire it.
 The `_ABSENCE_CUE_WINDOW` comment cites the pin instead of asserting a
 bare measurement (`fbe72e3`). It had put a measured character distance
 on a surface a model reads with nothing committed behind it, and the
-distance was never the point — the clause boundary is — so the comment
+distance was never the point (the clause boundary is), so the comment
 now describes the shape and names the test that pins the window. Repo
 hygiene rather than behaviour: no check changes its verdict.
 
@@ -2014,7 +2014,7 @@ asking whose voice a sentence was in, so a body that QUOTED transient
 state was blocked for a phrase its author never asserted: an owner
 ruling recorded verbatim, a user's own query wording the memory exists
 to catalogue, an upstream release note. The pathological case was
-self-reference — a memory documenting the marker list could not be
+self-reference: a memory documenting the marker list could not be
 written at all, because naming `"the new"` fires `the new`. Both marker
 detectors now skip a hit that sits inside a quotation, bounded to a
 single line so an unbalanced quote can never swallow the rest of a body
@@ -2024,9 +2024,9 @@ Measured on the 360-body dogfood store: 13 of 53 transient fires and 9
 of 21 user-claim fires sat inside quotations, 19 bodies were blocked on
 nothing else, and every one of the 19 is transcription or
 self-reference rather than a durability defect. Recall cost on
-`bench/integrity`'s poisoning arm is zero and not merely small — the
+`bench/integrity`'s poisoning arm is zero and not merely small (the
 P-A confusion matrix is unchanged at tp 8 / fn 22 / fp 1 / tn 93,
-J 0.256 — because the two payloads of 30 that carry a quote produce no
+J 0.256) because the two payloads of 30 that carry a quote produce no
 transient and no user-claim fire either way.
 
 The exemption is per occurrence, not per marker, so a body that quotes
@@ -2036,7 +2036,7 @@ that leg is a transcript miner, where first person means the user
 because the user typed it, while in a memory body the author is the
 assistant. `_USER_CLAIM_RE`, which reads the third-person shape a model
 writes when it files a claim of its own, keeps firing inside
-quotations — it has no quoted fires in the measured store, and
+quotations: it has no quoted fires in the measured store, and
 narrowing an unfired leg on no evidence is how a gate stops working.
 
 Also: a project root that contains another project's root is dropped
@@ -2046,7 +2046,7 @@ degenerate root only at `$HOME` and `/`, but a session opened in
 were all written from there inherited it as a "project root" that then
 prefix-matched every sibling project's paths. Two scopes in the
 measured store did exactly that, and 31 of its 86 recorded
-`scope_mismatch` events suggested those two and nothing else — none of
+`scope_mismatch` events suggested those two and nothing else; none of
 the 86 was ever accepted. Ancestry is decided against the roots the
 store actually carries, not a depth threshold, so a shallow root that
 no sibling sits under is kept.
@@ -2057,7 +2057,7 @@ Commit drift counted in reachability space. The commit-drift leg
 counted the commits AUTHORED after `last_verified_at`, so a branch
 authored before a verify and merged after it counted zero: a memory
 read `clean` while the tree had changed under it, on exactly the merge
-workflows — squash, rebase, a long-lived branch — where the work that
+workflows (squash, rebase, a long-lived branch) where the work that
 lands is older than the stamp. `memory_verify` now records the commit
 the origin checkout stands at as `verified_head`, and every drift
 surface counts the commits in `verified_head..HEAD` from it, falling
@@ -2088,9 +2088,9 @@ rebuilt on first use; one additive frontmatter field; no new parameter.
   is the restore re-check's question.
 - `06d4945` feat(verify): count commit drift in reachability space.
   `compute_commit_drift` counts from `verified_head` when the record
-  carries one and the caller's HEAD still descends from it — the
+  carries one and the caller's HEAD still descends from it (the
   anchored count read off the walk in Python, the claim-governed files
-  through the weak tier over the range's own patches — and every block
+  through the weak tier over the range's own patches), and every block
   names its axis: `basis` on the `commit_drift` block and the health
   rollup's rows, `commit_drift_basis` beside the search hit's count,
   all through the one core `resolve_commit_drift`. The applicability
@@ -2116,7 +2116,7 @@ rebuilt on first use; one additive frontmatter field; no new parameter.
   t0's commit instant and read at t1. `ffd745c` records the run on
   the sealed 30-repository corpus
   (`bench/rot/results/multirepo-reachability-2026-09-05.json`). P1 of
-  the unit is a hit — pooled Youden's J 0.2559 on the author-date arm
+  the unit is a hit: pooled Youden's J 0.2559 on the author-date arm
   against 0.2875 on the reachability arm, the author-date arm
   leaving 324 of the 8,627 falsified claims unflagged (3.8%, every one
   in dbt-core, whose window holds 1,482 commits authored before t0 and
@@ -2168,7 +2168,7 @@ new tool; one index schema bump (v9), rebuilt on first use.
   single-machine; `SECURITY.md` says what it does and does not defend.
 - `7042ed1` feat(verify): refuse a stamp that names nothing it checked.
   A `memory_verify` that attests no paths, attests no absence and
-  declares no claims — and preserves none from the record — is refused
+  declares no claims, and preserves none from the record, is refused
   on a memory whose cited paths resolve (an absolute citation that
   exists here, a relative one anchored in the memory's live worktree),
   with the resolved citations listed, repo-relative under the worktree,
@@ -2224,11 +2224,11 @@ replaces.
 
 - `08608ce` feat(write): link an update to the claim it replaces at
   write time. `bettermemory.supersession.detect_supersession` asks three
-  questions per stored memory — same subject (pairwise Jaccard at least
+  questions per stored memory: same subject (pairwise Jaccard at least
   0.10), different value (a number, a joined compound, a proper noun or
   the token after a change cue on each side that the other lacks), same
   slot (kin values, or each value's neighbourhood present in the other
-  body) — and the write path sets the link with a note naming the cue
+  body); and the write path sets the link with a note naming the cue
   and both values, or files the cue-less pair (detector `value`,
   `numeric` for two numbers). Both bodies must be single claims; five
   links and five filings per write at most. `Store.write` takes `links`
@@ -2552,7 +2552,7 @@ step, after the 2026-09-01 recon re-run: nothing on disk said how a
 memory entered the store, and a hand-written `last_verified_at` read
 fresh on every surface.
 
-### Added — provenance: how each memory entered the store
+### Added (provenance: how each memory entered the store)
 
 - `00d8f3f` feat(index): the provenance column, derived at rebuild.
   Schema v7 adds `provenance` to the index, one of `local` / `synced`
@@ -2690,7 +2690,7 @@ reachability anchor) stays queued as a design item.
 ## 6.4.1 - 2026-08-31
 
 A patch by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):
-bug fixes only, from the round-192/193 audit drive — a user-directed
+bug fixes only, from the round-192/193 audit drive, a user-directed
 catch-up audit of the 4.0.0→6.4.0 window (256 commits, 16 releases;
 eight audit domains, every finding adversarially verified, every fix
 gate-run in an isolated worktree before integration). Twenty-four of
@@ -2703,7 +2703,7 @@ queued as a design item.
 - `1d5e2b8` fix(search): guard out-of-range month years; demand context
   for 'may'. "december 9999" / "january 0000" queries crashed
   `search()` under shipped defaults (an unguarded ValueError in the
-  conversational lane's month branch — the sibling date branch already
+  conversational lane's month branch; the sibling date branch already
   had the guard), taking the silent-miss audit and prompt recall down
   with it on any turn that mentioned such a date. And the modal
   auxiliary "may" no longer parses as the month May without a year or
@@ -2762,17 +2762,17 @@ queued as a design item.
 - `1092c84` fix(origin): decode git output as UTF-8, not the locale
   codepage. The shared `_git` runner's bare `text=True` let Windows
   decode git's UTF-8 stdout as cp1252, mojibaking every non-ASCII path
-  on its way to the drift legs — caught by the new quotePath
-  regression test on the windows CI leg.
+  on its way to the drift legs (caught by the new quotePath
+  regression test on the windows CI leg).
 
 ## 6.4.0 - 2026-08-30
 
 A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):
 additive event fields, an additive out-parameter on `search()`, and a
-new `eval` mode — no schema change, no removals, no
-resident-description changes.
+new `eval` mode (no schema change, no removals, no
+resident-description changes).
 
-### Added — usage-toggle capture + `eval --usage-replay`: the flip bars' measurement surface
+### Added (usage-toggle capture + `eval --usage-replay`: the flip bars' measurement surface)
 
 The usage-signal ranking flags (`endorsement_boost`,
 `outcome_demotion`, `corroboration_boost`) have declared flip bars in
@@ -2780,7 +2780,7 @@ the ROADMAP whose replay clause needs per-turn counterfactuals, and
 those are only exactly computable where the factors live: the factors
 multiply per-leg scores *before* RRF rank fusion, so no offline
 arithmetic on a logged fused score can reproduce a toggle. The
-silent-miss probe now computes it in place — `search()` gains a
+silent-miss probe now computes it in place: `search()` gains a
 `usage_toggles_out` out-parameter (the `matched_leg_out` pattern)
 that, when any usage input carries live signal, divides each flag's
 per-memory factor back out of the exact leg lists production fused,
@@ -2790,7 +2790,7 @@ changed the top-1, with the counterfactual winner's raw coverage
 features. Leg composition is held fixed (pinned protocol); live
 signal means a non-neutral factor on at least one scored candidate.
 `turn_audited` and `prompt_recall` events carry the capture
-additively (`usage_active` / `usage_toggles` — absent on every
+additively (`usage_active` / `usage_toggles`, absent on every
 default-config turn, so those events keep their exact prior shape),
 and a delivery's capture records that the flag changed what got
 injected.
@@ -2802,7 +2802,7 @@ miss-labeled worsenings, checks the `outcome_demotion` invariant
 (`v1_later_top1_explicit_apply_within_600s`), and prints the density
 preconditions (distinct explicit endorsements, distinct negative
 outcomes, corroboration liveness) next to a pointer at the declared
-bars. Measurements only — thresholds stay in the ROADMAP, an unread
+bars. Measurements only: thresholds stay in the ROADMAP, an unread
 bar is a hold, and pre-capture turns are counted as not-replayable,
 never approximated. Ground truth is tested directly: the captured
 counterfactual must equal a real `search()` run with that one flag's
@@ -2812,10 +2812,10 @@ input removed, per flag, per mode.
 
 A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):
 additive report fields, a recalibrated health constant, split doctor
-messaging, and a widened honesty gate — no schema change, no removals,
-no resident-description changes.
+messaging, and a widened honesty gate (no schema change, no removals,
+no resident-description changes).
 
-### Added — cross-repo drift: the estate check
+### Added (cross-repo drift: the estate check)
 
 Every commit-drift surface is gated on the caller standing inside the
 memory's origin repo, so records anchored in other projects rot
@@ -2829,16 +2829,16 @@ caller-repo and estate rollups cannot compute different policies for
 the same memory. Bounds are explicit: a per-run cap on roots walked
 (over-cap groups listed as skipped, never dropped), `None` when no
 foreign claim-anchored verified candidate exists, and a walked clean
-group emitted with zero rows — "checked, clean" and "didn't check"
-must not read the same. Deep-report only: session-start's
+group emitted with zero rows ("checked, clean" and "didn't check"
+must not read the same). Deep-report only: session-start's
 `curation_pending` stays caller-repo cheap.
 
-### Changed — the cold-endorsement floor earns its number, gated
+### Changed: the cold-endorsement floor earns its number, gated
 
 `_COLD_ENDORSEMENT_MIN_RETRIEVALS` rises 5 → 30, calibrated against
 the dogfood event log: at the measured explicit-endorse rate
 (p ≈ 0.130 per retrieval) a healthy memory showed zero explicit
-applies at the old floor with probability 0.50 — the bucket flagged
+applies at the old floor with probability 0.50; the bucket flagged
 coin flips, and the store's one standing recommendation was to
 acknowledge-debt demonstrably active memories. Thirty puts
 P(zero | healthy) at or under 0.05 for both same-week rate estimates;
@@ -2850,22 +2850,22 @@ the counts an unwired hook cannot produce, so on a hookless store the
 zero is uninformative and the curation hint's pressure sum corrects
 itself for free.
 
-### Changed — verification debt splits by checkability
+### Changed: verification debt splits by checkability
 
-A large minority of a real store's debt is judgment records —
-preferences, directives, lessons — with nothing a verify pass can
+A large minority of a real store's debt is judgment records
+(preferences, directives, lessons) with nothing a verify pass can
 mechanically check, so an undivided `never_verified` total reads as
 backlog a curate loop can never drain. `verification_debt` gains
 `never_verified_checkable` / `stale_checkable` (a row is checkable
-when it declares claims or carries drift anchors — body-cited paths
+when it declares claims or carries drift anchors: body-cited paths
 plus attested `verified_paths`, the notion every drift surface
 already reads), and both capped row lists sort checkable-first so the
 display window leads with drainable work.
 
-### Changed — doctor tells hook-wired from MCP-audited
+### Changed: doctor tells hook-wired from MCP-audited
 
 The `audit_turn_cadence` census splits `turn_audited` on the shared
-coverage predicate instead of counting every row as hook evidence —
+coverage predicate instead of counting every row as hook evidence:
 an in-process `memory_audit_turn` stamps `triggered_from="mcp_tool"`,
 and counting it was the conflation this census kept after every other
 surface dropped it. An MCP-only store still warns (the hook genuinely
@@ -2873,17 +2873,17 @@ is not wired), but the message names what the store is instead of
 claiming silence; `hook_turn_audited` / `mcp_turn_audited` join the
 published info keys.
 
-### Changed — the small trio's remaining pair
+### Changed: the small trio's remaining pair
 
 The transient-reject hint routes run-state: it now names
 `episode_write` as the tier built for exactly the content it rejects
-(a runtime payload — nothing landed on the resident budget). And the
+(a runtime payload; nothing landed on the resident budget). And the
 system-prompt addendum's episode section catches up to the plugin
-skill's framing — the routing rule, the write-every-iteration minting
-moment, the cheap takeaway-only scan — net-neutral at 9,144 → 9,181
+skill's framing (the routing rule, the write-every-iteration minting
+moment, the cheap takeaway-only scan), net-neutral at 9,144 → 9,181
 bytes, both byte-equal surfaces moving together.
 
-### Fixed — the injected block drops its stale firing-rate claim
+### Fixed: the injected block drops its stale firing-rate claim
 
 `c7b371c`, shipped unreleased since the 6.2.0 tag: the prompt-recall
 injection block quoted the pre-6.2.0 firing-rate figure after the
@@ -2892,16 +2892,16 @@ handling without the stale number.
 
 ## 6.2.0 - 2026-08-25
 
-### Added — prompt recall delivers inside the caller's own project
+### Added: prompt recall delivers inside the caller's own project
 
 The score-gated UserPromptSubmit recall hook fires on a second lane:
 the project cohort. Until now the delivery predicate was identical to
 the silent-miss audit's, and the audit deliberately suppresses turns
 whose top hit belongs to the git project the caller is standing in
-("update <repo>", "push it" — no `memory_search` was *owed* with the
+("update <repo>", "push it"; no `memory_search` was *owed* with the
 source tree open). That suppression is correct for the audit's
-question and wrong for delivery's: memory-resident facts — decisions,
-run state, rulings — are exactly what an open source tree cannot
+question and wrong for delivery's: memory-resident facts (decisions,
+run state, rulings) are exactly what an open source tree cannot
 serve, and dogfood measured ~95% of replayable misses in this cohort.
 For a store whose memories concentrate in the repos the user actually
 works in (the normal shape for a coding-agent memory), the old
@@ -2913,7 +2913,7 @@ it mattered most.
   coupling. The v1 top-1 "high" bar, the retrieval shield, the
   creation shield, the ack/min-token gates, and the
   attribution-window anti-spam bound all still apply unchanged.
-- The silent-miss **audit lane is unchanged** — the project cohort
+- The silent-miss **audit lane is unchanged**: the project cohort
   still reports `ok`, and a delivered recall still shields the same
   turn's audit through `_RETRIEVAL_EVENT_KINDS`.
 - `MissReport` gains `suppressed_by` (additive: `"retrieval"` /
@@ -2921,12 +2921,12 @@ it mattered most.
   threshold-clearing hit; `prompt_recall` events gain
   `delivered_reason` (`"miss"` / `"project_cohort"`) so eval slices
   the lanes separately. Recall-rate comparisons across this boundary
-  must slice on `delivered_reason == "miss"` to stay like-for-like —
+  must slice on `delivered_reason == "miss"` to stay like-for-like;
   discontinuity named in docs/eval-results.md before the numbers, as
   usual.
 
 Release erratum (2026-08-30): the tagged release also carries one fix
-the entry did not name — `a5881abfd` gave the three drift-read log
+the entry did not name; `a5881abfd` gave the three drift-read log
 legs in `origin.py` the patch stream's 5.0s ceiling instead of the
 write path's inherited 1.0s, which on a slow host timed them out and
 collapsed real commit drift into the conservative no-report branch
@@ -2936,12 +2936,12 @@ shallow-checkout skip is why the CI matrix never flagged it.
 
 ## 6.1.0 - 2026-08-16
 
-### Changed — the conversational lane ships default-on
+### Changed: the conversational lane ships default-on
 
 Hybrid search now runs the Lane L conversational repairs by default
 (`search(conversational=True)`, `[behavior] conversational = true`):
-when a query has a temporal reading — "how many weeks ago did I…",
-"what did I do in March?" — its temporal-scaffold words
+when a query has a temporal reading ("how many weeks ago did I…",
+"what did I do in March?"), its temporal-scaffold words
 (day/week/ago/last/many and kin, a committed 40-stem closed class)
 price as common words in the BM25 legs so the question's own syntax
 cannot outprice its content, and date-anchored items matching an
@@ -2956,7 +2956,7 @@ The lane ran as a declared unit, bars fixed before any code
 instrument byte-identical, no question type regressed, and the
 untouched holdout half generalizing stronger than the tuning half.
 The default install's standing LongMemEval sentence moves from 89.3%
-to 90.6% macro recall@5 — one point behind the 91.6% reference, from
+to 90.6% macro recall@5, one point behind the 91.6% reference, from
 2.3, stated plainly: the reference line is not met. The silent-miss
 probe threads the flag through `RankingInputs` like every ranking
 input, so audit verdicts keep matching production. Both bench runners
@@ -2966,14 +2966,14 @@ default install; `off` reproduces every prior baseline row.
 ## 6.0.0 - 2026-08-15
 
 A major by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):
-a shipped surface is removed whole. The removal is the release —
+a shipped surface is removed whole. The removal is the release;
 nothing else changes.
 
-### Removed — the embedding lane, whole, again
+### Removed: the embedding lane, whole, again
 
 The 5.5.0 door C reentry is revoked by owner doctrine (2026-08-15):
 the project's objective is a frontier improvement built by this
-project — an own-built model or a genuinely better mechanism — and
+project (an own-built model or a genuinely better mechanism), and
 the standing 2026-08-11 condition ("you can add neural weights as
 long as we built the model from scratch") barred borrowed pretrained
 weights when door C admitted them behind an opt-in extra. Rigor
@@ -2985,7 +2985,7 @@ modules, the engine's cosine leg and `"semantic"` search mode, the
 `[embeddings]` and `[embeddings-fast]` extras, the handler/audit/hook
 threading, and both bench runners' semantic arms. The dated R1/R2/R3
 artifacts and their declarations remain in `bench/` as the record of
-a lane doctrine has closed — the numbers stay where they were
+a lane doctrine has closed; the numbers stay where they were
 recorded, beside their dates and caveats. The paraphrase gap the
 borrowed geometry papered over is OPEN again, honestly: own-built
 machinery or a new mechanism, or published as unreachable.
@@ -2993,7 +2993,7 @@ machinery or a new mechanism, or published as unreachable.
 A default install is byte-identical before and after: the extras were
 opt-in and the default engine has been deterministic lexical
 throughout. `origin.py`'s deprecated trio re-targets its removal
-notice to 7.0 — the 4.0-era notice outlived two majors, and the
+notice to 7.0; the 4.0-era notice outlived two majors, and the
 messages now track the re-target rule in
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -3017,33 +3017,33 @@ cannot substitute for).
 ## 5.7.0 - 2026-08-15
 
 A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):
-a validation cap loosened — inputs previously refused are now
-accepted, nothing previously accepted changes meaning — no schema
+a validation cap loosened (inputs previously refused are now
+accepted, nothing previously accepted changes meaning), no schema
 change, no new dependencies.
 
-### Changed — the note cap: 500 → 800
+### Changed (the note cap: 500 → 800)
 
 `memory_verify` and `memory_record_use` refuse free-text `note`
 strings over the cap rather than truncating them; the cap moves from
 500 to 800 characters (`_NOTE_MAX_LEN`). Scoped mechanically by the
 T1 live-store census (T-P5: 11.5% of 1,257 recorded notes within 50
-characters of the old ceiling —
+characters of the old ceiling;
 `bench/rot/results/live-store-2026-08-14.json`) and decided in
 `bench/rot/T3_NOTE_CAP_DECISION.md` against the only unconstrained
 sample a refusing cap can ever produce: the ten pre-cap days in the
 event log, whose overrun tail decays through the 500/600/700 buckets
-and collapses to scatter past 800 — so the cap moves to the bucket
+and collapses to scatter past 800; so the cap moves to the bucket
 boundary the histogram can see and keeps refusing the paste-shaped
 remainder.
 
 Truncate-with-acknowledge was the declared alternative and is
-refused: post-cap wire overruns are zero (writers trim to fit — that
+refused: post-cap wire overruns are zero (writers trim to fit; that
 is what the squeeze is), so it would fire approximately never and cut
 blindly when it did, mutating an audit log whose entire value is
 being exact.
 
-The T1 artifact's unpredicted finding — histogram entries above the
-cap — closed as CAP-POSTDATES-LOG: all 18 strict overruns are
+The T1 artifact's unpredicted finding, histogram entries above the
+cap, closed as CAP-POSTDATES-LOG: all 18 strict overruns are
 `verify` events from 2026-05-08→17, the cap shipped 2026-05-20
 (`d656a6d`, v2.3.1), and the log carries zero post-cap overruns. No
 leak, nothing to seal.
@@ -3053,7 +3053,7 @@ Deliberately untouched, each with its reason recorded in place: the
 `memory_acknowledge_miss` reason ceiling (a triage one-liner, its
 comment no longer claims to mirror the note cap), and the census's
 declaration constants (T1's sealed terms). The resident footprint is
-unmoved — the cap's two description lines changed at identical
+unmoved: the cap's two description lines changed at identical
 character count.
 
 ## 5.6.0 - 2026-08-14
@@ -3061,32 +3061,32 @@ character count.
 A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract):
 one additive claim kind, no schema change, no new dependencies. Every
 stored claim written under any prior release parses and means the same
-thing — the live store measured 0 of 595 claims carrying the new
+thing: the live store measured 0 of 595 claims carrying the new
 marker before it meant anything.
 
-### Added — the absence claim shape (`!path`)
+### Added: the absence claim shape (`!path`)
 
 The claims grammar's fourth kind, scoped mechanically by the T1
 live-store census (`bench/rot/T1_LIVE_STORE_DECLARATION.md`, decision
-rule 1: 89.5% of classifiable attested-absent paths were HISTORICAL —
-deleted on purpose — a pattern `verified_absent_paths`' presence-never-
+rule 1: 89.5% of classifiable attested-absent paths were HISTORICAL,
+deleted on purpose, a pattern `verified_absent_paths`' presence-never-
 flags contract carries with inverted polarity) and declared before
 implementation (`bench/rot/T2_ABSENCE_CLAIM_DECLARATION.md`).
 
 `memory_write(claims=["!src/old.py"])` asserts nothing exists at that
-path. The declare-time oracle refuses while anything — file or
-directory — occupies it; both gates inherit the inversion with no new
+path. The declare-time oracle refuses while anything, file or
+directory, occupies it; both gates inherit the inversion with no new
 gate code, so a `memory_verify` on a memory whose claimed-absent path
 has REAPPEARED refuses to stamp `last_verified_at`, naming the claim.
 The commit-drift leg's claim tier fires on reappearance: weak = the
 path was touched in the post-verify window, strict = the window net-
-re-created it — sound under the declare-time invariant (the window
+re-created it, sound under the declare-time invariant (the window
 starts absent, so touch-plus-delete can only be add-then-delete).
 Path-only: `!path::x` refuses with a teaching error; symbol- and
 literal-absence have no measured evidence base.
 
 Acceptance read (`bench/rot/results/t2-validation-2026-08-14.json`):
-all five declared predictions hit — including T1's two live reappeared
+all five declared predictions hit, including T1's two live reappeared
 cases, which refuse at declaration and fire strict in their re-add
 windows (2/2, 2/2), and detector identity for the three measured kinds
 (additive branch on a kind the corpus never contains; no pinned table
@@ -3096,10 +3096,10 @@ moved).
 
 A minor by the [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract).
 **A default install is unchanged**: no new dependencies, and with no
-extra installed every restored code path below is inert — the hybrid
+extra installed every restored code path below is inert; the hybrid
 fusion is the shipped two-leg lexical fusion, byte for byte.
 
-### Added — door C reentry: the embedding lane returns, opt-in only
+### Added (door C reentry: the embedding lane returns, opt-in only)
 
 The pretrained-weights doctrine decision (`bench/DOOR_C_DECISION_BRIEF.md`)
 opened door C conditionally, and `bench/R1_REENTRY_DECLARATION.md` fixed
@@ -3110,18 +3110,18 @@ return to packaging; the engine's semantic scoring leg, the pure
 when a model is present, and the Stop-hook's explicit
 `semantic_model_unavailable` no-signal all return, restored from the
 pre-4.0.0 ancestry (the lane was removed whole in `1bb73bc`) and
-modernized to the current engine — the semantic leg now coexists with
+modernized to the current engine: the semantic leg now coexists with
 the 5.1 rescue-expansion lane and the round-9 base-leg weighting, both
 of which disable themselves cleanly when a third leg joins the fusion.
 Deliberately NOT restored: the write-path semantic dedup gate, reindex
-tooling, and doctor's embeddings checks — the door C contract admits
+tooling, and doctor's embeddings checks; the door C contract admits
 pretrained weights to the retrieval arm only.
 
 The restored lane shipped only after passing its pre-committed
 reproduction bars: R1 measured every unpadded cell byte-identical to
-the pre-strip record — semantic/asked 60%/75% at recall@1/@5 against
+the pre-strip record, semantic/asked 60%/75% at recall@1/@5 against
 lexical/asked 35%/60%
-(`bench/retrieval/results/r1-unpadded-2026-08-13.json`) — with the
+(`bench/retrieval/results/r1-unpadded-2026-08-13.json`), with the
 lexical cells exact (the port-integrity control), a repeat run
 identical (the determinism bar), and the arm's asked cells unchanged
 through production's prefilter in both threshold regimes
@@ -3132,7 +3132,7 @@ R2 (held-out) and R3 (any default question) each require their own
 declared-first document before running.
 
 Release erratum (2026-08-14): the tagged release also carries two
-post-gate fixes the entry above did not name — `79e5af9` aligned both
+post-gate fixes the entry above did not name; `79e5af9` aligned both
 plugin manifests with the release version, and `2c674bf` finished the
 version sweep (the CHANGELOG date heading, the marketplace/plugin and
 server manifests, uv.lock) and scoped the lexical-tie pins' test
@@ -3149,21 +3149,21 @@ returned identical ids and scores across the full depth window (P64).
 Everything added is a default-off engine mechanism, bench instruments,
 and register fixes.
 
-### Added — round 9: the trailing base leg is withheld, measured, and killed at its gate
+### Added (round 9: the trailing base leg is withheld, measured, and killed at its gate)
 
 `a1fd750` adds the campaign's H-fusion-general mechanism: `_hybrid_fuse`
 reads rank, not evidence, so a base leg that trails its peer's evidence
 at rank-1 voted exactly as hard as the leading leg. The base-leg census
 (`bench/base_leg_census.py` and its labels artifact) located the damage
-in RELATIVE evidence — trailing legs helped 2 of 29 labelled dev cases,
-none of twelve at a deficit of two or more — so the rule is withheld,
+in RELATIVE evidence (trailing legs helped 2 of 29 labelled dev cases,
+none of twelve at a deficit of two or more), so the rule is withheld,
 not damped: the trailing leg does not vote, ties fuse byte-identically,
 and no graded constant exists to dispute across corpora.
 
-Preregistered as addendum 12 (P63–P70) and measured on three
-instruments. Dev gains were the campaign's largest and census-exact —
-padded-600 recall@1 rose 25/70/25 to 35/85/35 for asked/requery/control
-with recall@5 unchanged in every cell — and LongMemEval fell on all
+Preregistered as addendum 12 (P63-P70) and measured on three
+instruments. Dev gains were the campaign's largest and census-exact
+(padded-600 recall@1 rose 25/70/25 to 35/85/35 for asked/requery/control
+with recall@5 unchanged in every cell) and LongMemEval fell on all
 three macros (0.8861 vs 0.8935 at macro@5), which is a preregistered
 kill: C1 measured at the base pair. `_BASE_LEG_TRAILING_WITHHOLD` ships
 False; `--base-withhold` drives the arm in all three bench runners; the
@@ -3172,12 +3172,12 @@ record, including a disclosed upward-missed prediction clause and the
 per-question damage map, is the round-9 section of
 `bench/longmemeval/README.md`.
 
-### Added — a second blind-authored held-out instrument
+### Added: a second blind-authored held-out instrument
 
 `bench/heldout/data2/` (9524b88): 15 personas, 135 sessions, 120
 questions, authored from `FORMAT.md` alone by an isolated agent under
 the proven seal protocol, validated with zero envelope warnings, and
-reserved by addendum 12 for the next mechanism — two live mechanisms
+reserved by addendum 12 for the next mechanism; two live mechanisms
 never share one single-use check.
 
 ### Bench
@@ -3191,8 +3191,8 @@ record lives in the P1e sections of `bench/longmemeval/README.md` and
 
 - README: six bolded bullet leads reintroduced by the 5.0 measurement
   purge are plain sentences again, per the public-docs register bar.
-- `bench/claims.py`: the usage block cites `.venv/bin/python` — the
-  interpreter path that actually exists — matching every sibling bench
+- `bench/claims.py`: the usage block cites `.venv/bin/python`, the
+  interpreter path that actually exists, matching every sibling bench
   docstring.
 
 ## 5.3.0 - 2026-08-11
@@ -3205,7 +3205,7 @@ return shape changed. One commit carries a conventional-commit `!` and
 that marker stays honest in the log; the surface it changed is
 lane-internal.
 
-### Changed — the rescue leg votes at full strength or not at all (opt-in lane only)
+### Changed: the rescue leg votes at full strength or not at all (opt-in lane only)
 
 `[behavior] rescue_expansion` remains **off by default**. A default
 install ranks exactly as it did in 5.2.0, asserted as a preregistered
@@ -3217,8 +3217,8 @@ withheld entirely, and above that floor it votes at full strength. One
 matched term is a coincidence; two independent terms agreeing on the
 same document is evidence.
 
-An evidence-**scaled** form — the leg's weight rising with its match
-count — was built and measured during the campaign and ships as a
+An evidence-**scaled** form (the leg's weight rising with its match
+count) was built and measured during the campaign and ships as a
 committed non-default variant (`_RESCUE_LEG_EVIDENCE_SCALING`,
 `--evidence-scaling on` on both runners). It is not the active form,
 and the reason is the audience.
@@ -3233,42 +3233,42 @@ the technical-prose gold set:
 | scaled `m/F` | 0.55 / 0.80 | 0.50 / 0.85 |
 
 The scaled forms' compensating gains land on LongMemEval's
-conversational stores (macro@5 0.8823 flat → 0.8926 / 0.8901 scaled) —
+conversational stores (macro@5 0.8823 flat → 0.8926 / 0.8901 scaled),
 and **every one of those figures is below that corpus's lane-off
 baseline of 0.8935**. A conversational store is better served leaving
 the lane off entirely than running any form of it, so the form only
 matters for the audience flat serves best: a store whose owner knows it
 holds technical prose.
 
-### The retrieval campaign, rounds 6–8, and why the lane is a knob
+### The retrieval campaign, rounds 6-8, and why the lane is a knob
 
 Five preregistered experiments ran, each committed before its code and
 each scored against its own criteria. Two of the leg-weight forms were
 **superseded before release** rather than shipped:
 
-- **P1a — store-derived PPMI expansion.** Killed at its gate before any
+- **P1a: store-derived PPMI expansion.** Killed at its gate before any
   engine code: the best of 36 grid cells reached 0.46× the incumbent
   static tables' precision, and a rank-based fusion cannot discount an
   imprecise leg. The signal is real (PPMI finds 150+ gold terms the
-  tables miss) and arrives with 10–65 terms per probe.
-- **Round 6 — evidence-scaled weight, `(m−1)/(F−1)`.** Produced the
+  tables miss) and arrives with 10-65 terms per probe.
+- **Round 6: evidence-scaled weight, `(m−1)/(F−1)`.** Produced the
   campaign's best held-out figures (macro@5 **0.8926**, clearing a kill
   line that had stood five rounds and landing 0.0009 under baseline;
   macro@1 0.5134). Failed its dev gate.
-- **Round 7 — the structural form `m/F`**, zero new constants: the
+- **Round 7 (the structural form `m/F`)**, zero new constants: the
   leg's weight becomes the fraction of the evidence bar its own
   evidence reaches. macro@5
-  0.8901, dev gate failed again — and the two rounds together located
+  0.8901, dev gate failed again, and the two rounds together located
   the obstacle exactly: sweeping the one scalar that differs between
   them, the technical corpus wants the leg's floor stratum at full
   weight (as-asked recall@5 rising 0.65 → 0.90) while the
   conversational corpus wants it damped (macro@5 0.8823 → 0.8926).
   **Both monotone, in opposite directions.** No constant satisfies both.
-- **Round 8 — a store-adaptive weight.** Killed at its gate: of six
+- **Round 8: a store-adaptive weight.** Killed at its gate: of six
   register-adjacent statistics, none separates the two corpora by the
   twofold the weight would have to move. The closest is mean document
-  length at 1.70×, a length artifact; filler-token share — the quantity
-  the lane's own premise names — is **1.13×**.
+  length at 1.70×, a length artifact; filler-token share, the quantity
+  the lane's own premise names, is **1.13×**.
 
 **That is why `rescue_expansion` is a knob and not an inference.** The
 engine cannot cheaply tell which kind of corpus it is holding, so the
@@ -3276,7 +3276,7 @@ owner decides. Round 8 closes the adaptive family with a measurement
 rather than a hope: what separates a store the lane helps from one it
 harms is semantic, not distributional.
 
-### Bench — a blind held-out instrument, built and still sealed
+### Bench: a blind held-out instrument, built and still sealed
 
 The campaign's earlier record noted that LongMemEval had informed
 parameters across four rounds and was no longer a clean check.
@@ -3303,7 +3303,7 @@ preregistered arm is reachable from a clean checkout at a sha.
 - A test named for the filler df-floor toggled `rescue_expansion`,
   which moves the floor **and** the leg together, then credited the
   floor. Driven separately the floor alone leaves the distractor on
-  top — the leg is what surfaced the gold. It had been mis-attributing
+  top: the leg is what surfaced the gold. It had been mis-attributing
   since 5.1.0.
 - A `docs/ROADMAP.md` citation of the recency helper by line number had
   drifted four times as `search.py` grew; it now cites the symbol.
@@ -3317,10 +3317,10 @@ between tools. Everything below moves behaviour **only inside the
 opt-in `rescue_expansion` lane**, `SCHEMA_VERSION` is untouched, and no
 tool, parameter, default or return shape changed. Two commits in this
 window carry a conventional-commit `!` and that marker stays honest in
-the log — one of them (`13d0690`) introduced a cap surface that
+the log: one of them (`13d0690`) introduced a cap surface that
 `d759438` replaced before either was ever released.
 
-### Added — the rescue leg must earn its vote (opt-in lane only)
+### Added: the rescue leg must earn its vote (opt-in lane only)
 
 `[behavior] rescue_expansion` remains **off by default**. A default
 install ranks exactly as it did in 5.1.1, and a test pins that the new
@@ -3329,7 +3329,7 @@ constant is unobservable with the lane off.
 Inside the lane, the expansion leg now has to show evidence before it
 joins the fusion. `_hybrid_fuse` fuses by RANK, so the leg contributed
 `_RESCUE_LEG_WEIGHT / (rrf_k + rank)` whether its rank-1 was found by a
-discriminating synonym or by a single coincidental token — IDF only
+discriminating synonym or by a single coincidental token; IDF only
 reorders *within* the leg and cannot reduce its influence. Since 5.2.0
 a leg whose top candidate matched fewer than `_RESCUE_LEG_MIN_EVIDENCE`
 (2) synthesized terms is withheld entirely: one matched term is a
@@ -3347,10 +3347,10 @@ evidence. A withheld leg leaves the base fusion untouched.
   baseline) and lifts macro@10 to 0.9476, above baseline. macro@5
   reaches 0.8823 against a 0.8935 baseline.
 
-**The default stays off.** The lane's kill line — held-out macro@5
-≥ 0.8900, unchanged since 5.1.0 — is still not met.
+**The default stays off.** The lane's kill line (held-out macro@5
+≥ 0.8900, unchanged since 5.1.0) is still not met.
 
-### The retrieval campaign's round 2–5 arc, and why the lane closes
+### The retrieval campaign's round 2-5 arc, and why the lane closes
 
 Four preregistered experiments ran in this window, each committed
 before its code existed and each scored against its own criteria. Three
@@ -3359,21 +3359,21 @@ three are recorded here because the shipped rule is the fourth, and
 because two of them were **superseded before release** rather than
 shipped:
 
-- **Round 2 — df-gate the emitted terms.** Killed *before running* by a
+- **Round 2: df-gate the emitted terms.** Killed *before running* by a
   cheap pre-run check: the terms carrying the regression are
   individually RARE, so document frequency does not separate the class
   that helps a technical store from the class that harms a
   conversational one (0.74× against a 5× bar).
-- **Round 3 — a fixed margin threshold** (`13d0690`). First held-out
+- **Round 3: a fixed margin threshold** (`13d0690`). First held-out
   ground gained (macro@5 0.8770 → 0.8830), and killed on calibration: a
   fixed level fired on 61% of dev legs and 43.9% of held-out ones, and
   cost the gold set three questions.
-- **Round 4 — a self-calibrating standout ratio** (`d759438` replaced
-  it). Its hypothesis *held* — a criterion drawn from the leg's own gap
+- **Round 4: a self-calibrating standout ratio** (`d759438` replaced
+  it). Its hypothesis *held* (a criterion drawn from the leg's own gap
   structure transferred with a 2.0-point firing gap against the fixed
-  level's 17.1 — and it was not enough: macro@5 0.8790. Firing at the
+  level's 17.1) and it was not enough: macro@5 0.8790. Firing at the
   right rate is not firing on the right legs.
-- **Round 5 — true labels** (the shipped rule). Rounds 3 and 4 were
+- **Round 5: true labels** (the shipped rule). Rounds 3 and 4 were
   both fitted to a proxy, "the leg's rank-1 is the gold document".
   Labelling each leg by whether its vote actually moved the gold
   reframed the problem: of 39 engaged dev legs **21 help, 3 hurt, 15
@@ -3381,7 +3381,7 @@ shipped:
   seven helpful legs to catch those three.
 
 **The arc's finding is a ceiling, not a tuning problem.** Three
-structurally different rules — a level, a shape, a count — land within
+structurally different rules (a level, a shape, a count) land within
 0.004 of each other at held-out macro@5 (0.8790 / 0.8823 / 0.8830),
 recovering between a third and a half of the lane's damage and none of
 it reaching baseline. Conditioning *which* legs vote cannot repair a
@@ -3393,18 +3393,18 @@ One round-5 prediction was falsified cleanly and is recorded as such:
 the claim that a count has no distribution to shift between corpora is
 wrong (31.7% dev firing against 47.1% held-out).
 
-### Bench — the harness the arc left behind
+### Bench: the harness the arc left behind
 
 All reusable, all committed, none of it shipped in the wheel:
 
 - `--ablate none|floor-only|leg-only|floor-off` and
   `--leg-margin-cap on|off` on the LongMemEval runner. Round 1's
-  ablations were an uncommitted driver patch, and it cost a run — the
+  ablations were an uncommitted driver patch, and it cost a run: the
   first leg-only attempt raced a working-tree edit and measured pure
   baseline while claiming to measure the leg. Every preregistered arm
   is now reachable from a clean checkout at a sha.
 - `bench/df_census.py`, `bench/leg_census.py` and
-  `bench/leg_labels.py` — the statistics each round's threshold was
+  `bench/leg_labels.py`: the statistics each round's threshold was
   derived from, computed through the engine's own pipeline so a census
   cannot silently measure a different quantity than the ranker prices.
 - `bench/longmemeval/gate0.py`, which recomputes round 2's kill from
@@ -3415,12 +3415,12 @@ filler df-floor costs nothing under a cap, and the 0.0040 credited to
 it belongs to the `leg-only` ablation disabling the 5.1.1 emission
 filter as well.
 
-### Fixed — two test defects the work surfaced
+### Fixed: two test defects the work surfaced
 
 - A test named for the filler df-floor toggled `rescue_expansion`,
   which moves the floor **and** the leg together, then credited the
   floor. Driven separately the floor alone leaves the distractor on
-  top — the leg is what surfaced the gold. It had been mis-attributing
+  top: the leg is what surfaced the gold. It had been mis-attributing
   since 5.1.0.
 - The end-to-end prefilter test compared a live run against a dated
   artifact; its golden now tracks the current in-lane engine, and every
@@ -3429,10 +3429,10 @@ filter as well.
 
 ## 5.1.1 - 2026-08-10
 
-### Fixed — two holes in the rescue lane, both inside the opt-in flag
+### Fixed: two holes in the rescue lane, both inside the opt-in flag
 
 The 5.1 lane shipped with a leak and a parity gap. Neither moves a
-default install's ranking — `[behavior] rescue_expansion` is off — but
+default install's ranking (`[behavior] rescue_expansion` is off) but
 both bear on the experiment that could earn the default back.
 
 - **The rescue expansion no longer re-emits discourse filler.**
@@ -3441,7 +3441,7 @@ both bear on the experiment that could earn the default back.
   "wondering" regenerated 'wonder'/'wondered' and "thinking"
   regenerated 'think'. The df-floor that deflates filler is applied to
   the caller's tokens only, so a synthesized filler stem reached the
-  leg at full corpus-rare IDF — 7.1x its own floored sibling, and
+  leg at full corpus-rare IDF: 7.1x its own floored sibling, and
   above the genuine expansion vocabulary the lane exists to add.
   Measured on a 33-memory store with the flag on, that floated a body
   of pure filler (`match_terms []`) over the memory the rescue was
@@ -3452,7 +3452,7 @@ both bear on the experiment that could earn the default back.
   flag was read directly off `deps.config.behavior` at the search
   handler's own call site rather than through `RankingInputs`, the
   shape that exists so ranking surfaces cannot drift apart on
-  `[behavior]` inputs — so `probe_for_miss` could not see it and
+  `[behavior]` inputs; so `probe_for_miss` could not see it and
   scored a two-leg fusion against production's three. The miss probe
   reads only the rank-1 hit, so on a lane-on store a query production
   serves read `no_signal`. Both audit producers thread it now.
@@ -3466,7 +3466,7 @@ both bear on the experiment that could earn the default back.
 - The shipped `[behavior] rescue_expansion` key had no behavioural
   test from loader to ranker. It has one now, on both settings.
 
-### Fixed — the version contract, the strip residue, and the bench receipts
+### Fixed: the version contract, the strip residue, and the bench receipts
 
 - The contract docs never moved across two majors. `docs/api.md`
   called itself the 3.x surface and promised removals wait for 4.0 in
@@ -3476,7 +3476,7 @@ both bear on the experiment that could earn the default back.
   documented two controls whose code was deleted. All of it reads
   against 5.x, with 4.0 and 5.0 as the worked examples of what forces
   a major. The `origin.py` deprecation messages named a 4.0 that
-  shipped twice over and now name 6.0 — the removal itself stays a 6.0
+  shipped twice over and now name 6.0; the removal itself stays a 6.0
   decision.
 - Test-suite residue from the 4.0.0 and 5.0.0 strips: five orphaned
   parametrize stacks decorating a plain helper, an orphan test file
@@ -3495,30 +3495,30 @@ both bear on the experiment that could earn the default back.
 
 ## 5.1.0 - 2026-08-09
 
-### Added — rescue expansion, shipped opt-in; its preregistered check killed the default, and that verdict ships with it
+### Added: rescue expansion, shipped opt-in; its preregistered check killed the default, and that verdict ships with it
 
 The retrieval campaign's first lane. Hybrid search learns two
-query-time repairs, deterministic code under the WaC rules — committed
+query-time repairs, deterministic code under the WaC rules, committed
 readable tables, no models, no downloads, query-side only
 (`src/bettermemory/expansion.py`; the persisted index stream and its
 fingerprint never move):
 
 - **a document-frequency floor for discourse filler**: memory bodies
   are technical prose, so "supposed"/"remember" are corpus-rare, and
-  Okapi IDF priced them like discriminating terms — a distractor
+  Okapi IDF priced them like discriminating terms; a distractor
   matching two filler words could outrank the right memory matching
   two content words. Listed filler prices at df ≥ half the collection:
   deflated, never stripped.
 - **a confidence-gated rescue leg**: when the fused base ranking's top
   hit covers less than 0.60 of the query's unique tokens, one extra
-  BM25 leg over synthesized vocabulary — rule -ing/-ed variants
+  BM25 leg over synthesized vocabulary (rule -ing/-ed variants
   ("splitting" meets "split"), clipping full-forms ("creds" meets
-  "credentials"), dev-domain synonym groups ("toggles" meets "flags")
-  — joins the fusion at 0.7 weight via weighted RRF. Hits only this
+  "credentials"), dev-domain synonym groups ("toggles" meets "flags"))
+  joins the fusion at 0.7 weight via weighted RRF. Hits only this
   leg surfaced report the new `matched_leg="expansion"`, and
   `match_terms` stays an honest subset of the caller's own words.
 
-On the blind-authored gold set (the lane's development set —
+On the blind-authored gold set (the lane's development set;
 `bench/retrieval/README.md` says so in bold) the lane is worth
 recall@1/@5 as-asked **35%/60% → 50%/90%**, control 45%/85%, requery
 byte-stable at 80%/100%.
@@ -3527,24 +3527,24 @@ byte-stable at 80%/100%.
 check (`bench/longmemeval/PREREGISTRATION.md` addendum 3, committed
 before the run) fired its kill criterion: macro recall@5 0.8770
 against the 0.8935 baseline, under the 0.8900 kill line. The
-ablations, published beside it, split the verdict cleanly — the
+ablations, published beside it, split the verdict cleanly: the
 filler floor reproduces the LongMemEval baseline to four decimals;
 the expansion leg carries the entire regression (inflection variants
 of common chat verbs are promiscuous matchers in conversational
 stores, the inverse of the technical corpus). A dev-set win paid for
 by the held-out set is overfitting to twenty questions, so the
 default did not ship; `[behavior] rescue_expansion = true` enables
-the lane for stores shaped like the gold set — technical prose
-queried casually — with both instruments' numbers documented where
+the lane for stores shaped like the gold set, technical prose
+queried casually, with both instruments' numbers documented where
 the flag is.
 
 Also measured and killed on the way, per the bench house rules:
 RM3-shaped pseudo-relevance feedback as an equal-weight third leg
-(ten recall@1 points worse than baseline — cluster-level expansion
+(ten recall@1 points worse than baseline; cluster-level expansion
 boosts a gold document's near-duplicate siblings exactly as much as
 the gold), and a 2-character expansion term ('go', from went→go)
 whose promiscuous matching cost five points at recall@1 and @5 by
-itself — the minimum-length floor that pins it out is now a tested
+itself. The minimum-length floor that pins it out is now a tested
 invariant.
 
 `bench/retrieval/run.py` grows `--rescue-expansion on|off` (default
@@ -3563,14 +3563,14 @@ co-occurrence expansion, which no static table reaches.
 
 ## 5.0.0 - 2026-08-09
 
-### Removed — the web UI, whole
+### Removed: the web UI, whole
 
 An owner decision, same register as 4.0.0's: the store is markdown
 files plus your normal tools, and a bundled dashboard is surface area,
 not product. Removed rather than parked (`66e302f`):
 
 - The `web` module and every route it served, the `bettermemory ui`
-  subcommand (`--tunnel` included), and the `[ui]` extra — `fastapi`
+  subcommand (`--tunnel` included), and the `[ui]` extra; `fastapi`
   and `uvicorn` leave the dependency tree entirely. There are no
   runtime extras left.
 - The web-only test surface and the CI installs that existed to
@@ -3579,7 +3579,7 @@ not product. Removed rather than parked (`66e302f`):
 Curation happens where the memories live: in-conversation via the MCP
 tools, `bettermemory health` / `bettermemory consolidate` on the CLI,
 or any editor pointed at the markdown. Internals that existed to keep
-the page honest survive where they earn per-turn keep — the shared
+the page honest survive where they earn per-turn keep: the shared
 ranking-input shape (`resolve_ranking_inputs`) stays so the next
 ranking surface starts threaded instead of drifted, and the 500-char
 `note` cap outlives the form it originally matched.
@@ -3591,12 +3591,12 @@ ranking surface starts threaded instead of drifted, and the 500-char
   spec should drop the bracket. `fastapi` / `uvicorn` disappear from
   the lock on the next sync.
 
-### Changed — the README stops carrying numbers
+### Changed: the README stops carrying numbers
 
 The front page's "What it does" wall quoted dated measurements
 (a serialized tool-surface byte count measured at 3.32.0, benchmark
 precision figures with their artifact ceremony) that rot faster than
-anyone re-measures them — outdated the day after they were written
+anyone re-measures them: outdated the day after they were written
 down, and wrong-by-staleness on a project whose whole thesis is that
 stale claims get flagged. The README now states what the product does
 in timeless terms and carries ZERO measurements; the evidence lives in
@@ -3606,9 +3606,9 @@ appearing in README.md is a regression).
 
 ## 4.0.0 - 2026-08-09
 
-### Removed — the embedding lane, whole
+### Removed: the embedding lane, whole
 
-An owner decision, recorded as such: bettermemory is a purist product —
+An owner decision, recorded as such: bettermemory is a purist product;
 **the code is the model.** No embedding models, no borrowed pretrained
 weights, no third-party neural components anywhere. This release removes
 the entire embedding lane rather than disabling it:
@@ -3628,7 +3628,7 @@ the entire embedding lane rather than disabling it:
   machinery, and `reindex --embeddings`.
 - `doctor`'s embeddings checks and install hints, including the
   recall-lift fix hint.
-- The two extras CI legs (`test-embeddings`, `test-embeddings-fast`) —
+- The two extras CI legs (`test-embeddings`, `test-embeddings-fast`);
   the embeddings jobs were also the matrix's only model-download legs,
   the class behind the 3.43.0 release run's one-hour stall.
 - The bench semantic arms: both runners now refuse a requested
@@ -3639,10 +3639,10 @@ the entire embedding lane rather than disabling it:
 ### Migration
 
 - A config file still saying `search_mode = "semantic"` is normalised to
-  `hybrid` at load with one loud warning — delete the line to silence
+  `hybrid` at load with one loud warning; delete the line to silence
   it. (A page or server must not go down over a stale config line; an
   explicit per-call ask must not silently rank with a different
-  algorithm — so the per-call form raises instead.)
+  algorithm, so the per-call form raises instead.)
 - A leftover `semantic_dedup` / `semantic_provider` line is ignored;
   delete it.
 - Install specs referencing the removed extras
@@ -3651,7 +3651,7 @@ the entire embedding lane rather than disabling it:
   are inert and safe to delete; `sync` already excluded them from
   shared history.
 
-### Changed — the comparative claims, restated without the tie
+### Changed: the comparative claims, restated without the tie
 
 The removed leg measured real recall, and the record keeps saying so:
 the retrieval bench's semantic arm beat lexical by 25 points at recall@1
@@ -3661,7 +3661,7 @@ best-arm-vs-best-arm framing read as parity with claude-mem (91.8% vs
 Restated honestly: **bettermemory retrieves with deterministic lexical
 code only and scores 89.3% macro recall@5 on LongMemEval; claude-mem's
 embedding-native stack scores 91.6%. We are 2.3 points behind, by our
-own harness.** Closing that gap in code — no borrowed weights — is the
+own harness.** Closing that gap in code (no borrowed weights) is the
 standing retrieval campaign, and no current claim should be read as it
 having closed. `docs/api.md`, `docs/internals.md`,
 `docs/installation.md`, and both bench READMEs carry the migration
@@ -3670,7 +3670,7 @@ of the removed modules explicitly marked non-resolving at HEAD.
 
 ## 3.43.0 - 2026-08-08
 
-### Fixed — the whole-tree audit: thirty-five findings drained
+### Fixed (the whole-tree audit: thirty-five findings drained)
 
 A maintainer-mandated whole-tree audit read every tracked source, doc,
 bench, and CI file end-to-end through thirteen domain lenses, with
@@ -3680,16 +3680,16 @@ plus one carried side-finding. The severe pair sat in the product's
 two youngest lanes:
 
 - **`memory_search`'s expand-top block computed commit drift without
-  the memory's declared claims** — the pre-claims any-touch policy —
+  the memory's declared claims**, the pre-claims any-touch policy,
   so the loudest retrieval surface could report a different
   `staleness_verdict` than `memory_show` for the same memory in the
   same turn. The web detail page and `_response`'s per-hit attach
   carried the same divergence; all four surfaces now share one
   claim-narrowed policy.
 - **`episode_handoff`'s prior-session auto-resolution admitted
-  hook phantoms** — transcript-id sessions written by the client-side
+  hook phantoms** (transcript-id sessions written by the client-side
   hooks,
-  worktree-matching candidates that can never hold episodes — burying
+  worktree-matching candidates that can never hold episodes), burying
   the real predecessor's takeaway behind a zero-episode ghost. The
   walk now applies the same `_OUT_OF_PROCESS_TRIGGERS` skip the
   session bridge uses.
@@ -3726,14 +3726,14 @@ never existed, and a new ratchet key pins the
 bare-pip spelling extinct. Commit-lint skips manual dispatch runs
 instead of green-lighting an empty range.
 
-### Changed — the benchmarks describe this engine again
+### Changed: the benchmarks describe this engine again
 
 The published retrieval and LongMemEval artifacts measured 3.29.0 and
 3.30.0. Both suites re-ran unchanged at this release's engine: the
 retrieval headline reproduces (the semantic margin at recall@1 holds
 at the published size, control still tracks asked, and the prefilter
 still costs nothing at recall@5 in any cell), and LongMemEval comes
-back bit-for-bit identical on both arms at every k — the identity
+back bit-for-bit identical on both arms at every k, the identity
 doubling as a harness determinism check. Both runners now stamp a
 `provenance` block (version, commit, dirty flag, date, machine) on
 every artifact, restoring what the retrieval runner's rewrite dropped;
@@ -3754,18 +3754,18 @@ caller-checkout fallback for legacy origins.
 
 ## 3.42.0 - 2026-08-06
 
-### Added — the standing tier: fresh-verified ambient bodies at session start
+### Added (the standing tier: fresh-verified ambient bodies at session start)
 
 Opt-in retrieval cannot serve knowledge whose trigger condition is not
 knowing you need it. The 3.41.0 prompt-recall hook delivers
-conditionally — query-matched, score-gated, on the ~2% of prompts the
-silent-miss probe flags — which serves "you asked about something you
+conditionally (query-matched, score-gated, on the ~2% of prompts the
+silent-miss probe flags), which serves "you asked about something you
 forgot is stored" and still cannot serve "you didn't ask". The standing
 tier (`[behavior] standing_tier`, **default off**) is the unconditional
 lane: `bettermemory session-start` now appends the caller-scoped
 `ambient` memories whose staleness verdict computes fresh to the
-SessionStart hint — whole bodies, not pointers, because a pointer still
-requires the model to know to dereference it. Prior art is Letta's
+SessionStart hint (whole bodies, not pointers, because a pointer still
+requires the model to know to dereference it). Prior art is Letta's
 core-memory blocks; the differentiator is the budget and the
 verification.
 
@@ -3779,19 +3779,19 @@ The tier ships on the five decisions the ROADMAP settled build-ready
   the session hint's `candidate_admitted` predicate, so what the tier
   delivers is provably a subset of what `memory_search` would admit.
 - **Verification is the admission ticket.** Each candidate runs the
-  same chain `memory_show` computes — calendar verification,
+  same chain `memory_show` computes (calendar verification,
   claim-anchored path drift, commit drift against the caller's
-  checkout — at the gate, no relaxed session-start variant. Anything
+  checkout) at the gate, no relaxed session-start variant. Anything
   not fresh is never delivered; it collapses into one aggregate
-  "N standing memories are stale — verify to restore delivery" line,
+  "N standing memories are stale; verify to restore delivery" line,
   which converts the verification debt the tier would otherwise ship
   into visible pressure to pay it. A calendar-fresh memory whose
   attested path vanished is caught by the drift leg and held back
   (pinned by test).
 - **Hard byte budget, whole-memory truncation only.** Entries walk
   newest-verified first under a 1 KB ceiling. A body over the entire
-  budget is skipped whole — never trimmed, a truncated fact is a
-  different fact — so it cannot head-of-line-block smaller memories
+  budget is skipped whole (never trimmed, a truncated fact is a
+  different fact) so it cannot head-of-line-block smaller memories
   behind it; a body that merely doesn't fit the remaining budget stops
   the walk, because delivering an older body after declining a newer
   one would invert the priority order. Both land in the "…and K more
@@ -3801,7 +3801,7 @@ The tier ships on the five decisions the ROADMAP settled build-ready
   open for whoever holds ambient memories, and no equivalent
   measurement exists yet. It flips only with dogfood evidence.
 - **The session-start negative mandate stays intact, and the cost is
-  named.** Delivery records nothing — no event, no session — so v1
+  named.** Delivery records nothing (no event, no session), so v1
   adoption is deliberately unmeasured, and a delivered memory does not
   shield the miss probe (a same-topic prompt inside the attribution
   window can re-point at it via prompt-recall: redundant, rare,
@@ -3817,7 +3817,7 @@ The tier ships on the five decisions the ROADMAP settled build-ready
 
 The read stays index-first: the new `index.category_rows` names which
 files hold admitted ambient rows (same never-raises degrade contract as
-`scope_counts`) and only those files are parsed — the flag does not buy
+`scope_counts`) and only those files are parsed; the flag does not buy
 a `load_all`. The parse re-checks category and admission against the
 parsed truth, because the index-trust gates establish file identity,
 not file content. A failure anywhere in the standing computation
@@ -3827,31 +3827,31 @@ surface, also pinned by test.
 
 ## 3.41.0 - 2026-08-05
 
-### Added — score-gated recall at prompt time: the probe's answer, delivered instead of filed
+### Added (score-gated recall at prompt time: the probe's answer, delivered instead of filed)
 
 For as long as the Stop hook has existed, the product has computed the
-answer to "did this turn need memory?" on every turn — production's
+answer to "did this turn need memory?" on every turn (production's
 search pool, production's ranking inputs, the versioned threshold rule,
-all four shields — and written it to the event log at the one moment it
+all four shields) and written it to the event log at the one moment it
 could no longer help. The new UserPromptSubmit hook (`bettermemory
 prompt-recall`) runs the SAME probe before the turn starts:
 `hook._probe_message` is shared code, not a parallel implementation, so
 the recall path fires exactly where the audit would otherwise have
 flagged a `search_miss`. On a would-be miss it prints a one-hit pointer
-block — memory id, scopes, the query-biased snippet that cleared the
-bar, and the verify-first instruction — which Claude Code injects into
+block (memory id, scopes, the query-biased snippet that cleared the
+bar, and the verify-first instruction), which Claude Code injects into
 the model's context, and records a `prompt_recall` event carrying the
 same replayable `MissHit` shapes as `search_miss` plus `probe_mode` and
 `injected_chars`.
 
 The founding "don't pollute generic answers" stance is carried by the
-bar, not by opt-in — those two were conflated. The predicate fired on
+bar, not by opt-in; those two were conflated. The predicate fired on
 3 of 128 audited turns on the dogfood store
 (docs/eval-results.md, the 2026-08-04 snapshot; a this-store
 measurement, not a promise), so ~98% of prompts inject nothing and the
 flagged few get a pointer, never a body: the staleness read path
 (verdicts, path drift, claim drift) stays on `memory_show`, which the
-injected block instructs the model to call before relying — the one
+injected block instructs the model to call before relying; the one
 delivery in the product that bypasses the tool surface still cannot
 bypass verification.
 
@@ -3863,12 +3863,12 @@ dogfood evidence measured as ~95% noise ("push it" asked from inside
 the repo, the project memory as the top hit). `prompt_recall` joins the
 retrieval-event set (a delivered pointer is not a SILENT miss, so the
 Stop audit reports `ok`, and a second injection self-suppresses for the
-attribution window — the anti-spam bound is the existing 600s constant,
+attribution window; the anti-spam bound is the existing 600s constant,
 not a new knob); `telemetry.enabled = false` refuses to inject rather
 than deliver off the books (an unlogged injection would re-flag its own
 turn and be unmeasurable); and the hook stamps
 `triggered_from="prompt_hook"`, with `hook._latest_in_process_session`
-widened to skip the full out-of-process set — a recall row admitted as
+widened to skip the full out-of-process set: a recall row admitted as
 the server-session anchor would have handed the shield a transcript id
 and silently killed it. The miss lane's denominator semantics change
 with this release and are named in docs/eval.md and
@@ -3896,11 +3896,11 @@ rather than over-inject); and every prompt pays one `uvx` process
 spawn, bounded by the manifest's 10s timeout, `|| true`, and the
 common-path early exits.
 
-### Fixed — the claim oracle reaches legacy no-worktree memories from a matching checkout
+### Fixed: the claim oracle reaches legacy no-worktree memories from a matching checkout
 
 The 3.40.0 backfill hit 8 of 128 repo-matched memories whose origin
-carries `repo` but no `worktree_root` — records written before the
-field existed. The verify-side claim oracle refused all 8 for the
+carries `repo` but no `worktree_root` (records written before the
+field existed). The verify-side claim oracle refused all 8 for the
 missing tree, permanently: nothing rewrites a stored origin, so a
 legacy record could never carry claims at all. `memory_verify` now
 falls back to the CALLER's checkout when its `repo` matches the
@@ -3908,17 +3908,17 @@ memory's origin repo; the write-side oracle is untouched, and the
 attestation existence check and the advisory symbol check inherit the
 same root on the same argument.
 
-### Changed — the pending-token dedup parses the tail it examines, not the log
+### Changed: the pending-token dedup parses the tail it examines, not the log
 
 `_already_recorded_pending_ids` documented a backward early-exit and
 paid an O(N) toll before reaching it: `list(iter_events(root))` and the
 `_stop_hook_session_ids` pre-pass both parsed the entire active log on
-every turn that held pending tokens — 14.0ms of a 15.6ms call was that
+every turn that held pending tokens; 14.0ms of a 15.6ms call was that
 parse, while the backward loop then examined exactly one event
 (measured on the round-179 dogfood log; the numbers are in the
 function's own docstring). The new `events.iter_events_backward` reads
 each active segment's bytes once, splits lines without parsing, and
-JSON-parses lazily as the newest-first merge yields — so the demolition
+JSON-parses lazily as the newest-first merge yields, so the demolition
 demonstration (8,003-line synthetic log, three fresh tokens) went from
 8,003 parses to 4, with an identical result set. The session bridge
 that justified the pre-pass is now derived per-event: every hook-written
@@ -3927,19 +3927,19 @@ enumerating all four `use` producers in `src/` (the CLI acknowledge-debt
 writer is untagged and was never bridged under either shape), and the
 producer-side stamp is now pinned in both attribution shapes' tests so
 the equivalence cannot silently rot. Two parse-count ratchets join the
-round-181 iteration ratchet — the property "examined ≈ parsed" is what
+round-181 iteration ratchet: the property "examined ≈ parsed" is what
 the fix adds, so that is what the tests count; removing the early-exit
 takes the demonstration from 4 parses back to thousands and both go
-red. Bounded by the 10MB rotation cap before and after — this was a
+red. Bounded by the 10MB rotation cap before and after: this was a
 constant-factor tax on every turn, not a leak, and it is now paid only
 on the tail.
 
-### Changed — one spelling for the extras install commands
+### Changed: one spelling for the extras install commands
 
 `doctor._install_extra_command` / `_reinstall_extra_command`, the
 search handler's semantic-mode-unavailable message, and `semantic.py`'s
 provider-unavailable warning each hand-spelled the same install
-commands — three copies of the drift that produced the 2026-08-01
+commands: three copies of the drift that produced the 2026-08-01
 false-green's misleading remedy. The spellings now live once in
 `_install_hints.py` (import-free; `semantic.py` takes it as a lazy
 import inside the failure branch, keeping the hot path clean), doctor's
@@ -3952,9 +3952,9 @@ hand-spelled `[ui]`/`[dev]` variants in `web.py`, `llm.py`, and
 
 ## 3.40.0 - 2026-08-04
 
-### Added — claims-at-write: declared claims, checked at declaration, watched by the drift leg
+### Added (claims-at-write: declared claims, checked at declaration, watched by the drift leg)
 
-A `claims` list on `memory_write` and `memory_verify` — `path`,
+A `claims` list on `memory_write` and `memory_verify`: `path`,
 `path::symbol`, or `path::NAME=literal` strings, the three kinds the rot
 benchmark measured. The premise from `docs/ROADMAP.md`, unchanged by
 contact with implementation: a real-prose claim extractor is an open
@@ -3962,9 +3962,9 @@ problem only because extraction is post-hoc, and the author of a memory
 knows what it claims at the moment of writing. So the product asks, and
 the extractor is nobody's problem.
 
-Declaration is verification. `claims.check_claim` — the bench oracle
+Declaration is verification. `claims.check_claim` (the bench oracle
 `label_claim`, promoted verbatim: existence, a top-level AST lookup, a
-`repr`-space literal comparison, never an inference — runs at declare
+`repr`-space literal comparison, never an inference) runs at declare
 time and REFUSES a claim that is false right now, naming what the tree
 actually says. No `acknowledge_*` escape exists, deliberately: the read
 side's trust in claims is that every stored claim held at declaration.
@@ -3982,12 +3982,12 @@ stream of the post-verify window, column-0 binding match), while
 unclaimed cited files keep the incumbent any-touch rule; the halves
 union on commit identity, and a measured zero still demotes a
 calendar-stale verdict. Method-body churn in a claimed file now reads
-`clean` with `claim_drift: {checked, drifted: []}` attached — the
+`clean` with `claim_drift: {checked, drifted: []}` attached; the
 commit-drift block and drifting search hits both carry the new
 sub-dict, and a fired claim is named in the recommendation. On the
 30-repository corpus the weak tier costs 1.1 alerts per genuine catch
 at 94% precision against the per-file incumbent's 3.4
-(`bench/rot/results/multirepo-anchored-2026-07-30.json`) — the
+(`bench/rot/results/multirepo-anchored-2026-07-30.json`): the
 "replacement measured first" that the `_COMMIT_DRIFT_ESCALATES`
 retraction demanded, landed as upstream narrowing with the switch
 untouched. Those figures grade the detector on extracted corpus claims;
@@ -4008,7 +4008,7 @@ memories whose commit leg can speak carried commits since their last
 verify, 29 of the 31 verified in the 2026-07-24 clear among them.
 
 `bench/rot/run.py` now imports the promoted detector from
-`bettermemory.claims` — the bench measures the shipped functions, per
+`bettermemory.claims`; the bench measures the shipped functions, per
 its own "the shipped function, not a reimplementation" rule, and its 42
 tests pass unchanged against the promoted copies. All four commit-drift
 surfaces (`memory_show`, the `memory_search` fold, both `memory_health`
@@ -4022,12 +4022,12 @@ actionable, the same hint-carries-the-remedy split as the E1 cuts.
 
 ## 3.39.0 - 2026-08-04
 
-### Fixed — the three `[behavior]` write caps now bind the ingest path
+### Fixed: the three `[behavior]` write caps now bind the ingest path
 
 `max_content_bytes`, `min_content_tokens`, and `max_scopes_per_write` were
 unenforced at BOTH ingest phases: `compute_ingest_plan` never checked them and
 `apply_ingest_plan` builds its `Store.write` payload by hand, so the plan and
-the commit agreed exactly — on landing rows `memory_write` refuses. Measured
+the commit agreed exactly, on landing rows `memory_write` refuses. Measured
 2026-08-02 with all three set tight (200 bytes / 50 tokens / 1 scope): a
 3,098-byte body and a 3-token body, two caller scopes on each, every row
 planned as `write` and every row committed. Unlike the `[scopes] allowed` gap
@@ -4036,14 +4036,14 @@ which is why the fix is one predicate added to both sides at once
 (`_write_caps_reason`) rather than a reconciliation.
 
 The predicate calls the shared validators from `handlers/_shared.py` in
-`_validate_write_payload`'s own order — floor, size, count, ahead of the
-allowlist, ahead of the gates — so a row that breaks several caps reports the
+`_validate_write_payload`'s own order (floor, size, count, ahead of the
+allowlist, ahead of the gates), so a row that breaks several caps reports the
 same sentence `memory_write` would have raised first, and the message cannot
 drift from `memory_write`'s because it is `memory_write`'s. Two decisions
 travel with it. The scope-count cap counts caller-supplied scopes only: ingest
 stamps a provenance scope plus a type tag on every row, so counting them would
 let `max_scopes_per_write = 1` refuse every import including one with no
-`--scope` at all — the same broke-every-allowlist-user regression, re-armed as
+`--scope` at all, the same broke-every-allowlist-user regression, re-armed as
 arithmetic. And `config=None` means the SHIPPED cap defaults, not caps-off:
 the allowlist's unset value is a no-op, the byte and scope caps' unset values
 are not, so treating absence as absence would enforce different caps on the
@@ -4052,7 +4052,7 @@ abort, and surface in `render_ingest_text` beside every other skip reason.
 
 ## 3.38.0 - 2026-08-04
 
-### Added — `memory_update` refuses a body edit that shrinks and ends mid-sentence
+### Added: `memory_update` refuses a body edit that shrinks and ends mid-sentence
 
 `looks_truncated` had been detection-only: `doctor`'s `memory_body_completeness`
 names bodies whose last non-whitespace character is not sentence- or
@@ -4071,7 +4071,7 @@ legitimately ends on a bare identifier or a list item, including edits that only
 grew it. Both directions are pinned by tests that fail under deletion of the
 clause they name. One caveat travels with the rate: 0.4% was measured over
 stored bodies at rest (real bodies end on punctuation 233 times in 234), and
-the gate judges shrinking edits — a population nothing has measured — so the
+the gate judges shrinking edits, a population nothing has measured, so the
 figure should not be quoted about this gate without that qualification. Three
 existing tests went red on the gate the hour it landed, all terse unpunctuated
 fixture bodies. Rejected alternatives: a "new body is a strict prefix of the
@@ -4083,8 +4083,8 @@ the dogfood store.
 The gate had been deferred two releases on description budget, and the blocker
 was dissolved by reclamation rather than a ceiling bump. `DESC_MEMORY_LINKS_TAIL`
 spent 888 always-resident characters restating what `docs/api.md` already
-carried — REPLACE semantics appeared verbatim six lines above it in the same
-description — and collapses to a four-name type index that keeps only the
+carried (REPLACE semantics appeared verbatim six lines above it in the same
+description) and collapses to a four-name type index that keeps only the
 glosses deciding which edge type to use. Net −471 on the lean surface (25,890 →
 25,419 against the 25,900 warning line); the `acknowledge_truncation` parameter
 itself cost 60 of 371 remainder headroom, so prose was the entire constraint.
@@ -4094,15 +4094,15 @@ sat there through every previous budget squeeze. `_DESC_BASELINE`,
 same commit that moved them.
 
 Measured before tagging: the blind-authored retrieval gold set produces
-byte-identical results on this tree and on v3.37.0 in the same environment —
-every arm, every metric — so the release changes what `memory_update` refuses
+byte-identical results on this tree and on v3.37.0 in the same environment
+(every arm, every metric), so the release changes what `memory_update` refuses
 and nothing about what `memory_search` returns.
 
-### Added — tests that execute the consolidate refusal arms nothing ran
+### Added: tests that execute the consolidate refusal arms nothing ran
 
 `_apply_llm_proposal`'s hand-rolled gates are a deliberate divergence from the
-shared write-gate chain — they judge the LLM-authored claim rather than the
-stamped body that persists — and `tests/test_proposals_gate_parity.py` exists to
+shared write-gate chain (they judge the LLM-authored claim rather than the
+stamped body that persists) and `tests/test_proposals_gate_parity.py` exists to
 stop anyone rerouting them. Three of the five refusal arms turned out to be
 unexecuted code: deleting the transient-marker gate outright passed the full
 suite, because the parity test asserts on `consolidate.py`'s source text and so
@@ -4116,10 +4116,10 @@ reading of the claim.
 
 ## 3.37.0 - 2026-08-03
 
-### Fixed — shipped install commands that the default macOS shell refuses
+### Fixed: shipped install commands that the default macOS shell refuses
 
-`[` and `]` are glob characters, and zsh — the default shell on macOS since
-Catalina — refuses a command whose unquoted argument matches nothing. So
+`[` and `]` are glob characters, and zsh, the default shell on macOS since
+Catalina, refuses a command whose unquoted argument matches nothing. So
 `pip install bettermemory[ui]` exited 1 with "no matches found" and installed
 nothing. Six surfaces printed such a command: both branches of the
 `mode='semantic'` error from `memory_search`, the provider-unavailable server
@@ -4127,7 +4127,7 @@ WARNING, both web-UI import errors, the Ollama provider's httpx error, and the
 `ui` subcommand's help text.
 
 Each now quotes the spec and leads with `uv tool install --reinstall`, matching
-what `bettermemory doctor` emits and what `docs/installation.md` documents —
+what `bettermemory doctor` emits and what `docs/installation.md` documents:
 `uv pip` writes to whichever virtualenv is active rather than to the tool
 environment the documented install actually runs from. The rule is pinned over
 every tracked source under `src/`, matching an `install` command rather than a
@@ -4135,12 +4135,12 @@ bare mention, so prose that merely names an extra is untouched. This shape had
 been repaired in three separate rounds, each closing an instance; the pin closes
 the class.
 
-### Fixed — `memory_update` refused a re-tag over scopes it was only carrying
+### Fixed: `memory_update` refused a re-tag over scopes it was only carrying
 
 `scopes` REPLACES the stored list, so keeping a scope means resubmitting it, and
 `[scopes] allowed` was checked over everything submitted. A row written by
 `bettermemory ingest` carries the provenance scope and type tag ingest stamps
-itself — which the allowlist deliberately exempts at write time — so re-tagging
+itself, which the allowlist deliberately exempts at write time, so re-tagging
 an imported row was refused for those stamps, and the only way to add a
 sanctioned scope was to drop the provenance stamp the exemption exists to
 preserve.
@@ -4152,7 +4152,7 @@ rather than a stamp-name carve-out, it needs no list of ingest's tags to stay
 correct. The `[scopes]` comment written into every user's `config.toml` is
 corrected with it.
 
-### Fixed — the commit hook and CI disagreed about comment lines
+### Fixed: the commit hook and CI disagreed about comment lines
 
 A message whose only violation sat on a `#` line passed `.githooks/commit-msg`
 and then failed the `commit messages` job, turning a one-line edit into a
@@ -4160,33 +4160,33 @@ rebase. The two modes are genuinely asymmetric: when git opens an editor it
 writes a comment preamble and discards those lines before storing, so grading
 them would report violations about text that never enters history, while `-m`
 and `-F` store `#` lines verbatim. The hook now tells them apart by the
-environment git hands it — `GIT_EDITOR` is `:` for `-m` and `-F`, and the real
+environment git hands it: `GIT_EDITOR` is `:` for `-m` and `-F`, and the real
 editor command otherwise, verified against git 2.50.1 by recording what a hook
 observes on all three paths.
 
-### Fixed — `doctor` reported an all-green install whose search was dead
+### Fixed: `doctor` reported an all-green install whose search was dead
 
 With `search_mode = "semantic"` and neither embeddings extra installed,
 `embeddings_extra` returned `ok` and the report exited 0, while `memory_search`
 raised on every call: `semantic` is the one mode that does not fall back to
 keyword/BM25. The verdict was decided by `semantic_dedup`, a different fact from
 the one the check names, because the early return for a disabled dedup sat above
-every probe of whether a consumer would load a model — the check had already
+every probe of whether a consumer would load a model; the check had already
 computed `wants_model` into its own details and never read it again. That install
 now fails and says the mode does not degrade. The default `hybrid` install with
 no extra still passes quietly, since that mode degrades by design, and a test
 pins it so the gate cannot be widened into a false alarm.
 
 Fix hints across both embedding checks now render through one helper each and
-lead with the form that matches how bettermemory is running —
-`uv tool install --reinstall 'bettermemory[embeddings]'`, with pipx and quoted
-development-clone variants — instead of a `uv pip install -e .[embeddings]` that
+lead with the form that matches how bettermemory is running
+(`uv tool install --reinstall 'bettermemory[embeddings]'`, with pipx and quoted
+development-clone variants) instead of a `uv pip install -e .[embeddings]` that
 cannot repair a tool install and that zsh refuses to run unquoted.
 `retrieval_discrimination` no longer opens with "install an embeddings extra" on
 an install that already has one: it branches on the same probes `embeddings_extra`
 reads and names the repair this install actually needs.
 
-### Fixed — `doctor` counted a disabled plugin as live session-start wiring
+### Fixed: `doctor` counted a disabled plugin as live session-start wiring
 
 Claude Code records plugin enablement in an `enabledPlugins` map inside the
 settings files, separately from `installed_plugins.json`, and `claude plugin
@@ -4195,25 +4195,25 @@ Nothing read that map, so a switched-off plugin's manifest won the "runnable
 binding" slot and the check reported a wired hook that Claude Code reads only to
 decline registering. A record is now dropped only on an explicit `false` for its
 `plugin@marketplace` key, read across the settings files in ascending precedence
-so a project can switch a plugin off for itself alone. Every other shape — absent
+so a project can switch a plugin off for itself alone. Every other shape (absent
 key, list value, unparseable file, and an administrator's managed-policy disable,
-which lives in a file doctor never reads — keeps the record, because the failure
+which lives in a file doctor never reads) keeps the record, because the failure
 to prefer here is a false alarm at someone who wired everything correctly. The
 function's stated contract was narrowed to what it now measures.
 
-### Fixed — the commit-message linter failed pushes over input its author cannot control
+### Fixed: the commit-message linter failed pushes over input its author cannot control
 
 Dependabot writes its subject and body from a template, and both subjects it has
 produced in this repo are shapes the `commit-lint` job rejects, so every weekly
-bump — including a security patch — turned CI red on something no reviewer could
+bump, including a security patch, turned CI red on something no reviewer could
 edit. `.github/dependabot.yml` now pins a Conventional-Commits prefix on both
 updaters, and a commit git attributes to a bot is not graded in `--range` mode at
 all, which covers the generated body line no configuration can reshape.
 
 The wording rules also stopped matching inside hyphenated compounds (`this
 round-trip`, `embarrassing-looking`), stopped skipping any body line that opened
-with a capitalised word and a colon — `Note:`, `Tests:` and `Gate:` were
-exempting every rule for the rest of the line — and now grade whole paragraphs,
+with a capitalised word and a colon (`Note:`, `Tests:` and `Gate:` were
+exempting every rule for the rest of the line) and now grade whole paragraphs,
 so a banned phrase split across the body wrap is still caught. `--range` mode
 grades a stored message exactly as git kept it, since `git commit -m` does not
 strip `#` lines and the linter no longer does either. For the residual case where
@@ -4222,21 +4222,21 @@ message may waive one **named** wording rule with a `Lint-skip:` trailer; there 
 no wildcard, the envelope rules are not waivable, and the waiver stays in the
 permanent record.
 
-### Fixed — shipped comments, a docstring and an incident report described code that had moved
+### Fixed: shipped comments, a docstring and an incident report described code that had moved
 
 The `semantic_provider = "auto"` bullet written verbatim into every user's
 `config.toml` documented presence-based resolution, which the resolver stopped
 doing when it began requiring the extra to import as well; a broken torch now
 loses to a working fastembed instead of taking the semantic leg down. The
 `[scopes]` comment stated the stamped-scope exemption as a property of the scopes
-themselves — it is a property of the ingest path, and `memory_update` replaces the
+themselves; it is a property of the ingest path, and `memory_update` replaces the
 scope list wholesale, so re-tagging an imported row resubmits ingest's own stamps
 and is refused unless `allowed` names them.
 
 `Store`'s boot-time divergence check described its equal-count gate as missing
 exactly one shape, an out-of-band swap of one memory for another. It compares
 index rows against a raw `.md` file count that includes unparseable files, so it
-is silent on any state whose row count equals its file count — including a memory
+is silent on any state whose row count equals its file count, including a memory
 whose frontmatter breaks in place while its index row survives, which drops the
 memory out of `memory_search` with nothing added or removed. The docstring names
 both families and points at `bettermemory doctor`, whose identity reconciliation
@@ -4249,17 +4249,17 @@ sent there by the code or a commit message took away a form the repo's own tests
 label a bug. Condition 3 is marked as the shape it shipped as, a Superseded
 paragraph gives the current predicate, and the historical account is unchanged.
 
-### Added — `ingest` regression coverage for the commit half of its config wiring
+### Added: `ingest` regression coverage for the commit half of its config wiring
 
 Only the `compute_ingest_plan` side of the plan/commit pair was guarded, so the
 `config` argument on the `apply_ingest_plan` call could be dropped with the whole
-suite still green — a loss that would score `--dry-run` under the user's
+suite still green, a loss that would score `--dry-run` under the user's
 `[behavior] semantic_dedup` and thresholds while the commit fell back to lexical
 Jaccard defaults, turning a promised `would write 1` into `wrote 0 / skip invalid
 1`. A CLI test now drives a corpus the two scorers disagree on and asserts the dry
 run and the commit report the same per-row action and reason.
 
-### Changed — the commit-message register is narrower, and three more rules are enforced
+### Changed: the commit-message register is narrower, and three more rules are enforced
 
 The "Register" rules in `CONTRIBUTING.md` said to describe the change rather than
 the session that produced it, and left everything past first-person narration and
@@ -4276,8 +4276,8 @@ anyone's calendar.
 session references and editorialising: `session-narration`, `editorial`, and
 `release-subject`. Over that same frozen range they fire 88 times and every hit is
 a genuine instance; the determiners in the session rule are enumerated rather than
-open (`the current window` is absent) so that this project's real domain windows —
-demotion, verification, tag ranges — do not trip it when they are named plainly,
+open (`the current window` is absent) so that this project's real domain windows
+(demotion, verification, tag ranges) do not trip it when they are named plainly,
 and the editorial rule leaves the facts that make a recurrence actionable alone:
 incident paths, defect classes, cited shas. A `release:` subject is now the version alone, since the release's argument
 belongs in the CHANGELOG entry the tag points at. History is not re-graded; CI
@@ -4287,13 +4287,13 @@ The prose rules moved with the linter, and `CONTRIBUTING.md`'s body guidance no
 longer licenses length for its own sake: a body earns each paragraph by carrying a
 fact the diff does not, and a one-line body over a one-line fix is correct.
 
-### Changed — shipped prose states its limits without apologising for them
+### Changed: shipped prose states its limits without apologising for them
 
 `README.md` carried three self-undermining asides: a caveat about the age of the
 `bench/toolcost` head-to-head ratio, inside a bullet that does not state the ratio
 and links to the bench README that owns the caveat in more precise terms; a
 hedge on the published eval; and "you shouldn't need it, but" in front of the
-documentation index. The facts are unchanged and the measurements are untouched —
+documentation index. The facts are unchanged and the measurements are untouched:
 the serialized `tools/list` figures still trace to their artifact.
 
 The 3.36.0 entry above lost its aphorism lede and four phrases that graded the
@@ -4313,15 +4313,15 @@ deliberate rather than a backlog: the bench preregistrations grade their own
 pre-committed predictions as their method, the MCP *session* concept is what
 several tools are named for, the incident records have a field whose job is to
 name the sweep that found them, and `CONTRIBUTING.md` cannot state a rule without
-quoting the words it bans. The figure is a measurement of prose, not a budget —
+quoting the words it bans. The figure is a measurement of prose, not a budget;
 re-run the rules over the corpus rather than trusting this sentence.
 
-### Fixed — `CONTRIBUTING.md` described a setup that no longer exists
+### Fixed: `CONTRIBUTING.md` described a setup that no longer exists
 
 The "Local setup" section still told a contributor to `source venv/bin/activate`
 and explained the `venv/` rename as the whole story, which stopped being true when
 `.envrc` began resolving a checkout under `~/Documents` or `~/Desktop` to
-`$HOME/.venvs/<checkout-dir-name>` — so the documented command activates nothing
+`$HOME/.venvs/<checkout-dir-name>`, so the documented command activates nothing
 on exactly the machine the workaround exists for. The prose was corrected first,
 but only the comment above the command branched: the runnable line still read
 `export UV_PROJECT_ENVIRONMENT=venv`, so pasting the block on a checkout under
@@ -4349,7 +4349,7 @@ The shared defect is not a missing check but a check that skips, or answers, on
 a condition other than the one it measures. Such a check is indistinguishable
 from a correct one until the two conditions disagree.
 
-### Fixed — `ingest` checks `[scopes] allowed`, and only against scopes you typed
+### Fixed: `ingest` checks `[scopes] allowed`, and only against scopes you typed
 
 `bettermemory ingest` builds its `Store.write` payload by hand and never reached
 `_validate_write_payload`, so the whitelist that governs every other write path
@@ -4363,7 +4363,7 @@ caught inside this release. Ingest stamps
 every row with `imported-from-claude-code` plus a tag derived from the row's own
 type, and the first cut checked *those* against the operator's allowlist. Nobody
 types them and nobody can opt out of them, so any allowlist that failed to name
-them refused every row of every import — while `--dry-run`, which ran no such
+them refused every row of every import, while `--dry-run`, which ran no such
 check, reported the writes that were about to be refused. Only the
 scopes ingest stamps itself are exempt now, derived per row from that row's
 type, so `--scope feedback` on a `project` row is still caller-supplied and
@@ -4371,15 +4371,15 @@ still checked. `compute_ingest_plan` runs the same predicate in the same
 position, so the plan and the commit agree on the reason and not merely on the
 count.
 
-`config.toml`'s own `[scopes]` comment — written verbatim into every new install
-— still stated the unconditional rule, "writes with scopes outside this list
+`config.toml`'s own `[scopes]` comment, written verbatim into every new install,
+still stated the unconditional rule, "writes with scopes outside this list
 fail". It names the exemption now, since that file is where someone decides what
 to put in the list.
 
-### Fixed — `doctor` reported a semantic leg it never probed
+### Fixed: `doctor` reported a semantic leg it never probed
 
 `_check_embeddings_extra` learned to resolve the configured provider and probe
-it (`0bf7a49`, and again since) — but only on the branch where some extra was
+it (`0bf7a49`, and again since), but only on the branch where some extra was
 already installed-and-broken. `extra_import_failure` returns nothing both for
 "imports cleanly" and for "not installed at all", so an *absent* provider never
 put a row in that list, and the check fell through to code that asks the
@@ -4387,14 +4387,14 @@ resolver nothing: it returned `ok` on `semantic_dedup = false`, or ORed
 importability across both extras and returned `ok` naming whichever happened to
 be present.
 
-So `semantic_provider = "torch"` with only `[embeddings-fast]` installed — the
-plain typo class, and the shape of one of this project's own CI legs — got a
+So `semantic_provider = "torch"` with only `[embeddings-fast]` installed (the
+plain typo class, and the shape of one of this project's own CI legs) got a
 green light reading "semantic_dedup enabled and fastembed importable" over a
 process where `resolve_provider` returns `torch`, no model loads, hybrid ranking
 is lexical-only and cosine dedup has fallen back to Jaccard. The verdict was
 decided by an irrelevant fact: break the fastembed nobody resolved to, and the
 same install correctly reported `fail`. That is lesson 1 of the 2026-07-25
-incident — a check may skip only on the condition it measures — recurring on the
+incident (a check may skip only on the condition it measures) recurring on the
 branch the earlier repair did not cover.
 
 The resolver and the probe are hoisted above that split now, so every branch
@@ -4402,13 +4402,13 @@ reports the resolved provider and whether it imports. The severity also stops
 overstating: the escalation and the "silently degraded" clause are gated on
 whether any consumer would load a model at all, so a broken extra under
 `search_mode = "keyword"` with `semantic_dedup = false` is a `warn` about dead
-weight rather than a `fail` — which had been exiting 2 on installs whose
+weight rather than a `fail`, which had been exiting 2 on installs whose
 configured behaviour was entirely intact. And the hint stops recommending `auto`
 in the one branch where `auto` cannot help: when the named extra is absent and
 the other one is broken there is no working provider to resolve to, and it says
 so instead.
 
-### Fixed — `doctor` counted another project's plugin as this project's wiring
+### Fixed: `doctor` counted another project's plugin as this project's wiring
 
 `_installed_plugin_roots` read `installPath` out of every record in
 `installed_plugins.json` and ignored the `scope` and `projectPath` sitting
@@ -4416,14 +4416,14 @@ beside it, so a plugin install scoped `local` to one project counted as live
 wiring in every other project `doctor` ran from. Such an install's `hooks.json`
 binds `uvx bettermemory session-start || true`, which the path probe
 deliberately declines to judge, so it won the "runnable" slot and the
-session-start check returned `ok` — "hook is wired" — for a project where the
+session-start check returned `ok` ("hook is wired") for a project where the
 plugin is not enabled and the hook never fires. A genuinely stale binding in the
 user's own settings was demoted to a footnote on that `ok`.
 
 A record is skipped now only when it is explicitly `scope: "local"` for a
 project directory that is neither the current one nor an ancestor of it. Every
-uncertainty — no `scope`, an unfamiliar `scope`, a missing or unusable
-`projectPath` — keeps the record, because the failure to prefer here is a false
+uncertainty (no `scope`, an unfamiliar `scope`, a missing or unusable
+`projectPath`) keeps the record, because the failure to prefer here is a false
 alarm at someone who wired everything correctly, not a false green.
 
 The same function also treated the manifest as authoritative on its top-level
@@ -4435,12 +4435,12 @@ and the check told plugin users to install a plugin they already had. "Nothing
 is installed" and "nothing here parsed" are two different answers now, and only
 the first returns empty.
 
-### Fixed — one unreadable subtree sank the whole health report
+### Fixed: one unreadable subtree sank the whole health report
 
 `report_for_directory` called `EpisodeStore(root).volume()` unguarded, and
 `iter_session_ids` reaches the tree through a bare `iterdir()`. An `episodes`
-FILE where a directory belongs — the shape a bad sync or a half-finished export
-leaves — raised `NotADirectoryError`; an unreadable directory raised
+FILE where a directory belongs, the shape a bad sync or a half-finished export
+leaves, raised `NotADirectoryError`; an unreadable directory raised
 `PermissionError`. Neither stayed local to the episode gauge. Both came out of
 `memory_health`, `bettermemory health` and the web health pages alike, so every
 staleness, drift and curation signal in the report was intact and unreachable,
@@ -4451,7 +4451,7 @@ Both shapes were reproduced before the fix. The episode volume now degrades to
 absent the way any other unavailable input does, and the rest of the report is
 delivered.
 
-### Fixed — a claim about the user could be laundered in through `memory_update`
+### Fixed: a claim about the user could be laundered in through `memory_update`
 
 `UserClaimGate` exists so a body that reads as a claim ABOUT THE USER cannot
 commit as a `fact` without the pending handshake: misattribution sticks, so the
@@ -4464,7 +4464,7 @@ reads, with nobody asked. It is the same laundering shape the credential gate on
 this surface already closes for secrets.
 
 `memory_update` now runs the gate on the new body and returns the same
-`user_claim_warning` shape — a new status on that tool — judged against the
+`user_claim_warning` shape, a new status on that tool, judged against the
 category the record will HAVE after the edit, which can only be `user-inference`
 when the record already was one, since the retag INTO that category is refused a
 few lines above. Metadata-only edits are untouched, or curating the mis-filed
@@ -4473,17 +4473,17 @@ records that predate the gate would be impossible.
 The write path's `acknowledge_user_claim` escape is mirrored here, and the gap
 between the two surfaces was not cosmetic: `_find_user_claims` ORs in a
 case-insensitive `we (?:use|prefer|avoid|always|never)` branch, so an ordinary
-project memory — "We use ruff for linting in this repo." — trips the refusal.
+project memory ("We use ruff for linting in this repo.") trips the refusal.
 That body is writable with `memory_write(..., acknowledge_user_claim=True)`, so
 without the parameter on this surface there was a body you could CREATE and then
 could not EDIT into an existing record by any route, while passing the flag to
 `memory_update` was dropped as an unknown argument and the refusal came back
 anyway with nothing saying the flag did nothing. It has to reach the
-`ToolHandlers.memory_update` facade to be on the wire at all — the served schema
+`ToolHandlers.memory_update` facade to be on the wire at all: the served schema
 is built from that signature, so a handler-only parameter never leaves the
 process.
 
-### Fixed — `doctor` judged another repo's attestations against this one
+### Fixed: `doctor` judged another repo's attestations against this one
 
 `_check_attestation_anchors` claimed cross-repo memories were "skipped, since
 their anchors resolve against a worktree this process is not in". The loop never
@@ -4494,34 +4494,34 @@ drift, with a hint to re-attest an anchor that was never wrong. The claim held
 only for absolute anchors. It skips on repo mismatch now, matching how
 `unverifiable_attestations` already anchors.
 
-### Fixed — `export --strict` counted what it promised to name
+### Fixed: `export --strict` counted what it promised to name
 
 Three `export --strict` surfaces promised that `doctor` would NAME the skipped
-files; `doctor` reported a count. It names them now — the walk it needed was
+files; `doctor` reported a count. It names them now; the walk it needed was
 already there. And `skipped_active_files` counted files AFTER loading them, so a
 `memory_write` landing between the two walks manufactured a skip that never
 happened and exited 1: routine capture turning a clean backup into a red cron
 job on a store that was never damaged. Both walks take their count first now,
 which reads the interleaved write as the non-event it is, and `doctor`'s twin of
 that race is closed the same way. A `memory_remove` in the same gap still
-over-reports by one — the rarer half, since writes are a reflex and removals are
-curation — and the warning sends the reader to `doctor` rather than asserting
+over-reports by one (the rarer half, since writes are a reflex and removals are
+curation) and the warning sends the reader to `doctor` rather than asserting
 which file is at fault.
 
-### Fixed — the detail page and `memory_show` disagreed about staleness
+### Fixed: the detail page and `memory_show` disagreed about staleness
 
 `_render_memory_detail` computed its verdict from the FULL `path_drift.missing`
 count while every MCP surface had been narrowed to `claim_anchored_missing`. So
 a calendar-fresh memory whose body merely MENTIONS a path this machine does not
-have — a remote host's config, an `/etc/...` example — rendered `spot-check
+have (a remote host's config, an `/etc/...` example) rendered `spot-check
 recommended` on the page and `fresh` from `memory_show`, sending a curator to
 re-verify a memory the sweep says is almost certainly fine. Its own docstring
 asserted that the page "cannot disagree with what the model sees for the same
 memory", and this is the second time web-versus-MCP staleness diverged on this
 one file.
 
-The page passes the anchored subset now. The evidence stays on it — the missing
-path is still rendered, it just no longer speaks as a verdict — and the
+The page passes the anchored subset now. The evidence stays on it (the missing
+path is still rendered, it just no longer speaks as a verdict) and the
 docstring points at the test that enforces the parity instead of asserting it.
 
 Two more readers of the pre-narrowing rule went with it.
@@ -4531,23 +4531,23 @@ set the verdict deliberately ignores; it is rewritten against what
 `compute_staleness_verdict` does, came out shorter, and `docs/system_prompt.md`,
 pinned byte-for-byte to it, moved with it. And the `/memories` note that told the
 user "an embeddings extra is installed" renders behind a gate that opens on
-`semantic_dedup = true` alone — with that set and no extra present it asserted an
+`semantic_dedup = true` alone; with that set and no extra present it asserted an
 install the user does not have. It names its condition now instead of asserting
 it.
 
-### Changed — an extra that is installed but fails to import is BROKEN, not absent
+### Changed: an extra that is installed but fails to import is BROKEN, not absent
 
-3.35.0 shipped the three-state reading of an optional extra — absent, working,
-installed-but-broken — and two surfaces still collapsed it to two.
+3.35.0 shipped the three-state reading of an optional extra (absent, working,
+installed-but-broken) and two surfaces still collapsed it to two.
 
 `semantic.extra_importable` classified by exception TYPE: any `ImportError` was
-filed as "not installed". But absent and broken both raise it —
+filed as "not installed". But absent and broken both raise it:
 `sentence_transformers` present with `torch` uninstalled raises
 `ModuleNotFoundError: No module named 'torch'`, which by exception type alone is
 indistinguishable from `sentence_transformers` never having been installed. The
 state is decided by PRESENCE now, by whichever means the arm has: the
-`ImportError` arm consults `_spec_found` — is it on disk, answered without
-importing — which this file already had, and the exception only supplies the
+`ImportError` arm consults `_spec_found` (is it on disk, answered without
+importing), which this file already had, and the exception only supplies the
 reason string, while a non-`ImportError` needs no lookup because the module was
 found and its own code ran to raise it. Grepping for
 clones found the same exception-type split inside `_load_torch_model` and
@@ -4555,7 +4555,7 @@ clones found the same exception-type split inside `_load_torch_model` and
 helper.
 
 Two things change for the user. `doctor` stops reporting `ok` over an extra that
-is installed and cannot be imported — that `ok` was not merely uninformative, it
+is installed and cannot be imported; that `ok` was not merely uninformative, it
 asserted "no extra is installed-and-broken" while the probe behind it could not
 see a broken one. Whether the fault reads as `fail` or as a `warn` about dead
 weight depends on whether the config asks for a model at all; see "`doctor`
@@ -4563,21 +4563,21 @@ reported a semantic leg it never probed" above, which settled that split and the
 "reinstall it" wording along with it. And the `mode='semantic'` hard error no
 longer tells someone who already
 has the extra to `pip install` it: it resolves the provider that will actually
-load, consults `extra_import_failure`, and branches three ways — reinstall,
-install, or no-model-resolved, naming both candidate causes without asserting
+load, consults `extra_import_failure`, and branches three ways (reinstall,
+install, or no-model-resolved), naming both candidate causes without asserting
 either.
 
-### Fixed — `session_start_hook` certified a hook that could not run
+### Fixed: `session_start_hook` certified a hook that could not run
 
 The check reported `ok` on the strength of a `SessionStart` command string
 containing `bettermemory session-start`. It never asked whether that command
-could execute — so a hook naming a binary that no longer exists read as fully
+could execute, so a hook naming a binary that no longer exists read as fully
 wired.
 
 The gap is reachable on a normal install and produces no signal the user could
-act on. A hook command that names its binary by absolute path is a hand-edit — `init`
+act on. A hook command that names its binary by absolute path is a hand-edit (`init`
 writes no hook at all, it patches only `mcpServers`, and the plugin ships
-`uvx bettermemory session-start` — and a hand-wired path goes stale exactly the
+`uvx bettermemory session-start`) and a hand-wired path goes stale exactly the
 way the MCP client's binary path does when an environment is rebuilt, moved, or
 deleted. The trailing `|| true` that every documented form carries then turns
 the missing binary into a *successful* no-op. And unlike the Stop hook, this one
@@ -4595,20 +4595,20 @@ It judges that one shape deliberately. `uvx bettermemory session-start` names a
 launcher that fetches the tool on demand; `env …`, `cd … &&`, `sh -c "…"` and
 `${CLAUDE_PLUGIN_ROOT}/…` cannot be adjudicated from a string at all. All of
 them stay quiet, and the executable is located as the token before
-`session-start` rather than the first token of the command — reading `cd` or
+`session-start` rather than the first token of the command: reading `cd` or
 `env` as the binary is how a check invents failures that aren't there. On a
 check whose value is a green light, a false alarm is expensive and a missed
 alarm merely restores the previous behaviour.
 
 The probe was initially a no-op on Windows.
 POSIX `shlex` treats `\` as an ESCAPE, so `C:\Users\me\bin\bettermemory`
-tokenized to `C:Usersmebinbettermemory` — no separator left, so the probe
+tokenized to `C:Usersmebinbettermemory`: no separator left, so the probe
 declined to judge it as a path and went on reporting a stale hook as wired. It
 tokenizes with `posix=False` on Windows now, and strips the quotes non-posix
 mode leaves behind, since `C:\Program Files\…` has to be quoted to survive its
 space and a candidate still wearing them resolves nowhere. `os.X_OK` is
-meaningful only on POSIX — `os.access` reports it for any existing file on
-Windows — so there the check reduces to existence, which is the half that
+meaningful only on POSIX (`os.access` reports it for any existing file on
+Windows), so there the check reduces to existence, which is the half that
 actually rots. The hook path's platform is an explicit `windows=` argument
 rather than a read of `os.name`, because patching that global made `pathlib`
 build a `WindowsPath` on Linux on Python 3.11 and older, which turned a failed
@@ -4619,21 +4619,21 @@ first candidate file carrying a matching command whose path would not run, and
 stopped scanning. Claude Code merges the `SessionStart` bindings it finds across
 settings files and plugin manifests and runs all of them, so a user who
 hand-wired an absolute path years ago and has since installed the plugin carries
-two bindings and a hint that reaches the model — and `doctor` called that hook
-broken. Every binding in every readable candidate FILE is judged now — both
+two bindings and a hint that reaches the model; and `doctor` called that hook
+broken. Every binding in every readable candidate FILE is judged now: both
 bindings can sit in one settings.json, so a stale one above a runnable one no
 longer hides it, and when they are all stale the warning counts the bindings it
 actually read rather than the files it looked at. One runnable or unjudgeable
 binding anywhere returns `ok`, and the stale spelling is named as a detail on
 that `ok`: dead config rather than a broken hook.
 
-### Changed — inside a cloud-synced folder, `.envrc` puts the venv outside it
+### Changed: inside a cloud-synced folder, `.envrc` puts the venv outside it
 
 Renaming uv's `.venv` to `venv` addressed macOS hiding dot-directories in
 iCloud-synced folders. It did not address the syncing, which is the part that
 does the damage: duplicate `name 2.py` conflict copies, two dist-info
 directories for one package (making `importlib.metadata.version` return `None`),
-and — on 2026-08-01 — a `transformers` tree left holding 226 of its 2347 `.py`
+and, on 2026-08-01, a `transformers` tree left holding 226 of its 2347 `.py`
 files, which raised `KeyError: frozenset()` on import and took `memory_search`
 down entirely.
 
@@ -4642,13 +4642,13 @@ down entirely.
 keep separate environments. Anywhere else the in-repo `venv` default is
 unchanged, so this is a no-op for a checkout that was never in a synced folder.
 
-### Fixed — the MCP registry publish could never fire on a release
+### Fixed: the MCP registry publish could never fire on a release
 
 `publish-mcp.yml` shipped in 3.35.0 triggered on `release: published`, with a
 header arguing carefully for that choice over the tag push the upstream guide
 suggests. The argument was sound and the trigger was dead: GitHub does not start
 a workflow run from an event raised by a job authenticating with the default
-`GITHUB_TOKEN` — a recursion guard — and `release.yml`'s `github-release` job
+`GITHUB_TOKEN` (a recursion guard) and `release.yml`'s `github-release` job
 uses exactly that token.
 
 So the automatic path had never fired once. It looked like it worked because the
@@ -4661,7 +4661,7 @@ The workflow now also triggers on `workflow_run` against the Release workflow,
 which observes that run finishing rather than the event it emits, and is not
 suppressed. It is gated on a succeeded run whose `head_branch` starts with `v`,
 so a failed release or the TestPyPI dispatch does not publish a listing, and it
-checks out the TAG rather than the default branch — under `workflow_run` the
+checks out the TAG rather than the default branch: under `workflow_run` the
 default checkout is wherever `main` points now, which would list a `server.json`
 describing a version other than the one just published. `release: published` is
 kept alongside it, because a release cut by hand or with a PAT does raise a real
@@ -4669,35 +4669,35 @@ event.
 
 ## 3.35.0 - 2026-08-01
 
-This release has one subject: **an optional dependency has three states —
-absent, working, and installed-but-broken — and a probe that models two of them
+This release has one subject: **an optional dependency has three states
+(absent, working, and installed-but-broken) and a probe that models two of them
 turns a fault in an optional feature into an outage in a required one.** A
 partially-evicted `transformers` tree took `memory_search` down completely,
 through a predicate whose entire job was to return a bool. The same two-state
 assumption then turned up in the provider resolver, in the `doctor` check that
 names the extra, and in the install docs.
 
-### Fixed — an optional extra that was installed and BROKEN killed all retrieval
+### Fixed: an optional extra that was installed and BROKEN killed all retrieval
 
 `memory_search` returned `Error executing tool memory_search: frozenset()` for
 every query. The store, the index and the ranker were all fine. What had
 happened is that a `transformers` install had been partially evicted by iCloud
-out of a venv living under `~/Documents` — 226 of 2347 `.py` files left on disk
-— so the lazy-import scan `transformers/__init__.py` runs over its own package
+out of a venv living under `~/Documents` (226 of 2347 `.py` files left on disk),
+so the lazy-import scan `transformers/__init__.py` runs over its own package
 tree found nothing and raised `KeyError: frozenset()` while executing.
 
 `sentence_transformers` imports `transformers`. bettermemory imports
-`sentence_transformers` to answer one boolean — is a semantic ranking leg
-available — and that probe caught `ImportError` and nothing else. So the
+`sentence_transformers` to answer one boolean (is a semantic ranking leg
+available) and that probe caught `ImportError` and nothing else. So the
 exception escaped a PREDICATE, travelled up through
 `semantic_setup._semantic_model_or_none` and out of the MCP tool. A fault in an
 OPTIONAL ranking leg, whose entire documented behaviour is to degrade to
 keyword+BM25, took down required retrieval. The same factory backs write-time
-dedup, so capture was in the blast radius too — both halves of the product,
+dedup, so capture was in the blast radius too: both halves of the product,
 from a dependency neither half requires.
 
-An optional dependency has THREE states — absent, working, and
-installed-but-broken — and every probe here modelled two. The asymmetry is
+An optional dependency has THREE states (absent, working, and
+installed-but-broken) and every probe here modelled two. The asymmetry is
 visible in the old code: the model CONSTRUCTION in `_load_torch_model` was
 already guarded `except Exception  # model load can fail many ways`, while the
 import directly above it caught only `ImportError`. Many failure modes were
@@ -4705,16 +4705,16 @@ anticipated for the constructor and exactly one for the import, though an
 import runs arbitrary third-party module-level code and so has strictly more.
 
 `semantic.extra_importable` is now the single place that owns the three-state
-answer. Broken returns False and logs once per process at WARNING — silence
+answer. Broken returns False and logs once per process at WARNING: silence
 there would trade a loud crash for a silent capability downgrade, which is the
 worse failure, because search quietly gets worse and nothing in the process
 says why. Absent stays silent, since that is the default install and not a
 fault. `semantic.extra_import_failure` exposes the reason for diagnostics.
-Both model loaders grew the matching branch, and `find_spec` — documented to
-return `None` for "not found" but which raises on some damaged installs — now
+Both model loaders grew the matching branch, and `find_spec` (documented to
+return `None` for "not found" but which raises on some damaged installs) now
 goes through `_spec_found`.
 
-### Fixed — `doctor` was silent about a broken extra on the default config
+### Fixed: `doctor` was silent about a broken extra on the default config
 
 `_check_embeddings_extra` returned `semantic_dedup disabled (no extras needed)`
 and stopped, whenever `semantic_dedup` was false. That is the DEFAULT. The gate
@@ -4722,18 +4722,18 @@ was correct when the extra fed only write-time dedup and has been stale since
 `hybrid` became the default search mode and the extra started feeding ranking
 with no `semantic_dedup` involvement at all. So the one check that names the
 embeddings extra went quiet on precisely the population a broken extra
-degrades — this project's recurring shape, a check whose input population no
+degrades: this project's recurring shape, a check whose input population no
 longer matches the one the feature serves, and during the outage above it
 reported `ok`.
 
 The broken branch is now evaluated before the `semantic_dedup` gate, names the
-module and the import error, and says **reinstall** rather than install —
+module and the import error, and says **reinstall** rather than install:
 telling someone to install what they already have sends them looking in the
 wrong place. The absent case still respects the gate: a default install with no
 extra is not a fault, and `retrieval_discrimination` already owns that advice
 with a measurement behind it.
 
-### Fixed — auto-detect picked a broken provider over a working one
+### Fixed: auto-detect picked a broken provider over a working one
 
 Two embeddings extras exist so one can cover for the other, and
 `resolve_provider`'s auto branch could not do that: it asked whether a provider
@@ -4742,12 +4742,12 @@ sentence-transformers broken, it returned `torch`, the loader then returned
 `None`, and the semantic leg was lost on a machine with a perfectly good
 fastembed installed. Worse, `_semantic_rank_leg_active` ORs across the
 providers, so it went on reporting that a semantic leg was scoring searches
-while none was — a false green in `doctor` and the web UI both.
+while none was: a false green in `doctor` and the web UI both.
 
 Auto-detect now returns the first provider that actually imports. When every
 installed extra is broken it still names one rather than returning `None`,
 because `None` reads as "no extra installed" downstream and earns the install
-hint — the wrong advice for someone who has it installed; naming it routes to
+hint, the wrong advice for someone who has it installed; naming it routes to
 the loader whose WARNING says what actually failed. An explicit
 `semantic_provider` is still honoured verbatim, broken or not: it is an
 instruction, and quietly serving a different provider would make the embedding
@@ -4758,24 +4758,24 @@ whether `semantic_dedup = true` had what it needs, so `[embeddings-fast]`-only
 users were told the extra was not installed while their cosine dedup worked
 fine. Either extra now satisfies it.
 
-### Fixed — a semantic leg was reported over a run that loads no model
+### Fixed: a semantic leg was reported over a run that loads no model
 
 `_semantic_rank_leg_active` exists because
 `docs/incidents/2026-07-25-doctor-false-green-on-importable-extra.md` caught
 `doctor` reporting a semantic leg on the strength of an extra merely being
-importable. That fix replaced one condition with three. The third — "an
-embeddings extra imports" — stayed coarser than the routing it describes: it
+importable. That fix replaced one condition with three. The third, "an
+embeddings extra imports", stayed coarser than the routing it describes: it
 ORs across both providers, while `resolve_provider` commits to exactly one.
 
 So `semantic_provider = "torch"` with torch not installed and fastembed healthy
 made the OR true, resolution honoured the explicit preference and returned
-`torch`, the loader returned `None`, and nothing ranked semantically — while
+`torch`, the loader returned `None`, and nothing ranked semantically, while
 `doctor` reported `ok`, printed "a non-lexical signal scores every search", and
 **skipped its retrieval-quality probe**, and `/memories` told the reader
 `memory_search` fuses a leg it does not have. No damaged package is involved;
 it is a config typo, which is the class of thing `doctor` exists to catch.
 
-Condition 3 is now `_resolved_provider_importable` — the health of the provider
+Condition 3 is now `_resolved_provider_importable`: the health of the provider
 that will actually be loaded.
 
 `web._lexical_only_note` is deliberately NOT changed, and the attempt to change
@@ -4785,18 +4785,18 @@ narrowing applied there fails
 injects a working model and spies on which scorers actually run, because the
 note describes what the HANDLER does. Gating it on whether an extra imports in
 the ambient process couples a description of handler behaviour to a probe the
-handler need not have used — which is the substance of the "must not be merged"
+handler need not have used, which is the substance of the "must not be merged"
 note the 2026-07-25 incident left on both predicates. Two gates that look alike
 answering different questions is the thing that report is about.
 
-### Fixed — the guard that should have caught the stale install doc could not
+### Fixed: the guard that should have caught the stale install doc could not
 
 `test_docs_state_semantic_is_enabled_by_the_extra_alone` pinned the install
 contract against a hand-written list of two files. `docs/installation.md` was
-never in it, so the retired claim sat on the canonical install page — the page
-`doctor`'s own `fix_hint` links to — for three releases while five other
+never in it, so the retired claim sat on the canonical install page, the page
+`doctor`'s own `fix_hint` links to, for three releases while five other
 surfaces were pinned. The forbidden literals were too narrow as well: the drift
-wrote "the extra alone doesn't change ranking — semantic search also needs the
+wrote "the extra alone doesn't change ranking; semantic search also needs the
 config opt-in", which matched neither of them, so adding the file without
 widening the wording would still have passed.
 
@@ -4805,12 +4805,12 @@ the same correction 3.34.0 applied to the prose corpora, with `CHANGELOG.md`
 exempted because a changelog has to be able to quote the wording it retired.
 Verified by re-introducing the exact sentence and watching the guard fail.
 
-### Fixed — `docs/installation.md` still described the pre-3.x install contract
+### Fixed: `docs/installation.md` still described the pre-3.x install contract
 
-It said the embeddings extra "alone doesn't change ranking — semantic search
+It said the embeddings extra "alone doesn't change ranking; semantic search
 also needs the config opt-in". That has been false since `hybrid` became the
-default: installing either extra is sufficient, and `semantic_dedup` — the flag
-a reader would reach for to "activate" it — only ever controlled write-time
+default: installing either extra is sufficient, and `semantic_dedup`, the flag
+a reader would reach for to "activate" it, only ever controlled write-time
 dedup. This is the same foot-gun `semantic_setup` documents as already fixed
 ("a documented foot-gun that cost two sessions' worth of wrong install
 advice"); the install page was the last surface still carrying it, and it is
@@ -4824,7 +4824,7 @@ an end-to-end case that reproduces the exact
 `Error executing tool memory_search: ...` string, and a provider case where the
 old presence-only resolver returns `torch` and then no model at all.
 
-### Added — the release lists itself in the MCP registry
+### Added: the release lists itself in the MCP registry
 
 `.github/workflows/publish-mcp.yml` submits `server.json` after a release is
 published. `server.json` has been complete and correct for some time and was
@@ -4834,15 +4834,15 @@ It fires on `release: published` rather than on the `v*` tag the upstream guide
 suggests, because the registry refuses a listing whose version is not yet on
 PyPI, and a tag-triggered job races `release.yml`'s own publish. `release.yml`'s
 `github-release` job declares `needs: publish-pypi`, so a published release is
-the earliest moment that precondition is known to hold — enforced by the job
+the earliest moment that precondition is known to hold, enforced by the job
 graph rather than by a sleep. It is a separate workflow so that a registry
 outage cannot turn a good PyPI release red.
 
 Authentication is GitHub OIDC, so no secret exists to leak or rotate. The
 workflow asserts each of the registry's preconditions itself before calling the
-publisher — the two `server.json` version fields agreeing with each other and
+publisher (the two `server.json` version fields agreeing with each other and
 with the tag, the version being live on PyPI, and the `mcp-name:` marker being
-present in the published description — because the registry reports all of them
+present in the published description) because the registry reports all of them
 as one opaque "Package validation failed". That marker lives in `README.md` and
 is read by nothing else, which makes it exactly the kind of line a tidy-up
 deletes.
@@ -4851,7 +4851,7 @@ deletes.
 
 This release has one subject: **a checker that enumerates its own input
 population stops covering what it claims to cover, and says nothing when it
-does.** Every published incident in `docs/incidents/` is that shape — a
+does.** Every published incident in `docs/incidents/` is that shape: a
 `doctor` skip asking whether an extra was importable instead of whether a
 semantic leg would score a search; a calendar leg pre-empting the drift
 measurement it exists to back up; a guard asserting the ingest *plan* and never
@@ -4861,26 +4861,26 @@ found six, none of the lanes looking for the same thing. This ships the fixes
 and, where the class allows it, the ratchet that makes a recurrence fail the
 build.
 
-### Fixed — `doctor` certified a stale index, for the third time
+### Fixed: `doctor` certified a stale index, for the third time
 
 `index_health` answered a store holding one memory the index had never seen and
 one row for a memory that had been deleted with `Index healthy: 2 memories
 indexed (matches disk; PRAGMA quick_check passed)`. "Matches disk" was a claim
 about a row count; nothing had compared the index to disk in any other sense.
 Both reproductions run through the workflow this project advertises as its
-differentiator — one file per memory, grep-able and hand-editable — an
+differentiator (one file per memory, grep-able and hand-editable): an
 out-of-band identity swap, and a hand-edit that leaves the id and the filename
 alone.
 
 The gate was `if indexed_count == disk_count: return ok`. Everything downstream
-of it — the parse-aware refinement, the unparseable-file arithmetic — lived on
+of it (the parse-aware refinement, the unparseable-file arithmetic) lived on
 the *unequal*-count path, so the identity comparison was unreachable at exactly
 the counts a swap produces. `store._warn_on_index_divergence` carried the same
 early return and was silent on both stores for the same reason.
 
 It now reconciles before it certifies. `_reconcile_index_against_disk` runs an
 identity leg (routed through `store._has_confirmed_index_gap`, not a raw
-`indexed_ids` set difference — a raw diff reports holes that close a
+`indexed_ids` set difference: a raw diff reports holes that close a
 millisecond later under concurrent writes, which is the false positive that
 helper exists to kill) and a content leg (`SELECT id, scopes_json, body`
 compared against memories `doctor` already loads). Both record in `details`
@@ -4893,7 +4893,7 @@ Two docstrings that asserted the opposite of the code went with it:
 `_build_context_block`'s claim that the session-start count was **provably**
 what the other surfaces would report, and `_warn_on_index_divergence`'s claim
 that the raw count was "only the cheap TRIGGER, never the verdict". The
-session-start gate took the strictly stronger free upgrade instead — it
+session-start gate took the strictly stronger free upgrade instead: it
 compares the index's `filename` column against the directory listing it already
 performs, no parse, and declines to publish a scope table when they disagree.
 
@@ -4907,16 +4907,16 @@ promotes itself from cosmetic to retrieval at a size boundary nobody watches.
 Postmortem: [`docs/incidents/2026-07-31-index-health-certified-a-stale-index.md`](docs/incidents/2026-07-31-index-health-certified-a-stale-index.md).
 Its second lesson is the one worth carrying: **fixing a false green by adding
 evidence beneath the gate leaves the gate.** Twice before, the repair was a new
-probe — a parse walk, then `quick_check` — wired in below an untouched
+probe (a parse walk, then `quick_check`) wired in below an untouched
 `if a == b: return ok`. Both probes were real. Both times the shape that
 produced the incident was still reachable.
 
-### Fixed — the prose-honesty ratchets scanned 12 of 43 tracked documents
+### Fixed: the prose-honesty ratchets scanned 12 of 43 tracked documents
 
 `tests/test_doc_claims.py` built its corpus as `README.md` plus
 `glob("docs/*.md")`. The repository tracks 43 markdown files. So every incident
 postmortem, the model-facing plugin skill, `SECURITY.md`, `CONTRIBUTING.md` and
-every bench README were outside the honesty check — proven by negative control
+every bench README were outside the honesty check, proven by negative control
 rather than argued: a fabricated claim citing a `verdict_ladder` module that
 does not resolve anywhere in this repository, appended to five of those
 documents on a `git archive HEAD` scratch tree, still gave `4274 passed`. The
@@ -4935,21 +4935,21 @@ repositories.
 
 **The coverage ratchets were rebuilt to be falsifiable.** The first draft
 asserted `set(tracked) - scanned - exclusions == ∅` where `scanned` was *derived
-from* `tracked` — structurally empty for every input, a guard that cannot fail,
+from* `tracked`: structurally empty for every input, a guard that cannot fail,
 inside the change that exists to close guards that cannot fail. The population
 is now an independent filesystem walk, so the two enumerations of "markdown in
 this repo" have to agree; the walk-versus-git difference (untracked and ignored
 files) is subtracted explicitly and named in the docstring rather than papered
-over. Narrowing the shared listing — the regression the first draft could not
-see — now reds both ratchets while the original assertion bodies stay green.
+over. Narrowing the shared listing, the regression the first draft could not
+see, now reds both ratchets while the original assertion bodies stay green.
 
-### Fixed — two shipped-prose guards ran against a tool surface no install builds
+### Fixed: two shipped-prose guards ran against a tool surface no install builds
 
 `BehaviorConfig.full_tool_surface` defaults to `True` as a dataclass field and
 `False` in `load_config()`, which is the only path `bettermemory` runs. The two
 guards that keep shipped guidance from naming unreachable tools built their
 server the first way. Re-pointed at the surface that actually ships, they fail
-on nine tools in the system-prompt addendum and four in the plugin skill — and
+on nine tools in the system-prompt addendum and four in the plugin skill, and
 `plugin/.mcp.json` runs `uvx bettermemory` with an empty env, so **a plugin
 install is the lean surface**, shipping a skill that names four tools its own
 MCP entry never registers.
@@ -4958,26 +4958,26 @@ Both guards are now parametrized over both surfaces. The addendum and the skill
 mark the full-surface-only tools, following the convention the skill already
 used correctly in one place.
 
-Downstream of the same split, the curation-pressure hint — a runtime payload
-that reaches every install — read `Call memory_health for full buckets;
+Downstream of the same split, the curation-pressure hint, a runtime payload
+that reaches every install, read `Call memory_health for full buckets;
 memory_remove or memory_verify to resolve`. `memory_health` is registered only
 under `full_tool_surface`. The remedy was also on the wrong axis: the pressure
 was entirely cold-endorsement, whose predicate is `explicit_applied_count == 0`,
 and `memory_verify` writes a verification rather than a use event, so it cannot
 move that count at all. The hint now names routes that exist on every install,
-and a new ratchet asserts that — mechanically, against the real argparse
+and a new ratchet asserts that, mechanically, against the real argparse
 subparsers and the real lean tool set, with a non-empty-extraction guard so it
 cannot go vacuous when the message is reworded.
 
-### Added — `export --strict`, and an export that says what it dropped
+### Added: `export --strict`, and an export that says what it dropped
 
 `bettermemory export` ran `store.load_all()` and `store.load_tombstones()`,
-both of which swallow `PARSE_SKIP_EXCEPTIONS` — literally `(Exception,)` — and
+both of which swallow `PARSE_SKIP_EXCEPTIONS`, literally `(Exception,)`, and
 then reported the survivors as the backup. Three memory files in, "Exported 2
 active memories + 0 tombstones", exit 0. A backup that is silently short is the
 worst failure a backup can have: invisible at capture, discovered when the
 source is gone. Worse, `tombstoned_memories` was emitted as `[]`, which
-export's own contract documents as "no tombstones present" — a dropped
+export's own contract documents as "no tombstones present": a dropped
 tombstone was affirmatively reported as absent.
 
 The payload now carries `skipped_active_files` and `skipped_tombstone_files`
@@ -4989,22 +4989,22 @@ already refuses to collapse.
 
 `--strict` is new and opt-in: it exits non-zero when anything was dropped. The
 default stays exit 0, because `export -o` is advertised as the scripted-backup
-path and flipping its exit status would break cron callers silently — the
+path and flipping its exit status would break cron callers silently: the
 failure mode this section is about, aimed at the fix for it.
 
-### Changed — the commit-drift escalation pre-registration is graded, and retracted
+### Changed: the commit-drift escalation pre-registration is graded, and retracted
 
 `src/bettermemory/verify.py` carried a pre-registration in a source comment:
 if alerts-per-catch for the escalating tier still read `>= 1.5` once two
-conditions shipped, `_COMMIT_DRIFT_ESCALATES` flips to `False` — "either
+conditions shipped, `_COMMIT_DRIFT_ESCALATES` flips to `False`, "either
 outcome is a result; commit the numbers." Both conditions shipped. The trigger
 read **3.4**. Nobody graded it, and `B2b` appears nowhere in the roadmap; the
 upgrade plan it cites does not exist in the repository.
 
 Graded here, and the gate is **retracted rather than honoured**, because
 honouring it was measured to be wrong. With the switch off, the drift arms go
-`flag 96.74% → 0.00%` and `J 0.0339 → 0.000` — exactly `never_flag`, the mirror
-image of the `always_flag` constant function v3.30.0 fixed and postmortemed —
+`flag 96.74% → 0.00%` and `J 0.0339 → 0.000` (exactly `never_flag`, the mirror
+image of the `always_flag` constant function v3.30.0 fixed and postmortemed),
 while `shipped_default` is bit-identical, because the demotion branch reads
 `commit_drift_count` directly and bypasses the switch entirely. The gate's
 premise was that the anchored path leg would substitute; that leg reaches
@@ -5015,16 +5015,16 @@ test fails the build if any of the three by-path citations to it dangle.
 Recorded with it, in `docs/ROADMAP.md` so it stops living in a source comment:
 the shipped verdict measures J = 0.2875 at 77.8% flag and 29.5% precision on
 the pre-registered 30-repository corpus against `always_flag`'s J = 0.000 and
-22.9% — a real signal, and a weak one. **Claims-at-write** is promoted above
+22.9% (a real signal, and a weak one). **Claims-at-write** is promoted above
 the standing-tier and event-time items on the strength of the claim-level
 detector's 1.1 alerts-per-catch at 94% precision against the shipped 3.4.
 
-### Fixed — three surfaces that described behaviour they did not have
+### Fixed: three surfaces that described behaviour they did not have
 
 - `--typo-distance` is inert. `find_scope_typo_pairs` never reads the
   parameter; the value is threaded faithfully to the last call and dropped. The
   CLI help promised "raise to 3 to surface more pairs". The flag stays accepted
-  — removing it would break scripted callers — and its help now says it is
+  (removing it would break scripted callers) and its help now says it is
   ignored, pinned by an assertion against the parser's own help string so the
   correction is itself a build-failing guard rather than prose.
 - `memory_audit_turn`'s description and module docstring said the Stop hook
@@ -5039,11 +5039,11 @@ detector's 1.1 alerts-per-catch at 94% precision against the shipped 3.4.
   --continue/--abort` and never mentioned `bettermemory reindex`, which its
   sibling autostash exit does. Both error paths now carry the same recovery.
 
-### Added — `_frontmatter.normalise_body`, one definition of a rule with two readers
+### Added: `_frontmatter.normalise_body`, one definition of a rule with two readers
 
 `dumps` strips CR-before-newline on the way to disk while the index is written
 from the in-memory record, so `doctor`'s new content leg compares across that
-normalisation and would have called an untouched CRLF body drift — a `warn`
+normalisation and would have called an untouched CRLF body drift: a `warn`
 saying the index no longer describes a store that is in fact perfect. The rule
 is now a shared function rather than a second copy, which is the standing
 lesson from the 2026-07-26 postmortem: mirrored implementations guarded by
@@ -5051,7 +5051,7 @@ comments are a defect with a countdown.
 
 ## 3.33.0 - 2026-07-31
 
-### Changed — bettermemory runs on the mcp 2.x SDK. **The floor is now `mcp>=2.0.0`**
+### Changed: bettermemory runs on the mcp 2.x SDK. **The floor is now `mcp>=2.0.0`**
 
 **Upgrade note.** This is the one thing in this release that can require
 action. `mcp.server.fastmcp` does not exist in mcp 2.x and
@@ -5068,7 +5068,7 @@ field is renamed, removed or reshaped. The SDK's rename of
 `mcp_types.MCPModel` sets an alias generator and the transport serialises
 `by_alias=True`, so a connected client receives the same `inputSchema` bytes it
 received from 1.27.0. Nothing the schema-title scrub reaches through moved
-either — `_tool_manager._tools`, `tool.parameters`, `fn_metadata.output_schema`
+either: `_tool_manager._tools`, `tool.parameters`, `fn_metadata.output_schema`
 and the `cached_property` on `Tool.output_schema` were each checked against a
 real 2.0.0 install and are identical, so the scrub is still needed and still
 mutates in place.
@@ -5077,7 +5077,7 @@ mutates in place.
 which a client reads on `initialize`, is now this project's own version. mcp
 1.x's lowlevel server defaulted an unset version to the *mcp package's* version,
 so every release up to and including 3.32.0 introduced itself to clients as
-`1.27.0` or whatever SDK it resolved — the server reporting its dependency's
+`1.27.0` or whatever SDK it resolved, the server reporting its dependency's
 version as its own. 2.x replaced that fallback with `version: str = ""`, which
 would have turned the same never-passed argument into an empty string on the
 wire. `build_server` now passes `__version__` explicitly, read from the package
@@ -5096,34 +5096,34 @@ arbitrary keys still round-trip and `meta.get("client_id")` returns what
 `ctx.client_id` used to.
 
 **The floor was verified as a floor, in both directions.** The
-`install from declared constraints` job — which resolves without the lockfile,
-and exists because of the 3.31.0 incident — is green on the ported tree. As a
+`install from declared constraints` job (which resolves without the lockfile,
+and exists because of the 3.31.0 incident) is green on the ported tree. As a
 negative control, the ported tree against a clean `mcp==1.29.0` fails at
 `builder.py`'s import while the pre-port tree against that same install builds
 a server. The break is exactly the port and nothing else.
 
 **Why the test suite did not need 83 edits.** mcp 2.0.0 also changed what
-`call_tool` returns and which attribute names carry the schemas — 44 unpack
+`call_tool` returns and which attribute names carry the schemas: 44 unpack
 sites across 44 test files, 43 schema reads across 6, and 2 files that would not
 even collect. All of it was routed through `tests/_mcp.py` first, so the port
 edited one helper module instead of the suite. With one major now in play, the
 1.x branches in that module are gone: a branch no installable configuration can
 reach is not compatibility, it is untested code that reads like a promise. The
 forged request `Context` two test modules each kept a private copy of moved
-there too — both copies broke on the same change, which is the tax that module
+there too; both copies broke on the same change, which is the tax that module
 exists to stop paying.
 
 **`pydantic` is capped at `<3.0.0`, and that line now stands alone.** Under mcp
 1.x we also inherited a `pydantic<3.0.0` bound from the SDK itself. mcp 2.0.0
 declares `pydantic>=2.12.0` with no ceiling of its own, so the port removed that
-inheritance and this cap is the only ceiling left — the same gun that fired on
+inheritance and this cap is the only ceiling left: the same gun that fired on
 3.31.0, held down by one line with no backup.
 
 **The failure mode that ships silently is guarded.** 2.0.0 decides whether to
 inject a `Context` by matching a handler's resolved type hints against its own
 `Context` class. If the alias in `handlers/_shared.py` ever points at a
 different class, injection stops firing, `ctx` arrives as `None` on every call,
-and every client collapses into one shared session — with no exception and no
+and every client collapses into one shared session, with no exception and no
 failing test, because `SessionRegistry._key_for_ctx` swallows exactly that shape
 by design. `tests/test_session_registry.py` asserts the identity positively, and
 that a registered handler still declares a resolvable `ctx` hint.
@@ -5133,20 +5133,20 @@ SDK's spelling for no reason the rename made worth keeping: the AST reader that
 extracts the server `instructions` block now matches on the `instructions=`
 keyword instead of on a call to a class named `FastMCP`, and the two passages
 asserting that the mcp floor is an install-compat promise now say what actually
-binds — the *manner* a floor moves, deliberately and announced, not the
-particular number it was sitting at.
+binds (the *manner* a floor moves, deliberately and announced, not the
+particular number it was sitting at).
 
-### Removed — the internal audit plans, which belong in a memory store rather than a public repo
+### Removed: the internal audit plans, which belong in a memory store rather than a public repo
 
 `docs/audit/` carried about 3,400 lines of session-internal material: a drained
 phase plan whose every phase had shipped, three superseded entry briefs, and six
 "fact packs" of line-number anchors that their own sweep measured as 32% still
-exact. The prose in them was sound and the coordinates had rotted — which is
+exact. The prose in them was sound and the coordinates had rotted, which is
 what a snapshot does, and why the directory sat deliberately outside the
 doc-claims checker's corpus, where nothing could ever fail on it.
 
 The mcp 2.x port analysis moved to the durable store and, briefly, to
-`docs/ROADMAP.md` — briefly because the port shipped in this same release, so
+`docs/ROADMAP.md`: briefly because the port shipped in this same release, so
 the roadmap entry is already gone and what survives of the analysis is the
 section above. The deferred backlog it carried is now a "Small and anchored"
 section of the roadmap, in house voice. Kept:
@@ -5156,7 +5156,7 @@ changelog entries cite by path.
 Also corrected in passing: the roadmap described `apply_write_gates` and
 `memory_verify`'s attestation refusal as unreleased. Both shipped in 3.31.0.
 
-### Fixed — six ways a committed record could disappear, and the chokepoint that closes the class
+### Fixed: six ways a committed record could disappear, and the chokepoint that closes the class
 
 An adversarial sweep over the persistence, parse, gate and index surfaces
 found one defect reached from six directions: **a write reports `committed`
@@ -5164,8 +5164,8 @@ and the record is then invisible to every read surface.**
 
 The mechanism is that `model_copy(update=...)` runs no pydantic field
 validators, and nearly every mutation in the codebase is a `model_copy`. An
-over-cap record therefore serialises happily — 65 links is nowhere near the
-64 KB YAML cap, so `_frontmatter.dumps` sees nothing wrong — the write
+over-cap record therefore serialises happily (65 links is nowhere near the
+64 KB YAML cap, so `_frontmatter.dumps` sees nothing wrong), the write
 returns normally, and the next read re-constructs through `Memory(...)`,
 raises, and `load_all` catch-and-skips the file. The record leaves search,
 list, show and health while its `.md` sits on disk looking healthy. Three
@@ -5176,14 +5176,14 @@ call sites had each been patched individually before this; three had not:
 - `memory_conflicts` resolving a contradiction appended a 65th link to a
   source already at the cap and reported `link_written: true`.
 - `memory_update` did the same with scopes whenever `max_scopes_per_write`
-  was raised above 64 or set to `0` — the value `config.py` documents as
+  was raised above 64 or set to `0`, the value `config.py` documents as
   "disable the handler cap (the model-layer cap still fires at 64)", which
   was true for `memory_write` and false here.
 
 Rather than patch the three and leave the fourth caller open, `Store`
 re-validates at the single chokepoint every persist routes through
 (`_write_path`), and refuses with a `ValueError` naming the failing field.
-This is the byte-axis lesson — `dumps` is the one place size is checked —
+This is the byte-axis lesson (`dumps` is the one place size is checked)
 applied to the semantic axis. Cost is one pydantic round-trip per write,
 against an fsync.
 
@@ -5191,14 +5191,14 @@ A sixth route reached the same end state without any cap: `_SCOPE_RE` and
 `_ULID_RE` anchored with `$`, which in Python matches before a trailing
 newline, so `"projects:foo\n"` validated and persisted verbatim. The record
 was then filed under a scope that no filter, auto-scope resolution or
-`memory_list` query can equal — and on disk it renders as `- 'projects:foo`
+`memory_list` query can equal, and on disk it renders as `- 'projects:foo`
 plus a blank line, which does not look wrong either. Both now anchor `\Z`.
 
-### Fixed — the index rebuild destroyed the index it was repairing
+### Fixed: the index rebuild destroyed the index it was repairing
 
 Two active `.md` files can legitimately carry one id: an iCloud or Dropbox
 conflicted copy, a `cp` before a hand-edit, a backup restored by copying
-files back in — the exact situations `bettermemory reindex` exists for. The
+files back in, the exact situations `bettermemory reindex` exists for. The
 rebuild `INSERT`ed each file, hit `UNIQUE constraint failed: memories.id` on
 the second, and fell into the corruption fallback, which unlinked the healthy
 index, retried the identical feed, and failed again. The store was left with
@@ -5211,17 +5211,17 @@ path and `scan_active_memory_ids` already document. Independently,
 constraint violation is a statement about the entries, never about the file,
 so unlinking a valid index over one was always wrong.
 
-### Fixed — a restore that could not re-admit the record destroyed the tombstone anyway
+### Fixed: a restore that could not re-admit the record destroyed the tombstone anyway
 
 `restore` wrote the active file, unlinked the tombstone, and only then tried
 to load what it had written. A tombstone whose frontmatter parses but which
-`Memory` will not re-admit — one written by a newer `schema_version`, the
-state a `sync pull` from a newer host or a downgrade produces — left the
+`Memory` will not re-admit (one written by a newer `schema_version`, the
+state a `sync pull` from a newer host or a downgrade produces) left the
 record in neither listing: gone from `list_tombstones`, unparseable in
 `load_all`, with a retry raising `NotTombstonedError`. The load now happens
 first and a failure rolls the whole restore back.
 
-### Fixed — an update could mint a permanently un-removable record
+### Fixed: an update could mint a permanently un-removable record
 
 The file axis has reserved room for a record's own removal metadata at
 admission since 3.14.1; the frontmatter-YAML axis reserved it only on
@@ -5229,16 +5229,16 @@ lifecycle re-dumps, on the reading that a first write cannot approach 64 KiB
 of frontmatter. `memory_update` admits content on the same path and can grow
 the frontmatter without touching the body: 64 links each carrying a ~950-char
 note, all individually legal, landed a record whose `memory_remove` then
-failed forever — as did both escape hatches `handlers/remove.py` names. The
+failed forever, as did both escape hatches `handlers/remove.py` names. The
 YAML axis now reserves the budget at admission too.
 
-### Fixed — a serialisation bomb the expansion guard could not see
+### Fixed: a serialisation bomb the expansion guard could not see
 
 `_guard_dump_expansion` charged one node per value regardless of size, so a
 bomb built from a few large scalars rather than many small ones walked
 through it: a 50 KB file expanded to 12,359 nodes against a 65,536 budget,
 then spent 218 seconds and 1.1 GB of RSS inside `yaml.dump` producing a
-555 MB string for the post-hoc byte cap to reject — the precise failure the
+555 MB string for the post-hoc byte cap to reject, the precise failure the
 guard's own docstring says it prevents. Reachable through the documented
 threat model, a hostile `sync pull` or hand-edit dropping a `.md` into the
 memory directory, and it left the record un-removable because `tombstone`
@@ -5246,30 +5246,30 @@ re-serialises. The walk now carries a scalar-byte budget beside the node
 budget; the same bomb is refused in under a millisecond at 66 MB of RSS, and
 the densest realistic record still serialises.
 
-### Fixed — two round trips that rewrote what they stored
+### Fixed: two round trips that rewrote what they stored
 
 `_frontmatter.loads` strips the CR off every line so a Windows-authored file,
 or one checked out with `core.autocrlf`, reads the same on every platform.
 That normalisation is right and stays; what was missing was its other half.
 `dumps` wrote the body verbatim, so a CRLF body reached disk with its CRs
-while every reader returned it without them — `alpha\r\nbeta` on disk,
-`alpha\nbeta` from `memory_show` — until the first tombstone, restore,
+while every reader returned it without them (`alpha\r\nbeta` on disk,
+`alpha\nbeta` from `memory_show`) until the first tombstone, restore,
 rename or update re-dump silently made the readers' version permanent.
 
 `dumps` now applies the same per-line strip, so the two agree from the first
 write. Mirroring the operation rather than approximating it with a
 `replace("\r\n", "\n")` is load-bearing: under a plain replace,
 `alpha\r\r\nbeta` lands `alpha\r\nbeta` on disk and still reads back
-`alpha\nbeta` — the identical bug, one carriage return deeper. A test asserts
+`alpha\nbeta` (the identical bug, one carriage return deeper). A test asserts
 the general property, that `dumps` output is a fixed point of `loads`.
 
 Separately, U+0085 (NEL) is a YAML 1.1 line break, and pyyaml emitted it raw
 inside single-quoted scalars, so the loader folded it back to a space. Every
-frontmatter string was affected — an episode takeaway, a tombstone's
+frontmatter string was affected: an episode takeaway, a tombstone's
 `removed_reason`, a link note. Strings containing it now serialise
 double-quoted, which round-trips.
 
-### Fixed — `consolidate --llm` merges dropped the duplicate's scopes
+### Fixed: `consolidate --llm` merges dropped the duplicate's scopes
 
 The non-LLM dedup path merges them, with a comment explaining why:
 similarity is scope-blind, so two near-identical bodies in disjoint project
@@ -5280,12 +5280,12 @@ merge, so `consolidate --llm --apply --yes` silently removed the fact from
 one project. Measured: the same pair keeps one hit through `consolidate
 --apply` and zero through the LLM path.
 
-### Added — `doctor` reports memory bodies that end mid-sentence
+### Added: `doctor` reports memory bodies that end mid-sentence
 
 `memory_parse_health` answers "does the frontmatter parse", which is a true
 statement about file structure and says nothing about whether the content is
-whole. A body that arrives already truncated from the caller — an interrupted
-tool call, a model that hit its output cap mid-argument — round-trips
+whole. A body that arrives already truncated from the caller (an interrupted
+tool call, a model that hit its output cap mid-argument) round-trips
 byte-exactly and is reported healthy by every check. One memory in the
 maintainer's store sat cut off at "The whole security/red-team stack (Hak5"
 for ten days with a clean bill of health; the lost tail held a correction
@@ -5297,18 +5297,18 @@ every write path was traced, and the event log shows an ordinary
 `memory_update` carrying `fields: ["content"]`. The store persisted exactly
 what it was handed. What was missing was any surface that would say so.
 
-`models.looks_truncated` is the predicate — the last non-whitespace character
-is not sentence- or structure-terminal — and the new `memory_body_completeness`
+`models.looks_truncated` is the predicate (the last non-whitespace character
+is not sentence- or structure-terminal) and the new `memory_body_completeness`
 check reports the ids that trip it. Measured on the maintainer's 234-record
 store: 1 false positive (a bullet list ending in a bare word), 93.9% recall
 against mid-body cuts. It warns and names ids; it never fails, and it is
-deliberately not a write-time gate — that would cost a parameter and a
+deliberately not a write-time gate: that would cost a parameter and a
 description sentence against 127 characters of resident-surface margin. See
 `docs/ROADMAP.md`.
 
-### Added — a commit-message standard, and a linter that enforces the mechanical half
+### Added: a commit-message standard, and a linter that enforces the mechanical half
 
-The log had drifted into first-person narration and aphoristic subjects — entries
+The log had drifted into first-person narration and aphoristic subjects, entries
 that read as a diary of the session rather than a description of the change.
 `perf(footprint): stop paying for prose and titles nobody reads` is a slogan;
 what a bisecting reader needs is which surface shrank and by how much.
@@ -5316,14 +5316,14 @@ what a bisecting reader needs is which surface shrank and by how much.
 [`tools/commit_lint.py`](tools/commit_lint.py) encodes the part of the standard
 that can be decided without taste: the Conventional Commits envelope, a 72-char
 subject in the imperative mood with no trailing period, a blank line before the
-body, 100-char body wrapping, and two wording rules — no first-person narration
-and no conversational filler. Tone is not machine-checkable and stays in prose in
+body, 100-char body wrapping, and two wording rules (no first-person narration
+and no conversational filler). Tone is not machine-checkable and stays in prose in
 CONTRIBUTING.md, enforced by review.
 
 Two things keep the gate from becoming friction. Quoted material is exempt, so a
 commit that records the literal query a search was run with
 (`memory_search("how do I cut a release")`) is a citation rather than a
-violation. And only the commits a push or pull request *introduces* are graded —
+violation. And only the commits a push or pull request *introduces* are graded:
 history written before the rules existed is never re-linted, because failing
 every run over something nobody can fix teaches people to bypass the gate.
 
@@ -5333,7 +5333,7 @@ clone) reports and exits 0 rather than blocking. For local feedback before the
 commit is recorded, `git config core.hooksPath .githooks` installs the
 `commit-msg` hook, which runs the same rules.
 
-### Removed — 198 abandoned workflow branches
+### Removed: 198 abandoned workflow branches
 
 Prior multi-agent runs left one `worktree-wf_*` branch per agent behind after
 their worktrees were pruned. Every one was verified patch-equivalent to main
@@ -5342,17 +5342,17 @@ line by line against the tree before deletion.
 
 ## 3.32.0 - 2026-07-31
 
-### Changed — the always-resident surface is ~12% smaller, with nothing taught less
+### Changed: the always-resident surface is ~12% smaller, with nothing taught less
 
 Every tool description and schema this server registers is sent on every turn,
 whether or not a single memory tool is called. That cost was 38,887 chars; it is
-now 34,212 — and the toolcost benchmark's own measure of the served payload drops
+now 34,212, and the toolcost benchmark's own measure of the served payload drops
 38,424 → 33,714 bytes.
 
 Two independent cuts. **Pydantic annotates every parameter with an auto-generated
 `title` that restates the parameter's own name** (`"title": "Include Bodies"` next
 to `include_bodies`); no client reads them and the SDK offers no way to suppress
-them, so they are now stripped from every served schema after registration —
+them, so they are now stripped from every served schema after registration:
 2,812 chars across the lean surface, 4,219 across the full one. The scrub is
 structure-aware rather than a blind recursive walk: values under `properties` and
 `$defs` are keyed by caller-chosen names, so a parameter genuinely named `title`
@@ -5363,9 +5363,9 @@ one that eventually does.
 The rule applied throughout: prose earns its place only if nothing else teaches
 the same thing at the moment it is needed. Where a write gate already refuses with
 a hint naming both the remedy and its override flag, the description restating
-that remedy was paying rent twice. Where it did not — `memory_verify`'s
+that remedy was paying rent twice. Where it did not (`memory_verify`'s
 `verified_*` REPLACE semantics bite on a *successful* verify, so no refusal can
-ever teach them — the prose stayed. Every removed line was traced to what carries
+ever teach them), the prose stayed. Every removed line was traced to what carries
 it now; the descriptions still name every status, and the reject hints did not
 grow to compensate.
 
@@ -5373,30 +5373,30 @@ Behaviour is unchanged and was checked rather than assumed: an independently
 written stripper reproduces the served schemas exactly, `properties` order,
 `required`, `type` and `additionalProperties` are identical on all 45 tool legs,
 structured output stays enabled, and the guard test re-runs the same validation
-the MCP client performs on every structured result — so a client accepts and
+the MCP client performs on every structured result, so a client accepts and
 rejects precisely what it did before.
 
 The description ceiling ratchets 27,500 → 26,000 and the schema-remainder ceiling
 10,000 → 7,500, so the space cannot quietly refill.
 
-### Added — read a journal without paying for every body
+### Added: read a journal without paying for every body
 
 `episode_search` returns full bodies, which is right for reading one session and
 wrong for the thing the tool is mostly used for: scanning takeaways across many.
 Two additive parameters make the cheap read possible. `include_bodies=False`
 drops the `body` key from each row; `ids=[...]` fetches specific episodes back,
-and — because naming episodes is deliberate cross-worktree intent, the same rule
-`swarm_id` and `parent_session_id` already follow — bypasses worktree scoping.
+and (because naming episodes is deliberate cross-worktree intent, the same rule
+`swarm_id` and `parent_session_id` already follow) bypasses worktree scoping.
 
 They compose into scan-then-fetch: page takeaways cheaply, then pull back the one
 or two bodies worth reading in full. Measured on a 138-episode store, a 10-row
 page drops from 50.2 KB to 4.8 KB and a 20-row page from 84.1 KB to 8.9 KB, with
 a single body fetch adding back ~3 KB. That is roughly a 90% cut, but the honest
 framing is 4-10x rather than 50x: the saving is bounded by takeaway length, and
-takeaways are not short in practice — `max_takeaway_bytes` is 4 KB and writers
-use it. Both defaults preserve existing behaviour exactly.
+takeaways are not short in practice (`max_takeaway_bytes` is 4 KB and writers
+use it). Both defaults preserve existing behaviour exactly.
 
-### Added — episodes are the state channel, and the docs now say so
+### Added: episodes are the state channel, and the docs now say so
 
 The live store's single most-used memory is an audit-loop state blob, retrieved
 135 times. That is not an accident of one loop: the no-state write policy told
@@ -5405,13 +5405,13 @@ to put it, so state was rephrased until it cleared the durability gate and lande
 there anyway. Episodes have been the right home since they shipped; nothing said
 so at the moment of the decision.
 
-`DESC_EPISODE_PROMOTE` now states the convention in one line — loop and working
+`DESC_EPISODE_PROMOTE` now states the convention in one line (loop and working
 state belong in episodes; session close is when to promote the takeaways that
-hardened — with the worked three-call flow in `docs/api.md` and the loop steps in
+hardened), with the worked three-call flow in `docs/api.md` and the loop steps in
 the plugin skill rewritten to match. Guidance only: no schema change, and the
 existing state memory is left where it is, because the loop depends on it.
 
-### Added — journal growth is visible before it becomes a problem
+### Added: journal growth is visible before it becomes a problem
 
 Episode GC (`prune_old_sessions`, 30-day TTL) fires only on `episode_write` and
 the CLI, so a read-only loop never collects anything and the journal grows with
@@ -5422,17 +5422,17 @@ sessions are collectable.
 
 It stays off the hot path deliberately: the gauge is computed in
 `report_for_directory`, not `compute_health`, so no per-turn tool walks the
-episode subtree — a test asserts `volume()` has no call site outside `health.py`
+episode subtree; a test asserts `volume()` has no call site outside `health.py`
 and fails if one appears. Measured on the live 164-episode store at 1.6 ms, 0.6%
 of a health report. The prune predicate is stated once and shared with
 `episodes prune --dry-run`; the gauge evaluates the same rule inline to keep the
 scan single-pass, and a parity test holds the two copies together.
 
-### Added — a retrieval that nothing settled is now recorded, not discarded
+### Added: a retrieval that nothing settled is now recorded, not discarded
 
 A use-token that reached its 30-minute wall-clock eviction with nothing having
-settled it — no Stop-hook attribution, no explicit `memory_record_use`, and no
-in-process auto-commit because the session went idle — used to vanish on a bare
+settled it (no Stop-hook attribution, no explicit `memory_record_use`, and no
+in-process auto-commit because the session went idle) used to vanish on a bare
 `del`. Downstream the memory then read "retrieved, never applied", which is
 exactly the shape dead-weight curation punishes. The evidence had been thrown
 away, not withheld, and nothing said so.
@@ -5442,7 +5442,7 @@ pending writes, and the handler layer drains the stash and records one batched
 `use_token_expired` event (`ids`, `age_seconds`, `turns_since_issue`, `reason`).
 It deliberately carries no `outcome`/`auto`/`attribution`: an expiry is the
 *absence* of evidence, and settling evidence-free leftovers as `applied` would
-manufacture endorsements out of precisely the retrievals that earned none —
+manufacture endorsements out of precisely the retrievals that earned none,
 poisoning the cold-endorsement signal and suppressing dead weight wholesale.
 
 The drain subtracts all three settling surfaces before reporting a loss, and two
@@ -5453,12 +5453,12 @@ returns, so no amount of scanning back through the log can find it. Both were
 reproduced, and without the fix the append-only log permanently held one
 retrieval as simultaneously settled and lost.
 
-### Added — curation no longer reads a missing Stop hook as rot
+### Added: curation no longer reads a missing Stop hook as rot
 
 Dead weight means "retrieved but never applied", and settlement is overwhelmingly
 the Stop hook's job. On a store whose hook was never wired, every retrieved
 memory therefore looked like dead weight, and the machinery said so with total
-confidence across three surfaces — `memory_health`'s bucket, `curation_pending`'s
+confidence across three surfaces: `memory_health`'s bucket, `curation_pending`'s
 `dead` count, and the unattended demotion pass that can retag memories to
 `ambient` on disk.
 
@@ -5468,11 +5468,11 @@ plus a `telemetry_coverage` field saying why, and the mutating pass refuses with
 a reason rather than silently retagging. The signal is deliberately narrow: an
 in-process `memory_audit_turn` emits `triggered_from="mcp_tool"` and does not
 count, because it is not evidence the hook is wired. Endorsement reporting also
-splits by attribution tier (model / hook / auto) — `endorsement_ratio` no longer
+splits by attribution tier (model / hook / auto): `endorsement_ratio` no longer
 conflates a hook's containment phrase-match with model deliberation. The
 published `endorsement_rate` and `memory_helped_rate` are untouched.
 
-### Added — a SessionStart hook, so a fresh session starts oriented
+### Added: a SessionStart hook, so a fresh session starts oriented
 
 The plugin now ships a `SessionStart` hook running a purpose-built
 `bettermemory session-start`, which prints what is stored for the current
@@ -5496,14 +5496,14 @@ the toolcost figure is **33,960**, not 33,714. The description cut was
 
 The cause is the erratum's own subject. Phase 6's closing follow-ups restored
 `status="stale"` to the `memory_update` and `memory_verify` descriptions and
-re-pointed `memory_write`'s `duplicate` bullet at its hint — +238 chars, landing
+re-pointed `memory_write`'s `duplicate` bullet at its hint: +238 chars, landing
 in the same commit as the numbers but after they were taken. Nothing caught it,
 because the footprint baseline is diagnostic by design: a stale row is not a
 failing row. The published surfaces (`README.md`, `docs/internals.md`, the
 toolcost artifact and its README) carried the pre-follow-up figures until a
 recon pass recomputed them for the next session's brief.
 
-The shape of the claim is unchanged — the resident surface did shrink by roughly
+The shape of the claim is unchanged: the resident surface did shrink by roughly
 12%, and both ceilings still hold with room to spare. What was wrong is the
 precision, in a project whose rule is that every published number traces to a
 committed artifact. The artifact
@@ -5513,10 +5513,10 @@ against the tree it actually describes and now records `3.32.0` rather than the
 
 ## 3.31.1 - 2026-07-31
 
-### Fixed — `pip install bettermemory` works again (it did not, for any version)
+### Fixed: `pip install bettermemory` works again (it did not, for any version)
 
 `mcp` was declared as `mcp>=1.0.0` with no upper bound, from the initial commit
-onward. mcp 2.0.0 — published 2026-07-28, four minutes after 1.29.0 — deletes the
+onward. mcp 2.0.0 (published 2026-07-28, four minutes after 1.29.0) deletes the
 `mcp.server.fastmcp` module that `builder.py`, `handlers/_shared.py` and
 `session.py` import by path. A fresh install therefore resolved 2.0.0, installed
 without complaint, and raised `ModuleNotFoundError` on `import bettermemory`. The
@@ -5525,7 +5525,7 @@ server, no frame sent to a client.
 
 Because the constraint is baked into the metadata of every wheel already on PyPI,
 this was not confined to the newest release. **Every published version was
-un-installable**, including ones that were correct on the day they shipped — 3.30.0
+un-installable**, including ones that were correct on the day they shipped: 3.30.0
 resolves mcp 2.0.0 today and fails identically. That removed the usual escape
 hatch of pinning to the previous release, and is why this went out as a hotfix
 ahead of scheduled work.
@@ -5536,12 +5536,12 @@ modules; that is deliberately a separate change, on the reasoning that a rushed
 port of the SDK the whole tool sits on is worse than a supported 1.x for a few
 more days.
 
-### Added — CI installs from the declared constraints, not from the lockfile
+### Added: CI installs from the declared constraints, not from the lockfile
 
 All nine CI legs were green throughout, which is the part worth explaining. Every
 job installs with `uv sync`, which obeys the committed `uv.lock` and its
-`mcp==1.27.0` pin. The suite thus verified — on three platforms, four Pythons and
-both embeddings extras — a resolution that no user of the published package
+`mcp==1.27.0` pin. The suite thus verified (on three platforms, four Pythons and
+both embeddings extras) a resolution that no user of the published package
 receives. A lockfile records a resolution that worked once; `[project.dependencies]`
 is the contract new installs resolve against, and nothing here had ever exercised
 the second one.
@@ -5552,23 +5552,23 @@ and runs the CLI entry point. Not reading the lockfile is the whole mechanism, a
 makes the job a forward alarm rather than a regression test: resolving the declared
 constraints afresh takes the newest allowed version of everything, so the next
 upstream major that breaks us goes red on an ordinary push instead of on a user's
-machine after a release. It follows that the job can go red without any local change
-— that is the design, and the fix is a considered constraint edit or a port, never
+machine after a release. It follows that the job can go red without any local change;
+that is the design, and the fix is a considered constraint edit or a port, never
 deleting the job. It runs inside the reusable workflow `release.yml` gates on, so
 installability is now part of the publish gate. (The command also spells out
-`--resolution highest`, which is uv's own default — written explicitly so a future
+`--resolution highest`, which is uv's own default, written explicitly so a future
 config default cannot disarm the alarm quietly, not because it changes behaviour.)
 
 Verified in both directions before shipping: against `HEAD` as published the smoke
-test exits 1 with the `ModuleNotFoundError`; with the cap it resolves mcp 1.29.0 —
-newer than the lock's 1.27.0, so the guard also covers minor movement the locked
-legs cannot see — and exits 0.
+test exits 1 with the `ModuleNotFoundError`; with the cap it resolves mcp 1.29.0
+(newer than the lock's 1.27.0, so the guard also covers minor movement the locked
+legs cannot see) and exits 0.
 
 Postmortem: [`docs/incidents/2026-07-31-mcp-2-unbounded-constraint.md`](docs/incidents/2026-07-31-mcp-2-unbounded-constraint.md).
 
 ## 3.31.0 - 2026-07-31
 
-### Added — search snippets show why the hit came back, not what the memory opens with
+### Added: search snippets show why the hit came back, not what the memory opens with
 
 A hit's `snippet` was a blind head-of-body truncation. On a long memory the terms
 that actually matched routinely sit past character 200, so the caller was handed
@@ -5578,7 +5578,7 @@ all. The snippet is now windowed on the matched terms.
 The window is found Python-side, over the RAW body. SQLite's `snippet()` is a
 dead end here: the FTS table indexes the preprocessed token stream, so it returns
 stemmed soup rather than prose. Nor can the normalised text be used to locate
-anything — NFKC, lowercasing and diacritic folding are all length-changing, so
+anything: NFKC, lowercasing and diacritic folding are all length-changing, so
 offsets taken there do not map back. `_query_biased_snippet` walks the body with
 the tokenizer's own regex and normalises each raw token individually, which makes
 membership in the hit's `match_terms` the same predicate that put it there.
@@ -5587,7 +5587,7 @@ source characters are not word characters, so those anchors are found by
 re-running the alias patterns over the raw text.
 
 Scoped to one call site. `snippet_for` keeps its head-of-body contract for every
-other consumer — write-time dedup, consolidate summaries — none of which have a
+other consumer (write-time dedup, consolidate summaries), none of which have a
 query to bias toward. Every fallback delegates to it rather than re-deriving it:
 a body inside the budget, a hit with no literal match terms (browse mode, and
 semantic hits that matched by paraphrase alone), a match that landed on a scope
@@ -5597,21 +5597,21 @@ is what keeps head-anchored hits byte-identical to what they were.
 Total length stays inside the bound a head truncation had, by charging the
 leading `...` against the content budget instead of adding it on top. The scan
 costs one tokenizer call per raw token, bounded to the first 8,000 characters and
-paid only for bodies longer than the budget — and only on RETURNED hits, at most
+paid only for bodies longer than the budget, and only on RETURNED hits, at most
 `max_results` of them, never over the candidate pool. Both facts are pinned by
 tests rather than asserted, including a call-count test, because the existing
 per-search tokenizer budget test happens to use 46-character fixtures and would
 not have noticed.
 
 Two visible consequences, both intended. The silent-miss audit trace retains the
-hit's snippet, so a retained trace now carries the query-biased window — replay
+hit's snippet, so a retained trace now carries the query-biased window; replay
 parity holds, since the probe re-runs the same search over the same message. And
 the web UI derives a result card's title from the snippet, so a mid-body window
 puts a leading `...` there; that is the only place the snippet surfaces in the
-UI, so the ellipsis is doing real work — it marks the line as an excerpt rather
+UI, so the ellipsis is doing real work: it marks the line as an excerpt rather
 than the memory's opening.
 
-### Added — what the FTS prefilter costs above its threshold, finally measured
+### Added: what the FTS prefilter costs above its threshold, finally measured
 
 Every retrieval number this project has published was measured below the
 500-memory index threshold, where the prefilter never engages and the full corpus
@@ -5619,65 +5619,65 @@ is ranked. `bench/retrieval/README.md` said so about itself and named driving th
 real handler path as the missing increment. `--pad-to` did not close it: padding
 grows the corpus, but `run_arm` calls `search.search` on a memory list, so the
 pool was still everything. Every artifact dated before now measures *dilution*,
-not prefiltering — honest upper bounds and nothing more.
+not prefiltering: honest upper bounds and nothing more.
 
 `--prefilter {off,on,both}` now picks the code path, separately from `--pad-to`
 picking the corpus. `on` drives production's own `resolve_search_pool`, so bm25
-nominates the pool and the corpus-IDF provider prices the terms — the part a
+nominates the pool and the corpus-IDF provider prices the terms: the part a
 hand-rolled harness would omit, and omitting it scores a capped pool with
 collapsed pool-derived IDF.
 
 **The measurement refuses to run blind**, which is the part that makes it worth
-anything. Seven paths quietly return the full corpus — six inside the loader,
+anything. Seven paths quietly return the full corpus (six inside the loader,
 plus the cap-starvation reload one layer up in `resolve_search_pool`, which is
-why the arm passes no scope, repo or worktree filter — and a run that hit any of
+why the arm passes no scope, repo or worktree filter), and a run that hit any of
 them would print full-corpus numbers under a `prefilter: true`
-heading — indistinguishable from "the prefilter costs nothing". So engagement is
+heading, indistinguishable from "the prefilter costs nothing". So engagement is
 checked per query against the corpus-statistics provider, which is attached if
 and only if the FTS path served the pool, and the runner exits non-zero with an
 index census if a single query fell back.
 
 Measured on the canonical corpus padded to 600 (production's real threshold, no
 override) and again on the unpadded 180 with the threshold forced down, which
-reaches the same code path without filler — padding is a confound, since 420 of
+reaches the same code path without filler: padding is a confound, since 420 of
 the padded corpus's documents are deliberately off-domain and bm25 will never
 nominate them. **Recall@5 loss is exactly zero in all six cells**
 (`bench/retrieval/results/prefilter-above-threshold-2026-07-30.json`,
 `bench/retrieval/results/prefilter-forced-180-2026-07-30.json`).
 
 The reason is narrower than "prefiltering is free", and the README says so: bm25
-does drop the gold document on 5–10% of casually-phrased questions, but those are
+does drop the gold document on 5-10% of casually-phrased questions, but those are
 questions the full-corpus ranker also failed at k=5. The nomination ceiling is
 real and sits above the recall either arm reaches, so it never binds. On a corpus
 where the ranker reached 90%, a 90% nomination ceiling would cut in directly.
-Lexical arm only — the measuring machine has no embeddings extra, both artifacts
+Lexical arm only: the measuring machine has no embeddings extra, both artifacts
 record that, and the semantic half of the relevant prediction stays unscored.
 
-### Changed — read-side diversification was measured, and the evidence it exists to rescue is invisible to it
+### Changed: read-side diversification was measured, and the evidence it exists to rescue is invisible to it
 
 `bench/longmemeval/README.md` explained this project's largest remaining
 retrieval error as a coverage problem. Temporal-reasoning and multi-session
-questions lose recall the same way — some of a question's evidence lands in the
-top 5 and some does not — and the stated cause was that such a question carries
+questions lose recall the same way (some of a question's evidence lands in the
+top 5 and some does not), and the stated cause was that such a question carries
 vocabulary for two events living in two sessions, so `score_memory`'s
 `0.5 + 0.5 * coverage` multiplier cannot be satisfied by either one alone. The
 prescribed repair was a read-side re-ranker rescuing the dropped co-evidence,
-estimated at **+3.2 pooled recall@5** — larger than the entire
+estimated at **+3.2 pooled recall@5**, larger than the entire
 semantic-vs-lexical lift, and with no embedding model.
 
 That estimate came from a throwaway re-run, because the runner persisted
 `by_type` aggregates only. So the first thing built was per-question records,
 and a both-arms baseline against unmodified ranking, committed before any
 ranking edit existed (`bench/longmemeval/results/baseline-both-arms-2026-07-30.json`).
-It reproduces every published figure exactly — pooled 89.35 / 91.85,
-temporal-reasoning 83.72, multi-session 84.87 — and the README's
+It reproduces every published figure exactly (pooled 89.35 / 91.85,
+temporal-reasoning 83.72, multi-session 84.87) and the README's
 partial/complete table to the tenth of a point.
 
 Those records then refute the diagnosis. `coverage_probe.py` takes each dropped
 evidence session's best-ranked hit and counts the matched query terms it carries
 that the surviving top 5 does not carry between them. Of 87 dropped sessions,
 **81 carry none at all** against the generous reference set and **74 against the
-strict one** — the headline moves nine points between two defensible
+strict one**; the headline moves nine points between two defensible
 definitions, so both ship
 (`bench/longmemeval/results/coverage-probe-2026-07-30.json`). The dropped
 evidence is not answering a different half of the question: like for like it
@@ -5688,21 +5688,21 @@ term anything in the corpus matched, which is the structural reason there is so
 little novelty to find.
 
 What closes the item is not the sweep but the ceiling. The probe bounds an
-**omniscient** rescue — one promoting exactly the novel-carrying dropped
-evidence, with zero false promotions, which nothing real can beat — and reports
+**omniscient** rescue (one promoting exactly the novel-carrying dropped
+evidence, with zero false promotions, which nothing real can beat) and reports
 it against every novelty reference, including a `blind` one that promotes all 82
 ranked dropped sessions and asks nothing. Loosening the test raises the ceiling
 (+0.33 → +0.79 → +2.59) only by converging on blind promotion's +5.21, and the
 one reference whose ceiling clears the gate has **precision below blind
-promotion's** — it has stopped filtering, not started finding. The best novelty
+promotion's**: it has stopped filtering, not started finding. The best novelty
 signal available is a 1.22x lift on a 4.5% base rate, where clearing +2.00 needs
-something nearer 25–30%. The mechanism is impossible here, not merely untuned,
+something nearer 25-30%. The mechanism is impossible here, not merely untuned,
 and that conclusion does not depend on which reference you prefer.
 
-Measured rather than argued from there. The rescue was built the shippable way —
-a bounded marginal-coverage bonus applied to hits carrying terms the head of the
+Measured rather than argued from there. The rescue was built the shippable way
+(a bounded marginal-coverage bonus applied to hits carrying terms the head of the
 ranking misses, then a re-sort on the existing `(score, created, id)` key, so the
-list stays monotone and `top_hit_leads_runner_up` keeps working — and its
+list stays monotone and `top_hit_leads_runner_up` keeps working) and its
 parameters were chosen on a held-out half of the corpus. Twenty-nine
 configurations were scored offline against the captured pre-trim rankings; the
 dev-selected one was then run for real, and reproduced the offline prediction to
@@ -5717,70 +5717,70 @@ The baseline, the probe, and the negative result stay.
 not a closed question. Perfect rescue of evidence already inside the first 10
 distinct sessions would be worth +5.0 pooled, and every class ceiling at k=5 is
 ~100%. What this measurement establishes is only that term coverage is the wrong
-lever — the ranking already has the evidence in hand and orders it wrongly for
+lever: the ranking already has the evidence in hand and orders it wrongly for
 reasons the matched-term set does not express.
 
-### Added — relative citations finally get path protection, anchored to their own worktree
+### Added: relative citations finally get path protection, anchored to their own worktree
 
 `detect_path_drift` excluded relative paths by design: without a root, checking
 them would mean stat-ing the reader's cwd, which is meaningless. The cost of
-that exclusion was measured on 37,635 claims across 30 repositories — the path
+that exclusion was measured on 37,635 claims across 30 repositories: the path
 leg fired **exactly zero times** in the relative-citation arm, with thousands of
 real deletions in front of it. The citation style people actually write got no
 protection at all.
 
-A memory records its own `origin.worktree_root`, so the root is not unknown —
+A memory records its own `origin.worktree_root`, so the root is not unknown;
 it just was not being used. Relative citations now resolve against it before
 the existence check. The anchor regex could not be reused as-is: it is
 deliberately over-matchy because a phantom commit-drift anchor touches no commit
-and is verdict-neutral, but existence checking inverts that — a matched bare
-domain like `pypi.org` would stat as missing and fabricate drift. A filter layer
+and is verdict-neutral, but existence checking inverts that (a matched bare
+domain like `pypi.org` would stat as missing and fabricate drift). A filter layer
 requires a real directory segment, rejects host-shaped first segments and
 placeholder paths, and reports missing only when the parent directory exists.
 
 Measured on the same corpus (`bench/rot/results/multirepo-anchored-2026-07-30.json`,
-a fourth arm appended — the frozen `multirepo.json` and scorecard are untouched,
+a fourth arm appended; the frozen `multirepo.json` and scorecard are untouched,
 so no published prediction was regraded): **precision 1.000, false-alarm rate
 0.0, one alert per catch**, J 0.000 → 0.032 pooled, and 19 wins / 0 losses / 7
-ties repo-to-repo. The recall is small — 0.73% of claims against a 22.9% base
-rate — and that is the honest headline: this does not find most rot, it makes a
+ties repo-to-repo. The recall is small, 0.73% of claims against a 22.9% base
+rate, and that is the honest headline: this does not find most rot, it makes a
 dead leg fire precisely on the subset it can prove.
 
 The cross-host case is what would have made it dangerous. A store synced from
 another machine carries a `worktree_root` that does not exist locally, and
 checking against it would mark every citation missing at once. The check fails
-open when the recorded root is absent or unstattable — a deliberate, scoped
+open when the recorded root is absent or unstattable: a deliberate, scoped
 reversal of the bias `origin.py` records for files underneath a live worktree.
 That also closes a latent bug: a recorded empty `worktree_root` used to become
 `Path(".")` and anchor attestations against the reader's cwd, which is precisely
 what the relative exclusion existed to prevent.
 
-### Changed — only claim-anchored evidence escalates the staleness verdict
+### Changed: only claim-anchored evidence escalates the staleness verdict
 
 `PathDriftReport.missing` merged two populations with very different track
 records: misses from paths the memory itself attested, and misses from paths
-extracted out of prose. The in-tree measurement is stark — prose-extracted path
-alerts run about 0 of 15 real, attestation-anchored alerts 3 of 3 — and
+extracted out of prose. The in-tree measurement is stark (prose-extracted path
+alerts run about 0 of 15 real, attestation-anchored alerts 3 of 3) and
 `has_drift` treated them identically as the only path input to the verdict.
 
 Path drift now carries provenance. Only anchored misses, plus the newly
 checkable relative citations, feed verdict escalation; prose misses stay on the
-wire as advisory evidence. Nothing is hidden from the caller — only what
+wire as advisory evidence. Nothing is hidden from the caller; only what
 *escalates* changed, which is the distinction this whole release is built on:
 surface evidence, let the reader judge.
 
 The commit leg was the other candidate for removal from the escalation
 disjunction, gated on pooled alerts-per-catch reaching 1.5. It does not, so it
 stays, and the switch is isolated at one named place with a test pinning today's
-behaviour. The demotion branch — calendar-stale plus a *measured* zero reading
-fresh — is untouched and separately pinned; removing it would resurrect the
+behaviour. The demotion branch, calendar-stale plus a *measured* zero reading
+fresh, is untouched and separately pinned; removing it would resurrect the
 constant-function defect that `docs/incidents/` now documents.
 
-### Changed — the relevance label stops measuring length
+### Changed: the relevance label stops measuring length
 
 The `relevance` field was computed from lexical coverage, and the code said so
 about itself: "measuring LENGTH, not relevance". A pure-semantic paraphrase hit
-has no matched terms, so it was labelled `low` — while the tool description told
+has no matched terms, so it was labelled `low`, while the tool description told
 callers to treat low as noise and `expand_top` refused anything not `high`. The
 4x-cost semantic leg was suppressed by the one field callers branch on.
 
@@ -5788,16 +5788,16 @@ Hits now carry `matched_leg` (lexical / semantic / both), which reports why a hi
 surfaced instead of asking the caller to infer it, and a semantic-only hit is no
 longer labelled by a lexical statistic it cannot have.
 
-### Changed — an unattended consolidation pass cannot tombstone a contradiction
+### Changed: an unattended consolidation pass cannot tombstone a contradiction
 
 Negation detection was whole-body token presence, so "Deploy with the blue-green
 strategy; never do in-place." and its exact inverse scored Jaccard 1.0 with no
 polarity flip detected, and the keeper-picking pass would have tombstoned one
 side. Pairs showing negation or numeric-divergence signals now route to the
 conflicts queue only, structurally unreachable by the keeper pass rather than
-guarded at the call site — a fence you can forget to call is not a fence.
+guarded at the call site: a fence you can forget to call is not a fence.
 
-### Added — `memory_verify` reports symbol drift, advisory only
+### Added: `memory_verify` reports symbol drift, advisory only
 
 83 of 194 memories in the reference store cite backticked symbols, and no
 production code ever resolved one against a file; the machinery that scores
@@ -5806,16 +5806,16 @@ J≈0.99 is bench-only and its parser reads 0% of real prose by construction.
 `symbol_drift`. It feeds no verdict until a bench measures its precision, and
 `Store.mark_verified` stays a policy-free persistence primitive.
 
-### Fixed — `ingest --force` was a silent no-op, and three more write-path holes
+### Fixed: `ingest --force` was a silent no-op, and three more write-path holes
 
 `--force` documented itself as writing a duplicate the store already holds.
 Plan-time it did admit the row; apply-time the shared dedup gate refused it
 again, with a hint telling the operator to pass the flag they had just passed.
 CI stayed green because the guard test asserted the *plan* and never applied
-it — a test that asserts an intermediate artifact does not test the behaviour a
+it: a test that asserts an intermediate artifact does not test the behaviour a
 flag promises. `apply_ingest_plan` now takes `force` and drops the active-dedup
 gate from its tuple rather than setting the context's `force` bit, because that
-bit is read by the tombstone gate too and would have resurrected tombstones —
+bit is read by the tombstone gate too and would have resurrected tombstones,
 an asymmetry ingest documents and now proves end to end.
 
 Ingest's scope-mismatch gate refused realistic imports on any non-empty store:
@@ -5824,14 +5824,14 @@ naming its own project tripped the project-name check. All four of its gate
 tests ran against empty stores, where that check is structurally disabled and
 cannot fire. Ingest is a user-initiated bulk import of the user's own prior
 memory files, not a model mis-tagging a conversational write, so it now
-acknowledges the mismatch — and a test pins that the acknowledgement has exactly
+acknowledges the mismatch, and a test pins that the acknowledgement has exactly
 one reader, so it cannot quietly become an amnesty for gates added later.
 
 `memory_write_confirm` replayed its staged payload through zero gates: a
 duplicate or a tombstone that landed during the one-hour TTL committed
 unchecked. It now re-runs the credential and both dedup gates. The obvious
-implementation is wrong — the lookup pops, so a refusal after it destroys the
-staged write it was protecting — so the pending write is peeked, judged, and
+implementation is wrong (the lookup pops, so a refusal after it destroys the
+staged write it was protecting), so the pending write is peeked, judged, and
 only consumed on success; a refusal returns the normal status plus
 `pending_retained` and the still-valid id, and leaves the promotion source
 episode on disk. The staging call's `force` and acknowledge flags are persisted
@@ -5843,7 +5843,7 @@ now persist to a `0600` sidecar beside the store, keyed per client so one client
 still cannot confirm another's staged write, with the TTL and the
 expired-versus-never-existed distinction enforced on load.
 
-### Added — `memory_write` classifies claims about the user by body, not by label
+### Added: `memory_write` classifies claims about the user by body, not by label
 
 `PendingGate` triggers on the category *label*, so a claim about the user
 written as `category='fact'` committed instantly and the staging flow whose
@@ -5852,53 +5852,53 @@ could have caught it existed, was tested, and was wired only into the Stop hook.
 
 A new gate classifies the body. It cannot reuse that detector: it matches
 first-person shapes only, because it was built to read the user's own words,
-while a model-authored `memory_write` claim is usually third person — "Mattias
-prefers tabs", "the user prefers…". The gate composes the existing pattern with
+while a model-authored `memory_write` claim is usually third person ("Mattias
+prefers tabs", "the user prefers…"). The gate composes the existing pattern with
 third-person shapes rather than editing it, since the extractor's own tests pin
 its behaviour, and it applies them the way production does: per sentence, after
 smart-apostrophe normalisation, or the anchored possessive branch and every
 curly-quoted body silently stop matching.
 
 The blast radius needed deliberate work. `CONTENT_GATES` is derived by
-exclusion, so a new gate joins it automatically — which would have made ingest
+exclusion, so a new gate joins it automatically, which would have made ingest
 refuse imported preference files, and made proposal acceptance refuse exactly
 the explicit captures ("remember that I prefer X") the extractor deliberately
 stamps as `fact`. Both are now excluded by name, with the reasoning recorded at
 the definition: neither has a human present to flip a flag.
 
 The gate is precision-first and porous by the same trade the transient and
-credential gates make — a nominalised "<Name>'s preference is tabs" passes, and
+credential gates make: a nominalised "<Name>'s preference is tabs" passes, and
 widening to possessive-plus-noun would refuse "the parser's preference is the
 longest match". Acknowledged writes record the phrase they overrode, so the
 entry ticket for revisiting the pattern is override-rate telemetry rather than
 taste.
 
-### Changed — `memory_proposals` accept runs the same gates as every other write
+### Changed: `memory_proposals` accept runs the same gates as every other write
 
 Accepting a proposal ran one gate of six: a hand-rolled credential scan, while
 the commit that introduced the shared chain described these copies as
 "deliberately stricter". It now runs the shared content gates. This is a
-deliberate behaviour change — a proposal that near-duplicates an existing memory
-was previously the reviewer's problem and is now a `duplicate` refusal — so the
+deliberate behaviour change (a proposal that near-duplicates an existing memory
+was previously the reviewer's problem and is now a `duplicate` refusal), so the
 tool and the CLI grew the matching overrides, the refusal still fires before the
 queue removal (a refused proposal stays queued), and no event is recorded on
 refusal. Consolidate's copy is untouched: its stamped-versus-unstamped scan
 split is a measured decision that one gate context cannot express.
 
-### Added — `[behavior] min_content_tokens`, default 0
+### Added: `[behavior] min_content_tokens`, default 0
 
 A minimum body length, off by default. It is hardening rather than a closure:
 `content="x"` is a legitimate fixture in dozens of handler-path tests, and the
 only in-repo floor precedent sits an order of magnitude above what this corpus
 treats as valid. The validator it lives in also serves `memory_update` and
 proposal acceptance, so the three-tool blast radius is documented, and a
-structural test requires every call site to name the parameter explicitly —
+structural test requires every call site to name the parameter explicitly:
 opting out is a decision someone writes down, not one they fall into.
 
-### Added — a number on a resident surface must now cite a committed artifact
+### Added: a number on a resident surface must now cite a committed artifact
 
 `tests/test_doc_claims.py` closes the mechanically-decidable slice of "prose
-asserts something the code does not do" — paths, symbols, test counts, line
+asserts something the code does not do": paths, symbols, test counts, line
 refs, file counts. Numbers were its one structural blind spot, and that is
 exactly where every surviving false claim had collected. `test_number_claims.py`
 closes it: a number presented as a measurement on a tool description, the
@@ -5907,8 +5907,8 @@ must be derivable from a bench result committed to this repo.
 
 The discriminator is the word "measured", not a percent-or-bytes pattern. A
 naive shape rule false-positives on almost every number in the descriptions,
-because those are contract constants enforced by adjacent code — the episode
-frontmatter ceilings, the note and excerpt caps, the groundedness threshold —
+because those are contract constants enforced by adjacent code (the episode
+frontmatter ceilings, the note and excerpt caps, the groundedness threshold),
 and a checker with false positives gets switched off. One narrow cue-free rule
 covers byte and ratio figures on the two documents that state this project's
 own footprint, because the README's cost claim carried no cue at all and a
@@ -5920,44 +5920,44 @@ clause away, so a presence test would have blinded the guard to the very claim
 it was built to catch.
 
 The allowlist is empty, deliberately. The guard found two claims the
-truth-sync pass had missed, both in operator-facing `doctor` prose — a
+truth-sync pass had missed, both in operator-facing `doctor` prose: a
 threshold comment citing a measured scope spread that was never captured, and
 a fix hint asserting a perfect rate on rare-term queries that no artifact
 backs, in a string the check prints to humans. Both were repaired rather than
 exempted; a guard born with its findings allowlisted protects nothing. It is
 pinned against the pre-sync tree as a fixture: 11 findings there, 0 here.
 
-### Added — the resident footprint has one number, and a ceiling on the part nothing capped
+### Added: the resident footprint has one number, and a ceiling on the part nothing capped
 
 Three budgets were each policed and nothing summed them: the instructions
 block, the lean description total, and the toolcost bench. The served JSON
 schemas and the plugin skill frontmatter were governed by nothing at all.
-`tests/test_resident_footprint.py` records the aggregate — instructions 1,608
+`tests/test_resident_footprint.py` records the aggregate (instructions 1,608
 + descriptions + inputSchemas + outputSchemas 1,770 + skill frontmatter 759,
 **37,548 chars** when the ceiling was set and 38,167 after the write-path work
-below spent 93 chars of the reserve budgeted for it — and puts a ceiling only
+below spent 93 chars of the reserve budgeted for it) and puts a ceiling only
 on the previously-uncapped remainder, so an edit cannot fail two budgets under
 two different recalibration rules. The skill body is excluded and the test derives
 why rather than asserting it: 13,688 chars that load on activation, not per
 turn.
 
-### Added — tests for `bench/rot/resolution.py`
+### Added: tests for `bench/rot/resolution.py`
 
 The newest bench module had zero coverage, and it is the one that decides
 whether this project may claim a real-world staleness-accuracy number. Its
 parser reads the anchored corpus templates and 0 of 216 real memory bodies,
-by construction — pinned now as a structural property, so a regression that
+by construction, pinned now as a structural property, so a regression that
 loosens the anchors and starts "parsing" real prose fails instead of quietly
 manufacturing an accuracy figure. `resolution_rate` stays `null` (UNDEFINED,
 not zero); a flip to `0.0` fails.
 
-### Fixed — the resident surfaces carried a measurement the project had already retired
+### Fixed: the resident surfaces carried a measurement the project had already retired
 
 `DESC_MEMORY_SEARCH` told every model, every turn, that wording a query in
 nouns was worth a "measured 10%→65% recall@1". No committed artifact ever
 backed that pair. It came from an early live-store probe, and the blind
 replication built later in `bench/retrieval` measures the asked baseline at
-35%, not 10% — the bench README already said no number in that directory is
+35%, not 10%; the bench README already said no number in that directory is
 comparable to the old figures, which is another way of saying the old figure
 had been retired everywhere except the surfaces that quote it.
 
@@ -5965,7 +5965,7 @@ The same measurement family was restated at seven more sites, two of which
 were not docstrings: `doctor`'s `retrieval_discrimination` fix hint, printed
 to operators, and `config.py`'s `DEFAULT_CONFIG`, which ships verbatim into
 every user's `config.toml`. Two derived adjectives had gone false on their
-own terms as well — "three times the cold-query hit rate" and "+15 points on
+own terms as well: "three times the cold-query hit rate" and "+15 points on
 top of" describe 10→30 and 65→80, and the replacement artifact measures
 35→60 and 80→90.
 
@@ -5981,7 +5981,7 @@ instead. Net −2 chars on the lean budget.
 
 Also corrected in the same sweep: README and `docs/internals.md` claimed the
 default tool surface cost "~35 KB" with "the description half" capped in CI
-and that per-turn tool context "stays small" — the project's own
+and that per-turn tool context "stays small"; the project's own
 `bench/toolcost` artifact measures 38,009 bytes of serialized `tools/list`,
 of which 28,604 is names and descriptions (≈75%, not half), and 4.84× a
 comparable tool. `docs/eval-results.md` carried a caveat that was false when
@@ -5994,10 +5994,10 @@ docstring describing an auto-defaulting that was never implemented, and a
 `bench/rot/corpus.py` docstring advertising partial clones that its own
 `clone()` documents as measured-wrong.
 
-### Added — `docs/incidents/` has postmortems in it
+### Added: `docs/incidents/` has postmortems in it
 
 The directory has advertised public postmortems since 2026-05-21 and
-contained none — an index reading "(No incidents yet.)" under a README
+contained none: an index reading "(No incidents yet.)" under a README
 promising them. Its charter was also scoped to rot bugs *reported against*
 bettermemory, which no self-found defect could satisfy. The charter now
 covers any check whose job is to tell you memory has gone wrong, reporter
@@ -6007,10 +6007,10 @@ defaults (Youden's J = 0.000, fixed in `58a4fa4`), and the doctor check
 that reported green for precisely the store most needing its warning
 (fixed in `316781e`, about nine hours after it shipped).
 
-### Fixed — `memory_verify` accepted attestations it could not check
+### Fixed: `memory_verify` accepted attestations it could not check
 
 `Store.mark_verified` stamped `last_verified_at` and stored the caller's
-`verified_*` lists verbatim, with no check of any kind — a memory could
+`verified_*` lists verbatim, with no check of any kind: a memory could
 read `fresh` on an attestation naming a path that never existed. The read
 side cannot catch the absolute case on its own: an attested path is only
 existence-checked when the body also names it.
@@ -6020,8 +6020,8 @@ cannot stat. Relative entries resolve against the memory's own
 `origin.worktree_root`; documentation placeholders (`/etc/foo`,
 `/path/to/...`) are refused outright rather than inheriting the prose
 validator's exemption; Windows drive-absolute forms (`C:\...`, `C:/...`)
-are recognized as anchored. Shape claims — globs, templates, URLs, SSH
-remotes, SMB shares, single-segment routes — are exempt, since a pattern
+are recognized as anchored. Shape claims (globs, templates, URLs, SSH
+remotes, SMB shares, single-segment routes) are exempt, since a pattern
 can be neither present nor absent, and `verified_absent_paths` is exempt
 because non-existence is its claim.
 
@@ -6031,15 +6031,15 @@ existence demand applies only at the moment of attestation. The check
 lives in the `memory_verify` handler; `Store.mark_verified` remains a
 policy-free persistence primitive, and a test pins that split.
 
-### Added — `apply_write_gates()`: one gate chain, two write paths on it
+### Added (`apply_write_gates()`: one gate chain, two write paths on it)
 
 `_WRITE_GATES` was reachable only from `memory_write`; three other paths
 called `Store.write` directly with divergent policy subsets
 (`ingest.apply_ingest_plan` ran no gates, `consolidate._apply_llm_proposal`
 hand-reimplemented four, `handlers/proposals.accept_proposal` mirrored the
 credential gate alone). The chain is now `apply_write_gates()` behind a
-`GateDeps` protocol — satisfied structurally by `ToolHandlers`, or by
-`GateBundle` from a bare `Store` + `Config` — sitting strictly above
+`GateDeps` protocol (satisfied structurally by `ToolHandlers`, or by
+`GateBundle` from a bare `Store` + `Config`), sitting strictly above
 `Store.write`; the locking rationale there is untouched.
 
 `ingest.apply_ingest_plan` now runs `CONTENT_GATES` (every gate except the
@@ -6051,8 +6051,8 @@ credential in an auto-memory file imported silently. The CLI threads the
 real config rather than the `Config()` fallback, so the configured dedup
 thresholds and the semantic-dedup switch reach the gates. The `[scopes]
 allowed` allowlist does not: it is enforced by `_validate_write_payload`
-in `handlers/_shared.py`, which ingest never calls — ingest builds its
-`Store.write` payload directly — so an imported row can still land in an
+in `handlers/_shared.py`, which ingest never calls (ingest builds its
+`Store.write` payload directly), so an imported row can still land in an
 unsanctioned scope, and the content-size and scope-count caps are missed
 on the same path. Ingest is the only one of the four without an allowlist
 check; `consolidate` hand-rolls its own.
@@ -6062,29 +6062,29 @@ two are not comparable. `consolidate._apply_llm_proposal` diverges for
 reasons it measured: it refuses hard, because an unattended run has nobody
 to offer an `acknowledge_*` override to, and it scopes the transient and
 similarity checks to the LLM-authored claim rather than the
-provenance-stamped body — the stamp quotes the transcript verbatim, so it
+provenance-stamped body; the stamp quotes the transcript verbatim, so it
 carries transient phrasing of its own, and being shared by every proposal
 citing the same turn it dominates the Jaccard sets (the measured overlap is
 recorded at the gate). `accept_proposal` is the thin one: payload
 validation plus a hand-rolled credential scan, one of the six content
 gates. Putting it on the chain is unfinished work, not a policy stance.
 
-### Changed — `episode_search` description trimmed to proportionate length
+### Changed: `episode_search` description trimmed to proportionate length
 
 3,165 → 2,064 chars; lean default-on total 27,437 → 26,336 of the 27,500
 ceiling. The removed prose was rationale `docs/api.md` carries in full;
 every parameter, return-shape key, and cue pinned by
 `tests/test_prompts.py` is kept. Gating low-use episode tools out of the
-lean surface was evaluated and is not available — dependencies are
+lean surface was evaluated and is not available: dependencies are
 recorded at the episode block in `builder.py`.
 
-### Changed — the read-side repair 3.30.0 promised was measured, and it is a dead end
+### Changed: the read-side repair 3.30.0 promised was measured, and it is a dead end
 
 3.30.0 retired the write-side commit-SHA transient marker and said the
 better home for the one class it caught was read-side, "where a body-cited
 SHA is a resolvable commit rather than a regex judging English." That
 sentence is shipped history and stays where it is; this entry is the
-correction, in the register `0fdf436` established — correct forward, don't
+correction, in the register `0fdf436` established: correct forward, don't
 rewrite the record.
 
 The proposed leg was to resolve a cited SHA at verification time: does the
@@ -6094,51 +6094,51 @@ the 30-repository corpus behind `bench/rot`. All three rules fail on
 arithmetic.
 
 **Distance** (commits since the cited SHA) fires on **34 of 34**
-SHA-carrying in-repo memories — min 3 commits, median 188, max 685, not one
+SHA-carrying in-repo memories: min 3 commits, median 188, max 685, not one
 token sitting at zero, so there is no threshold at which it goes quiet.
 Youden's **J = 0.000**: arithmetically `always_flag`, the same pathology
 this release cycle already found in the default operating point. And the
 memories it would flip are exactly the SHA carriers already reading fresh,
 so "the verdict is fresh and the body holds a hex token" reproduces its
 entire output with no git calls at all. **Existence** changes zero verdicts,
-and both its live fires are on permanently-true history — a release tag
+and both its live fires are on permanently-true history: a release tag
 moved during the 2.7.1 incident, and another repository's commit quoted
-here. **Ancestry** fires zero times — every cited SHA that resolves here is
-an ancestor of HEAD, 88 of 88 — and its answer is a property of local
+here. **Ancestry** fires zero times (every cited SHA that resolves here is
+an ancestor of HEAD, 88 of 88) and its answer is a property of local
 `git gc` rather than of the project: the same SHA
 resolves on the forge forever, resolves in the author's checkout until it
 is pruned, and never resolves in a fresh clone.
 
 The corpus is what actually condemns it, and it inverts the premise. Across
 4,647 merged pull requests in 29 repositories, **3,573 head SHAs end up
-unreachable from the default branch — and all 3,573 belong to work that
+unreachable from the default branch, and all 3,573 belong to work that
 merged.** Under squash and rebase merge, "the commit you cited is gone" is
 the signature of successful integration, not of rot. J = 0.231 pooled, 0.053
 median, and exactly 0.000 in 11 of 28 repositories. Worth stating plainly:
 bettermemory commits straight to main and reads 88 of 88 cited SHAs
 reachable, so testing this locally would have shown a harmless 0% false
 positive rate on a signal that is `always_flag` in eleven real repositories
-— the mirror of `bench/rot` finding this repo a near-worst case for drift.
+(the mirror of `bench/rot` finding this repo a near-worst case for drift).
 
 **The honest cost, not dropped:** the bare unhedged branch pointer 3.30.0
 named as newly uncovered *stays* uncovered, and the calendar leg remains its
 only backstop. The measured population is about one memory in 211. A larger
-one would be new evidence, and the item would legitimately re-open — which
+one would be new evidence, and the item would legitimately re-open, which
 is why the record is a tombstone and two tests rather than a deletion.
 
-### Fixed — four model-facing sites said `verified_commits` feeds the drift legs
+### Fixed: four model-facing sites said `verified_commits` feeds the drift legs
 
 It does not, and never has: `verify.py` reads the field zero times. The
 claim appeared in the `memory_verify` tool description, the always-loaded
 system-prompt addendum and its `docs/system_prompt.md` mirror, the plugin
 skill, and a `memory_health` recommendation telling the model to
 "re-anchor" with it. `docs/api.md` went further and advised attesting
-commits *instead of* paths — steering the model away from the one
+commits *instead of* paths, steering the model away from the one
 attestation the read path actually resolves.
 
 The correction is a split, not a blanket: `verified_paths` **is** read back
-— checked against the memory's own worktree, and used as the anchor that
-narrows the commit-drift count — while `verified_commits` and
+(checked against the memory's own worktree, and used as the anchor that
+narrows the commit-drift count), while `verified_commits` and
 `verified_versions` are provenance for the next reader. Replacing one
 falsehood with its mirror would have cost every path-attested memory its
 only anchor.
@@ -6154,14 +6154,14 @@ machinery to make this project's claims about itself checkable; this
 release is what that machinery found, and it is not flattering.
 
 Three of the four entries below are a mechanism failing a measurement it
-had never been subjected to. The staleness verdict — the field the README
-tells consumers to branch on first — was a **constant function** at its
+had never been subjected to. The staleness verdict, the field the README
+tells consumers to branch on first, was a **constant function** at its
 shipped default, flagging every memory past the freshness window
 regardless of what the drift legs found. The path-drift detector scored
 95.7% against real deletions and fired **exactly zero times** in the
 citation style developers actually write. And the transient-marker gate,
 asked for the first time what its own event log said about it, turned out
-to be **overridden on 45 of 47 blocks** for commit hashes — a speed bump
+to be **overridden on 45 of 47 blocks** for commit hashes: a speed bump
 that had taught its caller the override reflex. That marker is now gone,
 executing a tuning protocol the module had carried in its docstring, and
 never run, since the day it was written.
@@ -6170,14 +6170,14 @@ None of this was found by review. Each came from pointing an instrument
 at the thing and reading the number, which is the only reason any of it is
 in a changelog rather than in the code.
 
-### Added — attested relative paths are checked, against the memory's own worktree
+### Added: attested relative paths are checked, against the memory's own worktree
 
 `detect_path_drift` excluded relative paths by design: without an anchor,
 checking one would mean checking the cwd at *retrieval* time, making a
 verdict depend on where the reader happens to stand. The rot corpus put a
 number on what that exclusion costs. Across 37,635 claims with 8,627 real
 deletions in front of it, the path leg fired **exactly zero times** in the
-relative-citation arm — while scoring 95.7% of gone-file claims at a 0.0%
+relative-citation arm, while scoring 95.7% of gone-file claims at a 0.0%
 false-alarm rate when the citation was absolute. Citation style alone
 decided whether the detector ever ran, and relative is how a developer
 writes.
@@ -6186,7 +6186,7 @@ A census of a real 206-memory store showed the cost in place: 136
 memories carry attested `verified_paths`, **104 of them attest relative
 paths**, and 72 memories were receiving no path check of any kind. Three
 attested files were already gone with nothing surfacing it, and each had
-failed differently — one deleted, one moved, and one whose attestation
+failed differently: one deleted, one moved, and one whose attestation
 was already wrong when it was made.
 
 The cwd objection does not reach an *attestation*, because
@@ -6197,13 +6197,13 @@ memory object and none were passing it. They do now.
 Scoped deliberately to `verified_paths` / `verified_absent_paths` and
 **not** to relative paths in body prose: an attestation is an explicit,
 reviewed claim, while prose is the false-positive swamp the original
-exclusion was right to avoid. Two ordering traps are now pinned by tests
-— anchoring has to happen *before* candidate validation, and again before
+exclusion was right to avoid. Two ordering traps are now pinned by tests:
+anchoring has to happen *before* candidate validation, and again before
 attestation normalisation, or the paths are silently dropped and the
 `verified_absent_paths` escape hatch inverts into a permanent false
 alarm.
 
-### Fixed — the SHA marker never bucketed, so its own override rate was unmeasurable
+### Fixed: the SHA marker never bucketed, so its own override rate was unmeasurable
 
 `find_transient_markers` emitted `sha:<7-char prefix>` as the marker
 *name*, while the comment beside it said "bucket all SHA hits under one
@@ -6212,7 +6212,7 @@ write minted a fresh name.
 
 That defeated the one report built to answer the question. `marker_stats`
 exists so "is this marker's override rate high enough to drop it?" gets
-answered from telemetry rather than vibes, and it aggregates by name — so
+answered from telemetry rather than vibes, and it aggregates by name, so
 the highest-volume marker class in the store sat as 89 events smeared
 across 52 rows, largest n = 5. No row could ever carry enough evidence to
 act on. Pooled, it was overridden on what looked like a coin flip against
@@ -6228,20 +6228,20 @@ Deliberately *not* decided here: whether that override rate meant the
 marker should go. Taking the policy call off the same data in the same
 commit is the tune-after-seeing lever this project's pre-registration
 discipline exists to prevent. It shipped with a row it could accumulate
-on — and the next section is what the accumulated row then said.
+on, and the next section is what the accumulated row then said.
 
-### Performance — one sort at the source, not one per memory
+### Performance: one sort at the source, not one per memory
 
 Found by pointing the rot harness at its first unfamiliar repository:
 scipy would not finish, and a profile put 82 of 90 seconds inside
 `compute_commit_drift`, in a single `sorted()`.
 
-`commit_author_timestamps` documented its order as "whatever git emits —
+`commit_author_timestamps` documented its order as "whatever git emits;
 callers that want ascending for bisect should sort explicitly", and all
 four callers then did exactly that, because all four follow it with
 `bisect_right`. Nobody wanted git's order. Three of them hoist the sort
 out of their per-memory loop; the fourth *is* the per-memory call, so it
-re-sorted the repository's entire history once per memory evaluated —
+re-sorted the repository's entire history once per memory evaluated:
 2,163 times at 38ms each, on a list its own caller had already sorted.
 
 The sort was also slower than it looked. `%aI` preserves each author's
@@ -6258,7 +6258,7 @@ The published 60-day report reproduces full-document identical after
 these changes, which is what the pre-registration requires of anything
 touching the instrument before results exist.
 
-### Fixed — the staleness verdict was a constant function at the shipped default
+### Fixed: the staleness verdict was a constant function at the shipped default
 
 `staleness_verdict` is the field this project tells consumers to branch
 on first, and past the freshness window it was not a signal at all.
@@ -6271,18 +6271,18 @@ configuration most users run.
 
 `bench/rot` had already measured the consequence and named it the most
 actionable finding it produced: the `shipped_default` arm flagged 100%
-of claims in every class and both windows, Youden's J = 0.000 —
+of claims in every class and both windows, Youden's J = 0.000,
 arithmetically identical to a detector that flags everything.
 
 A calendar-stale memory now reads `fresh` when its commit-drift leg
 returns a **measured zero**: no commit touched anything the memory
 cites since its own `last_verified_at`. That is the question the
 calendar leg is a crude proxy for, so the measurement wins and the
-proxy yields — which is the division of labour `compute_commit_drift`
+proxy yields, which is the division of labour `compute_commit_drift`
 already documented from the other side ("calendar staleness remains the
 backstop for that class"). Three guards keep the demotion from becoming
 a false green: `never` never demotes (no anchor, so no "since when"),
-`commit_drift_count is None` never demotes (the leg could not ask —
+`commit_drift_count is None` never demotes (the leg could not ask;
 this is what keeps preference and lesson memories loud), and path
 existence alone never demotes (on the live store, ~0 of 15 missing-path
 alerts raised from body prose were real drift, against 3 of 3 for
@@ -6291,18 +6291,18 @@ before.
 
 Re-measured on the same pinned windows, `shipped_default` moves from
 J = 0.000 to **0.034 (60d)** and **0.111 (30d)**, converging exactly
-onto the arm that had the calendar leg disabled — that convergence is
+onto the arm that had the calendar leg disabled; that convergence is
 now a regression test. The other arms, the claim-level detectors and
 the reference baselines reproduce identically. The ceiling did not
 move: the default now *reaches* the existing weak signal rather than
 the signal getting better.
 
-`verify.verdict_from_signals` is new public API — the primitive both
+`verify.verdict_from_signals` is new public API: the primitive both
 emission sites now share, replacing a re-implementation in
 `_response.attach_commit_drift_counts` that three separate "mirror the
 gate in verify.py" comments had been warning about.
 
-### Removed — the commit-SHA transient marker, and the rubber-stamp it trained
+### Removed: the commit-SHA transient marker, and the rubber-stamp it trained
 
 The durability module has carried a tuning protocol since it was
 written: *"a high override rate is a signal that a marker is producing
@@ -6313,25 +6313,25 @@ body may now cite a commit without the write gate objecting.
 
 The telemetry that condemned it, from the dogfood event log at the moment
 the call was made: **47 fires against 45 overrides**. (The row is not
-frozen at that figure — it still accepts events from any server process
+frozen at that figure: it still accepts events from any server process
 running pre-3.30.0 code, so a live rollup may read a little higher until
 those restart. What cannot grow again is the class.) Read the record as 45
-of 47 blocks overridden —
+of 47 blocks overridden:
 `override_rate` divides by fires *plus* overrides, so its 0.489 is 97.8%
 of the 0.500 that metric can reach when every block is answered. The
 same metric pooled across the phrase markers is 0.161. Of the 47 blocks,
 36 were answered by an explicit `acknowledge_transient=True` in the same
 session, **median gap 25 seconds**; a further 9 overrides have no
 preceding block at all, because the caller had started pre-acknowledging
-before being asked — 7 of those in the final fortnight. That is not a
+before being asked (7 of those in the final fortnight). That is not a
 gate. It is a speed bump that taught its caller the override reflex,
 which the marker-list comment names as worse than having no marker.
 
 The corpus agrees from the other side. Of 210 accepted bodies, 79
 contained text the detector fires on: **66 referential** ("the fix
 landed in 68aff13"), **10 positional** ("main is at 68aff13"), **3
-incidental** — a restic snapshot id, a Cloudflare build id, a container
-image tag, none of them commits at all. Only the positional class was
+incidental** (a restic snapshot id, a Cloudflare build id, a container
+image tag, none of them commits at all). Only the positional class was
 ever the target, and 2 of those 10 were already caught by another marker
 in the same body, so 8 firings in 79 were catches nothing else would
 make. Meanwhile 64 of the 79 bodies carry `verified_commits`
@@ -6342,7 +6342,7 @@ losing 45 times out of 47.
 One of the ten genuine catches is a machine-written loop ledger
 (`last_audited_sha: e3e4ba5`). A structured field cannot be rephrased,
 which is precisely the shape the title-case skip list already documents
-as disqualifying — every fire on it could only ever train the override.
+as disqualifying; every fire on it could only ever train the override.
 
 Two paths had no override valve at all, and there the marker was not a
 gate but a data-loss valve. In the proposal extractor a sentence like
@@ -6353,8 +6353,8 @@ now keep the sentence.
 
 Removed with the detector: the git-describe companion pattern (zero
 occurrences across the 210 live bodies), and the UUID mask and 32-hex
-skip, which existed only to stop durable identifiers — tenant UUIDs, KMS
-key ids, MD5 artifact hashes — from failing closed against a scan that
+skip, which existed only to stop durable identifiers (tenant UUIDs, KMS
+key ids, MD5 artifact hashes) from failing closed against a scan that
 no longer runs.
 
 **Kept deliberately, and it looks like dead code:** the `SHA_MARKER`
@@ -6366,12 +6366,12 @@ evidence for this removal unreproducible from the store. The constant now
 carries a tombstone comment saying so, and a test pins the split.
 
 **The honest cost.** A body whose only transient signal is a bare branch
-pointer — "main is at 68aff13", "head 1dc5bfe", "prod runs main@ed415c5"
-— now commits unremarked. Every hedged or dated spelling of the same
+pointer ("main is at 68aff13", "head 1dc5bfe", "prod runs main@ed415c5")
+now commits unremarked. Every hedged or dated spelling of the same
 fact still fires ("currently", "as of `<date>`", "the latest", "commits
 ahead"); what is uncovered is specifically the terse, unhedged pointer.
 The read side does **not** rescue it: `compute_commit_drift` anchors on
-paths, and a pure branch pointer has none, so the leg returns `None` —
+paths, and a pure branch pointer has none, so the leg returns `None`,
 which is exactly the case that never demotes. The calendar leg is the
 only backstop for that shape. The right repair is read-side, resolving a
 body-cited SHA against the repo at verification time rather than a regex
@@ -6382,8 +6382,8 @@ judging English, and it is deliberately not in this release.
 Almost no new feature, and one reversal. This window is one thing:
 making the project's claims about itself checkable, and repairing what
 that check found. The headline is a data-loss regression this same
-window introduced and then caught — `sync` refusals that fired *after*
-mutating the user's index — but the durable output is machinery. Four
+window introduced and then caught (`sync` refusals that fired *after*
+mutating the user's index), but the durable output is machinery. Four
 times a manual sweep for false prose was replaced by a test that
 re-derives the claim, and three times that machinery was then audited
 and found weaker than its own docstring.
@@ -6404,14 +6404,14 @@ check names (`retrieval_discrimination`, `attestation_anchors`) in its
 text and `--json` output.
 `SCHEMA_VERSION` is unchanged and no tool gains or loses a parameter. A
 default install with no embeddings extra ranks byte-identically to
-3.28.0 — the new checks only read. An install that *has* an embeddings
+3.28.0; the new checks only read. An install that *has* an embeddings
 extra does not, and that is the one change here a user will feel.
 
-### Fixed — `sync` could destroy uncommitted work
+### Fixed: `sync` could destroy uncommitted work
 
 - **🔴 A refusal that fires after a mutation is not a refusal
-  (`cb32eca`).** Both refusals the 3.28.0 snapshot rework introduced —
-  the empty commit message and `_require_no_sequencer_state` — lived
+  (`cb32eca`).** Both refusals the 3.28.0 snapshot rework introduced
+  (the empty commit message and `_require_no_sequencer_state`) lived
   inside `_commit_snapshot_tree`, which runs *after* `_stage_and_commit`
   has already reconciled `.gitignore` and run `git add -A`. On a store
   parked mid-merge with conflicts resolved and staged, `sync push` and
@@ -6419,8 +6419,8 @@ extra does not, and that is the one change here a user will feel.
   declined. Measured on a two-clone store with an unrelated uncommitted
   edit: that memory's porcelain code flipped from unstaged to staged
   across the refusal, and the refusal's own printed remedy `git merge
-  --abort` then reset it to its committed content — bytes that had never
-  been committed, so no reflog entry and no dangling object.
+  --abort` then reset it to its committed content (bytes that had never
+  been committed, so no reflog entry and no dangling object).
   Unrecoverable. The identical fixture with no sync run kept them.
 
   Both refusals now fire at the top of `_stage_and_commit`, which holds
@@ -6432,8 +6432,8 @@ extra does not, and that is the one change here a user will feel.
 - **🟡 The compare-and-swap did not span the window it protected
   (`cb32eca`).** It covered `rev-parse --verify HEAD` → `update-ref`,
   while the tree being committed was frozen earlier at `write-tree`. A
-  commit landing in that gap passed the CAS — its tip *was* the parent by
-  then — and the older tree then deleted its files from the branch tip.
+  commit landing in that gap passed the CAS (its tip *was* the parent by
+  then), and the older tree then deleted its files from the branch tip.
   Measured: `sync push` returned `committed=True, pushed=True` with a
   hand-written memory absent from `main`'s tree. The parent is now read
   immediately before the snapshot, so the CAS spans the whole window.
@@ -6459,12 +6459,12 @@ extra does not, and that is the one change here a user will feel.
   it had not: `sync push` produces a commit that verifies (`%G?` = `G`)
   under both `gpg.format=ssh` and `openpgp`, while a control
   `commit-tree` without `-S` returns `N`. What was missing was the
-  guarantee — the only signing test asserted the failure mode, which
+  guarantee: the only signing test asserted the failure mode, which
   cannot distinguish "signs correctly" from "errors whenever signing is
   on". Now pinned end-to-end with a throwaway ssh key, hermetic across
   the matrix, asserting both directions.
 
-### Fixed — worktree isolation
+### Fixed: worktree isolation
 
 - **The dead-worktree degrade fired on evidence it never had
   (`7dd2a11`).** `worktrees_match` keyed its degrade on
@@ -6478,21 +6478,21 @@ extra does not, and that is the one change here a user will feel.
   ENAMETOOLONG, plus the two Windows codes CPython does not fold in).
   Everything else is "I could not find out" and holds the isolation, so
   an unclassified future errno fails closed. `ERROR_NOT_READY` is
-  deliberately excluded where `pathlib` includes it — for an isolation
+  deliberately excluded where `pathlib` includes it: for an isolation
   boundary a disconnected volume is exactly the fail-open being closed.
 
   Same commit: `_count_recent_tombstones` compared roots with a raw `!=`,
   making `recently_removed_in_worktree` the one worktree-keyed surface
   with no degrade and no linked-worktree leg. After an ordinary `mv` of a
-  checkout it silently read 0 — "nothing was trimmed here" about a
-  workspace that had just trimmed something — while retrieval kept
+  checkout it silently read 0 ("nothing was trimmed here" about a
+  workspace that had just trimmed something) while retrieval kept
   working. It now routes through `should_include_for_caller`, the same
   helper the active per-scope counts in that handler already use.
 
 - **`episode_patterns` read and deleted across the isolation boundary
   (`b0a3063`).** It consulted neither `state.disabled_scopes` nor any
   worktree guard, so a caller saw sibling-worktree and scope-hidden
-  bodies through the pattern snippets — and a committed promote
+  bodies through the pattern snippets, and a committed promote
   bulk-DELETED those member episodes. Both filters now mirror
   `episode_search`, behind a new `auto_scope=True` parameter; the
   dismissal GC deliberately keeps keying off the unfiltered on-disk set,
@@ -6504,20 +6504,20 @@ extra does not, and that is the one change here a user will feel.
 
 - **The worktree-confinement claim was false on four legs, in four
   places (`c3d481a`, `e75773c`).** `episode_promote`'s carve-out argument
-  ended on an absolute — default-scoped `episode_search` and
-  `episode_patterns` "never" hand out a foreign episode id — which
+  ended on an absolute (default-scoped `episode_search` and
+  `episode_patterns` "never" hand out a foreign episode id), which
   `worktrees_match`'s permissive legs contradict. Reproduced three ways
   on real fixtures with the foreign worktree ALIVE on disk: a caller
   outside any git checkout, and a caller in a linked worktree whose
   primary wrote the episodes, both get another journal's ids from a
   default listing and both delete them on promote. The carve-out itself
-  is unchanged and still right — the bound is the SELECTOR, never "no
-  read will ever name a foreign one for you" — and the prose now argues
+  is unchanged and still right (the bound is the SELECTOR, never "no
+  read will ever name a foreign one for you"), and the prose now argues
   at that strength. `DESC_EPISODE_PATTERNS`, the model-facing copy and
   the one nobody re-reads critically, was corrected last and enumerates
   all four legs rather than pointing at the authority.
 
-### Fixed — the silent-miss audit probe now measures production
+### Fixed: the silent-miss audit probe now measures production
 
 - **The probe ranked a different candidate pool than production
   (`8fc7afc`).** Both producers handed it an unconditional
@@ -6547,24 +6547,24 @@ extra does not, and that is the one change here a user will feel.
   dead with no citations.
 
 - **The width difference that remains reaches the verdict, and the prose
-  said otherwise (`dd6ff31`).** `min_survivors` differs by caller —
-  request width for `memory_search`, config default for both producers —
+  said otherwise (`dd6ff31`).** `min_survivors` differs by caller
+  (request width for `memory_search`, config default for both producers),
   and both call sites claimed the guard therefore fires "on the same
   slices" production's would. Measured on a purpose-built corpus: the
   same probe over the two pools reports `ok` (rank 1 a 1/2-coverage
   medium hit) and `miss` (rank 1 a 2/2-coverage high hit). Not closed by
-  threading a request width — the miss verdict's own precondition is that
-  no retrieval happened — nor from the production end, which would reopen
+  threading a request width (the miss verdict's own precondition is that
+  no retrieval happened), nor from the production end, which would reopen
   a fixed starvation bug. So the widths stay and the prose is corrected,
   with the residual stated: a model habitually passing a wider
   `max_results` is audited against a narrower counterfactual than its own
   habit.
 
-### Fixed — conflict arbitration lifecycle
+### Fixed: conflict arbitration lifecycle
 
 - **A settled verdict could be erased by one bad read (`bd35cc8`).**
   `upsert_scan` treated "absent from the caller's `load_all()` snapshot"
-  as proof a member had died and permanently deleted the row — status,
+  as proof a member had died and permanently deleted the row: status,
   `verdict_ts`, note and all. But `Store.load_all` skips a file on
   `PARSE_SKIP_EXCEPTIONS`, which is `(Exception,)`, so one truncated
   write or bad `chmod` erased an arbitration with no way back:
@@ -6574,7 +6574,7 @@ extra does not, and that is the one change here a user will feel.
   and reports the new `gc_deferred` counter. Same commit: the resurrect
   rule keyed on `m.updated > verdict_ts`, which cannot tell a claim edit
   from an `updated` bump the arbitration surface itself caused on a
-  different row — so arbitrating one pair resurrected unrelated dismissed
+  different row, so arbitrating one pair resurrected unrelated dismissed
   pairs. Verdicts now fingerprint the two bodies they judged. And the
   `compatible` branch returned before the `recorder.record` only the
   contradiction branch reached; both now record `conflict_verdict`.
@@ -6594,16 +6594,16 @@ extra does not, and that is the one change here a user will feel.
   the same `conflicts.split_judgeable` predicate rather than counting raw
   rows, so a candidate whose member died since the last scan is no longer
   advertised as pending work; and on a GC-deferring scan the response no
-  longer carried two keys named `pending_total` with different numbers —
+  longer carried two keys named `pending_total` with different numbers:
   `upsert_scan` returns `pending_rows_on_disk`, which is a different
   question and now says so. The omitted-row hint fires in scan mode too,
   naming the deferral as the cause.
 
-### Fixed — store concurrency
+### Fixed: store concurrency
 
 - **`Store.update` reverted a concurrent corroboration bump
   (`a841b3e`).** `record_corroboration` deliberately never bumps
-  `updated` — a recurrence is not a rewrite — so a bump landing between
+  `updated` (a recurrence is not a rewrite), so a bump landing between
   the caller's snapshot read and the write lock sails through the
   `updated` CAS, and writing the snapshot's stale counter back silently
   erased it. The rollup is now store-owned like `updated`: re-copied from
@@ -6612,12 +6612,12 @@ extra does not, and that is the one change here a user will feel.
   correct merge; there is no opt-out, because a content edit does not
   invalidate recurrence evidence the way it invalidates an attestation.
 
-### Fixed — surfaces
+### Fixed: surfaces
 
 - **The web UI showed a staleness verdict the MCP surface disagreed with
   (`70437ab`).** `/memories` search rendered a verdict it computed itself
-  from verification plus path drift — which is `hit_to_dict`'s *pre*-attach
-  initial value — while `memory_search` then runs
+  from verification plus path drift, which is `hit_to_dict`'s *pre*-attach
+  initial value, while `memory_search` then runs
   `attach_commit_drift_counts` and upgrades hits whose anchors moved. So a
   calendar-fresh, drifted memory wore a green "fresh" chip on the search
   page and "spot-check recommended" one click away on its own detail page;
@@ -6658,7 +6658,7 @@ extra does not, and that is the one change here a user will feel.
   suppressed set into the per-hit block, additively like
   `expected_absent`, closing the one MCP surface that silently dropped
   the bucket; `docs/api.md` documents the key on both the `memory_search`
-  and `memory_show` shapes. Emit gates are unchanged — a route-only
+  and `memory_show` shapes. Emit gates are unchanged: a route-only
   report stays invisible everywhere.
 
 - **`docs/api.md` caught up to the 3.28.0 contract (`c4f23f6`,
@@ -6666,31 +6666,31 @@ extra does not, and that is the one change here a user will feel.
   ranking effects, the `curation_pending` conflicts key, the
   corroboration response keys and the `with_bodies` pair were all
   undocumented; every prose surface still claimed 25 tools / seven gated
-  after 3.28.0 took the surface to 27 / nine, and api.md — the pinned 3.x
-  contract — was missing `memory_conflicts` and `episode_patterns`
+  after 3.28.0 took the surface to 27 / nine, and api.md, the pinned 3.x
+  contract, was missing `memory_conflicts` and `episode_patterns`
   entirely. A new test asserts every "N tools" claim in the
   non-historical surfaces equals `_EXPECTED_TOOL_COUNT`.
 
-### Fixed — Windows path spellings
+### Fixed: Windows path spellings
 
 Five commits closing one class: raw string comparisons that assumed
 `os.sep`, in code paths whose whole job is deciding whether two spellings
 name the same place. Windows accepts `/` interchangeably with `\`, so a
 forward-slash or mixed spelling of a home-rooted citation read as not
-home-rooted — dropping a vanished-repo citation as a route instead of
+home-rooted, dropping a vanished-repo citation as a route instead of
 reporting it missing, which is the silent false negative the home escape
 exists to kill (`8f07c7b`). The same fold was missing in
 `scope_match._home_alias` (`6aced64`), in the degenerate-root guard,
 pass-2 membership and `_declared_root_covers` (`2532bb0`), and the case
 axis plus pass-1 span search were still byte-comparing after the fold
-(`ea7025f`) — so on a case-folding volume, the lowercase drive letter
+(`ea7025f`), so on a case-folding volume, the lowercase drive letter
 some shells record into a synced store slipped the home guard. A repo
 root's trailing separator is now spelled `os.sep` rather than hardcoded
 (`aeb9135`). On POSIX `os.altsep` is `None` and every fold is the
 identity. Tests drive Windows semantics from any platform via explicit
 `ntpath` separators with monkeypatched `HOME`/`USERPROFILE`.
 
-### Added — `doctor` can see whether retrieval still works
+### Added: `doctor` can see whether retrieval still works
 
 Every other check asks whether memory is stored, parsed, synced or fresh.
 None asked whether it can be **retrieved**, and a store passes all of
@@ -6700,22 +6700,22 @@ five confident-looking hits and never learns that the one it needed
 ranked sixth.
 
 - **`retrieval_discrimination`** samples each scope and queries every
-  sampled memory twice using terms from its own body — once with its
+  sampled memory twice using terms from its own body: once with its
   rarest, once with its most topical. The rare arm is a control: when it
   is high, the ranker, the index and the fusion are all working, so a low
   topical arm isolates query-document vocabulary mismatch rather than
   blaming a component. On this project's own store the control arm scored
-  100% in all seven scopes while the topical arm ranged 0%–50%.
+  100% in all seven scopes while the topical arm ranged 0% to 50%.
 - The cause is a ceiling, not a bug. Lexical retrieval needs the query to
   share rare terms with the target, and inside a topically coherent scope
-  the shared vocabulary carries almost no information — the subject words
+  the shared vocabulary carries almost no information: the subject words
   appear in nearly every member, so their IDF is near zero. Pricing IDF
   over the collection the caller can actually retrieve is *correct*
   (`c58c836`) and deliberately kept; the consequence is that the ceiling
   falls as a scope grows more coherent, and coherent scopes are exactly
   what good scope hygiene produces.
 - Reported, never auto-fixed. It skips only when a semantic leg would
-  *actually score a search* — the new shared predicate
+  *actually score a search*: the new shared predicate
   `semantic_setup._semantic_rank_leg_active`, which requires an importable
   extra AND a config that routes it into ranking. Importability alone is
   not that: under the default `search_mode = "hybrid"` with
@@ -6724,23 +6724,23 @@ ranked sixth.
   `ok` for exactly the configuration that most needs the warning. The
   `fix_hint` therefore names both halves, and notes that the one flag
   which routes the model also switches write-time dedup from Jaccard to
-  cosine — a coupling `_search_mode_needs_model` documents and which
+  cosine, a coupling `_search_mode_needs_model` documents and which
   decoupling would require the write path to stop reading the shared
   factory.
 - The docstring states what the probe cannot see: a high score does not
   mean retrieval is good, because real queries are not bags of a
-  document's own words. It is a floor — a low score proves a problem, a
-  high score proves only that this particular failure is absent — and it
+  document's own words. It is a floor (a low score proves a problem, a
+  high score proves only that this particular failure is absent), and it
   is explicitly not a helpfulness metric.
 
-### Changed — installing an embeddings extra now actually enables semantic search
+### Changed: installing an embeddings extra now actually enables semantic search
 
 This is the release's one behaviour change that a user will feel, and it
 reverses a decision this project defended for several versions.
 
 Installing `bettermemory[embeddings]` did **nothing** under the default
-`search_mode = "hybrid"`. The model resolved only when `semantic_dedup = true`
-— a flag about *write-time duplicate detection* — so anyone who installed an
+`search_mode = "hybrid"`. The model resolved only when `semantic_dedup = true`,
+a flag about *write-time duplicate detection*, so anyone who installed an
 embedding model to improve **search** got no search change at all, and the
 documented fix was to opt into an unrelated write-time behaviour to buy it.
 `docs/api.md` had said for a long time that semantic mode "needs only the
@@ -6759,12 +6759,12 @@ extra"; the code disagreed, and the code was wrong.
   Three times the cold-query hit rate, and **+15 points on top of** the
   caller-side query guidance shipped in this same window. That second number
   is the one that decided it: what remains after the guidance is the caller
-  *guessing* the store's vocabulary, and no prompt wording recovers it —
+  *guessing* the store's vocabulary, and no prompt wording recovers it;
   only a model that knows "cut a release" relates to "publish a version"
   without having seen the store.
 - **The original objection was real and is now answered rather than
   overridden.** The factory is shared with write-dedup, so resolving under
-  `hybrid` would have silently flipped dedup from Jaccard to cosine — and
+  `hybrid` would have silently flipped dedup from Jaccard to cosine, and
   scored it against Jaccard-calibrated thresholds.
   `handlers.write._resolve_dedup_thresholds` now reads `semantic_dedup`
   itself and asks the factory for nothing when it is off. Pinned by
@@ -6776,10 +6776,10 @@ extra"; the code disagreed, and the code was wrong.
 - Fallout, all in the same direction: `mode="semantic"` now works with just
   the extra (matching what the docs always claimed), the `/memories` lexical
   caveat now names the extra rather than the dedup flag as its trigger, and
-  `doctor`'s `retrieval_discrimination` hint is one sentence shorter — the
-  fix is "install it".
+  `doctor`'s `retrieval_discrimination` hint is one sentence shorter (the
+  fix is "install it").
 
-### Added — `doctor` checks whether an attestation points at the claim
+### Added: `doctor` checks whether an attestation points at the claim
 
 `memory_verify(id, verified_paths=[...])` records the files someone read to
 confirm a memory, and everything downstream trusts that list: `path_drift`
@@ -6787,7 +6787,7 @@ watches those paths, `commit_drift` counts commits against them to decide
 whether a calendar-fresh memory has gone stale.
 
 - `path_drift` only catches an anchor whose file is **missing**. An anchor
-  that exists but is **irrelevant** was invisible to every signal — and it is
+  that exists but is **irrelevant** was invisible to every signal, and it is
   the worse failure, because the memory reads green forever while its real
   ground truth moves unwatched. The instance that prompted this: a memory
   attesting a 3,166-line `eval.py` for a claim about symbols that had never
@@ -6795,46 +6795,46 @@ whether a calendar-fresh memory has gone stale.
 - **`attestation_anchors`** extracts the body's identifier-shaped tokens and
   requires at least one attested file to contain at least one of them. That
   proves only that an anchor mentions the vocabulary, never that it supports
-  the claim — it is a smoke alarm, and says so.
+  the claim; it is a smoke alarm, and says so.
 - Tuned so everything it cannot judge stays silent, because a diagnostic that
   fires on the unjudgeable stops being read. Exempt: memories with no
   attestation, memories with no identifier-shaped tokens (preferences and
   directives legitimately have no code anchor), and memories whose anchors
-  this method cannot read — directories, virtualenvs, paths outside the repo.
+  this method cannot read (directories, virtualenvs, paths outside the repo).
   Fenced blocks count as evidence, which removed the one measured false
   positive: a memory whose load-bearing claim was a command chain mirrored in
   `ci.yml`, where the anchor was doing real work the extractor couldn't see.
 - Measured on a 189-memory store: 63 unanchored, 65 exempt for tokens, 25
-  exempt for unreadable anchors, 36 checked, **1 finding** — a memory about
+  exempt for unreadable anchors, 36 checked, **1 finding**, a memory about
   virtualenv contents attesting `src/bettermemory/builder.py`, so its
   commit-drift tracked a file unrelated to every claim it made. Re-anchored;
   the check now reports clean.
 
-### Changed — `memory_search` documents how to word a query
+### Changed: `memory_search` documents how to word a query
 
 The check above measures the gap; this acts on it, from the only side
 that can. The mismatch is between the asker's vocabulary and the store's,
-and the asker's vocabulary originates outside the store — a corpus cannot
+and the asker's vocabulary originates outside the store: a corpus cannot
 teach itself words it does not contain. But the caller is a frontier model
 that already relates "cut a release" to "tag", "pypi" and "changelog", and
 nothing on the tool surface had ever asked it to say so.
 
 - **`query` stopped being documented as "free text".** Measured on a
   185-memory store over a 20-question gold set authored document-first in
-  caller voice — each target chosen by reading it, then a question written
+  caller voice: each target chosen by reading it, then a question written
   the way a caller asks *before* knowing that memory exists, so the ranker
   never picked the labels. Questions as asked retrieve at **10% recall@1**;
   the same questions re-queried in concrete nouns reach **65%** (13
   improved, 0 regressed), with an insider-vocabulary ceiling arm at 90%.
 - **The control arm is what fixed the wording.** Stripping the question
-  words and keeping the content words scores **10%** — byte-identical to
+  words and keeping the content words scores **10%**, byte-identical to
   asking outright, because the ranker already strips stopwords. "Use
   keywords, not questions" would therefore buy exactly nothing. The new
   line names the lever that actually moved, the vocabulary a memory would
-  literally contain, plus the re-query reflex — a weak first hit is the
+  literally contain, plus the re-query reflex: a weak first hit is the
   only signal a caller ever gets that its wording missed.
 - **Retracted in the same pass:** `mode`'s "`hybrid` for paraphrase
-  recall". With no semantic leg configured — the package default —
+  recall". With no semantic leg configured (the package default),
   `hybrid` is RRF over keyword and BM25, both lexical, so that line
   promised the caller the exact capability whose absence this window
   spent a check measuring.
@@ -6844,18 +6844,18 @@ nothing on the tool surface had ever asked it to say so.
   real guard is `test_api_md_since_prior_session_strict_after`. The lean
   default-on surface **shrank**, 27,245 → 27,155 chars.
 
-### Fixed — "worktree isolation" was never isolation
+### Fixed: "worktree isolation" was never isolation
 
 `auto_scope`'s worktree half runs `origin.worktrees_match`, which is
 **permissive**: it passes a memory or episode through on four cases, and both
 the model-facing descriptions and `docs/api.md` listed two. The unlisted pair
-is the pair nobody can infer — a caller sitting in a **linked worktree** of
+is the pair nobody can infer: a caller sitting in a **linked worktree** of
 the recording checkout, and a recorded worktree **positively gone from disk**.
 
 - The linked-worktree case is not a corner: `git worktree`-based agent fan-out
   runs there, and under it the primary checkout's memories and episodes are
-  fully visible. That is deliberate and desirable — it is why the relaxation
-  exists — but a reader told "isolation" will conclude the opposite.
+  fully visible. That is deliberate and desirable (it is why the relaxation
+  exists), but a reader told "isolation" will conclude the opposite.
 - `DESC_EPISODE_SEARCH` additionally claimed to mirror "the isolation
   `episode_handoff` enforces". It does not: handoff uses strict equality, this
   uses the permissive rule, so the two disagree on **every** pass-through case.
@@ -6864,7 +6864,7 @@ the recording checkout, and a recorded worktree **positively gone from disk**.
   call's commit path DELETES the episodes its filter admits, so each
   pass-through case is a potential cross-worktree delete.
 - Corrected in all three places (`memory_search`, `episode_search`,
-  `episode_patterns`) and guarded two ways — one test asserts against
+  `episode_patterns`) and guarded two ways: one test asserts against
   `inspect.getsource`, so swapping either handler's filter names the
   description that has gone stale, and one asserts `docs/api.md` cannot
   quietly restore the stronger word. What genuinely stays isolated, and is now
@@ -6873,7 +6873,7 @@ the recording checkout, and a recorded worktree **positively gone from disk**.
 The handlers' own inline comments were right the whole time. Only the copy a
 reader sees was wrong, which is the shape this window keeps finding.
 
-### Fixed — one `search_mode` string, three behaviours
+### Fixed: one `search_mode` string, three behaviours
 
 `[behavior] search_mode` was loaded with a bare `str(...)` and read by three
 consumers that each assumed something different about it:
@@ -6890,22 +6890,22 @@ typo.
   capitalising the *default* value killed memory search outright while every
   other surface looked fine.
 - Now normalised once at the loader, which is where the policy layer already
-  lives — so the whole system agrees with the assumption
+  lives, so the whole system agrees with the assumption
   `_search_mode_needs_model` was making on its own. An unrecognised value
   falls back to `hybrid` rather than raising, per `default_max_results`' rule
   that one bad knob must not take the server down, and it **warns**: a silent
   fallback would leave someone who asked for semantic ranking quietly getting
   lexical, which no other surface reports.
 - The mode tuple is a hand-copy of `search.SearchMode` (config cannot import
-  search — the dependency runs the other way) and is now cross-pinned, since
+  search; the dependency runs the other way) and is now cross-pinned, since
   a drifted copy would either reject a real mode or admit one the ranker
   raises on.
 
-### Changed — the shadow relevance label stays shadow, with a reason
+### Changed: the shadow relevance label stays shadow, with a reason
 
 `_relevance_label_v2`'s contract said live behaviour holds on v1 "until
 the logged v1/v2 disagreement data justifies a flip." That data now
-exists — 195 `turn_audited` events carrying both labels — and it answers
+exists, 195 `turn_audited` events carrying both labels, and it answers
 the question in the negative. Recorded in the docstring so the next reader
 inherits the verdict rather than the open question.
 
@@ -6914,7 +6914,7 @@ inherits the verdict rather than the open question.
   v2's runs 47% → 63% → 83% → **100%**. Neither label is measuring
   relevance; both are measuring length, in opposite directions. v1's
   coverage denominator grows with the query, so long messages can never
-  clear 0.75 — the blind spot v2 exists to close — but v2's absolute floor
+  clear 0.75 (the blind spot v2 exists to close), but v2's absolute floor
   replaces a length-blind rule with a length-credulous one, because four
   distinct content tokens landing *somewhere* in a 185-document store is
   near-certain for any long message.
@@ -6923,8 +6923,8 @@ inherits the verdict rather than the open question.
   no memory to miss.
 - A rule's flag rate not tracking message length is a necessary condition
   and needs no ground truth, so it is the screen used: max-minus-min flag
-  rate across those buckets is 45% for v1, 53% for v2 — worse than what it
-  replaces — and 29% for the conjunctive `coverage>=0.75 AND matched>=4`.
+  rate across those buckets is 45% for v1, 53% for v2 (worse than what it
+  replaces), and 29% for the conjunctive `coverage>=0.75 AND matched>=4`.
   The matched-token count is worth keeping; the `or` is the defect. That
   conjunction is what a v5 should be calibrated from, against labelled
   turns, since this screen can rank candidates but never confirm one.
@@ -6932,17 +6932,17 @@ inherits the verdict rather than the open question.
   artifact under either rule, so a low value is not evidence that a store
   is being retrieved well.
 
-### Added — machinery that re-derives instead of restating
+### Added: machinery that re-derives instead of restating
 
 The window's most valuable output. A commit dedicated to hunting
-duplicated false claims minted a new one in its own repair prose —
+duplicated false claims minted a new one in its own repair prose:
 `list_row_to_dict`, a symbol that has never existed in this repo
-(`f0e8f0b`) — which proved the class was structural and that a manual
+(`f0e8f0b`), which proved the class was structural and that a manual
 sweep is unfalsifiable. Four ratchets landed, and each was then audited
 and found weaker than its own docstring.
 
 - **`tests/test_symbol_citations.py` (`e913346`)** scans docstrings AND
-  `#` comments from every tracked `*.py` — `tests/test_doc_claims.py`
+  `#` comments from every tracked `*.py`: `tests/test_doc_claims.py`
   names comments as its own blind spot, and five of the defects lived in
   one. Four rules, each tightened against the whole corpus until live
   findings equalled the allowlist; suppressions are extractor rules
@@ -6960,7 +6960,7 @@ and found weaker than its own docstring.
   scan over public names flags ~79% of them. Proven by copying it onto
   the unchanged parent tree, where it reports exactly 26 citations across
   ten files, all naming a dead `ToolHandlers._load_search_candidates`
-  alias — now retargeted and deleted.
+  alias, now retargeted and deleted.
 
 - **A vocabulary tuned for one consumer fails open in another
   (`6487ea2`, `939c181`).** The historical-prose exemption first searched
@@ -6968,7 +6968,7 @@ and found weaker than its own docstring.
   anywhere in the window silenced the citation beside it; requiring the
   marker to ATTACH fixed that. Then attachment itself proved defeated by
   the same words, because for `before` / `until` / `once` / `was`
-  adjacency IS their ordinary reading — "Called before `_flush` acquires
+  adjacency IS their ordinary reading: "Called before `_flush` acquires
   the lock" is a live claim, silently exempt from all four rules, and it
   also silenced the brand-new rule 5. Root cause: sharing a vocabulary
   across two consumers with different reading disciplines. A module-local
@@ -6983,15 +6983,15 @@ and found weaker than its own docstring.
   the same class: a fixture manipulates paths POSIX-shaped while its
   assertion is platform-neutral, so the defect is invisible locally and
   on ubuntu and costs a windows-latest round-trip. Its exemptions then
-  took three generations to get right — direction-aware for the platform
+  took three generations to get right: direction-aware for the platform
   gate (`caf59f5`), for the probe gate (`2610a74`), and finally ordered
   against the flagged shape (`0abe0cc`), because both were position-blind
   and a skip written *below* a filesystem touch still excused it.
 
 - **Release notes are now gated on commit coverage (`dcf00ca`).** Every
   non-merge commit in the newest tag's window must be represented in that
-  release's entry — short-SHA citation, a shared two-word phrase, or a
-  near-total unigram match — with trivial types and tooling-only scopes
+  release's entry (short-SHA citation, a shared two-word phrase, or a
+  near-total unigram match), with trivial types and tooling-only scopes
   exempt. It skips on shallow CI checkouts by design; the teeth are the
   local run between `git tag` and `git push`, where a gap costs a re-tag
   instead of an erratum. Landing it surfaced the class live in the
@@ -7004,14 +7004,14 @@ and found weaker than its own docstring.
   non-resolving rule and a companion commit-pinned rule now suppress
   those, and both retired allowlist entries the reverse guard then forced
   out. `_LINEREF_BARE` never captured a range end, so a bare `file.py:N-M`
-  was checked as line `N` alone — the same bare/linked asymmetry that let
-  a wrong citation ship before — and a reversed range is now rejected as
+  was checked as line `N` alone (the same bare/linked asymmetry that let
+  a wrong citation ship before), and a reversed range is now rejected as
   malformed rather than validated by its end alone. Four subsequent
   commits tightened the non-resolving vocabulary from bare participles to
   constructions that name what they judge.
 
 - **The description budget got its slack back (`d1585d3`).** Measured
-  27,248 of a 27,250 ceiling at the 3.28.0 release commit — two
+  27,248 of a 27,250 ceiling at the 3.28.0 release commit: two
   characters. At that width it is not a budget, it is a tripwire on
   unrelated work that fires far from its cause, and it had already
   started shaping edits it has no business shaping. The ceiling moves to
@@ -7020,12 +7020,12 @@ and found weaker than its own docstring.
   unchanged and still absolute for the case it was written for; this is a
   recalibration of the slack, in which the measured total does not move.
 
-### Fixed — false claims in prose
+### Fixed: false claims in prose
 
 Beyond the ratchets, the repairs they demanded and the sweeps that
 preceded them. One claim needed seven corrections before it was gone
-(the audit probe "runs against the active store" — `b4c450f`, `4e963ad`,
-`12ef7fb`), another four (the links-vs-drift absence analogy — `497daa8`,
+(the audit probe "runs against the active store"; `b4c450f`, `4e963ad`,
+`12ef7fb`), another four (the links-vs-drift absence analogy; `497daa8`,
 `42fe4e1`, `308e743`, `e91759c`), and a repair is itself a claim. Also
 repaired: `store.py`'s rotted tombstone citations, symbol-anchored rather
 than line-numbered (`612ed49`, `8dff3dc`); four comment sites dating
@@ -7048,21 +7048,21 @@ One inherited finding was REFUTED rather than repaired (`5a960a3`,
 `e1d7b46`). The parked extractor-hunt record claimed strict
 `worktree_root` equality hides every memory for a repo after a checkout
 moves or the store syncs to another machine. It does not reproduce at
-HEAD: it was closed by `b0ab779` — the same commit that wrote the parked
-JSON, so it was filed and fixed together — and shipped in v3.9.0. Now
+HEAD: it was closed by `b0ab779` (the same commit that wrote the parked
+JSON, so it was filed and fixed together) and shipped in v3.9.0. Now
 pinned by three end-to-end cases (moved checkout, synced foreign-OS path,
 and the negative control that a second LIVE checkout stays isolated,
 which is what distinguishes the real fix from "drop the worktree
 clause"). No production change. The record's own correction then
-overstated in the other direction — the entry was open at the hunt's base
-— and was itself corrected.
+overstated in the other direction (the entry was open at the hunt's base)
+and was itself corrected.
 
 ### Changed
 
 - `src/bettermemory/cli/sync.py` goes 27% → 100% statement coverage
   (`153d284`). It sat with every `_cli_sync_*` body uncovered, so nothing
   pinned the layer that turns a `SyncError` into an exit code and a
-  stderr message — the layer this window's three new refusals reach users
+  stderr message, the layer this window's three new refusals reach users
   through. Sixteen tests driven in-process through the real CLI entry
   point, mutation-checked against four separate mutants. No mapping bug
   found.
@@ -7070,7 +7070,7 @@ overstated in the other direction — the entry was open at the hunt's base
 ### Erratum (2026-07-30)
 
 The entry above is left as it shipped. Its arithmetic is internally
-sound — 10% → 30% is three times, 65% → 80% is fifteen points — but the
+sound (10% → 30% is three times, 65% → 80% is fifteen points), but the
 measurement underneath it no longer stands. That 190-memory live-store
 pair was never captured as a committed artifact, and the blind
 replication built afterwards in `bench/retrieval` could not reproduce
@@ -7092,10 +7092,10 @@ comparison, at recall@1:
 
 So +25 points on the cold query rather than a tripling, and +10 points
 on top of the query guidance rather than +15. The model-facing sites
-that had restated the retired pair — `DESC_MEMORY_SEARCH`, the
+that had restated the retired pair (`DESC_MEMORY_SEARCH`, the
 `handlers/search.py` module docstring, `config.py`'s shipped
 `DEFAULT_CONFIG` prose, `semantic_setup.py`, and `doctor`'s
-`retrieval_discrimination` fix hint — were re-pointed at this artifact
+`retrieval_discrimination` fix hint) were re-pointed at this artifact
 in the 2026-07-30 window; the resident description now carries the
 instruction with no number at all, because that claim is only honest
 next to its caveat.
@@ -7105,19 +7105,19 @@ next to its caveat.
 The learning-loop release: three features that move the store from
 "archive with telemetry" toward "system that learns from its own
 experience". A design review of what the system *lacked* found the
-adaptive loops half-built — negative outcomes collected but never fed
+adaptive loops half-built: negative outcomes collected but never fed
 back into ranking, recurrence suppressed by dedup instead of
 accumulated, and corpus-level disagreement computed by the dedup scan
 and thrown away with the report. All three close here. Every ranking
 change is opt-in and the shipped default ranking is byte-stable.
 
-### Added — negative outcomes demote ranking (`outcome_demotion`)
+### Added: negative outcomes demote ranking (`outcome_demotion`)
 
 - Endorsement has boosted explicitly-applied memories since the
   `endorsement_boost` flag shipped; the negative half of the same
   signal (`ignored` / `contradicted`) only ever annotated. With
   `[behavior] outcome_demotion = true`, active negatives now slide a
-  memory down: `1 - 0.15*(1 - exp(-(ignored + 2*contradicted)/3))` —
+  memory down: `1 - 0.15*(1 - exp(-(ignored + 2*contradicted)/3))`,
   the mirror of the endorsement curve, floored at -15% so it breaks
   near-ties and can never bury a strongly-relevant hit. Contradicted
   weighs double: an off-topic surfacing is often the query's fault; a
@@ -7130,24 +7130,24 @@ change is opt-in and the shipped default ranking is byte-stable.
   (`health._has_unresolved_contradiction`'s rule applied per-event).
   Three independent guards against the rich-get-poorer spiral.
 - With the flag on, the per-search event read widens from the 600s
-  attribution horizon to the full 30-day negative window — which also
+  attribution horizon to the full 30-day negative window, which also
   upgrades the `recent_negative_outcomes` annotation's 30-day contract
   from best-effort (rotation luck) to guaranteed. The tallies cannot
   cross-contaminate: each enforces its own cutoff internally.
 
-### Added — recurrence accumulates (`corroborations` +
+### Added: recurrence accumulates (`corroborations` +
 `corroboration_boost`)
 
 - Dedup used to SUPPRESS recurrence evidence: the tenth time a claim
-  re-entered a conversation, the write bounced and nothing accumulated
-  — a one-off remark and a bedrock preference had equal standing. Now
+  re-entered a conversation, the write bounced and nothing accumulated;
+  a one-off remark and a bedrock preference had equal standing. Now
   a duplicate-rejected `memory_write` credits the matched memory a
   corroboration: persisted `corroborations` count plus
   `last_corroborated`, a third timestamp axis (`updated` = content
   edits, `last_verified_at` = reality-checks, `last_corroborated` =
   recurrence). Once per (memory, session); best-effort by contract;
-  `updated` deliberately untouched — a recurrence must not fake a
-  rewrite. The rejection response says so (`corroboration_recorded`),
+  `updated` deliberately untouched (a recurrence must not fake a
+  rewrite). The rejection response says so (`corroboration_recorded`),
   so the model stops treating duplicates as wasted calls.
 - Curation counts it as life: the freshest-touch window behind
   `dead`-bucket health, the consolidate demotion pass, and cold-scope
@@ -7159,7 +7159,7 @@ change is opt-in and the shipped default ranking is byte-stable.
   the write path, so an episode restating a known fact corroborates it
   for free.
 
-### Added — corpus-level inference (`memory_conflicts`,
+### Added: corpus-level inference (`memory_conflicts`,
 `episode_patterns`)
 
 - **The store can now notice its own contradictions.** New
@@ -7167,7 +7167,7 @@ change is opt-in and the shipped default ranking is byte-stable.
   polarity guard: near-identical bodies whose number-bearing tokens
   mutually diverge ("port 5432" vs "port 5433", 3.27.0 vs 3.27.1) are
   a value-level disagreement. Previously that pair was a DEDUP
-  CANDIDATE — an applying consolidate pass tombstoned one side on
+  CANDIDATE: an applying consolidate pass tombstoned one side on
   recency rather than truth. Now both detectors' skips persist into a
   verdict queue (`.conflicts.jsonl`) instead of dying with the report:
   stable pair ids, re-scans refresh rather than duplicate, and rows
@@ -7176,21 +7176,21 @@ change is opt-in and the shipped default ranking is byte-stable.
   bodies inline and takes the model's verdict.
   `verdict="contradiction"` writes the `contradicts` link (before the
   verdict stamp, so the link's own `updated` bump can't re-trigger
-  anything) — both memories then surface it at retrieval, and
+  anything); both memories then surface it at retrieval, and
   resolution proceeds through the normal verbs. `verdict="compatible"`
-  dismisses sticky — until either member's content changes, which
+  dismisses sticky, until either member's content changes, which
   legitimately reopens the question. Scans run on demand
   (`scan=True`) and automatically on every APPLYING consolidate pass;
   dry-run stays zero-side-effect. `curation_pending` gains a
   `conflicts` key in both the absolute and delta views.
 - `episode_patterns` (full surface) surfaces themes recurring across
-  ≥3 DISTINCT sessions' episodes — the consolidation no single session
+  ≥3 DISTINCT sessions' episodes, the consolidation no single session
   can see. Detection is conservative (unstemmed distinctive terms,
   ubiquity ceiling against project vocabulary, with a monothematic-
   journal fallback); the model AUTHORS the promoted body and the write
   routes through the full `memory_write` gate stack. Committed
   promotes delete their member episodes; a `duplicate` rejection still
-  lands value — it corroborates the existing memory. Dismissals
+  lands value: it corroborates the existing memory. Dismissals
   persist keyed by member-set hash: sticky for that exact evidence,
   reopened by a new member episode.
 
@@ -7201,10 +7201,10 @@ change is opt-in and the shipped default ranking is byte-stable.
   bullet documents the corroboration credit. The eval tool map covers
   the two new tools (+3 event kinds), and the eval markdown renderer
   now PINS untelemetered rows into the published table past the top-10
-  slice — at 27 tools a structurally-zero row can never crack top-10,
+  slice: at 27 tools a structurally-zero row can never crack top-10,
   and the "(no telemetry)" note must not silently vanish.
 - `sync push`'s gitignore covers the two new store-root sidecars
-  (`.conflicts.jsonl`, `.episode_patterns.jsonl`) — host-local
+  (`.conflicts.jsonl`, `.episode_patterns.jsonl`), host-local
   curation state, caught by the structural sidecar guard before it
   could repeat the plaintext-push incident class.
 
@@ -7212,23 +7212,23 @@ change is opt-in and the shipped default ranking is byte-stable.
 
 The entry above is left as it shipped. It is incomplete: the preamble
 counts "three features", but tag `v3.28.0` carries two further
-substantive commits that received no entry anywhere in this file — the
+substantive commits that received no entry anywhere in this file, the
 same omission class as v3.24.0's `096218e`, caught this time by the
 release-window coverage check that now lives in
 `tests/test_changelog.py`. Stated now as the bullets the release
 should have carried:
 
-- **Web UI overhauled — verdict parity, ranked search, three new
+- **Web UI overhauled: verdict parity, ranked search, three new
   read-only pages (`74f625d`).** The UI had frozen around the 3.18
   surface while eval telemetry, the episode tier, and the curation
   engine shipped around it, and its `/memories` search was a
-  contiguous-substring filter over the summary line — a query could
+  contiguous-substring filter over the summary line: a query could
   return zero rows against a store whose memory bodies carried it.
   Search now runs through the same `search.search` ranker
   `memory_search` uses (`semantic` degrades to `hybrid`: the web
   process loads no embedding model), and pages speak the staleness
   verdict through the same `compute_staleness_verdict` chain the MCP
-  handlers use — the web computes no verdict arithmetic of its own.
+  handlers use; the web computes no verdict arithmetic of its own.
   Three read-only pages close the feature gap (`/eval`, `/episodes`,
   `/curation`) and `/health` gains the modern buckets. The mutation
   surface is unchanged: verify stays the only POST, still answered
@@ -7239,14 +7239,14 @@ should have carried:
   the guard and `git add -A` is still possible"): the porcelain
   guards describe how a conflict was CREATED, so conflict content
   arriving from the user's own git between a caller's predicate and
-  the stage was committed as if resolved. `_stage_and_commit` — the
+  the stage was committed as if resolved. `_stage_and_commit` (the
   package's single `git add -A` choke point, reached by `push` and
-  `auto` alike — now scans the index between staging and committing
+  `auto` alike) now scans the index between staging and committing
   for line-start `<<<<<<<` / `>>>>>>>` / `|||||||` markers (exactly
   seven, per git's default `conflict-marker-size`; deliberately not
   the bare `=======` divider, which a setext markdown underline puts
   at column 0 in legitimate memory bodies) and refuses with
-  file-and-line detail when any are staged. The scan fails closed — a
+  file-and-line detail when any are staged. The scan fails closed: a
   git-grep failure refuses rather than commits. Losing the predicate
   race now costs a refusal instead of a corrupt commit; the race
   itself is not claimed gone.
@@ -7259,11 +7259,11 @@ schema bumps to v6 (one-time rebuild on first use), the store root's
 permissions change on disk when it is opened, and search ranking moves
 for any store past the 500-memory prefilter threshold.
 
-### Fixed — store permissions
+### Fixed: store permissions
 
 - **The store root was created world-readable and world-listable.**
   `Store.__post_init__` created it with a bare
-  `mkdir(parents=True, exist_ok=True)` — no mode — so under the usual 022
+  `mkdir(parents=True, exist_ok=True)`, no mode, so under the usual 022
   umask every store root on disk was `0o755`. Immediately below it, the
   tombstone directory already took an explicit `mode=0o700` with a
   comment saying not to rely on the caller's umask; the reasoning was
@@ -7271,8 +7271,8 @@ for any store past the 500-memory prefilter threshold.
 
   This is a disclosure, not a tidiness point: a memory's **filename**
   embeds the first ~43 characters of its summary, so a listable root
-  hands any local account the gist of the whole store from `ls` alone —
-  `2026-07-20-acquisition-talks-with-northstar-closing-in-<ulid>.md`.
+  hands any local account the gist of the whole store from `ls` alone
+  (`2026-07-20-acquisition-talks-with-northstar-closing-in-<ulid>.md`).
   The `0o600` on the bodies never came into it, and SECURITY.md names
   filesystem permissions as the access-control boundary.
 
@@ -7284,34 +7284,34 @@ for any store past the 500-memory prefilter threshold.
 
 - **`doctor` reports a root it could not tighten**, and its `--fix` chmod
   is reachable again. The fixer previously returned early whenever the
-  directory was writable — which a `0o755` root is — so the chmod five
+  directory was writable, which a `0o755` root is, so the chmod five
   lines below could never run for the one mode nearly every store had.
   The check heals before it judges, so a legacy root does not turn
   `doctor` red on the first run after upgrading; only a chmod that
   genuinely could not land surfaces as `warn`.
 
-### Fixed — search ranking
+### Fixed: search ranking
 
 - **BM25 priced term rarity against the wrong collection.** Above the
   500-memory threshold the FTS prefilter hands the ranker at most 50
   candidates, every one of them present *because* it matched the query.
   Document frequency counted over that pool makes the query's own
-  discriminative terms look ubiquitous — df approaches N by construction
-  — and Okapi IDF collapses toward zero for exactly the terms that should
+  discriminative terms look ubiquitous (df approaches N by construction),
+  and Okapi IDF collapses toward zero for exactly the terms that should
   dominate, degenerating BM25 into length normalisation plus recency.
   Measured through the live handler on a 608-memory store where 8
   memories carried the queried term: `IDF` 0.0572 pool-derived against
   4.2718 corpus-wide, a 74x error. The same arithmetic on a 63-memory
-  store with 3 carriers reads 0.1335 against 2.9 — the gap narrows with
+  store with 3 carriers reads 0.1335 against 2.9; the gap narrows with
   the corpus but never closes.
 
   Frequencies now come from the index, over the collection the search
-  will actually rank — scopes, excluded scopes, repo and worktree, the
+  will actually rank: scopes, excluded scopes, repo and worktree, the
   same admission rule `_filter_candidates` applies. That matters under
   auto-scope, where whole-store frequencies would price rarity against
   memories the caller cannot retrieve. The rule is evaluated in Python on
   index rows rather than pushed into SQL, because `repos_match` compares
-  on `(host, owner, name)` and consults per-process alternate spellings —
+  on `(host, owner, name)` and consults per-process alternate spellings:
   a SQL filter would quietly disagree with the ranked set for precisely
   the multi-remote stores that mechanism exists to serve.
 
@@ -7320,7 +7320,7 @@ for any store past the 500-memory prefilter threshold.
 
 - **`migrate` left the index holding pre-migration frontmatter.** It
   rewrites `.md` files directly rather than through a Store mutator, and
-  nothing kept the index in step — the startup divergence check compares
+  nothing kept the index in step: the startup divergence check compares
   counts, and rewriting scopes or an origin block in place changes none,
   so the skew was invisible. A migration that changed anything now flags
   the index for rebuild, which fails safe (search falls back to the full
@@ -7337,7 +7337,7 @@ for any store past the 500-memory prefilter threshold.
 
 - **The server's `instructions` block no longer carries the `/loop`
   sentence.** It told every connecting client to call `episode_handoff`
-  at entry and `episode_write` at exit — a directive for one operator's
+  at entry and `episode_write` at exit, a directive for one operator's
   audit-loop harness, resident in the system prompt of every user who had
   no such workflow. The `episode_*` tools are unchanged and still
   documented in their own descriptions.
@@ -7351,7 +7351,7 @@ and `sync push` / `sync auto` / `sync pull` now REFUSE in situations
 where they previously succeeded. Read the upgrade notes at the bottom
 before upgrading a store you sync.
 
-### Fixed — event log
+### Fixed: event log
 
 - **Cross-shard rotation destroyed whole segments.** 3.24.0 sharded the
   active event log and gave each shard its own append lock, but left the
@@ -7365,11 +7365,11 @@ before upgrading a store you sync.
   segment size single collisions destroyed hundreds to thousands of
   events. Uniform crc32 striping makes shards fill in phase, so
   same-second rotation is the correlated case under exactly the
-  concurrent workload sharding was built for — not a rare interleaving.
+  concurrent workload sharding was built for, not a rare interleaving.
   Rotation names are now partitioned by shard and both the archive and
   the holding path are probed before a name is taken.
 - **`iter_all_events` was no longer chronological.** It yielded every
-  archive before every active segment — sound when one active file
+  archive before every active segment: sound when one active file
   rotated wholesale into strictly-older archives, wrong once shards
   rotate independently, because a quiet shard's active segment can hold
   events older than a busy shard's archive. It now `heapq.merge`s
@@ -7392,10 +7392,10 @@ before upgrading a store you sync.
   skips holding files tagged for another shard and runs under a
   store-wide rotation lock.
 
-### Fixed — sync could commit conflict markers
+### Fixed: sync could commit conflict markers
 
 Three separate paths let `git add -A` stage a conflicted file as if it
-were resolved, committing `<<<<<<<` into a memory body — permanently, and
+were resolved, committing `<<<<<<<` into a memory body, permanently, and
 in one case onward to every clone.
 
 - **`sync push` committed AND pushed them.** It never consulted the
@@ -7404,9 +7404,9 @@ in one case onward to every clone.
   bare remote's `main` tip.
 - **`sync auto` committed them through a lock race.** Its guard ran
   *before* taking the sync lock, so a conflict arriving during the wait
-  was invisible. In the worst shape — a conflicted `git stash pop`, which
+  was invisible. In the worst shape (a conflicted `git stash pop`, which
   leaves no sentinel file and no remote divergence for the follow-on
-  rebase to trip on — `auto` returned normally, with no error at all, and
+  rebase to trip on), `auto` returned normally, with no error at all, and
   the markers reached the remote. The guard now runs inside the lock, as
   `push` and `pull` already did.
 - **The guard keyed on the wrong thing.** It probed for rebase sentinel
@@ -7419,11 +7419,11 @@ lock serialises bettermemory's own operations, not the user's hand-run
 git, so a conflict created between the guard and `git add -A` is still
 possible. The window is short but not zero.
 
-### Fixed — diagnostics and reporting
+### Fixed: diagnostics and reporting
 
 - **`doctor --fix` deleted user-added `.gitignore` lines**, rewriting the
   store's file wholesale. It now reconciles additively, and `sync` does
-  the same reconciliation on push rather than only at init — so a store
+  the same reconciliation on push rather than only at init, so a store
   created before 3.24.0 finally gets the sharded-event-log ignore rule
   instead of pushing raw telemetry to its remote.
 - **`doctor`'s event-log check probed only the first shard** while
@@ -7438,19 +7438,19 @@ possible. The window is short but not zero.
   budget so a real desync could never be reported. It now settles on the
   writer's lock instead of a timer.
 
-### Fixed — path drift
+### Fixed: path drift
 
 - **3.25.2's route-suppression overshot.** It stopped inventing drift and
   started hiding it: `/srv/docker/gitea`-shaped citations, and any
   home-rooted path written in its absolute form, were silently dropped
   rather than reported missing. The two spellings of one path now agree,
   case-insensitive volumes are handled, and the suppressed set is
-  visible in a new `dropped_as_route` bucket on `PathDriftReport` — an
+  visible in a new `dropped_as_route` bucket on `PathDriftReport`, an
   in-process bucket; it does not yet reach the MCP response surface.
 
 ### Added
 
-- **`tests/test_doc_claims.py`** — a CI guard on the truth of shipped
+- **`tests/test_doc_claims.py`**: a CI guard on the truth of shipped
   prose. It extracts checkable claims from the changelog, README and
   docs (paths, symbols, test counts, line citations) and fails when the
   repo does not support one. Known-false claims sit in a ratcheted
@@ -7479,11 +7479,11 @@ possible. The window is short but not zero.
 
 The entry above is left as it shipped. It is incomplete: tag
 `v3.26.0`'s window (`v3.25.2..v3.26.0`) carries ten substantive fix
-commits the entry left unrepresented — which is what the
+commits the entry left unrepresented, which is what the
 release-window coverage check in `tests/test_changelog.py` measures:
 representation inside one release's own section, not presence
 somewhere in the file. Nine of the ten are mentioned nowhere else in
-this file either — the same omission class as v3.24.0's `096218e`
+this file either, the same omission class as v3.24.0's `096218e`
 and the two commits the v3.28.0 erratum repairs. `b3cc470` is the
 exception, and the reason this claim is scoped to the entry rather
 than to the file: the 3.25.1 erratum already names that SHA as the
@@ -7491,12 +7491,12 @@ follow-up that routed the missed fourth rename site through
 `replace_atomic`, and did so in the file as `v3.26.0` shipped and as
 this erratum was written. What `b3cc470` never got was a bullet in
 the notes of the release that carried it. The coverage check judges
-only the newest tag's window by design — older entries are a frozen
-record it deliberately does not re-litigate — so nothing in CI forces
+only the newest tag's window by design (older entries are a frozen
+record it deliberately does not re-litigate), so nothing in CI forces
 this repair: the ten surfaced by retro-running that check against
 this window (the adjacent `v3.26.0..v3.27.0` window retro-runs
 clean), and the repair is editorial. The entry summarized four Fixed
-themes and dropped the rest of the round wholesale — several of the
+themes and dropped the rest of the round wholesale; several of the
 ten touch the very subsystems it covers. Stated now as the bullets
 the release should have carried:
 
@@ -7506,13 +7506,13 @@ the release should have carried:
   `_newest_rotated_segment_for_shard` accept only candidates whose
   parsed shard matched the active segment's, deliberately refusing
   untagged ones. A store upgrading from 3.24.0/3.25.x is exactly the
-  shape that owns ONLY untagged archives — its active log was already
-  sharded while rotation had not yet learned the `-s{NN}` tag — so its
+  shape that owns ONLY untagged archives (its active log was already
+  sharded while rotation had not yet learned the `-s{NN}` tag), so its
   windowed reader could never reach its own rotated history until
   every pre-upgrade archive aged out; a regression, confirmed by
   running the pre-`eace517` module against identical on-disk state.
   The fallback is restored: tagged candidates win, untagged ones are
-  eligible only when a shard has none — over-inclusion of same-store
+  eligible only when a shard has none. Over-inclusion of same-store
   events, which the ts-merge and the caller's window filter absorb,
   versus under-inclusion that loses events the caller cannot recover.
   Same commit: window coverage now derives from the union of the
@@ -7520,9 +7520,9 @@ the release should have carried:
   rotated candidates, so a shard with rotated history but no active
   file on disk (reachable mid-rotation and after a crash) still gets
   its history prepended; `_archive_sort_key` stopped ranking archives
-  by mtime — a segment recovered from a days-old crashed rotation
+  by mtime (a segment recovered from a days-old crashed rotation
   carries the mtime of TODAY's compression, so recovery displaced
-  real history — and ranks by the rotation timestamp stamped in the
+  real history) and ranks by the rotation timestamp stamped in the
   filename (the "moved off `mtime_ns`" half of the same-second bullet
   above; the write-evidence tiebreak arrived separately, `f6659b8`);
   and `Recorder.session_id` is folded through `_safe_stem_component`
@@ -7530,13 +7530,13 @@ the release should have carried:
   could have pointed the rename outside the store root.
 
 - **The embedding-cache rename skipped the Windows-safe helper
-  (`b3cc470`).** 3.25.1 added `replace_atomic` — a bounded retry for
-  Windows' refusal to rename over an open destination — and wired
+  (`b3cc470`).** 3.25.1 added `replace_atomic`, a bounded retry for
+  Windows' refusal to rename over an open destination, and wired
   three call sites; a fourth was missed: `flush_persistent_cache` in
   `semantic.py` renamed the embedding-cache `.npz` into place with a
   bare `Path.replace`. The miss was structural: the rename primitive
   has four stdlib spellings and the 3.25.1 sweep grepped for one. The
-  site is a genuine instance — cache hydration opens the destination
+  site is a genuine instance: cache hydration opens the destination
   with no lock, so a second MCP server on the same store is exactly
   the open handle Windows refuses, and the flush's enclosing
   `except Exception` swallowed the resulting PermissionError into a
@@ -7544,7 +7544,7 @@ the release should have carried:
   never persisted, re-embedding the whole store on every start. The
   rename now routes through the helper, and the durable half is an
   AST guard in `tests/test_fsutil.py` that finds every rename-shaped
-  call in the package — all spellings, aliased imports included — and
+  call in the package (all spellings, aliased imports included) and
   permits them only inside the helper itself.
 
 - **That guard was itself half-closed, and flush failures stayed
@@ -7552,11 +7552,11 @@ the release should have carried:
   `shutil.move` in the package and the new guard passed green:
   `shutil.move` degrades to `os.rename` on a same-filesystem move, so
   it carries the identical open-destination exposure. Zero live
-  instances existed — a guard repair, not a live bug — but the
+  instances existed (a guard repair, not a live bug), but the
   detector was an enumeration of known spellings, so widening it by
   one name would repeat the mistake at a different offset. It now
   also covers `os.renames`, Python 3.14's `Path.move` /
-  `Path.move_into`, and every import aliasing of `shutil` — and, the
+  `Path.move_into`, and every import aliasing of `shutil`; and, the
   part that ends the pattern, a test DERIVES the expected coverage
   from the running stdlib, so a spelling nobody thought of turns the
   guard red instead of leaving it vacuously green. The arity rule's
@@ -7574,16 +7574,16 @@ the release should have carried:
   removal of the Windows lock's silent no-op to 2.7; the branch is
   still a bare `yield` at `v2.7.3` and the commit introducing
   `msvcrt.locking` first ships in `v3.0.0`, so all three now read
-  3.0.0 — the correction `82b010a` had already made in the test
+  3.0.0, the correction `82b010a` had already made in the test
   suite. And the docstring named the 30s `BETTERMEMORY_FLOCK_TIMEOUT`
   ceiling only in its Windows paragraph while saying nothing about
-  the POSIX wait — the likely origin of the false sync-lock comment
+  the POSIX wait, the likely origin of the false sync-lock comment
   `60b7553` had to delete, which applied that ceiling to a POSIX
   acquire that has none. The docstring now states the asymmetry from
-  both ends — the POSIX acquire is blocking and unbounded (plain
+  both ends: the POSIX acquire is blocking and unbounded (plain
   `LOCK_EX`, no deadline; the env var is read only by
   `_flock_windows`), the Windows acquire is bounded and raises
-  `TimeoutError` — with behavioural and AST pins so neither claim can
+  `TimeoutError`, with behavioural and AST pins so neither claim can
   rot silently.
 
 - **`migrate --repair`'s printed action list could lie, or never
@@ -7591,7 +7591,7 @@ the release should have carried:
   applying a bulk mutation over the whole store, and it had three
   ways to go wrong. A torn record whose `scopes` value held a
   non-string element raised `TypeError` from outside the per-file
-  try/except — the routing lookups hash every element — so ONE
+  try/except (the routing lookups hash every element), so ONE
   malformed memory aborted the entire plan, with nothing repaired and
   no report at all; scopes are now screened through
   `_routable_scopes`, the bad record lands in `report.malformed` (the
@@ -7604,7 +7604,7 @@ the release should have carried:
   successful write, keeping the dry-run action list equal to what
   apply persists on the success path. And
   `migrate_origin_in_directory`'s docstring claimed both flags are
-  inert when `repair=False` — untrue for `keep_global`, which gates
+  inert when `repair=False`, untrue for `keep_global`, which gates
   the legacy backfill on exactly that path; it now states each flag's
   real gating.
 
@@ -7614,7 +7614,7 @@ the release should have carried:
   denominator note; the text renderers were still wrong:
   `render_text`, `render_threshold_sweep_text`,
   `render_widening_preview_text` and `render_tool_usage_text` each
-  stamped a "— last {window}" header over `total_events_scanned`,
+  stamped a "last {window}" header over `total_events_scanned`,
   which counts the WHOLE log (marker resolution runs ahead of the
   window filter by design). `ThresholdSweepReport`,
   `WideningPreviewReport` and `ToolUsageReport` now carry their own
@@ -7622,20 +7622,20 @@ the release should have carried:
   population the all-time counter covers, and all four renderers read
   it. The session-tally exclusion also became two-axis
   (`is_admin_recorded_event`): `consolidate --acknowledge-debt`
-  records `kind="use"` rows — a kind genuine sessions also emit, so
+  records `kind="use"` rows (a kind genuine sessions also emit, so
   kind-based exclusion structurally cannot catch them without
-  blinding the tally to real sessions — under a throwaway session id,
+  blinding the tally to real sessions) under a throwaway session id,
   and the rows' `cli_` attribution prefix (verified present on the
   real write path) is the second axis. Scoped to the session tally
   only: those rows still count as genuine endorsements. An AST parity
   scan now holds any literal fork of the admin-kind roster equal to
   the canonical set, because the comment claiming every consumer
-  reads the shared constant was false at its own introduction —
+  reads the shared constant was false at its own introduction:
   doctor carried a hand-written copy.
 
 - **The fifth all-time-under-a-window-label surface (`d85798e`).**
   `WideningDetailReport` declared only the all-time counter, and its
-  `to_dict` emitted it right next to `window_seconds` — the CLI dumps
+  `to_dict` emitted it right next to `window_seconds`; the CLI dumps
   that dict verbatim for `eval --widening-preview --detail --json`,
   so a JSON consumer read an all-time figure under a window label. It
   has no "Events scanned" text row, which is how the `f90fa18` sweep
@@ -7645,7 +7645,7 @@ the release should have carried:
   already computed, and an AST enumeration test asserts that every
   dataclass in the module declaring the all-time field declares the
   window twin, and that every `to_dict` emitting one key emits the
-  other — the convention is enforced rather than left to an eye that
+  other; the convention is enforced rather than left to an eye that
   had by then missed a surface twice.
 
 - **`doctor`'s cadence census applied half the admin classification
@@ -7654,11 +7654,11 @@ the release should have carried:
   `f90fa18`'s attribution axis can catch still landed in its session
   census: one real session plus one `consolidate --acknowledge-debt`
   run put the census at two and flipped the check from `ok` to
-  `warn` — the exact false positive the two-session floor was added
+  `warn`, the exact false positive the two-session floor was added
   to kill, re-entering through the axis this consumer wasn't reading.
   The census now calls `is_admin_recorded_event` and holds no roster
   of its own, and an AST scan fails any module outside `eval.py` that
-  names either axis in code — because "imports the shared constant"
+  names either axis in code, because "imports the shared constant"
   had proven satisfiable while still implementing half the rule.
 
 - **Two green-in-isolation repairs collided on a changed sync return
@@ -7670,43 +7670,43 @@ the release should have carried:
   against a base where the other did not exist, their file sets were
   disjoint, and the integrated result called `len()` on the
   dataclass. Unwrapping the added-lines list was not enough: the same
-  sync change stopped RAISING on write failure — it stands down and
-  reports — so doctor's `except OSError` no longer saw that case. The
+  sync change stopped RAISING on write failure (it stands down and
+  reports), so doctor's `except OSError` no longer saw that case. The
   result now carries `failed_stage` ("read" / "write" / None) and
   doctor branches on it: a write stand-down (knew exactly what to
   append, could not) reports an honest not-applied fix result; a read
   stand-down (never learned what an overwrite would destroy)
   correctly declines and leaves the finding manual. `push` and `init`
-  still treat both halves identically — never fail a sync over a
-  healing side-effect — which is why the distinction lives in the
+  still treat both halves identically (never fail a sync over a
+  healing side-effect), which is why the distinction lives in the
   result rather than in two return types.
 
 - **The path-drift bucket's honest reach sentence has a commit behind
-  it (`211b68f`).** The caveat closing the path-drift bullet above —
-  "an in-process bucket; it does not yet reach the MCP response
-  surface" — is this commit's finding, not part of the bucket's
+  it (`211b68f`).** The caveat closing the path-drift bullet above
+  ("an in-process bucket; it does not yet reach the MCP response
+  surface") is this commit's finding, not part of the bucket's
   design. The route-suppression repair (`c1ede35`) had shipped a
   `has_findings` predicate on `PathDriftReport` whose docstring
   claimed to BE the retrieval surfaces' emit gate and claimed that
   gate would notice a newly added bucket. Both claims were false, the
   second self-refutingly so: `dropped_as_route` IS a new bucket, the
   real gates (inline expressions in the show/search handlers) never
-  consulted the predicate, and nothing noticed. The dead predicate —
-  zero consumers outside its own unit test — is deleted, `has_drift`
+  consulted the predicate, and nothing noticed. The dead predicate
+  (zero consumers outside its own unit test) is deleted, `has_drift`
   now documents itself as one term of the gate rather than the gate,
   and the bucket's reach is stated as measured: in-process callers
   always see it; a mixed report (drift plus suppressed routes) does
   ship it, because the gates emit the whole `to_dict()` once they
-  fire; and a route-ONLY report — precisely the case the bucket was
-  added for — reached no MCP surface at all, documented as the
+  fire; and a route-ONLY report, precisely the case the bucket was
+  added for, reached no MCP surface at all, documented as the
   residual defect instead of as shipped observability.
 
 Separately, two sentences in the frozen bullets above do not survive
-checking against this same window's commits — already false when the
-tag was cut, not rotted after it:
+checking against this same window's commits (already false when the
+tag was cut, not rotted after it):
 
 - **"does not yet reach the MCP response surface" was false at the
-  cut.** `c1ede35` — the in-window commit that created the bucket —
+  cut.** `c1ede35`, the in-window commit that created the bucket,
   also serialised it, so `to_dict()` has carried a `dropped_as_route`
   key from the bucket's first commit; and the real emit gates in
   `memory_show` and `memory_search`'s expanded top hit, which predate
@@ -7715,11 +7715,11 @@ tag was cut, not rotted after it:
   So at 3.26.0 the bucket reached the MCP response surface whenever a
   report was emitted for another reason; the sentence's true part is
   the narrower residual the `211b68f` bullet above states as
-  measured — a route-ONLY report, the bucket with nothing else to
+  measured: a route-ONLY report, the bucket with nothing else to
   fire the gate, reached no MCP surface at all.
 
 - **"ordered among themselves by mtime" was stale at the cut.**
-  `7f76801` — also in-window, before the tag — moved
+  `7f76801` (also in-window, before the tag) moved
   `_archive_sort_key` off mtime to the rotation timestamp stamped in
   the filename, and rewrote `iter_all_events`' docstring the same way
   ("ordered by their filename rotation timestamp"). As v3.26.0
@@ -7728,13 +7728,13 @@ tag was cut, not rotted after it:
   bullet above already records the move ("`_archive_sort_key` moved
   off `mtime_ns`"), so the entry contradicted itself as it shipped;
   the untagged-chain sentence is the half that never got updated. Its
-  best-effort qualifier still holds — the mechanism it names is what
+  best-effort qualifier still holds; the mechanism it names is what
   was wrong.
 
 ## 3.25.2 - 2026-07-19
 
 A path-drift false positive that made healthy web-app memories look stale.
-Found by dogfooding — a verification sweep over a Go+React project's
+Found by dogfooding: a verification sweep over a Go+React project's
 memories, where four independent agents flagged the same phantom drift.
 
 ### Fixed
@@ -7742,8 +7742,8 @@ memories, where four independent agents flagged the same phantom drift.
 - **Bare application routes were reported as missing files.** Route
   suppression (`_is_route`) learns its vocabulary from
   `_DOMAIN_ROUTE_RE`, which only matches domain-qualified URLs like
-  `example.com/api`. A memory citing bare routes — `/api/v1/events/
-  presence`, `/admin/macros`, `/portal/incidents/new` — produced an
+  `example.com/api`. A memory citing bare routes (`/api/v1/events/
+  presence`, `/admin/macros`, `/portal/incidents/new`) produced an
   *empty* vocabulary, so every route fell through to the filesystem check
   and landed in `path_drift.missing`. Identical citations were suppressed
   correctly if the body happened to contain any fully-qualified URL, and
@@ -7760,7 +7760,7 @@ memories, where four independent agents flagged the same phantom drift.
   candidate that looks like a route. Two escapes keep genuine filesystem
   drift reportable: an **extension** on the terminal segment
   (`/srv/app/config.yaml` reads as a file), and an **existing parent
-  directory** (`/Users/me/gone`, `/etc/nope` — the neighbourhood is real,
+  directory** (`/Users/me/gone`, `/etc/nope`; the neighbourhood is real,
   so absence is real drift). Single-segment candidates are excluded, so
   the documented remote-host behaviour for `/opt/gophish`-style citations
   is unchanged: those still flow to `missing` until attested via
@@ -7786,7 +7786,7 @@ survive checking against the code.
   Wrong on the mechanism: the single-segment exclusion is
   `s.count("/") < 2`, and `"/opt/gophish".count("/") == 2`, so that arm
   never fires for such a citation. What actually preserves it is the
-  **existing-parent escape** — `/opt` is a real directory on a POSIX
+  **existing-parent escape**: `/opt` is a real directory on a POSIX
   host, so the neighbourhood reads as real and the candidate keeps
   flowing to `missing` until attested. The preservation is therefore a
   property of the *local filesystem*, not of the path's shape: on a
@@ -7797,7 +7797,7 @@ survive checking against the code.
   Wrong on the blast radius: "unchanged" is not true of the wider
   class. As 3.25.2 shipped, a multi-segment extensionless path whose
   immediate parent is absent locally is **dropped rather than
-  reported** — `/srv/docker/gitea`, `/data/compose/stacks`,
+  reported**: `/srv/docker/gitea`, `/data/compose/stacks`,
   `/mnt/tank/media` and the rest of the remote-host, NAS and
   deploy-target vocabulary that infrastructure memories cite
   constantly. Those used to reach `path_drift.missing` and no longer
@@ -7805,7 +7805,7 @@ survive checking against the code.
   candidates, so a path under this machine's `$HOME` is no longer
   dropped; the three examples above are not under it and still are.
   `_is_multi_segment_routelike`'s docstring states the drop condition
-  as a numbered shape — treat that as canonical over any prose here.)
+  as a numbered shape; treat that as canonical over any prose here.)
 
   Anyone who wants the drift signal back on such a path must attest it
   (`memory_verify(verified_paths=[...])` or
@@ -7822,8 +7822,8 @@ release-gate job rather than by a user report.
 - **Concurrent `os.replace` could fail hard on Windows.** The store's
   write discipline is tmp → fsync → rename. POSIX allows renaming over a
   destination another process still holds open; Windows does not, and
-  fails with `ERROR_ACCESS_DENIED` (5) or `ERROR_SHARING_VIOLATION` (32)
-  — both surfaced by Python as `PermissionError`. That window is
+  fails with `ERROR_ACCESS_DENIED` (5) or `ERROR_SHARING_VIOLATION` (32),
+  both surfaced by Python as `PermissionError`. That window is
   milliseconds wide and purely transient, but the rename had no retry,
   so it became a hard failure mid-write. Two consequences: a concurrent
   store mutation on Windows could raise `PermissionError` instead of the
@@ -7833,19 +7833,19 @@ release-gate job rather than by a user report.
   `windows-latest` leg, red-lighting the v3.25.0 release run while the
   identical job passed on that commit's CI run.
 
-  New `_fsutil.replace_atomic` wraps the rename in a bounded retry — 5
+  New `_fsutil.replace_atomic` wraps the rename in a bounded retry: 5
   attempts, doubling 10ms backoff, ~150ms ceiling. It is deliberately
   **Windows-only** (on POSIX a `PermissionError` from `os.replace` is
   never this race; it means the directory genuinely is not writable, and
   retrying would only delay a real diagnosis) and deliberately **narrow**
-  (only `PermissionError` retries — ENOSPC, EXDEV and friends propagate
+  (only `PermissionError` retries; ENOSPC, EXDEV and friends propagate
   on the first attempt, because a blanket `except OSError` would disguise
   a full disk as a slow rename). After the budget the original error
   propagates unchanged, with its true type and errno.
 
   Applied at all three rename sites: `atomic_write_bytes` (every memory,
   episode and index write) plus the event-log rotation and archive
-  renames in `events.py` — the latter two matter more since 3.24.0, as
+  renames in `events.py`; the latter two matter more since 3.24.0, as
   sharding multiplied the number of concurrent segment readers.
 
 ### Changed
@@ -7854,11 +7854,11 @@ release-gate job rather than by a user report.
   outcome for a worker that dies in any way other than a clean
   `ConcurrentUpdateError`, and inlines the exception text into the
   assertion message. Previously such a thread appended nothing at all,
-  so the failure read "expected exactly one stale-CAS loser, got 0" —
+  so the failure read "expected exactly one stale-CAS loser, got 0",
   naming the symptom while hiding the cause, which is precisely why this
   bug took a release-gate failure to surface. The arm does not paper
   over the defect: an `errored` outcome satisfies neither assertion, so
-  the test still fails — it just fails while naming the exception.
+  the test still fails; it just fails while naming the exception.
 
 ### Erratum (2026-07-19)
 
@@ -7875,17 +7875,17 @@ strong.
   tmp → fsync → rename, and as 3.25.1 shipped it called `Path.replace`
   directly rather than `_fsutil.replace_atomic`, so it never got the
   Windows retry. That release therefore left the site exposed to the
-  exact `PermissionError` race it set out to close — two flushes
+  exact `PermissionError` race it set out to close: two flushes
   against one memory dir on Windows could still fail the rename hard.
 
   The consequence is milder than for the store proper: the embedding
   cache is a fully recomputable derived artifact, and the flush already
   swallows its own exceptions, so a lost rename costs a cache rebuild
-  rather than data. It is a durability gap, not a correctness one — but
+  rather than data. It is a durability gap, not a correctness one, but
   the entry's "all three" asserted a completeness that did not hold.
 
   The site has since been routed through `replace_atomic` by `b3cc470`,
-  which landed on `main` after the `v3.25.2` tag — so, as with
+  which landed on `main` after the `v3.25.2` tag. So, as with
   `eace517` in the 3.24.0 erratum, no release at or below 3.25.2
   carries it and the first release cut from `main` after that point
   does. Stated that way on purpose:
@@ -7903,7 +7903,7 @@ not just backfill one that was never captured at all.
   on memories with no `origin` block, which turns out to be the rarer
   failure. The common one: a write made from a parent directory
   (`~/Documents`) or `$HOME` sits outside any git checkout, so
-  `capture()` records a cwd with `repo=None` — and `repos_match` treats
+  `capture()` records a cwd with `repo=None`, and `repos_match` treats
   a null repo as matching *every* caller. The memory silently becomes
   global and leaks into every project's auto-scoped search. Worse, a
   memory written while sitting in project B but scoped to project A ends
@@ -7924,25 +7924,25 @@ not just backfill one that was never captured at all.
   origin at all, so global is the honest answer for it.
 
 - **`migrate origin --keep-global SCOPE`** (repeatable, requires
-  `--repair`). Names a cross-cutting scope — `infrastructure`, `tools`,
-  `workflow` — that must never be anchored to one repo, since anchoring
+  `--repair`). Names a cross-cutting scope (`infrastructure`, `tools`,
+  `workflow`) that must never be anchored to one repo, since anchoring
   a genuinely project-spanning memory hides it from everywhere else. It
   guards both the repair and the legacy-backfill routes: honouring it on
   only one would let the older path quietly do the damage the newer one
-  refuses to. It never triggers a demote — treating it as one would
+  refuses to. It never triggers a demote: treating it as one would
   strip the anchor off every `projects:x`+`workflow` memory in a store
   and make the leak dramatically worse.
 
 Both flags are inert unless passed: without `--repair` the migration
 path is byte-for-byte unchanged, and still skips any memory that already
-has an origin. Only the `origin` block is ever rewritten — body, id, and
+has an origin. Only the `origin` block is ever rewritten: body, id, and
 every other frontmatter key are untouched. Pair with `--dry-run` first;
 repair prints the anchor/demote split so a run is reviewable before it
 is applied.
 
 ## 3.24.1 - 2026-07-19
 
-Two fixes on top of 3.24.0's event-log sharding — one a pre-existing
+Two fixes on top of 3.24.0's event-log sharding: one a pre-existing
 privacy leak, one a shard-awareness gap in `doctor`.
 
 ### Fixed
@@ -7951,8 +7951,8 @@ privacy leak, one a shard-awareness gap in `doctor`.
   `sync` gitignore carried `.events.jsonl.*.gz` for the event-log
   archives, but rotated archives are named `.events-{ts}.jsonl.gz`
   (dash after "events", not dot), so the pattern matched *nothing
-  real*: every gzipped archive — and every crashed-rotation
-  `.rotating` holding file — was staged by `sync push`'s `git add -A`
+  real*: every gzipped archive, and every crashed-rotation
+  `.rotating` holding file, was staged by `sync push`'s `git add -A`
   and committed to every clone, in plaintext, carrying session ids and
   (in verbatim mode) raw query text. Pre-existing since archives were
   introduced; the structural sidecar-coverage guard could not catch it
@@ -7960,7 +7960,7 @@ privacy leak, one a shard-awareness gap in `doctor`.
   not a discoverable `*_FILENAME` constant. The pattern is now
   `.events-*`, which covers both the `.gz` archives and the `.rotating`
   holding files, and a test pins the composed names directly. (Note:
-  gitignore only stops *future* staging — a clone that already
+  gitignore only stops *future* staging. A clone that already
   committed archives must `git rm --cached` them; run `bettermemory
   doctor`.)
 
@@ -7977,7 +7977,7 @@ privacy leak, one a shard-awareness gap in `doctor`.
 
 One additive feature. Minor rather than patch because the event log's
 on-disk layout changes (a new sharded active-file shape) and a new
-`sync` ignore line ships — but it is fully backward-compatible: a
+`sync` ignore line ships, but it is fully backward-compatible: a
 pre-upgrade `.events.jsonl` is still read, no migration runs, and
 every read/consumer contract is byte-identical.
 
@@ -7986,7 +7986,7 @@ every read/consumer contract is byte-identical.
 - **Event-log active file is sharded to kill the last global write
   lock (swarm-convergence).** Every `Recorder.record` used to append
   to one `.events.jsonl` under a single `fcntl` flock, so every agent
-  sharing a store serialised on it — the Phase-0 fleet benchmark
+  sharing a store serialised on it; the Phase-0 fleet benchmark
   (`bench/swarm.py`) measured that lock at ~7-17% of throughput. The
   active log now splits into a fixed set of per-shard files at the
   store root, `.events.00.jsonl` … `.events.{SHARD_COUNT-1:02d}.jsonl`
@@ -7995,14 +7995,14 @@ every read/consumer contract is byte-identical.
   and no longer contend; fixed striping (not one file per session)
   keeps the file count and a reader's simultaneously-open fds bounded
   no matter how many sessions a store accumulates. `iter_events` merges
-  the shards — plus any legacy pre-sharding `.events.jsonl`, read-only
-  from here on — into chronological order by event `ts` with a
+  the shards (plus any legacy pre-sharding `.events.jsonl`, read-only
+  from here on) into chronological order by event `ts` with a
   streaming `heapq.merge`; every other reader (`iter_all_events`,
   `iter_events_window`) and consumer composes on top of it unchanged,
   as do rotation, gzip archives, and crash recovery (still one shared
   scheme). `sync` now also excludes `.events.*.jsonl` so the per-shard
-  segments — which carry session ids and, in verbatim mode, raw query
-  text — never leave the host. After the change the benchmark's
+  segments (which carry session ids and, in verbatim mode, raw query
+  text) never leave the host. After the change the benchmark's
   event-log tax drops to ~1% (the residual is per-event redaction +
   fsync, not the lock). Nine tests pin the new behaviour: striping,
   per-session shard stability, cross-shard chronological merge with
@@ -8028,15 +8028,15 @@ survive checking against the code and the tag.
   its Phase 1b note ("The one true global serialization point.
   Removed.") and is corrected alongside this erratum.
 
-- **Not "one additive feature" — a second change shipped
+- **Not "one additive feature": a second change shipped
   undocumented.** Tag `v3.24.0` also carries commit `096218e`, which
-  rerouted `load_one` and `_find_path_for_id` — and therefore
-  `memory_show`, `memory_update`, `memory_verify` and `memory_remove`
-  — through the FTS5 index. It received no entry anywhere in this file.
+  rerouted `load_one` and `_find_path_for_id` (and therefore
+  `memory_show`, `memory_update`, `memory_verify` and `memory_remove`)
+  through the FTS5 index. It received no entry anywhere in this file.
   Stated now as the `### Changed` bullet the release should have
   carried:
 
-  - **By-id lookup is index-backed — O(corpus) walk → O(1) resolve
+  - **By-id lookup is index-backed: O(corpus) walk → O(1) resolve
     (swarm-convergence Phase 1).** `load_one` and `_find_path_for_id`
     used to resolve an id by walking the active directory and
     reparsing every file's frontmatter until one matched. New
@@ -8045,7 +8045,7 @@ survive checking against the code and the tag.
     is retained as the authoritative fallback**, not replaced: the
     index is consulted first and the walk runs whenever it does not
     produce a usable answer. The safety property is that a wrong index
-    can only cost time, never correctness — `_indexed_path_for_id`
+    can only cost time, never correctness: `_indexed_path_for_id`
     returns a path only when `_id_still_at_path` re-reads the named
     file and confirms it *still* carries that id, so a row pointing at
     a moved, renamed or tombstoned file yields `None` and the caller
@@ -8054,10 +8054,10 @@ survive checking against the code and the tag.
     observable consequences: (1) the resolver is wrapped in
     `@best_effort`, so a corrupt, locked or unreadable index logs a
     warning **per lookup** (previously such a store simply walked in
-    silence) — the message names the id and carries the `bettermemory
+    silence); the message names the id and carries the `bettermemory
     reindex` repair hint; (2) `memory_show` now opens the index
-    **twice** rather than once — one purposeful open for the id → path
-    resolve plus the existing `links_for_with_status` open — which is
+    **twice** rather than once (one purposeful open for the id → path
+    resolve plus the existing `links_for_with_status` open), which is
     what `test_no_inbound_show_opens_index_twice` pins, a third open
     still failing it.
 
@@ -8069,11 +8069,11 @@ survive checking against the code and the tag.
   `test_legacy_events_jsonl_merges_in_after_sharding`. Its other test
   edits are helper refactors, not additions. The "nine" appears to have
   been carried over from the one other commit in the tag whose message
-  states a test count — `096218e`, which likewise claims nine for
-  `tests/test_indexed_lookup.py` — that commit adds eight test
+  states a test count (`096218e`, which likewise claims nine for
+  `tests/test_indexed_lookup.py`). That commit adds eight test
   functions to that file, with no parametrisation to make up the
   difference. (Counted on `096218e` itself. The file has grown since,
-  so a count taken against `main` answers a different question — which
+  so a count taken against `main` answers a different question, which
   is why this one names the commit.)
 
 - **"every read/consumer contract is byte-identical" was false as
@@ -8103,11 +8103,11 @@ survive checking against the code and the tag.
   not itself sorted. Every archive cut by a post-`eace517` rotation
   carries a shard tag (`_next_rotation_paths` derives every candidate
   stem from `{ARCHIVE_PREFIX}{ts}-s{shard:02d}`), so it joins its own
-  shard's chain, and such a chain is ts-ordered by construction — a
+  shard's chain, and such a chain is ts-ordered by construction: a
   shard rotates its own segment wholesale, under that shard's append
   lock. Archives whose names predate the tag have no recoverable shard
-  — `_rotated_segment_shard` returns `None` for them deliberately
-  rather than guessing shard 0 — so they all share ONE chain, sequenced
+  (`_rotated_segment_shard` returns `None` for them deliberately
+  rather than guessing shard 0), so they all share ONE chain, sequenced
   by the rotation timestamp in the filename. Rotation time is not event
   time: two untagged archives cut by different shards can hold
   overlapping event-time ranges, and when they do, that chain is not
@@ -8115,7 +8115,7 @@ survive checking against the code and the tag.
 
   So the guarantee is **total across shard-tagged archives, and
   best-effort across untagged ones**. That bites a store which rotated
-  under a released version between 3.24.0 and 3.25.2 — the window where
+  under a released version between 3.24.0 and 3.25.2, the window where
   the active log was sharded but all 16 shards still rotated into one
   untagged namespace. A store that only ever rotated before 3.24.0 is
   unaffected in practice: there was a single active log, so its
@@ -8127,7 +8127,7 @@ survive checking against the code and the tag.
   package deletes a canonical one. The prune routines that do exist are
   about other data: `EpisodeStore.prune_old_sessions` drops episode
   session DIRECTORIES past a TTL, and `Store.prune_tombstones`
-  hard-deletes tombstone files past a retention cutoff — neither so
+  hard-deletes tombstone files past a retention cutoff. Neither so
   much as reads the event log's filenames. `events.py`'s own deletes
   reach only non-canonical scratch: the `.rotating` holding file and
   the `.jsonl.gz.tmp` of an in-progress compression, never a
@@ -8137,7 +8137,7 @@ survive checking against the code and the tag.
   `_recover_orphan_rotations` reclaims a pre-upgrade `.rotating` orphan
   by compressing it under its existing untagged stem. `iter_all_events`'
   own docstring flags the same untagged chain as its one approximate
-  stream — but that docstring also says the chain "degrades to exact as
+  stream, but that docstring also says the chain "degrades to exact as
   pre-3.25 archives age out of a store", which is the assumption this
   paragraph opened by correcting.
 
@@ -8148,7 +8148,7 @@ survive checking against the code and the tag.
   the release that ships the commit, rather than needing someone to
   remember to edit it during the cut. Both earlier revisions of this
   sentence instead stated release membership as of the day they were
-  written — the first sent the reader up the file to an entry that did
+  written: the first sent the reader up the file to an entry that did
   not exist; the second asserts the commit is in no tagged release,
   which is true only until the next cut.
 
@@ -8156,21 +8156,21 @@ survive checking against the code and the tag.
 
 One additive feature. Minor rather than patch because `eval --report`
 is a new CLI mode (and `--output` a new option); nothing renamed or
-removed — every existing eval mode and its `--json` shape are
+removed: every existing eval mode and its `--json` shape are
 byte-compatible.
 
 ### Added
 
-- **`eval --report` — the telemetry as a publishable artifact.** One
+- **`eval --report`: the telemetry as a publishable artifact.** One
   flag renders what `bettermemory eval` already computes into a
   self-contained markdown document: store shape (counts only), the
   three effectiveness rates with Wilson 95% CIs for the `--since`
   window and all-time side by side, a reading-the-numbers-honestly
-  section, the per-model audit slices, the v1–v4 threshold-sweep
+  section, the per-model audit slices, the v1-v4 threshold-sweep
   counterfactual, the tool-usage top ten, and a versioned methodology
   footer. `--output FILE` writes it to disk. The safety property is
   the point and is a tested contract, not a hope: the report carries
-  rates, counts, CIs, model names, and static registry names ONLY —
+  rates, counts, CIs, model names, and static registry names ONLY;
   a canary test seeds a store whose memory bodies, summaries, scope
   names, logged queries, session ids, and directory name all carry a
   token and asserts it appears nowhere while the seeded counts still
@@ -8193,7 +8193,7 @@ where noted.
 - **`doctor --fix` no longer corrupts its own verdict.** The
   `doctor_fix` audit event was counted by the audit-turn-cadence
   check's session census, so a fully-healed low-cadence store (one
-  real session, zero `turn_audited` — hookless, CI, or programmatic
+  real session, zero `turn_audited`: hookless, CI, or programmatic
   installs) exited 1 after a successful fix, with a false Stop-hook
   warning persisting for the 7-day window. Admin/CLI event kinds
   (`doctor_fix`, and `silent_miss_cutoff` from `consolidate
@@ -8205,9 +8205,9 @@ where noted.
   --fix` and `bettermemory ingest` both constructed bare Recorders,
   so an applied fix or an ingest run on a store with `[telemetry]
   enabled = false` created and appended to the event log the user had
-  turned off. Both thread the config now — so the 3.22.0 sentence
+  turned off. Both thread the config now (so the 3.22.0 sentence
   "every applied fix lands one `doctor_fix` event" holds only with
-  telemetry on — and a class-check test enumerates every Recorder
+  telemetry on) and a class-check test enumerates every Recorder
   construction site under `src/` and fails if any omits
   config-sourced `enabled=`.
 - **Symlinked event logs are refused, not chmod'd through.** The
@@ -8218,7 +8218,7 @@ where noted.
   hint for a symlinked log is a non-executable steer instead of a
   pasteable `chmod` that would hit the target.
 - **The event-log writability check now probe-appends for real**, as
-  its docstring always claimed — closing a Windows false-green where
+  its docstring always claimed, closing a Windows false-green where
   `os.access` consults only the readonly attribute the fixer itself
   just cleared. The probe opens without `O_CREAT`, so a log that
   vanishes mid-run is reported, never silently recreated as a
@@ -8257,30 +8257,30 @@ where noted.
 One additive feature: doctor grows the repair half of its contract.
 Minor rather than patch because `doctor --fix` is a new CLI surface
 (and `--json` with `--fix` a new payload shape); nothing renamed or
-removed — plain `doctor`, its 0/1/2 exit codes, and the bare `--json`
+removed: plain `doctor`, its 0/1/2 exit codes, and the bare `--json`
 shape are byte-compatible.
 
 ### Added
 
-- **`doctor --fix` — the safe repairs, applied.** Doctor's checks
+- **`doctor --fix`: the safe repairs, applied.** Doctor's checks
   already print pasteable, shell-safe remediation hints; `--fix`
   executes the safe subset by calling the same underlying functions
   the hints point at (never by re-parsing hint strings): store /
   event-log permission heals (`chmod 0700`/`0600`), search-index
-  rebuild (the exact `reindex` code path — the index is derived
+  rebuild (the exact `reindex` code path; the index is derived
   state), removal of the 0-byte 3.15.0 `<config>.lock` artifacts (the
   same heal `init` applies; a client's live directory lock is never
   touched), and the sync repo's `.gitignore` refresh (`sync init`'s
-  own idempotent write — a partial fix reported honestly as
+  own idempotent write; a partial fix reported honestly as
   still-red, since gitignore cannot untrack, but without it the
   manual `git rm --cached` remediation silently un-does itself on the
   next `sync push`). Each fix re-runs its check and is reported
   "fixed" only when the re-run is green; the exit code reflects the
   POST-fix state, so `doctor --fix && …` keeps the existing 0/1/2
   contract. Plain `doctor` remains the dry run. Destructive
-  remediations — untracking, history rewrites, MCP client config
+  remediations (untracking, history rewrites, MCP client config
   edits, anything that could delete possibly-unique user content,
-  anything on another host — stay hints forever. Every applied fix
+  anything on another host) stay hints forever. Every applied fix
   lands one `doctor_fix` event in the store's event log. `doctor
   --json` without `--fix` keeps its exact prior shape; with `--fix`
   it gains a `fixes` array and a `fixes_applied` count.
@@ -8289,25 +8289,25 @@ shape are byte-compatible.
 
 Two small features that close long-open design questions, plus the
 finish of the trust-layer copy retune. Minor rather than patch: `sync`
-stops staging a directory it previously pushed (`episodes/` — a new
+stops staging a directory it previously pushed (`episodes/`, a new
 line in every store sync repo's refreshed `.gitignore`), and
 `memory_proposals` gains a `credential_warning` status that
 tool-response readers parse. Nothing renamed or removed.
 
 ### Changed
 
-- **Episodes are host-local by design — `sync` now excludes
+- **Episodes are host-local by design: `sync` now excludes
   `episodes/`.** The transient tier synced only by omission: session
   run-state carries host-absolute worktree paths, the 30-day TTL prune
   keys on mtimes a clone's `git checkout` would reset, and
   `episode_handoff` adoption is worktree-strict, so a synced episode
   was filtered on arrival anyway. A structural guard now forces the
   sync decision for every store-root directory constant the way the
-  sidecar guard forces it for dotfiles — `.tombstones/` takes the
+  sidecar guard forces it for dotfiles; `.tombstones/` takes the
   deliberate stays-synced seat, because a removal made on one host
   must stay restorable from every clone. Migrating a pre-3.21.0
   multi-host sync repo: untrack on every host before its next
-  `sync pull` — the `sync_tracked_ignored` hint now spells out that
+  `sync pull`; the `sync_tracked_ignored` hint now spells out that
   pulling another host's untrack commit deletes your tracked working
   copies of those paths.
 - **`memory_proposals` accept refuses credential-bearing bodies with
@@ -8327,7 +8327,7 @@ tool-response readers parse. Nothing renamed or removed.
   argparse lead still opened with the retired 1.4.2 tagline after the
   positioning pass moved every other identity surface; both smoke-test
   pins retuned with it. The README now says a wrong verdict is *owed*
-  a public postmortem — with zero incidents on file, present-tense
+  a public postmortem; with zero incidents on file, present-tense
   "given" overclaimed.
 
 ### Internal
@@ -8351,7 +8351,7 @@ details key, and `store_nested_in_parent_repo`, warn-only, with
 `parent_toplevel(s)` / `store_prefix` / `tracked_sidecars` /
 `tracked_by_parent` / `scanned_parent_toplevels` / `patterns_checked`
 details); doctor gains a new exit-code outcome (a store whose sync repo
-still tracks a pre-denylist sidecar now exits 2 — deliberate, it flags a
+still tracks a pre-denylist sidecar now exits 2; deliberate, it flags a
 real plaintext leak); and three functions now emit `DeprecationWarning`,
 which `-W error` consumers will see. Tooling that branches on doctor's
 exit code or parses its JSON sees new values; nothing was renamed or
@@ -8361,8 +8361,8 @@ removed.
 
 - **`doctor` now finds the sidecar leaks that 3.19.0's gitignore fixes
   could not stop retroactively.** A sync repo initialised before the
-  denylist landed keeps already-tracked sidecars tracked — gitignore only
-  stops future staging — so the proposals queue and friends kept pushing
+  denylist landed keeps already-tracked sidecars tracked (gitignore only
+  stops future staging), so the proposals queue and friends kept pushing
   in plaintext. The new `sync_tracked_ignored` check detects any tracked
   path matching the denylist and prints the full remediation (`git rm
   --cached`, history rewrite for anything already pushed, secret
@@ -8373,19 +8373,19 @@ removed.
   under a nested store is now detected.** A store living inside a
   dotfiles-managed home directory (or any enclosing repo) leaks the same
   sidecars through the parent's `git add -A`, invisibly to sync. The new
-  `store_nested_in_parent_repo` check walks every enclosing worktree —
-  plain nesting, a store that became its own repo after the parent had
+  `store_nested_in_parent_repo` check walks every enclosing worktree
+  (plain nesting, a store that became its own repo after the parent had
   already tracked its files, doubly-nested chains, and stores whose
   `.git` gitfile is broken or dangling (a shape that previously made
-  every check stand down while the parent kept staging new captures) —
+  every check stand down while the parent kept staging new captures))
   and warns with per-repo tracked paths and remediation.
 
 ### Fixed
 
 - **Doctor's sidecar matching now agrees with `git check-ignore`.** The
   original translation let `*` cross `/` when matching full paths, so
-  `.embeddings.*.npz` could flag `.embeddings.cache/model.npz` — a file
-  git legitimately tracks — for destructive remediation, and files under
+  `.embeddings.*.npz` could flag `.embeddings.cache/model.npz`, a file
+  git legitimately tracks, for destructive remediation, and files under
   ignored directories were missed entirely. Matching is now
   per-component in the store's own frame, pinned by an oracle test that
   compares doctor's verdict against real `git check-ignore` across a
@@ -8405,15 +8405,15 @@ removed.
 
 - **The deprecation fence is mechanical, not review-dependent.**
   `error::DeprecationWarning:bettermemory` never escalated unwrapped
-  deprecated calls made *from test files* — `stacklevel=2` attributes
-  the warning to the caller's frame — so a future test could silently
+  deprecated calls made *from test files* (`stacklevel=2` attributes
+  the warning to the caller's frame), so a future test could silently
   exercise deprecated API. A message-scoped filter line now escalates
   bettermemory-emitted deprecations from any frame, proven both
   directions by a subprocess probe.
 
 - **`bettermemory ui --tunnel` exit-code contract is pinned end to
-  end.** A bind failure exits 3 through click to the OS boundary —
-  propagation was already correct; it is now tested against both
+  end.** A bind failure exits 3 through click to the OS boundary.
+  Propagation was already correct; it is now tested against both
   remap and swallow mutations, so `systemd`'s `Restart=on-failure`
   behavior can't regress silently.
 
@@ -8434,7 +8434,7 @@ removed.
   counts; `None`-on-all-dropped erased the empty-vs-unresolvable
   distinction). The author-date mechanism behind
   `verify.resolve_commit_drift_count` is the replacement, and each
-  warning names it. They had no production callers — the deprecation
+  warning names it. They had no production callers; the deprecation
   exists so nobody wires the inflatable semantics back in.
   `CONTRIBUTING.md` now documents two explicit deprecation lanes:
   `warnings.warn(DeprecationWarning)` for Python API, log-once for
@@ -8442,7 +8442,7 @@ removed.
 
 ### Changed
 
-- Every subcommand's `--help` now states what the command does —
+- Every subcommand's `--help` now states what the command does;
   previously argparse rendered the descriptions only in the top-level
   `bettermemory -h` listing, so `bettermemory doctor --help` printed
   usage and options with no statement of what doctor covers. The
@@ -8453,14 +8453,14 @@ removed.
   previous enumerations had silently gone stale twice.
 - The `episode_handoff` tool description was compressed to the
   model-facing minimum, restoring MCP description-budget headroom from
-  24 to 318 characters of the 27,250 ceiling — canonical detail lives in
+  24 to 318 characters of the 27,250 ceiling; canonical detail lives in
   `docs/api.md` and the module docstring.
 
 ### Performance
 
 - `memory_show`'s commit-drift computation resolves the repo toplevel
   once per call instead of forking `git rev-parse --show-toplevel` in
-  each helper — one fewer subprocess on the interactive read path.
+  each helper: one fewer subprocess on the interactive read path.
 
 The structural lesson repeats from 3.19.0, with sharper numbers: all 24
 individually-verified fixes came back clean from their own reviews, yet
@@ -8472,7 +8472,7 @@ between-commits reads stay mandatory.
 
 ## 3.19.0 - 2026-07-10
 
-An audit release. Two parallel drain rounds over the 3.15.1–3.18.1
+An audit release. Two parallel drain rounds over the 3.15.1-3.18.1
 window, then a set-audit of the drain itself, then a re-audit of the
 repairs. Every fix below carries a regression test that was verified to
 fail against the pre-fix source.
@@ -8482,7 +8482,7 @@ Minor rather than patch: the runtime now writes a new store-root file
 carry new fields, and `commit_drift` reports *not applicable* for a
 cohort of memories that previously received an affirmative `clean`.
 Every one of those is additive or a corrected verdict rather than a
-renamed or removed surface, so the compatibility contract holds — but
+renamed or removed surface, so the compatibility contract holds, but
 software reading those surfaces will see a difference, and a patch bump
 would understate that.
 
@@ -8500,13 +8500,13 @@ they lived between the fixes rather than inside any one of them.
   denylist, so `git add -A` staged, committed, and pushed it: a
   secret-shaped capture reached every clone in plaintext, and git history
   is permanent. The accept gate refused that same body afterwards, citing
-  cross-host sync — too late to matter. The queue is now gitignored, and
+  cross-host sync (too late to matter). The queue is now gitignored, and
   `extract_proposals` additionally drops credential-bearing sentences at
   capture, logging the detector kind and never the value.
 
 - **Three sibling leaks of the same class are closed, and the class is
   now guarded.** Orphaned `*.tmp` files from atomic writes carry the full
-  payload of the file they were about to become — a memory body, or the
+  payload of the file they were about to become: a memory body, or the
   proposals queue. The ingest watermark carries absolute host paths. The
   auto-consolidate clock is host-local debounce state. All three synced.
   A structural test now walks the package for store-root sidecar
@@ -8536,7 +8536,7 @@ they lived between the fixes rather than inside any one of them.
   that never came up (tailscaled down, Funnel not enabled in the tailnet
   ACLs) or dropped mid-session is reported instead of silently serving
   loopback forever. A clean `Ctrl-C` or `systemctl stop` no longer prints
-  a false "the shared URL is now DEAD" error — including when a slow
+  a false "the shared URL is now DEAD" error, including when a slow
   request is still draining, which a first attempt at this fix got wrong.
   A `nohup`-detached tunnel survives terminal hangup: an inherited
   `SIG_IGN` is no longer clobbered at either install site. And a
@@ -8563,8 +8563,8 @@ they lived between the fixes rather than inside any one of them.
 - **A record can be removed after `mark_verified` fills its frontmatter.**
   `tombstone` budgeted its removal metadata on the file-size axis only, so
   a record whose YAML sat near the 64 KiB cap became un-removable with a
-  misleading diagnosis. All three lifecycle re-dump callers —
-  `mark_verified`, `rename_scope`, and the `migrate` origin backfill — now
+  misleading diagnosis. All three lifecycle re-dump callers
+  (`mark_verified`, `rename_scope`, and the `migrate` origin backfill) now
   reserve room on the YAML axis, and `migrate` surfaces a record it cannot
   safely grow instead of growing it into the un-removable band.
 
@@ -8589,7 +8589,7 @@ they lived between the fixes rather than inside any one of them.
 ### Removed
 
 - `origin.any_pathspec_in_history`, introduced and subsumed within this
-  unreleased window — the author-date `git log` answers existence and
+  unreleased window: the author-date `git log` answers existence and
   recency in one call. Its tests were retargeted onto the function that
   replaced it rather than deleted.
 
@@ -8601,8 +8601,8 @@ they lived between the fixes rather than inside any one of them.
 
 ## 3.18.1 - 2026-07-10
 
-Live validation of the tunnel on a real tailnet — the follow-through
-3.18.0 shipped without — caught a real leak: kill the server and the
+Live validation of the tunnel on a real tailnet, the follow-through
+3.18.0 shipped without, caught a real leak: kill the server and the
 tunnel child survived indefinitely, keeping the share URL alive,
 proxying 502s, and pointed at whatever binds the port next. Two
 mechanisms conspired. uvicorn's signal capture re-raises the caught
@@ -8616,9 +8616,9 @@ once its parent was gone.
 
 - **Tunnel teardown now survives every exit path.** The provider
   runs under a small supervisor shim whose stdin is a pipe the
-  server holds open and never writes: when the server dies —
-  SIGTERM, SIGINT, SIGHUP, an exception, or SIGKILL, where no
-  userspace teardown can run — the kernel closes the pipe and the
+  server holds open and never writes: when the server dies
+  (SIGTERM, SIGINT, SIGHUP, an exception, or SIGKILL, where no
+  userspace teardown can run), the kernel closes the pipe and the
   shim reaps the provider before exiting. `serve()` additionally
   installs teardown handlers that compose with uvicorn's re-raise
   chain (reap, restore the default disposition, re-deliver), so
@@ -8628,15 +8628,15 @@ once its parent was gone.
   process-lifecycle regression tests: a subprocess driver runs
   `serve(tunnel=...)` for real and the suite asserts the shim and
   the provider both die within seconds of SIGTERM and of SIGKILL.
-  The stub provider deliberately ignores stdin — the worst case,
+  The stub provider deliberately ignores stdin: the worst case,
   and, per the live run, the real one.
 
 ## 3.18.0 - 2026-07-09
 
-`bettermemory ui --tunnel` — the roadmap's one-shot sharing item.
+`bettermemory ui --tunnel`: the roadmap's one-shot sharing item.
 The design splits responsibility deliberately: the tunnel CLI
 (Tailscale or cloudflared) owns transport and prints its own URL, so
-bettermemory does no output parsing; bettermemory owns POLICY — a
+bettermemory does no output parsing; bettermemory owns POLICY. A
 tunneled UI is always the read-only app, enforced at the app layer
 rather than trusted to the transport, so pointing any other tunnel at
 the port cannot re-expose the mutation.
@@ -8644,7 +8644,7 @@ the port cannot re-expose the mutation.
 ### Added
 
 - **`bettermemory ui --tunnel [auto|tailnet|funnel|cloudflare]`.**
-  Bare `--tunnel` auto-picks `tailnet` (Tailscale `serve` — your own
+  Bare `--tunnel` auto-picks `tailnet` (Tailscale `serve`, your own
   devices only) when the tailscale CLI is installed, falling back to
   a cloudflared quick tunnel. `funnel` (Tailscale Funnel) and
   `cloudflare` are PUBLIC: anyone with the URL can read the store,
@@ -8652,7 +8652,7 @@ the port cannot re-expose the mutation.
   the resolver also probes the Tailscale app bundle
   (`/Applications/Tailscale.app/…/Tailscale`), which ships the CLI
   without putting it on PATH. `--tunnel` with a non-loopback
-  `--host` is rejected — the tunnel is the front door.
+  `--host` is rejected: the tunnel is the front door.
 - **Read-only mode in the web app** (`build_app(read_only=True)`).
   The verify endpoint answers a policy 403 before any CSRF/origin
   parsing, the verify form disappears from detail pages, the CSRF
@@ -8668,14 +8668,14 @@ Root-anchor fix for claim-anchored commit drift, found by the
 feature's first live curation pass: a memory whose body cites the repo
 root ("the project lives at `~/…/bettermemory/`") had its anchor set
 resolve to the pathspec `.`, which matches every commit. That memory
-read 149 commits of "drift" — exactly the unfiltered count the 3.17.0
-change exists to remove — while its discriminating anchors read zero.
+read 149 commits of "drift" (exactly the unfiltered count the 3.17.0
+change exists to remove) while its discriminating anchors read zero.
 
 ### Fixed
 
 - **`resolve_repo_pathspecs` drops inputs that resolve to the repo
   root itself.** A root citation is a location claim, not a content
-  claim — its existence is path drift's axis; as a commit anchor it
+  claim: its existence is path drift's axis; as a commit anchor it
   degenerates to match-all. Root-only anchor sets now resolve to the
   empty result, which the shared drift policy
   (`resolve_commit_drift_count`) already reads as not-applicable, and
@@ -8690,7 +8690,7 @@ Claim-anchored commit drift. The commit-drift signal now counts only
 commits that could actually invalidate a memory's claims, and goes
 silent for memories that make no path-shaped claims at all. The change
 was measured before it was made: two hand-labeled reads of the
-dogfood store's drift queue — 12 flags at 3.13.0, 24 at 3.16.0 —
+dogfood store's drift queue (12 flags at 3.13.0, 24 at 3.16.0)
 found **zero true positives**. Every flagged memory was a preference,
 lesson, or reflection that merely *originated* in the repo; the bare
 repo-wide commit count carried no information about any of them, and
@@ -8702,15 +8702,15 @@ verified-paths pass pending exactly this evidence.)
 
 - **Commit drift is claim-anchored on all four surfaces** (`memory_show`,
   the `memory_search` per-hit fold and `expand_top` block, and both
-  `memory_health` rollups — `commit_drift_debt` and
+  `memory_health` rollups: `commit_drift_debt` and
   `curation_pending.drifted`). Each memory's *anchors* are its
-  `verified_paths` attestations plus the paths its body cites — the
+  `verified_paths` attestations plus the paths its body cites: the
   existing absolute/`~` extractor, now joined by repo-relative
   citations (`src/mod.py:42`, `docs/spec.md`, `CHANGELOG.md`), the
   dominant citation style path-drift could never check (nothing to
   stat without a root; the origin repo IS the root here). The drift
   count is narrowed to commits touching an anchor. A memory with no
-  anchors — or none inside the caller's repo — reads `commit_drift:
+  anchors, or none inside the caller's repo, reads `commit_drift:
   null` / omits `commit_drift_count` / leaves the health rollups: the
   signal is *not applicable*, not zero. The calendar staleness window
   is the deliberate backstop for that class, so nothing is exempt
@@ -8719,11 +8719,11 @@ verified-paths pass pending exactly this evidence.)
   every repo commit forever (the gap-1 noise this release closes),
   and a memory whose attested paths all resolved outside the repo
   fell back to the unfiltered count (now: not applicable). Cited-path
-  anchoring also *catches* drift the old filter missed — a memory
+  anchoring also *catches* drift the old filter missed: a memory
   whose body cites files it was never path-attested for now flags
   when those files change (the live store surfaced three such
   memories on the first read). Infrastructure failures still fall
-  back to the unfiltered count — git being unreachable must never
+  back to the unfiltered count; git being unreachable must never
   widen the exemption.
 - **The drift recommendation names the anchor semantics** ("commits
   touching this memory's cited or attested paths landed…") so the
@@ -8731,11 +8731,11 @@ verified-paths pass pending exactly this evidence.)
 
 ### Added
 
-- `verify.commit_drift_anchor_paths` / `verify.resolve_commit_drift_count`
-  — the shared anchor derivation and count policy behind all four
+- `verify.commit_drift_anchor_paths` / `verify.resolve_commit_drift_count`,
+  the shared anchor derivation and count policy behind all four
   surfaces (one decision function is what keeps them in lockstep), and
   `origin.repo_toplevel` / `origin.resolve_repo_pathspecs` /
-  `origin.commits_touching_pathspecs` — the pathspec-resolution split
+  `origin.commits_touching_pathspecs`, the pathspec-resolution split
   that lets callers distinguish "git can't answer" (conservative
   unfiltered fallback) from "these claims don't anchor here" (not
   applicable). `origin.commits_since_touching_paths` survives unchanged
@@ -8749,7 +8749,7 @@ verified-paths pass pending exactly this evidence.)
 ### Attestation guidance
 
 For preference/lesson memories, attest freshness with
-`verified_commits` + `note` rather than paths — a `verified_paths`
+`verified_commits` + `note` rather than paths: a `verified_paths`
 attestation anchors the memory to those files' commit history, which
 for a churn-prone file (`CHANGELOG.md`) re-flags it on every release.
 `memory_verify(id, verified_paths=[])` clears a prior path attestation
@@ -8759,10 +8759,10 @@ class. `docs/api.md` carries the same guidance.
 ## 3.16.0 - 2026-07-08
 
 A measurement-driven calibration release. The centerpiece: the
-relevance-v2 widening got its first live precision read — 103 replayable
+relevance-v2 widening got its first live precision read (103 replayable
 audited turns, every flagged turn hand-labeled against its logged
-evidence — and the verdict reshaped the roadmap. The bare matched-token
-floor (`w1_top1_v2_high`) measured ~15–30% precision and is ruled out as
+evidence) and the verdict reshaped the roadmap. The bare matched-token
+floor (`w1_top1_v2_high`) measured ~15-30% precision and is ruled out as
 the flip target: its v1-low→high promotions (long pasted messages
 crossing `matched_unique >= 4` against any domain-adjacent memory at
 coverage ~0.2) were almost pure noise, while its v1-medium→high
@@ -8770,12 +8770,12 @@ promotions measured ~50% and contained every clearly-real catch. The
 tooling that produced the readout ships in this release, so the next
 calibration pass is one command, not an archaeology project.
 Methodology and aggregates: `docs/eval/widening-labeling-2026-07-08.md`
-(raw turns stay in the local event log — they contain user-message
+(raw turns stay in the local event log; they contain user-message
 previews).
 
 ### Added
 
-- **`bettermemory eval --widening-preview --detail`** — the
+- **`bettermemory eval --widening-preview --detail`**: the
   precision-labeling surface behind the widening counts. Dumps each
   flagged turn's logged evidence (the redacted `probe_query` preview,
   the top hit's raw coverage pair, both relevance labels, the hit's
@@ -8783,11 +8783,11 @@ previews).
   summary) plus a per-memory concentration rollup, since concentration
   is the first diagnostic: N flags on two memories is a ranking
   problem, N flags across N memories is a wide label change. Reads
-  only what the event log already holds — no new logging, no exposure
+  only what the event log already holds: no new logging, no exposure
   widening. Both widening lanes now share one event-filter pipeline
   (`_collect_replayable_audits`), so the counts and the listed turns
   can never disagree.
-- **`w2_top1_v2_high_from_medium` widening candidate** — v1's high arm
+- **`w2_top1_v2_high_from_medium` widening candidate**: v1's high arm
   plus the shadow floor's medium→high promotions only, i.e. exactly
   the original blind-spot thesis (long natural-language queries
   landing at *medium* on strong matches) without the junk-dominated
@@ -8807,7 +8807,7 @@ previews).
   with large tool surfaces) were nudged into loading bettermemory's
   tools one round-trip at a time; the instructions block now names the
   core four to load in one call. Paid for inside the existing 1700-char
-  truncation budget by compressing the write-trigger list — the
+  truncation budget by compressing the write-trigger list; the
   detail lives on `memory_write`'s own description, per the block's
   push-detail-down doctrine.
 
@@ -8820,9 +8820,9 @@ previews).
 
 ## 3.15.1 - 2026-07-08
 
-A post-release external review of 3.15.0 itself — five parallel
+A post-release external review of 3.15.0 itself (five parallel
 adversarial slice reviews, every finding reproduced against a live store
-or client before it was filed — confirmed nine defects that release's
+or client before it was filed) confirmed nine defects that release's
 own set-audit had converged past, several *introduced by* its fixes. The
 recurring shape: each miss sat just outside a fix's framing (a missed
 mutator, an unwired tool boundary, a foreign lock protocol). This release
@@ -8834,8 +8834,8 @@ regression test with every fix (each verified to fail against 3.15.0).
 
 - **`init --client claude-code` no longer wedges Claude Code's own config
   lock.** 3.15.0's RMW lock left a persistent regular file at
-  `~/.claude.json.lock` — the exact path Claude Code locks with a
-  mkdir-style directory lock — so the client's stale-lock cleanup failed
+  `~/.claude.json.lock`, the exact path Claude Code locks with a
+  mkdir-style directory lock, so the client's stale-lock cleanup failed
   (`ENOTDIR`) forever and its config saves broke until the file was
   deleted by hand; conversely, the client's live lock directory crashed
   init with `EISDIR`. bettermemory now locks a private
@@ -8849,7 +8849,7 @@ regression test with every fix (each verified to fail against 3.15.0).
 - **The band-cap discipline now holds at every mutator, in both
   directions.** 3.15.0 closed grow-into-the-reserved-band for
   `mark_verified` / `rename_scope` but missed `migrate origin`, whose
-  re-dump ran at the full read cap — an origin backfill (caller- and
+  re-dump ran at the full read cap: an origin backfill (caller- and
   environment-controlled bytes) could still grow a just-under-cap record
   into the band and toward the hard-delete chain. And the band arm itself
   capped at the flat read cap, so a *legal* verify could eat the
@@ -8863,8 +8863,8 @@ regression test with every fix (each verified to fail against 3.15.0).
   with no tombstone-edit surface, a refused record just waited for
   `prune_tombstones` to hard-delete it. Restore re-admits at the read cap
   (band actives are maintainable and removable now, so nothing is lost),
-  and `tombstone` adaptively trims its removal metadata — the session
-  join is dropped first, then the reason is trimmed toward empty — so
+  and `tombstone` adaptively trims its removal metadata (the session
+  join is dropped first, then the reason is trimmed toward empty), so
   even a legacy record within the old fixed budgets of the read cap stays
   removable. `memory_remove` explains the shrink-first remediation for
   the truly unfittable sliver.
@@ -8872,7 +8872,7 @@ regression test with every fix (each verified to fail against 3.15.0).
   endorsement tally and the `recent_negative_outcomes` attach iterated
   raw event id fields, so a scalar or nested-list `ids` in the plaintext,
   hand-editable log failed every `memory_search` (the attach needs no
-  feature flag) — the exact poison shapes 3.15.0 hardened `memory_health`
+  feature flag), the exact poison shapes 3.15.0 hardened `memory_health`
   against. The normalizer moved to `events.py` as the single shared choke
   point, with an index-preserving variant so `claim_excerpts` (recorded
   parallel to the raw list) still attributes to the right memory when
@@ -8880,7 +8880,7 @@ regression test with every fix (each verified to fail against 3.15.0).
 - **`episode_handoff` survives scope-disable.** A worktree session whose
   takeaways were all scope-hidden suppressed the fallback machinery, so
   the handoff collapsed to the first-ever-invocation shape
-  (`prior_session_id: None`) — a regression below 3.14.1's honest note.
+  (`prior_session_id: None`), a regression below 3.14.1's honest note.
   The hidden session now resolves as the prior with a note naming the
   disabled-scope cause and the `memory_scope_enable` way back;
   rewind-through to an older *visible* takeaway is unchanged. The
@@ -8891,18 +8891,18 @@ regression test with every fix (each verified to fail against 3.15.0).
 - **`acknowledge_credential` on proposal-accept actually works.** The
   3.15.0 escape hatch was dead at both shipped surfaces: the MCP
   wrapper's signature omitted the parameter (so the schema never carried
-  it and FastMCP silently dropped it) and the CLI had no flag — while the
+  it and FastMCP silently dropped it) and the CLI had no flag, while the
   refusal message told users to pass exactly that. The wrapper forwards
   it, the CLI grew `--acknowledge-credential`, and the forced-override
   audit event (detector kinds only, never the value) is recorded inside
-  `accept_proposal` — one choke point, every surface, exactly once. The
+  `accept_proposal`: one choke point, every surface, exactly once. The
   regression tests now pin the registered tool schema and the full
   MCP/CLI round-trips, not just the in-process core.
 - **The verify scan cap can only drop path claims, never invent one.**
   The 32 KiB input bound sliced at a hard byte offset, so a legitimate
   citation straddling the boundary was bisected into a phantom prefix
   that validated as a path, failed the disk check, and fabricated a
-  `path_drift_missing` — a false non-fresh staleness verdict from a body
+  `path_drift_missing`: a false non-fresh staleness verdict from a body
   whose real path exists. The cut now lands on the last whitespace inside
   the cap.
 - **`uv`/`uvx` entry recognition is positional and pin-aware.** The
@@ -8910,7 +8910,7 @@ regression test with every fix (each verified to fail against 3.15.0).
   servers as ours (init would delete and rewrite that entry), while the
   version-pinned shapes uvx documents (`bettermemory@latest`,
   `bettermemory==3.15.0`) and the Windows `uvx.exe` spelling matched
-  nothing — resurrecting the doctor false-negative 3.15.0 claimed
+  nothing, resurrecting the doctor false-negative 3.15.0 claimed
   eliminated. The shared recognizer now walks the arg vector (skipping
   run-subcommands and flag values) to the first real positional, and
   doctor consumes it directly so the two can never drift again.
@@ -8920,19 +8920,19 @@ regression test with every fix (each verified to fail against 3.15.0).
   still raises the distinct cluster failure rather than counting as zero
   proposals.
 - **Doc/comment honesty.** The 3.15.0 notes claimed the config migration
-  preserves `disabled:` — it deliberately drops it (born-enabled; only a
+  preserves `disabled:`. It deliberately drops it (born-enabled; only a
   `disabled` set on the surviving new-name entry survives), and the entry
   below is corrected in place. The containment scorer's in-code claim
   that dropping the size-ratio gate "doesn't widen the firing set" was
-  false: the advisory band IS wider for comparable-length pairs —
+  false: the advisory band IS wider for comparable-length pairs,
   deliberate, ceiling-bounded, and now pinned by a test that keeps the
   comment and the behavior telling the same story.
 
 ## 3.15.0 - 2026-07-08
 
 A deep audit-drain of the 3.14.1 release itself. A set-audit of the
-3.14.1 window surfaced 26 confirmed findings — many of them defects the
-3.14.1 fixes had *introduced* (a green test suite is not evidence) — and
+3.14.1 window surfaced 26 confirmed findings, many of them defects the
+3.14.1 fixes had *introduced* (a green test suite is not evidence), and
 a multi-round adversarial drain fixed all of them, then set-audited its
 own output twice more until the finding count converged to zero. Every
 fix ships with a mutation-sound regression test (it fails without the
@@ -8949,7 +8949,7 @@ additive, which is why this is a minor rather than a patch.
   `mark_verified` and `rename_scope` re-dumped at the full read cap, so
   caller-controlled growth (`verified_paths`, a longer scope) on a memory
   admitted just under the write cap pushed it into the reserved
-  maintenance band — after which `update` rejected it, `tombstone` could
+  maintenance band, after which `update` rejected it, `tombstone` could
   cross the read cap (un-removable), and `restore` refused re-admission,
   so pruning eventually hard-deleted it. Both paths now cap by which band
   the record is already in: a sub-cap record cannot grow into the band; a
@@ -8978,7 +8978,7 @@ additive, which is why this is a minor rather than a patch.
 - **`episode_handoff` no longer severs the journal chain.** A clean
   read-only tick (floor-only *or* zero-episode) is rewound past to the
   most recent real takeaway, with an honest note that no longer claims a
-  crash — and, for a zero-episode session, no longer claims a handoff
+  crash, and, for a zero-episode session, no longer claims a handoff
   floor was written.
 - **Credential and scope guardrails now cover the LLM-consolidate and
   proposal-accept write paths**, which previously bypassed the
@@ -8992,15 +8992,15 @@ additive, which is why this is a minor rather than a patch.
   reader does instead of silently stamping the wrong repo.
 - **LLM JSON extraction is robust to fenced responses.** A provider that
   wraps its answer in a ```` ```json ```` fence (the expected Anthropic
-  shape) — even one whose body contains a nested fence — is parsed
+  shape), even one whose body contains a nested fence, is parsed
   instead of silently truncated, and a genuinely unparseable response is
   recorded as a cluster failure rather than counted as zero proposals.
 - **Client-config migration preserves user keys and stays schema-clean.**
   The legacy → `bettermemory` rename keeps `env.BETTERMEMORY_DIR`, `cwd`,
-  and `timeout` (a legacy `disabled:` is deliberately dropped — the
+  and `timeout` (a legacy `disabled:` is deliberately dropped: the
   migrated entry is born enabled, and only a `disabled` set on the
   surviving new-name entry survives; this sentence originally claimed
-  `disabled` was kept — corrected in 3.15.1), drops remote-transport keys
+  `disabled` was kept, corrected in 3.15.1), drops remote-transport keys
   that would make a strict client reject the stdio entry wholesale, migrates via a
   recognizer that matches the bare-name and `uvx` shapes (so `doctor`
   stops reporting a healthy `uvx` install as missing), and captures its
@@ -9024,7 +9024,7 @@ correctly-sized memory changes.
   handler cap plus a dense-but-legal frontmatter (many
   `verified_paths`) could serialize past the read cap, whereupon the
   file was stat-rejected on read and the malformed-file skip dropped
-  the record from every surface — while the write reported committed.
+  the record from every surface, while the write reported committed.
   `dumps` now enforces a total-file guard at the one serialization
   chokepoint, turning silent permanent loss into a clean `ValueError`.
   Content-admitting writes reserve a small headroom below the read cap
@@ -9035,14 +9035,14 @@ correctly-sized memory changes.
   `bettermemory` rename in `init.patch_client_config` seeded the new
   entry from the *new* name (absent on the rename path), so
   `env.BETTERMEMORY_DIR` (and any `disabled` / `timeout` / transport
-  keys) on the legacy entry were discarded — a user who had relocated
+  keys) on the legacy entry were discarded: a user who had relocated
   their store then booted against the default dir and saw it empty.
   The rename now carries the legacy entry's keys forward, overwriting
   only the canonical `type` / `command` / `args`.
 - **ReDoS on the search hot path.** `_DOMAIN_ROUTE_RE` ran unbounded
   (`(?:\.[\w-]+)+`) via `finditer` over the entire body inside
   `detect_path_drift`, which fires per search hit; a poisoned body
-  (`a.a.a…`) backtracked catastrophically (seconds-to-minutes) — the
+  (`a.a.a…`) backtracked catastrophically (seconds-to-minutes): the
   path cap only applies *after* the scan. The repetition is now
   bounded to `{1,20}`, far past any real FQDN.
 - **`migrate origin --scope-repo` crashed on a scalar `scopes`.** The
@@ -9083,7 +9083,7 @@ correctly-sized memory changes.
   `_pairwise_content_jaccard` is symmetric, so a near-verbatim
   restatement of one sentence of a long memory scored far below the
   `related` floor and committed. A containment score
-  (`|∩| / min(|A|,|B|)`), gated on large size asymmetry, now flags it —
+  (`|∩| / min(|A|,|B|)`), gated on large size asymmetry, now flags it,
   bounded by an absolute floor on the smaller token set and capped into
   the `related` band so it surfaces a near-duplicate without ever
   silently blocking a legitimately distinct short write.
@@ -9101,8 +9101,8 @@ correctly-sized memory changes.
   and since `APITimeoutError` is retryable the `timeout=` bound could
   stack to ~3× against a hung provider. Both clients now set
   `max_retries=0`, removing that stacking. (The remaining `timeout=`
-  is a bare float httpx applies per phase — connect/read/write each get
-  it — so it bounds each phase rather than total wall time, not a single
+  is a bare float httpx applies per phase (connect/read/write each get
+  it), so it bounds each phase rather than total wall time, not a single
   wall-clock deadline as first described.)
 - **mypy silently type-checked nothing when numpy was installed.**
   With the `[embeddings]` extra present, mypy aborted parsing
@@ -9111,10 +9111,10 @@ correctly-sized memory changes.
   checking" and checking zero files; CI dodged it by installing only
   `dev`+`ui`. A `[[tool.mypy.overrides]]` block now sets
   `follow_imports = "skip"` **and** `follow_imports_for_stubs = true`
-  for numpy — the stub setting is load-bearing, since `follow_imports`
+  for numpy; the stub setting is load-bearing, since `follow_imports`
   is otherwise ignored for `.pyi` files and mypy would still open
   numpy's stubs. `python_version` stays pinned to the project minimum
-  (3.11) — bumping it would silently admit 3.12-only syntax the shipped
+  (3.11): bumping it would silently admit 3.12-only syntax the shipped
   package can't run.
 
 ### Documented
@@ -9123,15 +9123,15 @@ correctly-sized memory changes.
   remote host (e.g. `/opt/gophish` on a homelab board) is stat'd
   against the local filesystem and reads as `missing` until attested
   via `memory_verify(verified_absent_paths=[...])`. This is the
-  intended escape hatch — there is no local-only heuristic that
+  intended escape hatch (there is no local-only heuristic that
   separates a legitimately-remote path from a deleted local one
-  without suppressing real drift — and is now called out in
+  without suppressing real drift) and is now called out in
   `detect_path_drift`.
 
 ## 3.14.0 - 2026-07-03
 
 The measurement release: three layers of the effectiveness telemetry
-were structurally miscalibrated — the relevance label compressed
+were structurally miscalibrated. The relevance label compressed
 on long queries, the helped-rate under-measured because the in-process
 auto-commit raced the Stop hook's attribution pass, and the silent-miss
 counters double-counted multi-stop turns. Every change here is
@@ -9148,18 +9148,18 @@ sessions (Sonnet 5 and Fable 5 reflections) and the live event log.
   ONLY: the label rides on `search` / `turn_audited` / `search_miss`
   events, never in an MCP response. `search` events additionally log
   per-hit `scores` / `match_counts` and the per-search `query_unique`
-  denominator, making the historical record formula-agnostic — any
+  denominator, making the historical record formula-agnostic: any
   future labeling rule can be replayed from the log alone.
 - **Per-turn calibration payload on `turn_audited`.** Every audited
   turn now carries `probe_query` (redacted `{hash, preview, len}`
   unless `log_queries_verbatim`) and a compact `top_hits` list
-  (id/score/relevance/relevance_v2/matched_unique/query_unique — no
+  (id/score/relevance/relevance_v2/matched_unique/query_unique, no
   snippets). This closes the "threshold-sweep can narrow but never
   widen" constraint at the data layer.
 - **`bettermemory eval --widening-preview`.** Replays candidate
   LOOSER threshold rules (registry: `eval.WIDENING_RULES`, bundled
   candidate `w1_top1_v2_high`) over the turn_audited stream against a
-  replayed v1 baseline — the forward-looking counterpart to
+  replayed v1 baseline, the forward-looking counterpart to
   `--threshold-sweep`.
 - **Per-model telemetry.** The Stop hook reads the model id off the
   transcript's newest assistant row and stamps `client_model` on the
@@ -9175,8 +9175,8 @@ sessions (Sonnet 5 and Fable 5 reflections) and the live event log.
 
 - **End-of-turn use settlement (auto-commit race fix).** The
   in-process auto-commit's clock is handler entries, so a tool-heavy
-  turn auto-committed its own retrievals mid-turn — before the reply
-  existed — starving the Stop hook's attribution matcher of every id
+  turn auto-committed its own retrievals mid-turn, before the reply
+  existed, starving the Stop hook's attribution matcher of every id
   it would have matched (~98% of applied events on the dogfood store
   were bare autos). `session.consume_old_tokens` now requires BOTH
   axes: ≥2 handler entries AND ≥`AUTO_COMMIT_MIN_AGE_SECONDS` (600s,
@@ -9192,7 +9192,7 @@ sessions (Sonnet 5 and Fable 5 reflections) and the live event log.
   a new user message, and each stop re-probed and re-flagged the same
   message (7 identical `search_miss` events from one ship-go message
   on the 2026-07-03 log). Repeats inside an hour now record
-  `turn_audited` with `repeat: true` — cadence stays observable — and
+  `turn_audited` with `repeat: true` (cadence stays observable) and
   never emit a second `search_miss`; eval and health exclude repeats
   from every denominator.
 
@@ -9204,23 +9204,23 @@ sessions (Sonnet 5 and Fable 5 reflections) and the live event log.
   tests.eval.comparative --live` swaps the honest stubs for executing
   adapters where execution is honest: mem0 runs fully local and
   keyless (HuggingFace MiniLM embedder, embedded qdrant in a tempdir,
-  `infer=False` so its LLM extraction pipeline is never invoked —
+  `infer=False` so its LLM extraction pipeline is never invoked;
   measured claim: its retrieval stack over verbatim facts), and the
   Anthropic reference `@modelcontextprotocol/server-memory` is bridged
   over stdio with the `mcp` client the project already ships (its
   native `search_nodes` is whole-query substring matching, so the
-  harness donates a tokenized-OR ranker — documented, and a test pins
+  harness donates a tokenized-OR ranker; documented, and a test pins
   that no gold probe matches verbatim, i.e. the raw server scores 0/7
   by construction). agentmemory joins the matrix as a fifth,
   documented-unavailable row (the PyPI package died in Oct 2023; the
   trending 2026 namesake is an unrelated TypeScript service), and the
   claude-mem row's prose is refreshed against its 2026 plugin
   architecture. Competitor stacks never touch the dev venv, uv.lock,
-  or CI — `tests/eval/run_live.sh` builds a throwaway `.eval-venv/`,
+  or CI: `tests/eval/run_live.sh` builds a throwaway `.eval-venv/`,
   and the live integration tests self-skip without `BM_EVAL_LIVE=1`.
   Ran-rows now carry `system_version`; the first committed artifact
   lives at `docs/eval/comparative-live-2026-07-03.json`.
-- **`docs/eval-results.md` — the published numbers.** Production
+- **`docs/eval-results.md`: the published numbers.** Production
   telemetry trio (two months of the author's real usage, n=1 stated)
   plus the comparative capability matrix and live recall rows, with
   every fairness accommodation spelled out and exact reproduce
@@ -9230,12 +9230,12 @@ sessions (Sonnet 5 and Fable 5 reflections) and the live event log.
 ### Fixed
 
 - **The four GC-timed sqlite `ResourceWarning`s under `-W default` are
-  gone — all were test-side.** Four tests tweaked the index with
+  gone: all were test-side.** Four tests tweaked the index with
   `with sqlite3.connect(...)`, which scopes the *transaction*, not the
   handle; the leaked connections surfaced as ResourceWarnings
   attributed to whatever test was running when GC fired (and kept an
   open handle that Windows CI's unlink is sensitive to). Production
-  code audited clean — every `src/` connect site closes
+  code audited clean: every `src/` connect site closes
   deterministically. The tests now use
   `contextlib.closing(...) as conn, conn:` so the transaction still
   commits before the handle closes.
@@ -9246,7 +9246,7 @@ sessions (Sonnet 5 and Fable 5 reflections) and the live event log.
   same release; the check now probes both with `--version` (only in
   the mismatch branch, memoized) and downgrades the same-version case
   to ok with a "different install, same version: <client>" note.
-  Genuinely stale paths still warn — and the message now carries the
+  Genuinely stale paths still warn, and the message now carries the
   client name, config path, and both versions inline (previously only
   in `--json` details), so the fix_hint names the actual client
   (`bettermemory init --client claude-code`) instead of the literal
@@ -9263,20 +9263,20 @@ sessions (Sonnet 5 and Fable 5 reflections) and the live event log.
   tokenizer-fingerprint ratchet so persisted-stream drift can't recur
   silently.** Schema v4 persists `tokenize()` output on disk
   (`body_fts`/`scopes_fts`), so query/index parity requires the
-  persisted stream to match the live tokenizer — and four post-3.12.0
+  persisted stream to match the live tokenizer, and four post-3.12.0
   tokenizer fixes (stopword curation, final-y normalisation, CJK
   index-side unigrams, the NFKC fold) respelled the stream with no
   schema bump, leaving every 3.12.0-built index stale-spelled: a
   live query 'todo'/'cooki' could not match the indexed
   'todos'/'cooky', so prefiltered search on large stores silently
   dropped exactly the memories the rankers rate high. The v5 bump
-  routes existing indexes through the schema heal path — machinery
+  routes existing indexes through the schema heal path, machinery
   that is itself new this cycle (3.12.0's v4 migration dropped the
   tables and waited for incremental writes to repopulate): the wipe,
   version stamp, and rebuild-pending flag commit in one atomic
   flock-revalidated transaction, the flag keeps search on full scans
   (slower, never lossy), and the next Store construction
-  auto-rebuilds — no manual `bettermemory reindex` needed. The
+  auto-rebuilds, no manual `bettermemory reindex` needed. The
   ratchet: index meta now records a tokenizer fingerprint (sha256 of
   `fts_index_text` over a fixed multilingual probe corpus) next to
   `schema_version`, stamped in the same atomic migration
@@ -9285,7 +9285,7 @@ sessions (Sonnet 5 and Fable 5 reflections) and the live event log.
   regression test asserts the recorded constant matches the
   live pipeline, so any future stream change fails CI until the
   constant is deliberately re-pinned. Existing indexes heal either
-  way — the runtime compares the live fingerprint, not the pin — so
+  way (the runtime compares the live fingerprint, not the pin), so
   the `SCHEMA_VERSION` bump the test's failure message prescribes
   keeps version semantics honest rather than gating the heal.
 
@@ -9293,28 +9293,28 @@ sessions (Sonnet 5 and Fable 5 reflections) and the live event log.
 
 - **Sixteen developer-vocabulary collisions un-stopworded from the
   multilingual lists.** todo/todos, su, dom, hat, uber, die, ist,
-  para, fur, hay, si, finns, sans, ses — and 'sin', which 3.12.0
-  promised out but leaked back via the Swedish possessive — were
+  para, fur, hay, si, finns, sans, ses (and 'sin', which 3.12.0
+  promised out but leaked back via the Swedish possessive) were
   absorbed as function words, and stopword-only queries
   short-circuited to zero hits before any ranker. `search()` also
   falls back to the unstripped tokens when stripping empties a query,
   so no future stopword addition can make a query unanswerable.
 - **Plural-stemmer symmetry restored: -ie/-y nouns share one key,
   s-final singulars pinned.** 'cookies' stemmed to 'cooky' but
-  'cookie' to 'cooki' — two index keys, zero matches for every
+  'cookie' to 'cooki': two index keys, zero matches for every
   movie/rookie/hoodie-shaped lexeme; a final-y normalisation
   mirroring the final-e rule puts both inflections on one key
   ('policy' meets 'policies'). s-final singulars outside the
   ss/us/is guard (alias, atlas, bias, canvas, lens) are pinned whole
   so they meet their own -es plurals.
 - **Single-character CJK queries match inside runs.** '猫' scored
-  zero against a body plainly containing 猫 — bigram segmentation
+  zero against a body plainly containing 猫: bigram segmentation
   left no single-char token to equal. The index side now emits each
   bigram's characters as unigrams (queries keep bigram phrase
   semantics), so one-character queries hit in every ranker and the
   FTS index.
 - **NFKC compatibility fold in the tokenizer.** Fullwidth Latin and
-  digits ('ＧＰＵ', '２０２６' — standard Japanese IME output) never
+  digits ('ＧＰＵ', '２０２６'; standard Japanese IME output) never
   met 'gpu'/'2026', halfwidth katakana never met fullwidth, and the
   halfwidth voiced-sound marks stranded as junk tokens. NFKC ahead of
   the case/diacritic folds fixes all three, symmetrically on query
@@ -9323,13 +9323,13 @@ sessions (Sonnet 5 and Fable 5 reflections) and the live event log.
   restoring its 3.11 width.** 3.12.0 canonicalised `_ACK_SURFACE`
   through the now-stemming `tokenize`, which put generic stems in
   `_ACK_TOKENS` ('works' → 'work', 'sounds' → 'sound', 'done' → 'don',
-  'nice' → 'nic', 'fine' → 'fin') — so ordinary content queries whose
+  'nice' → 'nic', 'fine' → 'fin'), so ordinary content queries whose
   tokens all landed on those stems ("does the sound work", 'Don' the
   name, 'NIC' the card) were classified `no_signal` and never probed
   for a retrieval miss, silently under-detecting the telemetry the
   eval/health pipeline reads. The set is now built from the UNSTEMMED
   tokenization and the gate compares the message's unstemmed tokens
-  against it — the curation is a judgment about spellings, so the
+  against it: the curation is a judgment about spellings, so the
   membership check happens in the space where it was made. Real
   acknowledgments ("sounds good", "thanks, done!") gate exactly as
   before; the two-content-token floor stays in stemmed space, matching
@@ -9338,14 +9338,14 @@ sessions (Sonnet 5 and Fable 5 reflections) and the live event log.
   annotations while the index is unhealthy.** Search-hit link
   annotations and `memory_show` reverse-links honour the
   rebuild-pending flag, and a corrupt or version-newer index takes
-  the same candidate-scan fallback for search-hit annotations —
+  the same candidate-scan fallback for search-hit annotations;
   previously those states returned hits with their links quietly
   missing.
 - **Poisoned index meta is corruption, not a crash.** A readable
   index whose meta rows were hand-edited or written by a foreign tool
   (non-integer `schema_version` / `indexed_count`) crashed
-  `index.status()` with ValueError — and OSError from a concurrent
-  unlink did the same — taking doctor and reindex diagnostics down on
+  `index.status()` with ValueError (and OSError from a concurrent
+  unlink did the same), taking doctor and reindex diagnostics down on
   exactly the corruption they exist to report. `status()` now returns
   its degraded corrupt shape in both cases, `rebuild()` recovers from
   the poisoned meta instead of raising, and `memory_show`'s link
@@ -9355,13 +9355,13 @@ sessions (Sonnet 5 and Fable 5 reflections) and the live event log.
   check surfaces a corrupt, missing, rebuild-pending, or
   out-of-sync-with-disk index (one repair: `bettermemory reindex`).
   Doctor and the startup S4 warning both subtract unparseable files a
-  rebuild can never index — previously they prescribed a reindex that
-  could never clear the gap — and parse-health counts files with the
+  rebuild can never index (previously they prescribed a reindex that
+  could never clear the gap) and parse-health counts files with the
   store's own enumeration (README.md, dot-prefixed .md) so the two
   checks cannot disagree.
 
 - **Acronym plurals meet their singulars.** 'APIs' tokenized whole
-  while 'API' stemmed to 'api' — cross-inflection queries missed
+  while 'API' stemmed to 'api': cross-inflection queries missed
   entirely for the most common tech plurals. A small irregular-plural
   map (apis, clis, cpus, gpus, guis, skus, uris) folds them ahead of
   the suffix rules; status/basis/analysis/redis stay guarded. This
@@ -9369,20 +9369,20 @@ sessions (Sonnet 5 and Fable 5 reflections) and the live event log.
   re-pinned and existing indexes heal automatically.
 - **The stopword-only query fallback works in bm25 mode too.** The
   fallback ranked unstripped tokens in keyword and hybrid mode, but
-  bm25 counted term frequency on the stripped stream — so
+  bm25 counted term frequency on the stripped stream, so
   `mode="bm25"` still returned zero hits for queries like 'des'.
   Fallen-back tokens now count against the unstripped body stream.
 - **A fresh index inside a populated store rebuilds instead of
   trusting itself.** Deleting `.index.sqlite` (the historical recovery
   advice) created an empty index stamped current; once enough
   post-creation writes accumulated, the prefilter re-engaged and
-  untouched legacy memories vanished from search — the migration
+  untouched legacy memories vanished from search: the migration
   recall hole, alive on the first-touch path. First touch on a
   populated store now stamps rebuild-pending, and the next Store
   construction auto-rebuilds.
 - **Page-level index corruption degrades instead of crashing.**
   `status()` reads only meta pages, so a torn data/FTS b-tree page
-  passed the health gate — and then `memory_search` crashed at the
+  passed the health gate, and then `memory_search` crashed at the
   tool boundary, doctor certified the index healthy, and reindex
   crashed mid-rebuild: the exact corruption class the repair path
   exists for. Search now routes to the full scan, doctor runs a real
@@ -9396,7 +9396,7 @@ sessions (Sonnet 5 and Fable 5 reflections) and the live event log.
 - **One adversarial file can't take down a read surface.** A memory,
   tombstone, or episode whose frontmatter parses but carries the wrong
   shape (`scopes: 5`) crashed Store construction, `memory_search`'s
-  scan, tombstone listing and pruning, or episode handoff — whichever
+  scan, tombstone listing and pruning, or episode handoff, whichever
   touched it first. Every per-file parse catch now shares one
   skip-set: malformed files are counted and skipped, never fatal.
 - **Failed auto-rebuilds back off.** A deterministically failing index
@@ -9415,14 +9415,14 @@ sessions (Sonnet 5 and Fable 5 reflections) and the live event log.
   499-memory store drops 91.5 ms → 26.8 ms with byte-identical hits,
   ordering, and relevance labels (pinned by golden streams).
 - **Diacritic folding via a precomputed translate table.** Common
-  Latin (U+0000–U+017F) folds through a dense `str.translate` table
+  Latin (U+0000 to U+017F) folds through a dense `str.translate` table
   built at import instead of a per-character NFD genexp; anything
   beyond the range routes to the unchanged NFD path. Non-ASCII Latin
   bodies tokenize at 1.17x ASCII cost, down from 1.46x.
 
 ## 3.12.0 - 2026-07-02
 
-The tokenizer v2 release — the "Tokenization v2" feature-class
+The tokenizer v2 release: the "Tokenization v2" feature-class
 residual parked in the 2026-06-09 extractor hunt
 (`docs/audit/extractor-hunt-2026-06-09.md`), shipped as one coherent
 change to the shared pipeline instead of six heuristic patches. The
@@ -9438,7 +9438,7 @@ meanwhile). Tests 2,546 → 2,565 under the full local extras matrix.
 ### Added
 
 - **CJK bigram segmentation in the shared tokenizer.** `\w`-based
-  tokenization treated an unspaced CJK clause as ONE giant token —
+  tokenization treated an unspaced CJK clause as ONE giant token:
   `東京オフィスは移転する` was a single 12-char "word" only a
   byte-exact query could match. `tokenize` now emits overlapping
   character bigrams for Han / Kana / Hangul / Thai runs (the standard
@@ -9450,11 +9450,11 @@ meanwhile). Tests 2,546 → 2,565 under the full local extras matrix.
   near-duplicates (previously similarity 0.0 for any rephrase), and
   the groundedness gate actually evaluates CJK sentences instead of
   skipping them under `MIN_CONTENT_TOKENS`. Hangul is bigrammed in
-  its NFD Jamo form (the diacritic fold decomposes syllables first)
-  — consistent on both sides, so matching works.
+  its NFD Jamo form (the diacritic fold decomposes syllables first),
+  consistent on both sides, so matching works.
 - **Light plural stemmer.** Matching was exact token equality, so
   'standups' vs a body saying 'standup' returned nothing anywhere.
-  `tokenize` now folds plural inflection — 'sses'/'ies'/final-'s'
+  `tokenize` now folds plural inflection: 'sses'/'ies'/final-'s'
   rules plus a final-e normalisation that collapses the '-es
   attachment' ambiguity ('branches'/'branch' and 'caches'/'cache'
   both fold correctly, which no dictionary-free rule can split
@@ -9469,8 +9469,8 @@ meanwhile). Tests 2,546 → 2,565 under the full local extras matrix.
   `_kebab_parts` stay coherent ('docker-containers' →
   'docker-container').
 - **Multilingual stopword lists (sv/de/fr/es).** The stopword defence
-  — the only thing keeping filler from anchoring groundedness ratios
-  and inflating relevance-coverage denominators — was English-only,
+  (the only thing keeping filler from anchoring groundedness ratios
+  and inflating relevance-coverage denominators) was English-only,
   so a hallucinated Swedish claim grounded on {vill, att, på} against
   any Swedish transcript. Four curated function-word sets join
   `_STOPWORDS`, spelled in post-diacritic-fold form ('på' → 'pa').
@@ -9485,7 +9485,7 @@ meanwhile). Tests 2,546 → 2,565 under the full local extras matrix.
 - **FTS index schema v4: prefilter/ranker parity by construction.**
   The FTS5 table stops indexing the raw body under unicode61 and
   indexes new `body_fts` / `scopes_fts` columns holding
-  `search.fts_index_text` output — the exact token stream the Python
+  `search.fts_index_text` output, the exact token stream the Python
   rankers score. Every past parity bug (diacritic folds, symbol
   aliases, contraction strips) came from the index having its own
   spelling authority that `fts_match_query` had to hand-mirror; now
@@ -9493,18 +9493,18 @@ meanwhile). Tests 2,546 → 2,565 under the full local extras matrix.
   OR-variant ('cpp' also trying '"c++"') is gone because the indexed
   text already says 'cpp'. Raw `body`/`scopes_text` stay on the
   content table (LIKE scope filter, debuggability). On-disk v3
-  indexes are dropped and recreated empty on first touch — run
+  indexes are dropped and recreated empty on first touch; run
   `bettermemory reindex` to repopulate eagerly.
 - **`match_terms` now carries the tokenizer's normal forms.** A query
   'standups' that hits reports 'standup'; 'caches' reports 'cach'.
-  The stems are index keys, not words — the field still means "which
+  The stems are index keys, not words: the field still means "which
   query tokens actually hit", the spellings are just canonical now.
 - **Groundedness: full-width sentence boundaries and a surface-form
   alias rescue.** The splitter treats 。！？； as terminators without
   requiring trailing whitespace (CJK prose has none), so a
   hallucinated second sentence can't hide behind a grounded first.
   The zero-anchor alias rescue ("Prefers VSCode." vs a transcript
-  saying "VS Code") now compares UNSTEMMED spellings — spelling
+  saying "VS Code") now compares UNSTEMMED spellings: spelling
   relations are surface properties, and the stem 'cod' fell under
   the rescue's particle length gate.
 - **`audit._ACK_TOKENS` canonicalises through the tokenizer at
@@ -9513,7 +9513,7 @@ meanwhile). Tests 2,546 → 2,565 under the full local extras matrix.
   stemmer landed ('done' → 'don'). Mapping the surface list through
   `tokenize` at import means the two can't drift again.
 - **Docs rewritten for brevity.** The README had grown into a pitch
-  deck — competitor tables, narrative walkthroughs, feature essays
+  deck: competitor tables, narrative walkthroughs, feature essays
   restating each other. It, `docs/ROADMAP.md`, `docs/eval.md`,
   `docs/installation.md`, and `plugin/README.md` are rewritten in
   conventional OSS register: what it is, install, features as
@@ -9534,7 +9534,7 @@ The eval-consistency release, opened by a removal: the key-gated
 project's own agent workflow never holds, and a staged one-shot
 completion is not a measurement), and the removal's diff-audit chain
 then surfaced a real divergence family between the two silent-miss
-reporting surfaces — `bettermemory eval` and `memory_health` now apply
+reporting surfaces; `bettermemory eval` and `memory_health` now apply
 identical invalidation semantics (bulk cutoffs, per-miss acks,
 tombstoned top-hits). Tests 2,533 → 2,552; no breaking changes
 (`compute_eval`'s new parameter is optional and default-preserving).
@@ -9547,7 +9547,7 @@ tombstoned top-hits). Tests 2,533 → 2,552; no breaking changes
   `memory_scope_overview` rollups drop telemetry invalidated by a
   `silent_miss_cutoff` event (`consolidate
   --acknowledge-misses-before`) or a per-event `miss_ack`
-  (`memory_acknowledge_miss`) — so after either escape hatch ran, the
+  (`memory_acknowledge_miss`), so after either escape hatch ran, the
   eval CLI's `silent_miss_rate` silently disagreed with the health
   surfaces over the same event stream, and the eval CLI is exactly the
   surface docs/eval.md tells people to compute the publishable trio
@@ -9557,28 +9557,28 @@ tombstoned top-hits). Tests 2,533 → 2,552; no breaking changes
   the numerator, the miss-capable denominator, `turns_no_signal`, and
   the inline triage list alike; an acked miss drops from the numerator
   only, since the audit itself wasn't the false positive. Streams with
-  no cutoff/ack events — including the comparative harness's — are
+  no cutoff/ack events, including the comparative harness's, are
   byte-identical to before. Follow-up in the same defect class closed
-  the two remaining gaps: (a) **tombstone parity** — health's
+  the two remaining gaps: (a) **tombstone parity**, health's
   `_silent_miss_stats` also drops misses whose canonical top-hit
   memory has been tombstoned (numerator only; the audited denominator
   keeps its turns), which `compute_eval` couldn't see (its `memories`
   param is active-only), so after a miss's top-hit was removed the
   eval CLI's numerator exceeded `memory_health`'s `miss_total` over
   the same stream. `compute_eval` now takes an optional
-  `tombstoned_ids` set (default `None` — byte-identical, so the
+  `tombstoned_ids` set (default `None`, byte-identical, so the
   comparative harness / scripted driver are untouched) applying
-  health's filter #2 exactly (canonical `top_hits[0].id` only — no
+  health's filter #2 exactly (canonical `top_hits[0].id` only; no
   legacy `top_hit_ids` fallback, matching health's conservative
   read), and the eval CLI passes the store's real tombstone set. (b)
-  **threshold-sweep policy** — `compute_threshold_sweep` replayed ALL
+  **threshold-sweep policy**: `compute_threshold_sweep` replayed ALL
   logged misses, including bulk-cutoff-invalidated ones (flagged by a
   since-fixed code bug, so replaying them polluted the "is v1
   over-firing" calibration); it now applies the `silent_miss_cutoff`
   filter with the same global latest-wins resolution, while
-  deliberately RETAINING acked misses in the replay — a confirmed
+  deliberately RETAINING acked misses in the replay (a confirmed
   false positive is exactly the calibration signal a stricter rule is
-  judged against — with the asymmetry documented in the sweep
+  judged against), with the asymmetry documented in the sweep
   docstring and docs/eval.md.
 - **Corrupt event-log lines that parse as valid JSON but not an object
   no longer crash `memory_health`.** A hand-edited / partially
@@ -9587,13 +9587,13 @@ tombstoned top-hits). Tests 2,533 → 2,552; no breaking changes
   reader's JSONDecodeError guard and flowed to consumers as a non-dict,
   violating the iterator's declared `Iterator[dict]` contract: the eval
   surfaces' isinstance guards skipped the row, but `compute_health`'s
-  first `ev.get(...)` raised AttributeError — one corrupt line took
+  first `ev.get(...)` raised AttributeError; one corrupt line took
   `memory_health` / `memory_scope_overview` / `report_for_directory`
   down entirely, the same eval-vs-health corrupt-row-tolerance
   divergence this release's theme covers. Such lines are now skipped at
   the shared parse site (`_iter_json_lines`) like any other corrupt
-  line, so every reader — `iter_events`, `iter_all_events`,
-  `iter_events_window` — is protected identically, matching the eval
+  line, so every reader (`iter_events`, `iter_all_events`,
+  `iter_events_window`) is protected identically, matching the eval
   surfaces.
 
 ### Removed
@@ -9605,11 +9605,11 @@ tombstoned top-hits). Tests 2,533 → 2,552; no breaking changes
   it could never actually run where the eval is driven from); it had already
   cost two honesty-defect fixes (3.7.1); and a staged single-turn completion
   role-playing "an agent answering with these memories" is not an agent
-  session — its output would have worn the "publishable measurement" label
-  the eval surface exists to keep honest. The `Agent` protocol, `run_driver`,
+  session (its output would have worn the "publishable measurement" label
+  the eval surface exists to keep honest). The `Agent` protocol, `run_driver`,
   and the deterministic `ScriptedAgent` (the CI-exercised compute-path proof)
   all stay; the honest source for live `memory_helped_rate` /
-  `endorsement_rate` numbers is production telemetry — `bettermemory eval`
+  `endorsement_rate` numbers is production telemetry: `bettermemory eval`
   over a real store's event log. The driver's internal event label
   `triggered_from` changed `live_agent_driver` → `agent_driver` (nothing
   consumes it), and docs/ROADMAP re-scope the comparative-publication plan
@@ -9628,14 +9628,14 @@ only.
 ### Fixed
 
 - **Credential gate**: catastrophic-backtracking (ReDoS) in the new
-  env-prefix clause — a dense snake_case/kebab paste could hang the
+  env-prefix clause. A dense snake_case/kebab paste could hang the
   write path for tens of seconds; the prefix repetition is now bounded
   (lossless for recall) and pinned by a perf regression test. Plus:
   connective separators (`is set to` / `was rotated to`), quoted/JSON
   keys, env-prefixed keywords, connection-URI passwords, `Bearer`
   tokens, `:=`/`=>` separators, a datetime-shape guard, the 200→1024
   value cap, and snake_case/kebab identifier false positives.
-- **Durability gate**: ~20 transient-marker fixes — fronted/medial
+- **Durability gate**: ~20 transient-marker fixes. Fronted/medial
   "today", "as of <date>", future-scheduling ("next week", "tonight"),
   in-progress vocabulary, git-state phrases ("unpushed",
   "uncommitted changes" with copula anchoring), UUID/hex false
@@ -9643,7 +9643,7 @@ only.
   York office", kanban "In Progress" columns), habitual "temporarily".
 - **Groundedness gate**: contraction fragments are no longer universal
   anchors; a zero-anchor floor catches short hallucinated claims (with
-  alias/prefix tolerance — "Neovim" grounds on "nvim"); mid-line
+  alias/prefix tolerance, "Neovim" grounds on "nvim"); mid-line
   speaker labels no longer donate freebie anchors; dotted
   abbreviations, ISO-date forms, sentence-split edge cases.
 - **Proposals extractor**: smart-apostrophe (U+2018/U+2019)
@@ -9691,10 +9691,10 @@ only.
 
 - `turn_audited` events and `MissReport` carry `no_signal_reason`;
   `memory_health` carries `no_signal_total` and `bettermemory eval`
-  carries `turns_no_signal` — `no_signal` audits are excluded from the
+  carries `turns_no_signal`: `no_signal` audits are excluded from the
   silent-miss-rate denominator so a probe stuck at "declined" can't
   read as a healthy 0% miss rate.
-- `memory_curate` / `consolidate` reports carry `polarity_skipped` —
+- `memory_curate` / `consolidate` reports carry `polarity_skipped`:
   near-duplicate pairs the negation guard refused to auto-tombstone,
   surfaced suggest-only as possible contradictions.
 
@@ -9702,14 +9702,14 @@ only.
 
 - `docs/api.md`, README, tool descriptions, and `config.toml` prose
   updated to the real semantic-mode contract (an installed embeddings
-  extra alone does not enable semantic participation — the config-level
+  extra alone does not enable semantic participation; the config-level
   opt-in does) and the shared dead-weight rule.
 - `docs/audit/extractor-hunt-2026-06-09.md` rewritten to drained
   status; the JSON remains the archival artifact.
 
 ## 3.9.0 - 2026-06-09
 
-A feature release centered on killing path-drift false signals — the
+A feature release centered on killing path-drift false signals: the
 phantom `path_drift_missing` flags that made healthy memories read as
 stale forever. Driven by live false flags found in the dogfood store and
 a 4-round multi-agent hunt (224 agents, 10 heuristic surfaces, every
@@ -9720,7 +9720,7 @@ changes; one wire-shape addition.
 
 - **`verified_absent_paths` attestation on `memory_verify`.** The mirror
   axis to `verified_paths`: body-cited paths you confirm are
-  *intentionally* absent on this machine — a remote host's path, a
+  *intentionally* absent on this machine. A remote host's path, a
   platform-conditional location (`~/.config/...` cited for Linux while
   running on macOS), a path the body cites precisely because it is NOT
   the real one. Path-drift reports them under a new
@@ -9729,7 +9729,7 @@ changes; one wire-shape addition.
   state. Persisted in frontmatter, preserved through scope-only updates,
   tombstone/restore, and no-arg verifies; surfaced on `memory_show`,
   expanded search hits, and the web UI detail view. Extraction
-  heuristics can't read that context — the attestation layer is where
+  heuristics can't read that context; the attestation layer is where
   human/agent judgment lands.
 
 ### Fixed
@@ -9771,13 +9771,13 @@ changes; one wire-shape addition.
   PEM headers and Slack `xapp-`/`xoxc-`/`xoxe-` token families.
 - **Auto-scope (HIGH): linked-worktree blackout.** Sessions running in
   a `git worktree` checkout (spawned agent worktrees, PR-review trees)
-  could not see ANY memory written in the primary checkout — the
-  repo's shared knowledge — because the worktree filter required exact
+  could not see ANY memory written in the primary checkout, the
+  repo's shared knowledge, because the worktree filter required exact
   root equality. A caller in a linked worktree now matches memories
   from its primary (derived from the worktree's `.git` file, no
   subprocess), and memories recorded in since-deleted worktrees degrade
   to repo-level matching instead of being invisible forever. Live
-  sibling worktrees stay isolated — the original leakage fix is
+  sibling worktrees stay isolated; the original leakage fix is
   preserved.
 
 ### Notes
@@ -9798,17 +9798,17 @@ breaking changes.
 - **Credential check at write time.** `memory_write` now runs a
   credential-shaped-token detector (`src/bettermemory/credentials.py`) as
   the first write gate, ahead of the durability check. A body that embeds a
-  secret-shaped token — a vendor-prefixed API key (AWS `AKIA…`,
+  secret-shaped token (a vendor-prefixed API key (AWS `AKIA…`,
   OpenAI/Anthropic `sk-…`, GitHub `ghp_…`/`github_pat_…`, Slack `xox…`,
   Google `AIza…`, Stripe `sk_live_…`), a private-key PEM header, a JWT, or a
-  guarded `password=…`/`api_key=…` assignment with a high-entropy value —
+  guarded `password=…`/`api_key=…` assignment with a high-entropy value)
   returns `{status: "credential_warning", markers: [...]}` and persists
   nothing. The store is plain-text markdown that `sync` pushes across hosts
   via git, so a captured secret would otherwise rot there unencrypted and in
   the `.events.jsonl` audit trail. **The matched value is redacted from both
   the warning and the event log** (only the detector `kind` is recorded), so
-  the gate never re-leaks what it refused. The detector is precision-first —
-  prose that merely mentions "api_key" or "password" never fires — and the
+  the gate never re-leaks what it refused. The detector is precision-first
+  (prose that merely mentions "api_key" or "password" never fires) and the
   rare legitimate case (a documented public/example credential) passes with
   `acknowledge_credential=True`, logged as an override by kind. Symmetric in
   shape to the durability gate; default-on, no config knob.
@@ -9817,8 +9817,8 @@ breaking changes.
 
 A patch release. An adversarial diff-audit of the 3.7.0 changes (the
 reactive sweep over the just-shipped feature commits) surfaced three real
-issues — one user-facing performance regression and two honesty defects in
-the new eval driver — fixed here. No breaking changes, no new public
+issues (one user-facing performance regression and two honesty defects in
+the new eval driver) fixed here. No breaking changes, no new public
 surface; the 25-tool count is unchanged.
 
 ### Fixed
@@ -9826,14 +9826,14 @@ surface; the 25-tool count is unchanged.
 - **Search no longer opens the link index once per hit.** The 3.7.0
   `supersedes`/`contradicts` activation (`attach_link_annotations`) is
   default-on on every hit-producing search, but it called `links_for` per
-  hit — each a full SQLite open (connect + PRAGMAs + sibling chmod-stat +
+  hit, each a full SQLite open (connect + PRAGMAs + sibling chmod-stat +
   schema-ensure). A 50-hit search did up to 50 sequential index opens. A new
   `index.links_for_many` resolves all hits in a single connection (two
   `IN (...)` queries); per-id results and ordering are identical, only the
   latency changes.
 - **Live-agent eval driver: `searched` is now a real model decision.**
-  `LiveAgent` derived `searched` from `bool(hits)` — the ranker's own
-  output — so any probe with a hit scored as "the agent searched", collapsing
+  `LiveAgent` derived `searched` from `bool(hits)`, the ranker's own
+  output, so any probe with a hit scored as "the agent searched", collapsing
   the live `silent_miss_rate` toward 0 regardless of model behaviour, under a
   "publishable measurement" banner. It now reads the model's explicit
   decision (the parse is extracted into a unit-tested pure function; only the
@@ -9858,16 +9858,16 @@ levers, and the eval driver that unblocks the comparative publication. The
 
 ### Added
 
-- **`memory_curate` MCP tool** — execute the curation `memory_health` only
+- **`memory_curate` MCP tool**: execute the curation `memory_health` only
   describes. Its recommendations pointed at a `bettermemory consolidate` CLI
   an in-session model can't run; the consolidate engine had no MCP handler.
   The tool wraps that same hardened engine (the one the Stop-hook
   `run_auto_consolidate` path uses) behind a `dry_run=True`-by-default
   contract: a side-effect-free preview, then on `dry_run=False` only the two
-  reversible actions — tombstone near-duplicates (undo via `memory_restore`)
+  reversible actions, tombstone near-duplicates (undo via `memory_restore`)
   and demote dead-weight facts to `ambient` (undo via `memory_update`).
   Gated behind `full_tool_surface`, so zero default-surface context cost.
-- **`bettermemory try`** — a 60-second, zero-network demo of the staleness
+- **`bettermemory try`**: a 60-second, zero-network demo of the staleness
   verdict. In an isolated temp store it writes a memory citing a file,
   attests it, deletes the file, then shows the next search flagging it
   (`staleness_verdict: spot_check_recommended`, `path_drift.missing`
@@ -9875,26 +9875,26 @@ levers, and the eval driver that unblocks the comparative publication. The
   store; this makes it visible on demand. Exits non-zero if it can't
   reproduce the drift (a self-test of the verify→drift→verdict path).
 - **Usage-aware ranking** (`[behavior] endorsement_boost`, opt-in, default
-  off) — a bounded endorsement factor (mirrors the recency boost, capped at
+  off): a bounded endorsement factor (mirrors the recency boost, capped at
   +10%) nudges memories the model has *explicitly* applied up the results, so
   a load-bearing fact wins a near-tie. Capped so it can never override
   relevance; explicit applies only (the auto-fallback is excluded). Off by
   default: it reorders results and costs one event-log read per search, so
   the shipped default is byte-stable.
-- **`supersedes` / `contradicts` link activation** — these `MemoryLink` edge
+- **`supersedes` / `contradicts` link activation**: these `MemoryLink` edge
   types existed since 2.x but retrieval ignored them. Search hits now carry
-  `superseded_by` (active memories that supersede this hit — prefer them) and
+  `superseded_by` (active memories that supersede this hit; prefer them) and
   `contradicts` (memories in unresolved contradiction, either direction),
-  purely additively (annotation only — never reorders or drops a hit), with
+  purely additively (annotation only, never reorders or drops a hit), with
   the same caps / targeted-load / scope-refilter discipline as
   `depends_on_resolved`.
 - **Live-agent eval driver** (`tests/eval/driver.py`,
-  `python -m tests.eval.comparative --driver scripted|live`) — the machinery
+  `python -m tests.eval.comparative --driver scripted|live`): the machinery
   that was the open piece before the comparative publication. An `Agent`
   protocol + `run_driver` turn a real agent's cite-decisions into the full
   `memory_helped_rate` / `endorsement_rate` / `silent_miss_rate` trio. A
   deterministic `ScriptedAgent` proves the compute path in CI (authored
-  citations — a demonstration, not a measurement; `LiveAgent`, gated behind
+  citations: a demonstration, not a measurement; `LiveAgent`, gated behind
   `ANTHROPIC_API_KEY`, produces the publishable numbers). The offline
   adapter's honest `n/a` is unchanged.
 
@@ -9911,7 +9911,7 @@ levers, and the eval driver that unblocks the comparative publication. The
 ### Fixed
 
 - **`.gitignore`** now ignores the `.venv` *symlink* form, not just the
-  `.venv/` directory — the dev-machine symlink could otherwise be committed
+  `.venv/` directory; the dev-machine symlink could otherwise be committed
   as a machine-specific absolute path.
 
 ## 3.6.5 - 2026-06-08
@@ -9926,17 +9926,17 @@ review of the sweep commit.
 ### Fixed
 
 - **Read-path DoS (`_frontmatter`).** A memory file with deeply-nested YAML
-  frontmatter raised `RecursionError` during parse — which is not a
+  frontmatter raised `RecursionError` during parse, which is not a
   `yaml.YAMLError`, so it escaped both the parser's catch and the store's
   malformed-file skip. One ~1 KB crafted file (a hand-edit, or a hostile
   `sync pull` writing into the memory directory) then propagated out of
   `load_all` / `load_one` / `load_tombstones` / `rename_scope` and DoS'd reads
   of the *whole* store. It is now translated to `ValueError`, so the existing
-  skip drops just the bad file and the rest of the store stays readable —
+  skip drops just the bad file and the rest of the store stays readable,
   restoring the module's "one corrupt file shouldn't blind the store" contract
   on the read side (the write side already guarded nesting depth).
 - **Embedding `encode()` fail-open (`search`).** A loaded embedding model that
-  raised at `encode()` time (a device / OOM / tokenizer fault — distinct from
+  raised at `encode()` time (a device / OOM / tokenizer fault, distinct from
   the already-handled "model failed to load" case) crashed the live
   `memory_write` dedup gate and default-mode `memory_search` instead of
   degrading to lexical scoring. All four semantic dispatch points (hybrid +
@@ -9953,7 +9953,7 @@ review of the sweep commit.
 - **`migrate` trust-boundary gaps.** `bettermemory migrate` no longer rewrites
   a memory whose `schema_version` is newer than this reader supports (matching
   the store's forward-compatibility gate), and no longer follows a symlinked
-  `.md` (matching the store iterators' symlink rejection) — both close
+  `.md` (matching the store iterators' symlink rejection); both close
   `sync pull` exposure.
 - **`reindex` exit code.** A write failure during `bettermemory reindex`
   (read-only directory, full disk, SQLite I/O error) now exits 2 with a clean
@@ -9963,8 +9963,8 @@ review of the sweep commit.
 ### Changed
 
 - **Config validation (`config`).** `[scopes] allowed` now rejects a bare
-  string scalar — a forgotten-brackets `allowed = "myproject"` previously
-  char-exploded into a per-character allowlist that rejected every real write —
+  string scalar (a forgotten-brackets `allowed = "myproject"` previously
+  char-exploded into a per-character allowlist that rejected every real write)
   and the numeric config fields report a clear, located error on a non-numeric
   value instead of an opaque `int()` / `float()` traceback escaping
   `load_config` (which crashed `serve` startup).
@@ -9972,7 +9972,7 @@ review of the sweep commit.
 ### Internal
 
 - **Event-log append cost (`events`).** Orphan-rotation recovery, which scans
-  the (shared) store directory, no longer runs on every event append — it is
+  the (shared) store directory, no longer runs on every event append; it is
   deferred to the rotation path, where it is actually needed. On a large store
   this removes an O(directory-size) scan from every tool call that records an
   event.
@@ -9991,7 +9991,7 @@ review of the sweep commit.
 
 - **Completed the tool-description context-valve sweep.** 3.6.2 closed the valve
   for the two policy-heaviest default-on tool descriptions (`memory_search`,
-  `memory_write`) — "first 2 of 18." This finishes it: the remaining 16
+  `memory_write`), "first 2 of 18." This finishes it: the remaining 16
   default-on descriptions were audited (one finder per description, every
   proposed cut adversarially verified to preserve information and discoverability)
   and their residual redundancy collapsed, with **all** field/parameter reference
@@ -10018,14 +10018,14 @@ review of the sweep commit.
     de-triplication. Every canonical policy home (the `instructions` block,
     `prompts.py`, `docs/system_prompt.md`) kept the USER subject; only the inline
     description drifted. "you concurred" reads as license for the model's own
-    agreement to mint a user-attributed `fact` — exactly the misattribution the
-    user-inference/veto design exists to prevent — so the inline cue is restored
+    agreement to mint a user-attributed `fact`, exactly the misattribution the
+    user-inference/veto design exists to prevent, so the inline cue is restored
     to match canonical policy.
   - `test_policy_lives_once_not_triplicated_in_descriptions` used `len(...) > 1`,
     which only catches re-triplication of the *current* wording. Three of the
     five tracked policy phrases had no survival floor elsewhere, so a harmless
     reword would drop the substring to zero matches and the guard would pass
-    vacuously — silently un-tracking that rule. Tightened to `!= 1` so a reword
+    vacuously, silently un-tracking that rule. Tightened to `!= 1` so a reword
     fails loudly; this now floors those three phrases.
 
 ## 3.6.2 - 2026-06-06
@@ -10033,8 +10033,8 @@ review of the sweep commit.
 ### Internal
 
 - **Closed the tool-description context valve.** The lean default-on tool
-  descriptions — resident in context on *every* turn, including the ~90% that
-  never touch memory — had grown to ~27.9 KB by restating the opt-in /
+  descriptions (resident in context on *every* turn, including the ~90% that
+  never touch memory) had grown to ~27.9 KB by restating the opt-in /
   announce-on-search / proactive-write policy verbatim across three places: the
   server `instructions` block, the `DESC_*` strings, and
   `SYSTEM_PROMPT_ADDENDUM`. The instructions-block budget test had quietly made
@@ -10056,7 +10056,7 @@ review of the sweep commit.
 - **`consolidate --acknowledge-debt` no longer shields dead-weight memories
   from removal.** Its inline cold-endorsement filter omitted the
   `applied_count > 0` gate the canonical `health` rollup enforces, so a pure
-  dead-weight memory (retrieved over the floor but *never* applied — zero auto
+  dead-weight memory (retrieved over the floor but *never* applied: zero auto
   *and* zero explicit) was wrongly swept into the endorsement pass and handed a
   fabricated `use(applied)` event. That bumped its applied-count to 1 and
   permanently excluded it from the dead-weight removal/demotion bucket (which
@@ -10067,7 +10067,7 @@ review of the sweep commit.
   recorder silently dropped every write. Mirrors the existing
   `--acknowledge-misses-before` guard.
 - **`bettermemory reindex` can now repair a corrupt or version-skewed index.**
-  `index.rebuild()` — the documented recovery primitive — previously crashed on
+  `index.rebuild()`, the documented recovery primitive, previously crashed on
   exactly the inputs it exists to fix: a torn `.index.sqlite`
   (`sqlite3.DatabaseError`) or an on-disk schema version newer than the running
   code (`IndexVersionError`). It now drops the index file and its `-wal`/`-shm`
@@ -10081,7 +10081,7 @@ review of the sweep commit.
   consumed, so a retry is safe to reason about.
 - **`bettermemory export -o` and `bettermemory init --config-path` exit cleanly
   (code 2) on a bad or unwritable target path** instead of dumping a raw
-  `FileNotFoundError` / `PermissionError` traceback — completing the gated-tool
+  `FileNotFoundError` / `PermissionError` traceback, completing the gated-tool
   CLI error-handling parity started in 3.6.0.
 
 ### Internal
@@ -10098,14 +10098,14 @@ review of the sweep commit.
   from the lean default surface (`[behavior] full_tool_surface = false`) now
   have a direct `bettermemory` CLI counterpart, closing most of the gap between
   that promise (made in the README and the 3.4.0 notes) and the shipped surface:
-  - `bettermemory tombstones restore <id>` — un-tombstone a memory (the CLI
+  - `bettermemory tombstones restore <id>`: un-tombstone a memory (the CLI
     counterpart of `memory_restore`). Pairs with the existing `tombstones
     list`; previously a removed memory could be *listed* from the CLI but not
     *restored* without enabling the full tool surface.
-  - `bettermemory rename-scope <old> <new>` — bulk-rename a scope tag across
+  - `bettermemory rename-scope <old> <new>`: bulk-rename a scope tag across
     active memories and tombstones (the CLI counterpart of
     `memory_rename_scope`), with `--no-tombstones` and `--json`.
-  - `bettermemory proposals list | accept <id> --scope … | dismiss <id>` —
+  - `bettermemory proposals list | accept <id> --scope … | dismiss <id>`:
     review the write-reflex proposal queue from the CLI (the counterpart of
     `memory_proposals`). `accept` shares the MCP tool's exact
     validate → atomic-claim → write core
@@ -10121,7 +10121,7 @@ review of the sweep commit.
 - **(docs) README / ROADMAP / api.md drift against the code.** A whole-diff
   audit of the 3.5.0 docs overhaul, plus a closing self-audit, corrected the
   blanket "all six gated tools reachable via the CLI" overclaim (now spelled out
-  per tool — five have direct CLI counterparts; `memory_acknowledge_miss`'s
+  per tool: five have direct CLI counterparts; `memory_acknowledge_miss`'s
   per-event ack is MCP-only, with only a bulk CLI cutoff); the ROADMAP
   attributing the lean default surface to 3.3.4 instead of 3.4.0 (two places);
   and the ROADMAP double-counting the four `episode_*` tools as "plus 4" on top
@@ -10131,7 +10131,7 @@ review of the sweep commit.
 
 A correctness + robustness release from a whole-codebase audit sweep of the
 post-3.4.2 tree: 17 fixes across the store, episodic, telemetry, verification,
-consolidation, web, and CLI surfaces — including two that could lose or hide
+consolidation, web, and CLI surfaces, including two that could lose or hide
 data. The minor bump reflects one behavioral change: `episode_search` now
 scopes its bare discovery walk to the caller's git worktree by default (new
 `auto_scope` parameter). Explicit `swarm_id` / `parent_session_id` reads are
@@ -10139,37 +10139,37 @@ unaffected.
 
 ### Fixed
 
-- **`memory_show` — a corrupt or version-newer index no longer crashes the
+- **`memory_show`: a corrupt or version-newer index no longer crashes the
   read.** `_links_payload` called `index.links_for_with_status` with no
   exception guard, so a torn/truncated `.index.sqlite`
   (`sqlite3.DatabaseError`) or an on-disk `schema_version` newer than the
   reader (`IndexVersionError`) propagated out of the bare-registered
-  `memory_show` tool and failed *every* id until `reindex` — even though the
+  `memory_show` tool and failed *every* id until `reindex`, even though the
   canonical `.md` files were intact and `memory_search` already degrades
   gracefully via the tolerant `index.status()`. `memory_show` now catches both
   and falls back to the `load_all` reverse-link scan.
 
-- **`memory_update` — an over-cap links list silently lost the whole record.**
+- **`memory_update`: an over-cap links list silently lost the whole record.**
   `model_copy(update=...)` skips field validators, so a `memory_update` with
   more than 64 links committed as `status="committed"` but then vanished from
   every read surface: load-time re-validation hit the 64-link cap and the
   record was skipped. The cap is now enforced on the update path, matching the
   existing `scopes` / `verified_*` guards against the same bypass.
 
-- **`episode_search` — the most-recent-N window sorts by datetime, not the ISO
+- **`episode_search`: the most-recent-N window sorts by datetime, not the ISO
   string.** `datetime.isoformat()` omits fractional seconds at microsecond 0,
   so a whole-second / bare-date episode mis-sorted as the newest of its second
   and could drop a genuinely-newer episode from the cap (and surface a
   non-chronological order).
 
-- **`episode_handoff` — an invalid explicit `prior_session_id` degrades to an
+- **`episode_handoff`: an invalid explicit `prior_session_id` degrades to an
   empty result** instead of raising a raw `ValueError` on the iteration-entry
   hot path, matching the auto-resolution branch and `episode_search`.
 
 - **Telemetry double-count of hook-attributed retrievals.** A Stop-hook
   `applied` event (written under the Claude Code transcript id) was not
   deduplicated against the in-process auto-commit (keyed on the server
-  `sess_<hex>` id), so every hook-attributed retrieval was counted twice —
+  `sess_<hex>` id), so every hook-attributed retrieval was counted twice,
   inflating `memory_helped_rate`, the dead-weight / cold-endorsement split, and
   the explicit-vs-auto ratio. The dedup now bridges both id spaces.
 
@@ -10179,9 +10179,9 @@ unaffected.
   cold-endorsement bucket is now gated on "at least one apply happened" across
   all three surfaces (`compute_health`, `curation_counts`, `eval`).
 
-- **Episode prune — the lock-sidecar unlink moved past `flock` release.**
+- **Episode prune: the lock-sidecar unlink moved past `flock` release.**
   `prune_old_sessions` unlinked the `.session-<id>.lock` sidecar inside the
-  `flock` block — the same Windows open-handle class as the 3.4.2 store fix,
+  `flock` block, the same Windows open-handle class as the 3.4.2 store fix,
   dead on Windows and masked only by the post-loop orphan sweep. It is now
   deferred to after the lock releases.
 
@@ -10189,7 +10189,7 @@ unaffected.
   via `git rev-list --since` (committer date, inclusive whole-second) while
   `memory_search` and `memory_health` bisect over author timestamps
   (strictly-greater, microsecond). The same memory could read drifted on one
-  surface and clean on another — after a rebase, *and* with zero rebases when
+  surface and clean on another: after a rebase, *and* with zero rebases when
   `last_verified_at` landed in a commit's UTC second. All four sites now share
   the author-date + `bisect_right` path with an identical `count > 0`
   verified-paths narrowing guard, resolving a long-parked divergence.
@@ -10201,33 +10201,33 @@ unaffected.
   auto-consolidate path). They now read the rotated archives too, matching
   `memory_health`'s canonical rule.
 
-- **Durability gate — decimal numbers are no longer flagged as commit SHAs.**
-  The transient-marker regex matched any 7–40 character run of `[0-9a-f]`,
+- **Durability gate: decimal numbers are no longer flagged as commit SHAs.**
+  The transient-marker regex matched any 7-40 character run of `[0-9a-f]`,
   including pure decimals, so a durable fact mentioning an epoch / phone number
   / numeric id was wrongly rejected as transient. A SHA match now requires at
-  least one `a–f` hex letter.
+  least one `a-f` hex letter.
 
-- **Web UI — the memory detail page flags stale verification.** A memory
+- **Web UI: the memory detail page flags stale verification.** A memory
   verified long outside the staleness window rendered identically to one
   verified today; the detail page now shows a stale cue, matching the rest of
   the curation surface.
 
-- **`_frontmatter` dump — alias expansion is bounded before materializing.**
+- **`_frontmatter` dump: alias expansion is bounded before materializing.**
   `dumps()` disabled YAML aliases, so crafted nested-alias frontmatter (via
   `sync pull` or a hand-edit) expanded to hundreds of MB on a re-dump before
-  the size cap (checked post-hoc) could reject it — a CPU/memory DoS under the
+  the size cap (checked post-hoc) could reject it, a CPU/memory DoS under the
   per-file lock. Expansion is now bounded up front.
 
-- **`migrate origin` — one failing write no longer aborts the directory.** The
+- **`migrate origin`: one failing write no longer aborts the directory.** The
   per-file write was outside the try/except the read already had, so a single
   `ENOSPC` / `EACCES` aborted the loop and over-counted `updated`. Failures are
   recorded and skipped; the count reflects what actually persisted.
 
-- **CLI — `tombstones list --scope <bad>` gives a clean error.** It raised a
+- **CLI: `tombstones list --scope <bad>` gives a clean error.** It raised a
   raw traceback leaking internal paths; it now exits 2 with an argparse-style
   message, like the sibling `export` command.
 
-- **`memory_rename_scope` — disk errors surface as a structured error.** A
+- **`memory_rename_scope`: disk errors surface as a structured error.** A
   genuine `OSError` mid-rename leaked raw through the MCP boundary (unlike the
   `remove` / `restore` / `update` / `verify` handlers); it is now wrapped in a
   clean `ValueError`.
@@ -10236,27 +10236,27 @@ unaffected.
 
 - **`episode_search` scopes to the caller's git worktree by default.** The bare
   discovery walk (no `swarm_id` / `parent_session_id`) now drops episodes from
-  a different worktree of the same repository sharing one memory root —
+  a different worktree of the same repository sharing one memory root,
   mirroring `memory_search`'s auto-scope and the isolation `episode_handoff`
   enforces. Explicit `swarm_id` (the N:1 swarm fan-in) and `parent_session_id`
   lookups are deliberate cross-tree reads and are never worktree-filtered.
 
 ### Added
 
-- **`episode_search(auto_scope=...)`** (default `True`) — set `False` to sweep
+- **`episode_search(auto_scope=...)`** (default `True`): set `False` to sweep
   the bare discovery walk across every worktree sharing the memory root.
 
 ## 3.4.2 - 2026-06-01
 
 A Windows-only follow-up to 3.4.1. 3.4.1's reverse-link, datetime, and
 robustness fixes were all sound, but its tombstone-prune lock-sidecar cleanup
-leaked the sidecar on Windows — caught by the CI matrix before publish, so
-3.4.1 never shipped to PyPI. 3.4.2 is 3.4.1's full set of fixes plus the
+leaked the sidecar on Windows (caught by the CI matrix before publish, so
+3.4.1 never shipped to PyPI). 3.4.2 is 3.4.1's full set of fixes plus the
 Windows correction; upgrade directly from 3.4.0.
 
 ### Fixed
 
-- **store (Windows)** — `prune_tombstones` unlinked each tombstone's `.lock`
+- **store (Windows)**: `prune_tombstones` unlinked each tombstone's `.lock`
   sidecar from inside the `with _locked(path):` block. On POSIX the held
   descriptor keeps the inode alive so the in-lock unlink succeeds, but on
   Windows `msvcrt.locking` holds the file handle open for the duration of the
@@ -10273,46 +10273,46 @@ Windows correction; upgrade directly from 3.4.0.
 
 ## 3.4.1 - 2026-05-31
 
-A parallel audit-loop backlog drain — 13 confirmed bug, robustness, and
+A parallel audit-loop backlog drain: 13 confirmed bug, robustness, and
 efficiency fixes across the store, hook, config, attribution, request-handlers,
 CLI, datetime/IO, and the search index. Each landed with its own regression
 test.
 
 ### Fixed
 
-- **hook** — `_pending_retrievals` used a bespoke ISO parser that returned a
+- **hook**: `_pending_retrievals` used a bespoke ISO parser that returned a
   naive datetime (compared in local time, off by the UTC offset); replaced with
   `parse_event_ts` (tz-aware UTC). And the retrieval-kind dispatch only
   recognised `search`/`show`, so memories surfaced via `memory_list` were never
-  eligible for Stop-hook attribution — `list`/`list_active` are now included.
-- **store** — `prune_tombstones` deleted the tombstone file but leaked its
+  eligible for Stop-hook attribution; `list`/`list_active` are now included.
+- **store**: `prune_tombstones` deleted the tombstone file but leaked its
   `.lock` sidecar (one per pruned tombstone, unbounded); the sidecar is now
   unlinked best-effort. And `_as_dt` raised on a YAML bare-date scalar
   (`created: 2025-01-01` parses to a `datetime.date`), which upstream load
-  swallowed as a skip — silently dropping the whole memory; it is now coerced to
+  swallowed as a skip, silently dropping the whole memory; it is now coerced to
   UTC midnight.
-- **config / events** — boolean config keys were coerced with a naive
+- **config / events**: boolean config keys were coerced with a naive
   `bool(...)`, so a quoted TOML value like `log_queries_verbatim = "false"` read
-  as `True` — silently inverting a privacy opt-out; a string-aware coercion now
+  as `True`, silently inverting a privacy opt-out; a string-aware coercion now
   handles it. And a non-positive `telemetry.max_bytes` made the rotation guard
   never hold, gzip-rotating the event log on every append; it is now clamped at
   load and guarded in the rotation check.
-- **attribution** — claim-excerpt matching compared text without Unicode
+- **attribution**: claim-excerpt matching compared text without Unicode
   normalization, so a memory body using precomposed accents (U+00E9) never
   matched a reply using the decomposed form (U+0065 U+0301), silently
   undercounting `memory_helped_rate` on non-ASCII text; `_normalize` now
   NFC-folds and token extraction runs on the folded text.
-- **request-handler robustness** — `memory_search` top-hit body expansion
+- **request-handler robustness**: `memory_search` top-hit body expansion
   aborted the whole search on a transient `OSError` (now skips the inline body);
   `acknowledge_miss` reason had no maximum length (now bounded); proposal
   `accept` was non-atomic across three locks so a concurrent double-accept could
   duplicate (now claim-before-write idempotent); `episode_promote` advanced the
   record-use turn counter twice (now once).
-- **core robustness** — remote LLM providers (Anthropic, OpenAI) issued requests
+- **core robustness**: remote LLM providers (Anthropic, OpenAI) issued requests
   with no timeout, so a hung provider could block indefinitely (now a default
   timeout); and the origin-backfill migrator mislabeled a file tombstoned
   mid-run as malformed (now skipped quietly).
-- **search index** — the reverse-link index collapsed two links that shared a
+- **search index**: the reverse-link index collapsed two links that shared a
   target but carried distinct typed notes, losing a note that exists on disk;
   the `memory_links` schema was widened (`SCHEMA_VERSION` 2 → 3) so
   distinct-note links are preserved while exact-duplicate links still collapse
@@ -10320,18 +10320,18 @@ test.
   one-time post-upgrade index rebuild (see Upgrade notes), reading the inbound
   links and the index-populated signal in a single index open on the common
   no-inbound-link path.
-- **scope / semantic** — scope-root matching guarded the leading but not the
+- **scope / semantic**: scope-root matching guarded the leading but not the
   trailing boundary, so `projects:foo` could over-match `projects:foobar` (the
   trailing boundary is now enforced); and an empty-but-dirty semantic cache
   short-circuited its flush, stranding the dirty flag so a later write could be
   lost (it now flushes and clears).
-- **CLI ergonomics** — `export --scope` and `eval --since` surfaced raw
+- **CLI ergonomics**: `export --scope` and `eval --since` surfaced raw
   `ValueError`/`OverflowError` tracebacks on bad input (now clean CLI errors);
   `episodes prune --dry-run` diverged from the real prune for `ttl_days <= 0`
   (now matches); `reindex --embeddings` warmed the cache from the unstripped
   body while readers key on the stripped form (now strips); plus a corrected
   `detect_path_drift` docstring.
-- **datetime / IO robustness** — the silent-miss probe (`audit.probe_for_miss`)
+- **datetime / IO robustness**: the silent-miss probe (`audit.probe_for_miss`)
   passed an injected `now` through without UTC-coercion, raising `TypeError`
   against tz-aware event timestamps (now coerced via `ensure_utc`); the
   negative-outcomes enrichment parsed timestamps with a local helper that
@@ -10347,7 +10347,7 @@ test.
 
 - **Index schema → v3.** The reverse-link fix (item above) widened the on-disk
   search index schema (v2 → v3). The first time a bettermemory server starts on
-  3.4.1 it rebuilds the local index once, automatically — no action required;
+  3.4.1 it rebuilds the local index once, automatically (no action required);
   `memory_show` serves correct `reverse_links` throughout the rebuild. If you
   run multiple bettermemory server processes against one store, restart them
   after upgrading so none keeps a v2 reader open against the rebuilt v3 index.
@@ -10357,19 +10357,19 @@ test.
 Three fixes from a diagnostic pass over the dogfood event log (2,205 events,
 41 memories). Two of them close gaps where a headline feature was silently
 not firing in practice; the third trims the per-turn context cost the project
-exists to minimise. The verification-surface fixes are the load-bearing ones —
+exists to minimise. The verification-surface fixes are the load-bearing ones:
 a trust signal that cries wolf, and an audit trail that never captured its
 positive label, are both worse than not having the feature.
 
 ### Changed
 
 - **Lean default tool surface.** The server previously registered all 24 MCP
-  tools unconditionally — ~9,500 tokens of descriptions in every turn's
+  tools unconditionally, ~9,500 tokens of descriptions in every turn's
   context. Dogfood telemetry (190 sessions) showed 43% of sessions never call
-  any memory tool, and six curation/power-user tools saw 0–8 organic calls
-  each. Those six — `memory_health`, `memory_acknowledge_miss`,
+  any memory tool, and six curation/power-user tools saw 0-8 organic calls
+  each. Those six (`memory_health`, `memory_acknowledge_miss`,
   `memory_rename_scope`, `memory_restore`, `memory_list_tombstones`,
-  `memory_proposals` — now gate behind a new `[behavior] full_tool_surface`
+  `memory_proposals`) now gate behind a new `[behavior] full_tool_surface`
   flag, so the **shipped default is 18 tools** (`memory_proposals` also
   auto-registers when `[proposals]` is enabled). All six stay reachable via the
   `bettermemory` CLI. **Upgrade note:** machines running the curate-loop /
@@ -10386,17 +10386,17 @@ positive label, are both worse than not having the feature.
   `memory_search`, which already narrow to commits that touched the paths the
   user attested. The rollup was the loudest surface and the only one missing
   the filter, so it flagged `spot_check` on memories deliberately marked stable
-  and disagreed with the per-hit verdict — exactly the cry-wolf failure that
+  and disagreed with the per-hit verdict, exactly the cry-wolf failure that
   trains the model to ignore the signal. In the dogfood store all 12 "drifted"
   memories were false positives (warm, applied, still-correct). `health.py`'s
   two drift loops now apply the same path filter via a `verified_paths_by_id`
   side-map, guarded so a caught-up memory pays no extra git call. Regression
   tests on both surfaces. (Residual: memories with no `verified_paths` still
-  drift on every commit — a principled verdict-policy fix is queued.)
+  drift on every commit; a principled verdict-policy fix is queued.)
 - **The Stop-hook claim-excerpt backfill never fired.** `attribute_uses` linked
   a memory to a reply only on a ≥30-char *verbatim* substring. Models paraphrase
   rather than quote, so the hook logged zero `attribution="hook"` events across
-  the entire event history — and `memory_helped_rate`, the claim-level
+  the entire event history, and `memory_helped_rate`, the claim-level
   audit-trail metric, read a structural 0 as a result. Adds a precision-first
   token-containment tier: a candidate sentence also matches when ≥60% of its
   distinct content (non-stopword) tokens appear in the reply, with an absolute
@@ -10407,7 +10407,7 @@ positive label, are both worse than not having the feature.
 
 ## 3.3.4 - 2026-05-30
 
-The first **whole-tree** coverage audit — applying the diff-only-blind-spot
+The first **whole-tree** coverage audit, applying the diff-only-blind-spot
 lesson the audit-loop's v5 `full_sweep_sha` gate was built for, but that had
 never actually been run against bettermemory's own source. Every one of the
 80 source files was read as whole files (not diffs) by a read-only review
@@ -10421,8 +10421,8 @@ confirmed documentation drift; the low-severity tail is queued for the loop.
 - **(high) Stop-hook silent-miss telemetry was structurally inflated.**
   `run_audit` passed Claude Code's *transcript* session id into the probe's
   "did the model already retrieve this turn?" shield, but the server stamps
-  its `search` / `show` / `list` events with its own `sess_<hex>` id — a
-  different id space — so the shield never matched and was dead in the
+  its `search` / `show` / `list` events with its own `sess_<hex>` id, a
+  different id space, so the shield never matched and was dead in the
   production Stop-hook path. Every turn where the model *did* search yet a
   high-relevance hit existed could still emit `search_miss`, inflating the
   silent-miss counters the curation surfaces triage. `probe_for_miss` now
@@ -10438,7 +10438,7 @@ confirmed documentation drift; the low-severity tail is queued for the loop.
   on-disk verification; content edits still reset it.
 - **(medium) `memory_proposals` accept bypassed the scope whitelist and cap
   (fail-open).** Accepting a proposal wrote straight through `store.write`,
-  enforcing only the content-size guard — not the `[scopes] allowed`
+  enforcing only the content-size guard, not the `[scopes] allowed`
   whitelist or `max_scopes_per_write` that `memory_write` / `memory_update`
   / `memory_rename_scope` enforce. It now routes through the shared
   `_validate_write_payload`.
@@ -10454,7 +10454,7 @@ confirmed documentation drift; the low-severity tail is queued for the loop.
   larger stores.
 - **(medium) `consolidate --semantic-threshold` help was wrong.** It claimed
   the flag is ignored without the embeddings extra, but the value is applied
-  as the Jaccard cutoff — a different scale. Corrected.
+  as the Jaccard cutoff, a different scale. Corrected.
 - **(docs) API-reference drift.** Added the missing
   `memory_acknowledge_miss` subsection and `recent_silent_misses` in the
   `memory_health` return; corrected the `memory_rename_scope` return shape
@@ -10468,8 +10468,8 @@ confirmed documentation drift; the low-severity tail is queued for the loop.
   the health rollup count **author**-date, so a rebase can make one memory
   read drifted via `memory_show` yet clean via `memory_search`. The lying
   "author-date" docstring is corrected here; unifying both signals onto
-  author-date — which must move the paths-filtered variant in lockstep and
-  ship rebase-fixture tests — is deferred rather than rushed into a
+  author-date, which must move the paths-filtered variant in lockstep and
+  ship rebase-fixture tests, is deferred rather than rushed into a
   half-fix. The low-severity robustness tail (scattered naive-datetime read
   paths, a tombstone `.lock` sidecar leak, CLI argument-error ergonomics, a
   missing LLM request timeout) is queued for the audit loop to drain.
@@ -10480,7 +10480,7 @@ A head-to-toe audit (24-unit subagent fan-out, every finding
 adversarially re-verified) of the codebase plus the new
 comparative-evaluation harness, draining 36 confirmed defects in one
 pass. No breaking changes; several fixes correct silently-wrong
-behavior, so a few observable signals shift — all toward honesty.
+behavior, so a few observable signals shift, all toward honesty.
 
 ### Added
 
@@ -10514,17 +10514,17 @@ behavior, so a few observable signals shift — all toward honesty.
   attributed and `memory_helped_rate` could never rise from the hook
   tier; the lookup now bridges to the in-process session.
 - **`consolidate` dedup no longer collapses a memory into an
-  already-tombstoned keeper** in a transitive-similarity cluster — a
+  already-tombstoned keeper** in a transitive-similarity cluster, a
   dangling-reference data loss that ran unattended in the Stop hook.
 - **memory_search per-hit commit-drift honors `verified_paths`,** so a
   memory attested as stable for a path no longer shows spurious
   spot-check noise on the search surface (now matches memory_show).
 - **An auto-applied `record_use` no longer clears a `contradicted`
-  flag** in `recent_negative_outcomes` — a memory the model flagged as
+  flag** in `recent_negative_outcomes`: a memory the model flagged as
   wrong keeps its warning across the unattended auto-commit.
 - **The event-log reader survives corruption.** A truncated or
   CRC-corrupt gzip archive, or a stray non-UTF-8 byte, no longer crashes
-  `memory_health` / `memory_scope_overview` / eval / doctor — each
+  `memory_health` / `memory_scope_overview` / eval / doctor; each
   degrades per-record instead of taking down the whole telemetry surface.
 - **`bettermemory init` re-run preserves user customizations** on its
   own MCP entry (`env` incl. `BETTERMEMORY_DIR`, `disabled`, `timeout`)
@@ -10554,13 +10554,13 @@ recent C3 / #28 changes.
   "this is unrelated to project X") still produced silent-miss flags from
   the client-side Stop hook, because the hook runs in a separate process
   and can't read the server's in-memory `SessionState`. The hook now
-  reconstructs the disabled set from the event log — `scope_disable` /
+  reconstructs the disabled set from the event log (`scope_disable` /
   `scope_enable` are already persisted as events stamped with the
-  server's stable per-process session id — and feeds it into the audit
+  server's stable per-process session id) and feeds it into the audit
   probe as `excluded_scopes`, the same shield the in-process
   `memory_audit_turn` applies. A turn the user framed as out-of-scope is
   no longer false-flagged. No new write path, no sidecar file, no schema
-  change — the event log was already the single source of truth (patch
+  change; the event log was already the single source of truth (patch
   bump). Reset-on-restart is eventual, not atomic: the reconstruction
   anchors to the most recent in-process server session, so a restarted
   server keeps replaying the prior session's disables until it writes its
@@ -10568,7 +10568,7 @@ recent C3 / #28 changes.
   Residual divergence (two directions): under multiple concurrent
   sessions sharing one memory dir the anchor can cross-attribute disabled
   scopes (over-suppress), and the active-log-only read can drop a disable
-  that rotated out while its session is still live (over-flag) — both
+  that rotated out while its session is still live (over-flag), both
   narrow, matching the single-active-server deployment.
 
 ### Internal
@@ -10604,8 +10604,8 @@ A single targeted fix closing queue item #28.
   construction and stamps `worktree_root` on every event it writes.
   `episode_handoff`'s zero-episode branch reads the candidate session's
   worktree from the event log rather than treating it as unknown, so a
-  prior session that wrote only events — a search-only loop tick, or one
-  that crashed before `episode_write` — is correctly adopted as
+  prior session that wrote only events (a search-only loop tick, or one
+  that crashed before `episode_write`) is correctly adopted as
   `prior_session_id` when it shares the caller's worktree. Previously
   such a session was skipped (the conservative None-only-matches-None
   rule), leaving a loop's next tick with no handoff anchor. Legacy
@@ -10616,7 +10616,7 @@ A single targeted fix closing queue item #28.
 ## 3.3.0 - 2026-05-28
 
 Three additive features land this batch, all serving the same north
-star — memory that compounds across many agents and over time.
+star: memory that compounds across many agents and over time.
 **Multi-agent swarm fan-in for episodes** lets one coordinator gather
 what all its parallel sub-agents learned; **opt-in self-improving
 consolidation** lets the store quietly curate itself between turns; and
@@ -10634,9 +10634,9 @@ lands as a minor bump rather than a patch.
   now carry an optional `swarm_id` cohort tag, and
   `episode_search(swarm_id=…)` (plus the new `EpisodeStore.list_by_swarm`
   primitive) gathers every episode bearing that tag across all session
-  directories. This fills the gap between `episode_handoff` — a *1:1,
+  directories. This fills the gap between `episode_handoff` (a *1:1,
   single-chain* "my previous self → me" handoff resolved via the event
-  log — and the *N:1* shape a swarm needs: a coordinator that fans out
+  log) and the *N:1* shape a swarm needs: a coordinator that fans out
   N parallel sub-agents (e.g. via the Agent tool) had no way to gather
   their collective takeaways. The flow: the coordinator passes its
   session id down to each sub-agent, every sub-agent stamps its
@@ -10655,14 +10655,14 @@ lands as a minor bump rather than a patch.
   keep their exact pre-field on-disk shape and `SCHEMA_VERSION` is
   unchanged), and legacy episodes load as `swarm_id=None`. The value is
   validated to the filesystem-safe id charset with a 128-char cap so a
-  runaway value can't bloat the episode frontmatter — it is matched for
+  runaway value can't bloat the episode frontmatter; it is matched for
   equality at fan-in time, never used as a path component.
 
 - **Opt-in self-improving consolidation (`[consolidate] auto_apply`).**
   A new off-by-default config section lets the store curate itself
   unattended. When enabled (and `[telemetry]` is on), the existing
   `audit-turn` Stop hook runs the *structurally-safe* consolidation
-  subset at turn end — conservative near-duplicate dedup (a reversible
+  subset at turn end: conservative near-duplicate dedup (a reversible
   tombstone) and demote-never-applied (a non-destructive fact→ambient
   retag). No LLM passes, no contradiction resolution; nothing that needs
   judgement. The pass is **debounced** (at most once per
@@ -10672,7 +10672,7 @@ lands as a minor bump rather than a patch.
   the turn-end hook), and **conservative** (Jaccard ≥ 0.90, stricter than
   the 0.75 manual default, with no embedding model loaded in the hook).
   Every action lands as a reviewable, reversible tombstone plus an
-  `auto_consolidate` event (`memory_list_tombstones` + the event log) — the
+  `auto_consolidate` event (`memory_list_tombstones` + the event log), the
   deliberate opposite of invisible "Dreaming" consolidation. Gated on
   `telemetry.enabled` because the event log is the reviewable audit trail for
   every auto-mutation: no log, no auto-mutation. This closes the loop the curation telemetry
@@ -10680,7 +10680,7 @@ lands as a minor bump rather than a patch.
   recommendations a human had to read and act on.
 
 - **Opt-in write-reflex capture (`[proposals] auto_propose` + the new
-  `memory_proposals` tool).** Closes the documented writing-reflex gap —
+  `memory_proposals` tool).** Closes the documented writing-reflex gap:
   the model under-writes durable content during head-down work (the gap
   `attribution.py` exists to measure). When enabled, the `audit-turn`
   Stop hook scans each turn's USER message for durable-looking
@@ -10689,8 +10689,8 @@ lands as a minor bump rather than a patch.
   transient run-state are rejected) and queues them as **inert**
   proposals at `<root>/.write_proposals.jsonl` (recording a
   `proposals_enqueued` event for observability). The new `memory_proposals`
-  tool (24th MCP tool) is the review surface — `list` them, then `accept`
-  one (a normal memory write, source=inferred — `scopes` required, the
+  tool (24th MCP tool) is the review surface: `list` them, then `accept`
+  one (a normal memory write, source=inferred; `scopes` required, the
   queue doesn't guess them) or `dismiss` it; `memory_scope_overview`
   reports `proposals_pending` so the queue is discoverable at session
   start. Nothing is ever written without an explicit accept, so the
@@ -10710,7 +10710,7 @@ lands as a minor bump rather than a patch.
   as the path used by the config / `.gitignore` / JSON-export writers.
   In fact no caller passes `mode`: those writers (`config.py`, `init.py`,
   `cli/export.py`, `sync.py`) inherit `NamedTemporaryFile`'s 0o600
-  default — strictly safe (owner-only) for these owner-scoped files —
+  default, strictly safe (owner-only) for these owner-scoped files,
   and `mode` currently has no callers, retained only as a documented
   chmod-after-rename affordance. Corrected the attribution so the doc
   matches the code. Also refreshed a `test_fsutil` docstring that still
@@ -10724,14 +10724,14 @@ lands as a minor bump rather than a patch.
   the suppressed error does not propagate and the defensive post-rename
   `os.chmod` recovers the requested mode; (2) `store._atomic_write_post`
   routes through the full `fsync_file → rename → fsync_dir(parent)`
-  ceremony — parity with the existing `episodes` spy test — so a future
+  ceremony, parity with the existing `episodes` spy test, so a future
   edit that re-inlined the write and dropped the dir-fsync fails loudly
   instead of passing the 0o600/round-trip checks.
 
 ## 3.2.2 - 2026-05-28
 
 Internal hardening, tooling, and documentation. No behavioral or API
-changes — a safe patch upgrade from 3.2.1.
+changes: a safe patch upgrade from 3.2.1.
 
 ### Added
 
@@ -10747,7 +10747,7 @@ changes — a safe patch upgrade from 3.2.1.
   `ignore_missing_imports` override. `reportUnreachable` is left off
   deliberately: the handlers' defense-in-depth `isinstance` / None
   guards at the MCP-JSON boundary are "unreachable" to the static
-  checker but validate untyped runtime input — the same reason the mypy
+  checker but validate untyped runtime input, the same reason the mypy
   config does not enable `warn_unreachable`.
 
 ### Changed
@@ -10757,12 +10757,12 @@ changes — a safe patch upgrade from 3.2.1.
   near-identical hand-rolled copies of the tmp + fchmod-before-rename +
   fsync + rename + dir-fsync ceremony. Both now delegate to
   `_fsutil.atomic_write_bytes`, which gained a `mode_before_rename`
-  option — `os.fchmod` on the tmp file descriptor before the rename, so
+  option: `os.fchmod` on the tmp file descriptor before the rename, so
   a 0o600 file is never world-readable at its visible path even for an
   instant (mutually exclusive with the existing chmod-after-rename
   `mode`). Behaviour-preserving: identical privacy guarantee, fsync
   ordering, dir-fsync ceremony, and orphan-tmp cleanup. The two
-  remaining bespoke writers stay bespoke for good reason —
+  remaining bespoke writers stay bespoke for good reason:
   `events._compress_rotating` streams gzip in 64 KB chunks and
   `semantic.flush_persistent_cache` writes a numpy container under a
   flock, so neither is a plain-bytes-in-memory caller. A future fix to
@@ -10772,7 +10772,7 @@ changes — a safe patch upgrade from 3.2.1.
 
 - **Documentation accuracy.** Corrected a `Store.restore` `except`
   comment that attributed the malformed-`created` `ValueError` to a
-  non-existent `_load_tombstone_path` symbol — it's raised inline in
+  non-existent `_load_tombstone_path` symbol; it's raised inline in
   `Store.restore` (Y9-fu3). Refreshed the `docs/ROADMAP.md` "where we
   are" version label (v3.1.0 → v3.2.2), whose body already described the
   3.2.x feature set. Added the missing `unique_silent_miss_memories`
@@ -10791,7 +10791,7 @@ changes — a safe patch upgrade from 3.2.1.
   `behavior_raw.get("cold_endorsement_ratio_threshold", 0.0)` fell
   through to the dataclass default and the bucket reverted to the
   strict "explicit == 0" check, dropping the loosened-ratio behaviour
-  the user had configured. No warning fired — the misconfiguration
+  the user had configured. No warning fired; the misconfiguration
   was invisible. T9 adds a shim inside `load_config` (before
   `BehaviorConfig` construction) covering four cases: (1) old key
   only → populate the new key with the legacy value and emit a
@@ -10807,7 +10807,7 @@ changes — a safe patch upgrade from 3.2.1.
   unresolved path on `OSError` so the guard still works if the config
   moved between `open()` and warn-time. This supersedes the
   "silently fall back to the default `0.0`" guidance in the 3.2.0
-  T1 entry above — the deprecation window is now explicit and
+  T1 entry above; the deprecation window is now explicit and
   loud-on-load instead of silent-on-rollup.
 - **`Store.restore` under-lock recheck (W7).** Mirror of the W1
   `tombstone()` recheck. Pre-W7 `Store.restore` walked
@@ -10816,16 +10816,16 @@ changes — a safe patch upgrade from 3.2.1.
   `frontmatter.load(tombstone_path)` without a recheck. Two
   restorers of the same id, or a restore racing with a concurrent
   `prune_tombstones`, would both pass the unlocked finds; the loser
-  hit a bare `FileNotFoundError` from inside `frontmatter.load` —
+  hit a bare `FileNotFoundError` from inside `frontmatter.load`,
   caught by an inline arm and re-raised as `MemoryNotFoundError`,
   but with no symmetric "raced with" message and no recheck for the
   case where the active record was re-created in the restore window
   (silent `_atomic_write_post` clobber). Fix adds two under-lock
   rechecks mirroring W1's discipline: (1) `_id_still_at_path(tombstone_path,
-  memory_id)` — the tombstone still carries the expected id (catches
+  memory_id)`, the tombstone still carries the expected id (catches
   the parallel-restore / prune race and the extremely-unlikely
-  tombstone-stem-reuse edge); (2) `_find_path_for_id(memory_id) is None`
-  — defensive against the narrow case where a parallel restore
+  tombstone-stem-reuse edge); (2) `_find_path_for_id(memory_id) is None`,
+  defensive against the narrow case where a parallel restore
   unlinked the tombstone AND a separate path re-created an active
   file at the predicted slug-suffix-determined `active_path` between
   the pre-lock active check and the lock acquisition. Either recheck
@@ -10845,7 +10845,7 @@ changes — a safe patch upgrade from 3.2.1.
   first-run experience. Now routes through `_fsutil.atomic_write_bytes`
   (the F5/F6 helper), same shape as the F5 `init.py` MCP-client-config
   and F6 `sync.py` `.gitignore` migrations: plain bytes payload, no
-  special mode bits, no privacy bar — the helper's chmod-after-rename
+  special mode bits, no privacy bar; the helper's chmod-after-rename
   posture is the right fit.
 - **`bettermemory export -o PATH` is now atomic (Q29).** The CLI
   export writer used `out_path.write_text(text + "\n", encoding="utf-8")`,
@@ -10860,7 +10860,7 @@ changes — a safe patch upgrade from 3.2.1.
   `semantic.flush_persistent_cache`, `events._compress_rotating`)
   all need fchmod-before-rename, which the current helper contract
   doesn't cover.
-- **`Store.mark_verified` race shape — attestation overwrite (W8).**
+- **`Store.mark_verified` race shape: attestation overwrite (W8).**
   Mirror of the W2 `Store.update` CAS pattern, applied to the
   verification path. Pre-W8 two agents calling `memory_verify` on the
   same id with disjoint attestations (e.g. agent A spot-checking path
@@ -10869,14 +10869,14 @@ changes — a safe patch upgrade from 3.2.1.
   `verified_versions` lists, because both `mark_verified` calls read
   the same on-disk snapshot and the second write clobbered the first
   without a CAS check. The REPLACE-not-append semantics on those
-  lists (by design — the event log is the audit trail) made the
+  lists (by design; the event log is the audit trail) made the
   silent loss especially nasty: one of the two agents' attestations
   vanished without surface. Post-W8 `Store.mark_verified` gains an
   optional `expected_last_verified_at` snapshot fingerprint plus a
   `check_expected=True` opt-in; under the lock, after the C2 recheck,
   the on-disk `last_verified_at` is compared to the caller's
   snapshot. On mismatch raise `ConcurrentUpdateError` carrying the
-  on-disk `updated` (kept uniform with W2's exception contract — the
+  on-disk `updated` (kept uniform with W2's exception contract; the
   caller's rebase action is the same: re-fetch via memory_show and
   retry). The `memory_verify` handler loads its snapshot first and
   opts in; legacy direct-store callers (the web UI verify form, the
@@ -10927,7 +10927,7 @@ changes — a safe patch upgrade from 3.2.1.
   `test_cold_endorsement_memories_section`. Internal-only rename:
   the MCP wire shape and eval JSON output key were already renamed
   by T1; this only touches Python-level identifiers and CLI text.
-  No alias — the eval module's only external consumers are its
+  No alias: the eval module's only external consumers are its
   tests and the CLI wrapper, both migrated. Remaining
   `endorsement_debt` snake_case sightings are confined to T9's
   back-compat TOML alias in `config.py` and its tests, and
@@ -10948,7 +10948,7 @@ changes — a safe patch upgrade from 3.2.1.
   type-annotation; no runtime impact.
 - **`docs/api.md` documents the W2/W8 stale + W7 race-loss surfaces
   (R3).** Three tools landed structured race-loss / stale responses
-  in 3.2.0–3.2.1 that the API contract documented only the happy
+  in 3.2.0-3.2.1 that the API contract documented only the happy
   path of. Append a paragraph to each so multi-agent callers learn
   about the `{"status": "stale", ...}` shape on `memory_update`
   (W2) / `memory_verify` (W8) and the structured
@@ -10973,7 +10973,7 @@ changes — a safe patch upgrade from 3.2.1.
   and the eval render header, but prose docs still taught the old
   branding. Swept `README.md`, `docs/ROADMAP.md`, and `docs/eval.md`
   to the new vocabulary. Historical CHANGELOG / api.md references to
-  the old key are preserved on purpose — they document the 3.1.x →
+  the old key are preserved on purpose: they document the 3.1.x →
   3.2.0 wire-shape break and the T9 TOML back-compat shim. Docs only.
 - **`Raises:` blocks added to `Store.update` / `mark_verified` /
   `tombstone` (Y9).** Symmetric with W7's `Store.restore`.
@@ -11013,7 +11013,7 @@ changes — a safe patch upgrade from 3.2.1.
   identifier omits the `cold_` bucket prefix that health carries:
   the eval output nests under `cold_endorsement_memories`, so the
   bucket scope is already supplied and the parameter prefix would be
-  redundant — whereas health's flat-kwarg path needs it.
+  redundant, whereas health's flat-kwarg path needs it.
   Comment only.
 - **Tests pinning cross-branch independence of the alias guards
   (Y4-fu).** Y4 pinned same-branch repeat-suppression but reset the
@@ -11028,7 +11028,7 @@ changes — a safe patch upgrade from 3.2.1.
   go-marker the parent touches once all workers are ready) so all
   losers route through the W7 under-lock recheck and carry the
   "raced with" hint, letting the strict assertion the threaded
-  variant already uses hold for the multi-process variant too —
+  variant already uses hold for the multi-process variant too,
   upgrading Y6's pragmatic closed-set concession. Test only.
 
 ## 3.2.0 - 2026-05-27
@@ -11056,12 +11056,12 @@ individually-actionable. Tool count goes from 22 to 23 (new
   optional `acknowledged_event_ids` parameter (default empty set,
   preserves legacy behaviour for callers that haven't been
   updated). Event log entries without an `event_id` field continue
-  to read cleanly — the rollup degrades to event-count-only for
+  to read cleanly: the rollup degrades to event-count-only for
   those legacy entries.
 - **`search_miss` event shape gains stable `event_id`.** Every new
   `search_miss` written via `search_miss_fields` now carries a
   per-event ULID under the top-level `event_id` field. Pure
-  additive — legacy consumers reading the event by `kind` and
+  additive: legacy consumers reading the event by `kind` and
   field-set see no break. The id is the handle
   `memory_acknowledge_miss` keys on; pre-T4 events lack it and
   fall through the ack-filter (the bulk cutoff remains the only
@@ -11078,17 +11078,17 @@ individually-actionable. Tool count goes from 22 to 23 (new
   kind (`cleanup_endorsement_debt` → `cleanup_cold_endorsements`).
   DESC strings for `memory_health` and `memory_scope_overview`
   now describe the field accurately as "memories with `retrieval_count
-  >= N` AND zero explicit applies — per-memory count, NOT per-turn."
+  >= N` AND zero explicit applies (per-memory count, NOT per-turn)."
   The old name suggested "9 turns where retrieval shaped the reply
   without `record_use`" but the actual semantic is "9 distinct
   memories that crossed the retrieval floor with zero explicit
-  endorsement" — a per-memory state, so the name now matches.
+  endorsement", a per-memory state, so the name now matches.
   Wire-shape: `memory_health` response replaces the
   `endorsement_debt` key with `cold_endorsement_memories` (same
   payload shape: `{min_retrievals, total, rows}`);
   `memory_scope_overview.curation_pending` and the `curation_hint`
   block emitted on `memory_write` likewise rename the key. Pure
-  rename — no alias — since the MCP responses are read by Claude
+  rename, no alias, since the MCP responses are read by Claude
   (which gets fresh tool descriptions per session) and no
   persisted state references the old key. TOML configs carrying the
   old `endorsement_debt_ratio_threshold` key will silently fall
@@ -11117,22 +11117,22 @@ individually-actionable. Tool count goes from 22 to 23 (new
   cap 10, newest-first) and calls `memory_acknowledge_miss(event_id,
   reason)` to acknowledge one. Emits one `miss_ack` event referencing
   the original `event_id`; subsequent rollups drop the acked event
-  from both `miss_total` and `unique_miss_memories`. Idempotent —
+  from both `miss_total` and `unique_miss_memories`. Idempotent:
   a second ack for the same `event_id` returns the success shape
   without emitting a duplicate. Returns `{"status": "not_found",
   ...}` for unknown ids (including legacy `search_miss` events
-  written before T4 added the field — those remain ack-able only
+  written before T4 added the field; those remain ack-able only
   through the bulk cutoff) and `{"status": "wrong_kind", ...}` when
   the id points at a non-`search_miss` event. `reason` is required
   (≥ 8 chars after stripping whitespace) so the audit trail carries
   signal. Routes through the same `Recorder` / `_advance_turn` /
   session-state plumbing every other handler uses. Existing event
   log lines without the new `event_id` field continue to read
-  cleanly — the rollup degrades to event-count-only behaviour for
+  cleanly: the rollup degrades to event-count-only behaviour for
   those entries.
 - **`HealthReport.recent_silent_misses` (T4).** Bounded inline list
   (cap 10, newest-first) on the `memory_health` response payload.
-  Each entry: `{event_id, top_hit_id, query_preview, ts}` — the
+  Each entry: `{event_id, top_hit_id, query_preview, ts}`, the
   triage surface the model reads to discover ack-able event ids.
   Filtered against the same cutoff / tombstone / ack set the rollup
   uses, so a non-empty `recent_silent_misses` always pairs with a
@@ -11144,7 +11144,7 @@ individually-actionable. Tool count goes from 22 to 23 (new
   their top-hit `memory_id` so the rollup distinguishes "9 events
   hammering 1 mis-tagged memory" from "9 distinct unretrieved
   memories" (the existing `miss_total` / `silent_misses` event count
-  is preserved unchanged for back-compat — both surfaces now ship).
+  is preserved unchanged for back-compat; both surfaces now ship).
   Wire-shape: `silent_misses` payload gains `unique_miss_memories`;
   `memory_scope_overview.curation_pending` gains
   `unique_silent_miss_memories`. `memory_scope_overview` and
@@ -11152,10 +11152,10 @@ individually-actionable. Tool count goes from 22 to 23 (new
   field.
 - **`_fsutil.atomic_write_bytes` helper (F5/F6).** New centralised
   tmp+fsync+rename+fsync_dir primitive in `_fsutil.py`. Used by
-  `init.py:333` (user MCP client config write — e.g. `~/.claude.json`)
+  `init.py:333` (user MCP client config write, e.g. `~/.claude.json`)
   and `sync.py:313` (`.gitignore` write). The existing per-module
   atomic writers (`store._atomic_write_post`, `episodes._write_path`,
-  `events` rotation) are unchanged this release — they keep their
+  `events` rotation) are unchanged this release: they keep their
   fchmod-before-rename ceremony for private memory bodies; the new
   helper uses chmod-after-rename since the new callsites carry
   files that are explicitly NOT privacy-sensitive (the MCP config
@@ -11171,7 +11171,7 @@ individually-actionable. Tool count goes from 22 to 23 (new
   missing index file, corrupt index (`status["corrupt"]`), and
   count mismatch. Catches the architectural failure mode where an
   external editor, a `sync pull`, or a sub-agent's generic `Write`
-  tool wrote an `.md` directly bypassing the Store hooks — pre-S4
+  tool wrote an `.md` directly bypassing the Store hooks; pre-S4
   `memory_search` would rank against stale candidate ids silently.
   README's Performance section gains an "Index consistency"
   subsection documenting the canonical writer set and the recovery
@@ -11182,13 +11182,13 @@ individually-actionable. Tool count goes from 22 to 23 (new
   `false` is omitted from YAML so existing episodes serialise
   identically). Written exclusively by `episode_handoff` at handler
   entry to seed a journal floor for the current `session_id`
-  before recording the handoff event — see the Fixed entry below.
+  before recording the handoff event (see the Fixed entry below).
 
 ### Fixed
 
 - **Silent-miss rollup drops tombstone-targeted events (T3).** The
   `silent_miss` aggregation in `compute_health` and `curation_counts`
-  now drops events whose top-hit `memory_id` is in `tombstoned_ids` —
+  now drops events whose top-hit `memory_id` is in `tombstoned_ids`:
   once the memory is gone, the miss is no longer actionable. Other
   rollups (`dead_weight`, `heavily_used`, `orphan_use_events`)
   already cross-reference against the tombstone set at the same
@@ -11265,7 +11265,7 @@ individually-actionable. Tool count goes from 22 to 23 (new
   crashed `memory_show`, `memory_record_use`, and the hook's
   attribution loop. Each iteration body now wraps in `try/except
   (FileNotFoundError, ValueError, KeyError, OSError,
-  yaml.YAMLError): continue` — same discipline the existing
+  yaml.YAMLError): continue`, same discipline the existing
   `load_tombstones` reader at `store.py:583` already used.
 - **`prune_old_sessions` unlinks per-session lockfile (E1, ≡
   carryover A3-13).** Pre-E1, `episodes.py:149` wrote
@@ -11279,7 +11279,7 @@ individually-actionable. Tool count goes from 22 to 23 (new
   `iter_session_ids` call, every `episode_search` /
   `episode_promote` walk hit it). Both prune branches now also
   `unlink(missing_ok=True)` and `fsync_dir(episodes_dir)` after
-  the rmtree/rmdir, while still holding the per-session flock —
+  the rmtree/rmdir, while still holding the per-session flock,
   safe for past-TTL sessions because the per-inode race the comment
   warned about only matters with live writers, and a 30-day-stale
   `session_id` has no live writer. The peer-prune race (when
@@ -11300,7 +11300,7 @@ individually-actionable. Tool count goes from 22 to 23 (new
 - **`sync.init:313` writes `.gitignore` atomically (F6).** Pre-F6,
   the `.gitignore` write used `gitignore.write_text(...)`. A
   truncated gitignore would let the next `sync push` commit event
-  logs and lockfiles to the remote — a real privacy regression
+  logs and lockfiles to the remote, a real privacy regression
   vector. Now routes through `_fsutil.atomic_write_bytes`.
 - **`episode_handoff` writes session-tag floor episode before
   recording the handoff event (E2).** Pre-E2, tick T calling
@@ -11312,7 +11312,7 @@ individually-actionable. Tool count goes from 22 to 23 (new
   branch in `handlers/episode_handoff.py:234-242` (strict-worktree
   filter: only adopt zero-episode candidates when caller's worktree
   is None), and in a real worktree silently walked past T and
-  adopted T-1 — dropping T's full history. The exact "loop↔memory
+  adopted T-1, dropping T's full history. The exact "loop↔memory
   boundary buggy" failure mode reported in the campaign brief.
   The handler now writes a floor episode at the very top of the
   handoff path (BEFORE recording the handoff event, so even crashes
@@ -11334,12 +11334,12 @@ five surface improvements that close adjacent audit gaps. Tool count
 goes from 18 to 22; on-disk format unchanged (SCHEMA_VERSION stays at
 1, additive-only).
 
-### Added — episode tier (sibling to memory)
+### Added: episode tier (sibling to memory)
 
 - **`episode_write(body, takeaway?, scopes?)`.** Journal-shaped writes
   for run-state and iteration takeaways. The `durability` gate
   (`TRANSIENT_PHRASE_MARKERS`) that rejects state-shaped content on
-  `memory_write` doesn't apply here — episodes are the alternative
+  `memory_write` doesn't apply here: episodes are the alternative
   home transient content used to lack. Storage at
   `<root>/episodes/<session_id>/<ulid>.md`, 30-day TTL, pruned on
   each write. Invisible to `memory_search` / `memory_health` /
@@ -11350,7 +11350,7 @@ goes from 18 to 22; on-disk format unchanged (SCHEMA_VERSION stays at
   `prior_session_id` is omitted. Designed as the first MCP call at
   `/loop` iteration entry.
 - **`episode_search(scopes?, parent_session_id?, since?, max_results?)`.**
-  Cross-session lookup. Not ranked — episodes are chronological,
+  Cross-session lookup. Not ranked: episodes are chronological,
   filtered by scope intersection / session id / ISO timestamp.
 - **`episode_promote(episode_id, scopes, category?, ..., use_body?)`.**
   Distill a takeaway into a durable memory via the standard
@@ -11358,17 +11358,17 @@ goes from 18 to 22; on-disk format unchanged (SCHEMA_VERSION stays at
   source episode on commit; leaves it intact on any non-committed
   status so the caller can adjust and retry.
 - **`bettermemory episodes list | prune` CLI.** Mirrors
-  `bettermemory tombstones` in shape — offline inspection and a
+  `bettermemory tombstones` in shape: offline inspection and a
   manual TTL-based cleanup pass.
 
-### Added — memory_search proactive surface
+### Added: memory_search proactive surface
 
 - **`memory_search(since_prior_session=True)` filter.** Restricts
   candidates to memories `updated` at or after the prior-session
   boundary (`find_prior_session_boundary` against the recorder's
   session_id). Loop entry can now ask "what's changed in this
   worktree since last time I was here?" without scanning. Empty
-  return when no prior session exists — caller distinguishes
+  return when no prior session exists; caller distinguishes
   "nothing new" from "no baseline" via
   `curation_pending_new_since_last_session`.
 - **`depends_on_resolved` on hits.** When a hit's memory carries
@@ -11377,7 +11377,7 @@ goes from 18 to 22; on-disk format unchanged (SCHEMA_VERSION stays at
   3 per hit, 10 total. Closes the "graph in the schema, retrieval
   ignores it" gap that's been open since 2.x.
 
-### Added — proactive curation surface
+### Added: proactive curation surface
 
 - **`HealthReport.recommendations`.** Distills the bucket rollups
   (dead_weight, contradicted, endorsement_debt, drifted, rare_scopes)
@@ -11393,7 +11393,7 @@ goes from 18 to 22; on-disk format unchanged (SCHEMA_VERSION stays at
 - **`endorsement_debt_ratio_threshold` config knob.** Default 0.0
   preserves the existing strict "zero explicit applies" rule. Setting
   > 0 also flags memories whose explicit/total-applied ratio falls
-  below the threshold — catches the "1 explicit endorsement out of 50
+  below the threshold. Catches the "1 explicit endorsement out of 50
   auto" case the binary check misses.
 - **`recently_removed_in_worktree` on `memory_scope_overview`.** Count
   of tombstones removed in the last 7 days, filtered by
@@ -11478,7 +11478,7 @@ the commit hash carries the implementation.
   prefilter so candidates that genuinely matter after the prior
   session boundary aren't dropped by a pre-boundary token-frequency
   cutoff [3bd27dc].
-- `since_prior_session` boundary is now strict-after — the
+- `since_prior_session` boundary is now strict-after: the
   prior-session boundary memory itself is excluded from results, so
   the count aligns with `curation_pending_new_since_last_session`'s
   delta semantics [ffad750].
@@ -11543,7 +11543,7 @@ Post-3.0.1 hotfix. Closes the Windows-matrix mypy gaps + flaky
 perf-test threshold that CI surfaced on the 3.0.1 merge to main.
 No on-disk format changes, no public API changes.
 
-### Fixed — Windows py3.14 mypy
+### Fixed: Windows py3.14 mypy
 
 - **`_fsutil.py:314,337` msvcrt.locking ignore compound.** py3.14
   typeshed types `msvcrt.locking` + `LK_NBLCK` + `LK_UNLCK`, so
@@ -11556,11 +11556,11 @@ No on-disk format changes, no public API changes.
 - **`store.py:1235` `os.fchmod` platform guard.** `os.fchmod` is
   absent from Windows typeshed (POSIX-only call). Wrapped the
   call in `if sys.platform != "win32":` so mypy narrows it out
-  on the Windows slot. Runtime behaviour unchanged — the prior
+  on the Windows slot. Runtime behaviour unchanged: the prior
   `contextlib.suppress(OSError)` already swallowed the
   AttributeError-via-non-existence case at execution time.
 
-### Fixed — flaky perf-test threshold
+### Fixed: flaky perf-test threshold
 
 - **`test_already_recorded_pending_ids_early_exits_on_old_events`
   threshold widened 100ms → 500ms.** Observed 151ms on a shared
@@ -11580,7 +11580,7 @@ sweep of test-rigour pins closing the same class hazard
 (asymmetric whitelist coverage) the prior audit-loop already
 worked through. No on-disk format changes, no public API changes.
 
-### Security — Defense-in-depth
+### Security: Defense-in-depth
 
 - **`llm.py` transcript fence scan symmetrised across all four
   nonce-anchored markers.** Pre-`520bb6d` the transcript scan
@@ -11588,12 +11588,12 @@ worked through. No on-disk format changes, no public API changes.
   already checked all four (`{trn_end, trn_begin, mem_end,
   mem_begin}`). The random per-prompt nonce already makes
   hard-coding a marker infeasible, so this is defense-in-depth
-  rather than a live break — but the three scan sites now line
+  rather than a live break, but the three scan sites now line
   up on the same predicate. Pinned by parametrised regression
   tests covering both `<<<BM_TRANSCRIPT_*_BEGIN>>>` and
   `<<<BM_MEMORY_*_BEGIN>>>` in the transcript body.
 
-### Fixed — CI gate
+### Fixed: CI gate
 
 - **Wider CI gate (ruff lint / ruff format / mypy strict) green
   at HEAD.** The post-2.7.3 audit-loop converged with pytest
@@ -11606,11 +11606,11 @@ worked through. No on-disk format changes, no public API changes.
   `test_llm.py` fence-injection tests monkeypatching
   `bettermemory.llm.secrets.token_hex` directly on the module
   namespace (rewritten to `pytest.MonkeyPatch.setattr` with
-  dotted-path form — mypy-clean and removes manual cleanup
+  dotted-path form, mypy-clean and removes manual cleanup
   boilerplate), and 21 files needing `ruff format` reflow.
   Behaviour unchanged.
 
-### Fixed — Test rigour (asymmetric whitelist coverage)
+### Fixed: Test rigour (asymmetric whitelist coverage)
 
 - **Closed-protocol whitelists pinned at every member.** Eight
   test commits closed the same class hazard the prior
@@ -11629,7 +11629,7 @@ worked through. No on-disk format changes, no public API changes.
   the `staleness_verdict` raise-gate across `verify.py` and
   `_response.py` (`0d56a50`, paired with a `_VERDICT_RAISE_
   STATUSES` DRY extraction); and BEGIN+END fence symmetry
-  across all three scan sites in `llm.py` — excerpt
+  across all three scan sites in `llm.py`, excerpt
   (`40341a2`), transcript-end (`a14dd6b`), and body
   (`93838db`). Each pin uses a hardcoded expected-membership
   tuple plus a separate guard against additions to the source
@@ -11673,13 +11673,13 @@ but the events log still carried the batch of pre-fix `search_miss` /
 an additive CLI cutoff so that batch can be invalidated without
 rewriting the log.
 
-### Added — Curation
+### Added: Curation
 
 - **`bettermemory consolidate --acknowledge-misses-before <ISO_TS>`**
   writes one `silent_miss_cutoff` event with `cutoff_ts=<ISO_TS>`
   through the shared `Recorder`. `compute_health` and
   `curation_counts` honor the latest `cutoff_ts` they observe and
-  drop any `turn_audited` / `search_miss` events earlier than it —
+  drop any `turn_audited` / `search_miss` events earlier than it,
   filtering both numerator and denominator so the miss-rate metric
   doesn't skew low or high. Mirrors `--acknowledge-debt`'s surface:
   always commits, no `--apply` gate (events are additive and a
@@ -11688,10 +11688,10 @@ rewriting the log.
   exit 1 instead of writing an event the rollup will silently
   ignore. `silent_miss_cutoff` is classified as a side-effect kind in
   `eval.py` so the tool-usage rollup doesn't count CLI admin
-  operations as tool invocations — same rationale as `search_miss`
+  operations as tool invocations, same rationale as `search_miss`
   and `pending_expired`.
 
-### Fixed — Audit follow-up
+### Fixed: Audit follow-up
 
 - **`--acknowledge-misses-before` no longer silently stamps naive
   timestamps as UTC.** A bare ISO timestamp without an offset (e.g.
@@ -11718,16 +11718,16 @@ rewriting the log.
   events before applying the delta filter.** Previously a cutoff
   event whose own `ts` fell under `since` was silently dropped,
   causing a delta run to over-count pre-cutoff misses. Cutoffs are
-  global markers — they now always apply regardless of `--since`.
+  global markers; they now always apply regardless of `--since`.
 
-### Fixed — Docs & examples
+### Fixed: Docs & examples
 
 - README on-disk-format example: `origin.worktree` corrected to
   `origin.worktree_root` (the actual field name the writer emits);
   example ULIDs expanded from 12 chars to the 26-char form the
   validator requires.
 - `examples/memories/2025-05-10-ci-runner-migration.md` now has a
-  resolvable `supersedes` target — added
+  resolvable `supersedes` target: added
   `examples/memories/2025-02-10-atlas-jenkins-ci.md` as the
   predecessor so the link demonstrates the feature it markets
   instead of dangling.
@@ -11743,21 +11743,21 @@ rewriting the log.
   non-existent `{"hits": [...]}` envelope; run command updated from
   `venv/bin/python` to `uv run python`.
 
-### Changed — Module layout
+### Changed: Module layout
 
 - **`build_server` extracted to `bettermemory.builder`.** `build_server`
   and `_register_tools` now live in a new `bettermemory.builder`
   module; `cli/serve.py` can import them at module top level instead
   of through the previous function-local lazy import that worked
   around the `cli ↔ server` cycle. `bettermemory.server` becomes a
-  back-compat re-export shim — `from bettermemory.server import
+  back-compat re-export shim: `from bettermemory.server import
   build_server` keeps working unchanged.
 - **`bettermemory.__init__` imports from canonical homes.** Package
   init now pulls `build_server` from `.builder` and `main` from
   `.cli` directly, bypassing the `server.py` shim. Public surface
   re-exported from the package root is unchanged.
 
-### Removed — Defensive `bettermemory.server` re-exports
+### Removed: Defensive `bettermemory.server` re-exports
 
 - **`bettermemory.server.__all__` trimmed to its actually-used
   surface.** After verifying zero in-tree consumers, the following
@@ -11770,14 +11770,14 @@ rewriting the log.
   retained surface is `build_server`, `main`, `SYSTEM_PROMPT_ADDENDUM`,
   `capture_origin`, and three `_cli_*` helpers (the `_cli_*` trio kept
   because the test suite monkeypatches them at the `server.` import
-  path). This is a soft API break — narrow in scope, but consumers
+  path). This is a soft API break, narrow in scope, but consumers
   pinning to the old import paths must update.
 
-### Added — Diagnostics
+### Added: Diagnostics
 
 - **`bettermemory doctor` detects `.dist-info` dirs missing canonical
   `METADATA`.** A new check walks `site-packages` and warns on any
-  `*.dist-info` directory whose `METADATA` is absent or non-readable —
+  `*.dist-info` directory whose `METADATA` is absent or non-readable,
   the exact failure mode that surfaces when iCloud Drive renames
   `METADATA` to `METADATA 2` mid-sync and crashes the MCP server with
   a `-32000` pydantic validation failure. Sites scanned cover both
@@ -11785,7 +11785,7 @@ rewriting the log.
   `site.getusersitepackages()`, so `pip install --user` installs are
   also covered. +4 tests for the detector.
 
-### Added — Test-suite hygiene
+### Added: Test-suite hygiene
 
 - **Platform-mocked coverage for the Windows `flock` branch.**
   `_flock_windows` is now exercised from a POSIX dev box via a
@@ -11802,7 +11802,7 @@ rewriting the log.
   collection time rather than masquerading as a runtime `AttributeError`
   in a downstream consumer. +30 tests.
 
-### Fixed — Doctor dist-info detector
+### Fixed: Doctor dist-info detector
 
 - **Empty `METADATA` files no longer pass the `.is_file()` check.**
   The original predicate accepted zero-byte `METADATA` even though
@@ -11822,7 +11822,7 @@ rewriting the log.
   only when) `ENABLE_USER_SITE` is truthy. +2 tests covering the
   enabled and disabled branches.
 
-### Fixed — Test rigour
+### Fixed: Test rigour
 
 - **Windows `flock` env-var fallback test proves the fallback is
   non-zero.** `test_env_var_invalid_string_falls_back_to_default`
@@ -11840,7 +11840,7 @@ rewriting the log.
 ### Documentation
 
 - Stale docstring / comment refresh across `server.py`,
-  `cli/__init__.py`, `builder.py`, and `cli/export.py` — six spots
+  `cli/__init__.py`, `builder.py`, and `cli/export.py`: six spots
   that still described the pre-2.7.3 single-module layout were
   updated to point at the post-extract structure (canonical homes
   in `builder.py`, the shim role of `server.py`, etc.). Code paths
@@ -11856,7 +11856,7 @@ open and didn't need a `memory_search`. This release suppresses that
 class. A second fix adds a CLI path to clear the related
 `endorsement_debt` curation bucket without touching memory bodies.
 
-### Fixed — Audit false-positive class
+### Fixed: Audit false-positive class
 
 - **`audit.probe_for_miss` suppresses misses when the caller's repo
   matches a top-hit memory's `origin.repo` AND the hit carries a
@@ -11866,13 +11866,13 @@ class. A second fix adds a CLI path to clear the related
   most of this at the search level, but the explicit check keeps the
   suppression self-contained for offline callers (eval replays,
   curation passes) that bypass auto-scope. Both predicates are
-  load-bearing — a `projects:` hit from another repo still flags
+  load-bearing: a `projects:` hit from another repo still flags
   (real cross-project miss), and a same-repo global memory still
   flags (no project boundary to suppress against). Uses `repos_match`
   for URL normalisation so SSH and HTTPS forms of the same remote
   compare equal.
 
-### Added — Curation
+### Added: Curation
 
 - **`bettermemory consolidate --acknowledge-debt`** walks the
   `endorsement_debt` bucket (memories the ranker keeps surfacing
@@ -11886,13 +11886,13 @@ class. A second fix adds a CLI path to clear the related
   re-derived inline because `EndorsementDebt.rows` caps at 20 for
   inline display and the CLI needs every debt id.
 
-### Deferred — Threshold-rule v5
+### Deferred: Threshold-rule v5
 
 The sweep on the live log shows v3 (dominance, 2× ratio) drops only
 1 of 21 misses, and v2/v4 (score floor) drops 10 but depends on the
-keyword score scale — silently breaks once the running server picks
+keyword score scale: silently breaks once the running server picks
 up the hybrid default. After the cwd-suppression ships, ~1 miss
-remains in the corpus — too thin to calibrate a new rule against.
+remains in the corpus, too thin to calibrate a new rule against.
 Deferred to a fresh dogfood window so v5 can be designed against
 post-suppression false positives.
 
@@ -11903,7 +11903,7 @@ regressions that only surfaced in the 2.7.1 CI run (masked by the version-sync
 failures that fired first). All three fixes are test-side or pure path
 normalisation; no runtime behaviour change on POSIX.
 
-### Fixed — Windows test compatibility
+### Fixed: Windows test compatibility
 
 - **`discover_default_source_root` normalises Windows paths.** `cwd.resolve()`
   on Windows produces backslash-separated paths with a drive-letter prefix;
@@ -11929,7 +11929,7 @@ the `threading.Lock` actually serializes contention (the prior sequential
 tests only proved the `OrderedDict` mechanics) and dropped a dead
 `# type: ignore` that mypy was already flagging.
 
-### Fixed — Security & robustness
+### Fixed: Security & robustness
 
 - **`ingest`: symlinks skipped before any read.** A hostile auto-memory
   directory containing `secret.md -> /etc/shadow` could otherwise smuggle the
@@ -11945,7 +11945,7 @@ tests only proved the `OrderedDict` mechanics) and dropped a dead
   capture in the truncation. `SECURITY.md` carries a threat-model note for
   the query-redaction defense-in-depth.
 
-### Fixed — Eval correctness
+### Fixed: Eval correctness
 
 - **`compute_eval` dedupes `memory_ids` within a single `record_use` event.**
   `docs/eval.md` spells out the per-id denominator semantics so consumers
@@ -11953,12 +11953,12 @@ tests only proved the `OrderedDict` mechanics) and dropped a dead
 - **`RateCI.torn_read` flag set when numerator > denominator.** The renderer
   emits an explicit warning line, and `to_dict` exposes the flag so CI
   consumers can branch on it (a torn read indicates log rotation raced).
-- **Wilson interval pinned against numerical gold** — `(50, 100)` and
+- **Wilson interval pinned against numerical gold**: `(50, 100)` and
   `(1, 10)` now assert exact bounds with tight tolerance, distinguishing
   Wilson from naive Wald. The prior six structural assertions would have
   passed with either formula.
 
-### Added — Long-running-mode preparation
+### Added: Long-running-mode preparation
 
 - **`SessionRegistry` is now LRU-bounded under a lock.** `OrderedDict`
   backing with a `max_clients=256` cap, `threading.Lock` for atomic
@@ -11970,7 +11970,7 @@ tests only proved the `OrderedDict` mechanics) and dropped a dead
   early-exits on `ev_ts < oldest_pending_issued_at`, bounding the hot-path
   scan to the pending-token window rather than the full 10 MB active log.
 
-### Added — Test-suite & test-env hygiene
+### Added: Test-suite & test-env hygiene
 
 - **`conftest.pytest_collection_modifyitems` auto-skips `no_extras` /
   `no_torch_embeddings` / `no_fastembed`** when the relevant extra IS
@@ -11982,11 +11982,11 @@ tests only proved the `OrderedDict` mechanics) and dropped a dead
 - **New `test_kind_map_parity_with_recorder_call_sites`** AST-walks `src/`
   and asserts every `recorder.record()` kind appears in either the tool-event
   map or the side-effect set. Guards against the unmapped-footer slow-drift
-  bug class — extractor limitations documented inline.
+  bug class; extractor limitations documented inline.
 - **Two new concurrent `SessionRegistry` tests.** 32-thread same-key
   contention must return one `is`-identity state; 8×25 distinct-key insertion
   past `cap=16` must preserve `size + evicted == total_inserts`. Without
-  these, removing the lock would still pass the rest of the suite — the
+  these, removing the lock would still pass the rest of the suite; the
   regression would only surface in production under HTTP/SSE fan-out.
 
 ### Build
@@ -12010,40 +12010,40 @@ Net effect: ~80 new tests, ~3500 lines of code + docs (≈1700 of which are
 tests), zero changes to the on-disk schema, zero changes to the 18-tool MCP
 surface. Existing memories load and search unchanged.
 
-### Added — `bettermemory eval --tool-usage`
+### Added: `bettermemory eval --tool-usage`
 
 - **Per-MCP-tool call-count rollup from the event log.** One row per known
   tool with absolute counts, share of total, and a bar visualisation. Tools
   without a dedicated event (today: `memory_health`) surface with a
   zero count and a "no telemetry" annotation rather than being silently
-  dropped — distinguishes "this tool is not counted" from "this tool was
+  dropped. Distinguishes "this tool is not counted" from "this tool was
   never called." A new map (`eval._TOOL_EVENT_KIND_TO_TOOL`) collapses the
   per-tool event-kind variants (`write` can land with `status="ok"`,
   `"pending"`, `"duplicate"`, etc., but it's still one tool call;
   `memory_audit_turn` always emits `turn_audited` and *optionally* a
-  `search_miss` side-effect — counting raw kinds would double-count it).
+  `search_miss` side-effect: counting raw kinds would double-count it).
   Honours `--since` and `--json`; ignores the rate-mode knobs.
 - **Unmapped-event-kind footer.** A future contributor who adds a new MCP
   tool without updating the map will see the unmapped kind surface in the
   output's footer rather than have its calls vanish silently. Guardrail
   against map drift over time.
 
-### Added — `bettermemory eval --threshold-sweep`
+### Added: `bettermemory eval --threshold-sweep`
 
 - **Counterfactual replay of logged `search_miss` events under alternative
   threshold rules.** Closes the calibration question
   `audit.py`'s docstring flags as open. Bundled rules (all stricter than v1
   so the comparison is well-defined):
 
-  - `v1_top1_high` — current default (reference).
-  - `v2_top1_high_score_50` — v1 + top-1 score >= 50. Filters single-token
+  - `v1_top1_high`: current default (reference).
+  - `v2_top1_high_score_50`: v1 + top-1 score >= 50. Filters single-token
     high-coverage hits.
-  - `v3_top1_high_dominant` — v1 + top-1 score >= 2× top-2 score. Distinguishes
+  - `v3_top1_high_dominant`: v1 + top-1 score >= 2× top-2 score. Distinguishes
     obvious match from borderline tie.
-  - `v4_top1_high_strict_combined` — intersection of v2 and v3.
+  - `v4_top1_high_strict_combined`: intersection of v2 and v3.
 
   On the maintainer's dogfood log (~14 memories, 12 replayable misses since
-  2.6.4), v2 would halve the v1 miss count — direct evidence the score
+  2.6.4), v2 would halve the v1 miss count: direct evidence the score
   floor is a defensible tightening. Adding a new rule is two lines (a checker
   function + a `ThresholdRule` entry in `eval.THRESHOLD_RULES`).
 - **Honest about its limitation.** The sweep is *relative*: strictly-looser
@@ -12051,13 +12051,13 @@ surface. Existing memories load and search unchanged.
   `turn_audited` event doesn't carry `top_hits`. The caveat is in the
   text rendering, in the docs, and in the module docstring. Going further
   would mean adding `top_hits` to every `turn_audited` event, which bloats
-  the log meaningfully — kept as a deliberate trade-off, not a roadmap commitment.
+  the log meaningfully (kept as a deliberate trade-off, not a roadmap commitment).
 - **Pre-2.6.4 event compatibility.** Legacy hook-originated `search_miss`
   events that carry only `top_hit_ids` (no relevance label) can't be
   replayed; they surface in `skipped_legacy_event_count` so the
   `replayable_misses` denominator stays honest.
 
-### Added — `bettermemory ingest`
+### Added: `bettermemory ingest`
 
 - **Bridge from Claude Code auto-memory.** New CLI subcommand walks
   `~/.claude/projects/<sanitized-cwd>/memory/` (or any path passed via
@@ -12071,18 +12071,18 @@ surface. Existing memories load and search unchanged.
   scope plus a type-derived second scope (`feedback`, `project-context`,
   `user-inferences`, `reference`). Auto-discovery's path sanitiser
   replaces both `/` and `.` with `-` to match Claude Code's on-disk
-  layout — so a worktree at `~/projects/foo/.claude/worktrees/bar`
+  layout, so a worktree at `~/projects/foo/.claude/worktrees/bar`
   resolves correctly rather than silently missing.
 - **Category mapping.** `user` → `Category.USER_INFERENCE`, `feedback` →
   `Category.FACT`, `project` → `Category.FACT`, `reference` →
   `Category.AMBIENT`, anything else / missing → `Category.FACT`. The MCP
   write handler's always-pending gate for `user-inference` does NOT
-  apply to ingest — an ingest run is the user telling bettermemory "these
+  apply to ingest: an ingest run is the user telling bettermemory "these
   pre-existing user-curated files are mine, ingest them" and routing each
   one through pending-confirm would be ergonomic theatre. The category
   still lands on the record so downstream curation treats them as
   user-claim memories.
-- **No source-file mutation.** Considered and rejected — modifying the
+- **No source-file mutation.** Considered and rejected: modifying the
   source `.md` files would race Claude Code's own auto-memory writes, and
   the dedup gate already makes re-ingestion safe (matching content
   Jaccards at 1.0 and trips the high-similarity threshold). Re-running
@@ -12090,12 +12090,12 @@ surface. Existing memories load and search unchanged.
   `skip_duplicate` rows.
 - **Plugin SKILL.md banner loosened.** The pre-2.7.0 banner read
   *"Do not fragment memory across ad-hoc files alongside …
-  `~/.claude/projects/*/memory/` …"* — implicitly framing the auto-memory
+  `~/.claude/projects/*/memory/` …"*, implicitly framing the auto-memory
   feature as adversarial. The new banner names the auto-memory path
   specifically and points to the ingest CLI, flipping the framing from
   "fight" to "consume rather than fight."
 
-### Added — `memory_scope_overview` delta field
+### Added: `memory_scope_overview` delta field
 
 - **`curation_pending_new_since_last_session`.** Sibling to the existing
   absolute `curation_pending` dict. Same key shape (`stale`,
@@ -12103,7 +12103,7 @@ surface. Existing memories load and search unchanged.
   `endorsement_debt`) but counted only against events emitted and
   memories created after the latest event from a session other than
   the current one. The field is `null` when no prior session exists in
-  the event log (first session ever, or after a wipe) — the model branches
+  the event log (first session ever, or after a wipe); the model branches
   on null vs. dict to tell "no baseline" apart from "nothing new since
   baseline." The tool description tells the model: prompt about curation
   based on the *delta*, surface the *absolute* on demand.
@@ -12112,7 +12112,7 @@ surface. Existing memories load and search unchanged.
   whose `session` field differs from the caller's current `session_id`.
   Accepts both the canonical `session` and the legacy `session_id` field
   names so pre-unification archives still resolve to a usable boundary.
-  Materialisation in the handler is intentional — the handler runs three
+  Materialisation in the handler is intentional: the handler runs three
   passes over the same in-memory event list (absolute rollup, boundary
   helper, delta rollup); the events list is bounded by the active log
   + rotated archives (same scale `compute_health` already pays at
@@ -12122,10 +12122,10 @@ surface. Existing memories load and search unchanged.
   events to `ts > since` and memories to `created > since` (the
   boundary value IS the prior session's last event timestamp, so it
   belongs to the prior session, not the delta). The same helper
-  produces both the absolute and delta views from the handler — no
+  produces both the absolute and delta views from the handler; no
   parallel implementation to drift.
 
-### Changed — plugin SKILL.md banner
+### Changed: plugin SKILL.md banner
 
 - The pre-2.7.0 anti-fragmentation banner named
   `~/.claude/projects/*/memory/` as forbidden alongside ad-hoc files
@@ -12168,7 +12168,7 @@ Addressed before the tag rather than as a 2.7.1:
   `TestComputeEvalListKind.test_list_event_counts_as_retrieval`.
 - **`v1_drift` surfaces in `compute_threshold_sweep`.** The previous
   docstring promised v1's replay must equal `replayable_misses` but
-  the production helper never raised on mismatch — only a 3-event
+  the production helper never raised on mismatch; only a 3-event
   synthetic test enforced it. New `v1_drift` field on
   `ThresholdSweepReport` carries `replayable_misses - v1_would_flag`;
   the text renderer surfaces a warning line when non-zero.
@@ -12185,7 +12185,7 @@ Addressed before the tag rather than as a 2.7.1:
 - **`bettermemory ingest --force` for parity with `memory_write`.** The
   active-store dedup gate can be bypassed for the rare case of a
   legitimately-near auto-memory record. Tombstone dedup remains in
-  force — re-importing a deliberately-removed memory stays disallowed.
+  force: re-importing a deliberately-removed memory stays disallowed.
 - **`apply_ingest_plan` no longer swallows `MemoryError` per row.**
   The bare `except Exception` would retry-and-eat disk-full / OOM
   errors on every subsequent row. Narrowed to `(ValueError, OSError)`
@@ -12223,18 +12223,18 @@ found one ranker default that underperformed by design, three event-log
 and session-state correctness issues the dogfood ~14-memory scale would
 never hit, one privacy-by-default gap, and one README over-promise.
 Every finding is fixed in this release. The two findings the audit
-flagged but the maintainer kept out of scope — empirical recalibration
+flagged but the maintainer kept out of scope (empirical recalibration
 of the 30-day staleness window and the 0.3 semantic threshold against
-a real dataset — are tracked for the next minor; both are observability
+a real dataset) are tracked for the next minor; both are observability
 questions the eval CLI was designed to answer once enough turns of
 dogfood traffic exist.
 
-### Changed — default `search_mode` is now `hybrid`
+### Changed: default `search_mode` is now `hybrid`
 
 - **`behavior.search_mode` defaults to `"hybrid"` (was `"keyword"`).**
   Hybrid runs RRF over keyword + BM25 (and semantic when the
   `[embeddings]` extra is installed), gracefully degrading to
-  keyword + BM25 fusion when no embedding extra is present — so the
+  keyword + BM25 fusion when no embedding extra is present, so the
   flip doesn't add a dep requirement. The legacy keyword scorer
   lacks IDF weighting and underperforms on rare-term queries. The
   1.6.0 default is still selectable explicitly via `mode="keyword"`
@@ -12242,11 +12242,11 @@ dogfood traffic exist.
   the `DEFAULT_CONFIG` template, and `BehaviorConfig.search_mode`
   all carry matching comments now.
 
-### Fixed — HIGH: event log rotation could double-count on crash
+### Fixed (HIGH): event log rotation could double-count on crash
 
 - **`events._rotate_if_needed` had a crash window between gzip-close
   and source unlink that left both files present.** Recovery via
-  `iter_all_events` then yielded every rotated event twice — and the
+  `iter_all_events` then yielded every rotated event twice, and the
   eval framework's `silent_miss_rate` / `endorsement_rate` numerators
   are computed off that stream, so a single crashed rotation would
   inflate the denominators for the lifetime of the active log. Fixed
@@ -12260,11 +12260,11 @@ dogfood traffic exist.
   rename. `iter_all_events` reads orphan `.rotating` files only when
   no matching `.gz` exists.
 
-### Fixed — HIGH: silent pending-write expiry
+### Fixed (HIGH): silent pending-write expiry
 
 - **`SessionState._evict_expired` dropped pending writes silently.**
   A user saying "yes, save it" 61+ minutes after the prompt got back
-  `no pending write with id ...` — the eviction was indistinguishable
+  `no pending write with id ...`; the eviction was indistinguishable
   from a typo and left no event-log trail. Two related changes:
   - `_advance_turn` now calls `state._evict_expired()` and any drop
     populates `_expired_pending`, which `_drain_pending_expired`
@@ -12274,13 +12274,13 @@ dogfood traffic exist.
     `user-inference` confirmations specifically).
   - `memory_write_confirm` now consults
     `SessionState.was_recently_expired(pending_id)` and raises a
-    targeted error — `"pending write {pid!r} expired before
+    targeted error (`"pending write {pid!r} expired before
     confirmation (the 1-hour TTL elapsed). The proposed memory was
     not saved. Re-stage with memory_write to create a fresh pending
-    id."` — so the model knows whether to apologise-and-re-ask or
+    id."`) so the model knows whether to apologise-and-re-ask or
     debug a phantom id.
 
-### Fixed — HIGH: auto-`record_use` race when log events landed after the scan
+### Fixed (HIGH): auto-`record_use` race when log events landed after the scan
 
 - **`_advance_turn`'s pre-consume dedup scanned only
   `attribution="hook"` events and matched on `(session, memory_id)`
@@ -12298,7 +12298,7 @@ dogfood traffic exist.
   retrieval cycle no longer purges a fresh token. The hook-only
   function name is kept as a backwards-compat alias.
 
-### Fixed — MED: search query text logged verbatim to disk by default
+### Fixed (MED): search query text logged verbatim to disk by default
 
 - **`Recorder.record` wrote `query` / `probe_query` field values
   verbatim.** A user pasting `key=sk-very-secret-...` into a
@@ -12310,12 +12310,12 @@ dogfood traffic exist.
     repeated query has the same hash); the first 32 characters
     survive for triage; the full body is not recoverable.
   - Rotated archives now match the active log's `0o600` permissions
-    (was umask-default — defense-in-depth so the chmod miss on the
+    (was umask-default; defense-in-depth so the chmod miss on the
     archive doesn't undo the active-log permission story).
   Set `telemetry.log_queries_verbatim = true` to restore the legacy
   shape for ranker debugging.
 
-### Fixed — LOW: README over-promised "every use is logged with claim-level excerpt"
+### Fixed (LOW): README over-promised "every use is logged with claim-level excerpt"
 
 - The phrasing implied every retrieval landed in the log with an
   excerpt. In practice only the *model-explicit*
@@ -12339,11 +12339,11 @@ headers, `init.py` atomic write, sub-microsecond chmod window on
 freshly-created index/embedding files) are squarely inside the
 documented same-machine trust model.
 
-### Fixed — HIGH: contract drift between handler and docs
+### Fixed (HIGH): contract drift between handler and docs
 
 - **`docs/api.md` memory_write success status said `"ok"`,
   emitted value is `"committed"`.** The exact drift CHANGELOG
-  2.6.2 announced as fixed in `DESC_MEMORY_WRITE` — but
+  2.6.2 announced as fixed in `DESC_MEMORY_WRITE`, but
   `docs/api.md` (the file `CONTRIBUTING.md:44` calls "pinned"
   as the stability contract) was never updated in lockstep.
   A library author or programmatic client branching on the
@@ -12351,22 +12351,22 @@ documented same-machine trust model.
   write. Fixed to `"committed"` matching the handler description
   and `_response.py:277`.
 
-### Fixed — HIGH: regression test that didn't exercise the production path
+### Fixed (HIGH): regression test that didn't exercise the production path
 
 - **`test_find_similar_dispatches_to_jaccard_without_model`
-  asserted `len(hits) >= 0` — tautology.** The docstring
+  asserted `len(hits) >= 0` (tautology).** The docstring
   promised "two bodies that share no tokens shouldn't surface
   via Jaccard," but the test bodies shared the token `postgres`,
   the inline comment contradicted the docstring, and the
   assertion was a tautology. Same shape as the 2.6.6
-  `test_schema_rebuild_executescript_is_transactional` rewrite —
+  `test_schema_rebuild_executescript_is_transactional` rewrite:
   a test named for a production branch it never exercised.
   Rewritten with a positive case (shared distinctive tokens →
   Jaccard hit at similarity > 0.40) plus a negative case
   (disjoint token sets → no hit, no exception, no hidden
   semantic-fallback path) so the dispatch boundary is pinned.
 
-### Fixed — MEDIUM: incomplete generalisation (two agents flagged independently)
+### Fixed (MEDIUM): incomplete generalisation (two agents flagged independently)
 
 - **`consolidate.py:407` `find_demotion_candidates` missed the
   `memory_ids` legacy fallback.** Read `event.get("returned") or
@@ -12374,22 +12374,22 @@ documented same-machine trust model.
   legacy-second / oldest-third chain every other call site
   uses (`eval.py:361`, `hook.py:365-367`, `health.py:699`,
   `health.py:1423`). Two of the six audit agents flagged this
-  independently. Same pattern as the 2.6.6 `health.py:679` fix
-  — the 2.6.5 sweep missed two sites, not one. Fix: insert
+  independently. Same pattern as the 2.6.6 `health.py:679` fix;
+  the 2.6.5 sweep missed two sites, not one. Fix: insert
   `memory_ids` between `returned` and `hit_ids`.
 
-### Fixed — MEDIUM: telemetry false positives
+### Fixed (MEDIUM): telemetry false positives
 
 - **`audit.py` `_RETRIEVAL_EVENT_KINDS` whitelist excluded
   `list` events.** `memory_list(scopes=[…])` returns ids (and
   bodies when `with_bodies=True`) and logs `kind="list",
-  returned=[…]` — same retrieval semantics as `search` and
+  returned=[…]`. Same retrieval semantics as `search` and
   `show`, but the silent-miss probe only counted the first two.
   A model using `memory_list` to triage would be flagged for a
   silent miss even though it had the content in front of it.
   Fix: add `list` to the frozenset.
 
-### Fixed — MEDIUM: dormant concurrency TOCTOU
+### Fixed (MEDIUM): dormant concurrency TOCTOU
 
 - **`SessionRegistry.for_request` had a read-then-write race
   on shared mutable state with no lock.** Two concurrent
@@ -12399,12 +12399,12 @@ documented same-machine trust model.
   / `turn_counter`. Stdio collapses every request into a single
   default-client key so the race is dormant today, but the
   class docstring anticipates an HTTP/SSE transport that fans
-  distinct `client_id`s in parallel — at which point the race
+  distinct `client_id`s in parallel, at which point the race
   becomes live and silent. Fix: `dict.setdefault` is atomic on
   CPython, so concurrent callers observing a missing key all
   receive the same `SessionState` instance.
 
-### Fixed — MEDIUM: tool description omitted a returned bucket
+### Fixed (MEDIUM): tool description omitted a returned bucket
 
 - **`DESC_MEMORY_HEALTH` listed `dead_weight` but never
   mentioned `cold_memories`.** Description claimed
@@ -12413,11 +12413,11 @@ documented same-machine trust model.
   never-retrieved memories route to the separate `cold_memories`
   bucket the description never named. A model curating against
   `dead_weight` would miss the cold subset entirely. Fix:
-  mirror the `docs/api.md` framing — dead is *"retrieved but
+  mirror the `docs/api.md` framing. Dead is *"retrieved but
   didn't help"*, cold is *"the ranker isn't surfacing this at
   all"*.
 
-### Fixed — MEDIUM: source enum under-documented
+### Fixed (MEDIUM): source enum under-documented
 
 - **`docs/api.md` listed only `"explicit-statement"` and
   `"inferred"` for `memory_write.source`.** `models.py` defines
@@ -12427,7 +12427,7 @@ documented same-machine trust model.
   wider than the contract. Fix: include `"user-correction"`
   with prose covering the post-hoc-correction semantics.
 
-### Fixed — MEDIUM: ROADMAP version stale
+### Fixed (MEDIUM): ROADMAP version stale
 
 - **`docs/ROADMAP.md` "Where we are" pinned at v2.6.3.**
   CHANGELOG 2.6.3 flagged "this count rots fast" but no test
@@ -12436,7 +12436,7 @@ documented same-machine trust model.
   sync-guard test would close this structurally; out of scope
   for this round.)
 
-### Fixed — MEDIUM: dispatch path defense-in-depth + test
+### Fixed (MEDIUM): dispatch path defense-in-depth + test
 
 - **`search.search()` had no runtime mode validator.** The
   `SearchMode` Literal pinned modes at the type-checker layer
@@ -12447,9 +12447,9 @@ documented same-machine trust model.
   unknown modes raise `ValueError` with the closed-set message.
   `test_mode_invalid_returns_typed_error` was the test that
   named the missing validator ("we can't easily check this at
-  runtime") — now actually exercises the production rejection.
+  runtime"); now actually exercises the production rejection.
 
-### Fixed — MEDIUM: weak structural pin on cold_memories
+### Fixed (MEDIUM): weak structural pin on cold_memories
 
 - **`test_cold_memories_field_returned_by_health` only asserted
   `isinstance(res["cold_memories"], list)`.** A regression that
@@ -12459,14 +12459,14 @@ documented same-machine trust model.
   `cold_memories` AND NOT in `dead_weight`). Misroutes between
   the two buckets now fail this test.
 
-### Fixed — MEDIUM: broad pytest.raises pattern
+### Fixed (MEDIUM): broad pytest.raises pattern
 
 - **30 sites used `pytest.raises(Exception)` without `match=`**
   across test_server.py, test_server_record_use.py,
   test_rename_scope.py, test_server_v12_features.py,
   test_session_registry.py, test_audit.py,
   test_server_tombstones.py, test_server_links.py. Bare
-  `Exception` catches any error type with any message — a
+  `Exception` catches any error type with any message; a
   refactor that swapped a clean `ValueError` for
   `AttributeError: 'NoneType'` would keep tests green while
   users see uninformative tracebacks at the MCP boundary. Fix:
@@ -12477,9 +12477,9 @@ documented same-machine trust model.
   rearrangement of validation order doesn't fail tests for the
   wrong reason.
 
-### Fixed — LOW: discipline alignment
+### Fixed (LOW): discipline alignment
 
-- **`auto` discriminator strictness drift** — `health.py:736`
+- **`auto` discriminator strictness drift**: `health.py:736`
   used `is True`, `eval.py:387` used `bool(...)`. Production
   traffic only writes literal True so no current bug, but
   identical structural class to the session-id sweep
@@ -12495,10 +12495,10 @@ documented same-machine trust model.
   Fix: regex anchored to end-of-string for the `-N` counter
   suffix.
 
-### Fixed — LOW: per-tool description wording
+### Fixed (LOW): per-tool description wording
 
 - **`DESC_MEMORY_SEARCH`** now explicitly notes that memories
-  with no recorded origin pass `auto_scope=True` as global —
+  with no recorded origin pass `auto_scope=True` as global;
   mirrors the sibling `DESC_MEMORY_SCOPE_OVERVIEW` wording.
 
 - **`DESC_MEMORY_RECORD_USE`** now documents the empty-string
@@ -12513,20 +12513,20 @@ pattern-discipline gap that 2.6.5 swept everywhere else but missed,
 and one regression test that pinned a stdlib property instead of
 the production call site it was named after.
 
-### Fixed — incomplete generalisation
+### Fixed: incomplete generalisation
 
 - **`health.py` distinct-session aggregation read canonical-only.**
   The 2.6.5 sweep applied the canonical-first / legacy-second
   fallback to five other `health.py` event reads but missed line
   679's `sess = ev.get("session")`. The Recorder stamps `session`
   on most canonical events, but `turn_audited` / `search_miss` use
-  `session_id` as their canonical field — under-counting the
+  `session_id` as their canonical field, under-counting the
   distinct-session metric in `compute_health`'s rollup whenever
   those event kinds were the only events in a session. Fix:
   `ev.get("session") or ev.get("session_id")`, matching the
   pattern applied at the four other `health.py` sites.
 
-### Fixed — regression test that didn't exercise the production path
+### Fixed: regression test that didn't exercise the production path
 
 - **`test_schema_rebuild_executescript_is_transactional` pinned a
   stdlib property, not the production call site.** The 2.6.5 test
@@ -12535,7 +12535,7 @@ the production call site it was named after.
   SQLite genuinely wraps. That verifies the property the fix
   depends on, but a regression in `_ensure_schema` itself (e.g.,
   reverting to the 2.6.4 shape: `conn.execute("BEGIN IMMEDIATE")`
-  then a separate `executescript`) would still pass the test —
+  then a separate `executescript`) would still pass the test;
   the production code path isn't called. Rewrite: sets up a v1
   index with a row, injects a broken `_SCHEMA` via monkeypatch,
   calls `index._ensure_schema` directly, asserts the row survives.
@@ -12551,13 +12551,13 @@ one regression the release itself introduced. This release addresses
 every HIGH and MEDIUM finding plus the LOW/NIT items with clean
 fixes.
 
-### Fixed — live bugs in 2.6.4
+### Fixed: live bugs in 2.6.4
 
 - **`bounded_read` flattened `FileNotFoundError` to bare `OSError`.**
   The 2.6.4 catch-and-re-raise turned `Store.restore` and
   `Store.rename_scope`'s `except FileNotFoundError` handlers into
   dead code AND made `test_concurrency`'s stress test flaky (~20%
-  under contention) — a regression introduced by the audit release
+  under contention), a regression introduced by the audit release
   itself. Fix: drop the re-wrap; `path.stat()` raises its native
   subclass unchanged.
 
@@ -12565,16 +12565,16 @@ fixes.
   Python's `sqlite3.executescript()` implicitly commits any pending
   transaction before it runs, so 2.6.4's
   `conn.execute("BEGIN IMMEDIATE")` followed by two `executescript()`
-  calls left the DROP/CREATE unprotected — a concurrent reader could
+  calls left the DROP/CREATE unprotected; a concurrent reader could
   still see "no such table: memories" mid-rebuild, exactly the gap
   the 2.6.4 fix claimed to close. Fix: move `BEGIN`/`COMMIT` inside
-  the executescript string. Verified atomic on CPython 3.11–3.13.
+  the executescript string. Verified atomic on CPython 3.11-3.13.
 
 - **`consolidate` merge-rollback orphaned tombstoned duplicates.**
   In a 3+-member cluster, if dup A tombstoned but dup B failed,
   2.6.4's rollback restored the keeper but left A's content in
   *neither* the keeper (rolled back, never received the merge) nor
-  the active set (tombstoned) — silent data loss until a manual
+  the active set (tombstoned): silent data loss until a manual
   `memory_restore`. Fix: track successfully-tombstoned ids and
   `store.restore()` them on failure.
 
@@ -12583,7 +12583,7 @@ fixes.
   for `decode("utf-8", errors="replace")` (silent U+FFFD
   substitution). A corrupt memory file then loaded into the
   retrieval surface, `doctor` reported it clean, and the next
-  mutator rewrote the file — laundering the corruption permanently.
+  mutator rewrote the file, laundering the corruption permanently.
   Fix: strict decode, raise `ValueError` so the store's
   malformed-file skip path fires (the pre-2.6.4 contract).
 
@@ -12601,7 +12601,7 @@ fixes.
   True sync↔Store coordination would require global write
   serialization and is left as a deliberate future decision.
 
-### Fixed — incomplete generalisations
+### Fixed: incomplete generalisations
 
 - **Shared `turn_audited` / `search_miss` field builders**
   (`audit.turn_audited_fields`, `audit.search_miss_fields`). The
@@ -12616,7 +12616,7 @@ fixes.
 
 - **`semantic` stale-dimension cache crashed `memory_write`.**
   `cosine_similarity_normalized` with `zip(strict=True)` (added in
-  2.6.4) raises `ValueError` on mismatched-dimension vectors —
+  2.6.4) raises `ValueError` on mismatched-dimension vectors,
   uncaught on the `memory_write` → `find_similar` path. When a
   persistent embedding cache was written under one model checkpoint
   and hydrated under another (same `model_name`, different output
@@ -12633,20 +12633,20 @@ fixes.
   `open("rb")` forever. Added `is_file()` guard mirroring the hook's;
   corrected `bounded_tail_read`'s docstring FIFO language.
 
-### Fixed — LOW / NIT
+### Fixed: LOW / NIT
 
-- `audit._count_recent_retrievals` — added the canonical-first
+- `audit._count_recent_retrievals`: added the canonical-first
   session fallback the 2.6.4 release applied everywhere else but
   missed on the silent-miss probe's own hot path.
 - `_handlers.py` comment falsely claimed "canonical handler writes
-  both `session` and `session_id`" — corrected (the Recorder always
+  both `session` and `session_id`"; corrected (the Recorder always
   stamps `session`, never `session_id`; only events whose producer
   passes `session_id=` explicitly carry both).
 - `tests/test_event_helpers.py` "contract" test emitted
   `claim_excerpts` / `lookback_seconds` / `probe_query` / `query`
-  without asserting them — a producer-side rename would have slipped
+  without asserting them: a producer-side rename would have slipped
   through the very test it was supposed to pin. Assertions added.
-- `tests/test_changelog.py` — added `encoding="utf-8"` to the
+- `tests/test_changelog.py`: added `encoding="utf-8"` to the
   `plugin.json` / `marketplace.json` reads (the same anti-pattern
   the 2.6.4 CI fix corrected for `CHANGELOG.md` in the same file).
 - CHANGELOG 2.6.4 entry corrections: `hook.py:_run_audit` →
@@ -12654,10 +12654,10 @@ fixes.
   (matches the parenthetical); the false sync-vs-Store coordination
   claim corrected as noted above.
 - `llm.py` Ollama-truncation comment described an unimplemented
-  "empty `done` flag (older)" branch — tightened to what the code
+  "empty `done` flag (older)" branch; tightened to what the code
   actually checks.
 
-### Added — regression tests
+### Added: regression tests
 
 - `test_fsutil.test_missing_file_raises_filenotfounderror` pins the
   `OSError` subclass contract (the test that should have caught the
@@ -12669,8 +12669,8 @@ fixes.
   the fix relies on.
 - `test_consolidate_llm.test_merge_rollback_restores_earlier_tombstoned_duplicates`
   covers the multi-duplicate rollback.
-- `test_consolidate_llm.test_load_transcript_does_not_hang_on_fifo`
-  — daemon-thread regression that pins the FIFO guard without
+- `test_consolidate_llm.test_load_transcript_does_not_hang_on_fifo`:
+  daemon-thread regression that pins the FIFO guard without
   hanging the suite on regression.
 - `test_audit.test_event_field_builders_pin_canonical_shape` pins
   the shared builders' output, including the two 2.6.4-audit gaps
@@ -12690,9 +12690,9 @@ drift, (3) cross-process concurrency primitives, (4) pattern non-
 generalization from prior fixes, (5) test-fixture honesty, and (6)
 novel bug classes the first three passes missed. The big find: the
 2.1.0 silent-miss telemetry flagship is partially broken for hook-
-originated events — three audits walked past it.
+originated events; three audits walked past it.
 
-### Added — structural foundations
+### Added: structural foundations
 
 - **`_fsutil.bounded_read` / `bounded_tail_read` / `bounded_stream_read`.**
   Single point of enforcement for resource caps on input. The 2.6.2
@@ -12706,14 +12706,14 @@ originated events — three audits walked past it.
   (`ValueError`, not OOM), and the byte-vs-char trap is structurally
   impossible because the helpers open in binary mode. Unit-tested
   against the 4-byte-codepoint case directly.
-- **`_fsutil.flock_excl` — single definition for the locking
+- **`_fsutil.flock_excl`: single definition for the locking
   primitive.** `store.py:_locked` and `events.py:_locked` had been
   duplicate implementations of the same fcntl-based exclusive
   lock since the start. The 2.6.3 audit-pass-of-audit-pass fix
   touched both files because the unlink-in-finally bug lived in both
   copies. This release lifts the canonical definition to
   `_fsutil.flock_excl`; store / events / sync all alias to it.
-  Future locking-discipline fixes land in one place — the
+  Future locking-discipline fixes land in one place; the
   3× duplication that the 2.6.3 audit cycle had to chase is gone.
 - **`tests/_event_helpers.EventLog` + `event_log` fixture.** Real
   `Recorder`-backed event log for tests. The 2.6.2 and 2.6.3 bugs
@@ -12724,7 +12724,7 @@ originated events — three audits walked past it.
   routes through the real `Recorder` so any future field rename
   fails the suite at write time instead of shipping. Includes
   `test_shape_matches_real_handlers_emission` which pins the
-  canonical key set explicitly — drift trips the suite.
+  canonical key set explicitly; drift trips the suite.
 - **Multi-process lockfile fault-injection tests
   (`test_concurrency.py`).** Two new deterministic tests:
   `test_store_locked_persists_lockfile_after_exit` and
@@ -12733,8 +12733,8 @@ originated events — three audits walked past it.
   2.6.3 regression). `test_locked_serializes_two_spawned_processes`
   spawns two interpreters and asserts B blocks on A's lock for the
   hold window. The stress test alone wouldn't catch a regression of
-  the inode-identity invariant — these close that gap.
-- **`test_changelog.py` — CHANGELOG hygiene lint.** Asserts every
+  the inode-identity invariant; these close that gap.
+- **`test_changelog.py`: CHANGELOG hygiene lint.** Asserts every
   `## <version> -` heading is well-formed AND the version in
   `pyproject.toml` has a matching entry. The 2.6.2 release noted
   three missing-heading defects (1.2.1, 1.3.0, 2.6.0); the prose
@@ -12745,7 +12745,7 @@ originated events — three audits walked past it.
   releases. The next missing-heading or version-drift instance
   trips CI instead of an audit pass.
 
-### Fixed — live shipping bugs
+### Fixed: live shipping bugs
 
 - **CRITICAL: silent-miss telemetry partially broken for hook-
   originated events (the 2.1.0 flagship).** `hook.py:run_audit`
@@ -12753,7 +12753,7 @@ originated events — three audits walked past it.
   `threshold_rule` / `lookback_seconds`, while `_handlers.py:_advance_turn`
   (the in-process MCP handler) emits `top_hits=[dicts]` with both
   fields. `eval.py:_silent_miss_from_event` reads the canonical
-  names — so every hook-originated silent miss surfaced in `bettermemory
+  names, so every hook-originated silent miss surfaced in `bettermemory
   eval` showed blank `top_missed_id` / `top_missed_relevance` /
   `threshold_rule` columns. The Stop hook is the *primary* production
   source of search_miss events (model-side `memory_audit_turn` rarely
@@ -12769,7 +12769,7 @@ originated events — three audits walked past it.
 - **HIGH: `_frontmatter.load` read whole file before YAML cap fired.**
   `_frontmatter.py:108-110` called `Path.read_text()` with no
   pre-flight size check. The existing `_MAX_YAML_BYTES = 64 KiB`
-  cap only protects the frontmatter region — a hostile `sync pull`
+  cap only protects the frontmatter region: a hostile `sync pull`
   pushing a multi-GB `.md` would OOM the loader before the YAML
   parser ran. Three audit agents flagged this independently. Fix:
   stat-rejects above `_MAX_FILE_BYTES = 1 MiB` (250× the largest
@@ -12778,7 +12778,7 @@ originated events — three audits walked past it.
   `sys.stdin.read()` before `json.loads` would buffer GB of
   garbage from a misbehaving pipe writer into memory before the
   parser got a chance to reject. Stop hooks fire on every assistant
-  turn — the blast radius is wide. Fix: `bounded_stream_read(
+  turn; the blast radius is wide. Fix: `bounded_stream_read(
   sys.stdin.buffer, 64 KiB)` with oversized-payload treated as
   malformed (silent no-op, preserving the hook's "never break the
   turn end" contract).
@@ -12790,7 +12790,7 @@ originated events — three audits walked past it.
   server could land between the migrate read and the migrate
   rename, silently losing the in-flight edit. Fix: wrap each
   per-file RMW in `_locked(path)` AND route through
-  `_atomic_write_post` (which the rest of the store already uses) —
+  `_atomic_write_post` (which the rest of the store already uses);
   the migrate path was also dropping the 0o600 chmod, so
   post-migration files inherited umask (0o644) and ended up
   world-readable. Two fixes for the price of one structural
@@ -12811,7 +12811,7 @@ originated events — three audits walked past it.
   add -A` can still stage a half-written file-set (at worst one
   commit stale; the next sync corrects it). True sync↔Store
   coordination would require `Store`'s mutators to take the
-  `.sync` lock too — a global write-serialization tradeoff
+  `.sync` lock too, a global write-serialization tradeoff
   deferred as a separate decision.
 - **HIGH: LLM providers (Ollama, OpenAI) had no output-token cap.**
   Ollama call had no `num_predict` in `options`; the OpenAI
@@ -12823,18 +12823,18 @@ originated events — three audits walked past it.
   on all three providers. Plus a new `LLMResponseTruncated`
   exception raised when the provider signals it hit the cap
   (`done_reason="length"` / `stop_reason="max_tokens"` /
-  `finish_reason="length"`) — pre-2.6.4 the truncated JSON
+  `finish_reason="length"`); pre-2.6.4 the truncated JSON
   silently fell through `parse_and_validate` as malformed, hiding
   the real root cause from the operator. Now the consolidate
   report surfaces "raise the cap or split the cluster" explicitly.
 - **MEDIUM: `store.prune_tombstones` and `store.tombstone`
   concurrency.** `prune_tombstones` read+stat+unlink each
-  tombstone WITHOUT the per-file lock — a concurrent `restore(id)`
+  tombstone WITHOUT the per-file lock: a concurrent `restore(id)`
   race could either un-tombstone or double-unlink. Fix: wrap the
   per-tombstone read/unlink in `_locked(path)`. Separately, the
   tombstone-naming TOCTOU (`if target.exists(): target = ...
   ULID-suffixed`) is killed by always using the ULID-suffixed
-  filename — unique by construction, no race possible. Existing
+  filename (unique by construction, no race possible). Existing
   unsuffixed tombstones on disk continue to load (the reader keys
   off the `id` field, not the filename).
 - **MEDIUM: `index.py:_ensure_schema` downgrade ran outside a
@@ -12861,7 +12861,7 @@ originated events — three audits walked past it.
 - **MEDIUM: `semantic.cosine_similarity_normalized` truncated to
   shorter input on dimension mismatch.** `zip(a, b)` over
   different-length vectors produced a similarity over the
-  overlap only — meaningless number that still passed the
+  overlap only: meaningless number that still passed the
   threshold. The case fires when a persistent cache from one
   embedding model is read against another (config swap without
   `flush_persistent_cache`). Fix: `zip(a, b, strict=True)`
@@ -12870,20 +12870,20 @@ originated events — three audits walked past it.
   `consolidate.apply_llm_proposal` updated the keeper's body
   then iterated `store.tombstone(dup_id)` for each duplicate.
   If the third of five tombstones failed, the keeper had the
-  merged body while two duplicates were still active —
+  merged body while two duplicates were still active:
   retrieval would surface both the merged record and the
   unmerged duplicates. Fix: catch exception in the tombstone
   loop, roll back the keeper to its pre-merge body, then
   re-raise. The rollback is best-effort but the raise gives
   the operator a clean signal instead of silent half-done state.
 
-### Fixed — pattern-generalization (event consumer fallbacks)
+### Fixed: pattern-generalization (event consumer fallbacks)
 
 - The 2.6.3 fix added tolerant `event.get("returned") or
   event.get("memory_ids")` reads to `llm.py` only. Five other
   consumers (`_handlers.py`, `_response.py`, `hook.py`,
   `consolidate.find_demotion_candidates`,
-  `consolidate.find_cold_scopes`) read canonical-only — pre-2.6.3
+  `consolidate.find_cold_scopes`) read canonical-only: pre-2.6.3
   archived events on disk were silently dropped from those passes.
   All five now use the same canonical-first-then-legacy discipline.
   Same fix applied to `session` / `session_id` divergence:
@@ -12897,20 +12897,20 @@ originated events — three audits walked past it.
   impossible session shapes.** Pre-2.6.4 the helper hardcoded
   `session: "sess-test"` regardless of any `session_id=` the
   caller passed; the resulting event had both fields
-  disagreeing — a state production never produces (both fields
+  disagreeing, a state production never produces (both fields
   derive from `state.session_id`). Helper now omits the
   `session` default when the caller provides either field.
   Migration to `_canonical_event` for legacy hand-built
   fixtures is follow-up work; the helper docstring directs
   new tests to the `event_log` fixture.
 
-### Audit framing — why a fourth pass
+### Audit framing: why a fourth pass
 
 After three audits in one day the question shifted from "are
 there more instances of these bug classes?" to "why do these
 bug classes keep producing new instances?" The structural fixes
 above (single helpers for byte caps + flock + test fixtures)
-make the *class* impossible — not "the next instance harder to
+make the *class* impossible, not "the next instance harder to
 find." That's the differential from the 2.6.1 / 2.6.2 / 2.6.3
 audit-pass approach, which was finding instances of named bug
 classes one at a time. Two of four 2.6.3 bug classes (byte-vs-
@@ -12918,7 +12918,7 @@ char, field-name drift) are now structurally impossible at the
 write site. Concurrency primitive duplication is gone (3× → 1×).
 The fourth pass found one critical-severity live bug
 (silent-miss flagship broken for hook traffic) that three prior
-passes missed — confirming the audit-of-audit-of-audit
+passes missed, confirming the audit-of-audit-of-audit
 diminishing-returns thesis: more audits surface different bugs
 not because they're more thorough, but because each pass's
 attention budget runs out before exhausting the surface.
@@ -12930,8 +12930,8 @@ shape-pinning, lockfile fault-injection).
 ## 2.6.3 - 2026-05-21
 
 **Audit-pass-of-the-audit-pass-of-the-audit-pass.** A third multi-agent
-review of the 2.6.2 surface — this time scoped to "find the bugs the
-last two audits' fix patterns should have generalized" — caught one
+review of the 2.6.2 surface (this time scoped to "find the bugs the
+last two audits' fix patterns should have generalized") caught one
 CRITICAL concurrency bug, two HIGH transcript-read DoS surfaces, and a
 latent field-name drift in `llm.py` that is the same class as the
 `find_demotion_candidates` bug 2.6.2 fixed in `consolidate.py`. Plus the
@@ -12950,7 +12950,7 @@ changes; one new constant and one new test surface.
   flock identity is per-inode, so B and C then both believe they hold
   the lock. The bug was invisible under low contention (each lock
   acquire-and-release was serial within one process) but loosens to
-  full lost-update territory under cross-process load — exactly the
+  full lost-update territory under cross-process load, exactly the
   scenario `bettermemory sync` and any future multi-client HTTP/SSE
   posture introduces. Fix: drop the unlink; persist the 0-byte
   lockfile so every `os.open` sees the same inode. Comment in both
@@ -12967,7 +12967,7 @@ changes; one new constant and one new test surface.
   the trailing `_TRANSCRIPT_TAIL_READ_BYTES = 1_048_576` bytes, then
   discard the first partial line (the next newline starts a complete
   record). The hook only needs the latest user+assistant pair, which
-  always sits at the tail of an append-only log — the head bytes are
+  always sits at the tail of an append-only log; the head bytes are
   dead weight. Unseekable streams (FIFOs from `mkfifo`-based fixtures)
   fall back to a bounded forward read; binary-mode read with
   `errors="replace"` decode handles UTF-8 codepoints split at the
@@ -12977,7 +12977,7 @@ changes; one new constant and one new test surface.
   The 2.6.2 release added `fh.read(_TRANSCRIPT_READ_CAP_BYTES)` on a
   *text*-mode stream, which reads at most that many *characters*.
   Worst-case multibyte UTF-8 (4 bytes/char) read up to ~4 MiB into
-  memory before the cap kicked in — defeating the "1 MiB hard cap"
+  memory before the cap kicked in, defeating the "1 MiB hard cap"
   the comment claimed. Fix: open in binary mode, read raw bytes,
   decode with `errors="replace"` so a partial codepoint at the
   truncation boundary doesn't raise. Same byte-vs-char trap as the
@@ -13002,12 +13002,12 @@ changes; one new constant and one new test surface.
   hand-rolled session keys. New regression test
   `test_build_clusters_seeds_contradiction_from_real_recorder` in
   `tests/test_llm.py` round-trips events through a real `Recorder` so
-  a future drop of the canonical-name path fails at suite time — the
-  same discipline the 2.6.2 demotion fix established.
+  a future drop of the canonical-name path fails at suite time (the
+  same discipline the 2.6.2 demotion fix established).
 
 ### Changed
 
-- **`SECURITY.md` — corrected the Web UI CSRF claim.** The hardening
+- **`SECURITY.md`: corrected the Web UI CSRF claim.** The hardening
   notes still described the pre-2.3.0 permissive header-less POST
   behavior ("Header-less POSTs fall through… refusing every
   header-less POST would break the normal in-UI flow"). 2.3.0 closed
@@ -13017,9 +13017,9 @@ changes; one new constant and one new test surface.
   are rejected." with the CLI-scripting escape hatch (`-H "Origin:
   http://127.0.0.1:<port>"`) called out explicitly. Security
   documentation overstating an attack surface that has already been
-  closed is worse than understating it, but only by a hair — the fix
+  closed is worse than understating it, but only by a hair; the fix
   brings the prose in line with the code.
-- **`CHANGELOG.md` — restored the missing `## 1.2.1 - 2026-05-10`
+- **`CHANGELOG.md`: restored the missing `## 1.2.1 - 2026-05-10`
   heading.** Same defect 2.6.2 fixed for `## 2.6.0` (and the 1.3.2
   entry already noted for 1.3.0 itself). The 1.2.1 narrative flowed
   out of the 1.2.2 entry without a separator; renderers walking the
@@ -13030,7 +13030,7 @@ changes; one new constant and one new test surface.
   has a matching `[project] version = "<version>"` entry in
   `pyproject.toml`'s history (or a release tag) so the next instance
   trips the suite instead of an audit pass.
-- **`docs/ROADMAP.md` — version pin and test count.** "Where we are"
+- **`docs/ROADMAP.md`: version pin and test count.** "Where we are"
   header read `(May 2026, v2.6.0)`; bumped to `v2.6.3`. The
   `1234 tests` line was off by ~20 after the 2.6.1 / 2.6.2 / 2.6.3
   additions; replaced with `1200+ tests` so the next minor doesn't
@@ -13042,7 +13042,7 @@ changes; one new constant and one new test surface.
 surface caught four real correctness gaps in the consolidate path that
 the previous read-through missed, plus several doc-vs-behavior drifts
 worth fixing while the surface was warm. No on-disk format changes, no
-wire-shape changes — only existing-but-skipped checks getting wired up
+wire-shape changes; only existing-but-skipped checks getting wired up
 correctly.
 
 ### Fixed
@@ -13050,8 +13050,8 @@ correctly.
 - **`consolidate.py:find_demotion_candidates` was reading the wrong
   event field.** The demotion pass keyed retrieval counts off
   `event.get("hit_ids")`, but `_handlers.memory_search` records the
-  result-id list as `returned` — has done since the recorder shape
-  stabilised. Every real event log silently scored zero retrievals,
+  result-id list as `returned` (has done since the recorder shape
+  stabilised). Every real event log silently scored zero retrievals,
   which means the demote-never-applied rule never proposed a single
   candidate against a production store. The unit tests passed because
   the synthetic fixtures used the legacy `hit_ids` field. Now reads
@@ -13062,7 +13062,7 @@ correctly.
 - **`consolidate.py:_apply_llm_proposal` `propose_new` branch
   bypassed every write-time guardrail.** `memory_write` runs
   `find_similar` (active + tombstones), `find_transient_markers`, and
-  the new 2.6.1 `max_content_bytes` cap before committing — but the
+  the new 2.6.1 `max_content_bytes` cap before committing, but the
   LLM-proposed branch went straight to `store.write` with none of
   them. Since the LLM only sees ~8 cluster members as "don't
   duplicate these" context, dedup against the full active set is
@@ -13074,7 +13074,7 @@ correctly.
   reason in the report.
 - **`consolidate.py:_load_transcript` had no read-size cap.** The
   whole transcript file was `path.read_text()`-ed before any
-  truncation — same unbounded-input class 2.6.1's `max_content_bytes`
+  truncation, same unbounded-input class 2.6.1's `max_content_bytes`
   work closed for memory bodies. A multi-GB transcript would OOM the
   process. Now caps the read at 1 MiB via a single `f.read(N)` on the
   text stream; the downstream prompt builder still truncates again
@@ -13082,12 +13082,12 @@ correctly.
 - **`llm.py:_validate_propose_new` didn't call `validate_scope`.** A
   syntactically-bad scope (e.g. `"foo bar"`, anything outside the
   lowercase-alphanumeric-plus-hyphens-and-colons grammar) passed
-  validation and crashed at apply time — *after* the user had
+  validation and crashed at apply time, *after* the user had
   already seen and accepted the `+ NEW MEMORY` diff. Now uses the
   same `validate_scope` helper `memory_write`'s payload validator
   does, so bad scopes are rejected before the diff renderer sees
   them.
-- **`store.py` — three bare `except Exception:` narrowed.**
+- **`store.py`: three bare `except Exception:` narrowed.**
   `_find_tombstone_path_for_id` (line 600), `rename_scope`'s
   tombstone branch (line 845), and `_find_path_for_id` (line 952)
   were catching every exception from `frontmatter.load`, including
@@ -13100,44 +13100,44 @@ correctly.
   `01HXYZHOMELABNETWORKEXAMPL`,
   `01HXYZPROJECTFOOSTACKEXAMP`) contained `I` / `L` / `O` / `U`
   characters, which the Crockford-base32 `_ULID_RE` rejects. `Memory()`
-  validation failed and `Store.load_all` swallowed the `ValidationError`
-  — so following the README's "drop these into `~/.claude-memory/`"
+  validation failed and `Store.load_all` swallowed the `ValidationError`,
+  so following the README's "drop these into `~/.claude-memory/`"
   instruction produced an empty store with no error visible to the
   user. Regenerated three valid IDs via `generate_ulid()`.
 
 ### Changed
 
-- **`CHANGELOG.md` — restored the missing `## 2.6.0 - 2026-05-21`
+- **`CHANGELOG.md`: restored the missing `## 2.6.0 - 2026-05-21`
   heading.** The 2.6.1 insertion landed without recreating the
   separator between releases, so the 2.6.1 "Fixed" bullets flowed
   directly into the 2.6.0 body text. Cosmetic but unambiguously
   wrong for changelog consumers (rendered HTML, parsers that walk
   the heading hierarchy). Also added the missing 2.6.1 "Fixed"
-  bullet for commit `00521d5` — the deleted-CWD Stop-hook fix
-  shipped in 2.6.1 but never made it into the changelog entry — and
+  bullet for commit `00521d5` (the deleted-CWD Stop-hook fix
+  shipped in 2.6.1 but never made it into the changelog entry) and
   scoped the 2.4.0 system-dirs claim to clarify Windows behaviour.
-- **`SECURITY.md` — reworded the YAML claim.** "No `yaml.load`
-  anywhere" was an overclaim — `_frontmatter.py:100` does call
+- **`SECURITY.md`: reworded the YAML claim.** "No `yaml.load`
+  anywhere" was an overclaim; `_frontmatter.py:100` does call
   `yaml.load(..., Loader=yaml.SafeLoader)`. Same safety property,
   but the literal sentence was wrong. Now reads "every `yaml.load`
   call pins `Loader=yaml.SafeLoader`" plus the 64 KB pre-flight cap
   noted in the parser as belt-and-suspenders.
-- **`CONTRIBUTING.md` — inlined the macOS `UF_HIDDEN` explanation.**
+- **`CONTRIBUTING.md`: inlined the macOS `UF_HIDDEN` explanation.**
   The previous text cross-referenced a README "macOS gotcha"
   section that doesn't exist. Now self-contained, with the
   `chflags nohidden .venv` recovery command for an already-flagged
   directory.
-- **`docs/installation.md` — added the `[embeddings-fast]` extra.**
+- **`docs/installation.md`: added the `[embeddings-fast]` extra.**
   Shipped in 2.5.0 but the install page only listed `[embeddings]`
   and `[ui]`. New entry calls out the PyTorch-vs-ONNX trade-off (~500
   MB vs ~50 MB on disk) and the `[behavior] semantic_provider` knob
   for selecting fastembed explicitly when both extras are installed.
-- **`_handlers.py:DESC_MEMORY_WRITE`** — the documented success
+- **`_handlers.py:DESC_MEMORY_WRITE`**: the documented success
   status was `"ok"` but the actual emitted value is `"committed"`
   (`_response.committed` has been stable on `"committed"` since 2.x).
   Models branching on the documented value got a no-match. Now
   matches the emission.
-- **`server.py` module docstring** — Curation list extended to
+- **`server.py` module docstring**: Curation list extended to
   include `memory_audit_turn`. Was 17 of 18; registration was always
   correct, the docstring was stale.
 
@@ -13156,7 +13156,7 @@ the model branches on; older callers see byte-stable behaviour.
   `0` disables).** Closes the only unbounded-input surface left after
   the YAML / note / origin trust-boundary work in 1.x. The event log
   already rotates at 10 MB, but the memory file itself was previously
-  unbounded — a runaway model or hostile client could fill disk with a
+  unbounded: a runaway model or hostile client could fill disk with a
   multi-gigabyte body. `memory_write` and `memory_update` now share a
   `_validate_content_size` helper that measures encoded UTF-8 byte
   length (the unit that actually lands on disk and in the JSONL log,
@@ -13168,7 +13168,7 @@ the model branches on; older callers see byte-stable behaviour.
 
 - **`orphan_use_events` is now a clean fabrication smoke test.** The
   rollup previously incremented on every `record_use` referencing an
-  id not in the active store — which conflated benign
+  id not in the active store, which conflated benign
   tombstone-after-use lifecycle events with model hallucination. The
   CLAUDE.md / health output advised treating a growing count as "model
   is hallucinating ids", but in practice the count was dominated by
@@ -13178,12 +13178,12 @@ the model branches on; older callers see byte-stable behaviour.
   tombstone set from `store.load_tombstones()`, so production callers
   via the MCP tool and CLI subcommand get the sharpened signal.
   Callers that don't pass `tombstoned_ids` see the legacy conflated
-  count — backward compatibility for offline tooling that builds
-  events without a live store.
+  count (backward compatibility for offline tooling that builds
+  events without a live store).
 
 ### Fixed
 
-- **`store.py:Store.__post_init__` — explicit `mode=0o700` on the
+- **`store.py:Store.__post_init__`: explicit `mode=0o700` on the
   tombstone directory.** Previously `mkdir(exist_ok=True)` relied on
   the caller's umask for owner-only permissions. On a system with a
   loose umask (0o027 or higher), the tombstone directory could be
@@ -13194,18 +13194,18 @@ the model branches on; older callers see byte-stable behaviour.
   for dedup), so directory listing should require the owner.
 - **`web.py` `/memories?scope=…` query param now validates.** The
   scope query param fed straight into `store.list_summaries` with no
-  validation — not an injection vector (set-intersection on scope
+  validation, not an injection vector (set-intersection on scope
   strings, no SQL exposure), but inconsistent with the MCP handlers
   that all call `validate_scope`. A malformed scope (e.g.
   `?scope=../etc/passwd`) silently returned an empty list, masking the
   user's typo as "no results". The route now returns a clear 400 with
   the same error message MCP handlers produce.
-- **`_response.py:_attach_commit_drift_to_hits` — defensive `.get()`
+- **`_response.py:_attach_commit_drift_to_hits`: defensive `.get()`
   on `path_drift_missing` during late verdict recomputation.** The
   late recompute reads `hit_dict["path_drift_missing"]` set earlier by
   `hit_to_dict`. The dependency was safe today but invisible across
   function boundaries; a future refactor that changed when the field
-  attached would `KeyError` retrieval. Now uses `.get("…", 0)` — costs
+  attached would `KeyError` retrieval. Now uses `.get("…", 0)`; costs
   nothing, removes the implicit invariant.
 - **`attribution.py:_SENTENCE_SPLIT_RE` docstring.** The comment
   claimed the trailing-space requirement avoided breaking
@@ -13235,7 +13235,7 @@ The MCP contract asks the model to attach `claim_excerpts` on explicit
 `memory_record_use`, to spot-check claims when the staleness verdict
 isn't fresh, and to call `memory_write` whenever something durable
 enters the conversation. In dogfood the model defaults to the cheap
-auto-commit path on all three — `memory_helped_rate` reads 0%, the
+auto-commit path on all three: `memory_helped_rate` reads 0%, the
 spot-check ceremony asks the model to recompute what the server
 already knows, and most durable facts never get written. This release
 closes each gap by moving the load-bearing work off the model:
@@ -13251,17 +13251,17 @@ is in a better position to do itself.
   pipeline already runs `detect_path_drift` inside `_build_hit` but
   was discarding the actual path lists, keeping only the integer
   counts. The model got a non-fresh `staleness_verdict` with no
-  actionable handle — its only options were `memory_show` round-trips
+  actionable handle: its only options were `memory_show` round-trips
   or manually re-scanning the snippet. New `MemoryHit` fields
   (`path_drift_checked_paths` / `path_drift_missing_paths` /
   `path_drift_verified_paths`) carry the `PathDriftReport`'s lists
   through and the search response surfaces them under
-  `path_drift = {checked, missing, verified}` — the same key shape
+  `path_drift = {checked, missing, verified}`, the same key shape
   `memory_show` already uses. A `spot_check_recommended` hit with
   `path_drift.missing = ["src/auth/middleware.py"]` is now directly
   actionable: `memory_update` the rotted bit or `memory_verify` the
   rest, no round-trip needed. Side effect: `_build_hit` now passes
-  `verified_paths` to `detect_path_drift` (it wasn't before — the
+  `verified_paths` to `detect_path_drift` (it wasn't before; the
   `verified` field of the report was always empty on search hits, bug
   fix). The spot-check ceremony language across
   `DESC_MEMORY_SEARCH`, `SYSTEM_PROMPT_ADDENDUM`,
@@ -13278,12 +13278,12 @@ is in a better position to do itself.
   (memory, matched-sentence) pair with `outcome="applied"`,
   `auto=false`, `attribution="hook"`, and the matched phrase as the
   `claim_excerpt`. New `attribution` field on `use` events with three
-  tiers — `model` (explicit by AI), `hook` (substring-match), `auto`
+  tiers: `model` (explicit by AI), `hook` (substring-match), `auto`
   (the fallback). Older events without the field fall back at read
   time (`auto=false → model`, `auto=true → auto`). `_advance_turn`
   reads recent events at the start of each `memory_*` call, purges
   hook-attributed ids from the pending map, and skips the
-  auto-commit pass for them — so each retrieval generates exactly one
+  auto-commit pass for them, so each retrieval generates exactly one
   `applied` event (hook, model, or auto). The hook also filters
   memory_ids that already have any `use` event in the lookback window
   (600s default), so a model that DID record use explicitly doesn't
@@ -13298,16 +13298,16 @@ is in a better position to do itself.
   something durable enters the conversation; in practice the bar for
   "durable" is fuzzy and head-down task focus wins. The new flag
   reads the conversation after the fact (plain text, Markdown, or
-  Claude Code session JSONL — autodetected by extension) and asks
+  Claude Code session JSONL; autodetected by extension) and asks
   the LLM to propose new memories worth saving. Fifth proposal type
   `propose_new(scope, category, body, source_excerpt, rationale)`
   joins the existing four (merge / resolve_contradiction /
-  rewrite_relative_date / demote_tier) under the same audit gate —
+  rewrite_relative_date / demote_tier) under the same audit gate:
   every proposal renders as a "+ NEW MEMORY" diff preview, `--apply`
   requires either `--yes` (batch accept) or an interactive y/N
   prompt. Hallucination defences fire: `scope` must be non-empty and
   not "general" (the catch-all); `category` must be `fact` or
-  `ambient` — never `user-inference` (that tier requires explicit
+  `ambient`, never `user-inference` (that tier requires explicit
   user confirmation the consolidate path can't supply);
   `source_excerpt` is required and capped at 500 chars; `body` must
   be non-empty. The excerpt is stamped into the new body as a
@@ -13320,7 +13320,7 @@ is in a better position to do itself.
   `tests/test_consolidate_llm.py`. Full suite: 1234 passed, 9
   skipped.
 - **`docs/incidents/` postmortem scaffold.** A public-postmortem
-  directory for reported memory-rot bugs — cases where the
+  directory for reported memory-rot bugs: cases where the
   verification trifecta (calendar age + path drift + commit drift)
   missed a stale claim or fired on a fresh one. Competing memory
   systems don't surface their drift bugs because their architecture
@@ -13339,7 +13339,7 @@ eval` CLI (`memory_helped_rate`, `endorsement_rate`, `silent_miss_rate`),
 the `[embeddings-fast]` extra that closes the recall objection without
 PyTorch, AND the `bettermemory consolidate --llm` Dreaming-defense pass
 that proposes merges / contradiction resolutions / relative-date rewrites
-/ tier demotions from a local Ollama model — refusing to commit any of
+/ tier demotions from a local Ollama model, refusing to commit any of
 them without your explicit accept. The narrative phrase: *Anthropic's
 Dreaming consolidates invisibly; bettermemory's `--llm` shows every
 proposed diff and refuses to commit without your accept.*
@@ -13357,7 +13357,7 @@ proposed diff and refuses to commit without your accept.*
   passed via the prompt so the model doesn't infer it from stale
   training data), and `demote_tier` (retag `fact` -> `ambient` when
   the verifiable claim has been superseded). The `--llm-provider` flag
-  picks between `ollama` (default — local HTTP on port 11434, no
+  picks between `ollama` (default: local HTTP on port 11434, no
   egress, no API key), `anthropic` (env `ANTHROPIC_API_KEY`, lazy-
   imports the `anthropic` SDK), and `openai` (env `OPENAI_API_KEY`,
   lazy-imports `openai`). Dry-run by default; `--apply` requires
@@ -13383,7 +13383,7 @@ proposed diff and refuses to commit without your accept.*
   installed (existing `.embeddings.<model>.npz` caches stay
   byte-stable), then fastembed, then Jaccard fallback. Explicit
   `"torch"` or `"fastembed"` honoured even when the extra isn't
-  installed — the per-provider WARNING surfaces the missing-extra
+  installed; the per-provider WARNING surfaces the missing-extra
   hint. Persistent cache namespaces by provider:
   `.embeddings.<model>.npz` (torch, legacy layout) vs
   `.embeddings.fastembed.<model>.npz` so flipping providers produces
@@ -13394,7 +13394,7 @@ proposed diff and refuses to commit without your accept.*
 - **`bettermemory reindex --embeddings`.** After rebuilding the FTS5
   index, re-embed every active body into the persistent cache.
   Provider+model-namespaced, so a config swap from torch to fastembed
-  needs warming the new cache file — this is the surface for that
+  needs warming the new cache file; this is the surface for that
   warming pass. Reports `embedded` count, resolved provider/model,
   and the cache path on success; clean exit with an actionable
   message when the provider isn't available.
@@ -13453,7 +13453,7 @@ proposed diff and refuses to commit without your accept.*
 
 **Path-drift extractor: narrow single-segment routes.** A bugfix
 release, but tagged minor because it changes the path-candidate set
-the `path_drift` signal acts on — consumers tracking
+the `path_drift` signal acts on: consumers tracking
 `path_drift_missing` counts will see lower numbers on bodies that
 document URL routes inline.
 
@@ -13474,7 +13474,7 @@ document URL routes inline.
   paths (`/Users/...`, `/etc/foo.conf`), home-relative paths
   (`~/...`), Windows paths, and extensioned single-segment paths
   (`/foo.txt`) are unaffected. Bare top-level system dirs (`/etc`,
-  `/var`, `/usr`) get filtered too — on POSIX they exist by
+  `/var`, `/usr`) get filtered too: on POSIX they exist by
   definition so the filter is a no-op for real drift, and on Windows
   they don't exist as bare roots so filtering them strips a false-
   positive at zero cost. Five regression
@@ -13504,7 +13504,7 @@ versions. No code-logic, schema, or surface changes.
 ## 2.3.1 - 2026-05-20
 
 **Audit-pass follow-up.** 2.3.0 cut as a single rebased push of 12
-audit commits — the chain never ran CI individually, so the first
+audit commits; the chain never ran CI individually, so the first
 push to main failed format check (16 unrun files) and the format
 fix-up exposed a mypy regression in the new lock-discipline tests.
 This patch closes the deeper bugs the rebase-squash papered over.
@@ -13523,7 +13523,7 @@ All fixes are correctness-only; no surface or schema changes.
 
 - **Index `filename` column wrong for collision-suffixed files.**
   The schema-v2 id → filename lookup derived its filename via
-  `_filename_for(memory)`, which only knew `(created, slug)` — no
+  `_filename_for(memory)`, which only knew `(created, slug)`, no
   collision suffix. Two memories sharing a date+slug had their
   index rows both pointing at the unsuffixed file; a search hit on
   the second memory resolved to the first memory's body, tripped
@@ -13537,7 +13537,7 @@ All fixes are correctness-only; no surface or schema changes.
 - **`_load_search_candidates` empty-loaded fallback.** When the
   FTS pre-filter returned candidate ids but every filename lookup
   missed (pre-v2 schema rows, every match tombstoned mid-search,
-  etc.), the handler returned an empty list — the comment in
+  etc.), the handler returned an empty list. The comment in
   `_filename_for` had claimed the `load_all` fallback covered that
   case; it didn't. The fallback is now actually wired up. Regression
   test blanks every filename column in the index and confirms
@@ -13576,7 +13576,7 @@ the FTS5 index schema goes from v1 to v2 (drop-and-rebuild on first
 launch, transparent), a new `bettermemory audit-turn` CLI subcommand
 ships, and the plugin manifest now declares a Stop hook that fires
 silent-miss telemetry on every assistant turn. Schema_version on
-memory files stays at 1 — no on-disk format change.
+memory files stays at 1; no on-disk format change.
 
 ### Fixed (correctness)
 
@@ -13589,7 +13589,7 @@ memory files stays at 1 — no on-disk format change.
   scope wrote the new list to disk without updating the index's
   `scopes_text` column; BM25 ranking on the renamed scope read
   against stale text until the next manual reindex. `restore` was
-  missing the index upsert entirely — restored memories were absent
+  missing the index upsert entirely: restored memories were absent
   from indexed search until reindex. Both paths now call
   `_index_upsert_quietly` after the file write.
 - **Consolidate failures aggregated, not silently swallowed.** The
@@ -13645,7 +13645,7 @@ memory files stays at 1 — no on-disk format change.
   branch on a later checkout.
 - **0o600 permissions on data files.** Memory `.md` files, the
   event log `.events.jsonl`, the SQLite index and its WAL/SHM
-  siblings all inherit the user umask (typically 0o644 — world-
+  siblings all inherit the user umask (typically 0o644, world-
   readable on default Linux/macOS). Lock files already used 0o600;
   the data path now matches. Best-effort; no-op on Windows.
 - **System-directory warning on misconfigured `BETTERMEMORY_DIR`.**
@@ -13761,21 +13761,21 @@ memory files stays at 1 — no on-disk format change.
   the first frontmatter key (matching what `store.py` actually
   writes; the previous examples were missing the field).
 - `CHANGELOG.md:7` anchor link to CONTRIBUTING.md was broken
-  (`#versioning-and-the-1x-compatibility-contract` — the `1x-`
+  (`#versioning-and-the-1x-compatibility-contract`; the `1x-`
   was dropped during the 2.0 rewrite). Fixed.
 - `docs/api.md` `memory_write` parameter signature reordered to
   match `_handlers.py`.
 - The 2.2.0 entry's lede ("No code... behaviour is byte-identical")
   was self-contradicting against the `_handlers.py` / `audit.py` /
   `groundedness.py` edits listed two paragraphs below. Lede
-  reworded to "No behavioural changes — only docstrings and code
+  reworded to "No behavioural changes; only docstrings and code
   comments were touched."
 
 ### Deferred
 
 - L9 (`time.sleep(0.01)` → freezegun-style explicit timestamps in
   test fixtures). The refactor needs a fixture that monkeypatches
-  `utcnow` across every consumer module — multiple
+  `utcnow` across every consumer module: multiple
   `from .models import utcnow` sites capture the reference at
   import time, so patching the canonical source doesn't propagate.
   The sleeps work today; the refactor warrants its own focused
@@ -13788,7 +13788,7 @@ tool-surface changes; the source-file edits below are scoped to
 docstrings and code comments, so runtime behaviour is byte-identical
 to 2.1.1. The release is cut as a minor bump rather than a patch
 because the public-facing language in `README.md` and
-`docs/v1.6-plan.md` changed materially — anyone linking to the
+`docs/v1.6-plan.md` changed materially; anyone linking to the
 prior README will land on a different framing of the project.
 
 ### Changed
@@ -13822,7 +13822,7 @@ prior README will land on a different framing of the project.
 - `src/bettermemory/audit.py`, `src/bettermemory/groundedness.py`,
   and `src/bettermemory/_handlers.py` (groundedness-check comment +
   one tool-description example string) had the same scrubbing pass
-  applied — module docstrings now describe the auto-extraction
+  applied: module docstrings now describe the auto-extraction
   failure mode generically rather than via a competitor's bug
   tracker.
 
@@ -13862,7 +13862,7 @@ get the trimmed body.
 **Silent-miss telemetry and endorsement-debt curation.** Two additive
 features close the false-negative half of the opt-in retrieval
 contract and add a "weakly endorsed" curation pivot. No on-disk
-breaking changes — every new wire field is opt-in or absence-as-signal,
+breaking changes: every new wire field is opt-in or absence-as-signal,
 SCHEMA_VERSION stays at 1, and legacy events load unchanged
 (`auto`-absent reads as explicit so pre-auto-commit history isn't
 silently relabelled). Test count: 970 → 1021 (+51).
@@ -13899,7 +13899,7 @@ silently relabelled). Test count: 970 → 1021 (+51).
   (never applied at all, auto included): dead_weight says the model
   doesn't even let the auto pass run on this; endorsement_debt says
   applies happened, but every single one was the auto fallback.
-  Ambient memories are excluded — their value is implicit and
+  Ambient memories are excluded: their value is implicit and
   explicit use events are structurally rare. Capped rows for inline
   display plus an uncapped `total` for bucket size. Threshold
   tunable via `endorsement_debt_min_retrievals` (clamped to >=1).
@@ -13924,8 +13924,8 @@ shipped as one major release: nine features in three tiers turn
 bettermemory into the only memory MCP with claim-level provenance,
 write-time hallucination detection, an FTS5 inverted index over the
 file-backed store, git-based cross-host sync, and a local web UI for
-curation. Test count: 821 → 970 (+149). No on-disk breaking changes
-— legacy memories load unchanged, every new wire field is opt-in or
+curation. Test count: 821 → 970 (+149). No on-disk breaking changes:
+legacy memories load unchanged, every new wire field is opt-in or
 absence-as-signal, and the SCHEMA_VERSION stays at 1. The 2.0 bump
 reflects scope, not incompatibility.
 
@@ -13956,16 +13956,16 @@ The competitive landscape (May 2026) is detailed in
   filter, per-memory detail view showing body / scopes /
   timestamps / verified paths / typed links, and a one-click
   "Mark verified now" form that bumps `last_verified_at` and 303s
-  back to the detail page (PRG pattern — refreshes don't repeat
+  back to the detail page (PRG pattern; refreshes don't repeat
   the verify). Tombstone browser with removal reasons. Run via
   `bettermemory ui --host 127.0.0.1 --port 8765` (local-only by
   default; binding non-loopback logs a warning since the UI
   exposes curation surfaces). The handler renders inline HTML
-  with `html.escape` everywhere — no template engine, no JS
+  with `html.escape` everywhere: no template engine, no JS
   framework, no XSS via memory_write. Gated behind a new
   optional `[ui]` extra (fastapi + uvicorn + httpx); the CLI
   prints a clean install hint when the extra is missing. No
-  editing surface — writes happen in-conversation, the UI is
+  editing surface: writes happen in-conversation, the UI is
   read-mostly with verify as the one mutation since "I just
   spot-checked this" is a natural human action. Surface:
   `bettermemory.web` module exports `build_app(config, store)`
@@ -13974,7 +13974,7 @@ The competitive landscape (May 2026) is detailed in
   case.
 - `bettermemory sync` CLI subcommand for cross-host replication
   (T4.1 of the 1.6 plan in `docs/v1.6-plan.md`). Thin wrapper over
-  git — the memory directory is already plain markdown, so git's
+  git: the memory directory is already plain markdown, so git's
   history / distributed copies / three-way merge handle the
   interesting cases without a custom protocol. Five subcommands:
   `sync init [--remote URL]` initialises the dir as a git repo and
@@ -13983,14 +13983,14 @@ The competitive landscape (May 2026) is detailed in
   files, doctor probes); `sync status` reports branch, pending
   changes, and remote ahead/behind counts; `sync push` stages,
   commits with a default `bettermemory: sync` message, and pushes
-  (no-op when nothing changed locally — the `committed=False`
+  (no-op when nothing changed locally; the `committed=False`
   signal in the response distinguishes this from "pushed prior
   commits"); `sync pull` rebase-pulls and rebuilds the FTS5 index
   so the runtime view matches the new file contents (Store hooks
   bypassed during the merge); `sync auto` is pull-then-push, the
   shell-alias / cron one-shot. `--set-upstream` is automatic on
   the first push so a subsequent `pull` has a tracking branch.
-  Merge conflicts fall through to git's normal flow — `git
+  Merge conflicts fall through to git's normal flow: `git
   rebase --continue` from the memory directory once resolved.
   Surface: `bettermemory.sync` module exports `init()`, `status()`,
   `push()`, `pull()`, `auto()`, the `SyncStatus` dataclass, the
@@ -14014,7 +14014,7 @@ The competitive landscape (May 2026) is detailed in
   candidates from the FTS5 query, then the existing rankers
   reorder within that pool. Falls back to `load_all` when the
   index is missing, corrupt, below threshold, or returns zero
-  candidates — small stores see byte-stable behaviour, large
+  candidates: small stores see byte-stable behaviour, large
   stores skip the linear scan that starts to bite at ~5-10K
   memories. Surface: `bettermemory.index` module exports
   `rebuild()`, `upsert()`, `remove()`, `query()`, `status()`,
@@ -14034,7 +14034,7 @@ The competitive landscape (May 2026) is detailed in
   consumer sees the relationship from either side. Forward-compat
   guarantee: unknown link types on disk load silently as empty
   rather than failing the whole record. Graph-lite without the
-  graph DB infra burden — adopted from mcp-memory-service's typed-
+  graph DB infra burden, adopted from mcp-memory-service's typed-
   edges idea but plumbed into retrieval, not just storage.
 - Write-time groundedness gate on `memory_write` (T1.3 of the 1.6
   plan in `docs/v1.6-plan.md`). Optional, opt-in via the new
@@ -14042,14 +14042,14 @@ The competitive landscape (May 2026) is detailed in
   (recent conversation turns). The server walks the body sentence-
   by-sentence and flags any sentence whose stopword-stripped, kebab-
   expanded content tokens overlap the transcript's token set by less
-  than 30% — the "fact pulled from thin air" failure mode common to
-  auto-extracting memory systems. Returns
+  than 30% (the "fact pulled from thin air" failure mode common to
+  auto-extracting memory systems). Returns
   `{status: "ungrounded", claims: [{sentence, overlap_ratio}, ...]}`
   instead of committing; the caller can rephrase or pass the new
   `acknowledge_ungrounded=True` override (same family as
   `acknowledge_transient` and `acknowledge_scope_mismatch`) when
   they have other grounding sources (a file read, a tool result)
-  not represented in the transcript. Off by default — back-compat
+  not represented in the transcript. Off by default, back-compat
   for every existing caller. Implements HaluMem-style operation-
   level write-time hallucination evaluation inline.
   Surface: `bettermemory.groundedness` module exports
@@ -14059,18 +14059,18 @@ The competitive landscape (May 2026) is detailed in
 - Negative-outcome annotations on `memory_search` hits (T2.3 of the
   1.6 plan in `docs/v1.6-plan.md`). When a hit's memory has been
   `ignored` or `contradicted` within the last 30 days AND not since
-  been `applied`, the hit carries a `recent_negative_outcomes` field
-  — a list (at most one entry per outcome type, so two entries max)
+  been `applied`, the hit carries a `recent_negative_outcomes` field,
+  a list (at most one entry per outcome type, so two entries max)
   describing the rejection. Each entry has `outcome`,
   `most_recent_ts`, `count_in_window`, `session_id`, `note`, and
-  `claim_excerpt` (when the original record_use carried one — T1.1
+  `claim_excerpt` (when the original record_use carried one, T1.1
   integration). The supersession rule is the load-bearing semantic:
   an `applied` event after a negative event clears the negative-
   bucket entries, because the user already validated the memory
   after the rejection; surfacing the rejection then would be
-  misleading. `corrected` outcomes never surface (audit-only — the
+  misleading. `corrected` outcomes never surface (audit-only: the
   drift was salvaged inline). The field is OMITTED from the hit when
-  no qualifying negatives exist — absence is the default. Stops the
+  no qualifying negatives exist; absence is the default. Stops the
   "model keeps re-suggesting memories the user already rejected"
   failure mode without any state on the client side. One event-log
   iteration per search call, then per-id bucketing; cost is bounded
@@ -14078,7 +14078,7 @@ The competitive landscape (May 2026) is detailed in
 - `bettermemory consolidate` CLI subcommand (T2.1 of the 1.6 plan in
   `docs/v1.6-plan.md`). Offline curation pass over the store with
   four operations: near-duplicate dedup (semantic when the
-  embeddings extra is installed, Jaccard otherwise — the newer-
+  embeddings extra is installed, Jaccard otherwise; the newer-
   `updated` member wins, ties broken by `verified_paths` attestation
   then ULID), demote-never-applied (mirrors `memory_health`'s
   dead-weight rule; retags `category=ambient` so the memory stops
@@ -14089,7 +14089,7 @@ The competitive landscape (May 2026) is detailed in
   the scope with more memories is the keeper, the lesser is the
   proposed typo). Dry-run by default; `--apply` commits dedup
   tombstones and category demotions (cold scopes and typo pairs
-  stay suggest-only regardless — they touch shape that needs human
+  stay suggest-only regardless: they touch shape that needs human
   review). `--json` for machine consumption. Closes the Letta-style
   sleep-time consolidation gap without the dual-agent topology.
   Surface: `bettermemory.consolidate` module exports
@@ -14097,7 +14097,7 @@ The competitive landscape (May 2026) is detailed in
   `ConsolidateReport` dataclass, and `render_text` / `render_json`
   for callers that want the data without going through the CLI.
 - Claim-level provenance on `memory_record_use` (T1.1 of the 1.6 plan
-  in `docs/v1.6-plan.md`). New optional `claim_excerpts` parameter —
+  in `docs/v1.6-plan.md`). New optional `claim_excerpts` parameter:
   a list parallel to `memory_ids` (same length, one entry per id, or
   `None` per slot for "no specific claim noted") carrying the
   load-bearing phrase the model applied, ignored, contradicted, or
@@ -14117,7 +14117,7 @@ The competitive landscape (May 2026) is detailed in
 - Hybrid retrieval for `memory_search` (T1.2 of the 1.6 plan in
   `docs/v1.6-plan.md`). The original keyword scorer (TF + coverage +
   recency) is now one of four selectable rankers; the new ones are
-  Okapi BM25 (IDF-weighted, TF-saturated, length-normalised — closes
+  Okapi BM25 (IDF-weighted, TF-saturated, length-normalised; closes
   the recall gap on rare-term queries), sentence-transformers cosine
   (paraphrase matching when the embeddings extra is installed), and
   hybrid (Reciprocal Rank Fusion over keyword + BM25, plus semantic
@@ -14129,7 +14129,7 @@ The competitive landscape (May 2026) is detailed in
   shakes out regressions. Hybrid mode without the embeddings extra
   degrades gracefully to keyword + BM25 fusion; `mode="semantic"`
   without the extra raises with an install hint. The fused-score
-  scale (~0.01 – 0.05 from `1/(k+rank)` summed) differs from the
+  scale (~0.01 to 0.05 from `1/(k+rank)` summed) differs from the
   single-ranker scales, so consumers should keep using the
   `relevance` label, not the raw `score`, for cross-mode comparison.
   Surface: `bettermemory.search.compute_idf`,
@@ -14183,8 +14183,8 @@ tag landed. All are documented here for the audit trail.
   (`git@host:path`) alone.
 - `bettermemory ui`: the one state-changing endpoint
   (`POST /memories/{id}/verify`) now requires the request's Origin
-  (preferred) or Referer header to point at a loopback host —
-  loopback binding alone doesn't stop a malicious page in another
+  (preferred) or Referer header to point at a loopback host.
+  Loopback binding alone doesn't stop a malicious page in another
   browser tab from POSTing to localhost and forging a verify event,
   which would corrupt a load-bearing trust signal. Header-less POSTs
   (server-rendered classic forms under stricter referrer-policy
@@ -14201,7 +14201,7 @@ tag landed. All are documented here for the audit trail.
 A multi-agent audit pass surfaced six bugs and one missing feature
 spread across the data, search, verify, and origin layers. Six fix
 commits and one feature commit landed off that audit. No on-disk
-format changes — `Origin.worktree_root` is an additive optional field
+format changes: `Origin.worktree_root` is an additive optional field
 and legacy memories without it pass through every new filter
 unchanged. Consumers pinned to `>=1.4.2` upgrade transparently;
 behaviour changes are observable but each one is a bug fix in the
@@ -14214,7 +14214,7 @@ direction the docstring already promised.
   filter on `memory_search` and `memory_scope_overview`. Fixes the
   audit's "worktree leakage" scenario where two `git worktree add`
   checkouts of one repo shared `origin.repo` and so cross-contaminated
-  each other's search results — repo-only matching had no signal to
+  each other's search results: repo-only matching had no signal to
   tell sibling worktrees apart, and a memory written from
   `~/repo-feature/` would surface in a search run from
   `~/repo-bugfix/`. Worktree filtering rides on the same
@@ -14226,8 +14226,8 @@ direction the docstring already promised.
 
 - **`migrate.py` durability**: `migrate_origin_in_directory` was the
   only persistent-write site that bypassed
-  `store._atomic_write_post`'s fsync discipline — bare `write_bytes`
-  + `replace`. POSIX guarantees the rename is atomic but doesn't
+  `store._atomic_write_post`'s fsync discipline (bare `write_bytes`
+  + `replace`). POSIX guarantees the rename is atomic but doesn't
   guarantee the data backing it is on disk; a power loss between
   rename and the next background flush could leave a zero-byte file
   at the target path. Now mirrors the helper's flush + fsync_file +
@@ -14241,7 +14241,7 @@ direction the docstring already promised.
   café del puerto.
 - **Search tiebreaker**: `hits.sort(key=lambda h: (h.score, h.created),
   reverse=True)` left ordering undefined for two memories sharing
-  both score AND created timestamp — a real case under
+  both score AND created timestamp, a real case under
   microsecond-tied writes and clock-mocked tests. Added `h.id` as
   the final discriminator; ULID-shaped ids sort lexically by time so
   the tiebreaker also gives "newer wins" semantics.
@@ -14287,7 +14287,7 @@ transparently.
 
 - pyproject `description` (PyPI's "summary" field) and the plugin
   manifest description now read "Persistent memory for Claude Code,
-  retrieved on demand." — matching the GitHub About text. The old
+  retrieved on demand." (matching the GitHub About text). The old
   string ("Local file-backed memory MCP server with retrieval-on-demand")
   was correct but mechanical; the new line is the project's actual
   positioning.
@@ -14300,14 +14300,14 @@ transparently.
 - `tests/test_config.py` `resolved_directory` tests now redirect
   `Path.home()` via a `_set_fake_home(monkeypatch, home)` helper that
   sets both `HOME` (POSIX) and `USERPROFILE` (Windows). Setting only
-  `HOME` was a no-op on Windows — `ntpath.expanduser` reads
-  `USERPROFILE` first — so three tests had been silently asserting
+  `HOME` was a no-op on Windows (`ntpath.expanduser` reads
+  `USERPROFILE` first), so three tests had been silently asserting
   against the runner's real home directory.
 
 ## 1.4.1 - 2026-05-13
 
 Republish from cleaned history. No code, behavior, wire-shape, or
-on-disk format changes versus 1.4.0 — pyproject `version` bumped so a
+on-disk format changes versus 1.4.0; pyproject `version` bumped so a
 fresh PyPI artifact can be published after the project's release
 history was reset. Any consumer pinned to `>=1.4.0` upgrades
 transparently.
@@ -14318,7 +14318,7 @@ Audit-fixes release. Internal hardening across durability, the
 server-side state shape, the surface-filter callsites, and the
 2972-line server module. The wire surface (17 MCP tools, names,
 schemas, JSON shapes) is unchanged from 1.3.x; every public default
-is preserved. Most installs will notice nothing — that's the
+is preserved. Most installs will notice nothing; that's the
 intended shape for a minor bump driven by infrastructure work.
 
 The one user-facing addition: a `SessionRegistry` routing layer that
@@ -14327,7 +14327,7 @@ MCP clients (each `Context.client_id` resolves to its own
 `SessionState`, so pending writes / disabled scopes / use-tokens
 never leak between clients). For stdio (the primary transport,
 one client per process), this collapses to a single state under a
-default-bucket key — same observable behavior as before.
+default-bucket key, same observable behavior as before.
 `build_server(state=...)` still accepts a bare `SessionState` for
 back-compat with the existing single-client test surface.
 
@@ -14344,7 +14344,7 @@ back-compat with the existing single-client test surface.
   The unbounded `_states` dict is a documented trade-off matched
   to the current stdio-primary deployment; revisit if HTTP/SSE
   becomes a supported transport.
-- **`should_include_for_caller`** in `origin.py` — the canonical
+- **`should_include_for_caller`** in `origin.py`: the canonical
   surface-filter for "this memory belongs to this caller's
   project," shared between `memory_search` and
   `memory_scope_overview`. Commit-drift callsites continue to
@@ -14370,7 +14370,7 @@ back-compat with the existing single-client test surface.
   `_response.py`). The 2972-line `server.py` shrinks to 1014 lines
   of wiring + CLI; the 17 tool handlers move to a `ToolHandlers`
   class on `_handlers.py`, the JSON-shaping helpers move to a
-  `ResponseBuilder` class on `_response.py`. Wiring is unchanged —
+  `ResponseBuilder` class on `_response.py`. Wiring is unchanged:
   every tool name, every schema, every response shape is identical
   to 1.3.x; tests reach handlers the same way (via
   `mcp._tool_manager.get_tool(name).fn`, which resolves to the
@@ -14378,8 +14378,8 @@ back-compat with the existing single-client test surface.
   is `find handlers/ -size` is now actually a useful operation.
 - **Tiered git logging** (`src/bettermemory/origin.py:_git`). The
   common "not a git repository" case now logs at DEBUG instead of
-  WARNING — clears the noise on installs where memories live in a
-  non-repo directory. Real failure modes (missing binary, command
+  WARNING (clears the noise on installs where memories live in a
+  non-repo directory). Real failure modes (missing binary, command
   timeout, OSError) stay at WARNING.
 
 ### Fixed
@@ -14395,13 +14395,13 @@ back-compat with the existing single-client test surface.
   the rename and the parent directory after; the event log fsyncs
   each append and the rotation archive. Side-fix: `rename_scope`'s
   tombstone overwrite was previously a non-atomic in-place
-  truncating write — now goes through tmp+rename like the other
+  truncating write; now goes through tmp+rename like the other
   persistent paths.
 - **Rotation fsync runs after the gzip trailer is flushed**
   (`src/bettermemory/events.py`). The initial durability commit
   fsynced the gzip write fd from inside the `with gzip.open(...)
   as dst:` block, but `GzipFile.close()` writes the CRC32+ISIZE
-  trailer at `with` exit — so the fsync race could leave a body-
+  trailer at `with` exit, so the fsync race could leave a body-
   only archive that `gzip.open(...)` rejects on read. Now re-opens
   the archive read-only after the `with` block and fsyncs that
   fresh fd. Source memory files were never affected; bounded to
@@ -14412,8 +14412,8 @@ back-compat with the existing single-client test surface.
 - The `_FakeCtx` duck-type in `tests/test_session_registry.py`
   picked up a `_fake_ctx` `Any`-typed helper so strict mypy
   accepts it where `for_request` expects a `Context[Any, Any, Any]`
-  — clears nine pre-existing arg-type errors without changing the
-  test semantics.
+  (clears nine pre-existing arg-type errors without changing the
+  test semantics).
 
 ## 1.3.2 - 2026-05-13
 
@@ -14534,8 +14534,8 @@ phrases.
 - **MCP `instructions` block in `src/bettermemory/server.py`.** One
   em dash replaced with a sentence break; final body stays well
   inside the 1700-char regression budget.
-- **CHANGELOG version headings.** Switched from `## X.Y.Z — date`
-  to `## X.Y.Z - date` so future entries match the project's
+- **CHANGELOG version headings.** Switched the separator from an em
+  dash to a hyphen (`## X.Y.Z - date`) so future entries match the project's
   no-em-dash style. Historical entry bodies were left alone (they
   are immutable release records).
 
@@ -14546,7 +14546,7 @@ maintenance audit pass: an additive `category` parameter on
 `memory_update` (so legacy memories written before the `ambient`
 tier can be retagged without remove+rewrite) and a slug-builder fix
 for bodies that begin with their own date. Both are purely
-additive on the wire — legacy clients never pass `category` to
+additive on the wire: legacy clients never pass `category` to
 `memory_update`, and the slug change only fires when the body's
 first line starts with an ISO date.
 
@@ -14555,7 +14555,7 @@ first line starts with an ISO date.
 - **`category` parameter on `memory_update`.** Joins `content`,
   `scopes`, and `confidence` as an updatable field. Accepts
   `"fact"` and `"ambient"` (the same values `memory_write` accepts
-  except `"user-inference"`, which is rejected here — that
+  except `"user-inference"`, which is rejected here; that
   category gates the pending-confirm WRITE flow and there is no
   equivalent gate on update). The motivating case: legacy
   memories written before 1.2.0 carry no category and read as
@@ -14564,7 +14564,7 @@ first line starts with an ISO date.
   belong in the `ambient` bucket so they're excluded from the
   dead-weight curation rule. Pre-1.3 the only retag path was
   remove+rewrite, which lost the original `created` timestamp and
-  littered `.tombstones/`. Category retags are metadata-only —
+  littered `.tombstones/`. Category retags are metadata-only:
   `last_verified_at` is preserved across the change, the same way
   scope and confidence edits preserve it. Seven new regression
   tests in `tests/test_server.py` cover retag-to-ambient,
@@ -14581,7 +14581,7 @@ first line starts with an ISO date.
   Without the strip, a body starting with "2026-05-07 tightened
   the mvp" produced a slug `2026-05-07-tightened-the-mvp` which
   `build_filename` then prefixed *again* with the memory's
-  `created` date — the maintainer's own store had a real
+  `created` date; the maintainer's own store had a real
   `2026-05-07-2026-05-07-tightened-the-mvp.md` file as evidence.
   The strip is conservative: only a leading date is touched, so a
   date in the middle of a title (`released 2026-05-07 cut`)
@@ -14595,7 +14595,7 @@ first line starts with an ISO date.
 Same-day patch following 1.2.1. The path-drift extractor was firing
 phantom `path_drift_missing` entries on memories whose bodies use
 documentation-placeholder paths (`/etc/foo`, `/path/to/file`,
-`/foo/bar`) to illustrate path-typed APIs — discovered when the
+`/foo/bar`) to illustrate path-typed APIs, discovered when the
 project's own overview memory documented `verified_paths` semantics
 with `/etc/foo` as the example path and read back as
 `staleness_verdict: "spot_check_recommended"` immediately after
@@ -14610,12 +14610,12 @@ being verified.
   `/path/to`) plus two prefix patterns (`/path/to/...`,
   `~/path/to/...`). Candidates that match are dropped before disk
   stat, the same way URLs and SSH-style remotes are. Single-extension
-  variants are also dropped — `/etc/foo.conf` reads as a placeholder
+  variants are also dropped: `/etc/foo.conf` reads as a placeholder
   via the `/etc/foo` entry. The list is deliberately narrow:
   terminal-component `foo` / `bar` are NOT filtered, so the
   `/tmp/foo`-shaped tmp-path test fixtures real test suites use
   remain valid path candidates. Seven new regression tests in
-  `tests/test_verify.py` lock the contract — including a
+  `tests/test_verify.py` lock the contract, including a
   `test_dot_prefixed_real_path_not_misclassified_as_placeholder`
   test pinning that `~/.claude-memory` and similar leading-dot
   paths don't trip the extension-stripping branch.
@@ -14686,7 +14686,7 @@ cost on every turn.
   `ambient_body_long` warning attaches to commits whose body exceeds
   500 words, so ambient memories don't drift into catch-all dumps.
 - **`cold_memories` bucket on `memory_health`.** Memories created
-  before the window with zero retrievals — distinct from
+  before the window with zero retrievals, distinct from
   `dead_weight`, which now means "retrieved but never `applied`".
   The two together separate "ranker isn't surfacing this memory"
   from "model retrieves but never gets value", so a curation pass
@@ -14708,12 +14708,12 @@ cost on every turn.
   memory_* call (logged with `auto=true`). The mechanical
   bookkeeping that was the most-forgotten step is now opt-out
   instead of opt-in. Explicit `memory_record_use(memory_ids=[...],
-  outcome="ignored"|"contradicted"|"corrected")` still wins — the
+  outcome="ignored"|"contradicted"|"corrected")` still wins: the
   override path purges the pending token before recording so the
   auto-commit can't shadow the explicit outcome.
 - **`curation_pending` rollup on `memory_scope_overview`.** Five
-  integer counts — `{stale, never_verified, drifted, cold, dead}`
-  — derived from the same logic as `memory_health` but without
+  integer counts (`{stale, never_verified, drifted, cold, dead}`)
+  derived from the same logic as `memory_health` but without
   row materialisation. Lets the model spot pending curation at
   session start without paying the full health cost.
 - **`scope_mismatch` warning at `memory_write` time.** Same design
@@ -14732,7 +14732,7 @@ cost on every turn.
   detector now surfaces a `verified` set on `PathDriftReport` (paths
   in the body that the caller previously attested AND that still
   exist on disk). The commit-drift signal narrows the count to
-  commits that actually touched any of `verified_paths` — a memory
+  commits that actually touched any of `verified_paths`: a memory
   verified for `[/etc/foo]` reads as `clean` even when the
   surrounding project moved, as long as `/etc/foo` itself didn't.
   `commits_since_touching_paths` in `origin.py` is the new git
@@ -14745,13 +14745,13 @@ cost on every turn.
 - **`dead_weight` rule.** Was: `created_before_window AND applied_count == 0`.
   Now: `created_before_window AND retrieval_count > 0 AND applied_count == 0`,
   with ambient-category memories excluded entirely. Memories that aren't
-  being retrieved are no longer mis-classified as dead — they go to the
+  being retrieved are no longer mis-classified as dead; they go to the
   new `cold_memories` bucket where the curation question is "does the
   trigger for this memory still exist?", not "is the body misleading?".
 - **`Memory` frontmatter.** New optional fields: `category`,
   `verified_paths`, `verified_commits`, `verified_versions`. Additive;
   legacy memories load cleanly with default values. Unknown category
-  values fall back to `None` rather than raising — older readers
+  values fall back to `None` rather than raising: older readers
   encountering a future-introduced category degrade to fact semantics.
 
 ### Internal
@@ -14779,7 +14779,7 @@ cost on every turn.
 
 Packaging metadata patch. The 1.1.0 PyPI listing rendered without a
 "Project links" sidebar because `pyproject.toml` had no `[project.urls]`
-table — visitors landed on the package page with no path back to source,
+table; visitors landed on the package page with no path back to source,
 issues, or release notes. No code changes; PyPI re-publish only.
 
 ### Added
@@ -14788,21 +14788,21 @@ issues, or release notes. No code changes; PyPI re-publish only.
   Repository, Issues, and Changelog links on the PyPI project page's
   "Project links" rail. Without these, the package page on PyPI had no
   path back to GitHub, the issue tracker, or the changelog. Picked up
-  automatically at wheel-build time — no other plumbing required.
+  automatically at wheel-build time, no other plumbing required.
 
 ## 1.1.0 - 2026-05-09
 
 Three themes:
 
-1. **A third staleness axis on every retrieval** — repo-aware
+1. **A third staleness axis on every retrieval**: repo-aware
    commit-drift, the cwd-aware sibling of `verification` and
    `path_drift`. Catches the failure mode where calendar verification
    reads fresh but the project the memory describes has moved on.
 2. **Structural fixes for the audit-after-fix workflow** that left
-   `has_unresolved_contradiction` stuck — a new `corrected` outcome
+   `has_unresolved_contradiction` stuck: a new `corrected` outcome
    on `memory_record_use`, plus a `resolution_timeline` on each stuck
    row so the next mis-step is self-diagnosable.
-3. **Distribution** — a Claude Code plugin (`/plugin install
+3. **Distribution**: a Claude Code plugin (`/plugin install
    bettermemory@bettermemory`) that bundles the MCP server
    registration with a system-prompt-level skill, plus install-friction
    cleanup (canonical snippet shape, namespaced default entry name,
@@ -14822,7 +14822,7 @@ Three themes:
   or `"drift"` (the count is positive). On `"drift"`, `recommendation`
   is an actionable string. Absent on the response when the caller
   isn't in any repo, is in a different repo, or the memory was never
-  verified — silence beats a noisy "unknown" branch every consumer
+  verified; silence beats a noisy "unknown" branch every consumer
   would have to filter. `memory_search` hits also carry a cheap
   per-row `commit_drift_count` integer for triage without an
   `expand_top` round-trip. Closes the gap where
@@ -14859,7 +14859,7 @@ Three themes:
   alongside `applied` / `ignored` / `contradicted`, for the
   noticed-and-fixed-inline workflow: the caller has already run
   `memory_update` and/or `memory_verify` in the same turn, and this
-  event is the audit-trail entry. Audit-only — increments a new
+  event is the audit-trail entry. Audit-only: increments a new
   `corrected_count` on `MemoryStats` but never raises the
   `has_unresolved_contradiction` flag, so the previous foot-gun
   (`contradicted` logged *after* the fix → flag stuck because the
@@ -14882,7 +14882,7 @@ Three themes:
   `category="fact"`. When the caller passes `"user-inference"` the
   write goes pending and returns
   `{status:"pending", pending_id, pending_reason:"user-inference"}`
-  instead of committing — the consumer is expected to ask the user
+  instead of committing; the consumer is expected to ask the user
   conversationally before calling `memory_write_confirm(pending_id)`
   (or `memory_write_cancel(pending_id)` if the user declines). Fires
   regardless of the global `behavior.require_write_confirmation`
@@ -14900,7 +14900,7 @@ Three themes:
 
 - **`bettermemory --version`** prints `bettermemory <version>` and
   exits 0. The version is sourced from `importlib.metadata`, so it
-  matches whatever `pip show bettermemory` reports — single source of
+  matches whatever `pip show bettermemory` reports: single source of
   truth, no drift.
 
 #### Distribution
@@ -14920,7 +14920,7 @@ Three themes:
 - **Public-repo hygiene files**: `SECURITY.md` (threat model + private
   disclosure flow + supported-versions matrix), `CODE_OF_CONDUCT.md`
   (Contributor Covenant 2.1), `.github/ISSUE_TEMPLATE/` (install
-  failure, bug report, feature request — install failure asks for
+  failure, bug report, feature request; install failure asks for
   `bettermemory doctor --json` output up front),
   `.github/pull_request_template.md`.
 
@@ -14960,7 +14960,7 @@ Three themes:
   and with Claude Code's evolving built-in memory features; the new
   default is unambiguous. `bettermemory init --client X` detects a
   legacy `memory` entry whose `command` resolves to the same binary
-  and removes it as part of the patch — upgrading users don't end up
+  and removes it as part of the patch; upgrading users don't end up
   with the server registered twice. Migration is binary-equality
   gated, so a `memory` entry pointing at a different memory MCP
   server is left alone. The `--name` flag still overrides the default
@@ -14968,7 +14968,7 @@ Three themes:
 
 - **MCP snippet shape includes `type: "stdio"` and `env: {}`.** Both
   optional in the MCP spec but match what `claude mcp add` and Claude
-  Code 2.x write — the snippet now looks the same as the user's
+  Code 2.x write: the snippet now looks the same as the user's
   hand-added entries instead of looking deliberately minimal.
 
 - **`bettermemory.__version__` reads from `importlib.metadata`.** The
@@ -14996,7 +14996,7 @@ Three themes:
   `has_unresolved_contradiction` flag. That left a sticky-flag failure
   mode: a session detects a contradiction, fixes the body, calls
   `memory_verify`, and *then* logs `record_use(contradicted)` after
-  the fact — the event's timestamp lands later than the verify, so
+  the fact; the event's timestamp lands later than the verify, so
   the flag never clears. The new rule treats either `updated` *or*
   `last_verified_at` newer than `last_contradicted_at` as resolution.
   Legacy stuck flags clear by re-running `memory_verify` after the
@@ -15005,7 +15005,7 @@ Three themes:
 
 - **`rare_scopes` only flags singletons that look like typos.** The
   previous heuristic flagged every `n=1` scope, which produced too
-  many false positives — narrow legitimate scopes like `career` or
+  many false positives: narrow legitimate scopes like `career` or
   `personal-context` got reported as suspect. The bucket now requires
   the singleton to be within Levenshtein distance 2 of another scope
   (`projct:foo` against `projects:foo`, `tool` against `tools`,
@@ -15019,8 +15019,8 @@ Three themes:
   `/plugin install foo@bar`) and shell invocations starting at an
   absolute binary (`/usr/bin/env python -m bettermemory`) as path
   candidates, then routing them to `path_drift_missing` when the
-  whole-string `Path.exists()` returned False — noisy false positives
-  on any memory that quoted the install path or a shell example. The
+  whole-string `Path.exists()` returned False (noisy false positives
+  on any memory that quoted the install path or a shell example). The
   extractor now distinguishes command shape from real-paths-with-
   internal-whitespace by counting slashes: a CLI has either a
   single-slash command name as its first whitespace-separated chunk
@@ -15034,7 +15034,7 @@ Three themes:
 ## 1.0.0 - 2026-05-08
 
 The first stable release. Three things changed under the hood between
-the last 0.x and this one — they collectively retire every "but" the
+the last 0.x and this one; they collectively retire every "but" the
 README used to publish.
 
 - **The system-prompt addendum is no longer required for correctness.**
@@ -15059,7 +15059,7 @@ README used to publish.
 - **The 1.x contract is contractual.** Every memory and tombstone
   carries `schema_version: 1` in its frontmatter. Within 1.x the
   on-disk format and the 17-tool surface (signatures, defaults,
-  return shapes — all pinned in `docs/api.md`) are stable. A
+  return shapes; all pinned in `docs/api.md`) are stable. A
   multi-process concurrency stress test exercises the cross-process
   fcntl locks under contention to retire the previous "untested"
   caveat. Property-based tests pin the store's identity / round-trip
@@ -15089,7 +15089,7 @@ trusted publishing.
     and needs a restart; Continue auto-reloads; Cursor reloads
     per-window). The "snippet shape" is the same `mcpServers`
     map for every client because that's what the MCP spec
-    standardizes — only the file path varies.
+    standardizes; only the file path varies.
 
 - **Programmatic client example**
   (`examples/programmatic_client.py`). A self-contained Python
@@ -15137,7 +15137,7 @@ trusted publishing.
   `mark_verified` is idempotent and monotonic; `load_all` is
   order-deterministic across consecutive calls; independent
   writes don't pollute each other on disk. `max_examples=10` per
-  property — each example does real disk I/O, so the goal is
+  property: each example does real disk I/O, so the goal is
   breadth of input space (Unicode, near-empty strings, scope
   shapes that pass the regex but stress the formatter), not
   exhaustive enumeration. Adds `hypothesis>=6.0` to dev deps.
@@ -15160,7 +15160,7 @@ trusted publishing.
 - **`schema_version` on frontmatter** (`models.SCHEMA_VERSION`,
   currently `1`). Every new memory and tombstone written by the
   store carries `schema_version: 1` as the first frontmatter
-  key. Readers default to `1` when the field is absent — that's
+  key. Readers default to `1` when the field is absent; that's
   the implicit version of memories written before this constant
   existed (additive-fields-only era, where backward compat held
   by virtue of every new field being `Optional`).
@@ -15177,7 +15177,7 @@ trusted publishing.
   flagged by doctor) rather than risk silent semantic
   misinterpretation. Tombstones share the same gate.
 
-  Within a major version, bumps remain additive-only — new
+  Within a major version, bumps remain additive-only: new
   optional fields, never renamed, never removed, never
   re-defined. A *major* bump (1 → 2) is reserved for genuinely
   breaking format changes and will ship alongside a
@@ -15198,7 +15198,7 @@ trusted publishing.
   duplicated IDs), and the lock isn't pathologically over-contended
   (concurrency_errors stay below ~25% of total attempts). The README
   caveat is updated accordingly: multi-process on Unix is now an
-  exercised guarantee. Windows still falls back to a no-op lock — the
+  exercised guarantee. Windows still falls back to a no-op lock; the
   MVP single-process recommendation stands there.
 
 - **`bettermemory doctor` subcommand.** Self-diagnostic for the
@@ -15207,7 +15207,7 @@ trusted publishing.
   not ok. Exit code is `0` / `1` / `2` so the command is
   scriptable.
 
-  Checks: Python version, binary on `$PATH` (warn when missing —
+  Checks: Python version, binary on `$PATH` (warn when missing;
   GUI MCP clients spawn with a minimal PATH), config loadable,
   storage directory exists/writable (probe-write a sentinel file),
   memory frontmatter parses on every active memory, event log
@@ -15215,7 +15215,7 @@ trusted publishing.
   true`, and a cross-check of every known MCP client's config file
   against the resolved binary path (catches the "I reinstalled
   bettermemory into a different venv and now nothing works"
-  failure mode — the registered command path is stale).
+  failure mode; the registered command path is stale).
 
   Each check is wrapped in `try/except` so a single broken probe
   surfaces as a `fail` diagnosis rather than crashing the whole
@@ -15263,7 +15263,7 @@ trusted publishing.
   pyproject.toml version matches the tag before any artifact ships,
   so an off-by-one tag fails fast. Process documented in
   `docs/release.md`, including the one-time PyPI-side trusted-publisher
-  setup. The 1.0 tag uses this workflow to publish — strangers get
+  setup. The 1.0 tag uses this workflow to publish: strangers get
   `uv tool install bettermemory` from PyPI directly.
 
 ### Changed
@@ -15273,8 +15273,8 @@ trusted publishing.
   (README "Quick start" step 3, with a bold warning that *"without
   this, the model will overuse memory"*). The opt-in policy,
   transparency requirement, and verification obligation now live in
-  the server-level FastMCP `instructions` block — which every MCP
-  client surfaces at the system-prompt level — and in each tool's
+  the server-level FastMCP `instructions` block (which every MCP
+  client surfaces at the system-prompt level) and in each tool's
   `description`, refreshed per-call. A fresh install of bettermemory
   behaves correctly without copying anything from
   `docs/system_prompt.md`.
@@ -15298,7 +15298,7 @@ trusted publishing.
 
 - **Structured `verification` block on every retrieval.** `last_verified_at`
   used to be a raw timestamp the consuming model had to do staleness
-  arithmetic on — and prose-only guidance ("spot-check before relying")
+  arithmetic on, and prose-only guidance ("spot-check before relying")
   failed open whenever the model's attention wavered. A real-world
   drift escaped the system this way (a memory whose tool list lagged
   the code by three new tools went undetected because the consumer
@@ -15316,12 +15316,12 @@ trusted publishing.
   ```
 
   - `status="never"` when the memory has not been spot-checked since
-    write — `recommendation` carries an explicit "spot-check before
+    write; `recommendation` carries an explicit "spot-check before
     relying, then call memory_verify" instruction.
   - `status="stale"` past `behavior.verification_stale_days` (default
-    30, mirroring `recency_boost_half_life_days`) — `recommendation`
+    30, mirroring `recency_boost_half_life_days`); `recommendation`
     names the age in days and asks for a re-spot-check.
-  - `status="fresh"` within the window — `recommendation: null` is
+  - `status="fresh"` within the window; `recommendation: null` is
     the explicit "nothing to do" signal so consumers branch on a
     stable shape.
 
@@ -15333,12 +15333,12 @@ trusted publishing.
   `verification.status` rather than read the prose. New
   `compute_verification_status` / `VerificationStatus` exports in
   `bettermemory.verify`. New `behavior.verification_stale_days` config
-  knob — set to 0 to mark every verified memory stale immediately
+  knob: set to 0 to mark every verified memory stale immediately
   (test affordance), or raise the threshold for caches of facts whose
   ground truth changes slowly.
 
 - **First-class tombstone lifecycle.** Removed memories used to be a
-  black hole on the read side — invisible to dedup, invisible to search,
+  black hole on the read side: invisible to dedup, invisible to search,
   with no path to restore short of hand-editing files. They now have a
   full lifecycle:
   - **`memory_list_tombstones(scopes?)`** lists removed records with
@@ -15347,7 +15347,7 @@ trusted publishing.
     cheap triage. Sorted most-recent-first.
   - **`memory_restore(id)`** brings a tombstone back to the active
     set. Strips the removal frontmatter, preserves `created`,
-    `updated`, and `last_verified_at` — the body didn't change while
+    `updated`, and `last_verified_at`; the body didn't change while
     the record was gone, so the recency boost stays honest. Raises
     `NotTombstonedError` on active ids and `MemoryNotFoundError` on
     unknown ones; the asymmetry routes the caller to `memory_update`
@@ -15356,7 +15356,7 @@ trusted publishing.
     `list` mirrors the MCP tool. `prune --older-than DAYS` is the
     only path that hard-deletes tombstones; the default cutoff comes
     from new config knob `behavior.tombstone_retention_days` (0 means
-    "no default — the flag is required"). Active memories are
+    "no default; the flag is required"). Active memories are
     untouched. `--dry-run` previews; the prune is atomic and returns
     pruned ids in chronological order.
   - **`removed_session` frontmatter on tombstones.** The originating
@@ -15372,7 +15372,7 @@ trusted publishing.
 - **Tombstone-aware dedup.** `memory_write` now scores the new body
   against the tombstone set in addition to active memories. A high
   overlap with a removed memory returns `status="previously_removed"`
-  carrying the original `removed_reason` — the lesson encoded in the
+  carrying the original `removed_reason`; the lesson encoded in the
   removal isn't silently re-discarded on re-write. The model can
   inspect the reason and either drop the write, call
   `memory_restore(id)` if the fact is now correct, or pass `force=true`
@@ -15390,8 +15390,8 @@ trusted publishing.
   invalidation.
 - **`memory_rename_scope(old, new, include_tombstones?)`.** The cheap
   fix for typo'd or deprecated scopes (`projct:foo` -> `projects:foo`,
-  `infra` -> `infrastructure`). Walks active memories — and
-  tombstones, by default — and replaces the old scope with the new
+  `infra` -> `infrastructure`). Walks active memories (and
+  tombstones, by default) and replaces the old scope with the new
   one, deduplicating if the new scope was already present. Bumps
   `updated` (metadata moved); preserves `last_verified_at` (the body
   didn't change). Validates both scopes against the standard scope
@@ -15403,7 +15403,7 @@ trusted publishing.
     counts and an applied-events sum. Sorted by `active` descending so
     the heaviest-trafficked scopes lead. Sum of `active` across scopes
     can exceed `total_active_memories` because a memory tagged with N
-    scopes is counted in each — that's the right shape for "where is
+    scopes is counted in each; that's the right shape for "where is
     the rot concentrated?"
   - **`rare_scopes`**, the singleton-scope bucket. Most often these
     are typos worth fixing via `memory_rename_scope`; occasionally
@@ -15415,7 +15415,7 @@ trusted publishing.
 - **Path-drift counts on every search hit.** `MemoryHit` carries
   `path_drift_checked` and `path_drift_missing` integers regardless
   of `expand_top`. The model can self-triage without a memory_show
-  round-trip — high `path_drift_missing` is the cue to expand.
+  round-trip; high `path_drift_missing` is the cue to expand.
   `expand_top=True` continues to surface the full `PathDriftReport`
   on the top hit. Cost: one regex pass + up to 8 stat() calls per
   matched memory; the bodies are already in memory at search time.
@@ -15429,7 +15429,7 @@ trusted publishing.
   `.tmp` + rename for crash safety; corrupt files log a WARNING
   and fall back to in-memory only. Model name is namespaced into
   the filename so swapping models produces a new file rather than
-  mixing incompatible vectors. Numpy-only — degrades gracefully
+  mixing incompatible vectors. Numpy-only; degrades gracefully
   when the embeddings extra isn't installed.
 - **`load_all` and `load_tombstones` are race-safe.** Both now catch
   `OSError` (notably `FileNotFoundError`) in addition to
@@ -15452,7 +15452,7 @@ trusted publishing.
   callers that don't pass `session_id` still work; the field is
   omitted from frontmatter when absent.
 - **Auto-scope filter documented as a UX filter, not access control.**
-  `memory_show(id)` doesn't auto-scope, by design — the threat model
+  `memory_show(id)` doesn't auto-scope, by design: the threat model
   is "don't surface irrelevant memories by accident", not "prevent
   cross-project information flow". For real isolation, use
   project-scoped stores via `./.claude-memory/` or `BETTERMEMORY_DIR`.
@@ -15482,19 +15482,19 @@ trusted publishing.
   axis to content edits: `memory_verify(id, note=...)` bumps
   `last_verified_at` to now after the caller has spot-checked the body's
   claims against ground truth. Distinct from `updated`, which moves
-  whenever `memory_update` rewrites content — verification is "a
+  whenever `memory_update` rewrites content: verification is "a
   human/agent confirmed reality matched the body on this date", editing
   is "the body changed on this date". A typo fix bumps `updated` but
   not `last_verified_at`; a verify call bumps `last_verified_at` but
   not `updated`. The field is surfaced on every retrieval response
   (`memory_show`, `memory_search` hits, `memory_list`, `_committed`,
-  `MemoryStats`) so staleness is visible at a glance — `null` means
+  `MemoryStats`) so staleness is visible at a glance; `null` means
   "never verified since write". Frontmatter is additive: legacy
   memories without the field load fine; malformed values silently fall
   back to `None` rather than crashing the load. Idempotent (calling
   twice slides the timestamp forward); records a `kind: "verify"` event
   with the optional note.
-- **`memory_scope_overview` tool.** Cheap session-start hint —
+- **`memory_scope_overview` tool.** Cheap session-start hint:
   per-scope counts (no bodies, IDs, or summaries) so the model can
   decide whether `memory_search` is likely to be fruitful before
   spending tokens on it. Auto-scoped to the current repo by default
@@ -15506,7 +15506,7 @@ trusted publishing.
   `auto_scope=False` for the cross-project view.
 - **Path-drift detection on retrieval.** `memory_show` and
   `memory_search(expand_top=True)` extract path-shaped tokens from the
-  body and stat them. Drift is surfaced as `path_drift.missing` —
+  body and stat them. Drift is surfaced as `path_drift.missing`:
   advisory, not a verdict (could be a temporary mount or a path on a
   different machine). `path_drift` is `null` when no drift is found so
   the consumer branches cleanly. Detection covers backtick-wrapped
@@ -15516,10 +15516,10 @@ trusted publishing.
   extraction with backtick spans masked before the bare scan avoids
   double-counting. Capped at 8 paths per body and 512 chars per path.
   `OSError` from `Path.exists()` (permission denied, ELOOP, etc.) is
-  treated as missing — semantically correct for a staleness signal.
+  treated as missing, semantically correct for a staleness signal.
 - New `bettermemory.verify` module: `PathDriftReport`,
   `detect_path_drift()`.
-- `Store.mark_verified(id)` — bumps `last_verified_at` without
+- `Store.mark_verified(id)`: bumps `last_verified_at` without
   touching `updated`.
 - **`bettermemory health --min-applied N` CLI flag** to override the
   configured `heavily_used_min_applied` floor for one invocation.
@@ -15528,29 +15528,29 @@ trusted publishing.
   block in frontmatter). Three routing modes, in priority order:
   - **`--scope-repo SCOPE=URL`** (repeatable): route by tag. Right tool
     for global memory directories whose memories already carry
-    `projects:<name>` scopes — first matching scope wins. Memories
+    `projects:<name>` scopes; first matching scope wins. Memories
     matching nothing in the map fall through.
   - **`--repo URL`**: force-tag every legacy memory with this URL.
-    Coarse — only right when you know all memories in the dir really
+    Coarse: only right when you know all memories in the dir really
     do come from one repo.
   - **Auto-inference**: when memory_dir's parent is itself a git repo
     (project-scoped layout), the repo URL is read from `git config`
     and the parent path becomes the origin's cwd.
 
-  `cwd` is set only on the auto-inferred path — that's the only mode
+  `cwd` is set only on the auto-inferred path; that's the only mode
   where we have legitimate evidence for a per-memory cwd. The other
   modes leave it null rather than fabricating one. Branch is always
   null since we don't know the original.
 
   Idempotent (memories with existing origin are skipped), atomic per
   file (`.tmp` + rename), `--dry-run` to preview. Tombstones are
-  skipped — backfilling origin into a removal record would change the
+  skipped: backfilling origin into a removal record would change the
   audit log retroactively.
 - New `bettermemory.migrate` module: `infer_origin_for_memory_dir`,
   `migrate_origin_in_directory`, `MigrationReport`.
 - **Semantic dedup (opt-in).** Behind `[behavior] semantic_dedup = true`,
   `memory_write` dedup uses sentence-transformers cosine similarity
-  instead of Jaccard on token sets — catches paraphrases ("the database"
+  instead of Jaccard on token sets; catches paraphrases ("the database"
   vs "Postgres") that lexical overlap misses. Requires the `embeddings`
   extra (`pip install bettermemory[embeddings]`); falls back to Jaccard
   with a single WARNING log if the extra isn't installed, so flipping
@@ -15561,7 +15561,7 @@ trusted publishing.
   `semantic_medium_threshold` (0.65).
 - New `bettermemory.semantic` module: `get_model()`, `cached_embed()`,
   `cosine_similarity_normalized()`, `reset_caches()`. Imports of the
-  optional extra are lazy — the module loads cleanly without it.
+  optional extra are lazy: the module loads cleanly without it.
 - **`memory_health` tool + `bettermemory health` CLI subcommand.**
   Aggregates the event log against the active store and returns a
   structured report: dead-weight memories (created beyond `window_days`
@@ -15569,7 +15569,7 @@ trusted publishing.
   count), unresolved contradictions (memories with a `contradicted`
   event whose timestamp is after their last `updated`), per-marker fire
   and override rates for the durability gate, and the scope distribution
-  histogram. The CLI mirrors the tool — `bettermemory health` for
+  histogram. The CLI mirrors the tool: `bettermemory health` for
   human-readable text, `bettermemory health --json` for machine-readable.
   Use the CLI for offline curation; use the tool for in-conversation
   introspection.
@@ -15579,8 +15579,8 @@ trusted publishing.
 - `bettermemory.__main__` shim so `python -m bettermemory` mirrors the
   installed `bettermemory` script.
 - **`memory_record_use` tool.** The model reports how a retrieved memory
-  landed — `"applied"` (shaped the response), `"ignored"` (off-topic),
-  or `"contradicted"` (user/state contradicted the stored fact) — with
+  landed: `"applied"` (shaped the response), `"ignored"` (off-topic),
+  or `"contradicted"` (user/state contradicted the stored fact), with
   an optional free-form `note`. Each call writes one `kind: "use"` event
   to the log. This is the feedback signal that makes dead-weight pruning
   and contradiction surfacing possible in the upcoming memory_health
@@ -15589,7 +15589,7 @@ trusted publishing.
   remote URL, and branch at write time and persists them under an `origin:`
   block in the memory's frontmatter. `memory_search(auto_scope=True)` (the
   new default) filters results to memories whose `origin.repo` matches the
-  caller's current repo — addressing the cross-project leakage failure
+  caller's current repo, addressing the cross-project leakage failure
   mode where a memory written for Project A surfaces during Project B
   conversations. Legacy memories (no `origin` field) and writes from
   outside any repo are treated as global and always surface. `auto_scope`
@@ -15597,7 +15597,7 @@ trusted publishing.
   `memory_show` and `memory_list(with_bodies=True)` surface the full
   origin so a caller can verify which repo a memory came from.
 - New `bettermemory.origin` module: `Origin` (Pydantic model), `capture()`,
-  `repos_match()` (URL-form-agnostic equality — `git@github.com:o/r.git`
+  `repos_match()` (URL-form-agnostic equality; `git@github.com:o/r.git`
   and `https://github.com/o/r` describe the same project).
 - **Append-only event log** at `<storage>/.events.jsonl`. Every tool call
   records one JSON line: query/returned IDs for searches, status/scopes for
@@ -15624,7 +15624,7 @@ trusted publishing.
 ### Changed
 
 - **`heavily_used_min_applied` threshold (default 3).** New config knob
-  in `[behavior]` floors the `heavily_used` bucket on `applied_count` —
+  in `[behavior]` floors the `heavily_used` bucket on `applied_count`;
   at 1 the bucket was dominated by one-off acknowledgements rather than
   repeat-use signal. Threaded through `compute_health`,
   `report_for_directory`, the `memory_health` tool (`min_applied` arg),
@@ -15667,8 +15667,8 @@ trusted publishing.
 - `SessionState` now carries a stable `session_id` for the lifetime of the
   process. `state.reset()` deliberately preserves it.
 - **Testing & CI hardening.** Several gaps caught in one sweep:
-  - Python 3.14 added to the matrix (was 3.11–3.13). macOS and Windows
-    slots added (one Python version each, 3.13) for platform coverage —
+  - Python 3.14 added to the matrix (was 3.11-3.13). macOS and Windows
+    slots added (one Python version each, 3.13) for platform coverage:
     `platformdirs`, `fcntl`-based locking, and the macOS UF_HIDDEN
     workaround in `tests/conftest.py` are all platform-sensitive.
   - `--cov-fail-under=80` enforces a coverage floor (current 85.32%).
