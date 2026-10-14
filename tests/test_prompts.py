@@ -10,7 +10,9 @@ Three surfaces carry the policy the model reads:
 (1) and (2) are byte-equal by design. (3) is the policy companion for
 plugin users, shorter and not a full inventory. Two failure modes are
 guarded: drift between (1) and (2), and a tool name in (1) or (3) that
-the server no longer registers.
+the server no longer registers. One reference-doc sentence is pinned
+too: the `since_prior_session` boundary in `docs/api.md`, which the
+served description no longer states.
 """
 
 from __future__ import annotations
@@ -85,3 +87,25 @@ async def test_skill_tool_names_exist_on_server(tmp_path: Path) -> None:
     assert referenced, "SKILL.md references no tools at all; regex broke."
     missing = referenced - registered
     assert not missing, f"SKILL.md names unregistered tools: {sorted(missing)}"
+
+
+def test_api_md_since_prior_session_strict_after() -> None:
+    """`docs/api.md` states the `since_prior_session` boundary as strict.
+
+    The served description says only "this session's changes", so the
+    reference doc is where a caller learns that the filter is
+    `updated > boundary` (`handlers/search.py`) and that a memory stamped
+    exactly at the boundary belongs to the prior session.
+    """
+    text = (_REPO / "docs" / "api.md").read_text(encoding="utf-8")
+    bullet = next(
+        (
+            line
+            for line in text.splitlines()
+            if line.startswith("- `since_prior_session")
+        ),
+        None,
+    )
+    assert bullet is not None, "docs/api.md lost its `since_prior_session` bullet"
+    assert "strictly after" in bullet
+    assert "a memory whose `updated` equals it belongs to that prior session" in bullet

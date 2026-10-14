@@ -1,6 +1,6 @@
-"""memory_search MCP tool — handler implementation + DESC.
+"""memory_search MCP tool: handler implementation and DESC.
 
-The handler is the busiest of the 18 default tools: it issues use-tokens,
+The handler is the busiest of the nine tools: it issues use-tokens,
 attaches per-hit drift signals, optionally expands the top hit, and
 records its own event with a generous payload shape so the eval CLI
 can rebuild what the model saw.
@@ -9,7 +9,7 @@ Description-edit history:
 
 - H8 (Round 2): the "before you call this" guidance was buried mid-string.
   Hoisted to a two-line lead block so it's the first thing the model
-  reads — opt-in retrieval + the transparency requirement land before
+  reads: opt-in retrieval and the transparency requirement land before
   any parameter detail.
 - H9: `query` stopped being described as "free text". Every line above it
   told the caller how to READ a result; nothing told it how to WRITE the
@@ -22,11 +22,11 @@ Description-edit history:
   The measurement itself lives here rather than in the description: it is
   only honest with a caveat attached, and a per-turn surface cannot
   afford the caveat. Committed evidence is
-  `bench/retrieval/results/v2-unpadded-2026-07-26.json` — a 180-document
+  `bench/retrieval/results/v2-unpadded-2026-07-26.json`: a 180-document
   synthetic corpus, 20 blind-authored questions per probe. The lexical
   arm retrieves 35% recall@1 on questions as asked and 80% re-queried in
   nouns the documents actually contain; the control arm (question words
-  stripped, content words kept) also scores 35% — identical to asking,
+  stripped, content words kept) also scores 35%, identical to asking,
   because the ranker already strips stopwords. Only the within-corpus
   contrast transfers: the retrieval-bench notes establish that this
   corpus is easier than a real store, so these are not a store's rates.
@@ -39,13 +39,17 @@ Description-edit history:
   4.0.0, deliberately does not carry).
 
   Paid for in the same string rather than by raising the ratchet in
-  `test_default_on_descriptions_fit_budget`: `since_prior_session` gave
-  back the sentence deriving why its boundary is strict-`>`. That is
-  rationale for a decision the caller cannot influence, it was resident
-  on every turn, and its actual guard is
+  `test_default_on_descriptions_fit_budget` (since replaced by
+  `test_tool_surface.py::test_session_surface_under_budget`):
+  `since_prior_session` gave back the sentence deriving why its boundary
+  is strict-`>`. That is rationale for a decision the caller cannot
+  influence, and it was resident on every turn. Its guard is
   `test_prompts.py::test_api_md_since_prior_session_strict_after`, which
-  pins the wording in `docs/api.md` — the field's actionable semantics
-  ("strictly after", the /loop guidance, empty-vs-no-baseline) all stay.
+  pins the wording in `docs/api.md`. The field's actionable semantics
+  ("strictly after", the /loop guidance, empty-vs-no-baseline) stayed in
+  the description until the 9.0 port cut it to "this session's changes",
+  so the strict boundary is now stated in `docs/api.md` and not in the
+  description.
 """
 
 from __future__ import annotations
