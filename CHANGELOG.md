@@ -19,11 +19,11 @@ them. An 8.x directory is imported once by
 `bettermemory migrate v8` and never written again; `bettermemory export
 --mirror` writes the store back out as that directory, byte for byte.
 
-Release candidate `9.0.0rc1` is cut from the `v9` branch: a PEP 440
+A 9.0.0 release candidate (`9.0.0rc1` and later) is a PEP 440
 pre-release, so `pip install bettermemory`, `uv tool install
 bettermemory` and the plugin's `uvx bettermemory` keep resolving 8.0.0
-until the stable `9.0.0` is tagged after the merge to `main`. Ask for it
-by version (`uvx bettermemory==9.0.0rc1`) to run it.
+until the stable `9.0.0` is tagged. Ask for a candidate by version
+(`uvx bettermemory==9.0.0rc1`) to run it.
 
 ### Added
 
@@ -67,8 +67,9 @@ by version (`uvx bettermemory==9.0.0rc1`) to run it.
   `memory_admin` carries `restore`, `tombstones`, `health`,
   `rename_scope`, `conflicts`, `acknowledge_miss`, `disable_scope` and
   `enable_scope`, each returning what its former tool returned
-  (`tombstones` under one key); `episode` carries `write` and
-  `handoff`. `acknowledge_miss` gains a `before` form that writes the
+  (`tombstones` under one key), and `relations`, a capture batch's
+  closing call (under Added); `episode` carries `write` and `handoff`.
+  `acknowledge_miss` gains a `before` form that writes the
   `silent_miss_cutoff` event `consolidate --acknowledge-misses-before`
   used to.
 - **`exclude_scopes` on `memory_search`**: the scopes to drop, applied
@@ -151,20 +152,6 @@ by version (`uvx bettermemory==9.0.0rc1`) to run it.
   went from 673.77 ms to 109.27 ms
   (`bench/daemon/results/latency-9.0.0-2026-09-30-write-baseline.json`,
   `latency-9.0.0-2026-09-30-write-cache.json`).
-- `bench/toolcost` records the served `instructions` block beside the
-  descriptions and schemas (`instructions_bytes`, `instructions_chars`,
-  `session_bytes`).
-- `bench/toolcost` never reaches a daemon outside its sandbox: the probe's
-  child inherits no `BETTERMEMORY_*` variable, `bettermemory down` runs
-  only when its state directory is inside the sandbox, and a leftover
-  daemon is signalled only when its record is inside the sandbox and
-  its port's `/health` reports its pid.
-- `bench/daemon/latency.py` measures a lone session-start hook both ways:
-  `hook_service_idle`, each call after a fixed 2.2 s idle gap with the
-  origin capture reused, and `hook_service_cold`, the same with the
-  capture made stale before each call (the ctime of the repository's
-  HEAD moved), the path every lone hook paid before 9.0.0.
-
 - **The local daemon, the stdio shim and the hook client.** `bettermemory
   up` starts one daemon per store on 127.0.0.1 (`[daemon] port`, default
   7397, an ephemeral port when that one is held), detached, with `down`
@@ -389,6 +376,19 @@ by version (`uvx bettermemory==9.0.0rc1`) to run it.
   review, the attended switch, the undo and the served surface.
   (`src/bettermemory/capture.py`, `capture_hook.py`, `capture_review.py`,
   `handlers/capture_relations.py`, `cli/capture_cmd.py`)
+- `bench/toolcost` records the served `instructions` block beside the
+  descriptions and schemas (`instructions_bytes`, `instructions_chars`,
+  `session_bytes`).
+- `bench/toolcost` never reaches a daemon outside its sandbox: the probe's
+  child inherits no `BETTERMEMORY_*` variable, `bettermemory down` runs
+  only when its state directory is inside the sandbox, and a leftover
+  daemon is signalled only when its record is inside the sandbox and
+  its port's `/health` reports its pid.
+- `bench/daemon/latency.py` measures a lone session-start hook both ways:
+  `hook_service_idle`, each call after a fixed 2.2 s idle gap with the
+  origin capture reused, and `hook_service_cold`, the same with the
+  capture made stale before each call (the ctime of the repository's
+  HEAD moved), the path every lone hook paid before 9.0.0.
 
 ### Changed
 
@@ -419,9 +419,9 @@ by version (`uvx bettermemory==9.0.0rc1`) to run it.
   package (`bettermemory`, `_entry`, `_daemon_client`, `_version`);
   without the first it loads the config as well, and without the second
   it imports `platformdirs` for the state directory.
-- The plugin's SessionEnd hook is gone: session capture runs at the
-  Stop hook (under Added). The Stop, SessionStart and UserPromptSubmit
-  hooks stay.
+- The SessionEnd hook that `main` carried unreleased after 8.0.0 is
+  gone: session capture runs at the Stop hook (under Added). The Stop,
+  SessionStart and UserPromptSubmit hooks stay.
 - A config file that still sets a removed key or section loads with one
   logged warning per key and the line ignored.
 - **Write-time supersession links one stored claim per cue.**
@@ -433,16 +433,17 @@ by version (`uvx bettermemory==9.0.0rc1`) to run it.
 
 ### Removed
 
-- **Eighteen MCP tools.** `memory_list`, `memory_scope_overview`,
+- **Twenty MCP tools.** `memory_list`, `memory_scope_overview`,
   `memory_write_confirm`, `memory_write_cancel`, `memory_audit_turn`,
   `memory_health`, `memory_curate`, `memory_conflicts`,
   `memory_acknowledge_miss`, `memory_rename_scope`, `memory_restore`,
   `memory_list_tombstones`, `memory_proposals`, `memory_scope_disable`,
-  `memory_scope_enable`, `episode_search`, `episode_promote` and
-  `episode_patterns`. Eight are `memory_admin` actions and two are
-  `episode` actions; `bettermemory export` covers the listings and the
-  session brief the newest fresh memories; a promotion is a `memory_write` the model makes
-  from a handoff it has read; the rest went with their modules.
+  `memory_scope_enable`, `episode_write`, `episode_handoff`,
+  `episode_search`, `episode_promote` and `episode_patterns`. Eight are
+  `memory_admin` actions and two are `episode` actions. `bettermemory
+  export` covers the listings, and the session brief points at the
+  newest fresh memories. A promotion is a `memory_write` the model makes
+  from a handoff it has read. The rest went with their modules.
 - **Ten off-by-default flags, with their code.** `[behavior]`
   `require_write_confirmation` (with the pending-write machinery),
   `rescue_expansion` (the retrieval bench still measures the leg),
@@ -450,19 +451,21 @@ by version (`uvx bettermemory==9.0.0rc1`) to run it.
   labelled replay), `standing_tier`, `full_tool_surface`,
   `curation_hint_enabled` and `curation_hint_threshold`;
   `[telemetry] log_queries_verbatim` and `max_bytes`; the
-  `[consolidate]` and `[proposals]` sections whole; and the 8.x
-  `[capture]` keys (`enabled`, `idle_minutes` and their siblings), which
-  switched on a capture that called a model of its own. The 9.0
-  `[capture]` section carries `stop_checkpoint`, `checkpoint_tokens` and
-  `daily_cap` (under Added), and 8.x's `enabled = true` never sets it.
+  `[consolidate]` and `[proposals]` sections whole; and the `[capture]`
+  keys of the capture `main` carried unreleased after 8.0.0 (`enabled`,
+  `idle_minutes` and their siblings), which switched on a capture that
+  called a model of its own. The 9.0 `[capture]` section carries
+  `stop_checkpoint`, `checkpoint_tokens` and `daily_cap` (under Added),
+  and the old `enabled = true` never sets it.
 - **The modules that served them.** `consolidate`, `proposals`,
   `patterns`, `session_capture`, `llm`, `doctor`, `sync`, `ingest`,
   `migrate` (the origin backfill), `quarantine`, `provenance`, `index`,
   the v8 `episodes` and `store`, and the `doctor`, `reindex`, `sync`,
-  `consolidate`, `ingest`, `session-end` and `proposals` commands. The
-  8.x `capture` and `capture_hook` modules and the `capture` command are
-  replaced by the in-session capture under Added, which shares their
-  names and nothing else.
+  `consolidate`, `ingest` and `proposals` commands. The unreleased
+  post-8.0.0 capture goes too: its `session-end` command is removed,
+  and its `capture` command and `capture_hook` module give way to the
+  in-session capture under Added, which shares their names and nothing
+  else.
 - **The groundedness gate.** `memory_write` loses `groundedness_check`,
   `source_transcript` and `acknowledge_ungrounded`, and the
   `groundedness` module and the `"ungrounded"` status go with them. The
