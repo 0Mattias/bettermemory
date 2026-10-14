@@ -37,9 +37,10 @@ known config locations:
 }
 ```
 
-If `bettermemory` is not on the spawned client's `$PATH` (common for
-GUI clients launched from Finder), `init` substitutes the absolute path.
-`--print-only` previews the patch without writing.
+`init` writes the absolute path of the `bettermemory` it finds on your
+`$PATH`, so GUI clients launched from Finder find it too. It falls back
+to the bare name shown above only when it finds none. `--print-only`
+previews the patch without writing.
 
 The server key under `mcpServers` becomes the tool-name prefix
 (`mcp__bettermemory__memory_search`). `init` detects and removes legacy
@@ -57,18 +58,21 @@ Then, in a session, ask the model *"what memory tools do you have?"*.
 You should see the nine tools: `memory_search`, `memory_show`,
 `memory_write`, `memory_update`, `memory_remove`, `memory_verify`,
 `memory_record_use`, `episode` and `memory_admin`. If not, the server
-failed to start; run `bettermemory` by hand from a terminal and read
-its startup log.
+failed to start: run `bettermemory status`, then
+`bettermemory up --foreground`, which logs the store it opens and
+prints any start error.
 
 The `bettermemory` command your client spawns is a stdio shim in front
 of one local daemon per store, started on first use and shared by every
 session and hook on the machine. `bettermemory status` says whether it
-is running, `bettermemory up` and `down` start and stop it, and a
-client that speaks streamable HTTP can point at
-`http://127.0.0.1:<port>/mcp` directly with the bearer token from the
-state file `status` names. When no daemon can be started the shim
-serves the store in-process and says so on stderr, so memory keeps
-working either way.
+is running and prints its port, and `bettermemory up` and `down` start
+and stop it. The daemon keeps its state file, `daemon-<hash>.json`,
+and its log, `daemon-<hash>.log`, under the user state directory (or
+under `BETTERMEMORY_STATE_DIR` when that is set). A client that speaks
+streamable HTTP can point at `http://127.0.0.1:<port>/mcp` directly,
+with the bearer token from the state file. When no daemon can be
+started the shim serves the store in-process and says so on stderr,
+so memory keeps working either way.
 
 ## 4. Optional: long-form policy
 
@@ -106,7 +110,7 @@ writes the store back out as an 8.x directory whenever you want one.
 
 Until the migration has run, a server pointed at the 8.x directory
 refuses to start rather than open an empty store beside your memories;
-its one error line names the directory and the command above. Client
+its error names the directory and the command above. Client
 registrations do not change: the server key, the binary and the
 `instructions` block are served as before, and the plugin's hooks find
 the migrated store on their own.
@@ -115,20 +119,22 @@ the migrated store on their own.
 
 - **`bettermemory` not found** when the client starts the server: use
   the absolute path (`bettermemory init --client X` does this).
-- **Memories not found by `memory_search`**: check `BETTERMEMORY_DIR`
-  and the startup-log "memory directory" line. Project-scoped
-  `./.claude-memory/` overrides global `~/.claude-memory/`.
+- **Memories not found by `memory_search`**: check `BETTERMEMORY_DIR`,
+  `[storage] directory` in `config.toml`, and the store path
+  `bettermemory status` prints. A project-scoped `./.claude-memory/`
+  overrides the global `~/.claude-memory/`.
 - **The server refuses to start, naming `bettermemory migrate v8`**: the
   store directory holds an 8.x store (memory files, event shards or a
   tombstone directory) and no `memory.sqlite`. Run the migration once
   (section 5); nothing in the directory is written.
-- **Every hit reads `trust_unavailable`**: this machine does not hold
-  the store's key, which lives under the user config directory
-  (`keys/<store_id>.key`, or under `BETTERMEMORY_KEYS_DIR` when that is
-  set), never in the store. A store copied from
-  another machine without its key reads but cannot vouch for its rows.
-  `bettermemory log verify` reports the same condition as
-  `unverifiable`.
+- **The daemon's log says the store was opened without its key**: this
+  machine did not hold the store's key, which lives under the user
+  config directory (`keys/<store_id>.key`, or under
+  `BETTERMEMORY_KEYS_DIR` when that is set), never in the store. The
+  server wrote a new key and appended a `rekey` row. Rows signed under
+  the old key keep the labels they arrived with, because their
+  pointers cannot be checked here, and `bettermemory log verify`
+  reports the store `unverifiable`.
 - **`bettermemory log verify` reports `tampered`**: a log row fails its
   MAC, the chain is broken, or a table holds a row no log row produced.
   `--json` names the rows. Nothing repairs a tampered store in place;
