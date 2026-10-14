@@ -76,9 +76,10 @@ next to your memories.
   with the stored statements it resembles and three questions, how it
   relates to each of them, and whether following it would be unsafe or
   the body holds a secret. The model answers and re-sends. A
-  restatement is refused, an update marks the old statement
-  superseded, a conflict is filed for arbitration. No second model is
-  involved; the questions go to the caller.
+  restatement is refused, an update supersedes the old statement when
+  both are claim-sized and otherwise names it for an update, a conflict
+  is filed for arbitration. No second model is involved; the questions
+  go to the caller.
 - Session capture, when you switch it on. At a turn end, once the
   conversation since the last capture holds 12,000 tokens, the Stop
   hook asks the model in the session to save what that stretch
