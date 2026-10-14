@@ -1,55 +1,25 @@
 # bettermemory: Claude Code plugin
 
-The Claude Code plugin wrapper for
-[bettermemory](https://github.com/0Mattias/bettermemory) — a trust
-layer between an agent and its own past: every retrieved fact carries
-a staleness verdict, every use an attribution, and whether it helped
-is measured rather than assumed.
+Memory for Claude Code, checked against your files and git history on
+every read, with a session brief and recall on each prompt. This is the
+plugin for [bettermemory](https://github.com/0Mattias/bettermemory).
 
-The plugin bundles five things:
+It adds the MCP server ([`.mcp.json`](.mcp.json)), the memory policy as
+a skill ([`skills/bettermemory/SKILL.md`](skills/bettermemory/SKILL.md)),
+and three hooks ([`hooks/hooks.json`](hooks/hooks.json)). The
+SessionStart and UserPromptSubmit hooks print pointers, never bodies;
+all three always exit 0.
 
-1. **MCP server registration** ([`.mcp.json`](.mcp.json)): spawns
-   `uvx bettermemory` as a stdio MCP server, which registers the nine
-   tools (see [docs/api.md](../docs/api.md)). It is a shim in front of
-   the local daemon (`bettermemory up`), started on first use, so every
-   session and every hook on the machine shares one warm process.
-2. **Memory-discipline skill**
-   ([`skills/bettermemory/SKILL.md`](skills/bettermemory/SKILL.md)):
-   the long-form retrieval and writing policy at the system-prompt
-   level. The server's own `instructions` block carries a short
-   summary; Claude Code truncates that block, the skill has no cap.
-3. **Stop hook** ([`hooks/hooks.json`](hooks/hooks.json)): runs
-   `uvx bettermemory hook stop --quiet` at each turn end to settle the
-   turn's retrievals, settle the pointers the brief and the prompt
-   recall showed when the reply used them, and log silent retrieval
-   misses. Always exits 0, so a transient failure never surfaces as a
-   hook-error banner. Session capture rides this hook and is off until
-   `[capture] stop_checkpoint = true` in `config.toml`: once the
-   conversation since the last capture holds 12,000 tokens of prompts
-   and replies, the hook hands the model in the session an instruction
-   to save what that stretch established, under ten rules, with
-   `memory_write`. No other model and no API key; every capture is a
-   batch that `bettermemory capture review` lists and `capture undo`
-   takes back.
-4. **SessionStart hook** (same file): runs
-   `uvx bettermemory hook session-start` when a conversation opens and
-   prints the session brief: up to eight pointers (id and summary,
-   never a body) to the newest memories written in the current
-   repository whose staleness verdict is fresh, under a header that
-   says they are pointers, not instructions. Claude Code injects a
-   SessionStart hook's stdout into the model's context. The brief is
-   recorded as a `session_brief` event, prints nothing outside a
-   repository or when nothing is fresh, and always exits 0. `[behavior]
-   session_brief = false` turns it off.
-5. **UserPromptSubmit hook** (same file): runs
-   `uvx bettermemory hook prompt` on each prompt submission. Probes
-   the prompt through the production search pool and ranker and prints
-   up to three pointers (id, relevance, summary and snippet, never a
-   body) to relevant memories written in this project and not already
-   shown, retrieved, written or updated in the session. Records a
-   `prompt_recall` event the audit counts as retrieval. `[behavior]
-   prompt_recall` takes `project` (the default), `everywhere` or
-   `off`. Always exits 0.
+- SessionStart: the session brief, up to eight pointers to the
+  repository's newest fresh memories. `[behavior] session_brief = false`
+  turns it off.
+- UserPromptSubmit: up to three pointers to this project's memories
+  that match the prompt. `[behavior] prompt_recall` takes `project`
+  (the default), `everywhere` or `off`.
+- Stop: settles what the turn showed and used. With
+  `[capture] stop_checkpoint = true` in `config.toml`, it also asks the
+  model to save what each 12,000 tokens of conversation established;
+  `bettermemory capture review` and `capture undo` manage the batches.
 
 ## Install
 
@@ -59,44 +29,52 @@ The plugin bundles five things:
 ```
 
 Requires [`uv`](https://docs.astral.sh/uv/) on `$PATH`; `uvx` fetches
-bettermemory from PyPI on first run. To use a pre-installed binary
-instead, `uv tool install bettermemory` and edit `.mcp.json` to
-`"command": "bettermemory"`.
+bettermemory from PyPI on first run. To use an installed binary
+instead, run `uv tool install bettermemory` and set
+`"command": "bettermemory"` and `"args": []` in `.mcp.json`. The hooks
+in `hooks/hooks.json` still call `uvx`.
+
+Coming from 8.x: run `uvx bettermemory migrate v8` once. Until then the
+server refuses to start beside the old files and says why.
 
 ## Verify
 
-Ask the model *"what memory tools do you have?"* — you should see tools
-with the `mcp__bettermemory__` prefix. Then try *"remember that I
-prefer hands-on tutorials with runnable code"*: the model should call
-`memory_write` with `category="user-inference"`, and the record lands
-in `~/.claude-memory/memory.sqlite` without a confirmation round trip.
+Ask the model "what memory tools do you have?"; you should see tools
+with the `mcp__bettermemory__` prefix. Then try "remember that I prefer
+hands-on tutorials with runnable code". The model calls `memory_write`
+with `category="user-inference"`, answers the write review that comes
+back, and re-sends. The record then lands in
+`~/.claude-memory/memory.sqlite`; you are not asked to confirm.
 
 ## Troubleshooting
 
 ```sh
-uvx bettermemory try
+uvx bettermemory --version
+uvx bettermemory status
 ```
 
-The offline demo proves the package runs; if the tools still do not
-appear in the session, run `uvx bettermemory` by hand and read its
-startup log, which names the store directory and any config problem.
+`--version` shows the package runs; `status` names the store and says
+whether its daemon is up. If the tools still do not appear, run
+`uvx bettermemory` by hand and read what it prints.
 `uvx bettermemory health` says whether the Stop hook's settlement
 telemetry is landing (`telemetry_coverage`).
 
 ## Uninstall
 
+Run `uvx bettermemory down` first to stop the daemon, then:
+
 ```text
 /plugin uninstall bettermemory@bettermemory
 ```
 
-Removes the server registration and skill. Memories on disk
-(`~/.claude-memory/`) are not touched.
+This removes the server registration, the skill and the hooks.
+Memories on disk (`~/.claude-memory/`) are not touched.
 
 ## Other clients
 
-The plugin is the Claude Code-specific wrapper around the same MCP
-server. For Claude Desktop, Cursor, Continue, Cline, or anything else,
-see [docs/installation.md](../docs/installation.md) and
+The plugin is the Claude Code wrapper around the same MCP server. For
+Claude Desktop, Cursor, Cline, Hermes Agent, Continue or any other MCP
+client, see [docs/installation.md](../docs/installation.md) and
 [docs/clients.md](../docs/clients.md).
 
 ## License
