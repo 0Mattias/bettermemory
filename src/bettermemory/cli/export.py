@@ -254,7 +254,15 @@ def _cli_export(
 
     config = _load_config()
     directory = config.resolved_directory()
-    store = Store.open_or_create(directory / STORE_FILENAME)
+    # Read-only, as the mirror is: no store is created where none exists,
+    # and a store whose key is absent is read without rekeying it.
+    path = directory / STORE_FILENAME
+    if not path.is_file():
+        msg = f"no bettermemory 9 store at {path} ({STORE_FILENAME})"
+        if parser is not None:
+            parser.error(msg)
+        raise FileNotFoundError(msg)
+    store = Store.open(path, allow_rekey=False)
 
     if scopes:
         # `validate_scope` raises ValueError on a malformed --scope

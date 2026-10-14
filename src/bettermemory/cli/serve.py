@@ -10,10 +10,16 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from pathlib import Path
 
 from ..builder import build_server
 from ..config import load_config
-from ..store import STORE_FILENAME, Store
+from ..store import (
+    STORE_FILENAME,
+    Store,
+    UnmigratedV8DirectoryError,
+    refuse_unmigrated_v8,
+)
 
 
 log = logging.getLogger("bettermemory")
@@ -31,6 +37,17 @@ def add_subparser(
     )
 
 
+def exit_if_unmigrated_v8(path: Path) -> None:
+    """Refuse, in one line on stderr and exit 1, a store path whose
+    directory holds an un-migrated bettermemory 8 store and no store
+    file, so the shim and `serve` never print a traceback for it."""
+    try:
+        refuse_unmigrated_v8(path)
+    except UnmigratedV8DirectoryError as exc:
+        sys.stderr.write(f"bettermemory: {exc}\n")
+        raise SystemExit(1) from None
+
+
 def run_serve() -> None:
     """Start the MCP server over stdio.
 
@@ -45,6 +62,7 @@ def run_serve() -> None:
     )
     config = load_config()
     directory = config.resolved_directory()
+    exit_if_unmigrated_v8(directory / STORE_FILENAME)
     store = Store.open_or_create(directory / STORE_FILENAME)
 
     log.info("memory directory: %s", directory)

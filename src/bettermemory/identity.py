@@ -398,7 +398,13 @@ def resolve(
     (overridable through `environ` for tests). Never raises: a channel
     that cannot be read is a channel that did not answer.
     """
-    env = os.environ if environ is None else environ
+    # Over HTTP (the daemon) the environment is never read: it was
+    # inherited from whichever client started the daemon and describes
+    # none of the others, which declare themselves in headers.
+    over_http = _carries_http(request_context)
+    env: Mapping[str, str] = (
+        {} if over_http else (os.environ if environ is None else environ)
+    )
     headers = _headers_of(request_context)
     sources: dict[str, str] = {}
 
@@ -467,7 +473,7 @@ def resolve(
     # started itself). The daemon's environment is inherited from
     # whichever client started it, so it is never read there.
     harness_session = _clean(headers.get(HEADER_HARNESS_SESSION))
-    if harness_session is None and not _carries_http(request_context):
+    if harness_session is None and not over_http:
         harness_session = _clean(env.get(ENV_HARNESS_SESSION))
 
     return Caller(

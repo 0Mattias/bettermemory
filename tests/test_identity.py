@@ -273,12 +273,12 @@ def test_g3_each_channel_resolves_with_its_own_source() -> None:
     assert header_over_env.workspace.path == "/from/header"
     assert header_over_env.actor.client == "hdr-client"
     assert header_over_env.actor.client_version == "2.1.0"
-    assert header_over_env.actor.model == "env-model"
+    # Over HTTP the environment is never read, so the env model is not.
+    assert header_over_env.actor.model is None
     assert header_over_env.actor.session == "sess-1"
     assert header_over_env.actor.sources == {
         "client": SOURCE_HEADER,
         "client_version": SOURCE_CLIENT_INFO,
-        "model": SOURCE_ENV,
         "session": SOURCE_TRANSPORT,
     }
 
@@ -340,7 +340,10 @@ async def test_g3_roots_resolve_once_per_connection_and_rank_below_env() -> None
         path="/work/proj one", source=SOURCE_ROOTS
     )
 
-    env_wins = identity.resolve(ctx.request_context, environ={ENV_WORKSPACE: "/env"})
+    # The environment ranks above roots where it is read: off HTTP.
+    stdio = fake_ctx(with_request=False)
+    stdio.request_context.session = session
+    env_wins = identity.resolve(stdio.request_context, environ={ENV_WORKSPACE: "/env"})
     assert env_wins.workspace.source == SOURCE_ENV
 
 
@@ -713,3 +716,28 @@ async def test_memory_show_renders_the_full_actor_shape(tmp_path: Path) -> None:
         "session": None,
         "sources": {"client": SOURCE_CLIENT_INFO, "client_version": SOURCE_CLIENT_INFO},
     }
+
+
+def test_the_daemon_never_reads_identity_from_its_environment() -> None:
+    """One daemon serves every client, and its environment is the one
+    that started it: Claude Code's `BETTERMEMORY_CLIENT` must not label
+    a Codex request that sent no header (ENG-32)."""
+    env = {
+        ENV_CLIENT: "claude-code",
+        ENV_CLIENT_VERSION: "2.0",
+        ENV_MODEL: "opus",
+        ENV_WORKSPACE: "/from/env",
+    }
+
+    over_http = identity.resolve(fake_ctx(headers={}).request_context, environ=env)
+    assert over_http.actor.client is None
+    assert over_http.actor.client_version is None
+    assert over_http.actor.model is None
+    assert SOURCE_ENV not in over_http.actor.sources.values()
+    assert over_http.workspace.source != SOURCE_ENV
+
+    off_http = identity.resolve(
+        fake_ctx(with_request=False).request_context, environ=env
+    )
+    assert off_http.actor.client == "claude-code"
+    assert off_http.workspace == identity.Workspace(path="/from/env", source=SOURCE_ENV)

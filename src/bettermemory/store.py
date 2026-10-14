@@ -1351,6 +1351,19 @@ class UnmigratedV8DirectoryError(RuntimeError):
     """A directory holds bettermemory 8 files and no store file."""
 
 
+def refuse_unmigrated_v8(path: Path) -> None:
+    """Raise `UnmigratedV8DirectoryError` when no store file is at `path`
+    and its directory holds a bettermemory 8 store."""
+    if path.is_file() or not path.parent.is_dir() or not holds_v8_files(path.parent):
+        return
+    raise UnmigratedV8DirectoryError(
+        f"{path.parent} holds a bettermemory 8 store and no "
+        f"{STORE_FILENAME}; run `bettermemory migrate v8` to import it "
+        "(`uvx bettermemory migrate v8` through the Claude Code plugin); "
+        "the 8.x files are left as they are"
+    )
+
+
 #: A v8 memory file: `<date>-<slug>-<ULID>.md` (`v8.py`).
 _V8_MEMORY_NAME = re.compile(r".*-[0-9A-HJKMNP-TV-Z]{26}\.md$")
 
@@ -1566,13 +1579,7 @@ class Store:
         path = store_path(path)
         if path.is_file():
             return cls.open(path, keys_dir=keys_dir)
-        if path.parent.is_dir() and holds_v8_files(path.parent):
-            raise UnmigratedV8DirectoryError(
-                f"{path.parent} holds a bettermemory 8 store and no "
-                f"{STORE_FILENAME}; run `bettermemory migrate v8` to import it "
-                "(`uvx bettermemory migrate v8` through the Claude Code plugin); "
-                "the 8.x files are left as they are"
-            )
+        refuse_unmigrated_v8(path)
         return cls.create(path, keys_dir=keys_dir)
 
     def close(self) -> None:

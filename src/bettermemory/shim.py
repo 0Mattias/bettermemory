@@ -307,6 +307,10 @@ def run_shim() -> None:
     config = load_config()
     store_path = resolved_store_path()
     state_dir = resolve_state_dir()
+    if not store_path.is_file():
+        from .cli.serve import exit_if_unmigrated_v8
+
+        exit_if_unmigrated_v8(store_path)
     env = daemon_env_for(store_path)
     try:
         state = ensure_daemon(

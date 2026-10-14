@@ -432,3 +432,40 @@ def test_export_to_file_bare_filename_does_not_raise(
     monkeypatch.chdir(tmp_path)
     _cli_export(output="bare.json", include_tombstones=False, scopes=None)
     assert (tmp_path / "bare.json").exists()
+
+
+def test_json_export_creates_no_store_where_none_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An export reads; it never writes a store into being (ENG-32)."""
+    monkeypatch.setattr(
+        "bettermemory.config.load_config", lambda: _config_for(tmp_path)
+    )
+    with pytest.raises(FileNotFoundError, match="no bettermemory 9 store"):
+        _cli_export(output=None, include_tombstones=True, scopes=None)
+    assert not (tmp_path / "memory.sqlite").exists()
+
+
+def test_json_export_reads_a_store_without_its_key_and_never_rekeys(
+    populated_store: tuple[Path, Store],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A store copied from another machine exports as it is: no new key
+    is written and no `rekey` row is appended (ENG-32)."""
+    from bettermemory import config as _config
+    from bettermemory import log as _log
+
+    _, store = populated_store
+    rows_before = len(store.log_rows())
+    elsewhere = tmp_path / "elsewhere"
+    monkeypatch.setattr(_log, "default_keys_dir", lambda: elsewhere)
+    monkeypatch.setenv(_config.KEYS_DIR_ENV, str(elsewhere))
+
+    _cli_export(output=None, include_tombstones=False, scopes=None)
+    parsed = json.loads(capsys.readouterr().out)
+
+    assert len(parsed["active_memories"]) == 2
+    assert not elsewhere.exists()
+    assert len(store.log_rows()) == rows_before

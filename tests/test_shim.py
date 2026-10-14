@@ -531,3 +531,21 @@ async def test_shim_reconnects_to_a_daemon_of_another_version_and_keeps_it(
     finally:
         first.stop()
         second.stop()
+
+
+@pytest.mark.parametrize("args", [[], ["serve"]], ids=["shim", "serve"])
+def test_an_unmigrated_v8_directory_is_refused_in_one_line(
+    tmp_path: Path, args: list[str]
+) -> None:
+    """An 8.x user sees the refusal, not daemon warnings and a traceback
+    (ENG-32), and nothing is created on either path."""
+    store_dir = tmp_path / "store"
+    store_dir.mkdir()
+    (store_dir / ".events.jsonl").write_text("")
+    proc = _cli(args, _env(tmp_path))
+    assert proc.returncode == 1
+    lines = proc.stderr.strip().splitlines()
+    assert len(lines) == 1, proc.stderr
+    assert "bettermemory migrate v8" in lines[0]
+    assert not _store_path(tmp_path).exists()
+    assert not _state_path(tmp_path).exists()
