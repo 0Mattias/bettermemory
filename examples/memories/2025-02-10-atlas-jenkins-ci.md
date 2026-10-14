@@ -15,6 +15,6 @@ origin:
 Atlas CI runs on Jenkins. The `Jenkinsfile` at the repo root drives
 the backend test + container build; the iOS build is a separate
 multi-branch pipeline that polls the Mac mini agent pool. New
-pipeline stages must declare an `agent { label '...' }` clause —
+pipeline stages must declare an `agent { label '...' }` clause:
 node-less stages get scheduled on the controller and starve
 everything else.

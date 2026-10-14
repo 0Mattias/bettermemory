@@ -19,5 +19,5 @@ links:
 Atlas CI now runs on Buildkite. Pipelines live in
 `.buildkite/pipeline.yaml`; agent queues are `linux-amd64` for the
 backend and `macos-arm64` for the iOS build. The old Jenkinsfile
-has been deleted — retrieval should prefer this memory and demote
+has been deleted, so retrieval should prefer this memory and demote
 the Jenkins one until it is tombstoned.

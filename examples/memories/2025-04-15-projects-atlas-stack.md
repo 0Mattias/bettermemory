@@ -18,6 +18,6 @@ links:
 ---
 Atlas is a FastAPI + SQLAlchemy + Postgres backend with a pnpm
 TypeScript frontend in the same monorepo. We do NOT use Alembic for
-migrations — they are hand-rolled SQL files in `db/migrations/`,
+migrations; they are hand-rolled SQL files in `db/migrations/`,
 applied by a small bash runner the deploy pipeline invokes before
 boot. New migrations must be append-only and idempotent.
