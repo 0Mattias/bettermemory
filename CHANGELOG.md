@@ -45,8 +45,10 @@ until the stable `9.0.0` is tagged. Ask for a candidate by version
   key. A row planted around the tool, and a row whose log row was
   forged without the key, read `unaccounted` on the next read without
   a refold. The labels are `local`, `imported`, `synced` and
-  `unaccounted`; a store opened without its key reads
-  `trust_unavailable` on every row.
+  `unaccounted`. A server that opens a store whose key is not on this
+  machine writes a new key and logs a warning; rows signed under the
+  old key keep their stored labels, and `log verify` reports the store
+  `unverifiable`.
 - **`bettermemory migrate v8` and `bettermemory export --mirror`.** The
   migration reads an 8.x store directory with the frozen v8 readers
   (`src/bettermemory/v8.py`) and writes it into the store in one
