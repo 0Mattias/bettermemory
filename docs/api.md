@@ -359,22 +359,22 @@ The JSON export writes every active memory (and, unless `--no-tombstones`, every
 
 | Command | What it does |
 | --- | --- |
-| `init --client X [--config-path P] [--print-only] [--name N] [--with-addendum]` | Register the server with a client, idempotently; `--with-addendum` prints the long-form policy. |
+| `init [--client X] [--config-path P] [--print-only] [--name N] [--with-addendum] [--json]` | Register the server with a client, idempotently. With no `--client` it prints the snippet and the known config locations. `--with-addendum` prints the long-form policy. |
 | `try [--json]` | The offline demo in a throwaway store. |
 | `health [--days N] [--top-k N] [--min-applied N] [--json]` | The health report the `health` action returns. |
-| `tombstones list [--scope S] [--json]`, `tombstones restore ID`, `tombstones prune --older-than DAYS [--dry-run]` | The removed memories: list, restore one (with the trust re-check), prune old ones. |
+| `tombstones list [--scope S] [--json]`, `tombstones restore ID [--json]`, `tombstones prune [--older-than DAYS] [--dry-run] [--json]` | The removed memories: list, restore one (with the trust re-check), prune old ones. `--older-than` defaults to `[behavior] tombstone_retention_days` and is required while that is 0. |
 | `rename-scope OLD NEW [--no-tombstones] [--json]` | The `rename_scope` action. |
 | `rollback --by-actor CLIENT [--since TS] [--apply --yes] [--json]` | Remove one actor's writes, as tombstones. |
-| `episodes list [--json]`, `episodes prune [--ttl-days N] [--dry-run] [--json]` | The journal: list every session's episodes, prune past the TTL. |
+| `episodes list [SESSION_ID] [--json]`, `episodes prune [--ttl-days N] [--dry-run] [--json]` | The journal: list every session's episodes or one session's, prune past the TTL. |
 | `export …` | The JSON export and the v8 mirror, above. |
 | `migrate v8 …` | The 8.x migration, above. |
 | `log verify [--json]` | The chain audit, above. |
-| `eval [--since TS] [--scope S] [--report] [--tool-usage] [--threshold-sweep] [--widening-preview [--detail]] [--json] [--output FILE]` | The three effectiveness rates and their diagnostics ([eval.md](eval.md)). |
+| `eval [--since TS] [--until TS] [--scope S] [--min-retrievals N] [--silent-miss-limit N] [--report] [--tool-usage] [--threshold-sweep] [--widening-preview [--detail]] [--json] [--output FILE]` | The three effectiveness rates and their diagnostics ([eval.md](eval.md)). |
 | `review samples …`, `review grade REVIEW_ID …` | Draw reviewed writes to grade and record a grade ([eval.md](eval.md)). |
-| `recall review [--since 7d] [--deliveries N] [--briefs N] [--silent N] [--json]`, `recall grade SAMPLE_ID --relevant ID… --irrelevant ID…` | Draw what the recall surface showed, with the prompt read from the transcript, and record a grade ([eval.md](eval.md)). |
-| `capture review [--json]`, `capture undo BATCH [--apply] [--skip-changed]`, `capture sample [--n N] [--seed S] [--tally]`, `capture grade ID --meets \| --fails [--rule N]…` | Session capture's batches: list them with their outcomes, refusals and undos; tombstone one batch's memories and record the undo (dry-run unless `--apply`; a member since updated, verified, linked to from outside the batch or filed in a conflict is refused unless `--skip-changed`); draw captured memories to grade against the ten rules and record a grade as a `capture_grade` event. Calls no model. |
+| `recall review [--since 7d] [--until TS] [--deliveries N] [--briefs N] [--silent N] [--seed S] [--transcripts] [--json]`, `recall grade SAMPLE_ID --relevant ID… --irrelevant ID… [--json]` | Draw what the recall surface showed, with the prompt read from the transcript, and record a grade ([eval.md](eval.md)). |
+| `capture review [--json]`, `capture undo BATCH [--apply] [--skip-changed] [--json]`, `capture sample [--n N] [--seed S] [--tally] [--json]`, `capture grade ID --meets \| --fails [--rule N]… [--note TEXT] [--json]` | Session capture's batches: list them with their outcomes, refusals and undos; tombstone one batch's memories and record the undo (dry-run unless `--apply`; a member since updated, verified, linked to from outside the batch or filed in a conflict is refused unless `--skip-changed`); draw captured memories to grade against the ten rules and record a grade as a `capture_grade` event. Calls no model. |
 | `up [--foreground] [--port N]`, `down`, `status` | The local daemon for this store: one process that owns the store and serves the nine tools at `http://127.0.0.1:<port>/mcp` and the hook bodies under `/api/v1/hook/`. `bettermemory` with no arguments is the stdio shim in front of it; `serve` runs the in-process stdio server without it. |
-| `hook session-start\|stop\|prompt [--quiet] [--dry-run]` | The Claude Code hook command; the plugin wires it. Reads the hook's stdin JSON, posts it to the daemon (starting one when none answers), prints the answer, always exits 0. `session-start`, `audit-turn` and `prompt-recall` are its 8.x aliases. |
+| `hook session-start\|stop\|prompt [--quiet] [--dry-run] [--transcript-path P] [--session-id ID] [--prompt TEXT]` | The Claude Code hook command; the plugin wires it. Reads the hook's stdin JSON, posts it to the daemon (starting one when none answers), prints the answer, always exits 0. `session-start`, `audit-turn` and `prompt-recall` are its 8.x aliases. |
 
 ## Naming conventions
 
