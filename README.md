@@ -126,7 +126,7 @@ MIT licensed. See [LICENSE][license].
 [bench]: https://github.com/0Mattias/bettermemory/tree/v9/bench
 [changelog]: https://github.com/0Mattias/bettermemory/blob/v9/CHANGELOG.md
 [clients]: https://github.com/0Mattias/bettermemory/blob/v9/docs/clients.md
-[clients-continue]: https://github.com/0Mattias/bettermemory/blob/v9/docs/clients.md#continue-legacy-shape--see-caveat
+[clients-continue]: https://github.com/0Mattias/bettermemory/blob/v9/docs/clients.md#continue-legacy-shape-see-caveat
 [contributing]: https://github.com/0Mattias/bettermemory/blob/v9/CONTRIBUTING.md
 [eval]: https://github.com/0Mattias/bettermemory/blob/v9/docs/eval.md
 [incidents]: https://github.com/0Mattias/bettermemory/blob/v9/docs/incidents/

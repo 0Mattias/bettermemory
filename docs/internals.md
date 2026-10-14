@@ -347,7 +347,7 @@ local daemon (`bettermemory up`, `down`, `status`), which is also what
 
 `config.toml` lives under platformdirs (`~/Library/Application
 Support/bettermemory/` on macOS, `~/.config/bettermemory/` on Linux).
-Defaults are sensible; most installs never edit it. `[behavior]` holds
+Most installs never edit it. `[behavior]` holds
 the knobs (`default_max_results`, `search_mode`, `conversational`,
 `write_supersession`, `prompt_recall`, `session_brief`,
 `verification_stale_days`, `tombstone_retention_days`, the size caps),

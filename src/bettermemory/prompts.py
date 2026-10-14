@@ -165,6 +165,6 @@ Loop iteration pattern:
 - Each iteration: episode(action="write", body=..., takeaway="one
   line"). Write it every time; the takeaway is what the next iteration
   sees first.
-- A sub-agent passes the coordinator's session id as swarm_id so the
-  coordinator can gather every sub-agent's takeaways.
+- A sub-agent passes the coordinator's session id as swarm_id, which
+  labels its episodes with the swarm.
 """

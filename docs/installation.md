@@ -77,8 +77,8 @@ so memory keeps working either way.
 ## 4. Optional: long-form policy
 
 The server's `instructions` block carries the core contract and lands
-at the system-prompt level on every compliant client; fresh installs
-behave correctly out of the box. For the full writing-discipline and
+at the system-prompt level on every compliant client, so a fresh install
+needs no prompt changes. For the full writing-discipline and
 verification policy:
 
 - **Claude Code**: install the [plugin](../plugin/README.md). Its skill

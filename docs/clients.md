@@ -2,7 +2,7 @@
 
 bettermemory speaks the standard MCP wire protocol over stdio, so any MCP-aware client can host it. This document collects the snippet shape and config-file location for each commonly-used host.
 
-The fastest path is `bettermemory init --client X`, which writes the right snippet into the right file (idempotently). Show-and-tell mode (`bettermemory init` with no flags) prints the snippet plus all known config locations with `[✓]` markers for files that exist.
+`bettermemory init --client X` writes the snippet into the client's config file and is safe to run twice. Show-and-tell mode (`bettermemory init` with no flags) prints the snippet plus all known config locations with `[✓]` markers for files that exist.
 
 After any setup change, restart the client so it picks up the new MCP server entry.
 
@@ -13,7 +13,7 @@ After any setup change, restart the client so it picks up the new MCP server ent
 /plugin install bettermemory@bettermemory
 ```
 
-The easiest path for Claude Code 2.x. Bundles the MCP server registration AND a system-prompt-level skill carrying the long-form policy. Uses `uvx bettermemory`, so the only prerequisite is [`uv`](https://docs.astral.sh/uv/). See [`../plugin/README.md`](../plugin/README.md).
+For Claude Code 2.x. Bundles the MCP server registration AND a system-prompt-level skill carrying the long-form policy. Uses `uvx bettermemory`, so the only prerequisite is [`uv`](https://docs.astral.sh/uv/). See [`../plugin/README.md`](../plugin/README.md).
 
 ## Claude Code (manual)
 
