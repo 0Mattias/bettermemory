@@ -27,7 +27,7 @@ Patches `~/.claude.json` (user scope). For project scope, point at the repo's `.
 bettermemory init --client claude-code --config-path .mcp.json
 ```
 
-Project-scope wins when both are present — usually what you want for a project-scoped store (`./.claude-memory/`).
+Claude Code uses the project entry when both are present. Which store the server opens is decided separately: `$BETTERMEMORY_DIR`, then `[storage] directory`, then `./.claude-memory/` in the working directory, then `~/.claude-memory/`.
 
 The manual path doesn't include the system-prompt skill the plugin ships. For the long-form policy with a manual install, paste [`system_prompt.md`](system_prompt.md) into your `CLAUDE.md`, or `bettermemory init --with-addendum` to print it.
 
@@ -124,7 +124,7 @@ mcp_servers:
 
 The patch is a splice, not a rewrite. Only the `bettermemory` entry is inserted or replaced; every other line of the file — your key order, your comments, the commented-out sections Hermes's installer leaves for you — stays exactly as it was. Keys you add to the entry (`idle_timeout_seconds`, `enabled`, a `tools` filter) survive a re-run, and a `BETTERMEMORY_CLIENT` you set yourself is kept. `bettermemory init --client hermes --print-only` prints the YAML entry without writing anything.
 
-Two things follow from Hermes's shape. One gateway process serves every chat platform from one directory and passes no `cwd` to a stdio server, so a memory written from Hermes records the gateway's own directory with `origin.source: process-cwd`, a labeled fallback, not a project. If your Hermes work is one project, add `BETTERMEMORY_WORKSPACE: /path/to/project` to the `env` block and writes record that project, its git remote and branch instead. And Hermes recycles idle stdio servers, so per-process session state (a scope disabled for the session, an unsettled use token) does not outlive a quiet gap between tool calls; the store itself is unaffected.
+Two things follow from Hermes's shape. One gateway process serves every chat platform from one directory and passes no `cwd` to a stdio server. A memory written from Hermes therefore records the gateway's own directory, which the stdio shim forwards as the workspace (`origin.source: header`), not a project. If your Hermes work is one project, add `BETTERMEMORY_WORKSPACE: /path/to/project` to the `env` block and writes record that project, its git remote and branch instead. And Hermes recycles idle stdio servers, so per-process session state (a scope disabled for the session, an unsettled use token) does not outlive a quiet gap between tool calls; the store itself is unaffected.
 
 A running interactive Hermes session reloads its MCP connections when the file changes; a gateway started before the patch reads the block at its next start.
 
@@ -142,13 +142,13 @@ bettermemory try
 
 The offline demo writes a memory citing a file into a throwaway store, deletes the file, and shows the next search flagging it; it needs no client and touches no real store.
 
-In the host itself, ask the model *"what memory tools do you have?"*. If the nine tools are not listed, the server failed to start: run `bettermemory` by hand from a terminal and read its startup log, which names the store directory and any config problem.
+In the host itself, ask the model *"what memory tools do you have?"*. If the nine tools are not listed, the server failed to start. `bettermemory status` names the store, and `bettermemory up --foreground` logs the store it opens and any config problem.
 
 After a few sessions, the health report (`bettermemory health`, or `memory_admin(action="health")`) says whether the Stop hook is wired: `telemetry_coverage.covered` is true when Stop-hook settlement telemetry is landing, and the dead-weight and cold-endorsement verdicts are suppressed, with the reason, when it is not.
 
 ## Snippet shape
 
-The MCP wire protocol is the same across hosts. Only the config file shape and location vary. Every supported client uses the same snippet:
+The MCP wire protocol is the same across hosts; the config shape and location vary. Every JSON client takes this entry (Hermes takes the YAML entry above):
 
 ```json
 {
@@ -163,9 +163,9 @@ The MCP wire protocol is the same across hosts. Only the config file shape and l
 }
 ```
 
-The `bettermemory` server key is the default; override it with `--name` only if you have a strong reason (Claude Code prefixes its tool names with this key). When you run `bettermemory init`, the `command` is written as the *absolute* path that `find_binary()` resolves on your PATH, not the bare `bettermemory` shown here, so a later reinstall into a different venv is visible in the config file. The bare-name form above also works if the binary stays on PATH; the plugin's `.mcp.json` instead uses `"command": "uvx"` with `"args": ["bettermemory"]`.
+The `bettermemory` server key is the default; override it with `--name` only if you have a strong reason (Claude Code prefixes its tool names with this key). When you run `bettermemory init`, the `command` is written as the *absolute* path that `find_binary()` resolves on your PATH, not the bare `bettermemory` shown here, so a later reinstall into a different venv is visible in the config file. The bare-name form above also works if the binary stays on PATH; the plugin's `.mcp.json` instead uses `"command": "uvx"` with `"args": ["bettermemory"]`. The empty `env` is what plain `init` prints; `init --client` declares the client there ([below](#declaring-who-is-calling)).
 
-If you find a client whose snippet shape isn't this, please file an issue.
+If you find a JSON client that does not take this shape, please file an issue.
 
 | Client          | Path | Init auto-patch |
 |-----------------|------|-----------------|
@@ -179,10 +179,14 @@ If you find a client whose snippet shape isn't this, please file an issue.
 
 ## Declaring who is calling
 
-Since 7.10.0 every memory records who wrote it (`actor`) and which
+Since 7.10.0 a memory carries an `actor` block whenever the caller
+declared anything. Through the stdio shim every memory carries one,
+holding at least the shim's session; `actor.client` stays null when the
+client named itself in no channel. A memory always records which
 channel named the directory it was written from (`origin.source`), and
-every event carries the same actor. A stdio server has exactly one
-out-of-band channel for that: the `env` block of its config entry.
+events carry the same actor block. A stdio client has one out-of-band
+channel for declaring itself: the `env` block of its config entry,
+which the shim forwards to the daemon as request headers.
 
 - `BETTERMEMORY_CLIENT` — the client's name. `bettermemory init
   --client cursor` writes `"env": {"BETTERMEMORY_CLIENT": "cursor"}`
@@ -195,16 +199,19 @@ out-of-band channel for that: the `env` block of its config entry.
   starts the server somewhere else. One long-lived gateway serving many
   chat surfaces from `$HOME` (Hermes Agent's shape: stdio servers take
   `command`, `args` and `env`, and no `cwd`) would otherwise anchor
-  every write to the gateway's own directory; with the variable set the
-  write records the declared project, its git remote and branch, and
-  `source: env` beside them.
+  every write to the gateway's own directory. With the variable set
+  the write records the declared project, its git remote and branch
+  (`source: header` under the daemon, `source: env` under
+  `bettermemory serve`).
 
-Over HTTP the same declarations travel as request headers —
-`x-bettermemory-client`, `x-bettermemory-client-version`,
-`x-bettermemory-model`, `x-bettermemory-workspace` — and take precedence
-over the environment; a client that offers `roots` is asked once per
-connection where it works, ranking below both. An OAuth token verifier
-on the transport fills `actor.principal`, the only attested field.
+Over HTTP the same declarations travel as request headers
+(`x-bettermemory-client`, `x-bettermemory-client-version`,
+`x-bettermemory-model`, `x-bettermemory-workspace`) and take precedence
+over the environment. Under `bettermemory serve`, a client that offers
+`roots` is asked once per connection where it works, ranking below
+both; through the shim, the client's working directory is forwarded as
+the workspace header instead. An OAuth token verifier on the transport
+fills `actor.principal`, the only attested field.
 Everything declared is client input and is stored as such; `SECURITY.md`
 says what that does and does not protect. `docs/api.md` (under
 Identity) has the full precedence table and the on-disk shape.
