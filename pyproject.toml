@@ -1,7 +1,7 @@
 [project]
 name = "bettermemory"
 version = "9.0.0rc1"
-description = "Memory you can verify — a trust layer between an AI coding agent and its own past: per-hit staleness verdicts, claim-level use attribution, measured effectiveness, episodic run-state. MCP-native, local-first, MIT, no cloud."
+description = "MCP memory server for coding agents. Memories are checked against your files and git history on every read. Signed change log, one local SQLite file, MIT."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -10,23 +10,33 @@ authors = [{ name = "Mattias Rask" }]
 # reachable only by exact name.
 keywords = [
     "mcp",
+    "mcp-server",
     "model-context-protocol",
     "claude",
     "claude-code",
+    "claude-desktop",
+    "cursor",
     "memory",
     "agent-memory",
+    "long-term-memory",
     "llm",
+    "llm-memory",
     "ai-agents",
+    "coding-agents",
+    "sqlite",
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
 ]
@@ -92,7 +102,7 @@ dev = [
 bettermemory = "bettermemory._entry:main"
 
 [project.urls]
-# Surfaced as the "Project links" rail on PyPI — without these the
+# Surfaced as the "Project links" rail on PyPI. Without these the
 # package page has no path back to source, issues, or release notes.
 Homepage = "https://github.com/0Mattias/bettermemory"
 Repository = "https://github.com/0Mattias/bettermemory"
