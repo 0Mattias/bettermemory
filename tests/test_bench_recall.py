@@ -362,6 +362,7 @@ def test_count_git_counts_git_processes_only() -> None:
     assert subprocess.run.__name__ == "run"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the git shim is a shell script")
 def test_git_shim_logs_each_call_and_runs_git(tmp_path: Path) -> None:
     log = tmp_path / "calls.log"
     shim = brief.git_shim(tmp_path / "shim", log)
@@ -426,6 +427,10 @@ def test_line_faults_flags_a_line_beyond_id_summary_and_mark() -> None:
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="the signature reads the POSIX stamps of the repository files",
+)
 def test_signature_sees_a_root_file_created_and_removed(tmp_path: Path) -> None:
     """The held stamps are part of the signature: a file created and
     removed in the root leaves the head's signature and the walk files as

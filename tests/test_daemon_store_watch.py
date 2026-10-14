@@ -298,13 +298,15 @@ def test_the_watch_leaves_a_connections_locks_alone(
         conn.close()
 
 
-@_BETWEEN
-def test_the_watch_leaves_the_wal_to_the_open_connection(
-    tmp_path: Path, between: Callable[[Path], None], keeps_locks: bool
-) -> None:
+def test_the_watch_leaves_the_wal_to_the_open_connection(tmp_path: Path) -> None:
     """The daemon's store is in WAL mode: an open connection's shared lock
     on the file is what stops another process's close from checkpointing
-    and deleting the WAL under it. After the watch it still does."""
+    and deleting the WAL under it. After the watch it still does. The
+    closed-descriptor control belongs to the locks test above: whether a
+    lost lock lets the other close delete the WAL depends on the SQLite
+    build (the CI runners keep it, a local macOS Python deletes it), so
+    it proves nothing here."""
+    between, keeps_locks = _cycle_the_watch, True
     store = tmp_path / "memory.sqlite"
     conn = sqlite3.connect(store, isolation_level=None)
     try:

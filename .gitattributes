@@ -59,3 +59,8 @@ tests/fixtures/v8/store/** -text
 # describe the default heuristic's output. Turning on the Python driver would
 # silently change what a future reader sees when they check that reasoning
 # against `git log -p`.
+
+# Benchmark corpora, raws and results are hashed and byte-pinned by tests;
+# never convert their line endings on checkout (the Windows leg did).
+bench/**/*.json -text
+bench/**/*.jsonl -text

@@ -156,6 +156,10 @@ def test_a_failed_spawn_leaves_no_sandbox(
     assert list(tmp_path.glob("toolcost-home-*")) == []
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="the probe reads the server through select, sockets only on Windows",
+)
 def test_probing_the_shim_leaves_no_daemon_and_no_sandbox(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

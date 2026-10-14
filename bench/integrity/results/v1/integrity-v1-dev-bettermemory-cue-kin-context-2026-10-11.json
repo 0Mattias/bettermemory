@@ -1442,7 +1442,7 @@
    "conflict_filed": 6
   }
  },
- "raw_observations": "/private/tmp/claude-501/-Users-mattias-Documents-projects-bettermemory/4c6d7fca-2c1e-40b7-a9e8-ca87aac2beca/scratchpad/c10/dev-raw.json",
+ "raw_observations": "bench/integrity/results/v1/raw/integrity-v1-dev-bettermemory-cue-kin-context-2026-10-11.json",
  "scored_with": {
   "bettermemory_version": "8.0.0",
   "commit": "ef6d45d",
