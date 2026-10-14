@@ -2,11 +2,9 @@
 
 Releases are cut by pushing an annotated `v<X.Y.Z>` tag. The `Release` workflow (`.github/workflows/release.yml`) handles the rest: build, full gating suite, PyPI publish, and GitHub release. No tokens; no manual `twine upload` step.
 
-> **Before you push the very first tag, configure PyPI trusted publishing first** (next section). Without it, the workflow builds the wheel cleanly and then fails the publish step with `invalid-publisher: valid token, but no corresponding publisher`. The build itself succeeds, so re-running the workflow after the PyPI-side setup is straightforward, but it is strictly less painful to set up the publisher record before tagging.
-
 ## One-time setup: PyPI trusted publishing
 
-Trusted publishing replaces long-lived API tokens with short-lived OIDC tokens minted per workflow run. The configuration lives on the PyPI side, not in this repo's secrets. There is nothing to copy into GitHub.
+Trusted publishing replaces long-lived API tokens with short-lived OIDC tokens minted per workflow run. The configuration lives on the PyPI side, not in this repo's secrets. There is nothing to copy into GitHub. Without a matching publisher record the publish step fails with `invalid-publisher` (see Troubleshooting).
 
 Set up two trusted publishers, one per target:
 
@@ -30,19 +28,20 @@ The `pypi` and `testpypi` environment names match the `environment:` blocks in `
 
 ## Cutting a release
 
-Working tree clean, on the branch the tag will point at (`main`; the 9.0 release candidates were cut from `v9`), all CI green.
+Working tree clean, on the branch the tag will point at (normally `main`), all CI green.
 
 A release version has to land on **seven fields across six files**.
-Miss one and the version-sync suite in step 5 fails rather than the
-release shipping skewed — but you still have to know the file is on
-the list to bump it:
+The version-sync tests in step 5 (`tests/test_version.py`,
+`tests/test_plugin.py`) fail when any of the five manifest and lock
+fields disagrees with `pyproject.toml`; nothing checks the CHANGELOG
+heading, so check it by eye.
 
 | Surface | Field |
 | --- | --- |
 | `pyproject.toml` | `[project] version` (source of truth) |
 | `plugin/.claude-plugin/plugin.json` | `.version` |
 | `.claude-plugin/marketplace.json` | `.metadata.version` |
-| `server.json` | `.version` **and** `.packages[0].version` — two places |
+| `server.json` | `.version` **and** `.packages[0].version` (two places) |
 | `uv.lock` | the `bettermemory` self-entry (`uv lock` rewrites it) |
 | `CHANGELOG.md` | the `## <X.Y.Z> - <date>` heading |
 
@@ -53,11 +52,9 @@ the list to bump it:
 $EDITOR pyproject.toml
 
 # 2. Bump the SAME version in the three manifests. server.json carries
-#    it TWICE — the top-level `.version` and the nested package version
-#    the registry validates against pypi.org — so it is the easiest one
-#    to half-bump. The version-sync tests in tests/test_plugin.py and
-#    tests/test_version.py fail if any of these drift apart. They are
-#    the guardrail for the release ritual.
+#    it TWICE (the top-level `.version` and the nested package version
+#    the registry validates against pypi.org), so it is the easiest one
+#    to half-bump.
 $EDITOR plugin/.claude-plugin/plugin.json    # `.version`
 $EDITOR .claude-plugin/marketplace.json      # `.metadata.version`
 $EDITOR server.json                          # `.version` AND
@@ -66,9 +63,9 @@ $EDITOR server.json                          # `.version` AND
 # 3. Move the relevant entries from the "Unreleased" section of
 #    CHANGELOG.md into a new `## <X.Y.Z> - <date>` heading. Read
 #    `git log <previous tag>..` beside it: every commit that changed
-#    behaviour is represented in the entry, by phrase or by short SHA.
-#    (The test that used to check this window, tests/test_changelog.py,
-#    was retired in 9.0 with the ratchet-test genre.)
+#    behaviour is represented in the entry, by phrase or by short SHA;
+#    a bullet that covers several commits cites their short SHAs. No
+#    test checks this window.
 $EDITOR CHANGELOG.md
 
 # 4. Refresh uv.lock so its editable self-entry tracks the new version.
@@ -83,13 +80,10 @@ $EDITOR CHANGELOG.md
 #    with all legs green.
 uv lock
 
-# 5. Run the suite locally. The version-sync tests are the cheapest
-#    check that all version surfaces agree (pyproject.toml is the source
-#    of truth for `bettermemory.__version__`, which the plugin
-#    manifests, both server.json fields, and uv.lock's self-entry must
-#    match). `uv sync` first: `bettermemory/_version.py` is written by
-#    the build hook at install time, and a stale one fails
-#    test_version.py until the editable install is refreshed.
+# 5. Run the version-sync tests locally. `uv sync` first:
+#    `bettermemory/_version.py` is written by the build hook at install
+#    time, and a stale one fails test_version.py until the editable
+#    install is refreshed.
 uv sync --locked --extra dev
 pytest tests/test_plugin.py tests/test_version.py -q
 
@@ -110,37 +104,30 @@ git push origin v<X.Y.Z>
 The tag push triggers the `Release` workflow. Watch it from the Actions tab. On success:
 
 - `bettermemory==<X.Y.Z>` is on PyPI.
-- A GitHub release with auto-generated notes appears on the Releases page, with the sdist and wheel attached as assets.
+- A GitHub release appears on the Releases page, with the sdist and wheel attached as assets. Its notes are GitHub's generated ones (`generate_release_notes` in `release.yml`): the pull requests merged since the previous tag and a compare link, nothing from the CHANGELOG. Edit the release by hand afterwards to add a line linking the version's CHANGELOG entry and the README's install section.
+- For a stable tag, `publish-mcp.yml` lists the version in the MCP registry once the Release run succeeds.
 
 ## Pre-release tags
 
-A tag whose version carries a letter after the digits (`v9.0.0rc1`, `v9.0.0b1`, `v9.0.0.dev1`; PEP 440 pre-releases) runs the same workflow with three differences, each keyed on that letter rather than on a flag:
+A tag whose version carries any letter (`v9.0.0rc1`, `v9.0.0b1`, `v9.0.0.dev1`) runs the same workflow with three differences, each keyed on that letter rather than on a flag. The test is any letter, so a `.postN` tag would be treated the same way; do not cut post-releases.
 
 - PyPI gets the version, and resolvers skip it: `pip install bettermemory`, `uv tool install bettermemory` and the plugin's `uvx bettermemory` keep resolving the latest stable release until a stable tag follows. Asking for it by version (`uvx bettermemory==9.0.0rc1`) installs it.
 - The GitHub release is created marked **pre-release**, so it never takes the "latest" slot (`release.yml`, the "Read the tag's kind" step).
 - The MCP registry listing is skipped (`publish-mcp.yml`): the registry carries one version per server and a listing is what registry clients install by default. The stable tag that follows lists as usual.
 
-The 9.0 release candidates were cut this way from the `v9` branch, with the stable `v9.0.0` tag following the merge to `main`.
+A pre-release keeps the CHANGELOG heading as `## <X.Y.Z> - Unreleased`; the stable tag dates it.
 
 ## Dry run via TestPyPI
 
-Before a real release (especially the first one, or any release with packaging changes), push to TestPyPI first via the manual trigger:
+Before a real release (especially one with packaging changes), push to TestPyPI first via the manual trigger:
 
-1. Bump the version in `pyproject.toml` to a pre-release candidate like `<X.Y.Z>rc1` or `<X.Y.Z>.dev1`. TestPyPI rejects re-uploading the same version, and `pip install` ignores pre-releases by default. So a pre-release candidate is the right shape: the candidate stays out of the way of regular installs while letting you bump `rc2` or `rc3` until you are happy.
+1. Set `<X.Y.Z>rcN` (or `<X.Y.Z>.devN`) on the version fields of steps 1 and 2 under Cutting a release, and run `uv lock` (step 4). The build and CI jobs run `uv sync --locked` and the version-sync tests, so a bump of `pyproject.toml` alone fails before anything is uploaded. TestPyPI rejects re-uploading a version and pip skips pre-releases by default, so a pre-release number keeps the candidate out of regular installs and lets you move to `rc2` or `rc3`.
 2. Commit (do not tag).
-3. Actions tab, then Release, then "Run workflow", and target `testpypi`.
+3. Actions tab, then Release, then "Run workflow" on a branch whose name does not start with `v` (see Listing in the MCP registry), and target `testpypi`.
 4. Verify the rendered project page on <https://test.pypi.org/project/bettermemory/>.
 5. `pip install -i https://test.pypi.org/simple/ bettermemory==<X.Y.Z>rcN` into a scratch venv and smoke-test.
 
-Once you are satisfied, bump pyproject.toml back to the real version (without the `rcN` or `devN` suffix), commit, tag, and push.
-
-## Version-tag mismatch protection
-
-The build job verifies that the pyproject.toml version matches the tag (`v<X.Y.Z>` to `<X.Y.Z>`). Tagging `v1.2.3` while pyproject still says `1.2.2` aborts the workflow before any artifact is uploaded. Fix the version, force-push the tag (`git tag -af v<X.Y.Z>`), and re-push.
-
-## Release-window CHANGELOG coverage
-
-`tests/test_changelog.py` used to walk every non-merge commit between the previous tag and the new one and require each to be represented in the release's entry, by a reused two-word phrase or a short SHA citation; 9.0 retired it with the ratchet-test genre. The check is now the reviewer's: step 3 reads `git log <previous tag>..` beside the entry, and a bullet that covers several commits at once cites their short SHAs, the shape the erratum bullets already use. The GitHub release notes are generated from the commits (`generate_release_notes` in `release.yml`) and do not depend on the CHANGELOG entry.
+Once you are satisfied, set the real version on the same fields, run `uv lock`, commit, tag and push.
 
 ## Yanking a bad release
 
@@ -154,25 +141,22 @@ has to *follow* the PyPI publish rather than race it off the `v*` tag push the
 upstream guide suggests. Three triggers are declared, and on the automated path
 the one that actually fires is `workflow_run` against the **Release** workflow:
 it observes that run finishing, and on a tag push that run cannot conclude
-`success` unless its `publish-pypi` job did — `publish-pypi` is not skipped on
-a `push` event, and `github-release` further declares `needs: publish-pypi`.
-The job is gated on a succeeded run whose `head_branch` starts with `v`, so a
-failed release and the TestPyPI dispatch list nothing, and it checks out that
-tag rather than the default branch — under `workflow_run` the default checkout
-is wherever `main` points *now*, which would publish a `server.json` describing
-some version other than the one that just went to PyPI.
+`success` unless its `publish-pypi` job did (`publish-pypi` is not skipped on
+a `push` event, and `github-release` further declares `needs: publish-pypi`).
+The job is gated on a succeeded run whose `head_branch` starts with `v`, and it
+checks out that ref rather than the default branch. Under `workflow_run` the
+default checkout is wherever `main` points *now*, which would publish a
+`server.json` describing some version other than the one that just went to
+PyPI. A tag run carries its tag in `head_branch`, so a failed release lists
+nothing, and a TestPyPI dispatch from `main` lists nothing. A dispatch from a
+branch whose name starts with `v`, such as `v9`, passes the gate as well: the job checks out that branch and fails red at its tag check,
+listing nothing.
 
 `release: published` is the second trigger and is kept deliberately, but it
 covers only a release cut by hand or with a PAT. A release created by
 `release.yml`'s `github-release` job raises no run-starting event: GitHub
 suppresses events raised by a job authenticating with the default
-`GITHUB_TOKEN` — a recursion guard — and that job uses exactly that token. The
-workflow shipped in 3.35.0 with `release: published` as its only automatic
-trigger and consequently never fired once; the 3.34.0 listing that existed had
-come from the `workflow_dispatch` backfill below, so a succeeding fallback hid
-a primary path that could not run. If you are reasoning about why a release did
-or did not get listed, the Release run is the thing to look at, not the
-release event.
+`GITHUB_TOKEN` (a recursion guard), and that job uses exactly that token.
 
 It is a separate workflow rather than another job in `release.yml` so that a
 registry outage cannot turn a good PyPI release red.
@@ -202,7 +186,7 @@ failed:
 To list a release that predates this workflow, or to retry after a
 registry-side failure, run it by hand: Actions → "Publish to MCP Registry" →
 "Run workflow". A dispatch has no tag, so it publishes whatever `server.json`
-currently says.
+currently says, unless that version is a pre-release, which is never listed.
 
 ## Troubleshooting
 
@@ -220,17 +204,15 @@ Fix:
 
 1. Go to <https://pypi.org/manage/account/publishing/>.
 2. If the project does not exist on PyPI yet, register a **Pending Publisher** with the exact field values from the "One-time setup" section. If it does exist, edit the existing publisher under that project to match.
-3. Re-run the publish without re-tagging. The build artifact is still good. From the GitHub Actions tab, go to the "Release" workflow, then "Run workflow", set `target=pypi`, and run. This dispatches the workflow on the same `main` HEAD; the build job re-runs (cheap) and the publish step exchanges the new OIDC token, which now has a matching trusted-publisher record. The `github-release` job is skipped on dispatch (it only fires on tag push), so you will need to create the GitHub release by hand from the tag if you want one. Or push a fresh patch tag (`v<X.Y.Z+1>`) once you are happy the trust setup works.
+3. Re-run the failed job of the tag's Release run without re-tagging: `gh run rerun <run-id> --failed`. The build is reused, the publish job mints a fresh OIDC token that now matches, and `github-release` follows as on any tag push. Or push a fresh patch tag (`v<X.Y.Z+1>`) once the trust setup works.
 
-### `version mismatch` build-job failure
+### `pyproject.toml version (...) does not match tag (...)`
 
-The build job verifies that the version in `pyproject.toml` matches the tag (`v1.2.3` to `1.2.3`). If they disagree, the run aborts before any artifact ships.
-
-Fix: bump `pyproject.toml` to match the tag and force-update the tag to the new commit:
+The build job compares the tag with `pyproject.toml` and stops before any artifact ships. Bump the version fields, commit, then move the annotated tag to that commit:
 
 ```sh
-git tag -f v<X.Y.Z>
+git tag -af v<X.Y.Z> -m "v<X.Y.Z>"
 git push --force origin v<X.Y.Z>
 ```
 
-The forced re-push fires the workflow again.
+The forced push runs the workflow again.
