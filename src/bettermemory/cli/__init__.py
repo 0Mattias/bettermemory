@@ -87,9 +87,9 @@ def _build_parser() -> tuple[
     parser = argparse.ArgumentParser(
         prog="bettermemory",
         description=(
-            "Memory you can verify — a trust layer between a coding agent "
-            "and its own past. Run with no arguments to start the MCP "
-            "server over stdio."
+            "MCP memory for coding agents, checked against your files and "
+            "git history on every read. Run with no arguments to start the "
+            "MCP server over stdio."
         ),
     )
     parser.add_argument(

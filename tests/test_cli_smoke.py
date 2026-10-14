@@ -82,12 +82,11 @@ def test_help_lists_all_subcommands(
         assert sub in out, f"subcommand {sub!r} missing from --help output"
     assert "bettermemory" in out
     # Pin the load-bearing positioning phrase from the argparse
-    # description so an accidental shorten-pass loses the regression,
-    # not the line "memory MCP server" that used to be the marker —
-    # retuned in 1.4.2 to lead with "Persistent memory", and again
-    # post-3.20.0 to the trust-layer framing every other identity
-    # surface adopted ("Memory you can verify").
-    assert "Memory you can verify" in out
+    # description so an accidental shorten-pass loses the regression.
+    # Retuned in 1.4.2 to lead with "Persistent memory", after 3.20.0 to
+    # "Memory you can verify", and in 9.0 to the one-line description
+    # that server.json and the package docstring share.
+    assert "MCP memory for coding agents" in out
 
 
 def test_version_flag_exits_zero_and_prints_program_name(
@@ -916,10 +915,9 @@ def test_subprocess_help_pins_packaging(tmp_path: Path) -> None:
     the wheel."""
     out = _run_subprocess("--help", env_extra={"BETTERMEMORY_DIR": str(tmp_path)})
     assert "bettermemory" in out
-    # Same pin as the in-process smoke test above — post-3.20.0 the
-    # description leads with the trust-layer framing ("Memory you can
-    # verify") shared by every other identity surface.
-    assert "Memory you can verify" in out
+    # Same pin as the in-process smoke test above: the description leads
+    # with the line server.json and the package docstring share.
+    assert "MCP memory for coding agents" in out
 
 
 @_skip_without_install

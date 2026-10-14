@@ -1,11 +1,11 @@
-"""bettermemory: a trust layer between a coding agent and its own past.
+"""MCP memory for coding agents, checked against your files and git history on every read.
 
-A local file-backed MCP server where a stored fact is a claim that
-keeps earning belief — per-hit staleness verdicts, gated writes,
-claim-level use attribution, measured effectiveness, curation, and an
-episode tier for session run-state. Memory is opt-in retrieval, not
-forced context. See the module-level docs and
-`prompts.SYSTEM_PROMPT_ADDENDUM` for the consumer-side instructions.
+A local MCP server whose store is one SQLite file built from a signed,
+hash-chained log. Each search hit carries a staleness verdict, writes
+pass gates and then a review, and an episode tier holds session
+run-state. Memory is opt-in retrieval, not forced context. See the
+module-level docs and `prompts.SYSTEM_PROMPT_ADDENDUM` for the
+consumer-side instructions.
 """
 
 from typing import Any

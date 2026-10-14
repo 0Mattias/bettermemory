@@ -1,7 +1,8 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.0Mattias/bettermemory",
-  "description": "Memory for coding agents, checked against the filesystem and git before it is believed.",
+  "title": "bettermemory",
+  "description": "MCP memory for coding agents, checked against your files and git history on every read.",
   "version": "9.0.0rc1",
   "repository": {
     "url": "https://github.com/0Mattias/bettermemory",
