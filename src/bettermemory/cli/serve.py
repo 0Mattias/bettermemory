@@ -1,10 +1,8 @@
-"""`bettermemory serve` — the default no-arg behavior.
+"""`bettermemory serve`: the MCP server over stdio, in this process.
 
-Runs the MCP server over stdio. Not currently exposed as a named
-subcommand on the CLI (the default-with-no-args path falls here
-directly); kept as its own module so the dispatch logic stays uniform
-and a future explicit ``bettermemory serve`` subcommand has an obvious
-home.
+With no arguments `bettermemory` runs the stdio shim, which forwards
+every request to the local daemon. `serve` runs the server itself, with
+no daemon, and is listed in `bettermemory --help`.
 """
 
 from __future__ import annotations
