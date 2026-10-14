@@ -1,6 +1,6 @@
 {
   "name": "bettermemory",
-  "version": "9.0.0.dev0",
+  "version": "9.0.0rc1",
   "description": "Memory you can verify, between Claude Code and its own past: every retrieved fact carries a staleness verdict checked against the filesystem and git, every use an attribution, and a signed store that shows how each record arrived. Retrieval is opt-in at the tool surface; three hooks add the session brief at session start, up to three pointers per prompt, turn-end settlement, and session capture by the model in the session, off by default.",
   "author": {
     "name": "Mattias Rask",
