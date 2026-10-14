@@ -6,7 +6,7 @@ The fastest path is `bettermemory init --client X`, which writes the right snipp
 
 After any setup change, restart the client so it picks up the new MCP server entry.
 
-## Claude Code — plugin path
+## Claude Code (plugin)
 
 ```text
 /plugin marketplace add 0Mattias/bettermemory
@@ -15,7 +15,7 @@ After any setup change, restart the client so it picks up the new MCP server ent
 
 The easiest path for Claude Code 2.x. Bundles the MCP server registration AND a system-prompt-level skill carrying the long-form policy. Uses `uvx bettermemory`, so the only prerequisite is [`uv`](https://docs.astral.sh/uv/). See [`../plugin/README.md`](../plugin/README.md).
 
-## Claude Code — manual path
+## Claude Code (manual)
 
 ```sh
 bettermemory init --client claude-code
@@ -31,7 +31,13 @@ Claude Code uses the project entry when both are present. Which store the server
 
 The manual path doesn't include the system-prompt skill the plugin ships. For the long-form policy with a manual install, paste [`system_prompt.md`](system_prompt.md) into your `CLAUDE.md`, or `bettermemory init --with-addendum` to print it.
 
-The manual path also skips the plugin's **hooks**, and those carry real behavior on Claude Code: the Stop hook (`bettermemory hook stop`) settles retrievals at turn end, runs the silent-miss audit and, with `[capture] stop_checkpoint = true`, asks the chat model to save what the conversation since its last capture established, the UserPromptSubmit hook (`bettermemory hook prompt`) prints up to three pointers to this project's memories that match the prompt, and the SessionStart hook (`bettermemory hook session-start`) prints the session brief, up to eight pointers to the repository's newest fresh memories; each is one HTTP call to the local daemon the stdio server already runs in front of. Without the Stop hook the usage telemetry is one-sided: the health report suppresses its dead-weight and cold-endorsement verdicts rather than misreading the silence (the honesty gate). Wire them from the plugin's `hooks/hooks.json` shapes if you want the full loop on a manual install; on other hosts there is no hook surface, and the in-process settlement plus the honesty gate are the designed degradation.
+The manual path also skips the plugin's **hooks**, which carry real behavior on Claude Code. Each hook is one HTTP call to the local daemon.
+
+- The Stop hook (`bettermemory hook stop`) settles retrievals at turn end and runs the silent-miss audit. With `[capture] stop_checkpoint = true` it also asks the chat model to save what the conversation established since its last capture.
+- The UserPromptSubmit hook (`bettermemory hook prompt`) prints up to three pointers to this project's memories that match the prompt.
+- The SessionStart hook (`bettermemory hook session-start`) prints the session brief: up to eight pointers to the repository's newest fresh memories.
+
+Without the Stop hook, the health report suppresses its dead-weight and cold-endorsement verdicts rather than misread the silence. To wire the hooks on a manual install, copy the shapes in the plugin's `hooks/hooks.json`. Other hosts have no hook surface; the in-process settlement and the suppressed verdicts are the designed degradation.
 
 ## Claude Desktop
 
@@ -47,7 +53,7 @@ Patches the platform-standard `claude_desktop_config.json`:
 | Linux   | `~/.config/Claude/claude_desktop_config.json` |
 | Windows | `%APPDATA%/Claude/claude_desktop_config.json` |
 
-Restart Claude Desktop after the patch — it loads config at startup and doesn't watch the file.
+Restart Claude Desktop after the patch; it loads config at startup and does not watch the file.
 
 ## Cursor
 
@@ -63,7 +69,7 @@ bettermemory init --client cursor --config-path .cursor/mcp.json
 
 Cursor's MCP support is per-window. A window opened before the patch won't see the new server until reloaded (Cmd-Shift-P → "Reload Window").
 
-## Continue (legacy shape — see caveat)
+## Continue (legacy shape, see caveat)
 
 ```sh
 bettermemory init --client continue
@@ -71,7 +77,7 @@ bettermemory init --client continue
 
 Patches `~/.continue/config.json` with an **object-shaped** `mcpServers`.
 
-**Caveat — this shape is not read by current Continue.** As of 2026-07, Continue's released schema reads MCP servers as a **YAML list** in `~/.continue/config.yaml` (or as individual files under `~/.continue/mcpServers/`); the object-in-`config.json` form is a deprecated format current Continue ignores. `init --client continue` therefore prints a warning and writes the entry for backward compatibility with legacy Continue only. On a current install, add the server to `~/.continue/config.yaml` by hand instead:
+**Caveat: current Continue does not read this shape.** As of 2026-07, Continue's released schema reads MCP servers as a **YAML list** in `~/.continue/config.yaml` (or as individual files under `~/.continue/mcpServers/`); the object-in-`config.json` form is a deprecated format current Continue ignores. `init --client continue` therefore prints a warning and writes the entry for backward compatibility with legacy Continue only. On a current install, add the server to `~/.continue/config.yaml` by hand instead:
 
 ```yaml
 mcpServers:
@@ -80,7 +86,7 @@ mcpServers:
     args: []
 ```
 
-(Substitute the absolute binary path `bettermemory init` reports for `command` so a later reinstall is detectable — same rationale as the JSON snippet below.) MCP tools in Continue are only available in **agent mode**.
+MCP tools in Continue are only available in **agent mode**.
 
 ## Cline
 
@@ -96,7 +102,7 @@ Patches Cline's MCP settings inside VS Code's `globalStorage`:
 | Linux   | `~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` |
 | Windows | `%APPDATA%/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` |
 
-Default assumes standard VS Code. On Code-Insiders, Codium, or VSCodium, the `Code` directory becomes `Code - Insiders`, `VSCodium`, etc. — pass the right path:
+Default assumes standard VS Code. On Code-Insiders, Codium, or VSCodium, the `Code` directory becomes `Code - Insiders`, `VSCodium`, and so on; pass the right path:
 
 ```sh
 bettermemory init --client cline --config-path \
@@ -111,7 +117,7 @@ Reload the VS Code window after the patch.
 bettermemory init --client hermes
 ```
 
-Patches `~/.hermes/config.yaml`. Hermes reads MCP servers from a YAML map under a top-level `mcp_servers` key, so this target writes the entry as YAML rather than as the JSON snippet below — the stdio keys Hermes documents (`command`, `args`, `env`) and no `type`:
+Patches `~/.hermes/config.yaml`. Hermes reads MCP servers from a YAML map under a top-level `mcp_servers` key, so this target writes the entry as YAML with the stdio keys Hermes documents (`command`, `args`, `env`) and no `type`:
 
 ```yaml
 mcp_servers:
@@ -122,7 +128,7 @@ mcp_servers:
       BETTERMEMORY_CLIENT: hermes
 ```
 
-The patch is a splice, not a rewrite. Only the `bettermemory` entry is inserted or replaced; every other line of the file — your key order, your comments, the commented-out sections Hermes's installer leaves for you — stays exactly as it was. Keys you add to the entry (`idle_timeout_seconds`, `enabled`, a `tools` filter) survive a re-run, and a `BETTERMEMORY_CLIENT` you set yourself is kept. `bettermemory init --client hermes --print-only` prints the YAML entry without writing anything.
+The patch is a splice, not a rewrite. Only the `bettermemory` entry is inserted or replaced; every other line of the file (your key order, your comments, the commented-out sections Hermes's installer leaves for you) stays exactly as it was. Keys you add to the entry (`idle_timeout_seconds`, `enabled`, a `tools` filter) survive a re-run, and a `BETTERMEMORY_CLIENT` you set yourself is kept. `bettermemory init --client hermes --print-only` prints the YAML entry without writing anything.
 
 Two things follow from Hermes's shape. One gateway process serves every chat platform from one directory and passes no `cwd` to a stdio server. A memory written from Hermes therefore records the gateway's own directory, which the stdio shim forwards as the workspace (`origin.source: header`), not a project. If your Hermes work is one project, add `BETTERMEMORY_WORKSPACE: /path/to/project` to the `env` block and writes record that project, its git remote and branch instead. And Hermes recycles idle stdio servers, so per-process session state (a scope disabled for the session, an unsettled use token) does not outlive a quiet gap between tool calls; the store itself is unaffected.
 
@@ -132,7 +138,7 @@ Once two clients write to one store (Claude Code declaring itself through `clien
 
 ## Other clients
 
-For anything not listed, run `bettermemory init` (no flags) to print the canonical snippet plus known config locations. Copy by hand into your client's MCP config file. If your client doesn't accept raw JSON config, embed the `mcp` SDK directly — see [`../examples/programmatic_client.py`](../examples/programmatic_client.py) for the wire-protocol shape.
+For anything not listed, run `bettermemory init` (no flags) to print the canonical snippet plus known config locations. Copy by hand into your client's MCP config file. If your client doesn't accept raw JSON config, embed the `mcp` SDK directly; see [`../examples/programmatic_client.py`](../examples/programmatic_client.py) for the wire-protocol shape.
 
 ## Verifying setup
 
@@ -173,7 +179,7 @@ If you find a JSON client that does not take this shape, please file an issue.
 | Claude Code (manual) | user `~/.claude.json` or project `.mcp.json` | yes |
 | Claude Desktop  | platform-standard `claude_desktop_config.json` | yes |
 | Cursor          | `~/.cursor/mcp.json` or `<repo>/.cursor/mcp.json` | yes |
-| Continue        | `~/.continue/config.json` (legacy shape; current Continue wants a YAML list in `config.yaml` — see caveat above) | writes + warns |
+| Continue        | `~/.continue/config.json` (legacy shape; current Continue wants a YAML list in `config.yaml`, see the caveat above) | writes + warns |
 | Cline           | VS Code `globalStorage/saoudrizwan.claude-dev/...` | yes (default VS Code only) |
 | Hermes Agent    | `~/.hermes/config.yaml` (a YAML `mcp_servers` map, spliced in place) | yes |
 
@@ -188,14 +194,14 @@ events carry the same actor block. A stdio client has one out-of-band
 channel for declaring itself: the `env` block of its config entry,
 which the shim forwards to the daemon as request headers.
 
-- `BETTERMEMORY_CLIENT` — the client's name. `bettermemory init
+- `BETTERMEMORY_CLIENT`: the client's name. `bettermemory init
   --client cursor` writes `"env": {"BETTERMEMORY_CLIENT": "cursor"}`
   into the entry it patches; a value you set yourself is kept.
-- `BETTERMEMORY_CLIENT_VERSION`, `BETTERMEMORY_MODEL` — optional. The
+- `BETTERMEMORY_CLIENT_VERSION`, `BETTERMEMORY_MODEL`: optional. The
   handshake's `clientInfo` fills the client name and version when the
   client sends one (Claude Code does), so the model is the one you
   usually have to declare.
-- `BETTERMEMORY_WORKSPACE` — the project directory, for a host that
+- `BETTERMEMORY_WORKSPACE`: the project directory, for a host that
   starts the server somewhere else. One long-lived gateway serving many
   chat surfaces from `$HOME` (Hermes Agent's shape: stdio servers take
   `command`, `args` and `env`, and no `cwd`) would otherwise anchor
