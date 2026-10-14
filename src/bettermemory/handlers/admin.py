@@ -43,9 +43,10 @@ DESC_MEMORY_ADMIN = (
     "restore: tombstone `id` back. "
     "tombstones: the removed memories. health: the health report. "
     "rename_scope: `old_scope` to `new_scope`. conflicts: pending "
-    "contradiction pairs; scan=True detects, `id` with `verdict` (a, b, "
-    "both, neither) and `note` resolves. acknowledge_miss: search_miss `id` "
-    "with `reason`, or all misses before ISO `before`. disable_scope, "
+    "conflict pairs; scan=True detects, `id` with `verdict` "
+    "(contradiction|compatible) and `note` resolves. acknowledge_miss: "
+    "search_miss `id` with `reason`, or all misses before ISO `before`. "
+    "disable_scope, "
     "enable_scope: hide or unhide `scope` this session."
 )
 
