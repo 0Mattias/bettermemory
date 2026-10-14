@@ -12,7 +12,7 @@ The contractual list of MCP tools bettermemory exposes. Signatures, defaults and
 
 The `bettermemory` CLI carries the rest: `up`, `down` and `status` for the local daemon, `serve`, `health`, `tombstones`, `rollback`, `rename-scope`, `episodes`, `export`, `migrate v8`, `log verify`, `eval`, `review`, `recall`, `capture`, `init`, `try`, and the hook command (`hook session-start|stop|prompt`; `session-start`, `audit-turn` and `prompt-recall` are its 8.x aliases). The [CLI](#cli) section lists them.
 
-What 9.0 removed from the MCP surface, and where the work went: `memory_list` and `memory_scope_overview` (the session-start hook prints the session brief; `bettermemory export` lists the store), `memory_write_confirm` and `memory_write_cancel` with the staged-write flow, `memory_audit_turn` (the Stop hook runs the audit out of process), `memory_curate` and `memory_proposals` with their modules, `episode_search`, `episode_promote` (a promotion is a `memory_write` the model makes from a handoff it has read) and `episode_patterns`, and the eight tools that became `memory_admin` actions. The [CHANGELOG](../CHANGELOG.md) entry for 9.0.0 has the full list.
+What 9.0 removed from the MCP surface, and where the work went: `memory_list` and `memory_scope_overview` (the session-start hook prints the session brief; `bettermemory export` lists the store), `memory_write_confirm` and `memory_write_cancel` with the staged-write flow, `memory_audit_turn` (the Stop hook runs the audit in the daemon), `memory_curate` and `memory_proposals` with their modules, `episode_search`, `episode_promote` (a promotion is a `memory_write` the model makes from a handoff it has read) and `episode_patterns`, and the eight tools that became `memory_admin` actions. The [CHANGELOG](../CHANGELOG.md) entry for 9.0.0 has the full list.
 
 ## Retrieval
 
@@ -253,7 +253,7 @@ Renames the scope on every active memory and every tombstone carrying it. Return
 
 - `scope: str`. Singular.
 
-Returns `{disabled_scopes: [...]}`, the session's full disabled set after the change. Resets when the server process restarts. Disabled scopes are filtered from `memory_search`, from the tombstones listing and from `episode(action="handoff")`.
+Returns `{disabled_scopes: [...]}`, the session's full disabled set after the change. Resets when the client's shim or the daemon restarts, or the process under `bettermemory serve`. Disabled scopes are filtered from `memory_search`, from the tombstones listing and from `episode(action="handoff")`.
 
 ## Identity (who is calling, and from where)
 
@@ -267,19 +267,29 @@ Channels, in precedence order, each recording its own `source`:
 | `source` | Channel | Fills |
 | --- | --- | --- |
 | `principal` | the SDK's attested OAuth principal (HTTP with a token verifier) | `actor.principal` |
-| `header` | `x-bettermemory-client`, `x-bettermemory-client-version`, `x-bettermemory-model`, `x-bettermemory-workspace` request headers (HTTP only; client input) | the named field |
+| `header` | `x-bettermemory-client`, `x-bettermemory-client-version`, `x-bettermemory-model`, `x-bettermemory-workspace` request headers, and `x-bettermemory-session` when the transport carries no session id (HTTP only; client input) | the named field; `x-bettermemory-session` fills `actor.session` |
 | `env` | `BETTERMEMORY_CLIENT`, `BETTERMEMORY_CLIENT_VERSION`, `BETTERMEMORY_MODEL`, `BETTERMEMORY_WORKSPACE` on the server process, the only out-of-band channel a stdio server has; `bettermemory init --client X` writes `BETTERMEMORY_CLIENT` into that client's config block | the named field |
 | `client-info` | the `initialize` handshake's `clientInfo` (optional under the protocol; its absence is ordinary) | `actor.client`, `actor.client_version` |
-| `transport` | the transport's own session id (`mcp-session-id` under streamable HTTP; none on stdio) | `actor.session` |
+| `transport` | the transport's own session id (`mcp-session-id` under stateful streamable HTTP; none on stdio) | `actor.session` |
 | `roots` | the first `file://` root a roots-capable client offers on `roots/list`, asked once per connection before the first tool call | `workspace` |
 | `process-cwd` | the server process's working directory, the labelled fallback, never a silent default | `workspace` |
 | `transcript` | the Claude Code hooks, which read a transcript rather than the wire: the transcript id is the session, the transcript's model is the model | `actor` on hook events |
+
+Under the default topology a stdio client talks to the shim, which forwards each call to the daemon with these headers:
+
+- the client's `BETTERMEMORY_CLIENT`, `BETTERMEMORY_CLIENT_VERSION`, `BETTERMEMORY_MODEL` and `BETTERMEMORY_WORKSPACE`, as the matching `x-bettermemory-*` headers;
+- its `clientInfo` name and version, for whichever of the two the environment left unset;
+- its working directory as `x-bettermemory-workspace`, when no workspace is declared;
+- a per-process `x-bettermemory-session`;
+- Claude Code's session id (`CLAUDE_CODE_SESSION_ID`) as `x-bettermemory-harness-session`. It fills no actor field. It stamps tool events so they join the hook rows.
+
+The daemon therefore records `header` for the client, the workspace and the session. It serves stateless HTTP and issues no `mcp-session-id`. `client-info`, `roots` and `process-cwd` answer under `bettermemory serve` and the shim's in-process fallback, where the client talks to its own server process.
 
 Declared values are bounded client input: whitespace-trimmed, no control characters, at most 256 characters; anything else is dropped, not stored.
 
 The `actor` block is stored only when something is set, and `origin.source` is always stored. The read surfaces (`memory_show`, the `committed` response) render the full actor shape, nulls included, and label the origin's source. Events carry `actor` when it is non-empty.
 
-The session registry (disabled scopes, use tokens) keys on what can differ between two requests reaching one process: the attested principal, the transport session, and header-declared `client` / `model`, in that composite. Per-process channels (`env`, `client-info`) never key it, so a stdio client stays in the default bucket.
+The session registry (disabled scopes, use tokens) keys on what can differ between two requests reaching one process: the attested principal, the session (the transport's, or the `x-bettermemory-session` header's), and header-declared `client` / `model`, in that composite. Per-process channels (`env`, `client-info`) never key it. Each shim sends its own `x-bettermemory-session`, so each stdio client has its own bucket on the daemon. Under `bettermemory serve` a stdio client stays in the default bucket.
 
 Reading it back: `memory_search` takes `client` / `model` filters over the two declared fields, as a `WHERE` on the candidate query. The rule lives in one function, `identity.actor_matches`, which both the ranked set and the BM25 corpus-IDF denominator read, so term rarity is never priced against memories the caller cannot see.
 
