@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, v9]
   pull_request:
     branches: [main]
   # Callable as a reusable workflow so release.yml can gate the PyPI

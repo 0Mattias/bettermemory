@@ -177,8 +177,24 @@ jobs:
           name: dist
           path: dist/
 
+      - name: Read the tag's kind
+        id: kind
+        # A tag whose version carries a letter after the digits (`v9.0.0rc1`,
+        # `v9.0.0b1`, `v9.0.0.dev1`) is a pre-release in PEP 440 terms: pip and
+        # uv skip it unless asked for it by version, so the GitHub release is
+        # marked the same way and stays off the "latest" slot.
+        run: |
+          if [[ "${GITHUB_REF_NAME#v}" =~ [A-Za-z] ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "$GITHUB_REF_NAME is a pre-release tag"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "$GITHUB_REF_NAME is a release tag"
+          fi
+
       - name: Create release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           generate_release_notes: true
+          prerelease: ${{ steps.kind.outputs.prerelease == 'true' }}
           files: dist/*
