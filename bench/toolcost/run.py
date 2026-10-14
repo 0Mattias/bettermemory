@@ -318,6 +318,28 @@ def sandbox_daemons(sandbox: str, env: dict[str, str]) -> list[dict[str, Any]]:
 
 
 def _pid_alive(pid: int) -> bool:
+    """Whether a process with `pid` exists, as `_daemon_client.pid_alive`
+    answers it. Not `os.kill(pid, 0)` on Windows: there signal 0 is
+    CTRL_C_EVENT, sent to every process on the console, the test runner
+    included (the first two CI runs on v9 died of it at the wait below)."""
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        process_query_limited_information = 0x1000
+        still_active = 259
+        handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return False
+            return code.value == still_active
+        finally:
+            kernel32.CloseHandle(handle)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
