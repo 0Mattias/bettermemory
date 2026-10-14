@@ -1,32 +1,29 @@
 name: Install / setup failure
 description: bettermemory installs, but the MCP server doesn't start, or the model doesn't see the tools.
-labels: ["install"]
+labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Most install failures are diagnosed by `bettermemory doctor`.
-        **Run it first** and paste the output below — that catches
-        nine in ten common breakage modes (binary not on PATH, stale
-        client config pointing at a moved binary, storage dir not
-        writable, etc.).
+        Fill in the diagnostics field first. `bettermemory status` and
+        the daemon's log show whether the package runs, which store it
+        opens and whether its daemon started.
 
   - type: textarea
-    id: doctor
+    id: diagnostics
     attributes:
-      label: bettermemory doctor output
+      label: Diagnostics
       description: |
-        Run `bettermemory doctor --json` and paste the full output
-        here. The JSON form is preferred — it's machine-readable so
-        we can spot the failing check at a glance.
-      render: json
+        The output of `bettermemory status`, the last 20 lines of the
+        daemon log (`daemon-<hash>.log`, beside the `daemon-<hash>.json`
+        state file in bettermemory's user state directory, or in
+        `BETTERMEMORY_STATE_DIR` when it is set), and anything printed
+        when you run `bettermemory` by hand. Leave out
+        `bettermemory health` output: it contains memory summaries.
+      render: shell
       placeholder: |
-        {
-          "checks": [
-            {"name": "python_version", "status": "ok", ...},
-            ...
-          ]
-        }
+        $ bettermemory status
+        bettermemory daemon: not running for <store path>
     validations:
       required: true
 
@@ -42,6 +39,7 @@ body:
         - Cursor
         - Continue
         - Cline
+        - Hermes Agent
         - Other (describe in "What happened?")
     validations:
       required: true
@@ -60,7 +58,7 @@ body:
     attributes:
       label: bettermemory version
       description: Output of `bettermemory --version`.
-      placeholder: bettermemory 3.1.0
+      placeholder: bettermemory 9.0.0
     validations:
       required: true
 

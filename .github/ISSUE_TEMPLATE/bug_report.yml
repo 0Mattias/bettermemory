@@ -5,10 +5,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        For install / setup failures (server doesn't start, tools not
-        visible to the model, doctor reports a fail), use the **Install
-        failure** template instead — it asks for the doctor output
-        which is the right starting point for that class of issue.
+        For install or setup failures (the server does not start, the
+        model does not see the tools, `bettermemory status` reports no
+        daemon), use the **Install / setup failure** template instead.
 
   - type: textarea
     id: what_happened
@@ -21,8 +20,8 @@ body:
         from the MCP client's tool-call log if available.
       placeholder: |
         Called memory_search(query="x", auto_scope=False) and got back
-        an empty list, but `memory_list` shows 5 memories matching the
-        query. Expected at least one hit.
+        an empty list, but `bettermemory export --scope projects:x`
+        lists 5 memories matching the query. Expected at least one hit.
     validations:
       required: true
 
@@ -40,14 +39,13 @@ body:
       label: Reproduction
       description: |
         Smallest sequence of tool calls (or `bettermemory` CLI commands)
-        that triggers the bug from a clean store. The
-        `examples/programmatic_client.py` shape is a good starting
-        point if you want to script it.
+        that triggers the bug from a clean store.
       render: shell
       placeholder: |
         export BETTERMEMORY_DIR=/tmp/repro
+        bettermemory down     # stop any daemon serving this store
         rm -rf "$BETTERMEMORY_DIR"
-        bettermemory health  # confirms empty store
+        bettermemory health   # confirms an empty store
         # ... the failing sequence
     validations:
       required: true
@@ -57,7 +55,7 @@ body:
     attributes:
       label: bettermemory version
       description: Output of `bettermemory --version`.
-      placeholder: bettermemory 5.1.0
+      placeholder: bettermemory 9.0.0
     validations:
       required: true
 
@@ -70,11 +68,11 @@ body:
       required: true
 
   - type: textarea
-    id: doctor
+    id: status
     attributes:
-      label: bettermemory doctor output (optional)
+      label: bettermemory status output (optional)
       description: |
-        Paste `bettermemory doctor --json` if you have a hunch the
-        environment is involved. Skip if the bug clearly reproduces in
-        a clean tmp store.
-      render: json
+        Paste `bettermemory status`, and `bettermemory log verify --json`
+        if you suspect the store itself. Skip this if the bug reproduces
+        in a clean temporary store.
+      render: shell
