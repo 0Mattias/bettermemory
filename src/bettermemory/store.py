@@ -1570,7 +1570,8 @@ class Store:
             raise UnmigratedV8DirectoryError(
                 f"{path.parent} holds a bettermemory 8 store and no "
                 f"{STORE_FILENAME}; run `bettermemory migrate v8` to import it "
-                "(the directory is never written)"
+                "(`uvx bettermemory migrate v8` through the Claude Code plugin); "
+                "the 8.x files are left as they are"
             )
         return cls.create(path, keys_dir=keys_dir)
 
