@@ -299,11 +299,9 @@ not, so its size is measured: `bench/toolcost` serialises `tools/list`
 and the `initialize` reply and records every description, every input
 schema and the `instructions` block, in bytes and in characters, in a
 dated artifact under `bench/toolcost/results/`. Quote the artifact
-rather than any paragraph when they disagree. The 2026-07-26
-head-to-head against claude-mem in that directory is left as it was
-rather than re-paired: its bettermemory arm is the 27-tool surface, and
-re-running only our side would produce a ratio whose two sides came
-from different weeks.
+rather than any paragraph when they disagree. The 2026-07-26 artifact
+in that directory predates 9.0, so it measures 3.29.0's default
+surface. It is left as it was.
 
 ## CLI
 
