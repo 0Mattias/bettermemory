@@ -91,7 +91,8 @@ validated ships as declared claims on `memory_write` / `memory_verify`.
 - Episodes: a journal beside memory for run-state that never pollutes
   durable search; a takeaway that hardens into a fact is written with
   `memory_write` by the model that read it back.
-- Tombstones instead of deletes; everything is restorable, and a
+- Tombstones instead of deletes: a removed memory can be restored
+  until `bettermemory tombstones prune` deletes its tombstone. A
   restore re-checks the trust the tombstone carried (a claim the
   origin tree now contradicts or an attested path that no longer
   exists is dropped, the stamp with it).
@@ -129,12 +130,14 @@ search hits, `memory_show`, the recall pointer and the health report's
 `provenance` census. Episodes carry the same label, read the same way,
 and the handoff never delivers the body of an unaccounted episode.
 
-A store opened on a machine that does not hold its key cannot verify
-any pointer: every row reads `trust_unavailable`, and a stamp of
-unknown origin is not read as this host's. `bettermemory log verify`
-is the whole-chain audit: it walks every row, checks every MAC and
-every link to the row before, compares the head checkpoint, and refolds
-the log to compare every table against it.
+A server that opens a store whose key is not on this machine writes a
+new key and appends a `rekey` row. Rows signed under a key this
+machine does not hold keep their stored labels, since their pointers
+cannot be checked, and stamps copied with the store read as this
+host's. `bettermemory log verify` is the whole-chain audit: it walks
+every row, checks every MAC and every link to the row before,
+compares the head checkpoint, and refolds the log to compare every
+table against it. It reports a rekeyed store `unverifiable`.
 
 Cost: one indexed log lookup and one HMAC per row served, nothing per
 candidate. What it cannot see: an injection-driven legitimate write,
@@ -178,12 +181,18 @@ per-client `SessionState` for the request (disabled scopes, use
 tokens), keyed on that caller, and `_response.py` shapes what goes back
 on the wire. `_decorators.py` and `time_utils.py` are cross-cutting.
 
-**Write path.** `handlers/write.py` runs the gate chain:
-`credentials.py` (secret-shaped strings), `durability.py` (structural
-durability), `scope_match.py` (scope mismatch against the caller's
-repo), `claims.py` (declared claims checked against the worktree),
-`supersession.py` (does this replace a stored statement),
-`conflicts.py` (contradiction candidates). A write that passes lands
+**Write path.** `handlers/write.py` first checks declared claims
+against the worktree (`claims.py`) and any declared `supersedes`
+list. It then runs the gate chain: `credentials.py` (secret-shaped
+strings), the capture gates on a capture write (the rules in
+`durability.py`, and a body an undo reverted before), `durability.py`
+(structural durability), the user-claim check, `scope_match.py`
+(scope mismatch against the caller's repo), and duplicate and
+tombstone dedup. `review.py` then puts the write review's questions
+to the caller. `supersession.py` decides whether the write replaces a
+stored statement; the review runs it to build its related set, and
+the commit runs it when the review did not. A cue-less divergence is
+filed in the conflicts queue (`conflicts.py`). A write that passes lands
 in `store.py` as one signed log row and one table row in one
 transaction, with `log.py` signing the row and keeping the chain.
 `origin.py` stamps where the write happened.
@@ -211,16 +220,17 @@ through; each event is a row of the store's log. `audit.py` and
 `eval.py` computes the effectiveness rates; `health.py` is the rollup
 `handlers/health.py` and the CLI serve.
 
-**Hooks.** `hook.py` is the Claude Code side: the Stop-hook turn audit
-and settlement, invoked through `cli/audit_turn_cmd.py`. `recall.py` is
-the recall surface, the session brief and the prompt recall with their
-per-session cooldown, invoked through `cli/session_start_cmd.py` and
-`cli/prompt_recall_cmd.py`; `verdict.py` is the one memoised verdict it
-and `memory_show` read. The daemon serves all three bodies at
-`/api/v1/hook/`. They run out of process, so they read the store rather
-than the server's session state, and join the conversation's tool rows
-by the harness session stamp, the worktree bridge when nothing carries
-it. Claude Code names the conversation anew on /clear and /resume while
+**Hooks.** `bettermemory hook session-start|stop|prompt` runs the
+standard-library client in `_daemon_client.py`, which posts the hook's
+payload to the daemon, and `daemon.py` serves the three bodies at
+`/api/v1/hook/`. `hook.py` is the Stop body: the turn audit and
+settlement. `recall.py` is the recall surface, the session brief and
+the prompt recall with their per-session cooldown; `verdict.py` is the
+one memoised verdict it and `memory_show` read. The bodies run in the
+daemon but outside the MCP request path, so they read the store rather
+than a session's state. They join the conversation's tool rows by the
+harness session stamp, the worktree bridge when nothing carries it.
+Claude Code names the conversation anew on /clear and /resume while
 the server keeps the id it was spawned with, so a server stamped with
 another id is another window's only when that id's hooks run beside this
 conversation (a hook row at or after its first); otherwise the bridge
@@ -264,7 +274,8 @@ a new cross-cutting concept belongs here, not in a cycle.
 ## Storage
 
 One SQLite file per store, `memory.sqlite` in the store directory
-(`store.py`). The tables hold the records: `memories`, `tombstones`,
+(`store.py`). The tables hold the records: `memories`,
+`memory_links` (each memory's links, folded with it), `tombstones`,
 `episodes`, `conflicts`, `verifications` (this host's stamps),
 `quarantine` and `imports`, plus the FTS5 table and triggers the 8.x
 index used, kept verbatim so the candidate query returns the same ids
@@ -279,7 +290,8 @@ holds the key's fingerprint, and a head checkpoint beside the key
 records the last row written. Every record row carries the MAC of the
 log row that produced it, which is what the provenance label reads.
 
-The store resolves to `$BETTERMEMORY_DIR` if set, else `./.claude-memory/`
+The store resolves to `$BETTERMEMORY_DIR` if set, else
+`[storage] directory` in `config.toml` if set, else `./.claude-memory/`
 if it exists, else `~/.claude-memory/`. An 8.x directory is read by
 `bettermemory migrate v8` and written by `bettermemory export --mirror`;
 the running server never reads or writes markdown files.
@@ -342,8 +354,10 @@ the knobs (`default_max_results`, `search_mode`, `conversational`,
 `[scopes]` the allowed list and typo exceptions, `[telemetry]` the one
 switch, `enabled`, `[daemon]` the port (7397 by default), and
 `[capture]` session capture's switch and bounds (`stop_checkpoint`,
-`checkpoint_tokens`, `daily_cap`). A key 9.0 removed loads with one
-logged warning and is ignored; the file's own comments say which.
+`checkpoint_tokens`, `daily_cap`). A removed key or section
+(`full_tool_surface`, `[consolidate]`, `[proposals]` and the rest
+`config.py` lists) loads with one logged warning that names it, the
+release that removed it and why. It is then ignored.
 
 ## Limitations
 
@@ -352,9 +366,10 @@ logged warning and is ignored; the file's own comments say which.
 - Tamper evidence, not tamper protection. A writer who holds the key
   can sign anything; a writer who holds the store file but not the key
   is detected, not stopped. `SECURITY.md` draws the line.
-- One host per store. The cross-host lane is not in 9.0: a store copied
-  to another machine reads there, without its key, as
-  `trust_unavailable`.
+- One host per store. The cross-host lane is not in 9.0. A store
+  copied to another machine without its key is rekeyed there: its rows
+  keep the labels they arrived with, and `log verify` reports it
+  `unverifiable`.
 - One writer at a time. SQLite serialises writers; a second server
   process on the same store waits on the busy timeout rather than
   interleaving.
