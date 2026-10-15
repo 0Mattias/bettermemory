@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -490,6 +491,66 @@ def _wait_stopped(pid: int, port: int, timeout: float) -> bool:
     return True
 
 
+_VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)(?:(a|b|rc)(\d+))?(?:\.dev(\d+))?")
+_PRE_RANK = {"a": 0, "b": 1, "rc": 2}
+
+
+def version_key(text: object) -> tuple[int, ...] | None:
+    """`text` as a key that sorts in PEP 440 order for the shapes this
+    project spells (`X.Y.Z`, `X.Y.ZrcN`, `X.Y.Z.devN`; `aN` and `bN` read
+    the same way): a dev release before the pre-releases of its version,
+    those before the final. None for anything else, a version this cannot
+    place. `re` is the one module this costs, and `urllib.request` imports
+    it already, so the hook path pays nothing for it."""
+    if not isinstance(text, str):
+        return None
+    match = _VERSION.fullmatch(text.strip())
+    if match is None:
+        return None
+    major, minor, patch, pre, pre_n, dev = match.groups()
+    if pre is not None:
+        pre_key = (_PRE_RANK[pre], int(pre_n))
+    elif dev is not None:
+        pre_key = (-1, 0)
+    else:
+        pre_key = (3, 0)
+    dev_key = (0, int(dev)) if dev is not None else (1, 0)
+    return (int(major), int(minor), int(patch), *pre_key, *dev_key)
+
+
+def _keeps(state: dict[str, Any], theirs: object, mine: str) -> bool:
+    """Whether a client of version `mine` keeps the daemon in `state`,
+    which reports version `theirs`: yes for the same version and for a
+    newer one, with one log line for the newer; no for an older one and
+    for one whose version `version_key` cannot read, which the caller
+    then replaces. A newer daemon is kept and used because two installs
+    at different versions on one store (the plugin's unpinned `uvx
+    bettermemory` beside a `uv tool install` or a venv) would otherwise
+    restart the daemon under each other, each flip costing the other
+    client a failed call and the shutdown wait. `logging` is imported
+    here, not at the top: only a kept newer daemon pays for it, and the
+    hook path, which configures no logging, drops the line (INFO is
+    under the last-resort handler's level) while the shim's stderr shows
+    it once at start."""
+    if theirs == mine:
+        return True
+    ours, other = version_key(mine), version_key(theirs)
+    if ours is None or other is None or other < ours:
+        return False
+    import logging
+
+    logging.getLogger(__name__).info(
+        "keeping the daemon of version %s at %s:%s (pid %s), newer than this "
+        "client's %s",
+        theirs,
+        HOST,
+        state["port"],
+        state["pid"],
+        mine,
+    )
+    return True
+
+
 def ensure_daemon(
     state_dir: Path,
     store_path: Path | str,
@@ -500,12 +561,13 @@ def ensure_daemon(
     timeout: float = START_TIMEOUT_SECONDS,
     env: dict[str, str] | None = None,
 ) -> dict[str, Any] | None:
-    """The state of a running daemon of `version` for `store_path`,
-    starting one when `start` and none answers. A daemon of another
-    version is stopped and replaced. None when no daemon can be reached, or
-    none answers within `timeout` of the start. Raises `DaemonExited` when
-    the daemon it started exited before any answered, naming that daemon's
-    error.
+    """The state of a running daemon for `store_path` that a client of
+    `version` can use, starting one when `start` and none answers. A
+    daemon of an older version, or of one `version_key` cannot read, is
+    stopped and replaced; one of the same or a newer version is kept
+    (`_keeps`). None when no daemon can be reached, or none answers within
+    `timeout` of the start. Raises `DaemonExited` when the daemon it
+    started exited before any answered, naming that daemon's error.
 
     A state file whose daemon does not answer is left for the daemon
     started next to overwrite, not removed: it may name a daemon that is
@@ -519,9 +581,9 @@ def ensure_daemon(
     state = read_state(state_dir, store_path)
     if state is not None:
         answer = health(state["port"], timeout=0.5)
-        if answer is not None and answer.get("version") == version:
-            return state
         if answer is not None:
+            if _keeps(state, answer.get("version"), version):
+                return state
             shutdown_daemon(state)
             remove_state(state_dir, store_path, pid=int(state["pid"]))
     if not start:
@@ -540,7 +602,7 @@ def ensure_daemon(
         # A client that held the lock before this one may have started a
         # daemon that answers by now.
         state = _answering(state_dir, store_path)
-        if state is not None and state.get("version") == version:
+        if state is not None and _keeps(state, state.get("version"), version):
             return state
         try:
             started = _spawn(state_dir, store_path, port=port, env=env)
@@ -781,6 +843,7 @@ __all__ = [
     "start_daemon",
     "state_file_for",
     "try_lock",
+    "version_key",
     "wait_for_daemon",
     "write_state",
 ]

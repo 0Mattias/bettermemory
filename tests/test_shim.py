@@ -185,7 +185,7 @@ class _FakeHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(b"{}")
 
 
-async def test_shim_restarts_a_daemon_of_another_version(
+async def test_shim_replaces_a_daemon_of_an_older_version(
     tmp_path: Path, daemon_env: dict[str, str]
 ) -> None:
     fake = _FakeDaemon(("127.0.0.1", 0), _FakeHandler)
@@ -531,6 +531,38 @@ async def test_shim_reconnects_to_a_daemon_of_another_version_and_keeps_it(
     finally:
         first.stop()
         second.stop()
+
+
+@pytest.mark.parametrize(
+    "running_version", ["999.0.0", __version__], ids=["newer", "equal"]
+)
+async def test_shim_keeps_a_daemon_of_the_same_or_a_newer_version(
+    tmp_path: Path, running_version: str
+) -> None:
+    """At start the shim uses a daemon of its own version or a newer one
+    as it is, with one stderr line for a newer one: a shim from an older
+    install beside a newer daemon serves through it instead of
+    restarting it under the newer install's clients."""
+    env = _fake_shim_env(tmp_path)
+    store = _store_path(tmp_path)
+    fake = _FakeMcpDaemon(version=running_version, token="a" * 64)
+    stderr_path = tmp_path / "shim.stderr"
+    try:
+        write_state(tmp_path / "state", fake.state(store))
+        with stderr_path.open("w") as stderr:
+            async with stdio_client(_shim_params(env), errlog=stderr) as (r, w):
+                async with ClientSession(r, w) as session:
+                    init = await session.initialize()
+                    assert init.server_info.version == __version__
+                    assert f"answered by {fake.port}" in _text(await _search(session))
+        assert fake.shutdown_calls == 0
+        assert fake.calls == 1
+        state = read_state(tmp_path / "state", store)
+        assert state is not None and state["port"] == fake.port
+    finally:
+        fake.stop()
+    kept = f"keeping the daemon of version {running_version} at 127.0.0.1:{fake.port}"
+    assert (kept in stderr_path.read_text()) == (running_version != __version__)
 
 
 @pytest.mark.parametrize("args", [[], ["serve"]], ids=["shim", "serve"])

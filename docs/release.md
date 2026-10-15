@@ -92,7 +92,8 @@ pytest tests/test_plugin.py tests/test_version.py -q
 #     release notes say so (CONTRIBUTING.md, the compatibility
 #     contract); `bettermemory migrate v8` is the pattern. The daemon
 #     needs no restart ritual: the first call from an upgraded shim or
-#     hook replaces a running daemon of another version.
+#     hook replaces a running daemon of an older version (a newer one
+#     is kept, so an older client never restarts it).
 
 # 6. Commit, tag, push the branch, then the tag.
 git commit -am "release: <X.Y.Z>"

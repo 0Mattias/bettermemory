@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import http.server
 import json
+import logging
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -18,7 +20,7 @@ import time
 import tomllib
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -331,19 +333,47 @@ def test_a_malformed_config_does_not_stop_a_hook_that_names_its_store(
 
 
 class _StaleDaemon(http.server.ThreadingHTTPServer):
-    shutdown_calls = 0
+    """A daemon's HTTP surface, enough for a hook: /health answers
+    `version`, a shutdown request is counted, and a hook post is counted
+    and answered with nothing to print."""
+
+    def __init__(self, version: str) -> None:
+        super().__init__(("127.0.0.1", 0), _StaleHandler)
+        self.version = version
+        self.shutdown_calls = 0
+        self.hook_calls = 0
+        threading.Thread(target=self.serve_forever, daemon=True).start()
+
+    @property
+    def port(self) -> int:
+        return int(self.server_address[1])
+
+    def state(self, store: Path) -> dict[str, Any]:
+        return {
+            "pid": 2**22 + 4321,
+            "port": self.port,
+            "token": "t" * 64,
+            "version": self.version,
+            "store": str(store),
+            "started": "2026-01-01T00:00:00Z",
+        }
+
+    def stop(self) -> None:
+        self.shutdown()
+        self.server_close()
 
 
 class _StaleHandler(http.server.BaseHTTPRequestHandler):
-    """A daemon of another version: /health answers 0.0.1, and a shutdown
-    request is counted."""
+    @property
+    def fake(self) -> _StaleDaemon:
+        return cast(_StaleDaemon, self.server)
 
     def log_message(self, *args: object) -> None:
         return
 
     def do_GET(self) -> None:  # noqa: N802
         body = json.dumps(
-            {"status": "ok", "version": "0.0.1", "store": "x", "pid": 1}
+            {"status": "ok", "version": self.fake.version, "store": "x", "pid": 1}
         ).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -352,42 +382,111 @@ class _StaleHandler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         if self.path == _daemon_client.SHUTDOWN_PATH:
-            self.server.shutdown_calls += 1  # type: ignore[attr-defined]
+            self.fake.shutdown_calls += 1
+        elif self.path.startswith(_daemon_client.HOOK_PATH):
+            self.fake.hook_calls += 1
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(b"{}")
 
 
-def test_the_hook_replaces_a_daemon_of_another_version_and_keeps_its_own(
-    tmp_path: Path, daemon_env: dict[str, str]
+def _dev_build_of_this_release() -> str:
+    """`X.Y.Z.dev0` for pyproject's `X.Y.Z[rcN]`: the version a checkout
+    installed before the candidate reports, older than the candidate."""
+    match = re.match(r"\d+\.\d+\.\d+", _pyproject_version())
+    assert match is not None
+    return match.group(0) + ".dev0"
+
+
+_ASCENDING = [
+    "0.0.1",
+    "9.0.0.dev0",
+    "9.0.0.dev1",
+    "9.0.0a1",
+    "9.0.0b2",
+    "9.0.0rc1.dev1",
+    "9.0.0rc1",
+    "9.0.0rc2",
+    "9.0.0",
+    "9.0.1",
+    "9.1.0",
+    "10.0.0",
+]
+
+
+def test_version_keys_sort_in_pep_440_order() -> None:
+    keys = [_daemon_client.version_key(text) for text in _ASCENDING]
+    assert all(key is not None for key in keys)
+    assert keys == sorted(keys, key=lambda key: key or ())
+    assert len(set(keys)) == len(keys)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["", "9", "9.0", "v9.0.0", "9.0.0.post1", "9.0.0+local", "9.0.0rc", None, 9],
+)
+def test_a_version_of_another_shape_has_no_key(text: object) -> None:
+    assert _daemon_client.version_key(text) is None
+
+
+def test_a_client_keeps_the_same_or_a_newer_daemon_and_replaces_the_rest(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The rule behind `ensure_daemon`: a daemon of the client's version
+    or a newer one is kept, with one log line for the newer; an older
+    one, and one whose version cannot be read, is replaced. A client
+    whose own version cannot be read keeps only the same string."""
+    state = {"port": 1, "pid": 1}
+
+    def keeps(theirs: object, mine: str) -> bool:
+        return _daemon_client._keeps(state, theirs, mine)
+
+    caplog.set_level(logging.INFO, logger="bettermemory._daemon_client")
+    assert keeps("9.0.0rc1", "9.0.0rc1")
+    assert keeps("9.0.1", "9.0.0")
+    assert keeps("9.0.0", "9.0.0rc1")
+    assert not keeps("9.0.0rc1", "9.0.0")
+    assert not keeps("9.0.0.dev0", "9.0.0rc1")
+    assert not keeps("0.0.1", "9.0.0rc1")
+    assert not keeps("not-a-version", "9.0.0rc1")
+    assert not keeps(None, "9.0.0rc1")
+    assert keeps("9.0.0+local", "9.0.0+local")
+    assert not keeps("9.0.1", "9.0.0+local")
+    assert [record.getMessage() for record in caplog.records] == [
+        "keeping the daemon of version 9.0.1 at 127.0.0.1:1 (pid 1), newer than "
+        "this client's 9.0.0",
+        "keeping the daemon of version 9.0.0 at 127.0.0.1:1 (pid 1), newer than "
+        "this client's 9.0.0rc1",
+    ]
+
+
+@pytest.mark.parametrize(
+    "stale_version",
+    ["0.0.1", _dev_build_of_this_release(), "not-a-version"],
+    ids=["older", "dev-build-of-this-release", "unreadable"],
+)
+def test_the_hook_replaces_a_daemon_of_an_older_version_and_keeps_its_own(
+    tmp_path: Path, daemon_env: dict[str, str], stale_version: str
 ) -> None:
     """After an upgrade the state file names a daemon of the old version:
     the hook asks it to stop and starts one of its own. The daemon it
     starts reports the version the hook compares against (the version
     file's, which is pyproject's), so the next hook keeps it rather than
-    replacing it again."""
+    replacing it again. A dev build of this release is older than its
+    candidate, and a version the hook cannot read is replaced too."""
     repo = _briefable_repo(tmp_path)
     payload = {"cwd": str(repo), "session_id": "sess_brief"}
-    stale = _StaleDaemon(("127.0.0.1", 0), _StaleHandler)
-    thread = threading.Thread(target=stale.serve_forever, daemon=True)
-    thread.start()
+    stale = _StaleDaemon(stale_version)
     try:
         write_state(
-            tmp_path / "state",
-            {
-                "pid": 2**22 + 4321,
-                "port": stale.server_address[1],
-                "token": "t" * 64,
-                "version": "0.0.1",
-                "store": str(tmp_path / "store" / "memory.sqlite"),
-                "started": "2026-01-01T00:00:00Z",
-            },
+            tmp_path / "state", stale.state(tmp_path / "store" / "memory.sqlite")
         )
         first = _hook(["hook", "session-start"], daemon_env, payload)
         assert first.returncode == 0, first.stderr
         assert first.stdout.startswith(_BRIEF_HEAD)
         assert stale.shutdown_calls == 1
+        assert stale.hook_calls == 0
         state = _wait_running(tmp_path)
         assert state["version"] == _pyproject_version()
         assert state["version"] == _daemon_client.package_version()
@@ -398,8 +497,42 @@ def test_the_hook_replaces_a_daemon_of_another_version_and_keeps_its_own(
         assert second.stdout == first.stdout
         assert _wait_running(tmp_path)["pid"] == state["pid"], "kept, not replaced"
     finally:
-        stale.shutdown()
-        stale.server_close()
+        stale.stop()
+
+
+@pytest.mark.parametrize(
+    "running_version", ["999.0.0", _pyproject_version()], ids=["newer", "equal"]
+)
+def test_the_hook_keeps_a_daemon_of_the_same_or_a_newer_version(
+    tmp_path: Path, running_version: str
+) -> None:
+    """A daemon that answers /health with the hook's version or a newer
+    one is used as it is: no shutdown, no daemon started, nothing on
+    stderr (a kept daemon is not a failure), and the hook's post goes to
+    it. So a hook from an older install beside a newer one does not
+    restart the daemon under the newer install's client."""
+    env = _env(tmp_path)
+    store = tmp_path / "store" / "memory.sqlite"
+    running = _StaleDaemon(running_version)
+    try:
+        write_state(tmp_path / "state", running.state(store))
+        result = _hook(
+            ["hook", "session-start"],
+            env,
+            {"cwd": str(tmp_path), "session_id": "sess_keep"},
+        )
+        assert result.returncode == 0
+        assert result.stdout == ""
+        assert result.stderr == ""
+        assert running.shutdown_calls == 0
+        assert running.hook_calls == 1
+        state = _daemon_client.read_state(tmp_path / "state", store)
+        assert state is not None and state["port"] == running.port
+    finally:
+        running.stop()
+        after = _daemon_client.read_state(tmp_path / "state", store)
+        if after is not None and after["port"] != running.port:
+            _cli(["down"], env, timeout=30)
 
 
 def _malformed_config(tmp_path: Path, env: dict[str, str]) -> dict[str, str]:

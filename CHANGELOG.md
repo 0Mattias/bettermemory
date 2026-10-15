@@ -168,8 +168,10 @@ until the stable `9.0.0` is tagged. Ask for a candidate by version
   is now a stdio shim: a real stdio MCP server whose `initialize`
   carries the daemon's instructions and this package's version and
   whose `tools/list` and `tools/call` forward to the daemon, starting
-  one when none answers, restarting one of another version, and serving
-  the store in-process (the 8.x shape, `bettermemory serve`) with one
+  one when none answers, replacing one of an older version (a newer
+  one is kept and used, so two installs at different versions on one
+  store do not restart the daemon under each other), and serving the
+  store in-process (the 8.x shape, `bettermemory serve`) with one
   stderr line when no daemon can be reached or started. Per-client
   session state is keyed on the `x-bettermemory-session` header the
   shim sets per process; the shim forwards the client's `clientInfo`
@@ -178,7 +180,7 @@ until the stable `9.0.0` is tagged. Ask for a candidate by version
   declared them. `bettermemory hook session-start|stop|prompt` reads
   the hook's stdin JSON, posts it to the daemon and prints the answer,
   through a path that imports nothing from the SDK. It reads the version
-  a running daemon's must match from `bettermemory/_version.py`, which
+  a running daemon's is held against from `bettermemory/_version.py`, which
   hatchling's version build hook writes from `pyproject.toml` at every
   build and editable install, without `importlib.metadata` (the
   installed metadata answers only where no build wrote the file); and

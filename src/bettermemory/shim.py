@@ -339,10 +339,10 @@ def run_shim() -> None:
     )
 
     def find() -> tuple[dict[str, Any] | None, str | None]:
-        # Not ensure_daemon: that stops a daemon of another version, and a
-        # shim holds the version it imported, so after an upgrade an older
-        # shim would stop the newer daemon on every reconnect. Whatever
-        # daemon answers serves; one is started only when none does.
+        # Not ensure_daemon: a reconnect finds the daemon again, it does
+        # not upgrade it, so an older daemon that came up meanwhile is not
+        # replaced here either. Whatever daemon answers serves; one is
+        # started only when none does.
         found = _answering(state_dir, store_path)
         if found is not None:
             return found, None
