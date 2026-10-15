@@ -78,6 +78,7 @@ jobs:
       # with no indication of WHICH validation. Each check below names the
       # thing it verified, so a failure is actionable from the log alone.
       - name: Check the preconditions the registry will check
+        id: preconditions
         env:
           # Empty on a dispatch (the backfill case, where server.json is the
           # authority). `github.ref_name` is the tag on a `release` event;
@@ -116,6 +117,18 @@ jobs:
             echo "tag $EXPECTED_TAG agrees with server.json"
           fi
 
+          # A pre-release (a letter after the version's digits: `v9.0.0rc1`,
+          # `v9.0.0.dev1`) is published to PyPI for whoever asks for it by
+          # version and is not listed: the registry carries one version per
+          # server, and a listing is what registry clients install by default.
+          # The stable tag that follows lists as usual.
+          if printf '%s' "${VERSION}" | grep -q '[A-Za-z]'; then
+            echo "${VERSION} is a pre-release; not listed in the registry"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "prerelease=false" >> "$GITHUB_OUTPUT"
+
           # The version must be ON PyPI. Ordering makes this true already; the
           # check turns "true by construction" into "observed", which is the
           # distinction this project keeps having to relearn. The JSON
@@ -148,6 +161,7 @@ jobs:
           echo "pypi description carries the mcp-name marker"
 
       - name: Install mcp-publisher
+        if: steps.preconditions.outputs.prerelease != 'true'
         # Unpinned, following the upstream guide, and the tradeoff is
         # deliberate: the registry is in preview and its API moves with the
         # tool, so a pin here buys reproducibility at the cost of breaking
@@ -159,7 +173,9 @@ jobs:
           ./mcp-publisher --version || true
 
       - name: Authenticate to the registry (GitHub OIDC)
+        if: steps.preconditions.outputs.prerelease != 'true'
         run: ./mcp-publisher login github-oidc
 
       - name: Publish
+        if: steps.preconditions.outputs.prerelease != 'true'
         run: ./mcp-publisher publish
