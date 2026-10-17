@@ -223,14 +223,21 @@ the conversation then retrieved a memory written in its project). Each
 sample shows its pointers with a summary from the store and the prompt
 it answered, read from the session's transcript under
 `~/.claude/projects` (`--transcripts DIR`) at review time and never
-stored: a delivery's by its prompt id, a brief's as the first prompt
-after it, a silent turn's as the latest before its Stop; a sample from
-another harness shows none. A sample already graded is not drawn again.
+stored: a delivery's as the user row whose text hashes to the row's
+probe (its prompt id row, labelled `unverified`, when none does), a
+brief's as the first prompt after it, a silent turn's as the latest
+before its Stop. Each sample names its prompt kind (`owner`,
+`task_notification`, `agent_message`, `cross_session`, `unknown`). A
+sample whose prompt is in no row, whose transcript is missing or which
+came from another harness is passed over for the next sample of its
+stratum in the seeded order and listed as ungradeable, so the record
+shows what the draw skipped. A sample already graded is not drawn again.
 `bettermemory recall grade <sample_id> --relevant ID... --irrelevant
-ID...` records a grade as a `recall_grade` event (for a silent prompt,
-relevant means the recall should have pointed at the memory); the
-latest grade of an id in a sample counts. The draw is meant every three
-to four days for two weeks, then weekly. `recall_review.py` holds it.
+ID...` records a grade as a `recall_grade` event carrying the rule that
+made the sample as `sample_rule` (for a silent prompt, relevant means
+the recall should have pointed at the memory); the latest grade of an id
+in a sample counts. The draw is meant every three to four days for two
+weeks, then weekly. `recall_review.py` holds it.
 
 When the window holds any row of the recall surface (a `session_brief`,
 a `prompt_recall` carrying `rule`, a settlement, a `segment_opened`, a

@@ -137,6 +137,86 @@ def test_the_floor_and_the_acknowledgment_gate_deliver_nothing(
 
 
 # ---------------------------------------------------------------------------
+# The prompt the harness composed
+# ---------------------------------------------------------------------------
+
+TASK_NOTIFICATION = (
+    "<task-notification>\n<task-id>bq5</task-id>\n<status>completed</status>\n"
+    f"<summary>{QUERY} check finished</summary>\n</task-notification>"
+)
+AGENT_MESSAGE = (
+    f'<agent-message from="acf8db08" name="helper">\n{QUERY}: the restic job '
+    "is ready for review\n</agent-message>"
+)
+CROSS_SESSION = (
+    f'<cross-session-message from="uds">\n{QUERY} please\n</cross-session-message>'
+)
+SIDE_SESSIONS_EVENT = (
+    f"<side-sessions-event>\n{QUERY} session ended\n</side-sessions-event>"
+)
+REMINDER = (
+    "<system-reminder>\nLinked sessions now: " + "x " * 1_200 + "\n</system-reminder>"
+)
+
+
+@pytest.mark.parametrize(
+    "prompt", [TASK_NOTIFICATION, AGENT_MESSAGE, CROSS_SESSION, SIDE_SESSIONS_EVENT]
+)
+def test_a_prompt_the_harness_composed_delivers_nothing_and_holds_nothing(
+    world: PromptWorld, prompt: str
+) -> None:
+    """A task notification, a message from another session or a
+    side-session note reaches the hook as the prompt; no one asked
+    anything. Nothing is probed or recorded, and the id is still there
+    for the owner's next prompt in the same session."""
+    memory = world.write()
+    assert world.recall(prompt, session_id="transcript-harness").stdout == ""
+    assert world.recalls() == []
+    assert world.recall(session_id="transcript-harness").ids == (memory.id,)
+
+
+def test_an_owner_prompt_that_names_a_tag_still_delivers(world: PromptWorld) -> None:
+    memory = world.write()
+    result = world.recall(
+        f"{QUERY} uses restic replication, per the <task-notification>"
+    )
+    assert result.ids == (memory.id,)
+
+
+def test_a_reminder_wrapped_owner_prompt_is_probed_on_the_owners_words(
+    world: PromptWorld,
+) -> None:
+    """The app composes a session's first prompt as reminder blocks ahead
+    of the typed text; the probe reads the typed text."""
+    memory = world.write()
+    prompt = f"{REMINDER}\n\n{QUERY}"
+    result = world.recall(prompt)
+    assert result.ids == (memory.id,)
+    (event,) = world.recalls()
+    cleaned = clean_prompt(prompt)
+    assert cleaned.strip() == QUERY
+    assert event["probe_query"]["len"] == len(cleaned)
+    assert event["probe_query"]["preview"] == cleaned[:32]
+
+
+def test_a_reminder_only_prompt_delivers_nothing(world: PromptWorld) -> None:
+    world.write(f"linked sessions {BODY}")
+    assert world.recall(REMINDER).stdout == ""
+    # An unclosed reminder is caught by its opening.
+    assert world.recall(f"<system-reminder>\nlinked sessions now {QUERY}").stdout == ""
+    assert world.recalls() == []
+
+
+def test_clean_prompt_removes_reminder_blocks() -> None:
+    cleaned = clean_prompt(f"{REMINDER}\n\n{QUERY}")
+    assert "system-reminder" not in cleaned and "Linked" not in cleaned
+    assert cleaned.strip() == QUERY
+    # A prompt without a reminder or a paste reads byte for byte as before,
+    # so the hashes the log already holds keep matching.
+    assert clean_prompt(QUERY) == QUERY
+
+
+# ---------------------------------------------------------------------------
 # A delivery: the block and the event
 # ---------------------------------------------------------------------------
 
@@ -154,7 +234,7 @@ def test_a_delivery_block_and_event(world: PromptWorld) -> None:
     assert result.surface == "prompt_recall"
     assert result.ids == (memory.id,)
     assert result.chars == len(result.stdout)
-    assert result.rule == "rs-v1"
+    assert result.rule == "rs-v2"
     # The old block's promise that recording `ignored` tunes recall down
     # is gone: no ranking reads outcomes.
     assert "ignored" not in result.stdout
@@ -163,7 +243,7 @@ def test_a_delivery_block_and_event(world: PromptWorld) -> None:
     assert event["event_id"] == result.event_id
     assert event["shown_ids"] == [memory.id]
     assert event["suppressed_ids"] == []
-    assert event["rule"] == "rs-v1"
+    assert event["rule"] == "rs-v2"
     assert event["chars"] == event["injected_chars"] == len(result.stdout)
     assert event["segment"] == 0
     assert event["delivered_reason"] == "project"

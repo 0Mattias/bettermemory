@@ -124,8 +124,11 @@ __all__ = [
 
 
 # The delivery rule's name, recorded on both events so a later rule can
-# be told apart in the log.
-RULE = "rs-v1"
+# be told apart in the log. "rs-v2" (RS-F1, 2026-10-17) is "rs-v1" with
+# the synthetic-prompt gate: a prompt the harness composed is not probed.
+# Every row written after that landing carries it, so a read of the log
+# splits on the row's rule and never on a clock.
+RULE = "rs-v2"
 
 # The harness a hook payload names when it names none: the one whose
 # hook protocol the plugin implements.
@@ -224,6 +227,13 @@ _SEEN_KINDS: frozenset[str] = frozenset(
 
 _PASTED_CONTENT = re.compile(
     r"<pasted_content\b[^>]*?(?:/>|>.*?</pasted_content\s*>)",
+    re.DOTALL | re.IGNORECASE,
+)
+# The app composes a session's first prompt as one or more reminder
+# blocks ahead of the typed text; the block is harness text, not the
+# owner's words.
+_SYSTEM_REMINDER = re.compile(
+    r"<system-reminder\b[^>]*>.*?</system-reminder\s*>",
     re.DOTALL | re.IGNORECASE,
 )
 
@@ -1255,10 +1265,18 @@ def _brief_in_segment(
 
 
 def clean_prompt(prompt: str) -> str:
-    """The prompt as the probe reads it: every ``<pasted_content …>`` block
-    removed (a paste is material the user handed over, not what they
-    asked), then cut at `PROMPT_CUT_CHARS`."""
-    return _PASTED_CONTENT.sub(" ", prompt)[:PROMPT_CUT_CHARS]
+    """The prompt as the probe reads it: every ``<system-reminder>…
+    </system-reminder>`` block removed (the app composes a session's first
+    prompt as reminder blocks ahead of the typed text), every
+    ``<pasted_content …>`` block removed (a paste is material the user
+    handed over, not what they asked), then cut at `PROMPT_CUT_CHARS`.
+
+    The recall review hashes a transcript row through this same function
+    to find the prompt a delivery answered, so a prompt without either
+    block reads byte for byte as it did before the reminder rule, and the
+    hashes the log already holds keep matching."""
+    text = _SYSTEM_REMINDER.sub(" ", prompt)
+    return _PASTED_CONTENT.sub(" ", text)[:PROMPT_CUT_CHARS]
 
 
 @dataclass(frozen=True)
@@ -1439,7 +1457,12 @@ def prompt_recall(
     The probe is the audit's (`hook._probe_message`), unchanged: the
     production pool and ranker over the cleaned prompt (`clean_prompt`),
     the content-token floor and the acknowledgment gate, top three. A
-    ``no_signal`` report delivers nothing. Each hit is then a candidate,
+    prompt the harness composed and no human typed (a task notification,
+    a message from another session, a harness tag: `hook.
+    is_synthetic_prompt`, the Stop audit's own test) is not probed and
+    records nothing, so the segment keeps its ids for the prompt the
+    owner types next. A ``no_signal`` report delivers nothing. Each hit
+    is then a candidate,
     held back with a reason when it is ``low_relevance`` (not medium or
     high), ``other_project`` (not written in the caller's project, under
     the default `prompt_recall = "project"`), ``provenance`` (not local or
@@ -1466,6 +1489,14 @@ def prompt_recall(
             return empty
     query = clean_prompt(prompt)
     if not query.strip():
+        return empty
+    from .hook import is_synthetic_prompt
+
+    if is_synthetic_prompt(query):
+        # The harness composed this prompt: a task notification, a message
+        # from another session, a side-session note. No one asked anything,
+        # so nothing is probed, recorded or claimed, and no id is held for
+        # the rest of the segment on its account (RS-F1).
         return empty
     now = now or utcnow()
     key = (harness or DEFAULT_HARNESS, str(session_id))

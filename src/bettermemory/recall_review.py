@@ -10,12 +10,20 @@
   memory written in the caller's project, with those memories.
 
 The prompt each sample answers is read from the session's transcript at
-review time and never stored: a delivery's by its `prompt_id` (the latest
-prompt before it when the row carries none), a brief's as the first
-prompt after it, a silent turn's as the latest prompt before its Stop.
-The CLI finds transcripts of one host only, under ``~/.claude/projects``;
-a sample from another harness shows no prompt. The prompt is shown as
-the probe read it (`recall.clean_prompt`).
+review time and never stored: a delivery's as the user row, the human's
+or not, whose text hashes to the row's `probe_query` hash through
+`recall.clean_prompt` and `events.redact_query` (the production hash
+exactly), falling back to its `prompt_id` row, labelled ``unverified``,
+when no row hashes to it; a brief's as the first prompt after it; a
+silent turn's as the latest prompt before its Stop. Each sample names its
+prompt kind: ``owner``, ``task_notification``, ``agent_message``,
+``cross_session`` or ``unknown``. A sample whose prompt is in no row of a
+transcript that is there is ``ungradeable``: the draw passes it over for
+the next sample of its stratum in the seeded order and lists it, so
+nothing leaves the record without a trace. The CLI finds transcripts of
+one host only, under ``~/.claude/projects``; a sample from another
+harness shows no prompt. The prompt is shown as the probe read it
+(`recall.clean_prompt`).
 
 `bettermemory recall grade` records the owner's grade of a sample's
 pointers as a `recall_grade` event, which `bettermemory eval` counts in
@@ -34,6 +42,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from .events import redact_query
 from .hook import event_joined, human_prompt, joined_sessions
 from .models import Memory
 from .origin import Origin
@@ -62,9 +71,34 @@ TURN_LOOKBACK = timedelta(minutes=30)
 #: The length of a pointer's summary in a sample.
 SUMMARY_CHARS = 200
 
+#: Where a sample's prompt came from. ``transcript``: the row the probe
+#: hash names (a delivery), or the row the stratum's position rule names
+#: (a brief, a silent turn, a delivery without a hash). ``unverified``:
+#: no row hashes to the delivery's probe, so its `prompt_id` row stands
+#: in. ``ungradeable``: the transcript is there and no row fits.
+#: ``unavailable``: no transcript. ``other_host``: another harness.
 PROMPT_TRANSCRIPT = "transcript"
+PROMPT_UNVERIFIED = "unverified"
+PROMPT_UNGRADEABLE = "ungradeable"
 PROMPT_UNAVAILABLE = "unavailable"
 PROMPT_OTHER_HOST = "other_host"
+
+#: What kind of prompt a sample answered, by the probed text's opening
+#: (the log's preview first, the matched row second).
+KIND_OWNER = "owner"
+KIND_TASK_NOTIFICATION = "task_notification"
+KIND_AGENT_MESSAGE = "agent_message"
+KIND_CROSS_SESSION = "cross_session"
+KIND_UNKNOWN = "unknown"
+
+#: The transcript keeps a message from another session behind this first
+#: line; the hook saw the tagged body after it.
+_WRAPPER_FIRST_LINE = "Another Claude session sent a message"
+_KIND_BY_PREFIX: tuple[tuple[str, str], ...] = (
+    ("<task-notification", KIND_TASK_NOTIFICATION),
+    ("<agent-message", KIND_AGENT_MESSAGE),
+    ("<cross-session-message", KIND_CROSS_SESSION),
+)
 
 _RETRIEVAL_KINDS: frozenset[str] = frozenset({"search", "show"})
 
@@ -93,7 +127,12 @@ def _in_window(
 
 @dataclass(frozen=True)
 class Candidate:
-    """One gradable sample as the log holds it: no prompt, no body."""
+    """One gradable sample as the log holds it: no prompt, no body.
+
+    `rule` is the delivery rule that made a show (None for a silent
+    turn), so a grade can be split by it; `probe_hash` and
+    `probe_preview` are the redacted probe of a delivery, the hash to
+    find its prompt row by and the preview to name its kind."""
 
     sample_id: str
     stratum: str
@@ -104,6 +143,9 @@ class Candidate:
     ids: tuple[str, ...]
     prompt_id: str | None = None
     transcript_path: str | None = None
+    rule: str | None = None
+    probe_hash: str | None = None
+    probe_preview: str | None = None
 
 
 def _segment(event: Mapping[str, Any]) -> int | None:
@@ -133,6 +175,8 @@ def _shows(
             continue
         assert stamp is not None
         brief = event.get("kind") == "session_brief"
+        probe = event.get("probe_query")
+        probe = probe if isinstance(probe, Mapping) else {}
         out.append(
             Candidate(
                 sample_id=sample_id,
@@ -144,6 +188,9 @@ def _shows(
                 ids=tuple(ids),
                 prompt_id=_str(event.get("prompt_id")),
                 transcript_path=_str(event.get("transcript_path")),
+                rule=_str(event.get("rule")),
+                probe_hash=_str(probe.get("hash")),
+                probe_preview=_str(probe.get("preview")),
             )
         )
     return out
@@ -287,6 +334,25 @@ def graded_samples(events: Iterable[Mapping[str, Any]]) -> set[str]:
     }
 
 
+def draw_order(
+    population: Mapping[str, list[Candidate]],
+    *,
+    seed: int,
+    exclude: Collection[str] = (),
+) -> dict[str, list[Candidate]]:
+    """Each stratum's pool, none of `exclude`, in the order the seed
+    draws it: a seeded shuffle, so the first `n` are the draw of size `n`
+    and the ones after them are the replacements for any the review
+    cannot grade, whatever `n` is."""
+    rng = random.Random(seed)
+    order: dict[str, list[Candidate]] = {}
+    for stratum in (STRATUM_DELIVERY, STRATUM_BRIEF, STRATUM_SILENT):
+        pool = [c for c in population.get(stratum, []) if c.sample_id not in exclude]
+        rng.shuffle(pool)
+        order[stratum] = pool
+    return order
+
+
 def draw(
     population: Mapping[str, list[Candidate]],
     *,
@@ -295,14 +361,11 @@ def draw(
     exclude: Collection[str] = (),
 ) -> list[Candidate]:
     """Up to `sizes[stratum]` samples of each stratum, none of `exclude`,
-    in stratum then time order."""
-    rng = random.Random(seed)
+    in stratum then time order: the head of `draw_order`."""
     chosen: list[Candidate] = []
-    for stratum in (STRATUM_DELIVERY, STRATUM_BRIEF, STRATUM_SILENT):
-        pool = [c for c in population.get(stratum, []) if c.sample_id not in exclude]
+    for stratum, order in draw_order(population, seed=seed, exclude=exclude).items():
         size = max(0, sizes.get(stratum, 0))
-        picked = rng.sample(pool, size) if len(pool) > size else list(pool)
-        chosen += sorted(picked, key=lambda c: c.ts)
+        chosen += sorted(order[:size], key=lambda c: c.ts)
     return chosen
 
 
@@ -348,6 +411,7 @@ class Transcripts:
     def __init__(self, root: Path) -> None:
         self._root = root
         self._rows: dict[Path, list[dict[str, Any]]] = {}
+        self._user_rows: dict[Path, list[_UserRow]] = {}
 
     def find(self, session_id: str, hint: str | None) -> Path | None:
         """The transcript of `session_id`: the path its row named when that
@@ -365,50 +429,170 @@ class Transcripts:
             self._rows[path] = _transcript_rows(path)
         return self._rows[path]
 
+    def user_rows(self, path: Path) -> list[_UserRow]:
+        """The transcript's user rows with text, hashed once."""
+        if path not in self._user_rows:
+            self._user_rows[path] = _user_rows(self.rows(path))
+        return self._user_rows[path]
 
-def _prompts(
-    rows: list[dict[str, Any]],
-) -> list[tuple[datetime | None, str | None, str]]:
-    """The human's prompts in a transcript: (stamp, promptId, text)."""
-    out: list[tuple[datetime | None, str | None, str]] = []
+
+@dataclass(frozen=True)
+class _UserRow:
+    """One user row of a transcript with text in it, the human's or not.
+
+    `probed` is the text the hook would have received for it: the row's
+    text, or the tagged body after the wrapper's first line for a message
+    from another session; `digest` is `probed` hashed as the log hashes a
+    probe, through `recall.clean_prompt` and `events.redact_query`."""
+
+    stamp: datetime | None
+    prompt_id: str | None
+    text: str
+    probed: str
+    digest: str
+    human: bool
+
+
+def _row_text(row: dict[str, Any]) -> str | None:
+    if row.get("type") != "user":
+        return None
+    message = row.get("message")
+    if not isinstance(message, dict):
+        return None
+    content = message.get("content")
+    text: str | None = None
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):
+        parts = [
+            block.get("text")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        ]
+        if any(isinstance(part, str) and part for part in parts):
+            text = "\n".join(part for part in parts if isinstance(part, str) and part)
+    if text is None or not text.strip():
+        return None
+    return text
+
+
+def probed_text(text: str) -> str:
+    """What the hook received for a transcript row's text: the text, or,
+    for a message from another session, the tagged body after the
+    wrapper's first line."""
+    head = text.lstrip()
+    if head.startswith(_WRAPPER_FIRST_LINE):
+        _, separator, body = head.partition("\n")
+        return body if separator else ""
+    return text
+
+
+def probe_digest(text: str) -> str:
+    """The hash a `prompt_recall` row carries for a prompt whose text was
+    `text`: the production redaction of the cleaned prompt."""
+    return str(redact_query(clean_prompt(text))["hash"])
+
+
+def _user_rows(rows: list[dict[str, Any]]) -> list[_UserRow]:
+    out: list[_UserRow] = []
     for row in rows:
-        text = human_prompt(row)
-        if text is not None:
-            out.append(
-                (parse_event_ts(row.get("timestamp")), _str(row.get("promptId")), text)
+        text = _row_text(row)
+        if text is None:
+            continue
+        probed = probed_text(text)
+        out.append(
+            _UserRow(
+                stamp=parse_event_ts(row.get("timestamp")),
+                prompt_id=_str(row.get("promptId")),
+                text=text,
+                probed=probed,
+                digest=probe_digest(probed),
+                human=human_prompt(row) is not None,
             )
+        )
     return out
+
+
+def prompt_kind(text: str | None) -> str | None:
+    """The kind a probed text's opening names: a task notification, an
+    agent message, a cross-session message, `KIND_UNKNOWN` for any other
+    tag or the wrapper, None when it opens as someone's words."""
+    if text is None:
+        return None
+    head = text.lstrip()
+    for prefix, kind in _KIND_BY_PREFIX:
+        if head.startswith(prefix):
+            return kind
+    if head.startswith("<") or head.startswith(_WRAPPER_FIRST_LINE):
+        return KIND_UNKNOWN
+    return None
+
+
+def _by_prompt_id(rows: list[_UserRow], prompt_id: str) -> _UserRow | None:
+    for row in rows:
+        if row.human and row.prompt_id == prompt_id:
+            return row
+    return None
+
+
+def _by_hash(rows: list[_UserRow], candidate: Candidate) -> _UserRow | None:
+    """The row whose probed text hashes to the delivery's probe: the
+    latest at or before the delivery when several do (a short prompt
+    repeats), else the first."""
+    matches = [row for row in rows if row.digest == candidate.probe_hash]
+    before = [m for m in matches if m.stamp is not None and m.stamp <= candidate.ts]
+    if before:
+        return before[-1]
+    return matches[0] if matches else None
 
 
 def prompt_for(
     candidate: Candidate, transcripts: Transcripts
-) -> tuple[str | None, str]:
-    """The prompt a sample answers, from its transcript, and where it came
-    from (`PROMPT_TRANSCRIPT`, `PROMPT_UNAVAILABLE`, `PROMPT_OTHER_HOST`)."""
+) -> tuple[str | None, str, str]:
+    """The prompt a sample answers, from its transcript; where it came
+    from (`PROMPT_TRANSCRIPT`, `PROMPT_UNVERIFIED`, `PROMPT_UNGRADEABLE`,
+    `PROMPT_UNAVAILABLE`, `PROMPT_OTHER_HOST`); and its kind (`KIND_OWNER`,
+    `KIND_TASK_NOTIFICATION`, `KIND_AGENT_MESSAGE`, `KIND_CROSS_SESSION`,
+    `KIND_UNKNOWN`).
+
+    A delivery with a probe hash is matched to the row whose probed text
+    hashes to it, whoever wrote the row; when none does, its `prompt_id`
+    row stands in as ``unverified``. A delivery without a hash (a log
+    written before 9) takes its `prompt_id` row, else the latest human
+    prompt before it. A brief takes the first human prompt after it, a
+    silent turn the latest before its Stop. The kind is read from the
+    log's preview when that opens with a tag, else from the row found."""
+    hinted = prompt_kind(candidate.probe_preview)
     if candidate.harness != DEFAULT_HARNESS:
-        return None, PROMPT_OTHER_HOST
+        return None, PROMPT_OTHER_HOST, hinted or KIND_UNKNOWN
     path = transcripts.find(candidate.session_id, candidate.transcript_path)
     if path is None:
-        return None, PROMPT_UNAVAILABLE
-    prompts = _prompts(transcripts.rows(path))
-    found: str | None = None
-    if candidate.prompt_id is not None:
-        for _, prompt_id, text in prompts:
-            if prompt_id == candidate.prompt_id:
-                found = text
-                break
+        return None, PROMPT_UNAVAILABLE, hinted or KIND_UNKNOWN
+    rows = transcripts.user_rows(path)
+    found: _UserRow | None = None
+    source = PROMPT_TRANSCRIPT
+    if candidate.stratum == STRATUM_DELIVERY and candidate.probe_hash is not None:
+        found = _by_hash(rows, candidate)
+        if found is None and candidate.prompt_id is not None:
+            found = _by_prompt_id(rows, candidate.prompt_id)
+            source = PROMPT_UNVERIFIED
+    elif candidate.prompt_id is not None:
+        found = _by_prompt_id(rows, candidate.prompt_id)
     elif candidate.stratum == STRATUM_BRIEF:
-        for stamp, _, text in prompts:
-            if stamp is not None and stamp >= candidate.ts:
-                found = text
+        for row in rows:
+            if row.human and row.stamp is not None and row.stamp >= candidate.ts:
+                found = row
                 break
     else:
-        for stamp, _, text in prompts:
-            if stamp is not None and stamp <= candidate.ts:
-                found = text
+        for row in rows:
+            if row.human and row.stamp is not None and row.stamp <= candidate.ts:
+                found = row
     if found is None:
-        return None, PROMPT_UNAVAILABLE
-    return clean_prompt(found), PROMPT_TRANSCRIPT
+        return None, PROMPT_UNGRADEABLE, hinted or KIND_UNKNOWN
+    kind = hinted or (
+        KIND_OWNER if found.human else prompt_kind(found.probed) or KIND_UNKNOWN
+    )
+    return clean_prompt(found.probed), source, kind
 
 
 # ---------------------------------------------------------------------------
@@ -432,10 +616,11 @@ def build_samples(
     transcripts: Transcripts,
 ) -> list[dict[str, Any]]:
     """The samples as the review shows them: the pointers with a summary
-    from the store, and the prompt from the transcript."""
+    from the store, and the prompt from the transcript with where it came
+    from and what kind of prompt it was."""
     samples: list[dict[str, Any]] = []
     for candidate in drawn:
-        prompt, source = prompt_for(candidate, transcripts)
+        prompt, source, kind = prompt_for(candidate, transcripts)
         samples.append(
             {
                 "sample_id": candidate.sample_id,
@@ -444,15 +629,53 @@ def build_samples(
                 "session_id": candidate.session_id,
                 "harness": candidate.harness,
                 "segment": candidate.segment,
+                "rule": candidate.rule,
                 "pointers": [
                     {"id": memory_id, "summary": _summary(memories.get(memory_id))}
                     for memory_id in candidate.ids
                 ],
                 "prompt": prompt,
                 "prompt_source": source,
+                "prompt_kind": kind,
             }
         )
     return samples
+
+
+def select_samples(
+    population: Mapping[str, list[Candidate]],
+    *,
+    sizes: Mapping[str, int],
+    seed: int,
+    exclude: Collection[str],
+    memories: Mapping[str, Memory],
+    transcripts: Transcripts,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """The review's samples and the ones it passed over.
+
+    Each stratum is walked in its seeded order (`draw_order`) until
+    `sizes[stratum]` samples with a prompt are in hand; a sample whose
+    prompt cannot be read (``ungradeable``, ``unavailable`` or
+    ``other_host``) is passed over for the next and returned in the
+    second list, so the record shows what the draw skipped. The samples
+    come in stratum then time order."""
+    chosen: list[dict[str, Any]] = []
+    passed: list[dict[str, Any]] = []
+    for stratum, order in draw_order(population, seed=seed, exclude=exclude).items():
+        size = max(0, sizes.get(stratum, 0))
+        taken: list[dict[str, Any]] = []
+        for candidate in order:
+            if len(taken) >= size:
+                break
+            (sample,) = build_samples(
+                [candidate], memories=memories, transcripts=transcripts
+            )
+            if sample["prompt"] is None:
+                passed.append(sample)
+            else:
+                taken.append(sample)
+        chosen += sorted(taken, key=lambda sample: str(sample["ts"]))
+    return chosen, passed
 
 
 _STRATUM_TITLE = {
@@ -472,15 +695,32 @@ _POINTER_LABEL = {
 }
 
 
+def _kind_label(sample: Mapping[str, Any]) -> str:
+    kind = str(sample.get("prompt_kind") or KIND_UNKNOWN).replace("_", " ")
+    if sample.get("prompt_source") == PROMPT_UNVERIFIED:
+        return f"{kind}, {PROMPT_UNVERIFIED}"
+    return kind
+
+
 def render_samples_text(doc: Mapping[str, Any]) -> str:
     """The text form of a review document."""
     window = doc["window"]
+    passed = list(doc.get("ungradeable") or [])
+    population = "population " + " ".join(
+        f"{name}={count}" for name, count in doc["population"].items()
+    )
+    if passed:
+        skipped: dict[str, int] = {}
+        for sample in passed:
+            skipped[sample["stratum"]] = skipped.get(sample["stratum"], 0) + 1
+        population += " ungradeable " + " ".join(
+            f"{name}={count}" for name, count in skipped.items()
+        )
     lines = [
         f"bettermemory recall review: {len(doc['samples'])} samples "
         f"({window['since'] or 'the start'} to {window['until'] or 'now'}), "
         f"seed {doc['seed']}",
-        "population "
-        + " ".join(f"{name}={count}" for name, count in doc["population"].items()),
+        population,
     ]
     for index, sample in enumerate(doc["samples"], start=1):
         stratum = sample["stratum"]
@@ -490,13 +730,22 @@ def render_samples_text(doc: Mapping[str, Any]) -> str:
             f"{sample['ts']} session {sample['session_id']}"
         )
         if sample["prompt"] is not None:
-            lines.append(f"  {_PROMPT_LABEL[stratum]}:")
+            lines.append(f"  {_PROMPT_LABEL[stratum]} ({_kind_label(sample)}):")
             lines.extend(f"    {line}" for line in sample["prompt"].splitlines())
         else:
             lines.append(f"  prompt not shown ({sample['prompt_source']})")
         for pointer in sample["pointers"]:
             lines.append(f"  {_POINTER_LABEL[stratum]} {pointer['id']}")
             lines.append(f"    {pointer['summary'] or '(no longer in the store)'}")
+    if passed:
+        lines.append("")
+        lines.append("passed over, no prompt to grade against:")
+        for sample in passed:
+            lines.append(
+                f"  {_STRATUM_TITLE[sample['stratum']]} {sample['sample_id']} "
+                f"{sample['ts']} session {sample['session_id']}: "
+                f"{sample['prompt_source']}, {_kind_label(sample)}"
+            )
     lines.append("")
     lines.append(
         "Grade each with: bettermemory recall grade <sample_id> "
@@ -514,17 +763,29 @@ __all__ = [
     "DEFAULT_BRIEFS",
     "DEFAULT_DELIVERIES",
     "DEFAULT_SILENT",
+    "KIND_AGENT_MESSAGE",
+    "KIND_CROSS_SESSION",
+    "KIND_OWNER",
+    "KIND_TASK_NOTIFICATION",
+    "KIND_UNKNOWN",
     "PROMPT_OTHER_HOST",
     "PROMPT_TRANSCRIPT",
     "PROMPT_UNAVAILABLE",
+    "PROMPT_UNGRADEABLE",
+    "PROMPT_UNVERIFIED",
     "Transcripts",
     "build_samples",
     "candidates",
     "default_transcripts_dir",
     "draw",
+    "draw_order",
     "find_candidate",
     "graded_samples",
+    "probe_digest",
+    "probed_text",
     "prompt_for",
+    "prompt_kind",
     "render_samples_text",
+    "select_samples",
     "silent_sample_id",
 ]

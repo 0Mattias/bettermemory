@@ -175,7 +175,7 @@ def test_the_brief_shape_and_its_event(world: _World) -> None:
     assert result.surface == "session_brief"
     assert result.ids == (second.id, first.id)
     assert result.chars == len(result.stdout)
-    assert result.rule == "rs-v1"
+    assert result.rule == "rs-v2"
     (event,) = world.briefs()
     assert event["event_id"] == result.event_id
     assert event["ids"] == [second.id, first.id]
@@ -184,7 +184,7 @@ def test_the_brief_shape_and_its_event(world: _World) -> None:
     assert event["chars"] == len(result.stdout)
     assert event["rows_examined"] == 2
     assert event["unresolved"] == 0
-    assert event["rule"] == "rs-v1"
+    assert event["rule"] == "rs-v2"
     assert event["triggered_from"] == "session_hook"
     assert event["session"] == "transcript-brief"
     assert event["transcript_path"] == "/tmp/t.jsonl"

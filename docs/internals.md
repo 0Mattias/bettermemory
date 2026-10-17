@@ -51,9 +51,13 @@ validated ships as declared claims on `memory_write` / `memory_verify`.
   verdict is fresh as `memory_show` computes it, local or imported, not
   ambient and not contradicted; a warm brief reads memoised verdicts and
   runs no git. On UserPromptSubmit the prompt recall probes the prompt
-  (pasted blocks removed, 2,000 characters) through the audit's probe
-  and delivers up to three relevant hits written in the caller's
-  project; a disputed one carries a `[disputed: cf-…]` mark. A per-session
+  (pasted blocks and `<system-reminder>` blocks removed, 2,000
+  characters) through the audit's probe and delivers up to three
+  relevant hits written in the caller's project; a disputed one carries
+  a `[disputed: cf-…]` mark. A prompt the harness composed and no human
+  typed (a task notification, a message from another session, any other
+  harness tag: the Stop audit's own test, `hook.is_synthetic_prompt`) is
+  not probed and records nothing. A per-session
   cooldown shows no id twice in a segment (a compact or clear opens a
   new one) and at most twelve recalls per segment. Each show is recorded
   (`session_brief`, `prompt_recall`), and the Stop settles a shown

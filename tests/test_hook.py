@@ -34,6 +34,8 @@ from bettermemory.hook import (
     _latest_in_process_session,
     _pending_retrievals,
     _read_payload,
+    human_prompt,
+    is_synthetic_prompt,
     main as hook_main,
     prompt_main,
     run_audit,
@@ -331,6 +333,48 @@ def test_extract_last_exchange_none_when_only_synthetic_rows(tmp_path: Path) -> 
     user, assistant, _ = _extract_last_exchange(transcript)
     assert user is None
     assert assistant is None
+
+
+def test_human_prompt_rejects_what_the_harness_composed() -> None:
+    """Rows the human did not type, by flag or by opening: the wrapper the
+    transcript keeps a message from another session behind, the tagged
+    body the hook saw, the app's side-session note, a compaction summary.
+    A row that names a tag after its first character is the human's."""
+
+    def row(text: str, **flags: Any) -> dict[str, Any]:
+        return {"type": "user", "message": {"content": text}, **flags}
+
+    body = '<agent-message from="a" name="b">\nhello\n</agent-message>'
+    assert human_prompt(row(f"Another Claude session sent a message:\n{body}")) is None
+    assert human_prompt(row(body)) is None
+    assert (
+        human_prompt(row('<cross-session-message from="b">hi</cross-session-message>'))
+        is None
+    )
+    assert (
+        human_prompt(row("<side-sessions-event>\ndone\n</side-sessions-event>")) is None
+    )
+    assert human_prompt(row("  <scheduled-task>\nrun\n</scheduled-task>")) is None
+    assert (
+        human_prompt(
+            row(
+                "This session is being continued from a previous", isCompactSummary=True
+            )
+        )
+        is None
+    )
+    typed = "why did the <task-notification> fire twice"
+    assert human_prompt(row(typed)) == typed
+
+
+def test_is_synthetic_prompt_is_the_one_prefix_test() -> None:
+    """The same test the prompt recall applies to the UserPromptSubmit
+    payload, which carries no flag at all."""
+    assert is_synthetic_prompt("  <task-notification>\n<task-id>x</task-id>")
+    assert is_synthetic_prompt('<agent-message from="a" name="b">')
+    assert is_synthetic_prompt("Another Claude session sent a message while you were")
+    assert not is_synthetic_prompt("ship the deploy")
+    assert not is_synthetic_prompt("the <task-notification> fired twice")
 
 
 def test_flatten_assistant_content_returns_none_on_no_text() -> None:

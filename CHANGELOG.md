@@ -267,15 +267,22 @@ until the stable `9.0.0` is tagged. Ask for a candidate by version
     It replaces the per-scope counts block. `[behavior] session_brief`
     switches it.
   - On UserPromptSubmit, the prompt recall: the prompt, pasted blocks
-    removed and cut at 2,000 characters, probed through the audit's own
-    pool and ranker, and up to three hits delivered when they are
+    and `<system-reminder>` blocks removed and cut at 2,000 characters,
+    probed through the audit's own pool and ranker, and up to three hits
+    delivered when they are
     relevant (medium or high), written in the caller's project, local or
     imported, not contradicted and not already shown, retrieved,
     written or updated in the session segment; 900 characters at most,
     snippets of at most 100. The one-hit miss lane is gone: `[behavior]
     prompt_recall` takes `project` (the default), `everywhere` or `off`
     (`true` and `false` read as `project` and `off`), and
-    `recall_in_project` retires with a removed-key notice.
+    `recall_in_project` retires with a removed-key notice. A prompt the
+    harness composed and no human typed (a task notification, a message
+    from another session, any other harness tag: the Stop audit's own
+    test, now `hook.is_synthetic_prompt`) is not probed and records
+    nothing, so no id is held for the rest of the segment on its
+    account; the rule name moves from `rs-v1` to `rs-v2` so the log
+    tells the rows apart.
   - A member of a pending conflicts pair is delivered with a
     `[disputed: cf-…]` mark, whatever the detector.
   - A per-session cooldown replaces the 600-second retrieval shield for
@@ -315,8 +322,11 @@ until the stable `9.0.0` is tagged. Ask for a candidate by version
   - `bettermemory recall review` draws 12 deliveries, 4 briefs and 4
     silent prompts (turns the recall stayed silent on before the model
     retrieved a project memory) with the prompt read from the transcript
-    at review time and never stored; `bettermemory recall grade` records
-    a `recall_grade` event.
+    at review time and never stored: a delivery's as the row its probe
+    hashes to, each sample named by its prompt kind, a sample with no
+    prompt to grade against passed over for the next in the seeded order
+    and listed; `bettermemory recall grade` records a `recall_grade`
+    event carrying the sample's rule.
   - The `instructions` block swaps its opt-in sentence for one of the
     same length that names the hook pointers, still 1,000 characters;
     `tools/list` is unchanged. The addendum, the plugin skill, README and

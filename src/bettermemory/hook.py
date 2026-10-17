@@ -165,15 +165,24 @@ _ATTRIBUTION_LOOKBACK_SECONDS = ATTRIBUTION_LOOKBACK_SECONDS
 # at byte granularity (not character) so multibyte UTF-8 can't bypass it.
 _TRANSCRIPT_TAIL_READ_BYTES = 1_048_576
 
-# `type="user"` transcript rows the human never typed. Claude Code records
+# Text the harness composed and no human typed. Claude Code records
 # background task notifications, slash-command bookkeeping, harness stdout
-# wrappers, and system reminders as user rows whose content opens with one
-# of these envelope tags (task-notification rows carry NO metadata flag, so
-# a content-prefix check is the only available discriminator). Skill and
-# command expansions additionally carry `isMeta: true` at the row level —
-# `_extract_last_exchange` checks that flag separately. On either signal
-# the reverse walk skips the row and keeps walking: the human's message is
-# typically a few rows earlier in the tail.
+# wrappers, and system reminders as `type="user"` transcript rows whose
+# content opens with one of these envelope tags (task-notification rows
+# carry NO metadata flag, so a content-prefix check is the only available
+# discriminator). Skill and command expansions additionally carry
+# `isMeta: true` at the row level — `human_prompt` checks that flag
+# separately. On either signal the reverse walk skips the row and keeps
+# walking: the human's message is typically a few rows earlier in the
+# tail. The same text reaches the UserPromptSubmit hook as its `prompt`,
+# with no flag at all, so `recall.prompt_recall` applies the same test
+# (`is_synthetic_prompt`) and probes nothing on it. The last six are the
+# shapes the prompt path sees that the transcript holds differently or
+# not at all: a message from another session arrives as
+# `<agent-message from="…">` or `<cross-session-message from="…">` (the
+# transcript keeps it behind an `isMeta` wrapper row opening "Another
+# Claude session sent a message"), the app's side-session notes,
+# scheduled-task and artifact-view payloads open with their own tags.
 _SYNTHETIC_USER_PREFIXES = (
     "<task-notification>",
     "<command-name>",
@@ -181,6 +190,12 @@ _SYNTHETIC_USER_PREFIXES = (
     "<local-command-stdout>",
     "<local-command-caveat>",
     "<system-reminder>",
+    "<agent-message",
+    "<cross-session-message",
+    "<side-sessions-event",
+    "<scheduled-task",
+    "<artifact-view-context",
+    "Another Claude session sent a message",
 )
 
 # Cap the Stop-hook stdin payload. Claude Code emits a small JSON object
@@ -335,16 +350,29 @@ def _extract_last_exchange(
     return user, assistant, model
 
 
+def is_synthetic_prompt(text: str) -> bool:
+    """True for text the harness composed and no human typed: it opens,
+    after leading whitespace, with one of `_SYNTHETIC_USER_PREFIXES`.
+
+    The one test for both surfaces that read a prompt: a transcript user
+    row (`human_prompt`, for the Stop audit, capture and the recall
+    review) and the UserPromptSubmit payload (`recall.prompt_recall`),
+    whose `prompt` carries no flag that says who wrote it. A prompt that
+    mentions a tag after its first character is the human's."""
+    return text.lstrip().startswith(_SYNTHETIC_USER_PREFIXES)
+
+
 def human_prompt(row: dict[str, Any]) -> str | None:
     """The text of a transcript row the human typed, or None for any
     other row.
 
     Harness-injected rows are not the human's: skill and command
-    expansions carry `isMeta: true` at the row level, and envelope-tagged
-    payloads (`_SYNTHETIC_USER_PREFIXES`) open with a tag. Empty and
+    expansions carry `isMeta: true` at the row level, a compaction
+    summary carries `isCompactSummary: true`, and envelope-tagged
+    payloads open with a tag (`is_synthetic_prompt`). Empty and
     whitespace-only user rows occur in real transcripts too; capturing
     one used to drop the whole audit at main()'s `if not user`."""
-    if row.get("type") != "user" or row.get("isMeta"):
+    if row.get("type") != "user" or row.get("isMeta") or row.get("isCompactSummary"):
         return None
     message = row.get("message")
     if not isinstance(message, dict):
@@ -357,7 +385,7 @@ def human_prompt(row: dict[str, Any]) -> str | None:
         candidate = _flatten_assistant_content(content)
     if candidate is None or not candidate.strip():
         return None
-    if candidate.lstrip().startswith(_SYNTHETIC_USER_PREFIXES):
+    if is_synthetic_prompt(candidate):
         return None
     return candidate
 

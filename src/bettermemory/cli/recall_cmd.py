@@ -31,7 +31,10 @@ def add_subparser(
         "nothing on before the model retrieved a project memory itself. "
         "Samples already graded are not drawn again. Each prompt is read "
         "from the session's transcript under ~/.claude/projects at review "
-        "time and never stored."
+        "time and never stored, a delivery's by its probe hash, and named "
+        "by kind (owner, task_notification, agent_message, cross_session, "
+        "unknown); a sample whose prompt is in no row is passed over for "
+        "the next in the seeded order and listed as ungradeable."
     )
     review = recall_sub.add_parser("review", help=review_text, description=review_text)
     review.add_argument(
@@ -69,9 +72,9 @@ def add_subparser(
 
     grade_text = (
         "Record the grade of one sample's pointers as a recall_grade event: "
-        "each id relevant or not. For a silent prompt, relevant means the "
-        "recall should have pointed at it. A later grade of an id replaces "
-        "an earlier one."
+        "each id relevant or not, with the rule that made the sample as "
+        "sample_rule. For a silent prompt, relevant means the recall should "
+        "have pointed at it. A later grade of an id replaces an earlier one."
     )
     grade = recall_sub.add_parser("grade", help=grade_text, description=grade_text)
     grade.add_argument("sample_id", help="The sample's id, as the review printed it.")
@@ -108,12 +111,11 @@ def _cli_review(args: argparse.Namespace, *, parser: argparse.ArgumentParser) ->
     from ..recall_counters import STRATUM_BRIEF, STRATUM_DELIVERY, STRATUM_SILENT
     from ..recall_review import (
         Transcripts,
-        build_samples,
         candidates,
         default_transcripts_dir,
-        draw,
         graded_samples,
         render_samples_text,
+        select_samples,
     )
     from ..time_utils import isoformat_utc_optional
     from ._common import cli_context
@@ -141,13 +143,19 @@ def _cli_review(args: argparse.Namespace, *, parser: argparse.ArgumentParser) ->
     memories = {m.id: m for m in ctx.store.load_all()}
     population = candidates(events, start=start, end=end, memories=memories)
     graded = graded_samples(events)
-    drawn = draw(population, sizes=sizes, seed=args.seed, exclude=graded)
     root = (
         Path(args.transcripts).expanduser()
         if args.transcripts
         else default_transcripts_dir()
     )
-    samples = build_samples(drawn, memories=memories, transcripts=Transcripts(root))
+    samples, ungradeable = select_samples(
+        population,
+        sizes=sizes,
+        seed=args.seed,
+        exclude=graded,
+        memories=memories,
+        transcripts=Transcripts(root),
+    )
     doc: dict[str, Any] = {
         "window": {
             "since": isoformat_utc_optional(start),
@@ -160,6 +168,7 @@ def _cli_review(args: argparse.Namespace, *, parser: argparse.ArgumentParser) ->
         "requested": sizes,
         "seed": args.seed,
         "samples": samples,
+        "ungradeable": ungradeable,
     }
     if args.json:
         sys.stdout.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
@@ -211,6 +220,10 @@ def _cli_grade(args: argparse.Namespace, *, parser: argparse.ArgumentParser) -> 
         "irrelevant_ids": irrelevant,
         "rule": RULE,
     }
+    if candidate.rule is not None:
+        # The rule that made the sample, beside the rule in force when it
+        # was graded, so a read of the grades splits by the delivery.
+        fields["sample_rule"] = candidate.rule
     recorder = cli_recorder(ctx, attribution="cli_recall_grade")
     recorder.record("recall_grade", **fields)
     if args.json:
