@@ -239,8 +239,8 @@ the recall should have pointed at the memory); the latest grade of an id
 in a sample counts. The draw is meant every three to four days for two
 weeks, then weekly. `recall_review.py` holds it.
 
-When the window holds any row of the recall surface (a `session_brief`,
-a `prompt_recall` carrying `rule`, a settlement, a `segment_opened`, a
+When the window holds any row of the recall surface (a `session_brief`
+with ids, a `prompt_recall` carrying `rule`, a settlement, a `segment_opened`, a
 `review_unanswered` or a `recall_grade`), the report carries a
 `surfaces` section; otherwise it is left out and the report reads byte
 for byte as it did before the surface. For the brief and the prompt
@@ -266,7 +266,8 @@ conversation's first hook row is the window's own server under the id
 it had before a /clear or /resume, and its row joins that conversation,
 as the hooks join it. Rows after a show are read up to the id's next
 show in the same conversation, by either surface (a compact re-shows a
-brief's ids, a recall may show what the brief showed), or else up to
+brief's ids, a resume's brief shows only what its segment has not, a
+recall may show what the brief showed), or else up to
 `--until`, so an open or a use counts once, for the latest show of the
 id before it; the join reads only rows before `--until`.
 

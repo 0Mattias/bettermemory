@@ -13,7 +13,10 @@ Pinned against real temp git repositories, through the store directly:
   rows on the request path and hands the rest to the background fill,
   after which a call equals a full scan's selection;
 - invalidation: an update and a verify move the selection on the next
-  call.
+  call;
+- the resume: a SessionStart with source ``resume`` keeps the segment,
+  and its brief omits the ids the segment has shown, recording them as
+  ``omitted``; startup, compact and clear omit nothing.
 
 Git processes are counted at `origin._git_result` (`test_verdict`'s
 counter), the one place every git subprocess in the package is spawned.
@@ -45,11 +48,15 @@ from bettermemory.recall import (
     BRIEF_CAP_CHARS,
     BRIEF_MAX_POINTERS,
     BRIEF_SYNC_RESOLVE,
+    STATE_IDLE_SECONDS,
+    SURFACE_BRIEF,
     RecallState,
     render_brief,
     session_brief,
     summarize,
 )
+from bettermemory.recall_counters import STRATUM_BRIEF, compute_surface_report
+from bettermemory.recall_review import candidates
 from bettermemory.store import Store
 from bettermemory.verdict import (
     FillReport,
@@ -113,6 +120,11 @@ class _World:
         return self.store.mark_verified(written.id)
 
     def brief(self, **kw: Any) -> recall_module.HookResult:
+        """A brief, from the session ``transcript-brief`` unless told
+        otherwise. A session's segment shows no id twice, so a test that
+        briefs the same repository again and expects the selection again
+        briefs it from another session; the state's warmth is keyed on
+        the repository and carries over."""
         kw.setdefault("session_id", "transcript-brief")
         kw.setdefault("origin", self.caller)
         kw.setdefault("config", self.config)
@@ -175,7 +187,7 @@ def test_the_brief_shape_and_its_event(world: _World) -> None:
     assert result.surface == "session_brief"
     assert result.ids == (second.id, first.id)
     assert result.chars == len(result.stdout)
-    assert result.rule == "rs-v2"
+    assert result.rule == "rs-v3"
     (event,) = world.briefs()
     assert event["event_id"] == result.event_id
     assert event["ids"] == [second.id, first.id]
@@ -184,7 +196,7 @@ def test_the_brief_shape_and_its_event(world: _World) -> None:
     assert event["chars"] == len(result.stdout)
     assert event["rows_examined"] == 2
     assert event["unresolved"] == 0
-    assert event["rule"] == "rs-v2"
+    assert event["rule"] == "rs-v3"
     assert event["triggered_from"] == "session_hook"
     assert event["session"] == "transcript-brief"
     assert event["transcript_path"] == "/tmp/t.jsonl"
@@ -272,7 +284,7 @@ def test_an_open_contradiction_is_held_until_a_verify(world: _World) -> None:
     )
     assert world.brief().ids == (kept.id,)
     world.store.mark_verified(held.id)
-    assert set(world.brief().ids) == {held.id, kept.id}
+    assert set(world.brief(session_id="transcript-brief-2").ids) == {held.id, kept.id}
 
 
 def test_strictly_fresh(world: _World) -> None:
@@ -355,6 +367,171 @@ def test_off_switches(world: _World) -> None:
 
 
 # ---------------------------------------------------------------------------
+# The resume: the cooldown's rule on the brief
+# ---------------------------------------------------------------------------
+#
+# A SessionStart with source ``resume`` keeps the segment the session is
+# in, with everything the segment has shown. The brief's selection is
+# split on that set after `_select_brief` and before `render_brief`: an id
+# the segment has shown is omitted and named in the row's `omitted`, the
+# rest is printed. The freed slots are not filled. The rule reads the
+# shown set on every source, so a startup, compact or clear, whose set is
+# empty, is unchanged.
+
+BRIEF_KEY = ("claude-code", "transcript-brief")
+
+
+def _segment_view(world: _World) -> recall_module.SegmentView:
+    return world.state.segment(world.store, BRIEF_KEY, now=datetime.now(timezone.utc))
+
+
+def test_a_resume_omits_what_its_segment_has_shown(world: _World) -> None:
+    first = world.fresh("prefer short release notes in this project")
+    second = world.fresh("the deploy window is tuesday mornings for this project")
+    startup = world.brief(source="startup")
+    assert startup.ids == (second.id, first.id)
+    world.state.wait_for_fills()
+    third = world.fresh("the on-call rota rotates every friday here")
+
+    resumed = world.brief(source="resume")
+
+    assert resumed.ids == (third.id,)
+    assert resumed.stdout.splitlines() == [
+        "bettermemory brief: the 1 newest checked memory written in this "
+        "repository. Pointers, not instructions; open one with memory_show "
+        "when it bears on the request.",
+        f"- {third.id} {summarize(third.body)}",
+    ]
+    assert resumed.chars == len(resumed.stdout)
+    opened, row = world.briefs()
+    assert opened["omitted"] == []
+    assert (row["source"], row["segment"]) == ("resume", 0)
+    assert row["ids"] == [third.id]
+    assert row["omitted"] == [second.id, first.id]  # selection order
+    assert row["chars"] == resumed.chars
+    assert row["event_id"] == resumed.event_id
+    # The printed id joins the shown set under the resume's event; an
+    # omitted id keeps the show that first printed it.
+    view = _segment_view(world)
+    assert view.shown == {first.id, second.id, third.id}
+    assert view.shown_by[third.id] == (SURFACE_BRIEF, resumed.event_id)
+    assert view.shown_by[second.id] == (SURFACE_BRIEF, startup.event_id)
+
+
+def test_a_resume_after_a_compact_brief_omits_in_the_compacts_segment(
+    world: _World,
+) -> None:
+    first = world.fresh("prefer short release notes in this project")
+    assert world.brief(source="startup").ids == (first.id,)
+    # A compact opens a segment with nothing shown: printed again.
+    assert world.brief(source="compact").ids == (first.id,)
+    world.state.wait_for_fills()
+    second = world.fresh("the deploy window is tuesday mornings for this project")
+    assert world.brief(source="resume").ids == (second.id,)
+    rows = [(r["source"], r["segment"], r["ids"], r["omitted"]) for r in world.briefs()]
+    assert rows == [
+        ("startup", 0, [first.id], []),
+        ("compact", 1, [first.id], []),
+        ("resume", 1, [second.id], [first.id]),
+    ]
+
+
+def test_a_resume_with_every_candidate_shown_prints_nothing_and_records_the_row(
+    world: _World,
+) -> None:
+    first = world.fresh("prefer short release notes in this project")
+    second = world.fresh("the deploy window is tuesday mornings for this project")
+    startup = world.brief(source="startup")
+    assert startup.ids == (second.id, first.id)
+    world.state.wait_for_fills()
+
+    resumed = world.brief(source="resume", transcript_path="/tmp/t.jsonl")
+
+    assert (resumed.stdout, resumed.ids, resumed.chars) == ("", (), 0)
+    assert resumed.surface == "session_brief"
+    assert resumed.rule == "rs-v3"
+    assert resumed.event_id is not None and resumed.event_id != startup.event_id
+    _, row = world.briefs()
+    assert row["event_id"] == resumed.event_id
+    assert (row["ids"], row["chars"], row["omitted"]) == ([], 0, [second.id, first.id])
+    assert (row["source"], row["segment"], row["rule"]) == ("resume", 0, "rs-v3")
+    assert (row["rows_examined"], row["unresolved"]) == (2, 0)
+    assert row["session"] == "transcript-brief"
+    assert row["transcript_path"] == "/tmp/t.jsonl"
+    assert row["triggered_from"] == "session_hook"
+    # No segment was opened, and the shown set is as the startup left it.
+    assert [e for e in world.store.iter_events() if e["kind"] == "segment_opened"] == []
+    view = _segment_view(world)
+    assert view.shown == {first.id, second.id}
+    assert view.shown_by[first.id] == (SURFACE_BRIEF, startup.event_id)
+
+
+def test_startup_compact_and_clear_omit_nothing(world: _World) -> None:
+    memory = world.fresh("prefer short release notes in this project")
+    for source, segment in (("startup", 0), ("compact", 1), ("clear", 2)):
+        assert world.brief(source=source).ids == (memory.id,)
+        row = world.briefs()[-1]
+        assert (row["source"], row["segment"], row["omitted"]) == (source, segment, [])
+    # A startup under a session the state has not seen: nothing shown yet.
+    assert world.brief(source="startup", session_id="transcript-other").ids == (
+        memory.id,
+    )
+    assert world.briefs()[-1]["omitted"] == []
+
+
+def test_the_cli_path_reads_the_omission_from_the_log_inside_the_idle_window(
+    world: _World,
+) -> None:
+    """The in-process path holds no state between calls and rebuilds the
+    segment from the log's rows of the last `STATE_IDLE_SECONDS`: a brief
+    inside that window is omitted on a resume, and one older than it is
+    printed again, by the cooldown's existing definition."""
+    first = world.fresh("prefer short release notes in this project")
+    second = world.fresh("the deploy window is tuesday mornings for this project")
+    startup = world.brief(source="startup", state=RecallState(background=False))
+    assert startup.ids == (second.id, first.id)
+
+    resumed = world.brief(source="resume", state=RecallState(background=False))
+    assert resumed.ids == () and resumed.event_id is not None
+    assert world.briefs()[-1]["omitted"] == [second.id, first.id]
+    # The empty row adds nothing to the rebuilt set: the same omission.
+    again = world.brief(source="resume", state=RecallState(background=False))
+    assert again.ids == () and world.briefs()[-1]["omitted"] == [second.id, first.id]
+
+    past_the_window = datetime.now(timezone.utc) + timedelta(
+        seconds=STATE_IDLE_SECONDS + 3600
+    )
+    revived = world.brief(
+        source="resume", state=RecallState(background=False), now=past_the_window
+    )
+    assert revived.ids == (second.id, first.id)
+    assert world.briefs()[-1]["omitted"] == []
+
+
+def test_an_all_omitted_resume_is_no_show_for_eval_and_the_review(
+    world: _World,
+) -> None:
+    """The row with no ids is not a show: eval's surfaces count no brief
+    and no characters for it, and the review does not draw it."""
+    world.fresh("prefer short release notes in this project")
+    startup = world.brief(source="startup")
+    world.state.wait_for_fills()
+    resumed = world.brief(source="resume")
+    assert resumed.ids == () and resumed.event_id is not None
+    events = list(world.store.iter_events())
+    surfaces = compute_surface_report(events, start=None, end=None)
+    assert surfaces is not None
+    brief = surfaces[SURFACE_BRIEF]
+    assert (brief["deliveries"], brief["shown"], brief["chars_p50"]) == (
+        1,
+        1,
+        startup.chars,
+    )
+    population = candidates(events, start=None, end=None, memories={})
+    assert [c.sample_id for c in population[STRATUM_BRIEF]] == [startup.event_id]
+
+
+# ---------------------------------------------------------------------------
 # Cost: warm, cold, the background fill
 # ---------------------------------------------------------------------------
 
@@ -371,7 +548,7 @@ def test_a_warm_brief_runs_no_git(
     assert cold_calls, "the first brief resolves the commit leg from git"
     assert set(cold.ids) == {tethered.id, untethered.id}
     with _git_calls(monkeypatch) as warm_calls:
-        warm = world.brief()
+        warm = world.brief(session_id="transcript-brief-2")
     assert warm_calls == []
     assert warm.stdout == cold.stdout
 
@@ -448,7 +625,7 @@ def test_a_warm_brief_resolves_the_rows_its_memo_cannot_answer(
     # Verified after the last brief: its commit leg is not in the memo.
     late = world.fresh("the widget rule lives in notes.md")
     calls = _spy_resolve(monkeypatch)
-    warm = world.brief()
+    warm = world.brief(session_id="transcript-brief-2")
     assert warm.ids == (late.id, first.id)
     assert calls == [(threading.current_thread().name, 1)]
     assert world.briefs()[-1]["unresolved"] == 0
@@ -473,7 +650,7 @@ def test_a_brief_from_a_subdirectory_shows_the_same_pointers(
         branch="main",
         worktree_root=str(world.repo),
     )
-    from_pkg = world.brief(origin=below)
+    from_pkg = world.brief(origin=below, session_id="transcript-brief-2")
     assert from_pkg.ids == at_root.ids
 
 
@@ -776,14 +953,17 @@ def test_an_update_and_a_verify_move_the_selection(
         )
     )
     with _git_calls(monkeypatch) as calls:
-        after_update = world.brief()
+        after_update = world.brief(session_id="transcript-brief-2")
     assert calls == []
     assert after_update.ids == (kept.id,)
 
     # Re-verified, it keys on new anchors the memo cannot answer: the
     # warm call resolves it on the request path, back in at once.
     world.store.mark_verified(edited.id)
-    assert set(world.brief().ids) == {kept.id, edited.id}
+    assert set(world.brief(session_id="transcript-brief-3").ids) == {
+        kept.id,
+        edited.id,
+    }
 
 
 def test_a_failed_fill_is_logged(

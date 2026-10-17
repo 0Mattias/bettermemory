@@ -559,6 +559,41 @@ def test_an_open_counts_for_the_latest_show_of_the_id_only() -> None:
     assert (brief["shown"], brief["opened"]) == (3, 1)
 
 
+def test_a_brief_row_without_ids_is_not_a_show() -> None:
+    """A resume whose brief omitted every candidate its segment had shown
+    leaves a `session_brief` row with no ids (`omitted` names them): not
+    a show, so it counts no delivery and no characters, and an open after
+    it counts for the brief that showed the id. It is a hook row all the
+    same, so the worktree bridge still anchors on it."""
+    from bettermemory.recall_counters import is_surface_show, surface_of
+
+    quiet = {
+        **_brief(_ts(1, 30), [], event_id="01JDDDDDDDDDDDDDDDDDDDDDD4"),
+        "source": "resume",
+        "chars": 0,
+        "omitted": [MEM_A],
+    }
+    assert not is_surface_show(quiet) and surface_of(quiet) is None
+    events = [
+        _brief(_ts(1), [MEM_A]),
+        # Another window's Stop in the worktree, then the quiet resume: an
+        # unstamped open after it bridges to the resumed conversation.
+        {
+            "ts": _ts(1, 20),
+            "session": "transcript-2",
+            "kind": "turn_audited",
+            "verdict": "ok",
+            "triggered_from": "stop_hook",
+            "worktree_root": WORKTREE,
+        },
+        quiet,
+        _tool("show", _ts(1, 40), session="sess_bridge", stamp=None, id=MEM_A),
+    ]
+    brief = _surfaces(events)["brief"]
+    assert (brief["deliveries"], brief["shown"], brief["opened"]) == (1, 1, 1)
+    assert brief["chars_p50"] == 300
+
+
 def test_an_unstamped_row_joins_by_the_worktree_bridge() -> None:
     """With no harness stamp, a tool row joins the conversation whose hook
     row was the latest in its worktree before it; a conversation joined

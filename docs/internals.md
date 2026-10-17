@@ -58,8 +58,10 @@ validated ships as declared claims on `memory_write` / `memory_verify`.
   typed (a task notification, a message from another session, any other
   harness tag: the Stop audit's own test, `hook.is_synthetic_prompt`) is
   not probed and records nothing. A per-session
-  cooldown shows no id twice in a segment (a compact or clear opens a
-  new one) and at most twelve recalls per segment. Each show is recorded
+  cooldown shows no id twice in a segment, by the brief or the recall (a
+  compact or clear opens a new one; a resume keeps it, and its brief
+  omits what the segment has shown), and at most twelve recalls per
+  segment. Each show is recorded
   (`session_brief`, `prompt_recall`), and the Stop settles a shown
   pointer as an applied `use` naming its surface when the reply used
   it, never by the auto fallback. Nothing is shown with telemetry off.

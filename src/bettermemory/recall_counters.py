@@ -4,10 +4,12 @@
 `bettermemory recall review` grades the deliveries they count, so the
 two read the same rows.
 
-A show is a `session_brief` row or a `prompt_recall` row carrying `rule`
-(the recall surface's; a `prompt_recall` written by the old one-hit hook
-carries none and is left to the trio's reading of it). Each id a show
-names is one shown pointer. What the conversation did with it is read
+A show is a `session_brief` row carrying ids (a resume's brief that
+omitted every id its segment had shown leaves a row without, and showed
+nothing) or a `prompt_recall` row carrying `rule` (the recall surface's;
+a `prompt_recall` written by the old one-hit hook carries none and is
+left to the trio's reading of it). Each id a show names is one shown
+pointer. What the conversation did with it is read
 from the rows after the show: a `show` of the id is an open, an applied
 `use` of it that is not the auto fallback and carries an excerpt is a
 use (the Stop's settlement of the pointer included), and a `use` with
@@ -101,12 +103,23 @@ def is_surface_row(event: Mapping[str, Any]) -> bool:
 
 
 def is_surface_show(event: Mapping[str, Any]) -> bool:
-    """True for a show of the recall surface: a `session_brief` row, or a
-    `prompt_recall` row carrying the rule that delivered it."""
+    """True for a show of the recall surface: a `session_brief` row that
+    printed (a resume's brief that omitted every id its segment had shown
+    leaves one with no ids, and showed nothing), or a `prompt_recall` row
+    carrying the rule that delivered it."""
     kind = event.get("kind")
     if kind == "session_brief":
-        return True
+        return bool(_ids(event.get("ids")))
     return kind == "prompt_recall" and isinstance(event.get("rule"), str)
+
+
+def _anchors_conversation(event: Mapping[str, Any]) -> bool:
+    """True for a hook row the worktree bridge anchors a conversation on:
+    a show of either surface, a brief that printed nothing (the
+    SessionStart ran under the session's id all the same), or a Stop's
+    `turn_audited`."""
+    kind = event.get("kind")
+    return kind in ("session_brief", "turn_audited") or is_surface_show(event)
 
 
 def surface_of(event: Mapping[str, Any]) -> str | None:
@@ -245,7 +258,7 @@ def _conversation_rows(
     conversations: set[str] = set()
     stamped: set[str] = set()
     for row in bounded:
-        if is_surface_show(row) or row.get("kind") == "turn_audited":
+        if _anchors_conversation(row):
             hook_session = session_of(row)
             if hook_session is not None:
                 conversations.add(hook_session)
@@ -261,7 +274,7 @@ def _conversation_rows(
         assert stamp is not None
         worktree = _str(row.get("worktree_root"))
         session = session_of(row)
-        if is_surface_show(row) or kind == "turn_audited":
+        if _anchors_conversation(row):
             if worktree is not None and session is not None:
                 latest[worktree] = session
             continue

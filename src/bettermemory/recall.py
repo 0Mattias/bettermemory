@@ -24,8 +24,11 @@ fetch carries the signals.
 
 Per-session state (`RecallState`) replaces the old 600-second
 any-retrieval shield for delivery: a session segment (a SessionStart
-with source ``compact`` or ``clear`` opens a new one) shows no id twice
-and delivers at most twelve recalls. The state lives in the daemon,
+with source ``compact`` or ``clear`` opens a new one; ``startup`` and
+``resume`` keep the one the session is in) shows no id twice, by either
+surface, and delivers at most twelve recalls. The brief on a resume
+omits the ids its segment has shown and records them as ``omitted``.
+The state lives in the daemon,
 lock-guarded, rebuilt from the log's events after a restart, evicted
 after a day idle and bounded at a thousand sessions; the in-process CLI
 path, which has no daemon, computes it from the log on every call. The
@@ -126,9 +129,12 @@ __all__ = [
 # The delivery rule's name, recorded on both events so a later rule can
 # be told apart in the log. "rs-v2" (RS-F1, 2026-10-17) is "rs-v1" with
 # the synthetic-prompt gate: a prompt the harness composed is not probed.
-# Every row written after that landing carries it, so a read of the log
-# splits on the row's rule and never on a clock.
-RULE = "rs-v2"
+# "rs-v3" (RS-F2 and RS-F3, 2026-10-17) is "rs-v2" with the brief's
+# omission on a resume (RS-F2) and the Stop row's prompt_id and
+# reply_source (RS-F3).
+# Every row written after a landing carries its rule, so a read of the
+# log splits on the row's rule and never on a clock.
+RULE = "rs-v3"
 
 # The harness a hook payload names when it names none: the one whose
 # hook protocol the plugin implements.
@@ -257,7 +263,8 @@ class HookResult:
     injects (`stdout`, empty when nothing is shown) and what the adapters
     wrap beside it: which surface spoke, the ids it showed, the text's
     length, the rule and the id of the event that recorded the show (None
-    when nothing was shown, so nothing was recorded)."""
+    when nothing was recorded; a resume's brief that omitted every
+    candidate records its row and carries the id with nothing shown)."""
 
     stdout: str
     surface: str
@@ -1053,8 +1060,12 @@ def session_brief(
     ``triggered_from="session_hook"`` so the hooks' server-session
     anchor (`hook._latest_in_process_session`) skips it like every other
     out-of-process row; it is not a retrieval kind, so the Stop audit's
-    shield does not count it. Its ids join the segment's shown set, so the
-    prompt recall does not point at them again.
+    shield does not count it. Its ids join the segment's shown set, so
+    neither surface points at them again in the segment. On a ``resume``,
+    which keeps the segment, the brief omits the ids the segment has
+    shown and records them as ``omitted``; when every candidate is
+    omitted the row is still recorded, with no ids, and nothing is
+    printed.
 
     A ``compact`` or ``clear`` that shows no brief, with telemetry on,
     records a `segment_opened` row instead (the session id, harness,
@@ -1199,7 +1210,20 @@ def _brief_in_segment(
     now: datetime,
 ) -> HookResult:
     """The brief for the segment `session_brief` just opened or resumed,
-    recorded when shown; empty when nothing is."""
+    recorded when shown; empty when nothing is.
+
+    The cooldown's rule, on the brief: an id the segment has shown (by
+    either surface, as `view.shown` has it) is not printed again. The
+    selection is split after `_select_brief` and before `render_brief`,
+    in selection order, into the ids kept and the ids omitted, and the
+    freed slots are not filled, so the selection stays a full scan's. The
+    rule reads the shown set on every source: on a ``compact`` or
+    ``clear`` the set is empty by construction, on a ``startup`` for a
+    session the state has not seen it is empty too, and a ``resume``
+    keeps what its segment showed. A brief with nothing left to print
+    still records its row, with no ids and `omitted` naming the
+    selection's, so the log shows the rule acted and on what; nothing is
+    recorded when the selection itself is empty."""
     empty = HookResult.empty("session_brief")
     if not cfg.behavior.session_brief or not cfg.telemetry.enabled:
         return empty
@@ -1217,10 +1241,10 @@ def _brief_in_segment(
     )
     if not selection.memories:
         return empty
-    text, ids = render_brief(
-        selection.memories, disputed_marks(store.pending_conflict_pairs())
-    )
-    if not ids:
+    kept = [memory for memory in selection.memories if memory.id not in view.shown]
+    omitted = [memory.id for memory in selection.memories if memory.id in view.shown]
+    text, ids = render_brief(kept, disputed_marks(store.pending_conflict_pairs()))
+    if not ids and not omitted:
         return empty
     identity.bind_transcript(session_id=key[1], model=None, client=key[0])
     event_id = generate_ulid()
@@ -1239,6 +1263,7 @@ def _brief_in_segment(
         "segment": view.segment,
         "ids": ids,
         "chars": len(text),
+        "omitted": omitted,
         "rows_examined": selection.examined,
         "unresolved": selection.unresolved,
         "rule": RULE,

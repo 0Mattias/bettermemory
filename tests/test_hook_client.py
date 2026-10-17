@@ -92,8 +92,9 @@ def test_session_start_prints_the_block_through_the_daemon(
     result = _hook(["hook", "session-start"], daemon_env, payload)
     assert result.returncode == 0, result.stderr
     assert result.stdout.startswith(_BRIEF_HEAD)
-    # The 8.x name is an alias of the same client.
-    alias = _hook(["session-start"], daemon_env, payload)
+    # The 8.x name is an alias of the same client; from another session,
+    # since a session's segment shows no id twice.
+    alias = _hook(["session-start"], daemon_env, {**payload, "session_id": "sess_2"})
     assert alias.returncode == 0, alias.stderr
     assert alias.stdout == result.stdout
 
@@ -493,7 +494,11 @@ def test_the_hook_replaces_a_daemon_of_an_older_version_and_keeps_its_own(
         answer = _daemon_client.health(state["port"])
         assert answer is not None and answer["version"] == state["version"]
 
-        second = _hook(["hook", "session-start"], daemon_env, payload)
+        # The next hook, from another session (a session's segment shows
+        # no id twice), is answered by the daemon the first one started.
+        second = _hook(
+            ["hook", "session-start"], daemon_env, {**payload, "session_id": "sess_2"}
+        )
         assert second.stdout == first.stdout
         assert _wait_running(tmp_path)["pid"] == state["pid"], "kept, not replaced"
     finally:

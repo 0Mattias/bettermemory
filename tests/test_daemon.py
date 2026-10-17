@@ -216,7 +216,7 @@ async def test_session_start_endpoint_returns_the_brief(
     assert body["surface"] == "session_brief"
     assert body["ids"] == [written.id]
     assert body["chars"] == len(body["stdout"])
-    assert body["rule"] == "rs-v2"
+    assert body["rule"] == "rs-v3"
     events = [e for e in daemon_store.iter_events() if e["kind"] == "session_brief"]
     assert [e["event_id"] for e in events] == [body["event_id"]]
 

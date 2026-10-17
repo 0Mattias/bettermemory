@@ -193,6 +193,36 @@ def test_a_rebuild_reads_only_the_idle_window(world: PromptWorld) -> None:
     assert rebuild_session(world.store, KEY, now=a_day_and_more_later).shown == set()
 
 
+def test_a_brief_row_without_ids_adds_nothing_and_keeps_its_segment(
+    world: PromptWorld,
+) -> None:
+    """A resume whose brief omitted every candidate its segment had shown
+    leaves a `session_brief` row with no ids: the rebuild reads the
+    segment it carries and adds nothing to the shown set."""
+
+    def brief(source: str, segment: int, ids: list[str], omitted: list[str]) -> None:
+        world.store.record_event(
+            "session_brief",
+            session=KEY[1],
+            harness=KEY[0],
+            source=source,
+            segment=segment,
+            ids=ids,
+            chars=300 if ids else 0,
+            omitted=omitted,
+            triggered_from="session_hook",
+        )
+
+    brief("startup", 0, ["a"], [])
+    brief("resume", 0, [], ["a"])
+    rebuilt = rebuild_session(world.store, KEY, now=_now())
+    assert (rebuilt.segment, rebuilt.shown, rebuilt.deliveries) == (0, {"a"}, 0)
+    brief("compact", 1, ["b"], [])
+    brief("resume", 1, [], ["b"])
+    rebuilt = rebuild_session(world.store, KEY, now=_now())
+    assert (rebuilt.segment, rebuilt.shown, rebuilt.deliveries) == (1, {"b"}, 0)
+
+
 # ---------------------------------------------------------------------------
 # Eviction, the bound, threads
 # ---------------------------------------------------------------------------

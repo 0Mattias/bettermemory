@@ -288,7 +288,12 @@ until the stable `9.0.0` is tagged. Ask for a candidate by version
   - A per-session cooldown replaces the 600-second retrieval shield for
     delivery: no id twice in a segment (a compact or clear opens a new
     one), twelve recalls per segment at most, held in the daemon and
-    rebuilt from the log after a restart.
+    rebuilt from the log after a restart. The brief on a resume, which
+    keeps its segment, omits the ids the segment has already shown and
+    records them as `omitted` on its `session_brief` row (a row with no
+    ids when every candidate was shown, which the eval and the review
+    do not count as a brief); the rule name moves from `rs-v2` to
+    `rs-v3` so the log tells the rows apart.
   - Each show is recorded at show time (`session_brief`, and
     `prompt_recall` with `shown_ids`, `suppressed_ids`, `rule`,
     `segment`, `prompt_id` and `transcript_path`); a compact or clear

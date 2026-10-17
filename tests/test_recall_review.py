@@ -278,7 +278,7 @@ def test_the_review_draws_each_stratum_with_its_prompt(
     assert SECRETISH not in json.dumps(doc)
     assert delivery["prompt_source"] == "transcript"
     assert delivery["prompt_kind"] == "owner"
-    assert delivery["rule"] == "rs-v2"
+    assert delivery["rule"] == "rs-v3"
 
     brief = by_stratum[STRATUM_BRIEF]
     assert brief["sample_id"] == seeded["brief"]
@@ -706,9 +706,9 @@ def test_a_grade_is_a_recall_grade_row_the_eval_counts(
     assert first["relevant_ids"] == [seeded["delivered"]]
     assert first["irrelevant_ids"] == []
     assert first["attribution"] == "cli_recall_grade"
-    assert first["rule"] == "rs-v2"
+    assert first["rule"] == "rs-v3"
     # The rule that made the sample, beside the rule in force at grading.
-    assert first["sample_rule"] == "rs-v2"
+    assert first["sample_rule"] == "rs-v3"
     assert "sample_rule" not in grades[1]
     # The prompt is read at review time and never stored.
     blob = json.dumps(list(world.store.iter_events()))

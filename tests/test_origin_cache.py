@@ -196,9 +196,10 @@ def test_a_lone_session_start_block_after_idle_reuses_the_capture(
 ) -> None:
     """The daemon's session-start endpoint builds the session brief with
     `recall.session_brief`, which captures the caller's origin. Two
-    session starts 2.2 s apart, the shape of a session-start firing alone,
-    run the four probes once, and read the same brief. The memory cites
-    no path, so its verdict needs no git of its own."""
+    session starts 2.2 s apart, the shape of a session-start firing alone
+    (from two sessions, since a session's segment shows no id twice), run
+    the four probes once, and read the same brief. The memory cites no
+    path, so its verdict needs no git of its own."""
     from bettermemory.config import Config, StorageConfig
     from bettermemory.recall import session_brief
     from bettermemory.store import Store
@@ -219,7 +220,7 @@ def test_a_lone_session_start_block_after_idle_reuses_the_capture(
         assert first.ids == (written.id,)
         probes.clear()
         clock.advance(2.2)
-        again = session_brief(session_id="s", cwd=repo, config=config, store=store)
+        again = session_brief(session_id="s2", cwd=repo, config=config, store=store)
         assert again.stdout == first.stdout
         assert probes == []
 
