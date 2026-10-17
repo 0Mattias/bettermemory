@@ -12,13 +12,25 @@ THE FORMULAS, per rule. Probe sessions (session id opening with
 "switch-probe") are excluded throughout.
 
 (1) repeat_shows / shows. A show is one id on a session_brief row's `ids`
-or a prompt_recall row's `shown_ids`; a repeat show is one whose id was
-already shown under the same (session_id, segment). The shown sets are
-built from every row up to the window's end, so a repeat of a show before
-the window counts; shows and repeats are counted inside the window only.
-Repeats are split by the row that repeated them: a brief (a resumed
-session prints its brief again in the segment it is in, since only
-compact and clear open a segment) or a prompt recall. Target 0.
+or a prompt_recall row's `shown_ids`; a session_brief row's `omitted`
+(the ids a brief withheld because its segment had shown them, recorded
+since RS-F2) names no show and is not read. A repeat show is one whose id
+was already shown under the same (session_id, segment), by either
+surface, with the most recent earlier show within
+`recall.STATE_IDLE_SECONDS` (24 hours) of it. A show across a longer gap
+is counted on its own line, "re-shows past the idle window", and is not
+a repeat: the daemon drops a session idle past that many seconds and
+rebuilds it from the log's rows of the last 24 hours, so an id shown more
+than a day before a resume is outside the rebuilt shown set and prints
+again by the cooldown's own definition (RS-F2 declaration, memory
+01M54ECJJ6XWS9KTVTC7PQJRQZ, section (b) item 4; pre-landing the cut moves
+no figure, the longest gap between consecutive shows in a segment being
+16.2 hours). The shown sets are built from every row up to the window's
+end, so a repeat of a show before the window counts; shows, repeats and
+re-shows are counted inside the window only. Repeats are split by the row
+that repeated them: a brief (before RS-F2 a resumed session printed its
+brief again in the segment it is in, since only compact and clear open a
+segment) or a prompt recall. Target 0.
 
 (2) with_prompt_id / deliveries, the clause's first half as the log
 carries it. The second half is read directly where a turn_audited row
@@ -76,6 +88,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from bettermemory.events import redact_query  # noqa: E402
 from bettermemory.hook import _SYNTHETIC_USER_PREFIXES, human_prompt  # noqa: E402
+from bettermemory.recall import STATE_IDLE_SECONDS  # noqa: E402
 
 PROBE_SESSION_PREFIX = "switch-probe"
 #: The instant the rc2 daemon began serving (install done 05:50:14Z).
@@ -158,7 +171,8 @@ def shows(
     db: sqlite3.Connection, since: datetime, until: datetime
 ) -> dict[str, Counter[str]]:
     out: dict[str, Counter[str]] = defaultdict(Counter)
-    seen: dict[tuple[Any, Any], set[str]] = defaultdict(set)
+    #: (session_id, segment) -> each shown id's most recent show.
+    last_shown: dict[tuple[Any, Any], dict[str, datetime]] = defaultdict(dict)
     segments: dict[str, set[tuple[Any, Any]]] = defaultdict(set)
     for stamp, session, kind, event in _events(db, ("session_brief", "prompt_recall")):
         if stamp >= until:
@@ -172,13 +186,18 @@ def shows(
             "repeat_shows_brief" if kind == "session_brief" else "repeat_shows_recall"
         )
         for memory_id in ids if isinstance(ids, list) else []:
+            earlier = last_shown[key].get(memory_id)
             if inside:
                 out[rule]["shows"] += 1
                 segments[rule].add(key)
-                if memory_id in seen[key]:
-                    out[rule]["repeat_shows"] += 1
-                    out[rule][repeated_by] += 1
-            seen[key].add(memory_id)
+                if earlier is not None:
+                    gap = (stamp - earlier).total_seconds()
+                    if gap <= STATE_IDLE_SECONDS:
+                        out[rule]["repeat_shows"] += 1
+                        out[rule][repeated_by] += 1
+                    else:
+                        out[rule]["reshows_past_idle"] += 1
+            last_shown[key][memory_id] = stamp
     for rule, keys in segments.items():
         out[rule]["segments"] = len(keys)
     return out
@@ -339,7 +358,8 @@ def main() -> None:
             f"  (1) repeat_shows {s['repeat_shows']} / shows {s['shows']} over "
             f"{s['segments']} segments = {_ratio(s['repeat_shows'], s['shows'])} "
             f"(repeated by a brief {s['repeat_shows_brief']}, by a prompt recall "
-            f"{s['repeat_shows_recall']})"
+            f"{s['repeat_shows_recall']}; re-shows past the idle window "
+            f"{s['reshows_past_idle']})"
         )
         print(
             f"  (2) with_prompt_id {j['with_prompt_id']} / deliveries {j['deliveries']} "
