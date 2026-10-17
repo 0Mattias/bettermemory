@@ -165,6 +165,15 @@ _ATTRIBUTION_LOOKBACK_SECONDS = ATTRIBUTION_LOOKBACK_SECONDS
 # at byte granularity (not character) so multibyte UTF-8 can't bypass it.
 _TRANSCRIPT_TAIL_READ_BYTES = 1_048_576
 
+# When the tail holds no row the human typed, the walk continues toward
+# the start of the file one tail-sized chunk at a time and gives up after
+# this many bytes. A turn whose tool results outgrew the tail (10 of 88
+# delivered owner turns at 9.0.0rc1, 1.1 to 7.1 MiB after the prompt)
+# then still gets its Stop row, and a transcript with no human row at all
+# costs at most this much reading. One chunk and the partial line carried
+# between chunks are in memory at a time, never the file.
+_TRANSCRIPT_WALK_BACK_BYTES = 64 * 1_048_576
+
 # Text the harness composed and no human typed. Claude Code records
 # background task notifications, slash-command bookkeeping, harness stdout
 # wrappers, and system reminders as `type="user"` transcript rows whose
@@ -286,13 +295,14 @@ def _extract_last_exchange(
     expansions (those carry `isMeta: true`), and occasional empty
     strings. Accepting them verbatim made the audit probe run on
     harness text whenever such a row landed after the human's message. The walk skips those rows and keeps going —
-    the human's message is usually a few rows earlier. If nothing
-    human-looking is in the tail, `user` stays None and the hook
-    no-ops, the same fail-quiet contract as before.
+    the human's message is usually a few rows earlier. When the tail
+    holds no human row at all (a turn whose tool results outgrew it),
+    the walk continues toward the start of the file one chunk at a time
+    (`_walk_back`), up to `_TRANSCRIPT_WALK_BACK_BYTES`; past that, or
+    in a file with no human row, `user` stays None and the hook no-ops,
+    the same fail-quiet contract as before.
     """
-    user: str | None = None
-    assistant: str | None = None
-    model: str | None = None
+    found = _LastExchange()
     # `bounded_tail_read` handles the seek-to-end + partial-line-discard +
     # unseekable-stream fallback. The latest user+assistant pair sits at
     # the tail of an append-only JSONL, so the head is uninteresting and
@@ -318,36 +328,105 @@ def _extract_last_exchange(
     # strip() below already handles \r remnants and the trailing empty
     # piece a terminal \n produces.
     for line in reversed(text.split("\n")):
+        found.take(line)
+        if found.complete:
+            break
+    if found.user is None:
+        # The tail began after this turn's human row (its tool results
+        # outgrew the tail): keep walking from where the tail began. An
+        # append between the two reads only makes the walk re-read a few
+        # of the tail's own rows.
+        try:
+            size = transcript_path.stat().st_size
+        except OSError:
+            size = 0
+        if size > len(chunk):
+            _walk_back(transcript_path, end=size - len(chunk), found=found)
+    return found.user, found.assistant, found.model
+
+
+@dataclasses.dataclass
+class _LastExchange:
+    """What the reverse walk has found so far: the newest human row, the
+    newest assistant text and the newest assistant row's model."""
+
+    user: str | None = None
+    assistant: str | None = None
+    model: str | None = None
+
+    @property
+    def complete(self) -> bool:
+        return self.user is not None and self.assistant is not None
+
+    def take(self, line: str) -> None:
+        """Read one transcript line, newest first. A line that is not a
+        row, and a user row the human did not type, are skipped."""
         line = line.strip()
         if not line:
-            continue
+            return
         try:
             row = json.loads(line)
         except json.JSONDecodeError:
-            continue
+            return
         if not isinstance(row, dict):
-            continue
+            return
         row_type = row.get("type")
         message = row.get("message")
         if not isinstance(message, dict):
-            continue
+            return
         if row_type == "assistant":
-            if model is None:
+            if self.model is None:
                 raw_model = message.get("model")
                 if isinstance(raw_model, str) and raw_model:
-                    model = raw_model
-            if assistant is None:
-                assistant = _flatten_assistant_content(message.get("content"))
-        elif user is None and row_type == "user":
+                    self.model = raw_model
+            if self.assistant is None:
+                self.assistant = _flatten_assistant_content(message.get("content"))
+        elif self.user is None and row_type == "user":
             # A row the human did not type (`human_prompt` says which)
             # is skipped: the human's message sits a few rows earlier.
             candidate = human_prompt(row)
-            if candidate is None:
-                continue
-            user = candidate
-        if user is not None and assistant is not None:
-            break
-    return user, assistant, model
+            if candidate is not None:
+                self.user = candidate
+
+
+def _walk_back(transcript_path: Path, *, end: int, found: _LastExchange) -> None:
+    """Continue the reverse walk from byte `end` (exclusive: where the
+    tail began) toward the start of the file, one tail-sized chunk at a
+    time, until `found` is complete, the file starts, or
+    `_TRANSCRIPT_WALK_BACK_BYTES` have been read.
+
+    A chunk boundary falls inside a row: the bytes before a chunk's first
+    newline are the end of a row whose start lies further back, so they
+    are carried into the next (earlier) chunk, and a row longer than a
+    chunk keeps accumulating until its start arrives. Memory holds one
+    chunk and the carry, never the file. An OSError leaves `found` as it
+    was: the hook then no-ops as it did before the walk existed."""
+    budget = _TRANSCRIPT_WALK_BACK_BYTES
+    carry = b""
+    try:
+        with transcript_path.open("rb") as fh:
+            while end > 0 and budget > 0 and not found.complete:
+                start = max(0, end - _TRANSCRIPT_TAIL_READ_BYTES, end - budget)
+                fh.seek(start)
+                buf = fh.read(end - start) + carry
+                budget -= end - start
+                end = start
+                if start > 0:
+                    newline = buf.find(b"\n")
+                    if newline == -1:
+                        # A row longer than the chunk: its start is
+                        # further back. Keep every byte and read on.
+                        carry = buf
+                        continue
+                    carry, buf = buf[:newline], buf[newline + 1 :]
+                else:
+                    carry = b""
+                for raw in reversed(buf.split(b"\n")):
+                    found.take(raw.decode("utf-8", errors="replace"))
+                    if found.complete:
+                        break
+    except OSError:
+        return
 
 
 def is_synthetic_prompt(text: str) -> bool:
@@ -530,7 +609,9 @@ def audit_transcript(
     (Claude Code sends the reply it just finished): when present it is
     the reply every attribution reads, and the transcript tail is read
     for the user's message and the model only; when absent the tail's
-    reply is used, as before. `harness`, `prompt_id` and `state` go to
+    reply is used, as before. Which one it was goes on the
+    `turn_audited` row as `reply_source` ("payload" or "tail"; no key
+    when neither held a reply). `harness`, `prompt_id` and `state` go to
     `run_audit` for the settlement of shown pointers."""
     transcript_path = Path(transcript_path).expanduser()
     if not transcript_path.is_file():
@@ -538,8 +619,12 @@ def audit_transcript(
     user, assistant, model = _extract_last_exchange(transcript_path)
     if not user:
         return None
+    reply_source: str | None = None
     if assistant_message:
         assistant = assistant_message
+        reply_source = "payload"
+    elif assistant is not None:
+        reply_source = "tail"
     return run_audit(
         user_message=user,
         assistant_response=assistant,
@@ -551,6 +636,7 @@ def audit_transcript(
         cwd=cwd,
         harness=harness,
         prompt_id=prompt_id,
+        reply_source=reply_source,
         state=state,
     )
 
@@ -567,6 +653,7 @@ def run_audit(
     cwd: Path | None = None,
     harness: str | None = None,
     prompt_id: str | None = None,
+    reply_source: str | None = None,
     state: RecallState | None = None,
 ) -> dict[str, Any]:
     """Pure-function entry point: given a user message and session
@@ -604,7 +691,10 @@ def run_audit(
     (`recall.review_unanswered`). `state` is the daemon's recall state;
     the in-process path passes None and the state is rebuilt from the
     log. `harness` names the session's harness (the recall's key) and
-    `prompt_id` the harness turn, stamped on a settlement.
+    `prompt_id` the harness turn, stamped on a settlement and, with
+    `reply_source` (where `assistant_response` came from: "payload" or
+    "tail", None for none), on the `turn_audited` row, so a delivery's
+    turn joins its Stop without a transcript read.
 
     The in-process rows the hook joins are found by the harness join
     first (`bridged_session`: tool events stamped with this hook's
@@ -748,6 +838,8 @@ def run_audit(
             triggered_from="stop_hook",
             repeat=repeat,
             client_model=client_model,
+            prompt_id=prompt_id,
+            reply_source=reply_source,
         ),
     )
     if report.is_miss and not repeat:

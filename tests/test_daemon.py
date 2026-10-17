@@ -544,3 +544,39 @@ async def test_hook_workers_keep_their_connections_and_close_them(
     for store in opened:
         with pytest.raises(sqlite3.ProgrammingError):
             store._conn.execute("SELECT 1")
+
+
+async def test_stop_endpoint_stamps_prompt_id_and_reply_source(
+    daemon_config: Config, daemon_store: Store, tmp_path: Path
+) -> None:
+    """RS-F3: the daemon route's Stop row carries the payload's prompt_id
+    and names the payload as the reply's source, so a delivery's turn
+    joins its Stop without a transcript read."""
+    daemon_store.write(content="the release is signed in the vault", scopes=["tools"])
+    transcript = tmp_path / "transcript.jsonl"
+    rows: list[dict[str, Any]] = [
+        {"type": "user", "message": {"role": "user", "content": "ship the release"}},
+        {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "ok"}],
+            },
+        },
+    ]
+    transcript.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+    async with running_app(daemon_config, daemon_store) as client:
+        response = await client.post(
+            "/api/v1/hook/stop",
+            json={
+                "cwd": str(tmp_path),
+                "session_id": "sess_hook",
+                "transcript_path": str(transcript),
+                "last_assistant_message": "Shipped.",
+                "prompt_id": "turn-3",
+            },
+            headers=_auth(),
+        )
+    assert response.status_code == 200
+    [audited] = [e for e in daemon_store.iter_events() if e["kind"] == "turn_audited"]
+    assert (audited["prompt_id"], audited["reply_source"]) == ("turn-3", "payload")

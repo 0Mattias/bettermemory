@@ -378,3 +378,76 @@ def test_a_use_stamped_before_a_clear_is_not_credited_again(
     )
     _audit(world, f"Done. {SENTENCE}")
     assert [u for u in _uses(world.store) if u.get("surface")] == []
+
+
+# ---------------------------------------------------------------------------
+# RS-F3: the Stop row names its turn and where its reply came from
+# ---------------------------------------------------------------------------
+
+
+def _audited(store: Store) -> list[dict[str, Any]]:
+    return [e for e in store.iter_events() if e["kind"] == "turn_audited"]
+
+
+def test_the_stop_row_names_the_payload_as_the_reply_source(
+    world: PromptWorld, tmp_path: Path
+) -> None:
+    transcript = _transcript(tmp_path / "t.jsonl", "I do not know yet.")
+    audit_transcript(
+        transcript_path=transcript,
+        session_id=SESSION,
+        config=world.config,
+        store=world.store,
+        assistant_message="Done.",
+        prompt_id="turn-7",
+    )
+    [row] = _audited(world.store)
+    assert (row["prompt_id"], row["reply_source"], row["assistant_present"]) == (
+        "turn-7",
+        "payload",
+        True,
+    )
+
+
+def test_the_stop_row_names_the_tail_as_the_reply_source(
+    world: PromptWorld, tmp_path: Path
+) -> None:
+    transcript = _transcript(tmp_path / "t.jsonl", "Done.")
+    audit_transcript(
+        transcript_path=transcript,
+        session_id=SESSION,
+        config=world.config,
+        store=world.store,
+    )
+    [row] = _audited(world.store)
+    assert row["reply_source"] == "tail"
+    assert row["assistant_present"] is True
+    assert "prompt_id" not in row
+
+
+def test_the_stop_row_has_no_reply_source_without_a_reply(
+    world: PromptWorld, tmp_path: Path
+) -> None:
+    path = tmp_path / "t.jsonl"
+    rows = [
+        {"type": "user", "message": {"content": "ship the release"}},
+        {
+            "type": "assistant",
+            "message": {
+                "model": "claude-test",
+                "content": [{"type": "tool_use", "name": "x", "input": {}}],
+            },
+        },
+    ]
+    path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+    audit_transcript(
+        transcript_path=path,
+        session_id=SESSION,
+        config=world.config,
+        store=world.store,
+        prompt_id="turn-8",
+    )
+    [row] = _audited(world.store)
+    assert row["assistant_present"] is False
+    assert "reply_source" not in row
+    assert row["prompt_id"] == "turn-8"

@@ -452,6 +452,13 @@ class MissReport:
         }
 
 
+# Where the reply a Stop settled against came from, stamped as
+# `reply_source` on `turn_audited`: the Stop payload's
+# `last_assistant_message`, or the transcript's newest assistant text when
+# the payload carried none. None (no reply at all) writes no key.
+_VALID_REPLY_SOURCE: frozenset[str] = frozenset({"payload", "tail"})
+
+
 def turn_audited_fields(
     report: MissReport,
     *,
@@ -461,18 +468,21 @@ def turn_audited_fields(
     triggered_from: str,
     repeat: bool = False,
     client_model: str | None = None,
+    prompt_id: str | None = None,
+    reply_source: str | None = None,
 ) -> dict[str, Any]:
     """Canonical field set for a ``turn_audited`` event.
 
-    Single source of truth for the two producers — the Stop hook
-    (``hook.run_audit``) and the in-process MCP handler
-    (``handlers.audit_turn.memory_audit_turn``). The 2.6.4 audit found
-    them already drifted (``triggered_from`` on the hook, absent on the
-    handler);
-    routing both through this builder makes that drift structurally
-    impossible. ``triggered_from`` is the source discriminator —
-    ``"stop_hook"`` or ``"mcp_tool"``, a closed set both producers
-    populate so a consumer can split traffic without guessing.
+    Single source of truth for the one producer, ``hook.run_audit``,
+    which two callers reach: the ``bettermemory audit-turn`` process
+    (``hook.main``) and the daemon's stop route (``daemon.hook_stop``).
+    The 2.6.4 audit found the Stop hook and the in-process MCP handler
+    of that time already drifted (``triggered_from`` on the hook, absent
+    on the handler); routing every producer through this builder makes
+    that drift structurally impossible. ``triggered_from`` is the source
+    discriminator, ``"stop_hook"`` or ``"mcp_tool"``, a closed set a
+    consumer can split traffic on without guessing (the handler is gone;
+    its rows remain in older logs).
 
     ``no_signal_reason`` rides along additively, omitted when None (the
     common non-no_signal case keeps its exact pre-existing shape).
@@ -506,11 +516,25 @@ def turn_audited_fields(
       The MCP channel carries no model identity, so the hook is the
       only producer that can stamp it; per-model usage slices in
       `bettermemory eval` read this field.
+    - ``prompt_id``: the harness turn the Stop payload names (Claude
+      Code's ``prompt_id``, the same id its ``UserPromptSubmit`` payload
+      carries), so a delivery's turn joins its Stop row without a
+      transcript read (RS-F3, 2026-10-17). Before it, a Stop named its
+      turn only on the ``use`` row of a settlement.
+    - ``reply_source``: where the reply the Stop settled against came
+      from, ``"payload"`` (the Stop payload's ``last_assistant_message``)
+      or ``"tail"`` (the transcript's newest assistant text), absent when
+      there was no reply, so it agrees with ``assistant_present``.
     """
     if triggered_from not in _VALID_TRIGGERED_FROM:
         raise ValueError(
             f"triggered_from must be one of "
             f"{sorted(_VALID_TRIGGERED_FROM)!r}, got {triggered_from!r}"
+        )
+    if reply_source is not None and reply_source not in _VALID_REPLY_SOURCE:
+        raise ValueError(
+            f"reply_source must be one of {sorted(_VALID_REPLY_SOURCE)!r} "
+            f"or None, got {reply_source!r}"
         )
     fields: dict[str, Any] = {
         "session_id": session_id,
@@ -532,6 +556,10 @@ def turn_audited_fields(
         fields["repeat"] = True
     if client_model is not None:
         fields["client_model"] = client_model
+    if prompt_id is not None:
+        fields["prompt_id"] = prompt_id
+    if reply_source is not None:
+        fields["reply_source"] = reply_source
     return fields
 
 

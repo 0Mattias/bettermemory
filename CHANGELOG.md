@@ -304,7 +304,11 @@ until the stable `9.0.0` is tagged. Ask for a candidate by version
     a match records one applied `use` naming its `surface` and the
     show's event id, and no match records nothing. Open review chains
     the conversation left since its previous turn are counted into a
-    `review_unanswered` event.
+    `review_unanswered` event. The Stop's `turn_audited` row carries the
+    payload's `prompt_id` and `reply_source` (`payload` or `tail`), and
+    when the transcript's last 1 MiB holds no human row the audit walks
+    back through the file one 1 MiB chunk at a time, 64 MiB at most,
+    instead of writing nothing for the turn.
   - The shim forwards `CLAUDE_CODE_SESSION_ID` as
     `x-bettermemory-harness-session`, the daemon stamps it on show,
     search, use, write, update and verify rows, and the hooks join a

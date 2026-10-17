@@ -2472,3 +2472,238 @@ def test_the_stop_rows_keep_their_field_sets(review_world: Any) -> None:
     assert set(audited) == _TURN_AUDITED_KEYS
     assert set(miss) == _SEARCH_MISS_KEYS
     assert len(_unanswered(review_world.store)) == 1
+
+
+# ---------------------------------------------------------------------------
+# RS-F3: the Stop row's prompt_id and reply_source; the walk past the tail
+# ---------------------------------------------------------------------------
+
+_MIB = 1_048_576
+
+
+def _tool_result_row(size: int) -> dict[str, Any]:
+    """A user row carrying a tool result of about `size` bytes: never the
+    human's text, and most of a real transcript's bytes."""
+    return {
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "t", "content": "x" * size}
+            ],
+        },
+    }
+
+
+def _reply_row(text: str) -> dict[str, Any]:
+    return {
+        "type": "assistant",
+        "message": {
+            "model": "claude-test",
+            "content": [{"type": "text", "text": text}],
+        },
+    }
+
+
+def _long_turn(path: Path, *, after_prompt: int, human: bool = True) -> None:
+    """A transcript whose newest turn has at least `after_prompt` bytes of
+    tool results between the human's row and the reply: one row longer
+    than a chunk, then rows of an odd size, so chunk boundaries fall
+    inside rows."""
+    rows: list[dict[str, Any]] = []
+    if human:
+        rows.append({"type": "user", "message": {"content": "stale ask"}})
+        rows.append(_reply_row("stale reply"))
+        rows.append({"type": "user", "message": {"content": "the long ask"}})
+    rows.append(_tool_result_row(_MIB + _MIB // 2))
+    written = _MIB + _MIB // 2
+    while written < after_prompt:
+        rows.append(_tool_result_row(300_007))
+        written += 300_007
+    rows.append(_reply_row("the long reply"))
+    _write_transcript(path, *rows)
+
+
+def _seed_store(mem_dir: Path) -> None:
+    store = Store(mem_dir)
+    store.write(content="alpha note about postgres", scopes=["infrastructure"])
+    store.close()
+
+
+def test_extract_last_exchange_walks_back_past_the_tail(tmp_path: Path) -> None:
+    """RS-F3: a turn whose tool results outgrew the 1 MiB tail. The tail
+    holds the reply and tool results only; the walk continues toward the
+    start of the file and finds the human's row about 3 MiB back. Every
+    chunk boundary falls inside a row, and one row is longer than a
+    chunk, so the carry between chunks is exercised."""
+    transcript = tmp_path / "t.jsonl"
+    _long_turn(transcript, after_prompt=3 * _MIB)
+    data = transcript.read_bytes()
+    size = len(data)
+    boundaries = [size - k * _MIB for k in range(1, size // _MIB + 1)]
+    assert boundaries and all(data[b - 1 : b] != b"\n" for b in boundaries)
+    user, assistant, model = _extract_last_exchange(transcript)
+    assert user == "the long ask"
+    assert assistant == "the long reply"
+    assert model == "claude-test"
+
+
+def test_extract_last_exchange_none_when_no_human_row_in_a_long_file(
+    tmp_path: Path,
+) -> None:
+    """The walk reaches the start of a file with no human row and gives
+    nothing, as the tail pass did; the reply is still read."""
+    transcript = tmp_path / "t.jsonl"
+    _long_turn(transcript, after_prompt=2 * _MIB, human=False)
+    user, assistant, _ = _extract_last_exchange(transcript)
+    assert user is None
+    assert assistant == "the long reply"
+
+
+def test_extract_last_exchange_none_past_the_walk_back_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A human row further back than the bound is not read: the hook
+    no-ops as before rather than reading the file without limit."""
+    from bettermemory import hook as hook_module
+
+    transcript = tmp_path / "t.jsonl"
+    _long_turn(transcript, after_prompt=4 * _MIB)
+    monkeypatch.setattr(hook_module, "_TRANSCRIPT_WALK_BACK_BYTES", 2 * _MIB)
+    user, assistant, _ = _extract_last_exchange(transcript)
+    assert user is None
+    assert assistant == "the long reply"
+    monkeypatch.setattr(hook_module, "_TRANSCRIPT_WALK_BACK_BYTES", 8 * _MIB)
+    assert _extract_last_exchange(transcript)[0] == "the long ask"
+
+
+def test_main_stamps_prompt_id_and_reply_source_from_the_payload(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """RS-F3: the Stop row names the harness turn and the reply's source,
+    "payload" when Claude Code sent `last_assistant_message`."""
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(mem_dir))
+    _seed_store(mem_dir)
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(
+        transcript,
+        {"type": "user", "message": {"content": "what about postgres?"}},
+        _reply_row("Postgres is on 5432."),
+    )
+    payload = {
+        "session_id": "sess-rsf3",
+        "transcript_path": str(transcript),
+        "last_assistant_message": "Postgres is on 5432, as before.",
+        "prompt_id": "turn-7",
+    }
+    monkeypatch.setattr("sys.stdin", _StdinMock(json.dumps(payload).encode("utf-8")))
+    assert hook_main(["--quiet"]) == 0
+    audited = next(e for e in _events(mem_dir) if e["kind"] == "turn_audited")
+    assert audited["prompt_id"] == "turn-7"
+    assert audited["reply_source"] == "payload"
+    assert audited["assistant_present"] is True
+
+
+def test_main_reads_the_tail_reply_when_the_payload_has_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(mem_dir))
+    _seed_store(mem_dir)
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(
+        transcript,
+        {"type": "user", "message": {"content": "what about postgres?"}},
+        _reply_row("Postgres is on 5432."),
+    )
+    payload = {"session_id": "sess-rsf3", "transcript_path": str(transcript)}
+    monkeypatch.setattr("sys.stdin", _StdinMock(json.dumps(payload).encode("utf-8")))
+    assert hook_main(["--quiet"]) == 0
+    audited = next(e for e in _events(mem_dir) if e["kind"] == "turn_audited")
+    assert audited["reply_source"] == "tail"
+    assert "prompt_id" not in audited
+
+
+def test_main_omits_reply_source_without_a_reply(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No reply from either source: `assistant_present` False and no
+    `reply_source` key, so the two fields agree by construction."""
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(mem_dir))
+    _seed_store(mem_dir)
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(
+        transcript,
+        {"type": "user", "message": {"content": "what about postgres?"}},
+        {
+            "type": "assistant",
+            "message": {"content": [{"type": "tool_use", "name": "x", "input": {}}]},
+        },
+    )
+    payload = {
+        "session_id": "sess-rsf3",
+        "transcript_path": str(transcript),
+        "prompt_id": "turn-8",
+    }
+    monkeypatch.setattr("sys.stdin", _StdinMock(json.dumps(payload).encode("utf-8")))
+    assert hook_main(["--quiet"]) == 0
+    audited = next(e for e in _events(mem_dir) if e["kind"] == "turn_audited")
+    assert audited["assistant_present"] is False
+    assert "reply_source" not in audited
+    assert audited["prompt_id"] == "turn-8"
+
+
+def test_main_audits_a_turn_whose_tool_results_outgrew_the_tail(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """End to end: the Stop row exists for a long turn and probes the
+    turn's own prompt. At 9.0.0rc2 the hook wrote nothing for it."""
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(mem_dir))
+    _seed_store(mem_dir)
+    transcript = tmp_path / "t.jsonl"
+    _long_turn(transcript, after_prompt=2 * _MIB)
+    payload = {
+        "session_id": "sess-long",
+        "transcript_path": str(transcript),
+        "prompt_id": "turn-9",
+    }
+    monkeypatch.setattr("sys.stdin", _StdinMock(json.dumps(payload).encode("utf-8")))
+    assert hook_main(["--quiet"]) == 0
+    audited = next(e for e in _events(mem_dir) if e["kind"] == "turn_audited")
+    assert audited["prompt_id"] == "turn-9"
+    assert audited["reply_source"] == "tail"
+    assert audited["probe_query"]["len"] == len("the long ask")
+
+
+def test_the_stop_row_with_a_reply_and_a_prompt_id_adds_two_keys(
+    review_world: Any,
+) -> None:
+    """RS-F3: beside the pinned set, a Stop that names its turn and had a
+    reply carries exactly `prompt_id` and `reply_source` more; the
+    search_miss row is unchanged."""
+    from .test_recall_prompt import QUERY
+
+    review_world.write(origin=None, scopes=["infrastructure"])
+    result = run_audit(
+        user_message=QUERY,
+        assistant_response="a reply that cites nothing",
+        session_id="transcript-review",
+        config=review_world.config,
+        store=review_world.store,
+        prompt_id="turn-1",
+        reply_source="payload",
+    )
+    assert result["verdict"] == "miss"
+    events = list(review_world.store.iter_events())
+    [audited] = [e for e in events if e["kind"] == "turn_audited"]
+    [miss] = [e for e in events if e["kind"] == "search_miss"]
+    assert set(audited) == _TURN_AUDITED_KEYS | {"prompt_id", "reply_source"}
+    assert (audited["prompt_id"], audited["reply_source"]) == ("turn-1", "payload")
+    assert set(miss) == _SEARCH_MISS_KEYS

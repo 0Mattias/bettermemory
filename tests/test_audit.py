@@ -1944,3 +1944,69 @@ def test_an_indeterminate_origin_declines_to_declare_a_miss() -> None:
     assert declined.top_hits[0].relevance == "high", "the hit still clears"
     assert declined.verdict == "ok"
     assert declined.suppressed_by == "origin_indeterminate"
+
+
+# ---------------------------------------------------------------------------
+# RS-F3: the Stop row's prompt_id and reply_source
+# ---------------------------------------------------------------------------
+
+
+def _rs_f3_report() -> Any:
+    from bettermemory.audit import MissReport
+
+    return MissReport(
+        verdict="ok",
+        checked_at=_utc(2026, 10, 17),
+        session_id="s1",
+        lookback_seconds=600,
+        recent_retrieval_count=0,
+        threshold_rule=THRESHOLD_RULE_V1,
+        probe_query="ship the release",
+    )
+
+
+def test_turn_audited_fields_carries_prompt_id_and_reply_source() -> None:
+    """RS-F3: the Stop row names its harness turn and where its reply came
+    from, each written only when given and after `client_model`, so a row
+    from a payload without them keeps its prior shape."""
+    from bettermemory.audit import turn_audited_fields
+
+    report = _rs_f3_report()
+    with_both = turn_audited_fields(
+        report,
+        session_id="s1",
+        probe_mode="hybrid",
+        assistant_present=True,
+        triggered_from="stop_hook",
+        prompt_id="turn-7",
+        reply_source="payload",
+    )
+    assert with_both["prompt_id"] == "turn-7"
+    assert with_both["reply_source"] == "payload"
+    assert list(with_both)[-2:] == ["prompt_id", "reply_source"]
+    without = turn_audited_fields(
+        report,
+        session_id="s1",
+        probe_mode="hybrid",
+        assistant_present=True,
+        triggered_from="stop_hook",
+    )
+    assert "prompt_id" not in without
+    assert "reply_source" not in without
+    assert set(with_both) - set(without) == {"prompt_id", "reply_source"}
+
+
+def test_turn_audited_fields_rejects_an_unknown_reply_source() -> None:
+    """`reply_source` is a closed set like `triggered_from`: "payload" or
+    "tail", or None for no reply."""
+    from bettermemory.audit import turn_audited_fields
+
+    with pytest.raises(ValueError, match="reply_source"):
+        turn_audited_fields(
+            _rs_f3_report(),
+            session_id="s1",
+            probe_mode="hybrid",
+            assistant_present=True,
+            triggered_from="stop_hook",
+            reply_source="elsewhere",
+        )

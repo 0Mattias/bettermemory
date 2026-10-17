@@ -89,6 +89,13 @@ have surfaced a high-relevance hit and the model made no
 - Denominator: `turn_audited` events, excluding `no_signal` verdicts
   (probe declined: empty store, nothing relevant). Those are reported
   separately so a probe stuck at "declined" can't read as a healthy 0%.
+- Each `turn_audited` row names its harness turn (`prompt_id`, from the
+  Stop payload) and where the reply it settled against came from
+  (`reply_source`: `payload` for `last_assistant_message`, `tail` for
+  the transcript's reply; no key when there was no reply). Rows written
+  before RS-F3 (2026-10-17) carry neither key. A Stop whose last 1 MiB
+  holds no human row walks back through the transcript, 64 MiB at most,
+  instead of writing nothing for the turn.
 
 The threshold rule is versioned (`THRESHOLD_RULE_V1 = "v1_top1_high"`)
 and recorded on every event.

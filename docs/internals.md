@@ -230,7 +230,11 @@ through; each event is a row of the store's log. `audit.py` and
 standard-library client in `_daemon_client.py`, which posts the hook's
 payload to the daemon, and `daemon.py` serves the three bodies at
 `/api/v1/hook/`. `hook.py` is the Stop body: the turn audit and
-settlement. `recall.py` is the recall surface, the session brief and
+settlement; the audit reads the transcript's last 1 MiB for the human's
+row and the reply, walks back one chunk at a time (64 MiB at most) when
+the tail holds no human row, and its `turn_audited` row carries the
+payload's `prompt_id` and `reply_source` (`payload` or `tail`).
+`recall.py` is the recall surface, the session brief and
 the prompt recall with their per-session cooldown; `verdict.py` is the
 one memoised verdict it and `memory_show` read. The bodies run in the
 daemon but outside the MCP request path, so they read the store rather
