@@ -3414,6 +3414,26 @@ class Store:
             if event is not None:
                 yield event
 
+    def session_events_of_kinds(
+        self, session: str, kinds: Collection[str]
+    ) -> Iterator[dict[str, Any]]:
+        """The telemetry rows of `kinds` recorded under `session`, in log
+        order, whenever they were stamped: what a session's recall state
+        is rebuilt from. Read through the log's kind index, the session
+        compared on each row of those kinds."""
+        names = sorted(set(kinds))
+        if not names:
+            return
+        placeholders = ",".join("?" * len(names))
+        for raw in self._conn.execute(
+            "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log "
+            f"WHERE kind IN ({placeholders}) AND session = ? ORDER BY seq",
+            (*names, session),
+        ):
+            event = self._event_from_raw(raw)
+            if event is not None:
+                yield event
+
     def reopen(self) -> Store:
         """Another connection to this store, for another thread: SQLite
         binds a connection to the thread that opened it, so a worker

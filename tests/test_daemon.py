@@ -216,7 +216,7 @@ async def test_session_start_endpoint_returns_the_brief(
     assert body["surface"] == "session_brief"
     assert body["ids"] == [written.id]
     assert body["chars"] == len(body["stdout"])
-    assert body["rule"] == "rs-v3"
+    assert body["rule"] == "rs-v4"
     events = [e for e in daemon_store.iter_events() if e["kind"] == "session_brief"]
     assert [e["event_id"] for e in events] == [body["event_id"]]
 
@@ -444,8 +444,14 @@ async def test_stop_endpoint_settles_from_last_assistant_message(
         "review_issued", review_id=root, related=[], parent_review_id=None
     )
     transcript = tmp_path / "transcript.jsonl"
+    # The turn's user row carries the payload's prompt id, as Claude Code
+    # stamps it: the Stop finds its turn by that id (RS-F5).
     rows: list[dict[str, Any]] = [
-        {"type": "user", "message": {"role": "user", "content": "ship the release"}},
+        {
+            "type": "user",
+            "promptId": "turn-3",
+            "message": {"role": "user", "content": "ship the release"},
+        },
         {
             "type": "assistant",
             "message": {
@@ -554,8 +560,14 @@ async def test_stop_endpoint_stamps_prompt_id_and_reply_source(
     joins its Stop without a transcript read."""
     daemon_store.write(content="the release is signed in the vault", scopes=["tools"])
     transcript = tmp_path / "transcript.jsonl"
+    # The turn's user row carries the payload's prompt id, as Claude Code
+    # stamps it: the Stop finds its turn by that id (RS-F5).
     rows: list[dict[str, Any]] = [
-        {"type": "user", "message": {"role": "user", "content": "ship the release"}},
+        {
+            "type": "user",
+            "promptId": "turn-3",
+            "message": {"role": "user", "content": "ship the release"},
+        },
         {
             "type": "assistant",
             "message": {

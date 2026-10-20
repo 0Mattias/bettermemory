@@ -234,7 +234,7 @@ def test_a_delivery_block_and_event(world: PromptWorld) -> None:
     assert result.surface == "prompt_recall"
     assert result.ids == (memory.id,)
     assert result.chars == len(result.stdout)
-    assert result.rule == "rs-v3"
+    assert result.rule == "rs-v4"
     # The old block's promise that recording `ignored` tunes recall down
     # is gone: no ranking reads outcomes.
     assert "ignored" not in result.stdout
@@ -243,7 +243,7 @@ def test_a_delivery_block_and_event(world: PromptWorld) -> None:
     assert event["event_id"] == result.event_id
     assert event["shown_ids"] == [memory.id]
     assert event["suppressed_ids"] == []
-    assert event["rule"] == "rs-v3"
+    assert event["rule"] == "rs-v4"
     assert event["chars"] == event["injected_chars"] == len(result.stdout)
     assert event["segment"] == 0
     assert event["delivered_reason"] == "project"

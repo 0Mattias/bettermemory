@@ -43,10 +43,11 @@ from pathlib import Path
 from typing import Any
 
 from .events import redact_query
-from .hook import event_joined, human_prompt, joined_sessions
+from .hook import event_joined, joined_sessions
 from .models import Memory
 from .origin import Origin
 from .origin import capture as capture_origin
+from .owner_prompt import owner_prompt, submitted_text
 from .recall import DEFAULT_HARNESS, clean_prompt, in_project, in_repository
 from .recall_counters import (
     RECALL_GRADE,
@@ -454,23 +455,9 @@ class _UserRow:
 
 
 def _row_text(row: dict[str, Any]) -> str | None:
-    if row.get("type") != "user":
-        return None
-    message = row.get("message")
-    if not isinstance(message, dict):
-        return None
-    content = message.get("content")
-    text: str | None = None
-    if isinstance(content, str):
-        text = content
-    elif isinstance(content, list):
-        parts = [
-            block.get("text")
-            for block in content
-            if isinstance(block, dict) and block.get("type") == "text"
-        ]
-        if any(isinstance(part, str) and part for part in parts):
-            text = "\n".join(part for part in parts if isinstance(part, str) and part)
+    """The text of a submitted user row (`owner_prompt.submitted_text`),
+    the owner's or not; None for a row without text."""
+    text = submitted_text(row)
     if text is None or not text.strip():
         return None
     return text
@@ -507,7 +494,7 @@ def _user_rows(rows: list[dict[str, Any]]) -> list[_UserRow]:
                 text=text,
                 probed=probed,
                 digest=probe_digest(probed),
-                human=human_prompt(row) is not None,
+                human=owner_prompt(row) is not None,
             )
         )
     return out

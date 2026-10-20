@@ -387,13 +387,16 @@ class MissReport:
 
     `no_signal_reason` (optional, additive) explains *why* a
     ``no_signal`` verdict carries no signal when the cause isn't
-    obvious from the other fields. Its one historical producer — the
-    semantic-mode-without-a-model branch
-    (``"semantic_model_unavailable"``) — was removed with the semantic
-    lane in 4.0.0; the field survives because recorded events carry it
-    and replay must keep reading them. ``None`` from every current
-    branch (empty store / empty query / no hits), so existing
-    consumers see an unchanged shape.
+    obvious from the other fields. Its one producer is the Stop's turn
+    with no owner prompt (``"no_owner_prompt"``, `no_owner_prompt_report`):
+    the one definition (`owner_prompt`) accepts none of the turn's
+    submitted rows, so nothing was probed (RS-F5). Its historical
+    producer, the semantic-mode-without-a-model branch
+    (``"semantic_model_unavailable"``), was removed with the semantic
+    lane in 4.0.0; recorded events still carry it and replay keeps
+    reading them. ``None`` from every branch of `probe_for_miss` (empty
+    store / empty query / no hits), so existing consumers see an
+    unchanged shape.
 
     `suppressed_by` (optional, additive) names which shield turned a
     threshold-clearing top hit into an ``"ok"`` verdict:
@@ -452,11 +455,39 @@ class MissReport:
         }
 
 
+#: The `no_signal_reason` of a Stop whose turn holds no owner prompt: the
+#: one definition (`owner_prompt`) accepts none of the turn's submitted
+#: rows, so nothing was probed and nothing settled.
+NO_OWNER_PROMPT = "no_owner_prompt"
+
+# The reasons a producer may stamp on `turn_audited` today. A reason
+# recorded by an older producer (``"semantic_model_unavailable"``) stays
+# readable in the log; no current branch writes it.
+_VALID_NO_SIGNAL_REASON: frozenset[str] = frozenset({NO_OWNER_PROMPT})
+
 # Where the reply a Stop settled against came from, stamped as
 # `reply_source` on `turn_audited`: the Stop payload's
 # `last_assistant_message`, or the transcript's newest assistant text when
 # the payload carried none. None (no reply at all) writes no key.
 _VALID_REPLY_SOURCE: frozenset[str] = frozenset({"payload", "tail"})
+
+
+def no_owner_prompt_report(
+    *, session_id: str, now: datetime, lookback_seconds: int
+) -> MissReport:
+    """The report of a Stop whose turn holds no owner prompt: verdict
+    ``no_signal`` with reason `NO_OWNER_PROMPT`, no probe query and no
+    hits, under the rule every Stop row carries. Eval reads it as a
+    declined audit, outside the miss rate's denominator."""
+    return MissReport(
+        verdict="no_signal",
+        checked_at=now,
+        session_id=session_id,
+        lookback_seconds=lookback_seconds,
+        recent_retrieval_count=0,
+        threshold_rule=THRESHOLD_RULE_V1,
+        no_signal_reason=NO_OWNER_PROMPT,
+    )
 
 
 def turn_audited_fields(
@@ -485,9 +516,11 @@ def turn_audited_fields(
     its rows remain in older logs).
 
     ``no_signal_reason`` rides along additively, omitted when None (the
-    common non-no_signal case keeps its exact pre-existing shape).
-    Without it the reason lived only in the tool-response/hook-stdout
-    dict (``MissReport.to_dict``), so a STRUCTURAL no_signal (its
+    common non-no_signal case keeps its exact pre-existing shape), and
+    must be one of `_VALID_NO_SIGNAL_REASON` (``"no_owner_prompt"``: the
+    definition accepts none of the turn's submitted rows, RS-F5). Without
+    it the reason lived only in the tool-response/hook-stdout dict
+    (``MissReport.to_dict``), so a STRUCTURAL no_signal (its
     historical producer: the pre-4.0 semantic-mode-without-a-model
     branch, which fired on every turn of such a deployment) was
     event-identical to a benign per-turn one (bare continuation, no
@@ -535,6 +568,14 @@ def turn_audited_fields(
         raise ValueError(
             f"reply_source must be one of {sorted(_VALID_REPLY_SOURCE)!r} "
             f"or None, got {reply_source!r}"
+        )
+    if (
+        report.no_signal_reason is not None
+        and report.no_signal_reason not in _VALID_NO_SIGNAL_REASON
+    ):
+        raise ValueError(
+            f"no_signal_reason must be one of {sorted(_VALID_NO_SIGNAL_REASON)!r} "
+            f"or None, got {report.no_signal_reason!r}"
         )
     fields: dict[str, Any] = {
         "session_id": session_id,
@@ -1240,12 +1281,14 @@ __all__ = [
     "DEFAULT_CREATION_SHIELD_SECONDS",
     "DEFAULT_LOOKBACK_SECONDS",
     "MIN_PROBE_CONTENT_TOKENS",
+    "NO_OWNER_PROMPT",
     "REAUDIT_DEDUP_WINDOW_SECONDS",
     "THRESHOLD_RULE_V1",
     "MissHit",
     "MissReport",
     "Verdict",
     "is_duplicate_audit",
+    "no_owner_prompt_report",
     "probe_for_miss",
     "search_miss_fields",
     "turn_audited_fields",

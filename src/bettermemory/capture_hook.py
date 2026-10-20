@@ -130,10 +130,13 @@ def _session_transcript(session_id: object, transcript: object) -> Path | None:
 
 
 def read_stretch(path: Path, offset: int) -> Stretch:
-    """The characters of human prompts and assistant text past `offset`,
+    """The characters of owner prompts and assistant text past `offset`,
     the UTC times of the prompts, where the stretch starts, and whether a
-    compact_boundary row lies in it."""
-    from .hook import _flatten_assistant_content, human_prompt
+    compact_boundary row lies in it. A prompt is the owner's as the one
+    definition reads it (`owner_prompt.owner_prompt`: envelope blocks
+    removed), and counts its words whole: the probe's cut at 2,000
+    characters is the probe's, not a measure of what was said."""
+    from .owner_prompt import owner_prompt, text_blocks
 
     out = Stretch()
     with path.open("rb") as handle:
@@ -159,12 +162,12 @@ def read_stretch(path: Path, offset: int) -> Stretch:
         if row.get("type") == "assistant":
             message = row.get("message")
             content = message.get("content") if isinstance(message, dict) else None
-            text = _flatten_assistant_content(content) or ""
+            text = text_blocks(content) or ""
             out.chars += len(text)
             if text:
                 out.tail = f"{out.tail}\n{text}" if out.tail else text
             continue
-        prompt = human_prompt(row)
+        prompt = owner_prompt(row, cut=False)
         if prompt is not None:
             out.chars += len(prompt)
             out.tail = ""

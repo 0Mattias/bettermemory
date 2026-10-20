@@ -92,9 +92,15 @@ def _uses(store: Store) -> list[dict[str, Any]]:
     return [e for e in store.iter_events() if e["kind"] == "use"]
 
 
-def _transcript(path: Path, reply: str) -> Path:
+def _transcript(path: Path, reply: str, *, prompt_id: str | None = None) -> Path:
+    """A one-turn transcript. With `prompt_id` its user row carries it, as
+    Claude Code stamps it: the Stop finds its turn by the payload's id
+    (RS-F5)."""
+    user: dict[str, Any] = {"type": "user", "message": {"content": "ship the release"}}
+    if prompt_id is not None:
+        user["promptId"] = prompt_id
     rows = [
-        {"type": "user", "message": {"content": "ship the release"}},
+        user,
         {
             "type": "assistant",
             "message": {
@@ -121,7 +127,9 @@ def test_last_assistant_message_settles_a_brief_pointer(
 ) -> None:
     memory = _memory(world)
     shown = _brief(world.store, [memory.id])
-    transcript = _transcript(tmp_path / "t.jsonl", "I do not know yet.")
+    transcript = _transcript(
+        tmp_path / "t.jsonl", "I do not know yet.", prompt_id="turn-7"
+    )
     audit_transcript(
         transcript_path=transcript,
         session_id=SESSION,
@@ -392,7 +400,9 @@ def _audited(store: Store) -> list[dict[str, Any]]:
 def test_the_stop_row_names_the_payload_as_the_reply_source(
     world: PromptWorld, tmp_path: Path
 ) -> None:
-    transcript = _transcript(tmp_path / "t.jsonl", "I do not know yet.")
+    transcript = _transcript(
+        tmp_path / "t.jsonl", "I do not know yet.", prompt_id="turn-7"
+    )
     audit_transcript(
         transcript_path=transcript,
         session_id=SESSION,
@@ -430,7 +440,11 @@ def test_the_stop_row_has_no_reply_source_without_a_reply(
 ) -> None:
     path = tmp_path / "t.jsonl"
     rows = [
-        {"type": "user", "message": {"content": "ship the release"}},
+        {
+            "type": "user",
+            "promptId": "turn-8",
+            "message": {"content": "ship the release"},
+        },
         {
             "type": "assistant",
             "message": {

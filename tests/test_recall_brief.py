@@ -16,7 +16,7 @@ Pinned against real temp git repositories, through the store directly:
   call;
 - the resume: a SessionStart with source ``resume`` keeps the segment,
   and its brief omits the ids the segment has shown, recording them as
-  ``omitted``; startup, compact and clear omit nothing.
+  ``omitted``; startup, clear, and a compact on its marker omit nothing.
 
 Git processes are counted at `origin._git_result` (`test_verdict`'s
 counter), the one place every git subprocess in the package is spawned.
@@ -66,6 +66,7 @@ from bettermemory.verdict import (
     resolve_verdicts,
 )
 
+from . import _transcript_rows as tr
 from .test_server_commit_drift import _REMOTE, _commit_touching
 from .test_verdict import _repo
 
@@ -187,7 +188,7 @@ def test_the_brief_shape_and_its_event(world: _World) -> None:
     assert result.surface == "session_brief"
     assert result.ids == (second.id, first.id)
     assert result.chars == len(result.stdout)
-    assert result.rule == "rs-v3"
+    assert result.rule == "rs-v4"
     (event,) = world.briefs()
     assert event["event_id"] == result.event_id
     assert event["ids"] == [second.id, first.id]
@@ -196,7 +197,7 @@ def test_the_brief_shape_and_its_event(world: _World) -> None:
     assert event["chars"] == len(result.stdout)
     assert event["rows_examined"] == 2
     assert event["unresolved"] == 0
-    assert event["rule"] == "rs-v3"
+    assert event["rule"] == "rs-v4"
     assert event["triggered_from"] == "session_hook"
     assert event["session"] == "transcript-brief"
     assert event["transcript_path"] == "/tmp/t.jsonl"
@@ -381,6 +382,13 @@ def test_off_switches(world: _World) -> None:
 BRIEF_KEY = ("claude-code", "transcript-brief")
 
 
+def _marked(tmp_path: Path, uuid: str) -> str:
+    """A transcript whose newest row is a compaction marker stamped now:
+    what a compact SessionStart reads to open a segment (RS-F5)."""
+    path = tmp_path / f"{uuid}.jsonl"
+    return str(tr.write(path, tr.boundary(datetime.now(timezone.utc), uuid)))
+
+
 def _segment_view(world: _World) -> recall_module.SegmentView:
     return world.state.segment(world.store, BRIEF_KEY, now=datetime.now(timezone.utc))
 
@@ -419,21 +427,26 @@ def test_a_resume_omits_what_its_segment_has_shown(world: _World) -> None:
 
 
 def test_a_resume_after_a_compact_brief_omits_in_the_compacts_segment(
-    world: _World,
+    world: _World, tmp_path: Path
 ) -> None:
     first = world.fresh("prefer short release notes in this project")
     assert world.brief(source="startup").ids == (first.id,)
-    # A compact opens a segment with nothing shown: printed again.
-    assert world.brief(source="compact").ids == (first.id,)
+    # A compact on its marker opens a segment with nothing shown: printed
+    # again.
+    marked = _marked(tmp_path, "boundary-1")
+    assert world.brief(source="compact", transcript_path=marked).ids == (first.id,)
     world.state.wait_for_fills()
     second = world.fresh("the deploy window is tuesday mornings for this project")
     assert world.brief(source="resume").ids == (second.id,)
-    rows = [(r["source"], r["segment"], r["ids"], r["omitted"]) for r in world.briefs()]
-    assert rows == [
+    briefs = [
+        (r["source"], r["segment"], r["ids"], r["omitted"]) for r in world.briefs()
+    ]
+    assert briefs == [
         ("startup", 0, [first.id], []),
         ("compact", 1, [first.id], []),
         ("resume", 1, [second.id], [first.id]),
     ]
+    assert world.briefs()[1]["marker"] == "boundary-1"
 
 
 def test_a_resume_with_every_candidate_shown_prints_nothing_and_records_the_row(
@@ -449,12 +462,12 @@ def test_a_resume_with_every_candidate_shown_prints_nothing_and_records_the_row(
 
     assert (resumed.stdout, resumed.ids, resumed.chars) == ("", (), 0)
     assert resumed.surface == "session_brief"
-    assert resumed.rule == "rs-v3"
+    assert resumed.rule == "rs-v4"
     assert resumed.event_id is not None and resumed.event_id != startup.event_id
     _, row = world.briefs()
     assert row["event_id"] == resumed.event_id
     assert (row["ids"], row["chars"], row["omitted"]) == ([], 0, [second.id, first.id])
-    assert (row["source"], row["segment"], row["rule"]) == ("resume", 0, "rs-v3")
+    assert (row["source"], row["segment"], row["rule"]) == ("resume", 0, "rs-v4")
     assert (row["rows_examined"], row["unresolved"]) == (2, 0)
     assert row["session"] == "transcript-brief"
     assert row["transcript_path"] == "/tmp/t.jsonl"
@@ -466,10 +479,13 @@ def test_a_resume_with_every_candidate_shown_prints_nothing_and_records_the_row(
     assert view.shown_by[first.id] == (SURFACE_BRIEF, startup.event_id)
 
 
-def test_startup_compact_and_clear_omit_nothing(world: _World) -> None:
+def test_startup_compact_and_clear_omit_nothing(world: _World, tmp_path: Path) -> None:
+    """A compact here reads its marker (RS-F5); one without it is a
+    resume (`test_recall_compaction.py`)."""
     memory = world.fresh("prefer short release notes in this project")
+    marked = _marked(tmp_path, "boundary-1")
     for source, segment in (("startup", 0), ("compact", 1), ("clear", 2)):
-        assert world.brief(source=source).ids == (memory.id,)
+        assert world.brief(source=source, transcript_path=marked).ids == (memory.id,)
         row = world.briefs()[-1]
         assert (row["source"], row["segment"], row["omitted"]) == (source, segment, [])
     # A startup under a session the state has not seen: nothing shown yet.
@@ -479,13 +495,14 @@ def test_startup_compact_and_clear_omit_nothing(world: _World) -> None:
     assert world.briefs()[-1]["omitted"] == []
 
 
-def test_the_cli_path_reads_the_omission_from_the_log_inside_the_idle_window(
+def test_the_cli_path_reads_the_omission_from_the_log_past_the_idle_window(
     world: _World,
 ) -> None:
     """The in-process path holds no state between calls and rebuilds the
-    segment from the log's rows of the last `STATE_IDLE_SECONDS`: a brief
-    inside that window is omitted on a resume, and one older than it is
-    printed again, by the cooldown's existing definition."""
+    segment from the session's rows in the log: a brief is omitted on a
+    resume, and still is past `STATE_IDLE_SECONDS` (RS-F5, changed
+    deliberately: the rebuild read the last day only, and a resume a day
+    later printed the segment's ids again)."""
     first = world.fresh("prefer short release notes in this project")
     second = world.fresh("the deploy window is tuesday mornings for this project")
     startup = world.brief(source="startup", state=RecallState(background=False))
@@ -501,11 +518,79 @@ def test_the_cli_path_reads_the_omission_from_the_log_inside_the_idle_window(
     past_the_window = datetime.now(timezone.utc) + timedelta(
         seconds=STATE_IDLE_SECONDS + 3600
     )
-    revived = world.brief(
+    later = world.brief(
         source="resume", state=RecallState(background=False), now=past_the_window
     )
-    assert revived.ids == (second.id, first.id)
-    assert world.briefs()[-1]["omitted"] == []
+    assert later.ids == ()
+    assert world.briefs()[-1]["omitted"] == [second.id, first.id]
+
+
+def test_a_brief_then_a_resume_30_hours_later_omits_it_on_a_fresh_state(
+    world: _World,
+) -> None:
+    """RS-F5's pin: a brief's show, then a resume 30 hours later on the
+    CLI path's fresh state, omits the id; the daemon's state, evicted
+    after a day idle, rebuilds the shown set it held."""
+    first = world.fresh("prefer short release notes in this project")
+    now = datetime.now(timezone.utc)
+    assert world.brief(source="startup", now=now).ids == (first.id,)
+    world.state.wait_for_fills()
+    held = world.state.segment(world.store, BRIEF_KEY, now=now).shown
+    assert held == {first.id}
+
+    later = now + timedelta(hours=30)
+    resumed = world.brief(
+        source="resume", state=RecallState(background=False), now=later
+    )
+    assert resumed.ids == ()
+    assert world.briefs()[-1]["omitted"] == [first.id]
+    fresh = RecallState(background=False).segment(world.store, BRIEF_KEY, now=later)
+    evicted = world.state.segment(world.store, BRIEF_KEY, now=later)
+    assert fresh.shown == evicted.shown == held
+
+
+def test_a_compact_without_its_marker_briefs_as_a_resume(
+    world: _World, tmp_path: Path
+) -> None:
+    """RS-F5: the compact SessionStart's transcript holds no compaction
+    marker yet, so its brief omits what the segment has shown, as a
+    resume's does, and its row says the marker was absent. When a later
+    read finds the marker, the segment it opens at the compact holds the
+    compact brief's ids, which were shown after the compaction."""
+    first = world.fresh("prefer short release notes in this project")
+    assert world.brief(source="startup").ids == (first.id,)
+    world.state.wait_for_fills()
+    second = world.fresh("the deploy window is tuesday mornings for this project")
+    transcript = tr.write(tmp_path / "t.jsonl", tr.user("an ask", "p1"))
+    signal = datetime.now(timezone.utc)
+    compacted = world.brief(
+        source="compact", transcript_path=str(transcript), now=signal
+    )
+    assert compacted.ids == (second.id,)
+    row = world.briefs()[-1]
+    assert (row["source"], row["segment"], row["omitted"]) == (
+        "compact",
+        0,
+        [first.id],
+    )
+    assert row["marker_absent"] is True and "marker" not in row
+    world.state.wait_for_fills()
+
+    tr.append(transcript, tr.boundary(signal + timedelta(seconds=1)))
+    resumed = world.brief(
+        source="resume",
+        transcript_path=str(transcript),
+        now=signal + timedelta(seconds=120),
+    )
+    [opened] = [e for e in world.store.iter_events() if e["kind"] == "segment_opened"]
+    assert (opened["segment"], opened["marker"]) == (1, "boundary-1")
+    assert resumed.ids == (first.id,)
+    row = world.briefs()[-1]
+    assert (row["source"], row["segment"], row["omitted"]) == (
+        "resume",
+        1,
+        [second.id],
+    )
 
 
 def test_an_all_omitted_resume_is_no_show_for_eval_and_the_review(

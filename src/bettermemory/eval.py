@@ -2858,11 +2858,14 @@ TOOLS_WITHOUT_TELEMETRY: tuple[str, ...] = ()
 # (`recall.review_unanswered`). A hook record, not a tool call, and not a
 # retrieval kind.
 #
-# ``segment_opened`` is the SessionStart hook's record that a compact or
-# clear opened a new recall segment whose brief showed nothing
-# (`recall.session_brief`): it carries the segment number a restarted
-# daemon or the in-process path reads back. A hook record, not a tool
-# call, and not a retrieval kind.
+# ``segment_opened`` is a hook's record of what a compact or clear did to
+# the session's recall segment when no brief row carried it: the
+# SessionStart's, for a compact or clear whose brief showed nothing
+# (`recall.session_brief`; a compact without its marker keeps its segment
+# and says ``marker_absent``), and the later read's that found a
+# compaction's marker (`recall.confirm_compaction`, with ``opened_at``).
+# It carries the segment number a restarted daemon or the in-process path
+# reads back. A hook record, not a tool call, and not a retrieval kind.
 _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
     {
         "turn_audited",
@@ -2888,8 +2891,8 @@ _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
 # carry, ``session_brief`` comes off the SessionStart hook's recorder
 # (recall.py) under that same transcript session id,
 # ``review_unanswered`` comes off the Stop hook's recorder under that
-# same transcript session id too, ``segment_opened`` off the SessionStart
-# hook's recorder under it as well, and
+# same transcript session id too, ``segment_opened`` off the SessionStart,
+# UserPromptSubmit or Stop hook's recorder under it as well, and
 # ``use_token_expired`` is drained handler-side through the
 # live session's recorder (handlers/_shared.py), at the entry of the
 # very tool call that noticed the eviction. ``silent_miss_cutoff`` stays

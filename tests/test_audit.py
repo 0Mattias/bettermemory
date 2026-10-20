@@ -1670,7 +1670,41 @@ def test_turn_audited_fields_carries_no_signal_reason_when_set() -> None:
     `semantic_model_unavailable` existed was the tool-response dict and
     a STRUCTURAL no_signal (the Stop hook's permanent semantic-mode
     state) was event-identical to a benign bare-continuation one. The
-    builder must forward the reason when the report carries one."""
+    builder must forward the reason when the report carries one.
+
+    Changed in RS-F5: the reasons are a closed set
+    (`_VALID_NO_SIGNAL_REASON`), and the historical
+    ``semantic_model_unavailable`` has had no producer since 4.0.0, so
+    the pin forwards the reason the Stop writes today."""
+    from bettermemory.audit import NO_OWNER_PROMPT, MissReport, turn_audited_fields
+
+    report = MissReport(
+        verdict="no_signal",
+        checked_at=_utc(2026, 5, 22),
+        session_id="s1",
+        lookback_seconds=600,
+        recent_retrieval_count=0,
+        threshold_rule=THRESHOLD_RULE_V1,
+        no_signal_reason=NO_OWNER_PROMPT,
+    )
+    ta = turn_audited_fields(
+        report,
+        session_id="s1",
+        probe_mode="hybrid",
+        assistant_present=False,
+        triggered_from="stop_hook",
+    )
+    assert ta["no_signal_reason"] == "no_owner_prompt"
+
+
+@pytest.mark.parametrize("reason", ["semantic_model_unavailable", "no_prompt", ""])
+def test_turn_audited_fields_rejects_a_reason_outside_the_closed_set(
+    reason: str,
+) -> None:
+    """RS-F5: `no_signal_reason` is a closed set, like `triggered_from`
+    and `reply_source`, so a log consumer splitting on it never meets a
+    value no producer documents; the historical reason is readable in old
+    rows and never written again."""
     from bettermemory.audit import MissReport, turn_audited_fields
 
     report = MissReport(
@@ -1680,17 +1714,39 @@ def test_turn_audited_fields_carries_no_signal_reason_when_set() -> None:
         lookback_seconds=600,
         recent_retrieval_count=0,
         threshold_rule=THRESHOLD_RULE_V1,
-        probe_query="backup strategy",
-        no_signal_reason="semantic_model_unavailable",
+        no_signal_reason=reason,
     )
-    ta = turn_audited_fields(
-        report,
-        session_id="s1",
-        probe_mode="semantic",
-        assistant_present=False,
-        triggered_from="stop_hook",
-    )
-    assert ta["no_signal_reason"] == "semantic_model_unavailable"
+    with pytest.raises(ValueError, match="no_signal_reason"):
+        turn_audited_fields(
+            report,
+            session_id="s1",
+            probe_mode="hybrid",
+            assistant_present=False,
+            triggered_from="stop_hook",
+        )
+
+
+def test_no_owner_prompt_report_is_a_bare_no_signal() -> None:
+    """RS-F5: the report of a Stop whose turn holds no owner prompt
+    probes nothing: verdict no_signal with its reason, no query, no hits,
+    no retrieval count, under the rule every Stop row carries."""
+    from bettermemory.audit import NO_OWNER_PROMPT, no_owner_prompt_report
+
+    now = _utc(2026, 10, 19)
+    report = no_owner_prompt_report(session_id="s1", now=now, lookback_seconds=600)
+    assert report.to_dict() == {
+        "verdict": "no_signal",
+        "checked_at": "2026-10-19T12:00:00Z",
+        "session_id": "s1",
+        "lookback_seconds": 600,
+        "recent_retrieval_count": 0,
+        "threshold_rule": THRESHOLD_RULE_V1,
+        "top_hits": [],
+        "probe_query": None,
+        "no_signal_reason": NO_OWNER_PROMPT,
+        "suppressed_by": None,
+    }
+    assert not report.is_miss
 
 
 def test_turn_audited_fields_omits_no_signal_reason_when_none() -> None:

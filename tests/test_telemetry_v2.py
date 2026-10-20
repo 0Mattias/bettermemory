@@ -51,7 +51,8 @@ from bettermemory.eval import (
 )
 from bettermemory.events import Recorder, redact_query
 from bettermemory.health import compute_health
-from bettermemory.hook import _extract_last_exchange, main as hook_main, run_audit
+from bettermemory.hook import main as hook_main, run_audit
+from bettermemory.transcript import stop_turn
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.search import (
     _V2_HIGH_MATCHED_FLOOR,
@@ -434,7 +435,7 @@ def _write_transcript(path: Path, *rows: dict[str, object]) -> None:
     path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
 
 
-def test_extract_last_exchange_captures_model(tmp_path: Path) -> None:
+def test_stop_turn_captures_model(tmp_path: Path) -> None:
     transcript = tmp_path / "t.jsonl"
     _write_transcript(
         transcript,
@@ -447,10 +448,13 @@ def test_extract_last_exchange_captures_model(tmp_path: Path) -> None:
             },
         },
     )
-    user, assistant, model = _extract_last_exchange(transcript)
-    assert user == "the question"
-    assert assistant == "the answer"
-    assert model == "claude-sonnet-5"
+    turn = stop_turn(transcript, None)
+    assert turn is not None
+    assert (turn.prompt, turn.reply, turn.model) == (
+        "the question",
+        "the answer",
+        "claude-sonnet-5",
+    )
 
 
 def test_extract_model_from_tool_use_only_stop(tmp_path: Path) -> None:
@@ -476,10 +480,13 @@ def test_extract_model_from_tool_use_only_stop(tmp_path: Path) -> None:
             },
         },
     )
-    user, assistant, model = _extract_last_exchange(transcript)
-    assert user == "do the thing"
-    assert assistant == "working on it"
-    assert model == "claude-fable-5"
+    turn = stop_turn(transcript, None)
+    assert turn is not None
+    assert (turn.prompt, turn.reply, turn.model) == (
+        "do the thing",
+        "working on it",
+        "claude-fable-5",
+    )
 
 
 def test_run_audit_dedups_repeats_and_stamps_model(tmp_path: Path) -> None:

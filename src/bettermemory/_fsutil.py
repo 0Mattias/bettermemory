@@ -424,8 +424,9 @@ def bounded_tail_read(path: Path, max_bytes: int) -> bytes:
     because the read starts at the head. NOTE: the fallback only
     helps once the file is open — opening a FIFO with no writer
     blocks indefinitely, so a caller passing a possibly-non-regular
-    path must guard with ``Path.is_file()`` first (see
-    ``hook._extract_last_exchange`` and ``consolidate._load_transcript``).
+    path must guard with ``Path.is_file()`` first, as
+    ``hook.audit_transcript`` does before ``transcript.ReverseLines``
+    opens a transcript.
     """
     with path.open("rb") as fh:
         try:

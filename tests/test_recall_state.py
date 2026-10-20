@@ -1,11 +1,13 @@
 """The recall surface's session cooldown (`recall.RecallState`).
 
 Per (harness, session id): the segment, the ids shown in it and its
-delivery count. A SessionStart with source ``compact`` or ``clear`` opens
-a new segment; no id is shown twice in one; twelve deliveries at most;
-the state is rebuilt from the log after a restart (and computed from it
-on the in-process path), evicted after a day idle, bounded at a thousand
-sessions, and safe to drive from many threads.
+delivery count. A SessionStart with source ``clear`` opens a new segment,
+and one with source ``compact`` on its compaction marker; no id is shown
+twice in one; twelve deliveries at most; the state is rebuilt from the
+session's rows in the log after a restart (and computed from them on the
+in-process path), evicted after a day idle and rebuilt as it was,
+bounded at a thousand sessions, and safe to drive from many threads.
+The compaction marker's own battery is `test_recall_compaction.py`.
 """
 
 from __future__ import annotations
@@ -23,6 +25,9 @@ from bettermemory.recall import (
     rebuild_session,
 )
 from bettermemory.store import Store
+from bettermemory.transcript import CompactMarker
+
+from . import _transcript_rows as tr
 
 from .test_recall_prompt import BODY, PromptWorld
 
@@ -38,25 +43,62 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _compact(state: RecallState, store: Store, key: str = "boundary-1") -> None:
+    """A compact SessionStart whose transcript holds a marker `key` the
+    session has not opened a segment on: it opens one (RS-F5)."""
+    now = _now()
+    _, opened = state.open_segment(
+        store, KEY, source="compact", now=now, marker=CompactMarker(key=key, at=now)
+    )
+    assert opened
+
+
 # ---------------------------------------------------------------------------
 # Segments
 # ---------------------------------------------------------------------------
 
 
-def test_compact_and_clear_open_a_segment(world: PromptWorld) -> None:
+def test_a_compact_on_its_marker_and_a_clear_open_a_segment(
+    world: PromptWorld,
+) -> None:
+    """RS-F5, changed deliberately: a compact opens a segment on a marker
+    the segments have not opened on, and keeps the segment without one,
+    as a resume does; a clear always opens one."""
     state = RecallState(background=False)
     now = _now()
-    assert state.open_segment(world.store, KEY, source="startup", now=now).segment == 0
+    marker = CompactMarker(key="boundary-1", at=now)
+    startup, opened = state.open_segment(world.store, KEY, source="startup", now=now)
+    assert (startup.segment, opened) == (0, False)
     state.note_shown(KEY, ["a"], delivery=True, now=now)
-    resumed = state.open_segment(world.store, KEY, source="resume", now=now)
-    assert (resumed.segment, set(resumed.shown), resumed.deliveries) == (0, {"a"}, 1)
-    compacted = state.open_segment(world.store, KEY, source="compact", now=now)
+    resumed, opened = state.open_segment(world.store, KEY, source="resume", now=now)
+    assert (resumed.segment, set(resumed.shown), resumed.deliveries, opened) == (
+        0,
+        {"a"},
+        1,
+        False,
+    )
+    unmarked, opened = state.open_segment(world.store, KEY, source="compact", now=now)
+    assert (unmarked.segment, set(unmarked.shown), unmarked.deliveries, opened) == (
+        0,
+        {"a"},
+        1,
+        False,
+    )
+    compacted, opened = state.open_segment(
+        world.store, KEY, source="compact", now=now, marker=marker
+    )
     assert (compacted.segment, set(compacted.shown), compacted.deliveries) == (
         1,
         set(),
         0,
     )
-    assert state.open_segment(world.store, KEY, source="clear", now=now).segment == 2
+    assert (opened, compacted.marker) == (True, "boundary-1")
+    again, opened = state.open_segment(
+        world.store, KEY, source="compact", now=now, marker=marker
+    )
+    assert (again.segment, opened) == (1, False)
+    cleared, opened = state.open_segment(world.store, KEY, source="clear", now=now)
+    assert (cleared.segment, cleared.marker, opened) == (2, "boundary-1", True)
 
 
 def test_no_id_twice_in_a_segment_and_again_after_a_compact(
@@ -66,7 +108,7 @@ def test_no_id_twice_in_a_segment_and_again_after_a_compact(
     state = RecallState(background=False)
     assert world.recall(state=state).ids == (memory.id,)
     assert world.recall(state=state).stdout == ""
-    state.open_segment(world.store, KEY, source="compact", now=_now())
+    _compact(state, world.store)
     assert world.recall(state=state).ids == (memory.id,)
     segments = [e["segment"] for e in world.recalls()]
     assert segments == [0, 1]
@@ -82,7 +124,7 @@ def test_an_update_holds_the_pointer_back_in_its_segment_only(
     state.open_segment(world.store, KEY, source="startup", now=_now())
     world.store.record_event("update", session="transcript-recall", id=memory.id)
     assert world.recall(state=state).stdout == ""
-    state.open_segment(world.store, KEY, source="compact", now=_now())
+    _compact(state, world.store)
     assert world.recall(state=state).ids == (memory.id,)
 
 
@@ -139,7 +181,7 @@ def test_a_rebuild_keeps_only_the_newest_segment(world: PromptWorld) -> None:
     # A compact, recorded through its brief (the brief here is empty, so
     # the segment rides on the next recall's event instead).
     state = RecallState(background=False)
-    state.open_segment(world.store, KEY, source="compact", now=_now())
+    _compact(state, world.store)
     assert world.recall(state=state).ids == (memory.id,)
     rebuilt = rebuild_session(world.store, KEY, now=_now())
     assert (rebuilt.segment, rebuilt.shown, rebuilt.deliveries) == (1, {memory.id}, 1)
@@ -180,7 +222,13 @@ def test_another_harness_or_session_is_not_rebuilt_in(world: PromptWorld) -> Non
     assert rebuilt.shown == set() and rebuilt.deliveries == 0
 
 
-def test_a_rebuild_reads_only_the_idle_window(world: PromptWorld) -> None:
+def test_a_rebuild_reads_the_whole_session_past_the_idle_window(
+    world: PromptWorld,
+) -> None:
+    """RS-F5, changed deliberately: the rebuild read the last day only, so
+    a session evicted after a day idle came back with nothing shown and
+    re-showed what its segment had. It reads the session's rows by
+    session, whenever they were stamped."""
     world.store.record_event(
         "prompt_recall",
         session=KEY[1],
@@ -190,7 +238,7 @@ def test_a_rebuild_reads_only_the_idle_window(world: PromptWorld) -> None:
     )
     assert rebuild_session(world.store, KEY, now=_now()).shown == {"old"}
     a_day_and_more_later = _now() + timedelta(hours=30)
-    assert rebuild_session(world.store, KEY, now=a_day_and_more_later).shown == set()
+    assert rebuild_session(world.store, KEY, now=a_day_and_more_later).shown == {"old"}
 
 
 def test_a_brief_row_without_ids_adds_nothing_and_keeps_its_segment(
@@ -295,11 +343,12 @@ def test_the_state_is_thread_safe(tmp_path: Path) -> None:
 
 
 def test_an_empty_compact_brief_opens_a_segment_on_the_cli_path(
-    world: PromptWorld,
+    world: PromptWorld, tmp_path: Path
 ) -> None:
     """The CLI path holds no state between calls: the compact must be
     read back from the log even when its brief showed nothing, or the ids
-    shown before it stay held and the cap carries over."""
+    shown before it stay held and the cap carries over. The compact's
+    transcript holds its marker (RS-F5), which the row names."""
     from bettermemory.config import BehaviorConfig, Config, StorageConfig
     from bettermemory.recall import session_brief
 
@@ -310,9 +359,11 @@ def test_an_empty_compact_brief_opens_a_segment_on_the_cli_path(
         storage=StorageConfig(directory=str(world.store_dir)),
         behavior=BehaviorConfig(session_brief=False),
     )
+    transcript = tr.write(tmp_path / "t.jsonl", tr.boundary(_now()))
     shown = session_brief(
         session_id=KEY[1],
         source="compact",
+        transcript_path=str(transcript),
         origin=world.caller,
         config=no_brief,
         store=world.store,
@@ -324,6 +375,7 @@ def test_an_empty_compact_brief_opens_a_segment_on_the_cli_path(
         "compact",
         KEY[1],
     )
+    assert (opened["marker"], "marker_absent" in opened) == ("boundary-1", False)
     assert opened["triggered_from"] == "session_hook"
     assert world.recall().ids == (memory.id,)
     assert [e["segment"] for e in world.recalls()] == [0, 1]

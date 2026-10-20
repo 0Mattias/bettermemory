@@ -8,14 +8,16 @@ a tool call, on two hook moments.
   80-character summary under a header that says they are pointers, not
   instructions. No body, no scope list, nothing outside a repository,
   nothing for an empty selection.
-- The prompt recall (`prompt_recall`), on UserPromptSubmit: the prompt,
-  pasted blocks removed and cut at 2,000 characters, probed through the
-  audit's own probe (`hook._probe_message`: the production pool and
-  ranker, top three), and up to three of those hits delivered as
-  pointers when they are relevant (medium or high), written or imported
-  here, in the caller's project (under the default `prompt_recall =
-  "project"`), not contradicted, and not already shown, retrieved,
-  written or updated in this session segment.
+- The prompt recall (`prompt_recall`), on UserPromptSubmit: the owner's
+  words as the one definition reads them (`owner_prompt.owner_text`: the
+  app's envelope blocks removed, cut at 2,000 characters, nothing for a
+  prompt the harness composed), probed through the audit's own probe
+  (`hook._probe_message`: the production pool and ranker, top three),
+  and up to three of those hits delivered as pointers when they are
+  relevant (medium or high), written or imported here, in the caller's
+  project (under the default `prompt_recall = "project"`), not
+  contradicted, and not already shown, retrieved, written or updated in
+  this session segment.
 
 Both are pointers by construction. The read path's staleness machinery
 lives on `memory_show`; a body delivered around it would be the one read
@@ -23,18 +25,22 @@ surface that skips verification, so the model is told to fetch, and the
 fetch carries the signals.
 
 Per-session state (`RecallState`) replaces the old 600-second
-any-retrieval shield for delivery: a session segment (a SessionStart
-with source ``compact`` or ``clear`` opens a new one; ``startup`` and
-``resume`` keep the one the session is in) shows no id twice, by either
-surface, and delivers at most twelve recalls. The brief on a resume
-omits the ids its segment has shown and records them as ``omitted``.
-The state lives in the daemon,
-lock-guarded, rebuilt from the log's events after a restart, evicted
-after a day idle and bounded at a thousand sessions; the in-process CLI
-path, which has no daemon, computes it from the log on every call. The
-Stop audit keeps its own shield unchanged: a delivered `prompt_recall`
-is still a retrieval kind there, so the turn it served is not a silent
-miss.
+any-retrieval shield for delivery: a session segment shows no id twice,
+by either surface, and delivers at most twelve recalls. A SessionStart
+with source ``clear`` opens a new segment; one with source ``compact``
+opens one only on a compaction marker the transcript holds, newer than
+the one the session's segments last opened on, and is otherwise kept as
+a signal a later read of the transcript confirms
+(`confirm_compaction`); ``startup`` and ``resume`` keep the segment. The
+brief on a resume, and on a compact without its marker, omits the ids
+its segment has shown and records them as ``omitted``. The state lives
+in the daemon, lock-guarded, rebuilt from the session's rows in the log
+after a restart or after a day idle (`rebuild_session`, by session, so
+the held and the rebuilt state agree), and bounded at a thousand
+sessions; the in-process CLI path, which has no daemon, computes it from
+the log on every call. The Stop audit keeps its own shield unchanged: a
+delivered `prompt_recall` is still a retrieval kind there, so the turn
+it served is not a silent miss.
 
 Telemetry is the gate for both: each show is recorded (`session_brief`,
 `prompt_recall`) at show time, and with `telemetry.enabled = false`
@@ -59,7 +65,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import shlex
 import threading
 from collections import OrderedDict
@@ -81,8 +86,10 @@ from .origin import (
     toplevel_and_head_from_files,
     worktrees_match,
 )
+from .owner_prompt import PROMPT_CUT_CHARS, owner_text, probe_text
 from .store import IMPORTED, LOCAL, STORE_FILENAME, Store, TrustRow
-from .time_utils import ensure_utc, parse_event_ts
+from .time_utils import ensure_utc, isoformat_utc, parse_event_ts
+from .transcript import CompactMarker, compact_marker
 from .verdict import (
     FillReport,
     MemoryVerdict,
@@ -98,6 +105,7 @@ __all__ = [
     "BRIEF_CAP_CHARS",
     "BRIEF_MAX_POINTERS",
     "BRIEF_SYNC_RESOLVE",
+    "COMPACT_MARKER_WINDOW_SECONDS",
     "DEFAULT_HARNESS",
     "HookResult",
     "PROMPT_CUT_CHARS",
@@ -112,6 +120,7 @@ __all__ = [
     "SURFACE_RECALL",
     "brief_key",
     "clean_prompt",
+    "confirm_compaction",
     "disputed_marks",
     "in_project",
     "is_settlement",
@@ -132,9 +141,10 @@ __all__ = [
 # "rs-v3" (RS-F2 and RS-F3, 2026-10-17) is "rs-v2" with the brief's
 # omission on a resume (RS-F2) and the Stop row's prompt_id and
 # reply_source (RS-F3).
+# rs-v4: RS-F5's one owner-prompt definition, the Stop anchored to its turn, compact on the marker
 # Every row written after a landing carries its rule, so a read of the
 # log splits on the row's rule and never on a clock.
-RULE = "rs-v3"
+RULE = "rs-v4"
 
 # The harness a hook payload names when it names none: the one whose
 # hook protocol the plugin implements.
@@ -169,9 +179,26 @@ _BRIEF_CHUNK = 24
 _SESSION_SOURCES: frozenset[str] = frozenset({"startup", "resume", "compact", "clear"})
 _NEW_SEGMENT_SOURCES: frozenset[str] = frozenset({"compact", "clear"})
 
+# How far from a compact SessionStart its compaction marker (the
+# transcript's `compact_boundary` row) may be stamped. Measured on 2026-10-19
+# over the 92 compact SessionStart rows since 2026-10-12 and the 49
+# distinct boundaries their transcripts hold: 45 boundaries had a compact
+# row within 2.5 seconds of their stamp (13 rows stamped up to 2.46 s
+# before the boundary, 32 up to 1.22 s after it), the other 4 none within
+# 120 s, and the other 47 compact rows had no boundary within 120 s. The
+# boundary reaches the file only after the hook has run (in each of the
+# 45 pairs a row written with it is stamped after the hook row, up to
+# 29.2 s after), so a SessionStart rarely reads its own marker and a
+# later read confirms it. Any window from 2.5 s to 120 s parts the
+# measured rows alike. The window bounds the marker's stamp, not the
+# read: the signal waits for whichever later read finds its marker. A
+# deadline on the read would be applied by reads that record nothing (a
+# prompt nothing is delivered for), which the log, and so the rebuilt
+# state, never sees.
+COMPACT_MARKER_WINDOW_SECONDS = 60
+
 # -- the prompt recall --------------------------------------------------------
 
-PROMPT_CUT_CHARS = 2_000
 RECALL_MAX_POINTERS = 3
 RECALL_CAP_CHARS = 900
 SNIPPET_CHARS = 100
@@ -192,10 +219,12 @@ STATE_MAX_BRIEF_KEYS = 256
 # The event kinds a session's state is rebuilt from: the two show
 # records, the Stop audit's row, whose first stamp under a session id is
 # the earliest moment that session is known to have run, and the two
-# rows the Stop records about what was shown: a pointer's settlement (a
-# `use` carrying a `surface`) and the unanswered-review count. A compact
-# or clear whose brief showed nothing leaves a `segment_opened` row, so
-# the segment it opened is read back too.
+# rows the Stop records about what was shown: a
+# pointer's settlement (a `use` carrying a `surface`) and the
+# unanswered-review count. A compact or clear whose brief showed nothing
+# leaves a `segment_opened` row, as does the later read that confirms a
+# compaction (with `opened_at`), so the segment, and a compact's pending
+# signal, are read back too.
 _STATE_KINDS: tuple[str, ...] = (
     "session_brief",
     "prompt_recall",
@@ -229,18 +258,6 @@ REVIEW_UNANSWERED = "review_unanswered"
 # The kinds whose ids count as retrieved, written or updated in a segment.
 _SEEN_KINDS: frozenset[str] = frozenset(
     {"search", "show", "list", "list_active", "write", "update"}
-)
-
-_PASTED_CONTENT = re.compile(
-    r"<pasted_content\b[^>]*?(?:/>|>.*?</pasted_content\s*>)",
-    re.DOTALL | re.IGNORECASE,
-)
-# The app composes a session's first prompt as one or more reminder
-# blocks ahead of the typed text; the block is harness text, not the
-# owner's words.
-_SYSTEM_REMINDER = re.compile(
-    r"<system-reminder\b[^>]*>.*?</system-reminder\s*>",
-    re.DOTALL | re.IGNORECASE,
 )
 
 _BRIEF_HEADER = (
@@ -405,6 +422,18 @@ def _str_ids(value: Any) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class _Signal:
+    """A compact SessionStart whose marker the transcript did not hold
+    yet: when it came, and what the segment had shown and delivered by
+    then. When a later read finds the marker, the segment it opens holds
+    what was shown and delivered since (`_reopen`)."""
+
+    at: datetime
+    shown: frozenset[str]
+    deliveries: int
+
+
 @dataclass
 class _SessionRecall:
     """One (harness, session id)'s cooldown: the segment it is in, when
@@ -415,7 +444,11 @@ class _SessionRecall:
     surface that showed it and that show's event id; `settled` holds the
     ids whose show the Stop has already settled in the segment (at most
     one settlement per id per segment); `review_roots` the review chain
-    roots already counted unanswered, for the whole session."""
+    roots already counted unanswered, for the whole session.
+
+    For compaction: `marker` is the compaction marker the session's
+    segments last opened on, and `signal` a compact SessionStart not yet
+    resolved against the transcript."""
 
     segment: int
     started_at: datetime
@@ -425,6 +458,8 @@ class _SessionRecall:
     shown_by: dict[str, tuple[str, str | None]] = field(default_factory=dict)
     settled: set[str] = field(default_factory=set)
     review_roots: set[str] = field(default_factory=set)
+    marker: str | None = None
+    signal: _Signal | None = None
 
 
 @dataclass(frozen=True)
@@ -439,6 +474,7 @@ class SegmentView:
     shown_by: Mapping[str, tuple[str, str | None]] = field(default_factory=dict)
     settled: frozenset[str] = frozenset()
     review_roots: frozenset[str] = frozenset()
+    marker: str | None = None
 
 
 def _view(entry: _SessionRecall) -> SegmentView:
@@ -450,46 +486,149 @@ def _view(entry: _SessionRecall) -> SegmentView:
         shown_by=dict(entry.shown_by),
         settled=frozenset(entry.settled),
         review_roots=frozenset(entry.review_roots),
+        marker=entry.marker,
     )
 
 
-def rebuild_session(
-    store: Store,
-    key: tuple[str, str],
+# The transitions a session's cooldown takes, shared by the held state and
+# its rebuild from the log, so the two cannot disagree on a segment.
+
+
+def _restart(
+    entry: _SessionRecall, *, segment: int, at: datetime, marker: str | None
+) -> None:
+    """Open `segment` at `at`, on `marker`: nothing shown, settled or
+    delivered in it yet, and no compact signal pending."""
+    entry.segment = segment
+    entry.started_at = at
+    entry.marker = marker
+    entry.signal = None
+    entry.shown = set()
+    entry.shown_by = {}
+    entry.settled = set()
+    entry.deliveries = 0
+
+
+def _reopen(
+    entry: _SessionRecall,
     *,
-    now: datetime,
-    idle_seconds: int = STATE_IDLE_SECONDS,
+    signal: _Signal,
+    segment: int,
+    at: datetime,
+    marker: str | None,
+) -> None:
+    """Open `segment` at `at`, the moment of the compact `signal`, on
+    `marker`: the ids shown and the recalls delivered since the signal
+    are the new segment's, everything before it the old one's."""
+    shown = entry.shown - signal.shown
+    entry.segment = segment
+    entry.started_at = at
+    entry.marker = marker
+    entry.signal = None
+    entry.shown = shown
+    entry.shown_by = {k: v for k, v in entry.shown_by.items() if k in shown}
+    entry.settled &= shown
+    entry.deliveries -= signal.deliveries
+
+
+def _hold_signal(entry: _SessionRecall, *, at: datetime) -> None:
+    """Hold a compact SessionStart whose marker is not read yet."""
+    entry.signal = _Signal(
+        at=at, shown=frozenset(entry.shown), deliveries=entry.deliveries
+    )
+
+
+def _replay(entry: _SessionRecall, event: Mapping[str, Any], stamp: datetime) -> None:
+    """Apply one of the session's rows (other than a `review_unanswered`)
+    to its rebuilt cooldown, in log order, by the transitions the held
+    state takes.
+
+    A row naming another segment opened it. One carrying ``opened_at`` (a
+    compaction whose marker a later read found) opened it at that moment,
+    with what was shown since the pending signal (`_reopen`); any other
+    opened it at the row, with nothing shown (`_restart`). A compact row
+    carrying ``marker_absent`` holds the signal (`_hold_signal`). Then
+    the row's shows or settlement join the segment; a `segment_opened`
+    or `turn_audited` row has neither."""
+    number = event.get("segment")
+    if (
+        isinstance(number, int)
+        and not isinstance(number, bool)
+        and number != entry.segment
+    ):
+        named = event.get("marker")
+        marker = named if isinstance(named, str) else entry.marker
+        opened_at = parse_event_ts(event.get("opened_at"))
+        if opened_at is not None and entry.signal is not None:
+            _reopen(
+                entry,
+                signal=entry.signal,
+                segment=number,
+                at=opened_at,
+                marker=marker,
+            )
+        else:
+            _restart(entry, segment=number, at=opened_at or stamp, marker=marker)
+    if event.get("marker_absent") is True:
+        _hold_signal(entry, at=stamp)
+    kind = event.get("kind")
+    if kind in ("segment_opened", "turn_audited"):
+        return
+    if kind == "use":
+        entry.settled.update(_str_ids(event.get("ids")))
+        return
+    shown_event_id = event.get("event_id")
+    shown_event = shown_event_id if isinstance(shown_event_id, str) else None
+    surface = _SURFACE_OF_KIND.get(str(kind), SURFACE_RECALL)
+    if kind == "session_brief":
+        brief_ids = _str_ids(event.get("ids"))
+        entry.shown.update(brief_ids)
+        for memory_id in brief_ids:
+            entry.shown_by.setdefault(memory_id, (surface, shown_event))
+        return
+    if "shown_ids" in event:
+        delivered = _str_ids(event.get("shown_ids"))
+    else:
+        hits = event.get("top_hits")
+        first = hits[0] if isinstance(hits, list) and hits else None
+        delivered = (
+            [first["id"]]
+            if isinstance(first, dict) and isinstance(first.get("id"), str)
+            else []
+        )
+    entry.shown.update(delivered)
+    for memory_id in delivered:
+        entry.shown_by.setdefault(memory_id, (surface, shown_event))
+    entry.deliveries += 1
+
+
+def rebuild_session(
+    store: Store, key: tuple[str, str], *, now: datetime
 ) -> _SessionRecall:
     """A session's cooldown computed from the log: what a restarted
-    daemon, or the in-process CLI path, knows about it.
+    daemon, the in-process CLI path, or the daemon after a day idle knows
+    about it.
 
-    Reads the session's own `session_brief`, `prompt_recall` and
-    `turn_audited` rows inside the idle window, through the kind index.
-    Each show record carries the segment it was counted in, so the walk
-    adopts the newest segment number and keeps only that segment's shown
-    ids and delivery count. A `prompt_recall` written before the recall
+    Reads every one of the session's `session_brief`, `prompt_recall`,
+    `turn_audited`, `use`, `review_unanswered` and `segment_opened` rows,
+    by session and through the kind index, whenever they were stamped, so
+    a rebuild agrees with the state that was held. Each show record
+    carries the segment it was counted in, so the walk adopts the newest
+    segment number and keeps only that segment's shown ids and delivery
+    count (`_replay`). A `prompt_recall` written before the recall
     surface carries no `shown_ids`; its one delivered hit is the first of
     `top_hits`. A session the log does not know starts a segment now.
 
     The Stop's own rows are read too: a `use` with a `surface` is a
     settlement, and carries its segment like a show does; a
-    `review_unanswered` names roots counted for the whole session. Any
-    other `use` under the session (the hook's attribution of a real
-    retrieval) is not the recall's and is skipped before it can stamp
-    the session's start."""
+    `review_unanswered` names roots counted for the whole session; a
+    `turn_audited` stamps the session's start. Any other `use` under the
+    session (the hook's attribution of a real retrieval) is not the
+    recall's and is skipped before it can stamp the session's start."""
     harness, session_id = key
-    segment = 0
-    started: datetime | None = None
-    shown: set[str] = set()
-    shown_by: dict[str, tuple[str, str | None]] = {}
-    settled: set[str] = set()
+    entry: _SessionRecall | None = None
     review_roots: set[str] = set()
-    deliveries = 0
-    for event in store.events_of_kinds(
-        _STATE_KINDS, since=now - timedelta(seconds=idle_seconds)
-    ):
-        if (event.get("session") or event.get("session_id")) != session_id:
-            continue
+    for event in store.session_events_of_kinds(session_id, _STATE_KINDS):
         named = event.get("harness")
         if isinstance(named, str) and named != harness:
             continue
@@ -502,53 +641,13 @@ def rebuild_session(
         if kind == REVIEW_UNANSWERED:
             review_roots.update(_str_ids(event.get("root_ids")))
             continue
-        if started is None:
-            started = stamp
-        if kind == "turn_audited":
-            continue
-        number = event.get("segment")
-        if isinstance(number, int) and not isinstance(number, bool):
-            if number != segment:
-                segment, shown, deliveries, started = number, set(), 0, stamp
-                shown_by, settled = {}, set()
-        if kind == "segment_opened":
-            continue
-        if kind == "use":
-            settled.update(_str_ids(event.get("ids")))
-            continue
-        shown_event_id = event.get("event_id")
-        shown_event = shown_event_id if isinstance(shown_event_id, str) else None
-        surface = _SURFACE_OF_KIND.get(str(kind), SURFACE_RECALL)
-        if kind == "session_brief":
-            brief_ids = _str_ids(event.get("ids"))
-            shown.update(brief_ids)
-            for memory_id in brief_ids:
-                shown_by.setdefault(memory_id, (surface, shown_event))
-            continue
-        if "shown_ids" in event:
-            delivered = _str_ids(event.get("shown_ids"))
-        else:
-            hits = event.get("top_hits")
-            first = hits[0] if isinstance(hits, list) and hits else None
-            delivered = (
-                [first["id"]]
-                if isinstance(first, dict) and isinstance(first.get("id"), str)
-                else []
-            )
-        shown.update(delivered)
-        for memory_id in delivered:
-            shown_by.setdefault(memory_id, (surface, shown_event))
-        deliveries += 1
-    return _SessionRecall(
-        segment=segment,
-        started_at=started if started is not None else now,
-        shown=shown,
-        deliveries=deliveries,
-        last_seen=now,
-        shown_by=shown_by,
-        settled=settled,
-        review_roots=review_roots,
-    )
+        if entry is None:
+            entry = _SessionRecall(0, stamp, set(), 0, now)
+        _replay(entry, event, stamp)
+    if entry is None:
+        entry = _SessionRecall(0, now, set(), 0, now)
+    entry.review_roots = review_roots
+    return entry
 
 
 class RecallState:
@@ -557,10 +656,11 @@ class RecallState:
     Two tables. Sessions: one `_SessionRecall` per (harness, session id),
     least recently seen first, evicted after `idle_seconds` without a hook
     and beyond `max_sessions`; a session not held is rebuilt from the log
-    (`rebuild_session`) on first sight. Briefs: per repository, the HEAD
-    the last brief there read (a brief is warm while it holds) and the one
-    background fill in flight, and what each repository's last finished
-    fill kept (`fill_report`).
+    (`rebuild_session`) on first sight, so an evicted session comes back
+    as it was. Briefs: per repository, the HEAD the last brief there read
+    (a brief is warm while it holds) and the one background fill in
+    flight, and what each repository's last finished fill kept
+    (`fill_report`).
 
     The daemon holds one for its lifetime and calls it from worker
     threads. The in-process CLI path builds a fresh one per call with
@@ -610,7 +710,7 @@ class RecallState:
                 held.last_seen = now
                 self._sessions.move_to_end(key)
                 return
-        rebuilt = rebuild_session(store, key, now=now, idle_seconds=self._idle_seconds)
+        rebuilt = rebuild_session(store, key, now=now)
         with self._lock:
             held = self._sessions.get(key)
             if held is None:
@@ -627,31 +727,77 @@ class RecallState:
         """The session's current segment."""
         self._entry(store, key, now)
         with self._lock:
-            entry = self._sessions.get(key)
-            if entry is None:  # evicted between the two locks: start afresh
-                entry = _SessionRecall(0, now, set(), 0, now)
-                self._sessions[key] = entry
-            return _view(entry)
+            return _view(self._held(key, now))
 
     def open_segment(
-        self, store: Store, key: tuple[str, str], *, source: str, now: datetime
-    ) -> SegmentView:
-        """A SessionStart: ``compact`` and ``clear`` open a new segment
-        (nothing shown, no deliveries); ``startup`` and ``resume`` keep
-        the one the session is in."""
+        self,
+        store: Store,
+        key: tuple[str, str],
+        *,
+        source: str,
+        now: datetime,
+        marker: CompactMarker | None = None,
+    ) -> tuple[SegmentView, bool]:
+        """A SessionStart: the segment it leaves the session in, and
+        whether it opened that segment.
+
+        A ``clear`` opens a new segment (nothing shown, no deliveries).
+        A ``compact`` opens one when `marker`, the compaction marker the
+        transcript holds near `now`, is not the one the session's
+        segments last opened on; without such a marker it keeps the
+        segment, as a resume does, and holds the signal for a later read
+        of the transcript (`resolve_compaction`). ``startup`` and
+        ``resume`` keep the segment."""
         self._entry(store, key, now)
         with self._lock:
+            entry = self._held(key, now)
+            if source == "clear":
+                _restart(entry, segment=entry.segment + 1, at=now, marker=entry.marker)
+                return _view(entry), True
+            if source != "compact":
+                return _view(entry), False
+            if marker is not None and marker.key != entry.marker:
+                _restart(entry, segment=entry.segment + 1, at=now, marker=marker.key)
+                return _view(entry), True
+            _hold_signal(entry, at=now)
+            return _view(entry), False
+
+    def pending_compaction(
+        self, store: Store, key: tuple[str, str], *, now: datetime
+    ) -> datetime | None:
+        """When the session's unresolved compact SessionStart came, or
+        None when it holds none. A signal ends only on a row the log
+        holds: its confirmation, a clear, or another compact."""
+        self._entry(store, key, now)
+        with self._lock:
+            signal = self._held(key, now).signal
+            return None if signal is None else signal.at
+
+    def resolve_compaction(
+        self,
+        key: tuple[str, str],
+        *,
+        at: datetime,
+        marker: CompactMarker | None,
+    ) -> SegmentView | None:
+        """Resolve the compact signal held since `at` against `marker`, the
+        marker the transcript holds near `at`: the segment it opens when
+        the marker is not the one the segments last opened on (returned).
+        Without such a marker the signal is kept for a later read; None
+        then, and when the signal was resolved meanwhile."""
+        with self._lock:
             entry = self._sessions.get(key)
-            if entry is None:
-                entry = _SessionRecall(0, now, set(), 0, now)
-                self._sessions[key] = entry
-            if source in _NEW_SEGMENT_SOURCES:
-                entry.segment += 1
-                entry.started_at = now
-                entry.shown = set()
-                entry.shown_by = {}
-                entry.settled = set()
-                entry.deliveries = 0
+            if entry is None or entry.signal is None or entry.signal.at != at:
+                return None
+            if marker is None or marker.key == entry.marker:
+                return None
+            _reopen(
+                entry,
+                signal=entry.signal,
+                segment=entry.segment + 1,
+                at=at,
+                marker=marker.key,
+            )
             return _view(entry)
 
     def _held(self, key: tuple[str, str], now: datetime) -> _SessionRecall:
@@ -1035,6 +1181,80 @@ def render_brief(
     return "", []
 
 
+def _marker_near(transcript_path: str | None, at: datetime) -> CompactMarker | None:
+    """The compaction marker the transcript holds within
+    `COMPACT_MARKER_WINDOW_SECONDS` of `at`; None without a transcript
+    path or a regular file there, so a compact SessionStart without one
+    is a resume until a later hook's transcript shows the marker."""
+    if not transcript_path:
+        return None
+    path = Path(transcript_path).expanduser()
+    if not path.is_file():
+        return None
+    return compact_marker(
+        path, near=at, window=timedelta(seconds=COMPACT_MARKER_WINDOW_SECONDS)
+    )
+
+
+def confirm_compaction(
+    *,
+    store: Store,
+    state: RecallState,
+    key: tuple[str, str],
+    transcript_path: str | None,
+    cfg: Config,
+    triggered_from: str,
+    now: datetime,
+    origin: Origin | None = None,
+    cwd: Path | None = None,
+) -> SegmentView | None:
+    """Resolve the session's pending compact signal, if it holds one,
+    against the transcript: the segment a compaction opened, or None.
+
+    Every hook reads the segment after this: the SessionStart, the prompt
+    recall and the Stop. A compact SessionStart rarely reads its own
+    marker, which reaches the file after the hook has run, so the signal
+    waits for a later read: one that finds a marker within the window of
+    the signal, other than the one the segments last opened on, opens
+    the segment at the signal, holding what was shown since
+    (`RecallState.resolve_compaction`), and records `segment_opened` with
+    the ``marker`` and the ``opened_at`` of the signal, stamped
+    `triggered_from` by the hook that read it. A read that finds none
+    leaves the signal for the next, however late: the signal ends only on
+    a row the log holds (its confirmation, a clear, another compact), so
+    the state rebuilt from the log holds it exactly when the daemon does.
+    While a signal is pending each hook reads the transcript once more
+    (`transcript.compact_marker`, 64 MiB at most). With telemetry off
+    nothing is resolved and nothing recorded, as nothing is shown."""
+    if not cfg.telemetry.enabled:
+        return None
+    at = state.pending_compaction(store, key, now=now)
+    if at is None:
+        return None
+    marker = _marker_near(transcript_path, at)
+    opened = state.resolve_compaction(key, at=at, marker=marker)
+    if opened is None:
+        return None
+    caller = origin if origin is not None else _origin_for(cwd)
+    Recorder(
+        store=store,
+        session_id=key[1],
+        enabled=cfg.telemetry.enabled,
+        worktree_root=caller.worktree_root,
+        triggered_from=triggered_from,
+    ).record(
+        "segment_opened",
+        session_id=key[1],
+        harness=key[0],
+        source="compact",
+        segment=opened.segment,
+        marker=opened.marker,
+        opened_at=isoformat_utc(at),
+        rule=RULE,
+    )
+    return opened
+
+
 def session_brief(
     *,
     session_id: str | None,
@@ -1049,7 +1269,8 @@ def session_brief(
     now: datetime | None = None,
 ) -> HookResult:
     """The SessionStart surface: open the session's segment (a new one on
-    ``compact`` / ``clear``) and, inside a repository, return the brief.
+    ``clear``, and on ``compact`` when its marker is read) and, inside a
+    repository, return the brief.
 
     Nothing is shown without a session id (the show has no session to be
     recorded under or to count against), with `session_brief` or
@@ -1067,11 +1288,21 @@ def session_brief(
     omitted the row is still recorded, with no ids, and nothing is
     printed.
 
+    A ``compact`` opens a segment only when the transcript holds a
+    compaction marker near it other than the one the session's segments
+    last opened on (`RecallState.open_segment`); its row then names the
+    ``marker``. Without one it keeps the segment, as a resume does, its
+    row carries ``marker_absent: true``, and a later read of the
+    transcript may still open the segment (`confirm_compaction`, which
+    runs first here too). A SessionStart without a transcript path reads
+    no marker, so its compact is a resume.
+
     A ``compact`` or ``clear`` that shows no brief, with telemetry on,
     records a `segment_opened` row instead (the session id, harness,
-    source and the new segment's number), so the segment is read back
-    after a restart and on the in-process path, which rebuilds the state
-    from the log on every call.
+    source, the segment's number and the compact's ``marker`` or
+    ``marker_absent``), so the segment, or the pending signal, is read
+    back after a restart and on the in-process path, which rebuilds the
+    state from the log on every call.
 
     One line leads whatever is shown, or stands alone, while the store
     was created fresh after a daemon saved the one it lost
@@ -1090,11 +1321,29 @@ def session_brief(
     now = now or utcnow()
     key = (harness or DEFAULT_HARNESS, str(session_id))
     opened_by = source if source in _SESSION_SOURCES else "startup"
-    view = state.open_segment(store, key, source=opened_by, now=now)
+    confirm_compaction(
+        store=store,
+        state=state,
+        key=key,
+        transcript_path=transcript_path,
+        cfg=cfg,
+        triggered_from="session_hook",
+        now=now,
+        origin=origin,
+        cwd=cwd,
+    )
+    marker = _marker_near(transcript_path, now) if opened_by == "compact" else None
+    view, opened = state.open_segment(
+        store, key, source=opened_by, now=now, marker=marker
+    )
+    compaction: dict[str, Any] = {}
+    if opened_by == "compact":
+        compaction = {"marker": view.marker} if opened else {"marker_absent": True}
     result = _brief_in_segment(
         key=key,
         view=view,
         opened_by=opened_by,
+        compaction=compaction,
         transcript_path=transcript_path,
         cwd=cwd,
         origin=origin,
@@ -1108,9 +1357,10 @@ def session_brief(
         and opened_by in _NEW_SEGMENT_SOURCES
         and cfg.telemetry.enabled
     ):
-        # No brief carried the new segment's number to the log: record
-        # it alone, or a restarted daemon and the in-process path (which
-        # rebuilds on every call) would never see the compact.
+        # No brief carried the segment's number, or the compact's marker
+        # or its absence, to the log: record them alone, or a restarted
+        # daemon and the in-process path (which rebuilds on every call)
+        # would never see the clear or the compact.
         caller = origin if origin is not None else _origin_for(cwd)
         Recorder(
             store=store,
@@ -1125,6 +1375,7 @@ def session_brief(
             source=opened_by,
             segment=view.segment,
             rule=RULE,
+            **compaction,
         )
     notice = orphan_notice(store)
     if notice:
@@ -1201,6 +1452,7 @@ def _brief_in_segment(
     key: tuple[str, str],
     view: SegmentView,
     opened_by: str,
+    compaction: Mapping[str, Any],
     transcript_path: str | None,
     cwd: Path | None,
     origin: Origin | None,
@@ -1217,13 +1469,15 @@ def _brief_in_segment(
     selection is split after `_select_brief` and before `render_brief`,
     in selection order, into the ids kept and the ids omitted, and the
     freed slots are not filled, so the selection stays a full scan's. The
-    rule reads the shown set on every source: on a ``compact`` or
-    ``clear`` the set is empty by construction, on a ``startup`` for a
-    session the state has not seen it is empty too, and a ``resume``
-    keeps what its segment showed. A brief with nothing left to print
-    still records its row, with no ids and `omitted` naming the
-    selection's, so the log shows the rule acted and on what; nothing is
-    recorded when the selection itself is empty."""
+    rule reads the shown set on every source: on a ``clear``, and on a
+    ``compact`` that opened a segment on its marker, the set is empty by
+    construction, on a ``startup`` for a session the state has not seen
+    it is empty too, and a ``resume``, like a ``compact`` without its
+    marker, keeps what its segment showed. `compaction` (the compact's
+    ``marker`` or ``marker_absent``) rides on the row. A brief with
+    nothing left to print still records its row, with no ids and
+    `omitted` naming the selection's, so the log shows the rule acted and
+    on what; nothing is recorded when the selection itself is empty."""
     empty = HookResult.empty("session_brief")
     if not cfg.behavior.session_brief or not cfg.telemetry.enabled:
         return empty
@@ -1267,6 +1521,7 @@ def _brief_in_segment(
         "rows_examined": selection.examined,
         "unresolved": selection.unresolved,
         "rule": RULE,
+        **compaction,
     }
     if transcript_path:
         fields["transcript_path"] = transcript_path
@@ -1290,18 +1545,16 @@ def _brief_in_segment(
 
 
 def clean_prompt(prompt: str) -> str:
-    """The prompt as the probe reads it: every ``<system-reminder>…
-    </system-reminder>`` block removed (the app composes a session's first
-    prompt as reminder blocks ahead of the typed text), every
-    ``<pasted_content …>`` block removed (a paste is material the user
-    handed over, not what they asked), then cut at `PROMPT_CUT_CHARS`.
+    """The prompt as the probe reads it (`owner_prompt.probe_text`): every
+    complete app envelope block removed (reminder blocks the app composes
+    ahead of the typed text, a paste the owner handed over, an artifact
+    view), then cut at `PROMPT_CUT_CHARS`.
 
     The recall review hashes a transcript row through this same function
-    to find the prompt a delivery answered, so a prompt without either
-    block reads byte for byte as it did before the reminder rule, and the
-    hashes the log already holds keep matching."""
-    text = _SYSTEM_REMINDER.sub(" ", prompt)
-    return _PASTED_CONTENT.sub(" ", text)[:PROMPT_CUT_CHARS]
+    to find the prompt a delivery answered, so a prompt without an
+    envelope block reads byte for byte as it did before the reminder
+    rule, and the hashes the log already holds keep matching."""
+    return probe_text(prompt)
 
 
 @dataclass(frozen=True)
@@ -1480,11 +1733,13 @@ def prompt_recall(
     three pointers, or nothing.
 
     The probe is the audit's (`hook._probe_message`), unchanged: the
-    production pool and ranker over the cleaned prompt (`clean_prompt`),
-    the content-token floor and the acknowledgment gate, top three. A
-    prompt the harness composed and no human typed (a task notification,
-    a message from another session, a harness tag: `hook.
-    is_synthetic_prompt`, the Stop audit's own test) is not probed and
+    production pool and ranker over the owner's words as the one
+    definition reads them (`owner_prompt.owner_text`: envelope blocks
+    removed, cut at `PROMPT_CUT_CHARS`, the bytes the Stop probes and
+    hashes for the same text), the content-token floor and the
+    acknowledgment gate, top three. A prompt the harness composed and no
+    human typed (a task notification, a message from another session, a
+    harness tag, a prompt that is only reminder blocks) is not probed and
     records nothing, so the segment keeps its ids for the prompt the
     owner types next. A ``no_signal`` report delivers nothing. Each hit
     is then a candidate,
@@ -1512,16 +1767,13 @@ def prompt_recall(
         store = _open_store(cfg)
         if store is None:
             return empty
-    query = clean_prompt(prompt)
-    if not query.strip():
-        return empty
-    from .hook import is_synthetic_prompt
-
-    if is_synthetic_prompt(query):
-        # The harness composed this prompt: a task notification, a message
-        # from another session, a side-session note. No one asked anything,
-        # so nothing is probed, recorded or claimed, and no id is held for
-        # the rest of the segment on its account (RS-F1).
+    query = owner_text(prompt)
+    if query is None:
+        # Not the owner's words: blank once the envelope blocks are gone,
+        # or composed by the harness (a task notification, a message from
+        # another session, a side-session note). No one asked anything, so
+        # nothing is probed, recorded or claimed, and no id is held for the
+        # rest of the segment on its account (RS-F1, RS-F5).
         return empty
     now = now or utcnow()
     key = (harness or DEFAULT_HARNESS, str(session_id))
@@ -1548,6 +1800,16 @@ def prompt_recall(
     )
 
     state = state if state is not None else RecallState(background=False)
+    confirm_compaction(
+        store=store,
+        state=state,
+        key=key,
+        transcript_path=transcript_path,
+        cfg=cfg,
+        triggered_from="prompt_hook",
+        now=now,
+        origin=caller,
+    )
     view = state.segment(store, key, now=now)
     recent_cut = now - timedelta(seconds=REAUDIT_DEDUP_WINDOW_SECONDS)
     # A first segment began with the session; a later one when its

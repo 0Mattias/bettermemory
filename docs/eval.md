@@ -92,10 +92,22 @@ have surfaced a high-relevance hit and the model made no
 - Each `turn_audited` row names its harness turn (`prompt_id`, from the
   Stop payload) and where the reply it settled against came from
   (`reply_source`: `payload` for `last_assistant_message`, `tail` for
-  the transcript's reply; no key when there was no reply). Rows written
-  before 9.0.0rc3 carry neither key. A Stop whose last 1 MiB
-  holds no human row walks back through the transcript, 64 MiB at most,
-  instead of writing nothing for the turn.
+  the newest assistant text of that turn; no key when the turn had no
+  reply). Rows written before 9.0.0rc3 carry neither key. The Stop reads
+  the turn its `prompt_id` names and no other (the newest user row's
+  turn when the payload names none), from the end of the
+  transcript one 1 MiB chunk at a time, 64 MiB at most; a turn it cannot
+  decide within that writes nothing.
+- A turn whose submitted rows are all someone else's (a task
+  notification, a message from another session, an SDK submission, a
+  compaction summary, an interrupt line, a prompt of reminder blocks
+  only: the one definition in `owner_prompt.py`) probes nothing and
+  writes verdict `no_signal` with `no_signal_reason: no_owner_prompt`,
+  counted in `turns_no_signal`, and settles nothing. Before rule
+  `rs-v4` (RS-F5) such a Stop probed another row instead (an older
+  turn's prompt for 58 of the 60 in the 2026-10-19 replay of 122 rc3
+  Stops, the turn's own SDK submission for 2) and was counted in the
+  denominator.
 
 The threshold rule is versioned (`THRESHOLD_RULE_V1 = "v1_top1_high"`)
 and recorded on every event.
@@ -272,8 +284,9 @@ worktree. A stamp naming an id whose hooks went quiet before that
 conversation's first hook row is the window's own server under the id
 it had before a /clear or /resume, and its row joins that conversation,
 as the hooks join it. Rows after a show are read up to the id's next
-show in the same conversation, by either surface (a compact re-shows a
-brief's ids, a resume's brief shows only what its segment has not, a
+show in the same conversation, by either surface (a compact that opened
+a segment re-shows a brief's ids, a resume's brief, like that of a
+compact without its marker, shows only what its segment has not, a
 recall may show what the brief showed), or else up to
 `--until`, so an open or a use counts once, for the latest show of the
 id before it; the join reads only rows before `--until`.
@@ -286,6 +299,20 @@ the ids graded and how many were relevant, the latest grade of an id in
 a sample counting. `--scope` does not filter the section.
 `recall_counters.py` holds the computation. The `--report` markdown
 carries the four rates per surface and the counts, never an id.
+
+A clear opens a segment. A compact opens one only on the compaction
+marker its transcript holds: a `compact_boundary` row newer than the one
+the session's segments last opened on, named as `marker` on the compact's
+row. A compact without it is a resume and its row carries
+`marker_absent: true`. A later hook (the prompt recall, the Stop, a
+SessionStart) that finds a marker stamped within 60 seconds of the
+compact opens the segment at the compact and records `segment_opened`
+with the `marker` and the compact's moment as `opened_at`, and what was
+shown since the compact belongs to it. The 60 seconds bound the
+marker's stamp, not the read: a read that finds no marker leaves the
+compact a resume and the next read looks again, however late, so the
+state rebuilt from the log changes only on rows the log holds. Rows
+before rule `rs-v4` opened a segment on every compact SessionStart.
 
 Reads the store's log (the telemetry rows in `memory.sqlite`, through
 `Store.iter_events`), joins against the active store, and reports the

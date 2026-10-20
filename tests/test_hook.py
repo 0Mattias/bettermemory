@@ -6,9 +6,9 @@ surface; in practice models forget to call it and the silent-miss
 telemetry stayed dormant for plugin users. This module is the
 client-side hook that closes that loop. Tests here cover:
 
-- transcript-JSONL parsing: walking the file in reverse to find the
-  latest user message and the latest assistant response, defensive
-  against malformed lines.
+- transcript-JSONL parsing (`transcript.stop_turn`): the turn the Stop
+  names, its owner prompt and its reply, defensive against malformed
+  lines; the full battery is `test_transcript.py`.
 - the hook's contract that errors must NEVER surface as non-zero
   exit codes (Claude Code's Stop hook would render that as an error
   banner; we'd rather lose telemetry than break the user's flow).
@@ -29,7 +29,7 @@ import pytest
 from bettermemory.events import Recorder
 from bettermemory.hook import (
     _disabled_scopes_from_events,
-    _extract_last_exchange,
+    audit_transcript,
     _flatten_assistant_content,
     _latest_in_process_session,
     _pending_retrievals,
@@ -43,6 +43,9 @@ from bettermemory.hook import (
 )
 from bettermemory.models import Memory
 from bettermemory.store import STORE_FILENAME, Store
+from bettermemory.transcript import stop_turn
+
+from . import _transcript_rows as tr
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +87,14 @@ def _write_transcript(path: Path, *rows: dict[str, object]) -> None:
     path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
 
 
+def _turn(
+    path: Path, prompt_id: str | None = None, **limits: int
+) -> tuple[str | None, str | None, str | None] | None:
+    """`transcript.stop_turn` as (prompt, reply, model), or None."""
+    turn = stop_turn(path, prompt_id, **limits)
+    return None if turn is None else (turn.prompt, turn.reply, turn.model)
+
+
 def _events(mem_dir: Path) -> list[dict[str, Any]]:
     """Every telemetry event the store under `mem_dir` holds, oldest first."""
     with Store.open(mem_dir) as store:
@@ -98,7 +109,7 @@ def _backdate(store: Store, memory: Memory, age: timedelta) -> None:
     store.put_memory(memory.model_copy(update={"created": stamp, "updated": stamp}))
 
 
-def test_extract_last_exchange_finds_last_pair(tmp_path: Path) -> None:
+def test_stop_turn_reads_the_newest_turn(tmp_path: Path) -> None:
     """The standard case: a user message followed by an assistant
     response. Should pull both out cleanly."""
     transcript = tmp_path / "t.jsonl"
@@ -115,12 +126,10 @@ def test_extract_last_exchange_finds_last_pair(tmp_path: Path) -> None:
             "message": {"content": [{"type": "text", "text": "latest reply"}]},
         },
     )
-    user, assistant, _ = _extract_last_exchange(transcript)
-    assert user == "latest ask"
-    assert assistant == "latest reply"
+    assert _turn(transcript) == ("latest ask", "latest reply", None)
 
 
-def test_extract_last_exchange_skips_thinking_and_tool_use(
+def test_stop_turn_skips_thinking_and_tool_use(
     tmp_path: Path,
 ) -> None:
     """Assistant `content` is a list of blocks. Only `text` blocks
@@ -141,18 +150,16 @@ def test_extract_last_exchange_skips_thinking_and_tool_use(
             },
         },
     )
-    _, assistant, _ = _extract_last_exchange(transcript)
-    assert assistant == "user-visible reply"
+    assert _turn(transcript) == ("ask", "user-visible reply", None)
 
 
-def test_extract_last_exchange_handles_missing_file(tmp_path: Path) -> None:
-    """A transcript path that doesn't exist must return (None, None)
-    rather than raising. The hook handles the None case by no-oping."""
-    user, assistant, _ = _extract_last_exchange(tmp_path / "missing.jsonl")
-    assert user is None and assistant is None
+def test_stop_turn_handles_missing_file(tmp_path: Path) -> None:
+    """A transcript path that doesn't exist must return None rather than
+    raising. The hook handles the None case by no-oping."""
+    assert _turn(tmp_path / "missing.jsonl") is None
 
 
-def test_extract_last_exchange_tolerates_malformed_lines(tmp_path: Path) -> None:
+def test_stop_turn_tolerates_malformed_lines(tmp_path: Path) -> None:
     """A single bad JSON line in the middle of the transcript must
     not abort the whole parse. The hook fires for every turn — one
     corrupted log can't shadow every subsequent audit."""
@@ -173,12 +180,10 @@ def test_extract_last_exchange_tolerates_malformed_lines(tmp_path: Path) -> None
         + "\n",
         encoding="utf-8",
     )
-    user, assistant, _ = _extract_last_exchange(transcript)
-    assert user == "first"
-    assert assistant == "reply"
+    assert _turn(transcript) == ("first", "reply", None)
 
 
-def test_extract_last_exchange_survives_unicode_line_separators(
+def test_stop_turn_survives_unicode_line_separators(
     tmp_path: Path,
 ) -> None:
     """Regression: the reverse walk split the tail with `splitlines()`,
@@ -220,27 +225,30 @@ def test_extract_last_exchange_survives_unicode_line_separators(
     # would never trip splitlines() and the test would pin nothing.
     raw = transcript.read_bytes().decode("utf-8")
     assert "\u2028" in raw and "\u2029" in raw
-    user, assistant, _ = _extract_last_exchange(transcript)
-    assert user == latest_ask
-    assert assistant == latest_reply
+    assert _turn(transcript) == (latest_ask, latest_reply, None)
 
 
-def test_extract_last_exchange_skips_task_notification_row(tmp_path: Path) -> None:
+def test_stop_turn_passes_a_task_notification_inside_the_turn(
+    tmp_path: Path,
+) -> None:
     """Regression: background-task completions inject a `type="user"` row
     whose content is a `<task-notification>` envelope AFTER the human's
     message. The reverse walk used to capture that synthetic payload as
     the user message, so the probe audited notification text and real
-    silent misses on agentic turns were structurally suppressed. The
-    walk must skip it and keep going to the human row."""
+    silent misses on agentic turns were structurally suppressed. A
+    notification delivered into the turn carries the turn's promptId,
+    and the walk passes it to the owner's row of the same turn."""
     transcript = tmp_path / "t.jsonl"
     _write_transcript(
         transcript,
         {
             "type": "user",
+            "promptId": "p1",
             "message": {"content": "how do we deploy myapp to staging again?"},
         },
         {
             "type": "user",
+            "promptId": "p1",
             "message": {
                 "content": (
                     "<task-notification>task wf_1 finished"
@@ -253,25 +261,53 @@ def test_extract_last_exchange_skips_task_notification_row(tmp_path: Path) -> No
             "message": {"content": [{"type": "text", "text": "deployed"}]},
         },
     )
-    user, assistant, _ = _extract_last_exchange(transcript)
-    assert user == "how do we deploy myapp to staging again?"
-    assert assistant == "deployed"
+    expected = ("how do we deploy myapp to staging again?", "deployed", None)
+    assert _turn(transcript) == expected
+    assert _turn(transcript, "p1") == expected
 
 
-def test_extract_last_exchange_skips_meta_and_wrapper_rows(tmp_path: Path) -> None:
-    """Regression: slash-command turns record the command bookkeeping
-    (`<command-name>` wrapper rows) and the full skill expansion (an
-    `isMeta: true` row) as `type="user"` rows ABOVE the assistant reply.
-    The walk used to return the expansion's documentation prose as "the
-    user's own words" — violating the proposals extractor's stated
-    precondition and shadowing whatever the human actually typed. Both
-    shapes must be skipped so the genuine row wins."""
+def test_a_notification_without_a_prompt_id_is_its_own_turn(tmp_path: Path) -> None:
+    """RS-F5, changed deliberately from the walk that skipped the row: in a
+    transcript whose rows carry no promptId, a submitted row is its own
+    turn, so a notification after the owner's row is a newer turn the
+    harness composed. The Stop reads it as a turn with no owner prompt
+    and never anchors to the older row."""
     transcript = tmp_path / "t.jsonl"
     _write_transcript(
         transcript,
-        {"type": "user", "message": {"content": "/plugin-marketplace docs"}},
+        {"type": "user", "message": {"content": "how do we deploy myapp?"}},
         {
             "type": "user",
+            "message": {"content": "<task-notification>done</task-notification>"},
+        },
+        {
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "deployed"}]},
+        },
+    )
+    assert _turn(transcript) == (None, "deployed", None)
+
+
+def test_stop_turn_skips_meta_and_wrapper_rows(tmp_path: Path) -> None:
+    """Regression: slash-command turns record the command bookkeeping
+    (`<command-name>` wrapper rows) and the full skill expansion (an
+    `isMeta: true` row) as `type="user"` rows ABOVE the assistant reply,
+    under the turn's promptId. The walk used to return the expansion's
+    documentation prose as "the user's own words" — violating the
+    proposals extractor's stated precondition and shadowing whatever the
+    human actually typed. Both shapes must be skipped so the genuine row
+    wins."""
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(
+        transcript,
+        {
+            "type": "user",
+            "promptId": "p1",
+            "message": {"content": "/plugin-marketplace docs"},
+        },
+        {
+            "type": "user",
+            "promptId": "p1",
             "isMeta": True,
             "message": {
                 "content": (
@@ -283,6 +319,7 @@ def test_extract_last_exchange_skips_meta_and_wrapper_rows(tmp_path: Path) -> No
         },
         {
             "type": "user",
+            "promptId": "p1",
             "message": {"content": "<command-name>/plugin-marketplace</command-name>"},
         },
         {
@@ -290,49 +327,49 @@ def test_extract_last_exchange_skips_meta_and_wrapper_rows(tmp_path: Path) -> No
             "message": {"content": [{"type": "text", "text": "docs shown"}]},
         },
     )
-    user, assistant, _ = _extract_last_exchange(transcript)
-    assert user == "/plugin-marketplace docs"
-    assert assistant == "docs shown"
+    assert _turn(transcript) == ("/plugin-marketplace docs", "docs shown", None)
 
 
-def test_extract_last_exchange_skips_empty_user_rows(tmp_path: Path) -> None:
-    """An empty-string user row (observed in real transcripts) used to be
-    captured verbatim, and main()'s `if not user` then silently dropped
-    the whole audit. The walk must keep going to the human row instead."""
+def test_stop_turn_skips_empty_user_rows(tmp_path: Path) -> None:
+    """An empty-string user row of the turn (observed in real transcripts)
+    used to be captured verbatim, and main()'s `if not user` then silently
+    dropped the whole audit. The walk keeps going to the owner's row."""
     transcript = tmp_path / "t.jsonl"
     _write_transcript(
         transcript,
-        {"type": "user", "message": {"content": "real question"}},
-        {"type": "user", "message": {"content": ""}},
+        {"type": "user", "promptId": "p1", "message": {"content": "real question"}},
+        {"type": "user", "promptId": "p1", "message": {"content": ""}},
         {
             "type": "assistant",
             "message": {"content": [{"type": "text", "text": "answer"}]},
         },
     )
-    user, _, _ = _extract_last_exchange(transcript)
-    assert user == "real question"
+    assert _turn(transcript) == ("real question", "answer", None)
 
 
-def test_extract_last_exchange_none_when_only_synthetic_rows(tmp_path: Path) -> None:
-    """Fail-quiet contract preserved: when NOTHING human-looking is in the
-    tail, the user surface stays None (the hook then no-ops exactly as it
-    does for a missing user message) — skipping must not invent one."""
+def test_stop_turn_says_no_owner_prompt_when_only_synthetic_rows(
+    tmp_path: Path,
+) -> None:
+    """RS-F5, changed deliberately: a turn whose rows are all composed by
+    the harness is read as a turn with no owner prompt (the Stop records
+    `no_owner_prompt`) instead of nothing; skipping must still not invent
+    a prompt. A reminder-only row and a meta row are such rows."""
     transcript = tmp_path / "t.jsonl"
     _write_transcript(
         transcript,
         {
             "type": "user",
+            "promptId": "p1",
             "message": {"content": "<system-reminder>reminder</system-reminder>"},
         },
         {
             "type": "user",
+            "promptId": "p1",
             "isMeta": True,
             "message": {"content": "expanded skill markdown"},
         },
     )
-    user, assistant, _ = _extract_last_exchange(transcript)
-    assert user is None
-    assert assistant is None
+    assert _turn(transcript) == (None, None, None)
 
 
 def test_human_prompt_rejects_what_the_harness_composed() -> None:
@@ -2505,20 +2542,36 @@ def _reply_row(text: str) -> dict[str, Any]:
     }
 
 
-def _long_turn(path: Path, *, after_prompt: int, human: bool = True) -> None:
+def _long_turn(
+    path: Path,
+    *,
+    after_prompt: int,
+    human: bool = True,
+    prompt_id: str | None = None,
+) -> None:
     """A transcript whose newest turn has at least `after_prompt` bytes of
     tool results between the human's row and the reply: one row longer
     than a chunk, then rows of an odd size, so chunk boundaries fall
-    inside rows."""
+    inside rows. With `prompt_id` the turn's user rows carry it, as
+    Claude Code stamps them, and the older turn carries another."""
+
+    def stamped(row: dict[str, Any], turn: str | None) -> dict[str, Any]:
+        return row if turn is None else {**row, "promptId": turn}
+
+    older = None if prompt_id is None else f"{prompt_id}-older"
     rows: list[dict[str, Any]] = []
     if human:
-        rows.append({"type": "user", "message": {"content": "stale ask"}})
+        rows.append(
+            stamped({"type": "user", "message": {"content": "stale ask"}}, older)
+        )
         rows.append(_reply_row("stale reply"))
-        rows.append({"type": "user", "message": {"content": "the long ask"}})
-    rows.append(_tool_result_row(_MIB + _MIB // 2))
+        rows.append(
+            stamped({"type": "user", "message": {"content": "the long ask"}}, prompt_id)
+        )
+    rows.append(stamped(_tool_result_row(_MIB + _MIB // 2), prompt_id))
     written = _MIB + _MIB // 2
     while written < after_prompt:
-        rows.append(_tool_result_row(300_007))
+        rows.append(stamped(_tool_result_row(300_007), prompt_id))
         written += 300_007
     rows.append(_reply_row("the long reply"))
     _write_transcript(path, *rows)
@@ -2530,51 +2583,46 @@ def _seed_store(mem_dir: Path) -> None:
     store.close()
 
 
-def test_extract_last_exchange_walks_back_past_the_tail(tmp_path: Path) -> None:
+def test_stop_turn_walks_back_past_the_tail(tmp_path: Path) -> None:
     """RS-F3: a turn whose tool results outgrew the 1 MiB tail. The tail
     holds the reply and tool results only; the walk continues toward the
     start of the file and finds the human's row about 3 MiB back. Every
     chunk boundary falls inside a row, and one row is longer than a
     chunk, so the carry between chunks is exercised."""
     transcript = tmp_path / "t.jsonl"
-    _long_turn(transcript, after_prompt=3 * _MIB)
+    _long_turn(transcript, after_prompt=3 * _MIB, prompt_id="p1")
     data = transcript.read_bytes()
     size = len(data)
     boundaries = [size - k * _MIB for k in range(1, size // _MIB + 1)]
     assert boundaries and all(data[b - 1 : b] != b"\n" for b in boundaries)
-    user, assistant, model = _extract_last_exchange(transcript)
-    assert user == "the long ask"
-    assert assistant == "the long reply"
-    assert model == "claude-test"
+    expected = ("the long ask", "the long reply", "claude-test")
+    assert _turn(transcript) == expected
+    assert _turn(transcript, "p1") == expected
 
 
-def test_extract_last_exchange_none_when_no_human_row_in_a_long_file(
+def test_stop_turn_none_when_no_human_row_in_a_long_file(
     tmp_path: Path,
 ) -> None:
-    """The walk reaches the start of a file with no human row and gives
-    nothing, as the tail pass did; the reply is still read."""
+    """The walk reaches the start of a file with no submitted row and
+    gives nothing: no turn's prompt is known, and the Stop records
+    nothing."""
     transcript = tmp_path / "t.jsonl"
     _long_turn(transcript, after_prompt=2 * _MIB, human=False)
-    user, assistant, _ = _extract_last_exchange(transcript)
-    assert user is None
-    assert assistant == "the long reply"
+    assert _turn(transcript) is None
 
 
-def test_extract_last_exchange_none_past_the_walk_back_bound(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_stop_turn_none_past_the_walk_back_bound(tmp_path: Path) -> None:
     """A human row further back than the bound is not read: the hook
     no-ops as before rather than reading the file without limit."""
-    from bettermemory import hook as hook_module
-
     transcript = tmp_path / "t.jsonl"
-    _long_turn(transcript, after_prompt=4 * _MIB)
-    monkeypatch.setattr(hook_module, "_TRANSCRIPT_WALK_BACK_BYTES", 2 * _MIB)
-    user, assistant, _ = _extract_last_exchange(transcript)
-    assert user is None
-    assert assistant == "the long reply"
-    monkeypatch.setattr(hook_module, "_TRANSCRIPT_WALK_BACK_BYTES", 8 * _MIB)
-    assert _extract_last_exchange(transcript)[0] == "the long ask"
+    _long_turn(transcript, after_prompt=4 * _MIB, prompt_id="p1")
+    assert _turn(transcript, "p1", budget=2 * _MIB) is None
+    assert _turn(transcript, budget=2 * _MIB) is None
+    assert _turn(transcript, "p1", budget=8 * _MIB) == (
+        "the long ask",
+        "the long reply",
+        "claude-test",
+    )
 
 
 def test_main_stamps_prompt_id_and_reply_source_from_the_payload(
@@ -2589,7 +2637,11 @@ def test_main_stamps_prompt_id_and_reply_source_from_the_payload(
     transcript = tmp_path / "t.jsonl"
     _write_transcript(
         transcript,
-        {"type": "user", "message": {"content": "what about postgres?"}},
+        {
+            "type": "user",
+            "promptId": "turn-7",
+            "message": {"content": "what about postgres?"},
+        },
         _reply_row("Postgres is on 5432."),
     )
     payload = {
@@ -2639,7 +2691,11 @@ def test_main_omits_reply_source_without_a_reply(
     transcript = tmp_path / "t.jsonl"
     _write_transcript(
         transcript,
-        {"type": "user", "message": {"content": "what about postgres?"}},
+        {
+            "type": "user",
+            "promptId": "turn-8",
+            "message": {"content": "what about postgres?"},
+        },
         {
             "type": "assistant",
             "message": {"content": [{"type": "tool_use", "name": "x", "input": {}}]},
@@ -2668,7 +2724,7 @@ def test_main_audits_a_turn_whose_tool_results_outgrew_the_tail(
     monkeypatch.setenv("BETTERMEMORY_DIR", str(mem_dir))
     _seed_store(mem_dir)
     transcript = tmp_path / "t.jsonl"
-    _long_turn(transcript, after_prompt=2 * _MIB)
+    _long_turn(transcript, after_prompt=2 * _MIB, prompt_id="turn-9")
     payload = {
         "session_id": "sess-long",
         "transcript_path": str(transcript),
@@ -2707,3 +2763,152 @@ def test_the_stop_row_with_a_reply_and_a_prompt_id_adds_two_keys(
     assert set(audited) == _TURN_AUDITED_KEYS | {"prompt_id", "reply_source"}
     assert (audited["prompt_id"], audited["reply_source"]) == ("turn-1", "payload")
     assert set(miss) == _SEARCH_MISS_KEYS
+
+
+# ---------------------------------------------------------------------------
+# RS-F5: the Stop anchored to its turn
+# ---------------------------------------------------------------------------
+
+#: A Stop whose turn holds no owner prompt probes nothing (no query, no
+#: hits) and says why; with a transcript read it also names the model.
+_NO_OWNER_KEYS = (_TURN_AUDITED_KEYS - {"probe_query", "top_hits"}) | {
+    "no_signal_reason",
+    "client_model",
+}
+
+
+def _composed_after_owner(path: Path, reply: str = "the notification's reply") -> Path:
+    """An owner turn ``p1`` asking the test query, then a turn ``p2`` a
+    background task's notification submitted with the query in its
+    text."""
+    from .test_recall_prompt import QUERY
+
+    return tr.write(
+        path,
+        tr.user(QUERY, "p1"),
+        tr.assistant("the owner's answer"),
+        tr.user(f"{QUERY} check finished", "p2", turnOrigin="task_notification"),
+        tr.assistant(reply),
+    )
+
+
+def _stop_of(world: Any, transcript: Path, prompt_id: str) -> dict[str, Any] | None:
+    return audit_transcript(
+        transcript_path=transcript,
+        session_id="transcript-review",
+        config=world.config,
+        store=world.store,
+        prompt_id=prompt_id,
+    )
+
+
+def test_a_turn_without_an_owner_prompt_is_audited_as_no_signal(
+    review_world: Any, tmp_path: Path
+) -> None:
+    """The turn the Stop names holds only a notification: its row says so
+    (verdict no_signal, reason no_owner_prompt), nothing is probed, and
+    the owner's prompt of the turn before is not probed in its place.
+    Before RS-F5 the walk took that older prompt and flagged this miss."""
+    review_world.write(origin=None, scopes=["infrastructure"])
+    transcript = _composed_after_owner(tmp_path / "t.jsonl")
+    result = _stop_of(review_world, transcript, "p2")
+    assert result is not None
+    assert (result["verdict"], result["no_signal_reason"], result["probe_query"]) == (
+        "no_signal",
+        "no_owner_prompt",
+        None,
+    )
+    events = list(review_world.store.iter_events())
+    [audited] = [e for e in events if e["kind"] == "turn_audited"]
+    assert set(audited) == _NO_OWNER_KEYS | {"prompt_id", "reply_source"}
+    assert (audited["verdict"], audited["no_signal_reason"]) == (
+        "no_signal",
+        "no_owner_prompt",
+    )
+    assert (audited["prompt_id"], audited["reply_source"]) == ("p2", "tail")
+    assert (audited["assistant_present"], audited["recent_retrieval_count"]) == (
+        True,
+        0,
+    )
+    assert [e for e in events if e["kind"] == "search_miss"] == []
+    # The owner's own turn is probed, and is the miss.
+    owner = _stop_of(review_world, transcript, "p1")
+    assert owner is not None and owner["verdict"] == "miss"
+
+
+def test_a_turn_without_an_owner_prompt_settles_nothing(
+    review_world: Any, tmp_path: Path
+) -> None:
+    """Its reply answered what the harness composed, so neither a pointer
+    the recall showed nor a real retrieval is settled against it, though
+    the reply quotes both; the owner's next turn settles them."""
+    from .test_recall_prompt import BODY
+
+    shown = review_world.write()
+    assert review_world.recall(session_id="transcript-review").ids == (shown.id,)
+    retrieved = review_world.store.write(
+        content="The metrics dashboard runs at grafana.internal/d/api-latency.",
+        scopes=["infrastructure"],
+    )
+    _seed_search_event(
+        review_world.store_dir, session_id="transcript-review", returned=[retrieved.id]
+    )
+    reply = f"{BODY}. The metrics dashboard runs at grafana.internal/d/api-latency."
+    transcript = _composed_after_owner(tmp_path / "t.jsonl", reply)
+    _stop_of(review_world, transcript, "p2")
+    assert [e for e in review_world.store.iter_events() if e["kind"] == "use"] == []
+    tr.append(transcript, tr.user("and how is it set up", "p3"), tr.assistant(reply))
+    _stop_of(review_world, transcript, "p3")
+    uses = [e for e in review_world.store.iter_events() if e["kind"] == "use"]
+    assert {memory_id for e in uses for memory_id in e["ids"]} == {
+        shown.id,
+        retrieved.id,
+    }
+
+
+def test_a_turn_without_an_owner_prompt_still_counts_open_reviews(
+    review_world: Any, tmp_path: Path
+) -> None:
+    """The next turn's review window opens at this Stop's row, so the
+    count is taken here as on any turn."""
+    root = _review_row(review_world.store)
+    _stop_of(review_world, _composed_after_owner(tmp_path / "t.jsonl"), "p2")
+    [row] = _unanswered(review_world.store)
+    assert row["root_ids"] == [root]
+
+
+def test_a_turn_without_text_has_no_reply_though_the_turn_before_has_one(
+    review_world: Any, tmp_path: Path
+) -> None:
+    """The reply fallback reads this turn only: no text in it is no reply
+    (no `reply_source`, `assistant_present` false), never the previous
+    turn's text."""
+    from .test_recall_prompt import QUERY
+
+    review_world.write(origin=None, scopes=["infrastructure"])
+    transcript = tr.write(
+        tmp_path / "t.jsonl",
+        tr.user("an older ask", "p0"),
+        tr.assistant("an older reply"),
+        tr.user(QUERY, "p1"),
+        tr.assistant(None),
+        tr.tool_result(40, "p1"),
+        tr.assistant(None),
+    )
+    _stop_of(review_world, transcript, "p1")
+    [audited] = [
+        e for e in review_world.store.iter_events() if e["kind"] == "turn_audited"
+    ]
+    assert audited["assistant_present"] is False
+    assert "reply_source" not in audited
+    assert audited["probe_query"]["len"] == len(QUERY)
+
+
+def test_an_undecided_turn_records_nothing(review_world: Any, tmp_path: Path) -> None:
+    """A Stop naming a turn the transcript does not hold has nothing to
+    audit: no row, as for an unreadable file."""
+    transcript = _composed_after_owner(tmp_path / "t.jsonl")
+    assert _stop_of(review_world, transcript, "p9") is None
+    assert [
+        e for e in review_world.store.iter_events() if e["kind"] == "turn_audited"
+    ] == []

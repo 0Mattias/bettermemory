@@ -12,8 +12,9 @@ control returns to the user.
 This module is the thin CLI surface those hooks wire to. The Stop
 half (`main` / `run_audit`) reads Claude Code's Stop hook payload
 from stdin (`{session_id, transcript_path, cwd, hook_event_name}`),
-parses the transcript JSONL to find the latest user message and
-assistant response, and calls `audit.probe_for_miss` against the
+reads the turn the payload names from the transcript JSONL
+(`transcript.stop_turn`: the owner's prompt of that turn and its reply),
+and calls `audit.probe_for_miss` against the
 store identified by `BETTERMEMORY_DIR` (or the usual resolution
 rules). The UserPromptSubmit half (`prompt_main` /
 `run_prompt_recall`) is a delegate of `recall.prompt_recall`, which
@@ -107,13 +108,14 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Collection, Iterable, Mapping
 
-from ._fsutil import bounded_stream_read, bounded_tail_read
+from ._fsutil import bounded_stream_read
 from .attribution import attribute_uses
 from .audit import (
     ATTRIBUTION_LOOKBACK_SECONDS,
     REAUDIT_DEDUP_WINDOW_SECONDS,
     MissReport,
     is_duplicate_audit,
+    no_owner_prompt_report,
     probe_for_miss,
     search_miss_fields,
     turn_audited_fields,
@@ -128,6 +130,7 @@ from .events import (
 from .models import utcnow
 from . import identity
 from .origin import Origin, capture as capture_origin
+from .owner_prompt import COMPOSED_OPENINGS, owner_prompt, owner_text, text_blocks
 from .store import (
     STORE_FILENAME,
     MemoryNotFoundError,
@@ -135,6 +138,7 @@ from .store import (
     TombstonedError,
 )
 from .time_utils import parse_event_ts
+from .transcript import stop_turn
 
 if TYPE_CHECKING:
     from .recall import RecallState
@@ -157,55 +161,10 @@ def _utcnow() -> datetime:
 # intact.
 _ATTRIBUTION_LOOKBACK_SECONDS = ATTRIBUTION_LOOKBACK_SECONDS
 
-# Cap the transcript read to the trailing 1 MiB. The hook only needs the
-# latest user + assistant message, which sit at the tail of an append-only
-# JSONL log; older content is irrelevant for this turn. Reading the whole
-# file was a real OOM vector on long Claude Code sessions (transcripts grow
-# to hundreds of MB in extended pairing sessions). The cap is enforced
-# at byte granularity (not character) so multibyte UTF-8 can't bypass it.
-_TRANSCRIPT_TAIL_READ_BYTES = 1_048_576
-
-# When the tail holds no row the human typed, the walk continues toward
-# the start of the file one tail-sized chunk at a time and gives up after
-# this many bytes. A turn whose tool results outgrew the tail (10 of 88
-# delivered owner turns at 9.0.0rc1, 1.1 to 7.1 MiB after the prompt)
-# then still gets its Stop row, and a transcript with no human row at all
-# costs at most this much reading. One chunk and the partial line carried
-# between chunks are in memory at a time, never the file.
-_TRANSCRIPT_WALK_BACK_BYTES = 64 * 1_048_576
-
-# Text the harness composed and no human typed. Claude Code records
-# background task notifications, slash-command bookkeeping, harness stdout
-# wrappers, and system reminders as `type="user"` transcript rows whose
-# content opens with one of these envelope tags (task-notification rows
-# carry NO metadata flag, so a content-prefix check is the only available
-# discriminator). Skill and command expansions additionally carry
-# `isMeta: true` at the row level — `human_prompt` checks that flag
-# separately. On either signal the reverse walk skips the row and keeps
-# walking: the human's message is typically a few rows earlier in the
-# tail. The same text reaches the UserPromptSubmit hook as its `prompt`,
-# with no flag at all, so `recall.prompt_recall` applies the same test
-# (`is_synthetic_prompt`) and probes nothing on it. The last six are the
-# shapes the prompt path sees that the transcript holds differently or
-# not at all: a message from another session arrives as
-# `<agent-message from="…">` or `<cross-session-message from="…">` (the
-# transcript keeps it behind an `isMeta` wrapper row opening "Another
-# Claude session sent a message"), the app's side-session notes,
-# scheduled-task and artifact-view payloads open with their own tags.
-_SYNTHETIC_USER_PREFIXES = (
-    "<task-notification>",
-    "<command-name>",
-    "<command-message>",
-    "<local-command-stdout>",
-    "<local-command-caveat>",
-    "<system-reminder>",
-    "<agent-message",
-    "<cross-session-message",
-    "<side-sessions-event",
-    "<scheduled-task",
-    "<artifact-view-context",
-    "Another Claude session sent a message",
-)
+# The openings `owner_prompt.COMPOSED_OPENINGS` names, under the name the
+# readers in bench/recall import. The definition of an owner prompt lives
+# in `owner_prompt.py`; nothing here adds to it.
+_SYNTHETIC_USER_PREFIXES = COMPOSED_OPENINGS
 
 # Cap the Stop-hook stdin payload. Claude Code emits a small JSON object
 # (`session_id`, `transcript_path`, `cwd`, `hook_event_name`) — well under
@@ -261,231 +220,24 @@ def _payload_text(payload: dict[str, Any], name: str) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _extract_last_exchange(
-    transcript_path: Path,
-) -> tuple[str | None, str | None, str | None]:
-    """Walk the transcript JSONL backwards to find the latest user
-    message, the latest assistant response, and the model that
-    produced it.
-
-    Returns `(user_message, assistant_response, model)`. Any field is
-    None when not found. Defensive against malformed lines — a
-    single bad JSON line doesn't abort the whole parse.
-
-    `model` is read off the newest assistant row's `message.model`
-    (e.g. "claude-sonnet-5") — captured even when that row carries no
-    text blocks (a tool-use-only stop), since any assistant row of the
-    turn identifies the model. The MCP channel carries no model
-    identity at all, so this transcript read is the ONLY place in the
-    system that can attribute telemetry per-model; `run_audit` stamps
-    it onto the events it emits as `client_model`.
-
-    Format reference (Claude Code transcript schema, observed
-    May 2026): one JSON object per line. User messages carry
-    `{"type": "user", "message": {"content": "<string>"}}`; assistant
-    messages carry `{"type": "assistant", "message": {"content":
-    [<content blocks>]}}` where the content blocks each have a
-    `type` field ("text" / "thinking" / "tool_use" / …). We
-    concatenate text-block bodies for the response surface.
-
-    Synthetic user rows (observed June 2026): transcripts also record
-    payloads the human never typed as `type="user"` rows — background
-    `<task-notification>` bodies, `<command-name>`/`<local-command-*>`
-    bookkeeping, `<system-reminder>` injections, slash-command/skill
-    expansions (those carry `isMeta: true`), and occasional empty
-    strings. Accepting them verbatim made the audit probe run on
-    harness text whenever such a row landed after the human's message. The walk skips those rows and keeps going —
-    the human's message is usually a few rows earlier. When the tail
-    holds no human row at all (a turn whose tool results outgrew it),
-    the walk continues toward the start of the file one chunk at a time
-    (`_walk_back`), up to `_TRANSCRIPT_WALK_BACK_BYTES`; past that, or
-    in a file with no human row, `user` stays None and the hook no-ops,
-    the same fail-quiet contract as before.
-    """
-    found = _LastExchange()
-    # `bounded_tail_read` handles the seek-to-end + partial-line-discard +
-    # unseekable-stream fallback. The latest user+assistant pair sits at
-    # the tail of an append-only JSONL, so the head is uninteresting and
-    # would risk loading hundreds of MB of session history into memory.
-    try:
-        chunk = bounded_tail_read(transcript_path, _TRANSCRIPT_TAIL_READ_BYTES)
-    except OSError:
-        return None, None, None
-    text = chunk.decode("utf-8", errors="replace")
-
-    # Walk lines in reverse — the most recent user/assistant come
-    # last. Stop once we have both.
-    #
-    # split("\n"), NOT splitlines(): the JSONL framing contract is
-    # bytes-level \n, while splitlines() also breaks on U+2028/U+2029/
-    # U+0085 — characters that are legal RAW inside JSON strings and
-    # that real serializers emit unescaped (Node's JSON.stringify,
-    # Python's json.dumps(ensure_ascii=False)). A transcript row whose
-    # content carried one shattered into fragments that all failed
-    # json.loads and were silently skipped, so the reverse walk
-    # anchored on an OLDER exchange: the audit probed a stale user
-    # message and attribution matched against a stale reply. The
-    # strip() below already handles \r remnants and the trailing empty
-    # piece a terminal \n produces.
-    for line in reversed(text.split("\n")):
-        found.take(line)
-        if found.complete:
-            break
-    if found.user is None:
-        # The tail began after this turn's human row (its tool results
-        # outgrew the tail): keep walking from where the tail began. An
-        # append between the two reads only makes the walk re-read a few
-        # of the tail's own rows.
-        try:
-            size = transcript_path.stat().st_size
-        except OSError:
-            size = 0
-        if size > len(chunk):
-            _walk_back(transcript_path, end=size - len(chunk), found=found)
-    return found.user, found.assistant, found.model
-
-
-@dataclasses.dataclass
-class _LastExchange:
-    """What the reverse walk has found so far: the newest human row, the
-    newest assistant text and the newest assistant row's model."""
-
-    user: str | None = None
-    assistant: str | None = None
-    model: str | None = None
-
-    @property
-    def complete(self) -> bool:
-        return self.user is not None and self.assistant is not None
-
-    def take(self, line: str) -> None:
-        """Read one transcript line, newest first. A line that is not a
-        row, and a user row the human did not type, are skipped."""
-        line = line.strip()
-        if not line:
-            return
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            return
-        if not isinstance(row, dict):
-            return
-        row_type = row.get("type")
-        message = row.get("message")
-        if not isinstance(message, dict):
-            return
-        if row_type == "assistant":
-            if self.model is None:
-                raw_model = message.get("model")
-                if isinstance(raw_model, str) and raw_model:
-                    self.model = raw_model
-            if self.assistant is None:
-                self.assistant = _flatten_assistant_content(message.get("content"))
-        elif self.user is None and row_type == "user":
-            # A row the human did not type (`human_prompt` says which)
-            # is skipped: the human's message sits a few rows earlier.
-            candidate = human_prompt(row)
-            if candidate is not None:
-                self.user = candidate
-
-
-def _walk_back(transcript_path: Path, *, end: int, found: _LastExchange) -> None:
-    """Continue the reverse walk from byte `end` (exclusive: where the
-    tail began) toward the start of the file, one tail-sized chunk at a
-    time, until `found` is complete, the file starts, or
-    `_TRANSCRIPT_WALK_BACK_BYTES` have been read.
-
-    A chunk boundary falls inside a row: the bytes before a chunk's first
-    newline are the end of a row whose start lies further back, so they
-    are carried into the next (earlier) chunk, and a row longer than a
-    chunk keeps accumulating until its start arrives. Memory holds one
-    chunk and the carry, never the file. An OSError leaves `found` as it
-    was: the hook then no-ops as it did before the walk existed."""
-    budget = _TRANSCRIPT_WALK_BACK_BYTES
-    carry = b""
-    try:
-        with transcript_path.open("rb") as fh:
-            while end > 0 and budget > 0 and not found.complete:
-                start = max(0, end - _TRANSCRIPT_TAIL_READ_BYTES, end - budget)
-                fh.seek(start)
-                buf = fh.read(end - start) + carry
-                budget -= end - start
-                end = start
-                if start > 0:
-                    newline = buf.find(b"\n")
-                    if newline == -1:
-                        # A row longer than the chunk: its start is
-                        # further back. Keep every byte and read on.
-                        carry = buf
-                        continue
-                    carry, buf = buf[:newline], buf[newline + 1 :]
-                else:
-                    carry = b""
-                for raw in reversed(buf.split(b"\n")):
-                    found.take(raw.decode("utf-8", errors="replace"))
-                    if found.complete:
-                        break
-    except OSError:
-        return
-
-
 def is_synthetic_prompt(text: str) -> bool:
-    """True for text the harness composed and no human typed: it opens,
-    after leading whitespace, with one of `_SYNTHETIC_USER_PREFIXES`.
-
-    The one test for both surfaces that read a prompt: a transcript user
-    row (`human_prompt`, for the Stop audit, capture and the recall
-    review) and the UserPromptSubmit payload (`recall.prompt_recall`),
-    whose `prompt` carries no flag that says who wrote it. A prompt that
-    mentions a tag after its first character is the human's."""
-    return text.lstrip().startswith(_SYNTHETIC_USER_PREFIXES)
+    """True for text that is not the owner's typing by the one definition
+    (`owner_prompt.owner_text`): blank once the app's envelope blocks are
+    removed, or opening with a shape the harness composes. A prompt that
+    mentions a tag after its first word is the owner's."""
+    return owner_text(text) is None
 
 
 def human_prompt(row: dict[str, Any]) -> str | None:
-    """The text of a transcript row the human typed, or None for any
-    other row.
-
-    Harness-injected rows are not the human's: skill and command
-    expansions carry `isMeta: true` at the row level, a compaction
-    summary carries `isCompactSummary: true`, and envelope-tagged
-    payloads open with a tag (`is_synthetic_prompt`). Empty and
-    whitespace-only user rows occur in real transcripts too; capturing
-    one used to drop the whole audit at main()'s `if not user`."""
-    if row.get("type") != "user" or row.get("isMeta") or row.get("isCompactSummary"):
-        return None
-    message = row.get("message")
-    if not isinstance(message, dict):
-        return None
-    content = message.get("content")
-    candidate: str | None = None
-    if isinstance(content, str):
-        candidate = content
-    elif isinstance(content, list):
-        candidate = _flatten_assistant_content(content)
-    if candidate is None or not candidate.strip():
-        return None
-    if is_synthetic_prompt(candidate):
-        return None
-    return candidate
+    """The owner's typed text of a transcript row, as the probe reads it,
+    or None for any other row: `owner_prompt.owner_prompt`, the one
+    definition the Stop audit, capture and the recall review read."""
+    return owner_prompt(row)
 
 
-def _flatten_assistant_content(content: Any) -> str | None:
-    """Pull text out of an assistant content list. Returns None if
-    nothing useful is found. Skips thinking blocks and tool-use
-    blocks — the audit cares about text the model showed the user."""
-    if not isinstance(content, list):
-        return None
-    parts: list[str] = []
-    for block in content:
-        if not isinstance(block, dict):
-            continue
-        if block.get("type") == "text":
-            text = block.get("text")
-            if isinstance(text, str) and text:
-                parts.append(text)
-    if not parts:
-        return None
-    return "\n".join(parts)
+# The text blocks of a message content (`owner_prompt.text_blocks`): the
+# reply text the Stop and capture read off an assistant row.
+_flatten_assistant_content = text_blocks
 
 
 def _probe_message(
@@ -601,35 +353,39 @@ def audit_transcript(
     prompt_id: str | None = None,
     state: RecallState | None = None,
 ) -> dict[str, Any] | None:
-    """`run_audit` over the last exchange of a Claude Code transcript:
-    the body of the Stop hook, shared by the `audit-turn` process and
-    the daemon's stop endpoint. None when there is nothing to audit.
+    """`run_audit` over the turn a Claude Code transcript holds for this
+    Stop: the body of the Stop hook, shared by the `audit-turn` process
+    and the daemon's stop endpoint. None when there is nothing to audit.
 
-    `assistant_message` is the Stop payload's ``last_assistant_message``
-    (Claude Code sends the reply it just finished): when present it is
-    the reply every attribution reads, and the transcript tail is read
-    for the user's message and the model only; when absent the tail's
-    reply is used, as before. Which one it was goes on the
-    `turn_audited` row as `reply_source` ("payload" or "tail"; no key
-    when neither held a reply). `harness`, `prompt_id` and `state` go to
-    `run_audit` for the settlement of shown pointers."""
+    The turn is the one `prompt_id` names (the Stop payload's), else the
+    newest user row's (`transcript.stop_turn`); its prompt is the owner's
+    text of its newest row the definition accepts (`owner_prompt`), and a
+    turn none of whose submitted rows the definition accepts is audited
+    as having no owner prompt (`run_audit` with no message). The
+    reply is the Stop payload's ``last_assistant_message`` (Claude Code
+    sends the reply it just finished) when present, else the newest
+    assistant text of the turn after its prompt; a turn with neither has
+    no reply. Which one it was goes on the `turn_audited` row as
+    `reply_source` ("payload" or "tail"; no key without a reply).
+    `harness`, `prompt_id` and `state` go to `run_audit` for the
+    settlement of shown pointers."""
     transcript_path = Path(transcript_path).expanduser()
     if not transcript_path.is_file():
         return None
-    user, assistant, model = _extract_last_exchange(transcript_path)
-    if not user:
+    turn = stop_turn(transcript_path, prompt_id)
+    if turn is None:
         return None
+    assistant: str | None = None
     reply_source: str | None = None
     if assistant_message:
-        assistant = assistant_message
-        reply_source = "payload"
-    elif assistant is not None:
-        reply_source = "tail"
+        assistant, reply_source = assistant_message, "payload"
+    elif turn.reply is not None:
+        assistant, reply_source = turn.reply, "tail"
     return run_audit(
-        user_message=user,
+        user_message=turn.prompt,
         assistant_response=assistant,
         session_id=session_id,
-        client_model=model,
+        client_model=turn.model,
         config=config,
         dry_run=dry_run,
         store=store,
@@ -637,13 +393,14 @@ def audit_transcript(
         harness=harness,
         prompt_id=prompt_id,
         reply_source=reply_source,
+        transcript_path=str(transcript_path),
         state=state,
     )
 
 
 def run_audit(
     *,
-    user_message: str,
+    user_message: str | None,
     assistant_response: str | None,
     session_id: str,
     client_model: str | None = None,
@@ -654,6 +411,7 @@ def run_audit(
     harness: str | None = None,
     prompt_id: str | None = None,
     reply_source: str | None = None,
+    transcript_path: str | None = None,
     state: RecallState | None = None,
 ) -> dict[str, Any]:
     """Pure-function entry point: given a user message and session
@@ -661,11 +419,19 @@ def run_audit(
     for JSON dumping. Side effects (event-log writes) only happen
     when there's something to report and the probe runs cleanly.
 
-    `client_model` is the transcript-derived model id (see
-    `_extract_last_exchange`); stamped as `client_model` on the
-    `turn_audited` / `search_miss` / `use` events this hook emits so
-    eval can slice telemetry per-model. None (unknown) omits the
-    field.
+    `user_message` is the owner's prompt as the probe reads it
+    (`owner_prompt.owner_text`, the bytes the prompt recall hashes too).
+    None is a turn with no owner prompt: its `turn_audited` row carries
+    verdict ``no_signal`` and reason ``no_owner_prompt``
+    (`audit.no_owner_prompt_report`), nothing is probed, no `search_miss`
+    is recorded and nothing is settled; the unanswered reviews are still
+    counted, since the next turn's window opens at this row.
+
+    `client_model` is the transcript-derived model id (the turn's
+    newest assistant row, `transcript.stop_turn`); stamped as
+    `client_model` on the `turn_audited` / `search_miss` / `use` events
+    this hook emits so eval can slice telemetry per-model. None
+    (unknown) omits the field.
 
     `dry_run` computes the audit and returns the same dict while writing
     NOTHING to the event log. It exists because the manual invocation
@@ -694,14 +460,21 @@ def run_audit(
     `prompt_id` the harness turn, stamped on a settlement and, with
     `reply_source` (where `assistant_response` came from: "payload" or
     "tail", None for none), on the `turn_audited` row, so a delivery's
-    turn joins its Stop without a transcript read.
+    turn joins its Stop without a transcript read. `transcript_path` is
+    where a compaction the session signalled is looked for
+    (`recall.confirm_compaction`) before the segment is read.
 
     The in-process rows the hook joins are found by the harness join
     first (`bridged_session`: tool events stamped with this hook's
     session id as their ``harness_session``), the worktree bridge only
     when none is stamped."""
     from .recall import RecallState as _RecallState
-    from .recall import previous_audit_at, review_unanswered, settle_shown
+    from .recall import (
+        confirm_compaction,
+        previous_audit_at,
+        review_unanswered,
+        settle_shown,
+    )
 
     cfg = config or load_config(None)
     if dry_run:
@@ -774,21 +547,27 @@ def run_audit(
     server_session = bridged_session(
         recent, harness_session=session_id, worktree_root=caller_origin.worktree_root
     )
-    excluded_scopes = _disabled_scopes_from_events(
-        recent,
-        worktree_root=caller_origin.worktree_root,
-        server_session=server_session,
-    )
-    report = _probe_message(
-        cfg=cfg,
-        store=store,
-        user_message=user_message,
-        session_id=session_id,
-        server_session=server_session,
-        caller_origin=caller_origin,
-        excluded_scopes=excluded_scopes,
-        recent=recent,
-    )
+    if user_message is None:
+        report = no_owner_prompt_report(
+            session_id=session_id,
+            now=utcnow(),
+            lookback_seconds=_ATTRIBUTION_LOOKBACK_SECONDS,
+        )
+    else:
+        report = _probe_message(
+            cfg=cfg,
+            store=store,
+            user_message=user_message,
+            session_id=session_id,
+            server_session=server_session,
+            caller_origin=caller_origin,
+            excluded_scopes=_disabled_scopes_from_events(
+                recent,
+                worktree_root=caller_origin.worktree_root,
+                server_session=server_session,
+            ),
+            recent=recent,
+        )
     # Emit the audit event so cadence is visible even when there's
     # nothing to flag — matches the MCP handler's discipline. Honour
     # the same `telemetry.enabled` config the server-side recorder
@@ -818,10 +597,22 @@ def run_audit(
     probe_mode = cfg.behavior.search_mode or "hybrid"
     now = utcnow()
     recall_state = state if state is not None else _RecallState(background=False)
+    # A compaction the session signalled may have reached the transcript
+    # since: the segment it opened is the one this Stop settles in.
+    confirm_compaction(
+        store=store,
+        state=recall_state,
+        key=(harness or "claude-code", session_id),
+        transcript_path=transcript_path,
+        cfg=cfg,
+        triggered_from="stop_hook",
+        now=now,
+        origin=caller_origin,
+    )
     # The unanswered-review window opens at the session's previous
     # turn, read before this turn's row lands.
     previous_audit = previous_audit_at(store, session_id, now=now)
-    repeat = is_duplicate_audit(
+    repeat = user_message is not None and is_duplicate_audit(
         recent,
         session_id=session_id,
         probe_query_hash=redact_query(user_message)["hash"],
@@ -878,7 +669,9 @@ def run_audit(
     sessions = joined_sessions(
         recent, harness_session=session_id, worktree_root=caller_origin.worktree_root
     )
-    if assistant_response:
+    # A turn with no owner prompt settles nothing: its reply answered rows
+    # the harness composed.
+    if user_message is not None and assistant_response:
         settled = _emit_hook_attributions(
             store=store,
             recorder=recorder,

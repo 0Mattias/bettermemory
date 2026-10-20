@@ -266,10 +266,12 @@ until the stable `9.0.0` is tagged. Ask for a candidate by version
     ambient, without an open contradiction, 1,200 characters at most.
     It replaces the per-scope counts block. `[behavior] session_brief`
     switches it.
-  - On UserPromptSubmit, the prompt recall: the prompt, pasted blocks
-    and `<system-reminder>` blocks removed and cut at 2,000 characters,
-    probed through the audit's own pool and ranker, and up to three hits
-    delivered when they are
+  - On UserPromptSubmit, the prompt recall: the owner's words as the one
+    definition of an owner prompt reads them
+    (`src/bettermemory/owner_prompt.py`: reminder, paste and artifact
+    view blocks removed, cut at 2,000 characters), probed through the
+    audit's own pool and ranker, and up to three hits delivered when
+    they are
     relevant (medium or high), written in the caller's project, local or
     imported, not contradicted and not already shown, retrieved,
     written or updated in the session segment; 900 characters at most,
@@ -282,33 +284,73 @@ until the stable `9.0.0` is tagged. Ask for a candidate by version
     test, now `hook.is_synthetic_prompt`) is not probed and records
     nothing, so no id is held for the rest of the segment on its
     account; the rule name moves from `rs-v1` to `rs-v2` so the log
-    tells the rows apart.
+    tells the rows apart. The Stop audit, capture and the recall review
+    judge a transcript row by the same definition, its marks first
+    (`isMeta`, `isCompactSummary`, a `turnOrigin` other than `human`)
+    and its text second, so a prompt behind reminder blocks is the
+    owner's on every surface and hashes alike on the recall and the
+    Stop; `hook.human_prompt`, `hook.is_synthetic_prompt` and
+    `recall.clean_prompt` are names for it, and `clean_prompt` reads a
+    prompt without an artifact view byte for byte as before.
   - A member of a pending conflicts pair is delivered with a
     `[disputed: cf-…]` mark, whatever the detector.
   - A per-session cooldown replaces the 600-second retrieval shield for
-    delivery: no id twice in a segment (a compact or clear opens a new
-    one), twelve recalls per segment at most, held in the daemon and
-    rebuilt from the log after a restart. The brief on a resume, which
-    keeps its segment, omits the ids the segment has already shown and
-    records them as `omitted` on its `session_brief` row (a row with no
-    ids when every candidate was shown, which the eval and the review
-    do not count as a brief); the rule name moves from `rs-v2` to
-    `rs-v3` so the log tells the rows apart.
+    delivery: no id twice in a segment (a clear opens a new one, and so
+    does a compact on its marker), twelve recalls per segment at most,
+    held in the daemon and rebuilt from the log after a restart. The
+    brief on a resume, which keeps its segment, omits the ids the
+    segment has already shown and records them as `omitted` on its
+    `session_brief` row (a row with no ids when every candidate was
+    shown, which the eval and the review do not count as a brief); the
+    rule name moves from `rs-v2` to `rs-v3` so the log tells the rows
+    apart.
+  - A compact SessionStart opens a segment only when the transcript
+    holds a `compact_boundary` row newer than the one the segments last
+    opened on, named as `marker` on its row (one session sent 45
+    compact SessionStarts against one compaction). Without it the
+    compact is a resume, and its row carries `marker_absent: true`; the
+    boundary reaches the file only after the hook has run (in each of 45
+    measured pairs), so a later hook (the prompt recall, the Stop, a
+    SessionStart) that finds a marker stamped within 60 seconds of the
+    compact, however late it reads, opens the segment at the compact,
+    keeps what was shown since, and records `segment_opened` with
+    `marker` and `opened_at`. A SessionStart
+    without a transcript path reads no marker, so its compact is a
+    resume until a later hook finds one. The state is rebuilt
+    from the session's own rows whenever they were stamped, where it
+    read the last day before, so a session evicted after a day idle, a
+    restarted daemon and the CLI path hold what the daemon held. The
+    rule name moves from `rs-v3` to `rs-v4` so the log tells the rows
+    apart.
   - Each show is recorded at show time (`session_brief`, and
     `prompt_recall` with `shown_ids`, `suppressed_ids`, `rule`,
     `segment`, `prompt_id` and `transcript_path`); a compact or clear
     whose brief shows nothing records `segment_opened`. Nothing is shown
     with telemetry off.
-  - At Stop the reply (`last_assistant_message`, the transcript tail
+  - At Stop the reply (`last_assistant_message`, the turn's own reply
     when absent) is matched against every pointer shown in the segment;
     a match records one applied `use` naming its `surface` and the
     show's event id, and no match records nothing. Open review chains
     the conversation left since its previous turn are counted into a
     `review_unanswered` event. The Stop's `turn_audited` row carries the
-    payload's `prompt_id` and `reply_source` (`payload` or `tail`), and
-    when the transcript's last 1 MiB holds no human row the audit walks
-    back through the file one 1 MiB chunk at a time, 64 MiB at most,
-    instead of writing nothing for the turn.
+    payload's `prompt_id` and `reply_source` (`payload` or `tail`).
+  - The Stop reads the turn the payload's `prompt_id` names and no other
+    (`src/bettermemory/transcript.py`), from the end of the file one
+    1 MiB chunk at a time, 64 MiB at most, a row that starts exactly at
+    the budget's first byte included. Its prompt is the newest of the
+    turn's rows the definition accepts; a turn without one records
+    `turn_audited` with verdict `no_signal` and `no_signal_reason:
+    no_owner_prompt`, which eval counts in `turns_no_signal` outside the
+    silent-miss denominator, probes nothing and settles nothing (60 of
+    the 122 rc3 Stops replayed on 2026-10-19 had no owner prompt: rc3
+    had probed an older turn's prompt for 58 of them and the turn's own
+    SDK submission for 2; of the other 62, rc3 had probed another turn's
+    prompt for 7, 6 of them because the prompt opened with a reminder
+    block).
+    The reply is `last_assistant_message`, else the newest assistant
+    text of the turn after its prompt, else none, where it was the
+    newest text of any turn. A turn the walk cannot decide within its
+    budget records nothing.
   - The shim forwards `CLAUDE_CODE_SESSION_ID` as
     `x-bettermemory-harness-session`, the daemon stamps it on show,
     search, use, write, update and verify rows, and the hooks join a

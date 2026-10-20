@@ -50,18 +50,30 @@ validated ships as declared claims on `memory_write` / `memory_verify`.
   points at up to eight of the newest memories written there whose
   verdict is fresh as `memory_show` computes it, local or imported, not
   ambient and not contradicted; a warm brief reads memoised verdicts and
-  runs no git. On UserPromptSubmit the prompt recall probes the prompt
-  (pasted blocks and `<system-reminder>` blocks removed, 2,000
-  characters) through the audit's probe and delivers up to three
-  relevant hits written in the caller's project; a disputed one carries
-  a `[disputed: cf-…]` mark. A prompt the harness composed and no human
-  typed (a task notification, a message from another session, any other
-  harness tag: the Stop audit's own test, `hook.is_synthetic_prompt`) is
-  not probed and records nothing. A per-session
-  cooldown shows no id twice in a segment, by the brief or the recall (a
-  compact or clear opens a new one; a resume keeps it, and its brief
-  omits what the segment has shown), and at most twelve recalls per
-  segment. Each show is recorded
+  runs no git. On UserPromptSubmit the prompt recall probes the owner's
+  words as the one definition of an owner prompt reads them
+  (`owner_prompt.py`: the app's envelope blocks removed, reminders,
+  pastes and artifact views, then 2,000 characters) through the audit's
+  probe and delivers up to three relevant hits written in the caller's
+  project; a disputed one carries a `[disputed: cf-…]` mark. A prompt
+  the harness composed and no human typed (a task notification, a
+  message from another session, an interrupt line, any other harness
+  tag, reminder blocks alone) is not probed and records nothing. The
+  Stop, capture and the recall review judge a transcript row by the
+  same definition, its marks first (`isMeta`, `isCompactSummary`, a
+  `turnOrigin` other than `human`), so the recall and the Stop hash a
+  prompt alike. A per-session cooldown shows no id twice in a segment,
+  by the brief or the recall, and at most twelve recalls per segment.
+  A clear opens a new segment. A compact opens one only on the
+  compaction marker its transcript holds, a `compact_boundary` row newer
+  than the one the segments last opened on; without it the compact is a
+  resume until a later hook, however late, finds a marker stamped within
+  60 seconds of it, which opens the segment at the compact
+  (`recall.confirm_compaction`). A resume keeps the segment, and its
+  brief omits what the segment has shown. The cooldown is rebuilt from
+  the session's own rows whenever they were stamped, so a restart, an
+  eviction after a day idle and the CLI path see the segment the daemon
+  held. Each show is recorded
   (`session_brief`, `prompt_recall`), and the Stop settles a shown
   pointer as an applied `use` naming its surface when the reply used
   it, never by the auto fallback. Nothing is shown with telemetry off.
@@ -230,10 +242,17 @@ through; each event is a row of the store's log. `audit.py` and
 standard-library client in `_daemon_client.py`, which posts the hook's
 payload to the daemon, and `daemon.py` serves the three bodies at
 `/api/v1/hook/`. `hook.py` is the Stop body: the turn audit and
-settlement; the audit reads the transcript's last 1 MiB for the human's
-row and the reply, walks back one chunk at a time (64 MiB at most) when
-the tail holds no human row, and its `turn_audited` row carries the
-payload's `prompt_id` and `reply_source` (`payload` or `tail`).
+settlement. The audit reads the turn the payload's `prompt_id` names,
+and no other (`transcript.py`: the user rows carrying that `promptId`,
+read from the end of the file one 1 MiB chunk at a time, 64 MiB at
+most; the newest user row's turn when the payload names none). Its
+prompt is the owner's text of the turn's newest row the definition
+accepts; a turn with none records `turn_audited` with verdict
+`no_signal` and reason `no_owner_prompt` and probes and settles
+nothing, and a turn the walk cannot decide within the budget records
+nothing. The reply is the payload's `last_assistant_message`, else the
+turn's newest assistant text after its prompt, else none; the row
+carries `prompt_id` and `reply_source` (`payload` or `tail`).
 `recall.py` is the recall surface, the session brief and
 the prompt recall with their per-session cooldown; `verdict.py` is the
 one memoised verdict it and `memory_show` read. The bodies run in the
