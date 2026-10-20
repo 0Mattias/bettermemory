@@ -53,9 +53,9 @@ not a corruption risk, and propagating the error would break the write
 surface for test/CI/container environments without buying any
 durability they actually have.
 
-**Bounded reads (`bounded_read`, `bounded_tail_read`,
-`bounded_stream_read`).** Single point of enforcement for resource
-caps on input we don't trust to be small. The 2.6.2 and 2.6.3 releases
+**Bounded reads (`bounded_read`, `bounded_stream_read`).** Single
+point of enforcement for resource caps on input we don't trust to be
+small. The 2.6.2 and 2.6.3 releases
 fixed three separate unbounded-read defects (consolidate transcript,
 hook transcript, llm.py contradiction clustering byte-vs-char trap);
 the underlying class is one we keep producing because each call site
@@ -70,12 +70,6 @@ because the helpers open in binary mode.
   checks first so an over-cap file is rejected before the allocation.
   Use for files where over-cap is a malformed-input signal (config,
   frontmatter, JSON payloads).
-* `bounded_tail_read(path, max_bytes)` — read up to the trailing
-  `max_bytes` of a file; truncate silently and discard the first
-  partial line. Falls back to a bounded forward read on unseekable
-  streams (FIFOs from `mkfifo`-based fixtures, named pipes). Use for
-  append-only logs where the head is uninteresting (transcripts,
-  event-log tails).
 * `bounded_stream_read(stream, max_bytes)` — read up to `max_bytes`
   from an open binary stream and raise `ValueError` if the stream
   carries more. Detects over-cap by attempting one extra byte after
@@ -396,52 +390,14 @@ def bounded_read(path: Path, max_bytes: int) -> bytes:
     make those handlers dead code.
 
     Use for inputs where over-cap is a malformed-input signal —
-    frontmatter, config files, JSON payloads. For append-only logs
-    where truncation is the right behaviour, use
-    :func:`bounded_tail_read` instead.
+    frontmatter, config files, JSON payloads. A transcript is read from
+    its end by ``transcript.ReverseLines``, which budgets its own walk.
     """
     size = path.stat().st_size
     if size > max_bytes:
         raise ValueError(f"{path}: file size {size} exceeds cap {max_bytes} bytes")
     with path.open("rb") as fh:
         return fh.read(max_bytes)
-
-
-def bounded_tail_read(path: Path, max_bytes: int) -> bytes:
-    """Read up to the trailing ``max_bytes`` of a file.
-
-    Truncates silently — the use case is "I want the tail of an
-    append-only log; the head is uninteresting." Returns bytes.
-    Discards the first partial line in the chunk: when the seek lands
-    mid-line, the bytes before the first newline are dropped so the
-    caller never sees half a record. If no newline exists in the read
-    window the whole chunk is returned (a single huge unbroken line
-    will not have a partial-line discard applied — that's the caller's
-    responsibility to handle).
-
-    Falls back to a bounded forward read when the open file can't be
-    seeked; the partial-line discard does not apply in that case
-    because the read starts at the head. NOTE: the fallback only
-    helps once the file is open — opening a FIFO with no writer
-    blocks indefinitely, so a caller passing a possibly-non-regular
-    path must guard with ``Path.is_file()`` first, as
-    ``hook.audit_transcript`` does before ``transcript.ReverseLines``
-    opens a transcript.
-    """
-    with path.open("rb") as fh:
-        try:
-            fh.seek(0, os.SEEK_END)
-            size = fh.tell()
-            offset = max(0, size - max_bytes)
-            fh.seek(offset)
-        except OSError:
-            offset = 0
-        chunk = fh.read(max_bytes)
-    if offset > 0:
-        newline = chunk.find(b"\n")
-        if newline != -1:
-            chunk = chunk[newline + 1 :]
-    return chunk
 
 
 # Module-level guard so the "Windows lock fell back to in-process only"
@@ -679,7 +635,6 @@ __all__ = [
     "atomic_write_bytes",
     "bounded_read",
     "bounded_stream_read",
-    "bounded_tail_read",
     "flock_excl",
     "fsync_dir",
     "fsync_file",

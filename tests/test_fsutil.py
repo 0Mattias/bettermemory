@@ -46,7 +46,6 @@ from bettermemory._fsutil import (
     atomic_write_bytes,
     bounded_read,
     bounded_stream_read,
-    bounded_tail_read,
 )
 
 
@@ -95,80 +94,6 @@ class TestBoundedRead:
         path = tmp_path / "empty"
         path.write_bytes(b"")
         assert bounded_read(path, max_bytes=1024) == b""
-
-
-class TestBoundedTailRead:
-    def test_under_cap_returns_full_file(self, tmp_path: Path) -> None:
-        path = tmp_path / "log.jsonl"
-        path.write_bytes(b"line1\nline2\n")
-        assert bounded_tail_read(path, max_bytes=1024) == b"line1\nline2\n"
-
-    def test_over_cap_returns_tail(self, tmp_path: Path) -> None:
-        path = tmp_path / "log.jsonl"
-        path.write_bytes(b"line1\nline2\nline3\nline4\n")
-        # 10-byte cap → seeks to size-10 = 14; reads from offset 14.
-        # File bytes 14..24 = "line4\n" preceded by half of "line3\n".
-        # Partial-line discard drops the half-line; tail starts after the
-        # first newline.
-        result = bounded_tail_read(path, max_bytes=10)
-        # Result must begin after a newline (no partial line at the head).
-        assert b"\n" not in result or result.startswith(b"line")
-        assert result.endswith(b"line4\n")
-
-    def test_partial_line_discard_at_seek_boundary(self, tmp_path: Path) -> None:
-        """When the seek lands inside a line, the partial head is
-        dropped before returning."""
-        path = tmp_path / "log.jsonl"
-        # 100-byte content, 10 lines of "0123456789\n" each (11 bytes).
-        path.write_bytes(b"0123456789\n" * 10)
-        # Cap of 25 bytes → seek lands at byte 85, mid-line. After
-        # partial-line discard, result should start at the next newline.
-        result = bounded_tail_read(path, max_bytes=25)
-        # Every retained line is a full record.
-        assert all(line == b"0123456789" for line in result.splitlines() if line)
-
-    def test_unseekable_stream_falls_back_to_forward_read(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """FIFO / pipe paths can't seek; the helper must read forward
-        up to the cap rather than crashing."""
-        path = tmp_path / "log.jsonl"
-        path.write_bytes(b"line1\nline2\n")
-        real_open = Path.open
-
-        def patched_open(self: Path, *args, **kwargs):
-            fh = real_open(self, *args, **kwargs)
-
-            def fail_seek(*_a, **_kw):
-                raise OSError("unseekable")
-
-            fh.seek = fail_seek
-            return fh
-
-        monkeypatch.setattr(Path, "open", patched_open)
-        result = bounded_tail_read(path, max_bytes=1024)
-        # Fallback reads from current position (start), full content fits.
-        assert result == b"line1\nline2\n"
-
-    def test_no_newline_returns_chunk_unchanged(self, tmp_path: Path) -> None:
-        """A single huge unbroken line has no partial-line discard
-        applied — the caller has to handle it."""
-        path = tmp_path / "blob"
-        path.write_bytes(b"x" * 200)
-        # Cap of 50 → seek to 150, read 50 bytes, no newline to anchor
-        # the partial-line discard, return as-is.
-        result = bounded_tail_read(path, max_bytes=50)
-        assert result == b"x" * 50
-
-    def test_byte_not_char_cap(self, tmp_path: Path) -> None:
-        path = tmp_path / "log.jsonl"
-        # Mix of single-byte and 4-byte codepoints to make sure the cap
-        # operates on bytes regardless of UTF-8 width.
-        body = ("a\U0001f600\n" * 50).encode("utf-8")  # 6 bytes * 50 = 300
-        path.write_bytes(body)
-        result = bounded_tail_read(path, max_bytes=60)
-        # 60 bytes ≤ result ≤ 60 bytes (no partial-line discard adds bytes).
-        assert len(result) <= 60
 
 
 class TestBoundedStreamRead:
