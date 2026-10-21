@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Memory for Claude Code, checked against your files and git history on every read, with a session brief and recall on each prompt.",
-    "version": "9.0.0rc4"
+    "version": "9.0.0rc5"
   },
   "plugins": [
     {

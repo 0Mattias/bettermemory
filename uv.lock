@@ -80,7 +80,7 @@ wheels = [
 
 [[package]]
 name = "bettermemory"
-version = "9.0.0rc4"
+version = "9.0.0rc5"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },
