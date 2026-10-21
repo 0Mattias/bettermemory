@@ -90,7 +90,11 @@ _READONLY_ERRNOS = frozenset({errno.EACCES, errno.EPERM, errno.EROFS})
 # O_NONBLOCK keeps a FIFO planted at the token's name from blocking the
 # reader (it is then reported as not a regular file); O_BINARY keeps
 # Windows from translating line ends.
-_OPEN_READ = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
+_OPEN_READ = os.O_RDONLY | _NONBLOCK | getattr(os, "O_BINARY", 0)
+# The errors a non-blocking open or read is made again after, plainly: a
+# network filesystem's client refusing the flag (`_read_text`).
+_RETRY_ERRNOS = frozenset({errno.EINVAL, errno.EIO})
 _OPEN_CREATE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
 
 ReadState = Literal["present", "absent", "malformed", "unreadable"]
@@ -306,24 +310,32 @@ def _read_at(path: Path) -> TokenRead:
 
 def _read_text(path: Path) -> str | TokenRead:
     """The file's text, or the TokenRead that ends the read (absent,
-    unreadable, or malformed for what is not a small ASCII regular file)."""
+    unreadable, or malformed for what is not a small ASCII regular file).
+
+    The open is non-blocking, so a FIFO planted at the name does not hold
+    the reader. A network filesystem's client can refuse the non-blocking
+    open, or a read on such a descriptor, with ``EINVAL`` (seen on a cifs
+    mount just after another writer placed the file): the open is then
+    made again plainly once a stat says a regular file is there, and the
+    read again with the flag cleared on the same descriptor. The detail
+    of an unreadable file names the call that failed."""
     try:
         fd = os.open(path, _OPEN_READ)
     except (FileNotFoundError, NotADirectoryError):
         return TokenRead("absent")
     except OSError as exc:
-        return TokenRead("unreadable", detail=_os_text(exc))
+        if exc.errno not in _RETRY_ERRNOS:
+            return TokenRead("unreadable", detail=f"open: {_os_text(exc)}")
+        plain = _open_plain(path)
+        if not isinstance(plain, int):
+            return plain
+        fd = plain
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             return TokenRead("malformed", detail="not a regular file")
-        data = b""
-        while len(data) <= _MAX_BYTES:
-            chunk = os.read(fd, _MAX_BYTES + 1 - len(data))
-            if not chunk:
-                break
-            data += chunk
+        data = _read_all(fd)
     except OSError as exc:
-        return TokenRead("unreadable", detail=_os_text(exc))
+        return TokenRead("unreadable", detail=f"read: {_os_text(exc)}")
     finally:
         os.close(fd)
     if len(data) > _MAX_BYTES:
@@ -332,6 +344,53 @@ def _read_text(path: Path) -> str | TokenRead:
         return data.decode("ascii")
     except UnicodeDecodeError:
         return TokenRead("malformed", detail="not ASCII text")
+
+
+def _open_plain(path: Path) -> int | TokenRead:
+    """A blocking open of `path` for the retry of a non-blocking one the
+    filesystem refused: only once a stat says a regular file is there, so
+    the open cannot wait on a FIFO."""
+    try:
+        if not stat.S_ISREG(os.stat(path).st_mode):
+            return TokenRead("malformed", detail="not a regular file")
+        return os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+    except (FileNotFoundError, NotADirectoryError):
+        return TokenRead("absent")
+    except OSError as exc:
+        return TokenRead("unreadable", detail=f"open: {_os_text(exc)}")
+
+
+def _read_all(fd: int) -> bytes:
+    """Up to a byte more than a token file may hold, from `fd`. A read the
+    filesystem refuses with ``EINVAL`` on the non-blocking descriptor is
+    made once more with the flag cleared (`fcntl`, where there is one)."""
+    data = b""
+    while len(data) <= _MAX_BYTES:
+        try:
+            chunk = os.read(fd, _MAX_BYTES + 1 - len(data))
+        except OSError as exc:
+            if exc.errno not in _RETRY_ERRNOS or not _clear_nonblock(fd):
+                raise
+            chunk = os.read(fd, _MAX_BYTES + 1 - len(data))
+        if not chunk:
+            break
+        data += chunk
+    return data
+
+
+def _clear_nonblock(fd: int) -> bool:
+    """Clear ``O_NONBLOCK`` on `fd`; False where the platform has no
+    ``fcntl`` or the flag could not be changed."""
+    if sys.platform == "win32":
+        return False
+    import fcntl
+
+    try:
+        flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, flags & ~_NONBLOCK)
+    except OSError:
+        return False
+    return True
 
 
 def _cut_short(text: str) -> bool:
@@ -448,16 +507,19 @@ def _after_race(path: Path) -> TokenWrite:
     token. The loser's link or exclusive create was refused because the
     name exists, yet its read can still find no file there (an SMB client
     answers from the lookup it made just before) or one empty or cut short
-    (the winner's bytes not yet in). Either is read again, in pauses
-    growing from `_REREAD_DELAY_SECONDS`, for up to `_RACE_READ_SECONDS`
-    (design 8.7, I34); then what was last found is reported, the token
-    removed when nothing is there."""
+    (the winner's bytes not yet in), or a read the filesystem refuses for
+    the moment. Each is read again, in pauses growing from
+    `_REREAD_DELAY_SECONDS`, for up to `_RACE_READ_SECONDS` (design 8.7,
+    I34); then what was last found is reported, the token removed when
+    nothing is there."""
     deadline = time.monotonic() + _RACE_READ_SECONDS
     pause = _REREAD_DELAY_SECONDS
     while True:
         found = _existing(path)
-        unfinished = found is None or (
-            found.status == "malformed" and found.detail in (_EMPTY, _CUT_SHORT)
+        unfinished = (
+            found is None
+            or found.status == "failed:io"
+            or (found.status == "malformed" and found.detail in (_EMPTY, _CUT_SHORT))
         )
         left = deadline - time.monotonic()
         if not unfinished or left <= 0:

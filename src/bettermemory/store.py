@@ -206,6 +206,7 @@ MEMBERSHIP_EVENT_KINDS = frozenset(
         "checkout_moved",
         "checkout_view_added",
         "checkout_rekeyed",
+        "checkout_object_refreshed",
         "checkout_retired",
         "token_superseded",
         "token_reminted",

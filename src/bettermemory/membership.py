@@ -1907,6 +1907,32 @@ class Membership:
         self._put("checkout", _checkout_row(k))
         return k
 
+    def _refresh_object(self, k: Checkout, loc: Location) -> Checkout:
+        """The checkout's object key, and its common key where that is the
+        same object, taken as `loc` reads them now: the same device and
+        inode number with another birth time (decision B20, a restore
+        that got the number back). Nothing to do when the keys agree.
+        Logged as ``checkout_object_refreshed``, which is no re-key: the
+        object is the one recorded, read anew."""
+        new = loc.object_key
+        old = k.object_key
+        if new is None or old is None or old == new:
+            return k
+        common = k.common_object_key
+        if common is not None and _same_number(common, old):
+            common = loc.common_object_key if loc.common_object_key else common
+        k = self._put_checkout(
+            dataclasses.replace(k, object_key=new, common_object_key=common)
+        )
+        self._event(
+            "checkout_object_refreshed",
+            checkout=k.id,
+            path=loc.root,
+            old_object=dataclasses.asdict(old),
+            new_object=dataclasses.asdict(new),
+        )
+        return k
+
     def _put_view(self, v: View) -> None:
         self._put(
             "checkout_view",
@@ -2824,7 +2850,10 @@ class Membership:
             old = k.object_key
             if _same_number(old, loc.object_key):
                 # B20: the same device and inode, confirmed by the others
-                # (H): the same object, no re-key row and no key change.
+                # (H): the same object, no re-key row. The key takes the
+                # birth time read now, so the view is live by it from here
+                # on (`view_state` reads another birth time as replaced).
+                k = self._refresh_object(k, loc)
                 k, more = self._observe(k, loc, tenant)
                 return self._caller(
                     k,

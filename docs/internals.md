@@ -464,6 +464,10 @@ Each is a control row of its own, written whatever the telemetry setting
 - `checkout_view_added`: a known checkout seen at another path.
 - `checkout_rekeyed`: a recorded checkout given a new object (B, or `git
   init` in a folder project).
+- `checkout_object_refreshed`: a recorded checkout kept at its device and
+  inode number with another birth time (a restore that got the number
+  back, decision B20): the stored key takes the birth time read now, so
+  the view is live by it afterwards.
 - `checkout_retired`: a checkout unseen for 180 days, out of health.
 - `token_superseded`: a token history disagrees with, left out of the
   tally.

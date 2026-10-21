@@ -508,6 +508,86 @@ def test_i34_a_loser_gives_up_once_the_bound_is_spent(
     assert max(clock.pauses) == checkout_token._RACE_PAUSE_MAX_SECONDS
 
 
+@pytest.mark.parametrize("ids", [1, 3], ids=["once", "three-times"])
+def test_i34_a_loser_whose_read_is_refused_reads_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ids: int
+) -> None:
+    """The loser's read of the winner's file refused by the filesystem for
+    the moment (a cifs client answering EINVAL just after the race): read
+    again in the same pauses until it answers, then the token reported."""
+    git_dir = _repo(tmp_path / "proj")
+    winner = mint()
+    refused = TokenWrite(
+        "failed:io",
+        detail="the existing token cannot be read: read: Invalid argument (EINVAL)",
+    )
+    clock = _losing(monkeypatch, [*([refused] * ids), TokenWrite("exists", winner)])
+    assert write(git_dir, policy=True, bare=False) == TokenWrite("exists", winner)
+    assert len(clock.pauses) == ids
+
+
+@pytest.mark.skipif(not hasattr(os, "O_NONBLOCK"), reason="no non-blocking open here")
+def test_a_non_blocking_open_refused_with_einval_is_made_again_plainly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A filesystem client that refuses the non-blocking open with EINVAL:
+    once a stat says a regular file is there, the open is made again
+    without the flag and the token is read."""
+    git_dir = _repo(tmp_path / "proj")
+    written = write(git_dir, policy=True, bare=False)
+    real_open = os.open
+    opens: list[int] = []
+
+    nonblock = getattr(os, "O_NONBLOCK", 0)
+
+    def refusing(path: Any, flags: int, *args: Any, **kw: Any) -> int:
+        opens.append(flags)
+        if flags & nonblock:
+            raise OSError(errno.EINVAL, "Invalid argument")
+        return real_open(path, flags, *args, **kw)
+
+    monkeypatch.setattr(os, "open", refusing)
+    assert read(git_dir) == TokenRead("present", token=written.token)
+    assert len(opens) == 2 and not opens[1] & nonblock
+
+
+def test_a_read_refused_with_einval_is_made_again_with_the_flag_cleared(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A filesystem client that refuses a read on the non-blocking
+    descriptor with EINVAL: the flag is cleared on that descriptor and
+    the read made again."""
+    git_dir = _repo(tmp_path / "proj")
+    written = write(git_dir, policy=True, bare=False)
+    real_read = os.read
+    reads = {"n": 0}
+
+    def refusing(fd: int, n: int) -> bytes:
+        reads["n"] += 1
+        if reads["n"] == 1:
+            raise OSError(errno.EINVAL, "Invalid argument")
+        return real_read(fd, n)
+
+    monkeypatch.setattr(os, "read", refusing)
+    assert read(git_dir) == TokenRead("present", token=written.token)
+    assert reads["n"] >= 2
+
+
+def test_an_open_refused_for_good_names_the_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refused twice, the detail says which call failed."""
+    git_dir = _repo(tmp_path / "proj")
+    write(git_dir, policy=True, bare=False)
+
+    def refusing(path: Any, flags: int, *args: Any, **kw: Any) -> int:
+        raise OSError(errno.EIO, "Input/output error")
+
+    monkeypatch.setattr(os, "open", refusing)
+    found = read(git_dir)
+    assert found.state == "unreadable" and found.detail.startswith("open: ")
+
+
 def test_i34_a_loser_finding_another_file_reports_it_at_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -679,7 +759,10 @@ def test_an_unreadable_token_is_reported(local_tmp_path: Path) -> None:
 def test_i23_bare_repository_is_never_written(tmp_path: Path) -> None:
     source = _repo(tmp_path / "source").parent
     bare = tmp_path / "served.git"
-    _git(tmp_path, "clone", "-q", "--bare", str(source), str(bare))
+    # A cifs mount whose inode numbers the client makes up (noserverino)
+    # makes git refuse a hard-linked local clone ("hardlink different from
+    # source"), and a clone's objects are not what this test reads.
+    _git(tmp_path, "clone", "-q", "--bare", "--no-hardlinks", str(source), str(bare))
     before = sorted(p.name for p in (bare / "info").iterdir())
     assert write(bare, policy=True, bare=True) == TokenWrite("skipped:bare")
     assert sorted(p.name for p in (bare / "info").iterdir()) == before
@@ -811,7 +894,7 @@ def test_git_clone_carries_no_token(tmp_path: Path, how: str) -> None:
     write(git_dir, policy=True, bare=False)
     clone = tmp_path / "clone"
     source = str(git_dir.parent) if how == "path" else git_dir.parent.as_uri()
-    _git(tmp_path, "clone", "-q", source, str(clone))
+    _git(tmp_path, "clone", "-q", "--no-hardlinks", source, str(clone))
     assert (clone / "file0.txt").is_file()
     assert read(clone / ".git") == TokenRead("absent")
 

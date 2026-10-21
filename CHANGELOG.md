@@ -69,11 +69,24 @@ network mount. The store's schema does not move.
   live checkout's. A racing writer's location now also counts the token
   it wrote, so eight concurrent first sightings of one checkout register
   one.
-- **Token writers on SMB.** Of concurrent writers of one fresh token, the
-  losers read the winner's file before its bytes were visible on a cifs
-  mount and reported an I/O failure. A loser now reads again, in growing
-  pauses for a bounded time, while it finds nothing or an unfinished
-  file.
+- **A restored checkout stays live.** A checkout restored with its old
+  inode number and another birth time (a backup put back in place,
+  decision B20) was recognised as the same object, but its stored key
+  kept the old birth time, so every later read of the view found it
+  replaced and a handoff at it read as inherited from a checkout no
+  longer live. The key now takes the birth time read at the recognition,
+  logged as `checkout_object_refreshed` (no re-key: the object is the one
+  recorded, read anew).
+- **Token writers and readers on SMB.** Of concurrent writers of one
+  fresh token, the losers read the winner's file before its bytes were
+  visible on a cifs mount and reported an I/O failure. A loser now reads
+  again, in growing pauses for a bounded time, while it finds nothing, an
+  unfinished file or a read the filesystem refuses for the moment. The
+  token's reader opens non-blocking (a FIFO at the name cannot hold it);
+  a cifs client can refuse that open or a read on it with `EINVAL`, and
+  the reader then opens plainly once a stat says a regular file is there,
+  or reads again with the flag cleared. An unreadable token's detail
+  names the call that failed.
 
 #### Changed
 

@@ -1153,6 +1153,7 @@ def test_i18_restored_with_its_old_inode_number_is_the_same_checkout(
         pytest.skip("I18 with birth time: this filesystem reports none")
     p = make_repo(tmp_path / "work" / "proj", commits=2)
     lab.write("m1", p)
+    lab.write("e1", p, kind="episode", session="s-before")
     k0 = lab.checkout_of("m1")
     old = _git_dir_key(p)
     backup = copy(p, tmp_path / "backup" / "proj")
@@ -1162,14 +1163,31 @@ def test_i18_restored_with_its_old_inode_number_is_the_same_checkout(
     assert new[2] != old[2] if birth else new[2] is None
     with posing(p / ".git", (old[0], old[1], new[2])):
         res, brief = lab.view(p)
-    assert (res.outcome, res.checkout, brief) == (SILENT, k0, ["m1"])
-    assert res.rule == ("same_object:B+H+T" if birth else "object+token")
-    assert lab.rows("checkout_rekeyed") == []
+        assert (res.outcome, res.checkout, brief) == (SILENT, k0, ["m1"])
+        assert res.rule == ("same_object:B+H+T" if birth else "object+token")
+        assert lab.rows("checkout_rekeyed") == []
+        # The view is live by the same reading afterwards (B18): the
+        # checkout keeps its run-state, and a copy of the backup at a
+        # second path, a new checkout, takes none of it.
+        assert lab.handoff(res).rule == "own_checkout"
+        second = copy(backup, tmp_path / "restored-copy" / "proj")
+        rb, bb = lab.view(second)
+        assert (rb.outcome, bb) == (SILENT, ["m1"]) and rb.checkout != k0
+        assert lab.handoff(rb).rule == "none"
 
 
 # ---------------------------------------------------------------------------
 # Object identity without birth time (E15, E33)
 # ---------------------------------------------------------------------------
+
+
+def _stamps_seen(lab: Lab, label: str, path: Path) -> tuple[Any, Any]:
+    """The init stamps recorded for `label`'s checkout and the ones read at
+    `path` now: what an init-stamp assertion prints when it fails, so a
+    filesystem that reports a file's times differently from one reading
+    to the next names the field."""
+    k = lab.model().checkout(str(lab.checkout_of(label)))
+    return (k.stamps, location._init_stamps(str(path / ".git")))
 
 
 def _recorded_key(lab: Lab, label: str) -> location.Key:
@@ -1279,7 +1297,7 @@ def test_i14_commit_less_move_without_birth_or_token_continues_by_init_stamps(
         lab.checkout_of("g1"),
         "object+init_stamps",
         ["g1"],
-    )
+    ), _stamps_seen(lab, "g1", g2)
 
 
 @pytest.mark.usefixtures("no_birth")
@@ -1292,13 +1310,16 @@ def test_i33_a_clock_a_day_off_changes_no_decision(
     the same path with the same inode number is refused, at every skew."""
     real_time = time.time
     decisions: dict[str, tuple[str, list[str], str]] = {}
+    stamps: dict[str, Any] = {}
     for name, skew in (("none", 0.0), ("ahead_1d", 86400.0), ("behind_1d", -86400.0)):
         monkeypatch.setattr(time, "time", lambda skew=skew: real_time() + skew)
         location.forget()
         moving = lab_of(f"move-{name}", write_token=False)
         a = unborn(tmp_path / name / "a" / "proj")
         moving.write("a1", a)
-        ra, ba = moving.view(move(a, tmp_path / name / "a2" / "proj"))
+        a2 = move(a, tmp_path / name / "a2" / "proj")
+        ra, ba = moving.view(a2)
+        stamps[name] = _stamps_seen(moving, "a1", a2)
         again = lab_of(f"recreate-{name}", write_token=False)
         b = unborn(tmp_path / name / "b" / "proj")
         again.write("b1", b)
@@ -1309,7 +1330,11 @@ def test_i33_a_clock_a_day_off_changes_no_decision(
             rb, _ = again.view(b)
         decisions[name] = (ra.rule, ba, rb.rule)
     monkeypatch.setattr(time, "time", real_time)
-    assert decisions["none"] == ("object+init_stamps", ["a1"], "new:reused_path")
+    assert decisions["none"] == (
+        "object+init_stamps",
+        ["a1"],
+        "new:reused_path",
+    ), stamps["none"]
     assert decisions["ahead_1d"] == decisions["behind_1d"] == decisions["none"]
 
 
@@ -1332,7 +1357,11 @@ def test_i14_e33_commit_less_move_without_birth_or_token_is_live_at_its_new_path
     assert (model.view_state(k), model.live_view(k)) == (membership.LIVE, str(g))
     g2 = move(g, tmp_path / "g2" / "proj")
     res, brief = lab.view(g2)
-    assert (res.checkout, res.rule, brief) == (k.id, "object+init_stamps", ["g1"])
+    assert (res.checkout, res.rule, brief) == (
+        k.id,
+        "object+init_stamps",
+        ["g1"],
+    ), _stamps_seen(lab, "g1", g2)
     assert "checkout_moved" in lab.rows("checkout_moved")
     moved = model.checkout(k.id)
     old, new = moved.views_on(lab.identity.id)
@@ -1419,6 +1448,7 @@ def test_i33_e33_liveness_is_the_same_at_every_clock_skew(
     real_time = time.time
     real_init = Membership.__init__
     answers: dict[str, tuple[Any, ...]] = {}
+    stamps: dict[str, Any] = {}
     for name, skew in (("none", 0.0), ("ahead_1d", 86400.0), ("behind_1d", -86400.0)):
 
         def skewed(self: Membership, *args: Any, skew: float = skew, **kw: Any) -> None:
@@ -1435,6 +1465,7 @@ def test_i33_e33_liveness_is_the_same_at_every_clock_skew(
         lab.write("a1", a)
         a2 = move(a, tmp_path / name / "a2" / "proj")
         moved, _ = lab.view(a2)
+        stamps[name] = _stamps_seen(lab, "a1", a2)
         model = lab.model()
         k = model.checkout(str(moved.checkout))
         old = k.views_on(lab.identity.id)[0]
@@ -1462,7 +1493,7 @@ def test_i33_e33_liveness_is_the_same_at_every_clock_skew(
         membership.GONE,
         membership.REPLACED,
         NEW,
-    )
+    ), stamps["none"]
     assert answers["ahead_1d"] == answers["behind_1d"] == answers["none"]
 
 
