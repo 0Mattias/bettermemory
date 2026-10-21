@@ -41,6 +41,7 @@ from bettermemory.membership import (
     LEGACY,
     SUPERSEDED,
     Declaration,
+    legacy_asks,
     Membership,
     line_legacy,
 )
@@ -379,7 +380,8 @@ def world(tmp_path: Path) -> Iterator[World]:
         "desk-ep", "migration:lineage_cited+same_name", root=gone["desktop-wsam6"]
     )
     # A gone root citing two of alpha's commits and one nobody holds,
-    # under another folder name: a project of its own and a question (D5).
+    # under another folder name: a project of its own, and no question
+    # (held by citation alone under another name decides nothing).
     w.memory("dsh1", "migration:none", root=gone["dsh"], cited=(a1, _UNKNOWN))
     w.memory("dsh2", "migration:none", root=gone["dsh"], cited=(a3,))
     w.episode("dsh-ep", "migration:none", root=gone["dsh"])
@@ -570,8 +572,9 @@ def test_per_root_counts_projects_and_checkouts(world: World) -> None:
     # Seven live checkouts and one legacy checkout per gone root but the
     # re-homed one, each with its view, and the re-homed root's view.
     assert (t.checkouts, t.views) == (13, 14)
-    # The copy's first-sight question and the two legacy questions.
-    assert t.proposals == 3 and len(report.proposals) == 2
+    # The copy's first-sight question and the twin's legacy question; the
+    # dsh root, held by citation alone under another name, asks none.
+    assert t.proposals == 2 and len(report.proposals) == 1
 
 
 def test_witnesses_and_the_evidence_of_a_project_with_no_live_checkout(
@@ -625,83 +628,161 @@ def test_m2_no_live_root_loses_a_memory_rc3_delivered_there(world: World) -> Non
         assert rc3 <= mine, r.path
 
 
-def test_d5_legacy_question_in_the_checkout_holding_the_commits(world: World) -> None:
-    """D5, line L6: the gone root no live checkout's lineage claims, whose
-    recorded commits alpha (and its clone) partly hold, two of three, is a
-    project of its own with one durable legacy question, in the checkout
-    holding the most (the first on a tie); the root nothing holds gets
-    none."""
+def test_d5_legacy_question_only_where_the_evidence_decides_something(
+    world: World,
+) -> None:
+    """D5, line L6, under the owner's ruling of 2026-10-21: the gone root
+    whose verified head two compatible live projects hold (the twin,
+    ambiguous) is a project of its own with one durable legacy question
+    in the checkout holding the most; the gone root alpha (and its clone)
+    hold two of three recorded commits of by citation alone, under
+    another folder name, is a project of its own with no question: the
+    overlap decides nothing, and no one is asked. The root nothing holds
+    gets none either."""
     report = migrate(world.store, world.identity, now=_now)
     roots = {r.path: r for r in report.roots}
     alpha, dsh = roots[str(world.alpha)], roots[str(world.gone["dsh"])]
     clone = roots[str(world.alpha2)]
     assert dsh.recorded == 3
     assert dsh.held == {alpha.checkout: 2, clone.checkout: 2}
-    q = _question(report, world.gone["dsh"])
-    line = line_legacy(
-        "dsh",
-        2,
-        1,
-        str(world.gone["dsh"]),
-        2,
-        "alpha",
-        alpha.project,
-        recorded=3,
-    )
-    assert (q.checkout, q.at, q.legacy_project, q.line) == (
-        alpha.checkout,
-        str(world.alpha),
-        dsh.project,
-        line,
-    )
-    assert line == (
-        f"bettermemory: the records of dsh (2 memories, 1 episodes; its folder "
-        f'{world.gone["dsh"]} is gone) may belong to project "alpha" here: this '
-        f"repository holds 2 of their 3 recorded commits. Same project: "
-        f"bettermemory project join {alpha.project}; separate: bettermemory "
-        f"project new"
-    )
+    assert not [q for q in report.proposals if q.root == str(world.gone["dsh"])]
+    assert not [q for q in report.proposals if q.root == str(world.gone["lost"])]
     twin = _question(report, world.gone["beta-twin"])
     assert twin.checkout == roots[str(world.beta)].checkout
     assert "holds 1 of their 1 recorded commits" in twin.line
-    assert not [q for q in report.proposals if q.root == str(world.gone["lost"])]
+    assert twin.line.endswith(
+        f'separate: memory_admin(action="answer_question", id="{twin.proposal}", '
+        'answer="separate")'
+    )
+    assert (
+        f'Same project, when the user says so: memory_admin(action="answer_question", '
+        f'id="{twin.proposal}", answer="join", target="{roots[str(world.beta)].project}", '
+        'said="<the user\'s words>")' in twin.line
+    )
     model = world.model()
-    (pending,) = [p for p in model.pending() if p.id == q.proposal]
+    (pending,) = [p for p in model.pending() if p.id == twin.proposal]
     assert (pending.kind, pending.checkout, pending.line, pending.reason) == (
         LEGACY,
-        alpha.checkout,
-        line,
+        twin.checkout,
+        twin.line,
         mm.LEGACY_REASON,
     )
-    # Every session at alpha names the question until it is answered.
-    res = model.resolve(_location_of(world.identity, world.alpha))
-    assert res.outcome == "ask" and line in model.first_output(res)
+    # Every session at beta names the question until it is answered; a
+    # session at alpha is asked nothing.
+    res = model.resolve(_location_of(world.identity, world.beta))
+    assert res.outcome == "ask" and twin.line in model.first_output(res)
+    at_alpha = model.resolve(_location_of(world.identity, world.alpha))
+    assert at_alpha.outcome != "ask"
+    assert not [line for line in model.first_output(at_alpha) if "dsh" in line]
 
 
-def test_d5_join_merges_the_legacy_records_into_the_checkouts_project(
+def test_legacy_asks_names_the_shapes_that_decide_something() -> None:
+    """`membership.legacy_asks`: ambiguous always; none only under the same
+    name through compatible holders."""
+    assert legacy_asks(rule="ambiguous", same_name=False, compatible=False)
+    assert legacy_asks(rule="none", same_name=True, compatible=True)
+    assert not legacy_asks(rule="none", same_name=False, compatible=True)
+    assert not legacy_asks(rule="none", same_name=True, compatible=False)
+    assert not legacy_asks(rule="lineage", same_name=True, compatible=True)
+
+
+def test_a_legacy_question_an_earlier_candidate_opened_is_settled_at_open(
     world: World,
 ) -> None:
-    """`bettermemory project join <id>` in alpha answers the legacy
-    question: dsh's records belong to alpha's project from then on, by one
-    merge row, no home rewritten."""
+    """Design 8.6, rc6: a store in which 9.0.0rc1 to rc5 opened a legacy
+    question on cited-only overlap under another name (the dsh shape) or
+    through an incompatible remote closes it as separate at the next
+    open, by the rule, in one row; the twin's question (ambiguous) stays
+    open, and a second pass closes nothing."""
     report = migrate(world.store, world.identity, now=_now)
-    q = _question(report, world.gone["dsh"])
-    alpha = {r.path: r for r in report.roots}[str(world.alpha)]
+    roots = {r.path: r for r in report.roots}
+    alpha, dsh = roots[str(world.alpha)], roots[str(world.gone["dsh"])]
+    model = Membership.open(world.store, world.identity)
+    # The question rc5 would have opened, with its evidence.
+    pr = model.open_proposal(
+        checkout=str(alpha.checkout),
+        kind=LEGACY,
+        candidates=[alpha.project],
+        evidence={
+            "unresolved_project": dsh.project,
+            "unresolved_checkout": dsh.checkout,
+            "path": str(world.gone["dsh"]),
+            "memories": 2,
+            "episodes": 1,
+            "held": 2,
+            "recorded": 3,
+            "rule": "none",
+        },
+        reason=mm.LEGACY_REASON,
+        line="an rc5 line",
+        distinct="unresolved_project",
+    )
+    twin = _question(report, world.gone["beta-twin"])
+    assert {p.id for p in model.pending() if p.kind == LEGACY} == {pr.id, twin.proposal}
+    settled = mm.settle_at_open(world.store, world.identity)
+    assert settled == [pr.id]
+    closed = model.proposal(pr.id)
+    assert (closed.state, closed.answer, closed.answered_by) == (
+        "answered",
+        "new",
+        "rule:legacy_separate",
+    )
+    assert {p.id for p in model.pending() if p.kind == LEGACY} == {twin.proposal}
+    assert _project_of(world, "dsh1") == dsh.project
+    assert mm.settle_at_open(world.store, world.identity) == []
+    rows = [
+        json.loads(r.payload) for r in world.store.membership_log(["proposal_answered"])
+    ]
+    assert [r for r in rows if r["proposal"] == pr.id] == [
+        {
+            "proposal": pr.id,
+            "checkout": str(alpha.checkout),
+            "answer": "new",
+            "by": "rule:legacy_separate",
+        }
+    ]
+
+
+def test_d5_join_project_merges_the_legacy_records_into_the_checkouts_project(
+    world: World,
+) -> None:
+    """The agent's `join_project` (`Declaration("absorb")`) in alpha, on the
+    user's words: dsh's records belong to alpha's project from then on, by
+    one merge row and one `project_absorbed` row naming the words, no home
+    rewritten; `unjoin` gives them back."""
+    report = migrate(world.store, world.identity, now=_now)
+    roots = {r.path: r for r in report.roots}
+    alpha, dsh = roots[str(world.alpha)], roots[str(world.gone["dsh"])]
     homes_before = world.homes()
     model = Membership.open(world.store, world.identity)
     model.declare(
         Declaration(
-            "join",
-            "os:fixture",
-            checkout=q.checkout,
-            proposal=q.proposal,
-            target=alpha.project,
+            "absorb",
+            "agent:s1",
+            checkout=alpha.checkout,
+            target=dsh.project,
+            said="yes, the dsh notes are bettermemory's",
         )
     )
     assert world.homes() == homes_before
     for label in ("dsh1", "dsh2", "dsh-ep"):
         assert _project_of(world, label) == alpha.project
-    assert q.proposal not in {p.id for p in model.pending()}
+    (absorbed,) = [
+        json.loads(r.payload) for r in world.store.membership_log(["project_absorbed"])
+    ]
+    assert absorbed == {
+        "project": dsh.project,
+        "into": alpha.project,
+        "checkout": alpha.checkout,
+        "evidence": "declaration:agent:s1",
+        "said": "yes, the dsh notes are bettermemory's",
+    }
+    model.declare(Declaration("unjoin", "agent:s1", target=dsh.project))
+    for label in ("dsh1", "dsh2", "dsh-ep"):
+        assert _project_of(world, label) == dsh.project
+    assert world.homes() == homes_before
+    with pytest.raises(ValueError, match="not merged"):
+        model.declare(Declaration("unjoin", "agent:s1", target=dsh.project))
 
 
 def test_m10_log_verify_and_the_fold_after_the_migration(world: World) -> None:
@@ -799,9 +880,9 @@ def test_records_written_since_are_homed_by_the_same_rules(world: World) -> None
     assert (t.projects, t.checkouts, t.proposals) == (0, 0, 0)
     assert report.proposals == ()
     asked = [p for p in world.model().pending() if p.kind == LEGACY]
-    assert len(asked) == len(first.proposals) == 2
-    (dsh,) = [p for p in asked if p.id == _question(first, g["dsh"]).proposal]
-    assert "(3 memories, 1 episodes;" in dsh.line
+    assert len(asked) == len(first.proposals) == 1
+    assert asked[0].id == _question(first, g["beta-twin"]).proposal
+    assert not [p for p in asked if "dsh" in p.line]
     assert ensure_migrated(world.store, world.identity, config=Config()) is None
 
 
@@ -1022,10 +1103,11 @@ def test_an_abbreviated_cited_commit_is_held_as_the_object_it_names(
 ) -> None:
     """B19: memories cite commits by 7-character ids, as models write them.
     The live repository holding two of a gone root's cited commits is
-    asked the legacy question ("2 of their 5 recorded commits"); the live
-    root's own abbreviated citation becomes a witness under its full id;
-    an abbreviation two objects share and one no object starts with are
-    held by no one, and no witness row carries an abbreviation."""
+    reported as holding them ("2 of their 5 recorded commits") and asked
+    nothing (held by citation alone under another name); the live root's
+    own abbreviated citation becomes a witness under its full id; an
+    abbreviation two objects share and one no object starts with are held
+    by no one, and no witness row carries an abbreviation."""
     from bettermemory import location
 
     tmp = tmp_path.resolve()
@@ -1064,19 +1146,10 @@ def test_an_abbreviated_cited_commit_is_held_as_the_object_it_names(
         live, legacy = roots[str(app)], roots[str(gone)]
         assert (legacy.rule, legacy.recorded) == ("migration:none", 5)
         assert legacy.held == {live.checkout: 2}
-        q = _question(report, gone)
-        assert (q.checkout, q.legacy_project) == (live.checkout, legacy.project)
-        assert q.line == line_legacy(
-            "legacy-tool",
-            2,
-            0,
-            str(gone),
-            2,
-            "app",
-            live.project,
-            recorded=5,
+        assert not [q for q in report.proposals if q.root == str(gone)]
+        assert "holds 2 of their 5 recorded commits" in line_legacy(
+            "legacy-tool", 2, 0, str(gone), 2, "app", live.project, recorded=5
         )
-        assert "holds 2 of their 5 recorded commits" in q.line
         rows = store.membership_rows("project_witnesses")
         witnesses = {
             (str(r["project"]), str(r["commit_id"])): str(r["source"]) for r in rows

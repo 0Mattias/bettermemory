@@ -32,9 +32,21 @@ only what these tools hold.
 Tools: memory_search, memory_show, memory_write, memory_update,
 memory_remove, memory_verify, memory_record_use, episode (write,
 handoff), memory_admin (restore, tombstones, health, rename_scope,
-conflicts, acknowledge_miss, disable_scope, enable_scope). The
-`bettermemory` command carries the offline work: health, eval, export,
-tombstones, episodes, rename-scope, migrate, log verify.
+conflicts, acknowledge_miss, disable_scope, enable_scope,
+answer_question, join_project, unjoin_project). The `bettermemory`
+command carries the offline work: health, eval, export, tombstones,
+episodes, rename-scope, migrate, log verify.
+
+## Membership questions
+
+A session's first output may carry a `bettermemory:` line asking which
+project a folder's records belong to, with the call that answers it.
+Answer it yourself; the user types nothing. `separate` is yours to
+give: it moves nothing and can be revisited. `join` merges two
+projects and rests on the user's words: give it only when the user has
+said so in this conversation, quoting them in `said`; otherwise ask
+them in your reply and answer when they do. A question whose answer
+would change nothing is never asked.
 
 ## When to retrieve
 

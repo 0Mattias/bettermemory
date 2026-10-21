@@ -203,8 +203,11 @@ def test_t16_e27_import_maps_by_file_history_and_remote_one_or_none(
     line = asked[0].line
     assert line == (
         f'bettermemory: imported project "three" from teammate.json may be "three" '
-        f"({b3.project}: H). Same project: bettermemory project join {b3.project} "
-        "(in that checkout); keep apart: bettermemory project new"
+        f"({b3.project}: H). Same project, when the user says so: "
+        f'memory_admin(action="answer_question", id="{asked[0].id}", answer="join", '
+        f'target="{b3.project}", said="<the user\'s words>") (in that checkout); '
+        f'keep apart: memory_admin(action="answer_question", id="{asked[0].id}", '
+        'answer="separate")'
     )
     assert line in b3.lines and line in out
     typed(monkeypatch, "three")

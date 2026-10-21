@@ -813,14 +813,17 @@ def _refuse_if_moved(target_path: Path, baseline_sig: tuple[int, int] | None) ->
 
 
 # ---------------------------------------------------------------------------
-# Claude Code: the deny rule for declarations (decision D6, design 8.8)
+# Claude Code: the deny rules an earlier candidate added, removed
 # ---------------------------------------------------------------------------
 
 
-#: The Claude Code permission rules that keep the membership declarations
-#: (`bettermemory project join | new | init`, `bettermemory memory move`)
-#: the user's: the harness refuses them to an agent's shell before anything
-#: runs, and the commands themselves refuse without a terminal.
+#: The Claude Code permission rules 9.0.0rc1 to rc5 added to
+#: `permissions.deny` under decision D6 (the membership declarations
+#: were the user's, typed in a terminal). The owner's ruling of 2026-10-21
+#: retired that decision: the agent answers membership questions itself
+#: (`handlers/questions.py`), and its shell may run the commands. The
+#: installer removes exactly these rules from a settings file that
+#: carries them, and nothing else.
 DECLARATION_DENY_RULES = (
     "Bash(bettermemory project:*)",
     "Bash(bettermemory memory move:*)",
@@ -835,72 +838,70 @@ def claude_code_settings_path(config_path: Path) -> Path:
     return config_path.parent / ".claude" / "settings.json"
 
 
-def patch_claude_code_permissions(settings_path: Path) -> dict[str, Any]:
-    """Idempotently add `DECLARATION_DENY_RULES` to `permissions.deny` in a
-    Claude Code settings file, creating the file and its directory when
-    missing. Every other key and rule is kept as it is, and nothing is
-    removed. Returns `{action, path, added}` with `action` "added" or
-    "noop".
+def remove_claude_code_deny_rules(settings_path: Path) -> dict[str, Any]:
+    """Remove `DECLARATION_DENY_RULES` from `permissions.deny` in a Claude
+    Code settings file that carries them; a file that does not exist, or
+    carries none of them, is left as it is and nothing is created. Every
+    other key and rule is kept. Returns `{action, path, removed}` with
+    `action` "removed" or "noop".
 
     The read-modify-write follows `patch_client_config`: the private
     `<target>.bettermemory.lock` sidecar held throughout, the file's
     signature taken before the read and checked again before the atomic
     write, so a write by the running client aborts with ValueError instead
     of being overwritten. A file that is not a JSON object, or whose
-    `permissions` is not an object or `permissions.deny` not a list,
-    raises ValueError and is left as it is."""
-    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    `permissions.deny` is not a list, raises ValueError and is left as it
+    is."""
+    if not settings_path.exists():
+        return {"action": "noop", "path": str(settings_path), "removed": []}
     with _fsutil.flock_excl(settings_path, lock_suffix=".bettermemory.lock"):
-        baseline_sig: tuple[int, int] | None = None
-        if settings_path.exists():
-            baseline_sig = _config_signature(settings_path)
-            try:
-                text = settings_path.read_text(encoding="utf-8")
-                existing = json.loads(text) if text.strip() else {}
-            except json.JSONDecodeError as exc:
-                raise ValueError(
-                    f"existing settings at {settings_path} are not valid JSON: "
-                    f"{exc.msg} (line {exc.lineno}, col {exc.colno}). Fix the file "
-                    f"by hand before re-running init."
-                ) from exc
-            if not isinstance(existing, dict):
-                raise ValueError(
-                    f"existing settings at {settings_path} have a non-object root; "
-                    f"expected `{{...}}`."
-                )
-        else:
-            existing = {}
-        permissions = existing.setdefault("permissions", {})
-        if not isinstance(permissions, dict):
+        baseline_sig = _config_signature(settings_path)
+        try:
+            text = settings_path.read_text(encoding="utf-8")
+            existing = json.loads(text) if text.strip() else {}
+        except json.JSONDecodeError as exc:
             raise ValueError(
-                f"`permissions` in {settings_path} is not an object; expected `{{...}}`."
+                f"existing settings at {settings_path} are not valid JSON: "
+                f"{exc.msg} (line {exc.lineno}, col {exc.colno}). Fix the file "
+                f"by hand before re-running init."
+            ) from exc
+        if not isinstance(existing, dict):
+            raise ValueError(
+                f"existing settings at {settings_path} have a non-object root; "
+                f"expected `{{...}}`."
             )
-        deny = permissions.setdefault("deny", [])
+        permissions = existing.get("permissions")
+        if not isinstance(permissions, dict):
+            return {"action": "noop", "path": str(settings_path), "removed": []}
+        deny = permissions.get("deny")
+        if deny is None:
+            return {"action": "noop", "path": str(settings_path), "removed": []}
         if not isinstance(deny, list):
             raise ValueError(
                 f"`permissions.deny` in {settings_path} is not a list; expected `[...]`."
             )
-        added = [rule for rule in DECLARATION_DENY_RULES if rule not in deny]
-        if not added:
-            return {"action": "noop", "path": str(settings_path), "added": []}
-        deny.extend(added)
+        removed = [rule for rule in deny if rule in DECLARATION_DENY_RULES]
+        if not removed:
+            return {"action": "noop", "path": str(settings_path), "removed": []}
+        permissions["deny"] = [r for r in deny if r not in DECLARATION_DENY_RULES]
         _refuse_if_moved(settings_path, baseline_sig)
         _fsutil.atomic_write_bytes(
             settings_path,
             (json.dumps(existing, indent=2) + "\n").encode("utf-8"),
         )
-        return {"action": "added", "path": str(settings_path), "added": added}
+        return {"action": "removed", "path": str(settings_path), "removed": removed}
 
 
 def _print_permissions_summary(result: Mapping[str, Any]) -> None:
-    rules = ", ".join(DECLARATION_DENY_RULES)
     if result["action"] == "noop":
-        print(f"deny rules already in {result['path']} (no change): {rules}")
-    else:
-        print(f"added deny rules to {result['path']}: {', '.join(result['added'])}")
+        return
     print(
-        "  so an agent's shell cannot run `bettermemory project` or `bettermemory "
-        "memory move`; you run them in a terminal"
+        f"removed from {result['path']} the deny rules an earlier candidate "
+        f"added: {', '.join(result['removed'])}"
+    )
+    print(
+        "  the agent answers membership questions itself now; nothing is left "
+        "for you to run"
     )
 
 
@@ -1342,9 +1343,10 @@ def cli_init(
 
     The client's `format` picks the writer and the printed shape: the
     JSON `mcpServers` snippet for every JSON client, the YAML
-    `mcp_servers` block for Hermes. For Claude Code the patch also adds
-    `DECLARATION_DENY_RULES` to the settings file beside the config
-    (`claude_code_settings_path`), and says so (decision D6)."""
+    `mcp_servers` block for Hermes. For Claude Code the patch also removes
+    the `DECLARATION_DENY_RULES` an earlier candidate added to the
+    settings file beside the config (`claude_code_settings_path`), and
+    says so when it did."""
     if name is None:
         name = DEFAULT_SERVER_NAME
     if client is not None and client not in KNOWN_CLIENTS:
@@ -1388,7 +1390,7 @@ def cli_init(
                 client_paths, target, name=name, binary=binary, client=client
             )
             if client == "claude-code":
-                out["permissions"] = patch_claude_code_permissions(
+                out["permissions"] = remove_claude_code_deny_rules(
                     claude_code_settings_path(target)
                 )
         print(json.dumps(out, indent=2))
@@ -1410,12 +1412,6 @@ def cli_init(
         else:
             print(json.dumps(snippet, indent=2))
         print(f"\n# Save the above to: {target}")
-        if client == "claude-code":
-            print(
-                f"# And add to `permissions.deny` in "
-                f"{claude_code_settings_path(target)}: "
-                + ", ".join(DECLARATION_DENY_RULES)
-            )
         return
 
     result = _patch_for(client_paths, target, name=name, binary=binary, client=client)
@@ -1426,5 +1422,5 @@ def cli_init(
     )
     if client == "claude-code":
         _print_permissions_summary(
-            patch_claude_code_permissions(claude_code_settings_path(target))
+            remove_claude_code_deny_rules(claude_code_settings_path(target))
         )

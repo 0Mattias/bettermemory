@@ -410,6 +410,10 @@ class ToolHandlers:
         # The capture's closing call: member id -> {related id: label}.
         # Served as a plain object, as `review` is.
         relations: dict[str, Any] = Field(default_factory=dict),
+        # The membership declarations (`handlers/questions.py`).
+        answer: str | None = None,
+        target: str | None = None,
+        said: str | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         deps = self.for_request(ctx)
@@ -429,6 +433,9 @@ class ToolHandlers:
             reason=reason,
             before=before,
             relations=relations,
+            answer=answer,
+            target=target,
+            said=said,
             ctx=ctx,
         )
 

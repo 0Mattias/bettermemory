@@ -308,8 +308,55 @@ def _strip_titles(node: object) -> None:
             _strip_titles(item)
 
 
+def _fold_nullable(node: object) -> None:
+    """Fold an optional parameter's two-branch ``anyOf`` into one type
+    array, in place: pydantic serves ``X | None`` as ``{"anyOf": [{"type":
+    "<x>", ...}, {"type": "null"}]}``, and JSON Schema spells the same
+    set of values ``{"type": ["<x>", "null"], ...}``. The meaning is
+    identical; the envelope is forty characters shorter per optional
+    parameter, and the served surface has forty of them (owner decision
+    O6: the session surface stays under its ceiling by trimming, and
+    this trim costs no word of any description).
+
+    Only the exact shape is folded: two branches, one of them ``{"type":
+    "null"}`` alone, the other carrying one named type; a branch with a
+    ``$ref``, several types or an ``anyOf`` of its own is left as it is.
+    Structure-aware as `_strip_titles` is: the maps keyed by caller-chosen
+    names are descended into by value only."""
+    if isinstance(node, dict):
+        branches = node.get("anyOf")
+        if (
+            isinstance(branches, list)
+            and len(branches) == 2
+            and {"type": "null"} in branches
+        ):
+            other = branches[0] if branches[1] == {"type": "null"} else branches[1]
+            if (
+                isinstance(other, dict)
+                and isinstance(other.get("type"), str)
+                and not ({"anyOf", "$ref"} & set(other))
+                and not ({"type"} & set(node))
+            ):
+                folded = {k: v for k, v in other.items() if k != "type"}
+                folded["type"] = [other["type"], "null"]
+                del node["anyOf"]
+                node.update(folded)
+        for key, value in node.items():
+            if key in ("properties", "$defs", "definitions") and isinstance(
+                value, dict
+            ):
+                for sub in value.values():
+                    _fold_nullable(sub)
+            else:
+                _fold_nullable(value)
+    elif isinstance(node, list):
+        for item in node:
+            _fold_nullable(item)
+
+
 def _strip_schema_titles(mcp: MCPServer) -> None:
-    """Scrub the served schemas after registration.
+    """Scrub the served schemas after registration: the titles and null
+    defaults (`_strip_titles`), then the nullable fold (`_fold_nullable`).
 
     There is no SDK hook: `Tool.from_function` hard-codes
     `parameters = arg_model.model_json_schema(by_alias=True)`, and
@@ -373,11 +420,13 @@ def _strip_schema_titles(mcp: MCPServer) -> None:
         params = getattr(tool, "parameters", None)
         if isinstance(params, dict):
             _strip_titles(params)
+            _fold_nullable(params)
         output_schema = getattr(
             getattr(tool, "fn_metadata", None), "output_schema", None
         )
         if isinstance(output_schema, dict):
             _strip_titles(output_schema)
+            _fold_nullable(output_schema)
 
 
 __all__ = ["build_server", "_register_tools"]

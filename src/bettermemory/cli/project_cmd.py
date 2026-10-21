@@ -1,16 +1,15 @@
 """`bettermemory project`: the projects membership knows, and the
 declarations that settle them (RS-F6; design 2.1, 3.4, 8.8 and 8.10;
-decisions D6, D14 and D18).
+decisions D14 and D18; the owner's ruling of 2026-10-21, which retired
+decision D6's terminal: nothing in the product waits on a human).
 
 `list`, `show`, `why` and `pending` read. `join`, `new` and `init` are
-declarations (decision D6): each refuses unless stdin is a terminal,
-prints what it is about to do, asks for a name to be typed exactly (the
-target project's for `join`, the folder's display name for `new` and
-`init`) and only then calls `Membership.declare` with the OS user as the
-principal. A piped stdin or a wrong name exits 2 with one line and
-changes nothing. The installer also denies these commands to Claude Code
-(`init.patch_claude_code_permissions`), so an agent's shell cannot run
-them. `init` is the one caller of `project_file.write`, the only file
+declarations: each prints what it is about to do and calls
+`Membership.declare` with the OS user as the principal, from any stdin
+(an agent's shell included); a refusal exits 2 with one line and changes
+nothing. The agent's own path is `memory_admin` (`handlers/questions.py`:
+``answer_question``, ``join_project``, ``unjoin_project``), which the
+question lines name. `init` is the one caller of `project_file.write`, the only file
 bettermemory writes into a working tree (design 1.1). Where it writes
 decides what the file names (design 2.1, decision D13): at a repository's
 root, the repository's project; below the root, a new sub-project of the
@@ -55,8 +54,7 @@ def add_subparser(
     """Register ``project`` and its commands."""
     help_text = (
         "The projects membership knows (list, show, why, pending) and the "
-        "declarations that settle a checkout's project (join, new, init). "
-        "Declarations need a terminal and the project's name typed to confirm."
+        "declarations that settle a checkout's project (join, new, init)."
     )
     parser = sub.add_parser("project", help=help_text, description=help_text)
     project_sub = parser.add_subparsers(dest="project_cmd")
@@ -82,15 +80,14 @@ def add_subparser(
     why.add_argument("record", metavar="RECORD_ID", help="A memory or episode id.")
 
     text = (
-        "Every open question with its line, which names the two commands that "
-        "answer it, and the checkout to run them in."
+        "Every open question with its line, which names the call that answers "
+        "it, and the checkout it is about."
     )
     project_sub.add_parser("pending", help=text, description=text)
 
     text = (
         "Declare this checkout part of project ID: answers the checkout's open "
-        "question, or with none moves the checkout there. Needs a terminal and "
-        "the project's name typed to confirm."
+        "question, or with none moves the checkout there."
     )
     join = project_sub.add_parser("join", help=text, description=text)
     join.add_argument("id", metavar="ID", help="The project id (P001).")
@@ -98,8 +95,7 @@ def add_subparser(
     text = (
         "Declare this checkout a project of its own: answers the checkout's open "
         "question with 'separate', or with none takes the checkout and what was "
-        "written there out of its project, and re-mints its checkout token. "
-        "Needs a terminal and the folder's name typed to confirm."
+        "written there out of its project, and re-mints its checkout token."
     )
     project_sub.add_parser("new", help=text, description=text)
 
@@ -111,8 +107,7 @@ def add_subparser(
         "own); in a plain folder it makes a folder project. --new gives the file "
         "a project of its own (at the root the checkout's too; below it a "
         "sub-project with an id of its own); --rebind replaces an existing file "
-        "with a new id bound to the project it named. Needs a terminal and the "
-        "folder's name typed."
+        "with a new id bound to the project it named."
     )
     init = project_sub.add_parser("init", help=text, description=text)
     mode = init.add_mutually_exclusive_group()
@@ -181,18 +176,6 @@ def refuse(line: str) -> NoReturn:
     raise SystemExit(2)
 
 
-def require_terminal(command: str) -> None:
-    """Decision D6: a declaration is the user's, typed in a terminal. A
-    piped or redirected stdin (a script, an agent's shell) is refused
-    before the store is opened."""
-    stdin = sys.stdin
-    if stdin is None or not stdin.isatty():
-        refuse(
-            f"{command} is a declaration and runs only from a terminal (decision "
-            "D6); nothing changed"
-        )
-
-
 def principal() -> str:
     """The OS user a declaration is logged with."""
     try:
@@ -200,17 +183,6 @@ def principal() -> str:
     except (KeyError, OSError, ImportError):
         user = "unknown"
     return f"os:{user}"
-
-
-def confirm(expected: str, what: str) -> None:
-    """Ask for `expected` to be typed exactly; anything else, or no input,
-    exits 2 with nothing changed."""
-    try:
-        typed = input(f'Type {what} to confirm ("{expected}"): ')
-    except EOFError:
-        refuse("no name typed; nothing changed")
-    if typed != expected:
-        refuse(f'"{typed}" is not "{expected}"; nothing changed')
 
 
 def context() -> CliContext:
@@ -222,20 +194,11 @@ def context() -> CliContext:
 def open_model(ctx: CliContext) -> Membership:
     """The membership model of this process's machine over the CLI's store,
     its machine row written first, with a token writer: a declaration that
-    separates a checkout re-mints its checkout token (design 1.1)."""
-    from .. import checkout_token, location
-    from ..membership import BARE, Membership
+    separates a checkout re-mints its checkout token (design 1.1;
+    `declare.declaring_model`, which the agent's path opens too)."""
+    from ..declare import declaring_model
 
-    identity = location.process_machine()
-    policy = ctx.config.membership.write_token
-
-    def write_token(k: Checkout) -> tuple[str | None, str]:
-        if k.git_dir is None or k.machine != identity.id:
-            return None, "skipped:other_machine"
-        wrote = checkout_token.remint(k.git_dir, policy=policy, bare=k.kind == BARE)
-        return wrote.token, wrote.status
-
-    return Membership.open(ctx.store, identity, token_writer=write_token)
+    return declaring_model(ctx.store, ctx.config)
 
 
 def read_model(ctx: CliContext) -> Membership:
@@ -501,7 +464,6 @@ def _question_for(
 def _join(project_id: str) -> None:
     from ..membership import FILE_CONTRADICTION, Declaration
 
-    require_terminal("bettermemory project join")
     ctx = context()
     # The resolution first, so the model reads the projects it minted.
     cwd, res = caller(ctx)
@@ -532,7 +494,6 @@ def _join(project_id: str) -> None:
         parts = _parts_said(model, k)
         if parts:
             print(parts)
-    confirm(model.project(target).name, "the project's name")
     done = model.declare(
         Declaration(
             "join",
@@ -607,7 +568,6 @@ def _new() -> None:
     from .. import location
     from ..membership import REMOTE_DIVERGED, SUBPROJECT_CONTRADICTION, Declaration
 
-    require_terminal("bettermemory project new")
     ctx = context()
     # The resolution first, so the model reads the projects it minted.
     cwd, res = caller(ctx)
@@ -646,7 +606,6 @@ def _new() -> None:
         parts = _parts_said(model, k)
         if parts:
             print(parts)
-    confirm(name, "the folder's name")
     done = model.declare(
         Declaration(
             "new",
@@ -674,7 +633,6 @@ def _init(*, new: bool, rebind: bool, name: str | None, boundary: bool) -> None:
         Declaration,
     )
 
-    require_terminal("bettermemory project init")
     ctx = context()
     # The resolution first, so the model reads the projects it minted.
     cwd, res = caller(ctx)
@@ -801,7 +759,6 @@ def _init(*, new: bool, rebind: bool, name: str | None, boundary: bool) -> None:
             f"  and lifts the boundary of {named(model, keeps)}: the fresh file "
             "declares none"
         )
-    confirm(display, "the folder's name")
     try:
         written = project_file.write(
             directory, name=display, boundary=boundary, rebind=existing is not None
@@ -882,7 +839,6 @@ __all__ = [
     "add_subparser",
     "caller",
     "checkout_line",
-    "confirm",
     "context",
     "named",
     "open_model",
@@ -890,6 +846,5 @@ __all__ = [
     "project_or_refuse",
     "read_model",
     "refuse",
-    "require_terminal",
     "run",
 ]

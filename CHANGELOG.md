@@ -25,6 +25,71 @@ bettermemory` and the plugin's `uvx bettermemory` keep resolving 8.0.0
 until the stable `9.0.0` is tagged. Ask for a candidate by version
 (`uvx bettermemory==9.0.0rc1`) to run it.
 
+### 9.0.0rc6
+
+The sixth candidate retires the one place the product waited on a
+human: a membership question could be answered only by a command typed
+in a terminal, with the project's name retyped to confirm, and the
+installer denied those commands to the agent's shell. The owner's
+ruling of 2026-10-21 governs from here: the user types nothing, and the
+agent answers the product's questions itself. The store's schema does
+not move; a store a candidate before rc6 opened a no-information
+question in closes it at the next open.
+
+#### Changed
+
+- **The agent answers membership questions.** `memory_admin` takes
+  three new actions. `answer_question` answers an open question, the
+  one named by `id` or the caller's checkout's first: `separate` on the
+  agent's own judgement (it moves nothing and can be revisited); `join`
+  only on the user's words, quoted in `said`, which the daemon checks
+  against the prompts its hook saw in that checkout (the last twenty,
+  held in memory only, never written) and refuses when the quote is in
+  none of them. Where no hook has reported a prompt for the checkout (a
+  client without hooks), the quote is logged unchecked and the reply
+  says so. `join_project` merges a project the user names into the
+  caller's checkout's project, on the same words; `unjoin_project`
+  undoes a merge. Every declaration is one logged row naming the agent
+  (`agent:<session>`), and a join carries the words it rests on. Every
+  question line names the call that answers it, with the question's id.
+- **No command needs a terminal or a typed name.** `bettermemory project
+  join | new | init` and `bettermemory memory move` print what they are
+  about to do and do it, from any stdin, logged with the OS user as
+  before. `bettermemory init --client claude-code` removes the
+  `Bash(bettermemory project:*)` and `Bash(bettermemory memory move:*)`
+  rules an earlier candidate added to `permissions.deny`, and adds
+  nothing; its output no longer mentions a terminal.
+- **A question whose answer changes nothing is never asked.** The
+  migration opens its legacy question (line L6) only when the gone
+  folder's recorded commits are held by more than one compatible live
+  project, or by citation alone under the same folder name. Held by
+  citation alone under another name (one memory citing three commits
+  of another project), or through a remote the holder does not carry
+  (one seven-character citation that happened to match a commit in an
+  unrelated repository), the records stay a project of their own with
+  no live checkout and no question, and the report still names what was
+  held. At every open of the store, an open legacy question of that
+  shape from an earlier candidate is closed as separate by the rule
+  (`rule:legacy_separate`), in one row, and the daemon logs the ids.
+- **The system prompt addendum** tells the agent how to answer a
+  question, and the health report's open questions name the call that
+  settles each.
+- **The served schema spells an optional parameter as a type array.**
+  Pydantic serves `X | None` as a two-branch `anyOf` with a bare null;
+  the scrub after registration now folds that into `{"type": ["<x>",
+  "null"]}`, the same set of values in forty fewer characters, on every
+  one of the forty optional parameters. The session surface (nine
+  descriptions, nine schemas, the instructions) stays under its
+  declared 8,000-character ceiling with the three actions added (owner
+  decision O6: trim, keep the ceiling).
+
+#### Fixed
+
+- **A flaky hook test on macOS.** The suite's fake daemon answered a
+  hook's post without reading its body, and macOS reset the connection
+  under the hook now and then (`ConnectionResetError` on one run of the
+  v9 push matrix, green on the tag's). It reads the body first.
+
 ### 9.0.0rc5
 
 The fifth candidate closes what the fourth's CI matrix and the prompt

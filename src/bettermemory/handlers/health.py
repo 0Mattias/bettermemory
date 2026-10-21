@@ -132,8 +132,8 @@ DESC_MEMORY_HEALTH = (
     # Documented after `CLI equivalent:` too: membership is not a bucket of
     # memory rows but the questions and states of design 8.10.
     "`membership` is the state of which project each record belongs to: "
-    "`open_proposals` (each with the line naming its two commands, which "
-    "the user runs in a terminal; never an agent), `provisional_projects`, "
+    "`open_proposals` (each with the line naming the `answer_question` "
+    "call that settles it), `provisional_projects`, "
     "`unresolved_projects` (writes made where the folder could not be read), "
     "`suppressed_recall_turns` per checkout, `indeterminate_captures`, "
     "`deferred_captures` and `checkouts_without_live_view`."

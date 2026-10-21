@@ -173,6 +173,24 @@ IMPORT = "import"
 OPEN = "open"
 ANSWERED = "answered"
 
+#: The reason of the migration's ``legacy`` question (L6), and the
+#: principal that closes one whose evidence decides nothing.
+LEGACY_NO_LIVE_CHECKOUT = "legacy_no_live_checkout"
+LEGACY_SEPARATE = "rule:legacy_separate"
+
+
+def legacy_asks(*, rule: str, same_name: bool, compatible: bool) -> bool:
+    """Whether a migration's legacy question (L6) decides anything: the
+    records' commits are held by more than one compatible live project
+    (``rule`` ambiguous), or by citation alone by a compatible project of
+    the same name. Held by citation alone under another name, or through
+    a remote the holder does not carry, they decide nothing: the records
+    stay a project of their own with no live checkout and no one is
+    asked (the owner's ruling of 2026-10-21: nothing in the product waits
+    on a human)."""
+    return rule == "ambiguous" or (rule == "none" and same_name and compatible)
+
+
 # Export and import (design 8.7, E27): the witness commits a portable
 # identity carries (the oldest half and the newest half of the bounded
 # set), the reasons an ``import`` question is opened for, and the format
@@ -579,13 +597,21 @@ class Proposal:
 
 @dataclass(frozen=True)
 class Declaration:
-    """A statement from a terminal (decision D6), which outranks evidence:
-    ``join`` (``project join <target>``), ``new`` (``project new``),
-    ``init`` (``project init`` writing ``file_id``), ``init_new``
-    (``project init --new``), ``init_rebind`` (``project init
-    --rebind``), ``move`` (``memory move <record> --project <target>``).
-    ``checkout`` is the checkout it is made in; ``proposal`` the question
-    it answers, when one is open there. ``directory`` is the folder an
+    """A statement that outranks evidence (design 8.8): ``join``
+    (``project join <target>``, or the agent's ``answer_question`` with
+    ``join``), ``new`` (``project new``, or ``answer_question`` with
+    ``separate``), ``init`` (``project init`` writing ``file_id``),
+    ``init_new`` (``project init --new``), ``init_rebind`` (``project init
+    --rebind``), ``move`` (``memory move <record> --project <target>``),
+    ``absorb`` (the agent's ``join_project``: project ``target`` merged
+    into the checkout's) and ``unjoin`` (the agent's ``unjoin_project``:
+    the merge of project ``target`` undone). ``principal`` names who made
+    it: the OS user of a command (``os:<user>``), the agent of a tool
+    call (``agent:<session>``), or the rule that settled a question no
+    one needed to answer (``rule:<name>``). ``said`` is the user's words
+    a join rests on, logged with it. ``checkout`` is the checkout it is
+    made in; ``proposal`` the question it answers, when one is open
+    there. ``directory`` is the folder an
     ``init`` wrote its file in: the model decides from it whether the
     file lies at the checkout's root or below it (`Membership.below_root`,
     decision B17; None reads as the root). Below the root ``target``
@@ -610,6 +636,7 @@ class Declaration:
     boundary: bool = False
     outer_tenant: str | None = None
     replaced: str | None = None
+    said: str | None = None
 
 
 @dataclass(frozen=True)
@@ -911,6 +938,24 @@ def _named(name: str, project_id: str) -> str:
     return f'"{name}" ({project_id})'
 
 
+def _answer(
+    question: str | None, answer: str, target: str | None = None, *, said: bool = False
+) -> str:
+    """The agent's call that answers a question (design 8.8): the
+    ``answer_question`` action of ``memory_admin``, naming the question
+    when its id is known, the target project of a join, and for a join
+    the user's words it rests on."""
+    args = ['action="answer_question"']
+    if question:
+        args.append(f'id="{question}"')
+    args.append(f'answer="{answer}"')
+    if target:
+        args.append(f'target="{target}"')
+    if said:
+        args.append('said="<the user\'s words>"')
+    return "memory_admin(" + ", ".join(args) + ")"
+
+
 def line_first_sight(
     root: str,
     candidates: Sequence[tuple[str, str]],
@@ -918,22 +963,26 @@ def line_first_sight(
     *,
     unwritten: str | None = None,
     filed: bool = False,
+    question: str | None = None,
 ) -> str:
     """L1. `candidates` are (name, id) pairs; `evidence` the witness
     words; `unwritten` the token file and status that could not be
     written; `filed` when the root's project file is bound, which makes
-    the separate command ``project init --new`` (E22 e)."""
+    the separate answer ``project init --new`` (E22 e); `question` the
+    id of the question the line opens."""
     names = " or ".join(_named(n, p) for n, p in candidates)
-    join = " | ".join(f"bettermemory project join {p}" for _n, p in candidates)
+    join = " | ".join(_answer(question, "join", p, said=True) for _n, p in candidates)
     separate = (
-        "bettermemory project init --new" if filed else "bettermemory project new"
+        "bettermemory project init --new (a fresh project file)"
+        if filed
+        else _answer(question, "separate")
     )
     could_not = f" (could not write {unwritten})" if unwritten else ""
     return (
         f"bettermemory: {root} may be project {names}: {evidence}{could_not}. "
-        "Until you answer, nothing from other projects is shown here and what "
+        "Until answered, nothing from other projects is shown here and what "
         "is written here stays with this folder. "
-        f"Same project: {join}; separate: {separate}"
+        f"Same project, when the user says so: {join}; separate: {separate}"
     )
 
 
@@ -962,14 +1011,20 @@ def line_new(
 
 
 def line_file_contradiction(
-    root: str, name: str, project_id: str, file_name: str, file_project: str
+    root: str,
+    name: str,
+    project_id: str,
+    file_name: str,
+    file_project: str,
+    *,
+    question: str | None = None,
 ) -> str:
     """L3."""
     return (
         f"bettermemory: {root} is project {_named(name, project_id)} but its "
         f"project file names {_named(file_name, file_project)}. Keep: bettermemory "
-        f"project init --rebind; move this checkout: bettermemory project join "
-        f"{file_project}"
+        f"project init --rebind; move this checkout, when the user says so: "
+        f"{_answer(question, 'join', file_project, said=True)}"
     )
 
 
@@ -983,14 +1038,21 @@ def line_joined(root: str, name: str, project_id: str, codes: Iterable[str]) -> 
 
 
 def line_remote_diverged(
-    root: str, new_key: str, name: str, project_id: str, old_key: str
+    root: str,
+    new_key: str,
+    name: str,
+    project_id: str,
+    old_key: str,
+    *,
+    question: str | None = None,
 ) -> str:
     """L5."""
     return (
         f"bettermemory: {root} now names {new_key}, while project "
         f"{_named(name, project_id)} elsewhere still names {old_key}. Still the "
-        f"same project: bettermemory project join {project_id}; a project of its "
-        "own: bettermemory project new"
+        f"same project, when the user says so: "
+        f"{_answer(question, 'join', project_id, said=True)}; a project of its "
+        f"own: {_answer(question, 'separate')}"
     )
 
 
@@ -1004,6 +1066,7 @@ def line_legacy(
     candidate_id: str,
     *,
     recorded: int | None = None,
+    question: str | None = None,
 ) -> str:
     """L6, the migration's question in the candidate checkout: `held` of
     the `recorded` commits the records carry are in this repository
@@ -1013,8 +1076,9 @@ def line_legacy(
         f"bettermemory: the records of {name} ({memories} memories, {episodes} "
         f"episodes; its folder {path} is gone) may belong to project "
         f'"{candidate_name}" here: this repository holds {held} of their '
-        f"{of} recorded commits. Same project: bettermemory project join "
-        f"{candidate_id}; separate: bettermemory project new"
+        f"{of} recorded commits. Same project, when the user says so: "
+        f"{_answer(question, 'join', candidate_id, said=True)}; separate: "
+        f"{_answer(question, 'separate')}"
     )
 
 
@@ -1024,14 +1088,17 @@ def line_subproject(
     project_id: str,
     repository_name: str,
     parent_name: str,
+    *,
+    question: str | None = None,
 ) -> str:
     """L7."""
     return (
         f"bettermemory: {file_path} names {_named(name, project_id)}, which is not "
-        f'part of "{repository_name}"; treated as "{parent_name}" until you '
-        f"decide. That folder is {_named(name, project_id)}: bettermemory project "
-        f'join {project_id}; a part of "{parent_name}" with an id of its own: '
-        "bettermemory project init --new (in that folder)"
+        f'part of "{repository_name}"; treated as "{parent_name}" until '
+        f"answered. That folder is {_named(name, project_id)}, when the user says "
+        f"so: {_answer(question, 'join', project_id, said=True)}; a part of "
+        f'"{parent_name}" with an id of its own: bettermemory project init --new '
+        "(in that folder)"
     )
 
 
@@ -1053,22 +1120,33 @@ def line_deferred(root: str, file_name: str) -> str:
 
 
 def line_import(
-    name: str, source: str, candidates: Sequence[tuple[str, str, Sequence[str]]]
+    name: str,
+    source: str,
+    candidates: Sequence[tuple[str, str, Sequence[str]]],
+    *,
+    question: str | None = None,
 ) -> str:
     """L10. `candidates` are (name, id, witness codes)."""
     named = ", ".join(
         f'"{n}" ({p}: {"+".join(sorted(codes))})' for n, p, codes in candidates
     )
-    first = candidates[0][1] if candidates else "<id>"
+    first = candidates[0][1] if candidates else None
     return (
         f'bettermemory: imported project "{name}" from {source} may be {named}. '
-        f"Same project: bettermemory project join {first} (in that checkout); keep "
-        "apart: bettermemory project new"
+        f"Same project, when the user says so: "
+        f"{_answer(question, 'join', first, said=True)} (in that checkout); keep "
+        f"apart: {_answer(question, 'separate')}"
     )
 
 
 def line_unresolved(
-    path: str, memories: int, episodes: int, name: str, project_id: str
+    path: str,
+    memories: int,
+    episodes: int,
+    name: str,
+    project_id: str,
+    *,
+    question: str | None = None,
 ) -> str:
     """L6 in the form decision B6 gives it: writes made at `path` while
     it could not be read, offered to the project of the checkout found
@@ -1076,8 +1154,9 @@ def line_unresolved(
     return (
         f"bettermemory: the records written at {path} while it could not be "
         f"read ({memories} memories, {episodes} episodes) may belong to "
-        f"project {_named(name, project_id)} here. Same project: bettermemory project "
-        f"join {project_id}; a project of their own: bettermemory project new"
+        f"project {_named(name, project_id)} here. Same project, when the user "
+        f"says so: {_answer(question, 'join', project_id, said=True)}; a project "
+        f"of their own: {_answer(question, 'separate')}"
     )
 
 
@@ -2974,20 +3053,22 @@ class Membership:
         rf = loc.root_file
         filed = rf is not None and self._file_binding(rf.id) not in (None, p.id)
         candidates = [self._canon(x) for x in pids]
-        line = line_first_sight(
-            loc.root or loc.cwd,
-            [(self.project(x).name, x) for x in candidates],
-            evidence,
-            unwritten=_unwritten(loc),
-            filed=filed,
-        )
+        named = [(self.project(x).name, x) for x in candidates]
+        unwritten = _unwritten(loc)
         pr = self._open_proposal(
             checkout=k.id,
             kind=FIRST_SIGHT,
             candidates=candidates,
             evidence={x: sorted(c) for x, c in witnesses.items()},
             reason=reason,
-            line=line,
+            line=lambda q: line_first_sight(
+                loc.root or loc.cwd,
+                named,
+                evidence,
+                unwritten=unwritten,
+                filed=filed,
+                question=q,
+            ),
             signature=_signature(loc),
         )
         return self._caller(
@@ -3117,8 +3198,8 @@ class Membership:
                     candidates=[pid],
                     evidence={"old": sorted(last), "new": sorted(remotes)},
                     reason=REMOTE_DIVERGED,
-                    line=line_remote_diverged(
-                        loc.root or loc.cwd, new, p.name, pid, old
+                    line=lambda q: line_remote_diverged(
+                        loc.root or loc.cwd, new, p.name, pid, old, question=q
                     ),
                     signature=_signature(loc),
                 )
@@ -3153,12 +3234,13 @@ class Membership:
                         candidates=[bound],
                         evidence={"file": rf.id},
                         reason=FILE_CONTRADICTION,
-                        line=line_file_contradiction(
+                        line=lambda q: line_file_contradiction(
                             loc.root or loc.cwd,
                             p.name,
                             pid,
                             self.project(bound).name,
                             bound,
+                            question=q,
                         ),
                         signature=_signature(loc),
                     )
@@ -3204,6 +3286,23 @@ class Membership:
         return updated, lines
 
     # -- nested project files ---------------------------------------------------------------
+
+    def _subproject_line(
+        self, file_path: str, bound: str, base: str, parent: str
+    ) -> Callable[[str], str]:
+        """A part's question's line (L7), built from the question's id."""
+
+        def line(q: str) -> str:
+            return line_subproject(
+                file_path,
+                self.project(bound).name,
+                bound,
+                self.project(base).name,
+                self.project(parent).name,
+                question=q,
+            )
+
+        return line
 
     def _nested_answer(self, checkout_id: str, directory: str) -> str | None:
         for row in self._store.membership_rows(
@@ -3279,13 +3378,7 @@ class Membership:
                         "name": f.name,
                     },
                     reason=SUBPROJECT_CONTRADICTION,
-                    line=line_subproject(
-                        f.path,
-                        self.project(bound).name,
-                        bound,
-                        self.project(base).name,
-                        self.project(parent).name,
-                    ),
+                    line=self._subproject_line(f.path, bound, base, parent),
                     signature=None,
                 )
             break
@@ -3489,14 +3582,16 @@ class Membership:
         candidates: Sequence[str],
         evidence: Mapping[str, Any],
         reason: str,
-        line: str,
+        line: str | Callable[[str], str],
         signature: tuple[Any, ...] | None,
         distinct: str | None = None,
     ) -> Proposal:
         """One proposal per checkout and question (design 3.4): an open
         one of the same kind on the checkout is returned as it is; with
         `distinct`, only one whose evidence names the same value there
-        (one ``legacy`` question per checkout and unresolved project)."""
+        (one ``legacy`` question per checkout and unresolved project).
+        `line` is the question's line, or the function of the question's
+        id that builds it, so the line names the call that answers it."""
         if checkout is not None:
             for existing in self._open_proposals(checkout):
                 if existing.kind == kind and (
@@ -3504,14 +3599,15 @@ class Membership:
                     or existing.evidence.get(distinct) == evidence.get(distinct)
                 ):
                     return existing
+        qid = self._store.next_membership_id("proposals", "Q")
         pr = Proposal(
-            id=self._store.next_membership_id("proposals", "Q"),
+            id=qid,
             checkout=checkout,
             kind=kind,
             candidates=tuple(candidates),
             evidence=_jsonable(evidence),
             reason=reason,
-            line=line,
+            line=line(qid) if callable(line) else line,
             state=OPEN,
             answer=None,
             answered_by=None,
@@ -3530,20 +3626,24 @@ class Membership:
         )
         return pr
 
-    def _close(self, pr: Proposal, answer: str, by: str) -> None:
+    def _close(
+        self, pr: Proposal, answer: str, by: str, *, said: str | None = None
+    ) -> None:
         if pr.state != OPEN:
             return
         current = self.proposal(pr.id)
         self._put_proposal(
             dataclasses.replace(current, state=ANSWERED, answer=answer, answered_by=by)
         )
-        self._event(
-            "proposal_answered",
-            proposal=pr.id,
-            checkout=pr.checkout,
-            answer=answer,
-            by=by,
-        )
+        payload: dict[str, Any] = {
+            "proposal": pr.id,
+            "checkout": pr.checkout,
+            "answer": answer,
+            "by": by,
+        }
+        if said is not None:
+            payload["said"] = said
+        self._event("proposal_answered", **payload)
 
     def open_proposal(
         self,
@@ -3553,11 +3653,12 @@ class Membership:
         candidates: Sequence[str],
         evidence: Mapping[str, Any],
         reason: str,
-        line: str,
+        line: str | Callable[[str], str],
         distinct: str | None = None,
     ) -> Proposal:
         """A proposal another rule opens (the migration's ``legacy``, an
-        import's ``import``), with its line; one per checkout and kind, or
+        import's ``import``), with its line (or the function of the
+        question's id that builds it); one per checkout and kind, or
         with `distinct` one per checkout, kind and value of that evidence
         key (the migration's one question per legacy project)."""
         with self._call():
@@ -3587,16 +3688,52 @@ class Membership:
                 self._put_proposal(restated)
             return restated
 
-    # -- declarations (D6) ---------------------------------------------------------------------
+    def settle_legacy_questions(self) -> list[Proposal]:
+        """Close, as separate, every open ``legacy`` question of the
+        migration whose evidence decides nothing (`legacy_asks`): the
+        records' commits are held here by citation only under another
+        name, or through a remote the candidate does not carry. The
+        records stay a project of their own with no live checkout, as they
+        were; the question is answered by the rule, not by anyone, in one
+        ``proposal_answered`` row each. Returns the questions closed. Runs
+        at every open of the store (design 8.6) and is idempotent."""
+        with self._call():
+            closed: list[Proposal] = []
+            for pr in self._open_proposals():
+                if pr.kind != LEGACY or pr.reason != LEGACY_NO_LIVE_CHECKOUT:
+                    continue
+                legacy = pr.evidence.get("unresolved_project")
+                if not isinstance(legacy, str) or not pr.candidates:
+                    continue
+                candidate = self._canon(pr.candidates[0])
+                try:
+                    lp, cp = self.project(self._canon(legacy)), self.project(candidate)
+                except KeyError:
+                    continue
+                mine, theirs = self._remotes_of(lp.id), self._remotes_of(cp.id)
+                compatible = not mine or not theirs or bool(mine & theirs)
+                if legacy_asks(
+                    rule=str(pr.evidence.get("rule") or ""),
+                    same_name=lp.name == cp.name,
+                    compatible=compatible,
+                ):
+                    continue
+                self._close(pr, "new", LEGACY_SEPARATE)
+                closed.append(pr)
+            return closed
+
+    # -- declarations (design 8.8) ---------------------------------------------------------
 
     def declare(self, decl: Declaration) -> Declared:
-        """Apply a declaration from a terminal (decision D6). ``join`` and
-        ``new`` answer the open proposal named (or the checkout's first
-        open one) or, with none, join or separate the checkout itself;
-        ``init``, ``init_new`` and ``init_rebind`` bind the file id the
-        command wrote, at the checkout's root to the checkout's project and
-        below it to a part (decision B17); ``move`` re-homes one record.
-        Each is logged with the principal."""
+        """Apply a declaration (design 8.8). ``join`` and ``new`` answer
+        the open proposal named (or the checkout's first open one) or,
+        with none, join or separate the checkout itself; ``init``,
+        ``init_new`` and ``init_rebind`` bind the file id the command
+        wrote, at the checkout's root to the checkout's project and below
+        it to a part (decision B17); ``move`` re-homes one record;
+        ``absorb`` merges the project named into the checkout's; ``unjoin``
+        undoes the merge of the project named. Each is logged with the
+        principal, and a join with the user's words it rests on."""
         with self._call():
             before = {pr.id for pr in self._open_proposals()}
             project = self._declare(decl)
@@ -3624,14 +3761,16 @@ class Membership:
             if self._declared_below(decl, self.checkout(decl.checkout)):
                 return
         if decl.action == "join":
-            self._event(
-                "resolution_joined",
-                checkout=decl.checkout,
-                project=project,
-                witnesses=["declaration"],
-                principal=decl.principal,
-                proposal=decl.proposal,
-            )
+            payload: dict[str, Any] = {
+                "checkout": decl.checkout,
+                "project": project,
+                "witnesses": ["declaration"],
+                "principal": decl.principal,
+                "proposal": decl.proposal,
+            }
+            if decl.said is not None:
+                payload["said"] = decl.said
+            self._event("resolution_joined", **payload)
         elif decl.action in ("new", "init_new"):
             self._event(
                 "resolution_new",
@@ -3704,9 +3843,17 @@ class Membership:
             if decl.record is None or decl.target is None:
                 raise ValueError("memory move names a record and a project")
             return self._move_record(decl.record, decl.target, by)
+        if decl.action == "unjoin":
+            if decl.target is None:
+                raise ValueError("unjoin names a project")
+            return self._unmerge(decl.target, by)
         if decl.checkout is None:
             raise ValueError(f"{decl.action} is made in a checkout")
         k = self.checkout(decl.checkout)
+        if decl.action == "absorb":
+            if decl.target is None:
+                raise ValueError("absorb names a project")
+            return self._absorb(k, decl.target, by, said=decl.said)
         below = self._declared_below(decl, k)
         pr: Proposal | None = None
         if decl.proposal is not None:
@@ -3862,7 +4009,7 @@ class Membership:
                         principal=decl.principal,
                     )
             self._merge(mine, target, evidence=by)
-        self._close(pr, f"join:{target}", by)
+        self._close(pr, f"join:{target}", by, said=decl.said)
         return target
 
     def _answer_new(
@@ -3965,6 +4112,42 @@ class Membership:
         else:
             self._move_checkout(k, dst, by)
         return dst
+
+    def _absorb(
+        self, k: Checkout, target: str, by: str, *, said: str | None = None
+    ) -> str:
+        """The agent's ``join_project``: project `target` (a legacy or an
+        imported project with no live checkout, whose question was closed
+        as separate, or any project the user names) merged into the
+        checkout's project, so its records are delivered here from now on;
+        one project row and one ``project_absorbed`` row naming the
+        declaration and the user's words. Reversed by ``unjoin``."""
+        mine, src = self._canon(k.project), self._canon(target)
+        if src == mine:
+            return mine
+        self._merge(src, mine, evidence=by)
+        self._event(
+            "project_absorbed",
+            project=src,
+            into=mine,
+            checkout=k.id,
+            evidence=by,
+            said=said,
+        )
+        return mine
+
+    def _unmerge(self, target: str, by: str) -> str:
+        """The agent's ``unjoin_project``: the merge of project `target`
+        undone, its records its own again; one project row and one
+        ``project_unmerged`` row. A project not merged into another
+        raises ValueError."""
+        p = self.project(target)
+        if p.merged_into is None:
+            raise ValueError(f"project {target} is not merged into another")
+        was = p.merged_into
+        self._put_project(dataclasses.replace(p, merged_into=None))
+        self._event("project_unmerged", project=p.id, was_into=was, evidence=by)
+        return p.id
 
     def _split(self, k: Checkout, name: str, by: str) -> str:
         """``project new``: the checkout and what was written there become
@@ -4322,9 +4505,7 @@ class Membership:
                     "sessions": list(u.sessions),
                 },
                 reason=UNRESOLVED_LOCATION,
-                line=line_unresolved(
-                    path, memories, episodes, self.project(target).name, target
-                ),
+                line=self._unresolved_line(path, memories, episodes, target),
                 signature=None,
                 distinct="unresolved_project",
             )
@@ -4336,6 +4517,18 @@ class Membership:
         return dataclasses.replace(
             res, lines=tuple(lines), outcome=outcome, proposal=proposal
         )
+
+    def _unresolved_line(
+        self, path: str, memories: int, episodes: int, target: str
+    ) -> Callable[[str], str]:
+        """The B6 question's line, built from the question's id."""
+
+        def line(q: str) -> str:
+            return line_unresolved(
+                path, memories, episodes, self.project(target).name, target, question=q
+            )
+
+        return line
 
     def _answer_unresolved(
         self, pr: Proposal, k: Checkout, decl: Declaration, by: str, *, join: bool
@@ -4358,7 +4551,7 @@ class Membership:
         u = self.checkout(str(pr.evidence["unresolved_checkout"]))
         if u.replaced_by is None:
             self._put_checkout(dataclasses.replace(u, replaced_by=k.id))
-        self._close(pr, answer, by)
+        self._close(pr, answer, by, said=decl.said)
         return result
 
     def _answer_import(
@@ -4949,15 +5142,28 @@ class Membership:
                     "codes": {q: list(codes[q])},
                 },
                 reason=reason,
-                line=line_import(
-                    identity.name, source, [(self.project(q).name, q, codes[q])]
-                ),
+                line=self._import_line(identity.name, source, q, codes[q]),
                 signature=None,
                 distinct="imported_project",
             )
             opened.append(pr.id)
         rule = f"import:ask:{reason}" if holders else "import:new:no_live_checkout"
         return ImportedProject(p.id, rule, codes, tuple(opened))
+
+    def _import_line(
+        self, name: str, source: str, candidate: str, codes: Sequence[str]
+    ) -> Callable[[str], str]:
+        """An import question's line (L10), built from the question's id."""
+
+        def line(q: str) -> str:
+            return line_import(
+                name,
+                source,
+                [(self.project(candidate).name, candidate, codes)],
+                question=q,
+            )
+
+        return line
 
     def import_home(
         self,
@@ -5200,6 +5406,8 @@ __all__ = [
     "Checkout",
     "Declaration",
     "Declared",
+    "LEGACY_NO_LIVE_CHECKOUT",
+    "LEGACY_SEPARATE",
     "EpisodeRef",
     "Handoff",
     "Health",
@@ -5228,6 +5436,7 @@ __all__ = [
     "admitted",
     "line_deferred",
     "line_file_contradiction",
+    "legacy_asks",
     "line_first_sight",
     "line_import",
     "line_joined",

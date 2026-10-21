@@ -662,7 +662,7 @@ def test_i06_commit_less_copy_while_the_original_lives_asks_once(
     k = copy(o, tmp_path / "c" / "copy")
     res, brief = lab.view(k)
     assert (res.outcome, res.rule, brief) == (ASK, "ask:token_shared_no_commit", [])
-    assert any("bettermemory project new" in line for line in res.lines)
+    assert any('answer="separate"' in line for line in res.lines)
     again, _ = lab.view(k)
     assert again.outcome == ASK
     assert any("may be project" in line for line in again.lines)
@@ -764,7 +764,7 @@ def test_t01_fresh_clone_joins_by_history_and_remote_and_a_shallow_one_asks(
     s = clone(a, tmp_path / "ci" / "proj", "--depth", "1", url=url)
     res, brief = lab.view(s)
     assert (res.outcome, res.rule, brief) == (ASK, "ask:one_witness", [])
-    assert any("bettermemory project join" in line for line in res.lines)
+    assert any('answer="join"' in line for line in res.lines)
     lab.answer(s, "join")
     res, brief = lab.view(s)
     assert (res.outcome, brief) == (SILENT, ["m1"])

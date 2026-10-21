@@ -879,9 +879,9 @@ def _migrate_at_start(store: Store, config: Config) -> None:
     id (`location.process_machine` raises OSError) one warning is logged,
     the store is served as it is, and the next start tries again."""
     from . import location
-    from .membership_migrate import ensure_migrated, unhomed
+    from .membership_migrate import ensure_migrated, settle_at_open, unhomed
 
-    if not store.has_key or not unhomed(store):
+    if not store.has_key:
         return
     try:
         identity = location.process_machine()
@@ -892,6 +892,16 @@ def _migrate_at_start(store: Store, config: Config) -> None:
             store.path,
             exc,
         )
+        return
+    settled = settle_at_open(store, identity)
+    if settled:
+        log.info(
+            "membership: %d legacy questions closed as separate (nothing to "
+            "decide): %s",
+            len(settled),
+            ", ".join(settled),
+        )
+    if not unhomed(store):
         return
     report = ensure_migrated(store, identity, config=config)
     if report is None:

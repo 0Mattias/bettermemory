@@ -107,9 +107,9 @@ def run_migration_at_open(
     commands pass INFO, the default: Claude Code shows a hook's stderr to
     the user, and no handler prints an INFO record in a hook process."""
     from .. import location
-    from ..membership_migrate import ensure_migrated, unhomed
+    from ..membership_migrate import ensure_migrated, settle_at_open, unhomed
 
-    if not store.has_key or not unhomed(store):
+    if not store.has_key:
         return None
     try:
         identity = location.process_machine()
@@ -121,6 +121,11 @@ def run_migration_at_open(
             store.path,
             exc,
         )
+        return None
+    # The settle pass first (design 8.6, rc6): a legacy question an earlier
+    # candidate opened on evidence that decides nothing closes as separate.
+    settle_at_open(store, identity)
+    if not unhomed(store):
         return None
     return ensure_migrated(store, identity, config=config)
 

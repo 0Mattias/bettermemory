@@ -475,6 +475,7 @@ Each is a control row of its own, written whatever the telemetry setting
 - `remote_declared`: a remote declared a project's for shallow clones.
 - `project_minted`: a project created, with its reason.
 - `project_merged`: a project folded into another, with the evidence.
+- `project_absorbed`: a project merged into the caller's checkout's by the agent's `join_project`, naming the checkout and the user's words; `project_unmerged`: a merge undone by `unjoin_project`.
 - `project_file_bound`: a project file id bound to a project.
 - `project_reparented`: a part carried to another project by the
   declaration that moved its checkout.
@@ -578,11 +579,26 @@ it is; the next open migrates. `bettermemory membership migrate
   joins by the project file, a declaration, the same git directory or
   object store, or the project's old path stay silent.
 
-Declarations (`project join`, `project new`, `project init`, `memory
-move`) are CLI only: each refuses without a terminal and asks for the
-project's or folder's name to be typed, and `bettermemory init --client
-claude-code` adds `Bash(bettermemory project:*)` and `Bash(bettermemory
-memory move:*)` to Claude Code's `permissions.deny`.
+Declarations are the agent's (design 8.8; the owner's ruling of
+2026-10-21: nothing in the product waits on a human at a terminal). A
+question's line names the `memory_admin` call that answers it:
+`answer_question` with `separate` on the agent's own judgement (it moves
+nothing), or with `join` on the user's words, quoted in `said`, which
+the daemon checks against the prompts its hook saw in that checkout
+(`recall.WORDS`, the last twenty per checkout, in memory only); where
+the hook saw no prompt for the checkout at all, the quote is logged
+unchecked and the row says so. `join_project` merges a project the
+user names into the caller's checkout's project; `unjoin_project` undoes
+a merge. The CLI declarations (`project join`, `project new`, `project
+init`, `memory move`) run from any stdin, an agent's shell included,
+and log the OS user. A migration's legacy question is opened only when
+its evidence decides something (`membership.legacy_asks`: the records'
+commits held by more than one compatible live project, or by citation
+under the same name); held by citation only under another name, or
+through a remote the holder does not carry, the records stay a project
+of their own with no question, and a store a candidate before 9.0.0rc6
+opened such a question in closes it at its next open
+(`membership_migrate.settle_at_open`).
 
 ## Module map
 

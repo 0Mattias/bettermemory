@@ -35,7 +35,7 @@ consuming model sees an identical list):
 - Episodes:  episode (action: write, handoff)
 - Admin:     memory_admin (action: restore, tombstones, health,
              rename_scope, conflicts, acknowledge_miss, disable_scope,
-             enable_scope)
+             enable_scope, answer_question, join_project, unjoin_project)
 
 That is 22 ``memory_*`` plus 5 ``episode_*``; 18 of the 27 register by
 default, the rest behind ``[behavior] full_tool_surface``.

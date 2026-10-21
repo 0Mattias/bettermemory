@@ -69,7 +69,7 @@ import logging
 import os
 import shlex
 import threading
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
@@ -229,6 +229,67 @@ _RELEVANT: frozenset[str] = frozenset({"medium", "high"})
 SEGMENT_DELIVERY_CAP = 12
 STATE_IDLE_SECONDS = 24 * 3600
 STATE_MAX_SESSIONS = 1_000
+
+#: The words the prompt hook keeps per checkout, for a join to rest on.
+WORDS_PER_CHECKOUT = 20
+WORDS_CHECKOUTS = 500
+
+
+class WordsSeen:
+    """The user's own words, as the prompt hook saw them, per store and
+    checkout: the last `WORDS_PER_CHECKOUT` prompts of each, in this
+    process only, never written anywhere. A join of two projects rests on
+    them (design 8.8, `handlers.questions`): the agent quotes the user,
+    and the quote must be in a prompt the hook saw in that checkout. A
+    process that saw no prompt for a checkout (no hook installed) holds
+    nothing for it, which `seen` tells apart from a quote not found."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._words: OrderedDict[tuple[str, str], deque[str]] = OrderedDict()
+
+    def remember(self, store_path: object, checkout: str, words: str) -> None:
+        key = (str(store_path), checkout)
+        with self._lock:
+            held = self._words.get(key)
+            if held is None:
+                held = deque(maxlen=WORDS_PER_CHECKOUT)
+                self._words[key] = held
+                while len(self._words) > WORDS_CHECKOUTS:
+                    self._words.popitem(last=False)
+            else:
+                self._words.move_to_end(key)
+            held.append(words)
+
+    def seen(self, store_path: object, checkout: str) -> bool:
+        with self._lock:
+            return (str(store_path), checkout) in self._words
+
+    def holds(self, store_path: object, checkout: str, quote: str) -> bool:
+        """Whether `quote` is in a prompt the hook saw in `checkout`:
+        whitespace folded, case folded, the quote at least
+        `MIN_QUOTE_CHARS` characters."""
+        wanted = _fold(quote)
+        if len(wanted) < MIN_QUOTE_CHARS:
+            return False
+        with self._lock:
+            held = list(self._words.get((str(store_path), checkout), ()))
+        return any(wanted in _fold(text) for text in held)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._words.clear()
+
+
+MIN_QUOTE_CHARS = 8
+
+
+def _fold(text: str) -> str:
+    return " ".join(text.split()).casefold()
+
+
+#: The process's one table of words (the daemon's for its lifetime).
+WORDS = WordsSeen()
 # The most brief keys (a repository and the directory the caller stands
 # in) whose HEAD and fill the state remembers, least recently used out.
 STATE_MAX_BRIEF_KEYS = 256
@@ -2135,6 +2196,12 @@ def prompt_recall(
             surface="prompt_recall",
             membership={"ask": caller_resolution.to_reply()},
         )
+    if caller_resolution is not None and caller_resolution.checkout is not None:
+        # The user's words, whole, kept for this checkout in this process:
+        # what a join of two projects must quote (design 8.8).
+        whole = owner_text(prompt, cut=False)
+        if whole:
+            WORDS.remember(store.path, caller_resolution.checkout, whole)
     # The admission the switch names (decision B21): the prompt recall's
     # own under "project", the unscoped search's under "everywhere".
     surface = PROMPT_RECALL if mode == "project" else SEARCH_UNSCOPED

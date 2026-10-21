@@ -44,7 +44,12 @@ NINE = {
 # `relations` object) added 134 (8,132); under O6 the admin description
 # lost its per-call lead and the closing call's sentence (the hint and the
 # capture instruction teach it) and verify its audit-trail clause, back to
-# 8,000.
+# 8,000. 9.0.0rc6 added the three membership actions (answer_question,
+# join_project, unjoin_project with `answer`, `target` and `said`), 8,590;
+# under O6 the served schema folds every `X | None` parameter's two-branch
+# `anyOf` into one type array (`builder._fold_nullable`, the same meaning
+# in 760 fewer characters), back under the ceiling with the actions'
+# description at the floor of meaning (the question line names the call).
 SESSION_BUDGET_CHARS = 8_000
 
 # The parameters D1 removed with the groundedness gate. None may return.
@@ -146,6 +151,9 @@ async def test_dispatch_actions_are_enumerated(tmp_path: Path) -> None:
         "disable_scope",
         "enable_scope",
         "relations",
+        "answer_question",
+        "join_project",
+        "unjoin_project",
     ]
     assert by_name["episode"].input_schema["required"] == ["action"]
     assert by_name["memory_admin"].input_schema["required"] == ["action"]

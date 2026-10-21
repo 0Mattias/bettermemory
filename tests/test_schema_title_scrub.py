@@ -100,6 +100,50 @@ def _without_titles(node: Any) -> Any:
     return node
 
 
+def _folded(node: Any) -> Any:
+    """Independent re-implementation of the nullable fold (9.0.0rc6):
+    an ``anyOf`` of exactly one typed branch and ``{"type": "null"}``
+    becomes that branch with its type as ``[<type>, "null"]``; anything
+    else is left as it is. Functional, like `_without_titles`, and not
+    imported from `builder` for the same reason."""
+    if isinstance(node, dict):
+        out = {}
+        for key, value in node.items():
+            if key in ("properties", "$defs", "definitions") and isinstance(
+                value, dict
+            ):
+                out[key] = {k: _folded(v) for k, v in value.items()}
+            else:
+                out[key] = _folded(value)
+        branches = out.get("anyOf")
+        if (
+            isinstance(branches, list)
+            and len(branches) == 2
+            and {"type": "null"} in branches
+            and "type" not in out
+        ):
+            other = branches[0] if branches[1] == {"type": "null"} else branches[1]
+            if (
+                isinstance(other, dict)
+                and isinstance(other.get("type"), str)
+                and "anyOf" not in other
+                and "$ref" not in other
+            ):
+                del out["anyOf"]
+                out.update({k: v for k, v in other.items() if k != "type"})
+                out["type"] = [other["type"], "null"]
+        return out
+    if isinstance(node, list):
+        return [_folded(item) for item in node]
+    return node
+
+
+def _expected(node: Any) -> Any:
+    """What the scrub is declared to serve: the pydantic schema minus its
+    titles and null defaults, its optional parameters folded."""
+    return _folded(_without_titles(node))
+
+
 def _title_count(node: Any) -> int:
     """Schema-node titles only — a property KEYED `title` is not one."""
     total = 0
@@ -148,9 +192,10 @@ async def test_served_schemas_are_the_pydantic_schemas_minus_titles(
 
     Reconstructs what pydantic emits for each tool from a throwaway
     server that never went through the scrub, and requires the served
-    schema to be exactly that minus its titles. Anything else the scrub
-    touched — a reordered key, a dropped constraint, a mangled `anyOf` —
-    fails here rather than in a client six months later."""
+    schema to be exactly that minus its titles, with its optional
+    parameters folded (`_expected`). Anything else the scrub touched — a
+    reordered key, a dropped constraint, an `anyOf` mangled rather than
+    folded — fails here rather than in a client six months later."""
     mcp = _server(tmp_path)
     served = {t.name: t for t in await mcp.list_tools()}
     registry = mcp._tool_manager._tools
@@ -160,17 +205,17 @@ async def test_served_schemas_are_the_pydantic_schemas_minus_titles(
         pristine.tool(name=name, description=tool.description)(tool.fn)
         (reference,) = await pristine.list_tools()
 
-        assert _blob(_without_titles(_input_schema(reference))) == _blob(
+        assert _blob(_expected(_input_schema(reference))) == _blob(
             _input_schema(served[name])
         ), (
             f"{name}: the served inputSchema is not the pydantic schema minus "
-            f"its titles. The scrub changed something else."
+            f"its titles, folded. The scrub changed something else."
         )
         assert (_output_schema(reference) is None) == (
             _output_schema(served[name]) is None
         ), f"{name}: the scrub changed whether an outputSchema is served at all"
         if _output_schema(reference) is not None:
-            assert _blob(_without_titles(_output_schema(reference))) == _blob(
+            assert _blob(_expected(_output_schema(reference))) == _blob(
                 _output_schema(served[name])
             ), f"{name}: the served outputSchema is not the reference minus titles"
 
@@ -196,11 +241,58 @@ async def test_properties_and_required_survive_the_scrub(tmp_path: Path) -> None
             f"{name}: `required` moved"
         )
         assert schema.get("type") == _input_schema(reference).get("type")
-        # And each property's body is intact apart from its own title.
+        # And each property's body is intact apart from its own title and
+        # the fold of its null branch.
         for param, body in _input_schema(reference).get("properties", {}).items():
-            assert _blob(_without_titles(body)) == _blob(schema["properties"][param]), (
+            assert _blob(_expected(body)) == _blob(schema["properties"][param]), (
                 f"{name}.{param}: the property body changed, not just its title"
             )
+
+
+async def test_optional_parameters_are_served_as_type_arrays(tmp_path: Path) -> None:
+    """9.0.0rc6, owner decision O6: an optional parameter (`X | None`) is
+    served as ``{"type": ["<x>", "null"]}``, the same set of values as
+    pydantic's two-branch ``anyOf`` in forty fewer characters, and no
+    ``anyOf`` with a bare null branch reaches the wire. A parameter that
+    is not optional is untouched."""
+    mcp = _server(tmp_path)
+    served = {t.name: t for t in await mcp.list_tools()}
+    admin = _input_schema(served["memory_admin"])["properties"]
+    assert admin["id"] == {"type": ["string", "null"]}
+    assert admin["scopes"] == {"items": {"type": "string"}, "type": ["array", "null"]}
+    assert admin["scan"] == {"default": False, "type": "boolean"}
+    blob = json.dumps([_input_schema(t) for t in served.values()])
+    assert '{"type": "null"}' not in blob
+    assert "anyOf" not in blob
+
+
+def test_the_fold_leaves_every_other_shape_alone() -> None:
+    """The fold takes exactly the two-branch shape with a bare null and a
+    single-typed branch: a `$ref` branch, three branches, a branch with
+    its own `anyOf`, a node that already names a type, and a property
+    keyed `anyOf` are left as they are."""
+    from bettermemory.builder import _fold_nullable
+
+    keep = {
+        "properties": {
+            "ref": {"anyOf": [{"$ref": "#/$defs/X"}, {"type": "null"}]},
+            "three": {
+                "anyOf": [{"type": "string"}, {"type": "integer"}, {"type": "null"}]
+            },
+            "nested": {"anyOf": [{"anyOf": [{"type": "string"}]}, {"type": "null"}]},
+            "typed": {
+                "type": "string",
+                "anyOf": [{"type": "string"}, {"type": "null"}],
+            },
+            "anyOf": {"type": "string"},
+        }
+    }
+    before = json.loads(json.dumps(keep))
+    _fold_nullable(keep)
+    assert keep == before
+    fold = {"anyOf": [{"type": "null"}, {"type": "integer", "minimum": 1}]}
+    _fold_nullable(fold)
+    assert fold == {"minimum": 1, "type": ["integer", "null"]}
 
 
 # ---------------------------------------------------------------------------

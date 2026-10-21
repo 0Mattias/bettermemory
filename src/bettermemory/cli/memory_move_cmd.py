@@ -1,9 +1,8 @@
 """`bettermemory memory move <record id> --project <id>`: a declaration
-(decision D6, design 2.1) that re-homes one record to another project, or
-to ``global``. Like `bettermemory project join`, it refuses unless stdin is
-a terminal, prints what it is about to do and asks for the target
-project's name to be typed exactly before `Membership.declare` runs with
-the OS user as the principal; the installer denies it to Claude Code.
+(design 2.1, 8.8) that re-homes one record to another project, or to
+``global``. Like `bettermemory project join`, it prints what it is about
+to do and runs `Membership.declare` with the OS user as the principal,
+from any stdin.
 """
 
 from __future__ import annotations
@@ -17,15 +16,13 @@ def add_subparser(
     """Register ``memory`` and its ``move`` command."""
     help_text = (
         "Declarations about one record. `memory move` re-homes a record to "
-        "another project (or global); it needs a terminal and the project's "
-        "name typed to confirm."
+        "another project (or global)."
     )
     parser = sub.add_parser("memory", help=help_text, description=help_text)
     memory_sub = parser.add_subparsers(dest="memory_cmd")
     text = (
         "Move one memory or episode to project ID (or `global`): its home "
-        "names that project from here on, with a log row naming you. Needs a "
-        "terminal and the project's name typed to confirm."
+        "names that project from here on, with a log row naming you."
     )
     move = memory_sub.add_parser("move", help=text, description=text)
     move.add_argument("record", metavar="RECORD_ID", help="A memory or episode id.")
@@ -52,17 +49,14 @@ def run(args: argparse.Namespace, *, sub_parser: argparse.ArgumentParser) -> Non
 def _move(record_id: str, project_id: str) -> None:
     from ..membership import GLOBAL, Declaration
     from .project_cmd import (
-        confirm,
         context,
         named,
         open_model,
         principal,
         project_or_refuse,
         refuse,
-        require_terminal,
     )
 
-    require_terminal("bettermemory memory move")
     ctx = context()
     model = open_model(ctx)
     home = model.home(record_id)
@@ -77,8 +71,6 @@ def _move(record_id: str, project_id: str) -> None:
         f"bettermemory memory move: {home.kind} {record_id}{written} leaves "
         f"{named(model, home.project)} for {named(model, target)}"
     )
-    expected = GLOBAL if target == GLOBAL else model.project(target).name
-    confirm(expected, "the project's name")
     done = model.declare(
         Declaration("move", principal(), record=record_id, target=target)
     )

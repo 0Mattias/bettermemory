@@ -213,6 +213,8 @@ MEMBERSHIP_EVENT_KINDS = frozenset(
         "remote_declared",
         "project_minted",
         "project_merged",
+        "project_absorbed",
+        "project_unmerged",
         "project_file_bound",
         "project_reparented",
         "machine_cloned",

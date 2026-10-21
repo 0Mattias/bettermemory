@@ -85,7 +85,7 @@ UNREACHABLE = "unreachable"
 #: Every home rule the migration writes starts with this.
 RULE_PREFIX = "migration:"
 #: The reason of the migration's ``legacy`` questions (design 8.6, D5).
-LEGACY_REASON = "legacy_no_live_checkout"
+LEGACY_REASON = mb.LEGACY_NO_LIVE_CHECKOUT
 #: The membership row the run ends with (design 8.10).
 MIGRATED = "membership_migrated"
 
@@ -377,6 +377,18 @@ def run_command(*, dry_run: bool) -> None:
         print(line)
 
 
+def settle_at_open(store: Store, identity: MachineIdentity) -> list[str]:
+    """The settle pass at an open (design 8.6): every open legacy question
+    whose evidence decides nothing is closed as separate
+    (`Membership.settle_legacy_questions`), so a store a candidate before
+    9.0.0rc6 opened such questions in asks no one. Returns the ids
+    closed; nothing when no such question is open, which is one read."""
+    if not store.membership_rows("proposals", where={"state": mb.OPEN}):
+        return []
+    model = mb.Membership.open(store, identity)
+    return [pr.id for pr in model.settle_legacy_questions()]
+
+
 def ensure_migrated(
     store: Store, identity: MachineIdentity, *, config: Config
 ) -> MigrationReport | None:
@@ -486,6 +498,8 @@ class _Decision:
     rule: str
     recorded: int = 0
     held: dict[str, int] = field(default_factory=dict)
+    #: Whether the overlap is worth a question (`membership.legacy_asks`).
+    asks: bool = False
 
 
 @dataclass
@@ -992,8 +1006,19 @@ class _Run:
             )
             if len(carriers) == 1:
                 chosen, rule = carriers[0], "remote"
+        asks = False
         if chosen is None:
             rule = "ambiguous" if len(comp_s) > 1 else "none"
+            # Whether the overlap decides anything (`membership.legacy_asks`):
+            # more than one compatible holder of the records' own commits,
+            # or compatible holders by citation under the same name. Cited
+            # only under another name, or held through a remote the holder
+            # does not carry, is no question: the project stands apart.
+            asks = mb.legacy_asks(
+                rule=rule,
+                same_name=bool(same_name & set(comp_w)),
+                compatible=bool(comp_s or comp_w),
+            )
             chosen = self._mint(
                 _basename(root),
                 reason="migration_no_live_checkout",
@@ -1023,6 +1048,7 @@ class _Run:
             rule,
             recorded=len(strong | weak),
             held=dict(held) if rule in ("none", "ambiguous") else {},
+            asks=asks,
         )
 
     def _mint(self, name: str, *, reason: str, provisional: str | None) -> str:
@@ -1167,22 +1193,32 @@ class _Run:
             if known is not None:
                 self._restate(known, memories, episodes)
                 continue
-            if not d.held or d.checkout is None:
+            if not d.held or d.checkout is None or not d.asks:
                 continue
             at, n_held = sorted(d.held.items(), key=lambda kv: (-kv[1], kv[0]))[0]
             k = self.model.checkout(at)
             live_project = self._canon(k.project)
             where = self.live[at].path if at in self.live else self._view_path(k)
-            line = mb.line_legacy(
+            name, n_memories, n_episodes, n_recorded = (
                 _basename(root),
                 memories,
                 episodes,
-                root,
-                n_held,
-                self._name(live_project),
-                live_project,
-                recorded=d.recorded,
+                d.recorded,
             )
+
+            def line(q: str, _root: str = root, _project: str = live_project) -> str:
+                return mb.line_legacy(
+                    name,
+                    n_memories,
+                    n_episodes,
+                    _root,
+                    n_held,
+                    self._name(_project),
+                    _project,
+                    recorded=n_recorded,
+                    question=q,
+                )
+
             # `unresolved_project` and `unresolved_checkout` are the keys a
             # `legacy` question is answered by (`Membership._answer_join`,
             # `_answer_new`): join merges the records' project into this
@@ -1208,7 +1244,7 @@ class _Run:
             )
             open_by_project[d.project] = pr
             self.questions.append(
-                LegacyQuestion(pr.id, at, where, d.project, root, line)
+                LegacyQuestion(pr.id, at, where, d.project, root, pr.line)
             )
 
     def _view_path(self, k: mb.Checkout) -> str:
@@ -1235,6 +1271,7 @@ class _Run:
             self._name(live_project),
             live_project,
             recorded=int(ev.get("recorded") or 0),
+            question=pr.id,
         )
         self.model.restate_proposal(pr.id, line=line, evidence=ev)
 
@@ -1444,6 +1481,7 @@ class _Run:
 __all__ = [
     "GONE",
     "LEGACY_REASON",
+    "settle_at_open",
     "LIVE",
     "MIGRATED",
     "REPLACED",

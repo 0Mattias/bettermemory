@@ -1,16 +1,18 @@
-"""The membership CLI (RS-F6; design 3.4, 8.8 and 8.10; decisions D6, D14
-and D18): `bettermemory project list | show | why | pending | join | new |
-init`, `bettermemory memory move`, `bettermemory membership migrate`, and
-the installer's deny rule.
+"""The membership CLI (RS-F6; design 3.4, 8.8 and 8.10; decisions D14 and
+D18; the owner's ruling of 2026-10-21): `bettermemory project list | show
+| why | pending | join | new | init`, `bettermemory memory move`,
+`bettermemory membership migrate`, and the installer's removal of the
+deny rules an earlier candidate added.
 
 Each test runs the CLI in process on a scratch store. The caller's
 resolution (`location.resolve_here`) is replaced by the model resolving a
 location built by hand for a real directory under `tmp_path`: its git
 directory's object, its token and its project file are read from disk,
 while its commits live in an in-memory history, so no git process runs
-and nothing depends on the host's git configuration. A terminal is
-`sys.stdin` answering `isatty()` with True; the typed name is its one
-line. Tests are named by their design section 7 rows where one applies.
+and nothing depends on the host's git configuration. A declaration runs
+from any stdin: `typed` gives it a terminal and `piped` a pipe, and
+neither changes what it does. Tests are named by their design section 7
+rows where one applies.
 """
 
 from __future__ import annotations
@@ -464,8 +466,15 @@ def test_project_pending_prints_each_question_its_line_and_where(
         "(first_sight: one_witness), opened "
     )
     assert out[1].startswith(f"  bettermemory: {fork.path} may be project")
-    assert f"Same project: bettermemory project join {up.project}" in out[1]
-    assert out[1].endswith("separate: bettermemory project new")
+    assert (
+        f'Same project, when the user says so: memory_admin(action="answer_question", '
+        f'id="{asked.proposal}", answer="join", target="{up.project}", '
+        'said="<the user\'s words>")' in out[1]
+    )
+    assert out[1].endswith(
+        f'separate: memory_admin(action="answer_question", id="{asked.proposal}", '
+        'answer="separate")'
+    )
 
 
 def test_project_pending_says_when_nothing_is_open(
@@ -494,61 +503,32 @@ def test_x13_project_why_prints_project_checkout_rule_and_rows(
 
 
 # ---------------------------------------------------------------------------
-# Declarations: a terminal, the typed name (decision D6)
+# Declarations run from any stdin (the owner's ruling of 2026-10-21)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "argv",
-    [
-        ("project", "join", "P001"),
-        ("project", "new"),
-        ("project", "init"),
-        ("project", "init", "--new"),
-        ("project", "init", "--rebind"),
-        ("memory", "move", "01NOTARECORD0000000000000", "--project", "P001"),
-    ],
-)
-def test_declarations_refuse_without_a_terminal(
+@pytest.mark.parametrize("stdin", [typed, piped], ids=["terminal", "pipe"])
+def test_declarations_run_from_any_stdin_and_type_nothing(
     scene: Scene,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    argv: tuple[str, ...],
+    stdin: Any,
 ) -> None:
-    _up, _rid, fork, _asked = _upstream_and_fork(scene)
-    before = scene.store.log_rows()
-    piped(monkeypatch, "app")
-    err = refused(monkeypatch, capsys, *argv)
-    assert "runs only from a terminal" in err and "nothing changed" in err
-    assert scene.store.log_rows() == before
-    assert not (fork.path / project_file.PROJECT_FILE_NAME).exists()
-
-
-def test_declarations_refuse_a_wrong_name_and_change_nothing(
-    scene: Scene, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    up, rid, fork, asked = _upstream_and_fork(scene)
-    # A second sighting reaches the steady state a declaration resolves in
-    # (the first sight's written token now reads as present).
-    scene.see(fork)
-    tables = scene.tables()
-    token = checkout_token.read(fork.git_dir).token
-    for argv, wrong in (
-        (("project", "join", str(up.project)), "App"),
-        (("project", "new"), "fork "),
-        (("project", "init", "--new"), "nope"),
-        (("memory", "move", rid, "--project", str(asked.project)), "app"),
-    ):
-        typed(monkeypatch, wrong)
-        err = refused(monkeypatch, capsys, *argv)
-        assert "nothing changed" in err
-    assert scene.tables() == tables
-    assert checkout_token.read(fork.git_dir).token == token
-    assert not (fork.path / project_file.PROJECT_FILE_NAME).exists()
-    typed(monkeypatch, "")
-    monkeypatch.setattr(sys, "stdin", _Terminal(""))
-    err = refused(monkeypatch, capsys, "project", "join", str(up.project))
-    assert "no name typed" in err
+    """A declaration neither needs a terminal nor asks for a name: an
+    agent's shell runs it as a terminal does, and stdin is never read."""
+    up, _rid, fork, asked = _upstream_and_fork(scene)
+    stdin(monkeypatch, "not the project's name")
+    bm(monkeypatch, "project", "join", str(up.project))
+    out = capsys.readouterr().out
+    assert "to confirm" not in out and "terminal" not in out
+    assert f"question {asked.proposal} answered" in out
+    pr = scene.model.proposal(str(asked.proposal))
+    assert (pr.state, pr.answer, pr.answered_by) == (
+        mb.ANSWERED,
+        f"join:{up.project}",
+        "declaration:os:tester",
+    )
+    assert scene.see(fork).project == up.project
 
 
 def test_join_refuses_an_unknown_project_and_a_folder_outside_any_checkout(
@@ -579,7 +559,6 @@ def test_t04_join_answers_the_open_question(
     bm(monkeypatch, "project", "join", str(up.project))
     out = capsys.readouterr().out
     assert f"answers question {asked.proposal} in checkout {asked.checkout}" in out
-    assert 'Type the project\'s name to confirm ("app")' in out
     assert (
         f'bettermemory: checkout {asked.checkout} is project "app" ({up.project}); '
         f"question {asked.proposal} answered"
@@ -762,7 +741,9 @@ def test_t10a_use_this_template_asks_and_init_new_answers(
     )
     asked = scene.see(product)
     assert asked.outcome == ASK
-    assert asked.lines[-1].endswith("separate: bettermemory project init --new")
+    assert asked.lines[-1].endswith(
+        "separate: bettermemory project init --new (a fresh project file)"
+    )
     capsys.readouterr()
     typed(monkeypatch, "product")
     bm(monkeypatch, "project", "init", "--new")
@@ -1226,7 +1207,7 @@ def test_b10_a_part_first_bound_in_another_clone_asks_once_after_new(
     asked = scene.see(b)
     assert (asked.outcome, asked.project) == (ASK, mine.project)
     line = asked.lines[-1]
-    assert f"bettermemory project join {part.project}" in line
+    assert f'id="{asked.proposal}", answer="join", target="{part.project}"' in line
     assert "bettermemory project init --new (in that folder)" in line
     again = scene.see(b)
     assert again.proposal == asked.proposal
@@ -1635,7 +1616,7 @@ def test_a_bare_command_prints_its_help_and_exits_2(
 
 
 # ---------------------------------------------------------------------------
-# The installer's deny rule (decision D6, design 8.8)
+# The installer removes the deny rules an earlier candidate added
 # ---------------------------------------------------------------------------
 
 
@@ -1652,7 +1633,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return fake
 
 
-def test_installer_adds_the_deny_rules_once_and_keeps_every_other(
+def test_installer_removes_the_deny_rules_once_and_keeps_every_other(
     home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from bettermemory.init import DECLARATION_DENY_RULES
@@ -1663,7 +1644,10 @@ def test_installer_adds_the_deny_rules_once_and_keeps_every_other(
         json.dumps(
             {
                 "model": "opus",
-                "permissions": {"allow": ["Bash(ls:*)"], "deny": ["Read(./.env)"]},
+                "permissions": {
+                    "allow": ["Bash(ls:*)"],
+                    "deny": ["Read(./.env)", *DECLARATION_DENY_RULES],
+                },
             }
         ),
         encoding="utf-8",
@@ -1671,42 +1655,41 @@ def test_installer_adds_the_deny_rules_once_and_keeps_every_other(
     bm(monkeypatch, "init", "--client", "claude-code")
     out = capsys.readouterr().out
     assert (
-        f"added deny rules to {settings}: " + ", ".join(DECLARATION_DENY_RULES) in out
+        f"removed from {settings} the deny rules an earlier candidate added: "
+        + ", ".join(DECLARATION_DENY_RULES)
+        in out
     )
+    assert "nothing is left for you to run" in out
     body = json.loads(settings.read_text(encoding="utf-8"))
     assert body["model"] == "opus"
     assert body["permissions"]["allow"] == ["Bash(ls:*)"]
-    assert body["permissions"]["deny"] == ["Read(./.env)", *DECLARATION_DENY_RULES]
+    assert body["permissions"]["deny"] == ["Read(./.env)"]
     assert (
         json.loads((home / ".claude.json").read_text(encoding="utf-8"))["mcpServers"][
             "bettermemory"
         ]["command"]
         == "/fake/bm"
     )
-    # A second run keeps the rules once and says so.
+    # A second run finds nothing to remove and says nothing about it.
     bm(monkeypatch, "init", "--client", "claude-code")
     out = capsys.readouterr().out
-    assert f"deny rules already in {settings} (no change)" in out
-    again = json.loads(settings.read_text(encoding="utf-8"))
-    assert again == body
+    assert "deny rules" not in out
+    assert json.loads(settings.read_text(encoding="utf-8")) == body
 
 
-def test_installer_creates_the_settings_file_and_reports_it_in_json(
+def test_installer_creates_no_settings_file_and_reports_noop_in_json(
     home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from bettermemory.init import DECLARATION_DENY_RULES
-
     bm(monkeypatch, "init", "--client", "claude-code", "--json")
     payload = json.loads(capsys.readouterr().out)
     settings = home / ".claude" / "settings.json"
     assert payload["permissions"] == {
-        "action": "added",
+        "action": "noop",
         "path": str(settings),
-        "added": list(DECLARATION_DENY_RULES),
+        "removed": [],
     }
-    assert json.loads(settings.read_text(encoding="utf-8")) == {
-        "permissions": {"deny": list(DECLARATION_DENY_RULES)}
-    }
+    assert not settings.exists()
+    assert not (home / ".claude").exists()
 
 
 def test_installer_project_scope_and_print_only(
@@ -1727,7 +1710,7 @@ def test_installer_project_scope_and_print_only(
         "--print-only",
     )
     out = capsys.readouterr().out
-    assert f"permissions.deny` in {project / '.claude' / 'settings.json'}" in out
+    assert "permissions.deny" not in out and "terminal" not in out
     assert not (project / ".claude").exists()
     bm(
         monkeypatch,
@@ -1737,7 +1720,8 @@ def test_installer_project_scope_and_print_only(
         "--config-path",
         str(project / ".mcp.json"),
     )
-    assert (project / ".claude" / "settings.json").is_file()
+    assert (project / ".mcp.json").is_file()
+    assert not (project / ".claude").exists()
     assert not (home / ".claude").exists()
 
 
@@ -1755,7 +1739,7 @@ def test_installer_leaves_a_malformed_deny_list_alone(
     assert settings.read_text(encoding="utf-8") == original
 
 
-def test_other_clients_get_no_deny_rule(
+def test_other_clients_get_no_settings_file(
     home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     target = tmp_path / "cursor.json"

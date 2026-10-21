@@ -1427,7 +1427,9 @@ def test_t10a_use_this_template_asks_offering_init_new(world: World) -> None:
     product.files = (replace(template.files[0], dir="/w/product"),)
     asked = world.see(product)
     assert (asked.outcome, asked.rule) == (ASK, "ask:one_witness")
-    assert asked.lines[-1].endswith("separate: bettermemory project init --new")
+    assert asked.lines[-1].endswith(
+        "separate: bettermemory project init --new (a fresh project file)"
+    )
     fid = _file_id()
     world.model.declare(
         Declaration("init_new", "os:tester", checkout=asked.checkout, file_id=fid)
@@ -2355,8 +2357,11 @@ def test_b6_another_session_meets_one_legacy_question(
     expected = (
         "bettermemory: the records written at /w/app while it could not be "
         "read (1 memories, 1 episodes) may belong to project "
-        f'"app" ({first.project}) here. Same project: bettermemory project '
-        f"join {first.project}; a project of their own: bettermemory project new"
+        f'"app" ({first.project}) here. Same project, when the user says so: '
+        f'memory_admin(action="answer_question", id="{res.proposal}", answer="join", '
+        f'target="{first.project}", said="<the user\'s words>"); a project of '
+        f'their own: memory_admin(action="answer_question", id="{res.proposal}", '
+        'answer="separate")'
     )
     assert res.lines[-1] == expected
     pending = world.model.pending()
@@ -2499,8 +2504,11 @@ def test_b16_a_write_without_a_machine_asks_another_session(
     expected = (
         "bettermemory: the records written at /w/app while it could not be "
         "read (1 memories, 0 episodes) may belong to project "
-        f'"app" ({first.project}) here. Same project: bettermemory project '
-        f"join {first.project}; a project of their own: bettermemory project new"
+        f'"app" ({first.project}) here. Same project, when the user says so: '
+        f'memory_admin(action="answer_question", id="{res.proposal}", answer="join", '
+        f'target="{first.project}", said="<the user\'s words>"); a project of '
+        f'their own: memory_admin(action="answer_question", id="{res.proposal}", '
+        'answer="separate")'
     )
     assert res.lines[-1] == expected
     [pr] = world.model.pending()
