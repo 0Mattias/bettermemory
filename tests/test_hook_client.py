@@ -405,6 +405,12 @@ class _StaleHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self) -> None:  # noqa: N802
+        # The body is read before the reply: a server that answers and
+        # closes with the request's bytes unread resets the connection on
+        # macOS, and the hook sees ECONNRESET instead of the reply.
+        length = int(self.headers.get("Content-Length") or 0)
+        if length:
+            self.rfile.read(length)
         if self.path == _daemon_client.SHUTDOWN_PATH:
             self.fake.shutdown_calls += 1
         elif self.path.startswith(_daemon_client.HOOK_PATH):
