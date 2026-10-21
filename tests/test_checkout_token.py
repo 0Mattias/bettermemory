@@ -551,12 +551,14 @@ def test_a_non_blocking_open_refused_with_einval_is_made_again_plainly(
     assert len(opens) == 2 and not opens[1] & nonblock
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="no fcntl to clear the flag with")
 def test_a_read_refused_with_einval_is_made_again_with_the_flag_cleared(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A filesystem client that refuses a read on the non-blocking
     descriptor with EINVAL: the flag is cleared on that descriptor and
-    the read made again."""
+    the read made again. Windows has no fcntl, so the read stays refused
+    there (`test_a_read_refused_where_the_flag_cannot_be_cleared`)."""
     git_dir = _repo(tmp_path / "proj")
     written = write(git_dir, policy=True, bare=False)
     real_read = os.read
@@ -571,6 +573,27 @@ def test_a_read_refused_with_einval_is_made_again_with_the_flag_cleared(
     monkeypatch.setattr(os, "read", refusing)
     assert read(git_dir) == TokenRead("present", token=written.token)
     assert reads["n"] >= 2
+
+
+def test_a_read_refused_where_the_flag_cannot_be_cleared(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Where the flag cannot be cleared (Windows, or an fcntl the
+    filesystem refuses), the refused read is reported as it is, naming
+    the call."""
+    git_dir = _repo(tmp_path / "proj")
+    write(git_dir, policy=True, bare=False)
+    reads = {"n": 0}
+
+    def refusing(fd: int, n: int) -> bytes:
+        reads["n"] += 1
+        raise OSError(errno.EINVAL, "Invalid argument")
+
+    monkeypatch.setattr(os, "read", refusing)
+    monkeypatch.setattr(checkout_token, "_clear_nonblock", lambda fd: False)
+    found = read(git_dir)
+    assert found.state == "unreadable" and found.detail.startswith("read: ")
+    assert reads["n"] == 1
 
 
 def test_an_open_refused_for_good_names_the_call(
