@@ -2907,7 +2907,13 @@ def test_t17_clone_of_a_shared_bare_repository_by_path(
     lab.view(b)
     c = tmp_path / "dev" / "srv"
     c.parent.mkdir(parents=True)
-    sh("git", "clone", "-q", b, c)
+    # By path, so origin is the path (the remote key under test), and
+    # without hard links: a local clone links the packs into place and
+    # reads them back at once, and on a cifs mount the read-back can
+    # miss a link just made (the checkout token writer re-reads for the
+    # same reason), which left the clone's refs pointing at objects it
+    # could not find.
+    sh("git", "clone", "-q", "--no-hardlinks", b, c)
     res, brief = lab.view(c)
     assert (res.rule, brief) == ("join:H+R", ["m1"])
 

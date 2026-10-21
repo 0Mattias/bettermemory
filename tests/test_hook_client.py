@@ -635,7 +635,14 @@ def test_a_daemon_that_exits_at_start_fails_the_hook_at_once_with_its_error(
     """No daemon runs, so the hook starts one, and the malformed config
     stops that daemon at start. The hook sees its child exit and reports
     the error the daemon logged, at once, where it used to wait out
-    START_TIMEOUT_SECONDS and name no cause."""
+    START_TIMEOUT_SECONDS and name no cause.
+
+    The bound is the whole of START_TIMEOUT_SECONDS, not a fraction of
+    it: the old code could not return under it, and what the elapsed
+    time holds besides the wait is two interpreter starts, which a
+    loaded CI runner has stretched past 5 s. The wait's own precision is
+    pinned without processes by
+    test_the_wait_ends_when_the_started_child_exits."""
     env = _malformed_config(tmp_path, daemon_env)
     started = time.monotonic()
     result = _hook(["hook", "session-start"], env, {"cwd": str(tmp_path)})
@@ -645,7 +652,7 @@ def test_a_daemon_that_exits_at_start_fails_the_hook_at_once_with_its_error(
     assert "Expected ']' at the end of a table declaration" in result.stderr, (
         result.stderr
     )
-    assert elapsed < _daemon_client.START_TIMEOUT_SECONDS / 2, elapsed
+    assert elapsed < _daemon_client.START_TIMEOUT_SECONDS, elapsed
 
 
 @pytest.mark.skipif(
@@ -665,7 +672,7 @@ def test_up_reports_the_error_of_a_daemon_that_exits_at_start(
         result.stderr
     )
     assert "daemon-" in result.stderr and ".log" in result.stderr, result.stderr
-    assert elapsed < _daemon_client.START_TIMEOUT_SECONDS / 2, elapsed
+    assert elapsed < _daemon_client.START_TIMEOUT_SECONDS, elapsed
 
 
 def test_the_wait_ends_when_the_started_child_exits(tmp_path: Path) -> None:
