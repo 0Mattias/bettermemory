@@ -98,7 +98,11 @@ network mount. The store's schema does not move.
   test the repositories. `BETTERMEMORY_TEST_NO_BIRTH` runs the same files
   as a filesystem without birth time reads them, on any disk. The SMB
   leg's remount now renumbers the objects (`noserverino`), the case the
-  design's E11 c names.
+  design's E11 c names. `BETTERMEMORY_TEST_SETTLE_SECONDS` waits out a
+  cifs client's attribute cache where a test records a new file's times
+  and reads them again after a move (the init stamps of a commit-less
+  repository): the client reports its own write time until the cache
+  expires and the data is flushed, the server's time afterwards.
 
 ### 9.0.0rc4
 

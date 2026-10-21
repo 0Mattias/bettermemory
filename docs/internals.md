@@ -840,3 +840,13 @@ release that removed it and why. It is then ignored.
 - One writer at a time. SQLite serialises writers; a second server
   process on the same store waits on the busy timeout rather than
   interleaving.
+- Init stamps read within a network client's attribute cache. A cifs
+  client reports its own write time for a file it wrote until its
+  attribute cache expires (`actimeo`, 1 s by default) and the data is
+  flushed; the server's time, which every later read reports, can be
+  tens of milliseconds later. A commit-less checkout on such a mount
+  that reports no birth time and holds no token, sighted within that
+  second of its `git init` and moved afterwards, is asked about rather
+  than continued by its init stamps: the stamps recorded are the
+  client's. A sighting later than the cache's lifetime records the
+  server's times.

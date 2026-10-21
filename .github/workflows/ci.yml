@@ -401,10 +401,15 @@ jobs:
       # (BETTERMEMORY_TEST_LOCAL_TMP), as are the few fixtures the share
       # cannot host and that test the reader, not the mount: a FIFO
       # (EOPNOTSUPP) and a file chmod makes unreadable (chmod 000 does not
-      # take on the share).
+      # take on the share). The cifs client reports its own write time for
+      # a file it wrote until its attribute cache expires (actimeo=1) and
+      # the data is flushed (closetimeo=1), the server's time afterwards:
+      # a test that records a new file's times and reads them again after
+      # a move waits them out (BETTERMEMORY_TEST_SETTLE_SECONDS).
       - name: Membership tests on SMB
         env:
           BETTERMEMORY_TEST_LOCAL_TMP: ${{ runner.temp }}/bettermemory-local
+          BETTERMEMORY_TEST_SETTLE_SECONDS: "3"
         run: >-
           uv run pytest -p no:cacheprovider --basetemp=/mnt/smb/pytest -q -rfEs
           tests/test_checkout_token.py tests/test_project_file.py

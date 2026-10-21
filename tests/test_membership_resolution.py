@@ -66,6 +66,8 @@ from bettermemory.membership import (
 from bettermemory.models import utcnow
 from bettermemory.store import Store
 
+from .conftest import settled
+
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
 
 posix_only = pytest.mark.skipif(
@@ -1288,7 +1290,7 @@ def test_i14_commit_less_move_without_birth_or_token_continues_by_init_stamps(
     """I14, X7 (E15 g): the token write denied by policy, no birth time: a
     real unborn move keeps the checkout by its init stamps (A2)."""
     lab = lab_of(write_token=False)
-    g = unborn(tmp_path / "g" / "proj")
+    g = settled(unborn(tmp_path / "g" / "proj"))
     lab.write("g1", g)
     assert not (g / ".git" / "info" / "bettermemory").exists()
     g2 = move(g, tmp_path / "g2" / "proj")
@@ -1315,7 +1317,7 @@ def test_i33_a_clock_a_day_off_changes_no_decision(
         monkeypatch.setattr(time, "time", lambda skew=skew: real_time() + skew)
         location.forget()
         moving = lab_of(f"move-{name}", write_token=False)
-        a = unborn(tmp_path / name / "a" / "proj")
+        a = settled(unborn(tmp_path / name / "a" / "proj"))
         moving.write("a1", a)
         a2 = move(a, tmp_path / name / "a2" / "proj")
         ra, ba = moving.view(a2)
@@ -1348,7 +1350,7 @@ def test_i14_e33_commit_less_move_without_birth_or_token_is_live_at_its_new_path
     move, at the new path after it (`live_view` names it), while the old
     path is gone."""
     lab = lab_of(write_token=False)
-    g = unborn(tmp_path / "g" / "proj")
+    g = settled(unborn(tmp_path / "g" / "proj"))
     lab.write("g1", g)
     model = lab.model()
     k = model.checkout(str(lab.checkout_of("g1")))
@@ -1461,7 +1463,7 @@ def test_i33_e33_liveness_is_the_same_at_every_clock_skew(
         lab = lab_of(f"skew-{name}", write_token=False)
         off = (lab.model()._now() - utcnow()).total_seconds()
         assert abs(off - skew) < 60
-        a = unborn(tmp_path / name / "a" / "proj")
+        a = settled(unborn(tmp_path / name / "a" / "proj"))
         lab.write("a1", a)
         a2 = move(a, tmp_path / name / "a2" / "proj")
         moved, _ = lab.view(a2)

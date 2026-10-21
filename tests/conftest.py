@@ -19,6 +19,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Iterator, Sequence
 
@@ -51,6 +52,13 @@ LOCAL_TMP_ENV = "BETTERMEMORY_TEST_LOCAL_TMP"
 #: "1": the whole session reads no birth time (`location.REPORT_BIRTH`), as
 #: on NFSv3, whatever the disk under it reports.
 NO_BIRTH_ENV = "BETTERMEMORY_TEST_NO_BIRTH"
+#: Seconds a new file's times take to settle on the filesystem under
+#: ``--basetemp`` (`settled`); unset or empty, none. A cifs client reports
+#: its own write time for a file it wrote until its attribute cache
+#: expires (``actimeo``) and the data is flushed (``closetimeo``); the
+#: server's time, which every later read reports, can be some tens of
+#: milliseconds later. The SMB leg of CI sets 3.
+SETTLE_ENV = "BETTERMEMORY_TEST_SETTLE_SECONDS"
 
 
 def set_git_discovery_ceiling(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -147,6 +155,25 @@ def memory_dir(tmp_path: Path) -> Path:
     d = tmp_path / "memories"
     d.mkdir()
     return d
+
+
+def settle_seconds() -> float:
+    """The seconds ``BETTERMEMORY_TEST_SETTLE_SECONDS`` names, 0 unset."""
+    named = os.environ.get(SETTLE_ENV, "").strip()
+    return float(named) if named else 0.0
+
+
+def settled(path: Path) -> Path:
+    """`path` once the times of the files just written under it are the
+    ones every later read reports: a pause of `settle_seconds`, none on a
+    local disk. For a test that records a file's times as a witness (the
+    init stamps of a commit-less repository) and reads them again after a
+    move: the production sighting comes well after the cache's lifetime,
+    the test's within it."""
+    pause = settle_seconds()
+    if pause > 0:
+        time.sleep(pause)
+    return path
 
 
 @pytest.fixture(scope="session")
