@@ -2,22 +2,24 @@
 a tool call, on two hook moments.
 
 - The session brief (`session_brief`), on SessionStart inside a
-  repository: at most eight pointers to the newest memories written in
-  that repository whose staleness verdict is ``fresh`` exactly as
-  `memory_show` computes it (the trust rule included), each an id and an
-  80-character summary under a header that says they are pointers, not
-  instructions. No body, no scope list, nothing outside a repository,
-  nothing for an empty selection.
+  project: at most eight pointers to the newest memories homed in the
+  caller's project (the SESSION_BRIEF surface of design 3.5) whose
+  staleness verdict is ``fresh`` exactly as `memory_show` computes it
+  (the trust rule included), each an id and an 80-character summary
+  under a header that says they are pointers, not instructions. No body,
+  no scope list, nothing outside a project, nothing for a caller nothing
+  could be read for (its row says so), nothing for an empty selection.
 - The prompt recall (`prompt_recall`), on UserPromptSubmit: the owner's
   words as the one definition reads them (`owner_prompt.owner_text`: the
   app's envelope blocks removed, cut at 2,000 characters, nothing for a
   prompt the harness composed), probed through the audit's own probe
   (`hook._probe_message`: the production pool and ranker, top three),
   and up to three of those hits delivered as pointers when they are
-  relevant (medium or high), written or imported here, in the caller's
-  project (under the default `prompt_recall = "project"`), not
-  contradicted, and not already shown, retrieved, written or updated in
-  this session segment.
+  relevant (medium or high), written or imported here, admitted for the
+  caller (under `prompt_recall = "project"` the PROMPT_RECALL surface of
+  design 3.5, the caller's own project; under ``"everywhere"`` the
+  unscoped search's admission, decision B21), not contradicted, and not
+  already shown, retrieved, written or updated in this session segment.
 
 Both are pointers by construction. The read path's staleness machinery
 lives on `memory_show`; a body delivered around it would be the one read
@@ -83,6 +85,7 @@ from .models import Category, Memory, generate_ulid, utcnow
 from .origin import (
     Origin,
     repos_match,
+    should_include_for_caller,
     toplevel_and_head_from_files,
     worktrees_match,
 )
@@ -90,6 +93,17 @@ from .owner_prompt import PROMPT_CUT_CHARS, owner_text, probe_text
 from .store import IMPORTED, LOCAL, STORE_FILENAME, Store, TrustRow
 from .time_utils import ensure_utc, isoformat_utc, parse_event_ts
 from .transcript import CompactMarker, compact_marker
+from .admission import NO_RESOLUTION, Admission, CountedRecords, admitted_nothing
+from .location import Exchange
+from .membership import (
+    POOL_PREFILTER,
+    PROMPT_RECALL,
+    SEARCH_UNSCOPED,
+    SESSION_BRIEF,
+    UNRESOLVED,
+    Membership,
+    Resolution,
+)
 from .verdict import (
     FillReport,
     MemoryVerdict,
@@ -118,11 +132,13 @@ __all__ = [
     "SEGMENT_DELIVERY_CAP",
     "SURFACE_BRIEF",
     "SURFACE_RECALL",
+    "admission_for",
+    "membership_model",
     "brief_key",
+    "caller_admission",
     "clean_prompt",
     "confirm_compaction",
     "disputed_marks",
-    "in_project",
     "is_settlement",
     "previous_audit_at",
     "prompt_recall",
@@ -142,9 +158,10 @@ __all__ = [
 # omission on a resume (RS-F2) and the Stop row's prompt_id and
 # reply_source (RS-F3).
 # rs-v4: RS-F5's one owner-prompt definition, the Stop anchored to its turn, compact on the marker
+# rs-v5: RS-F6's delivery decided by membership; the brief and recall rows carry the checkout, the membership rule and rc3_admitted
 # Every row written after a landing carries its rule, so a read of the
 # log splits on the row's rule and never on a clock.
-RULE = "rs-v4"
+RULE = "rs-v5"
 
 # The harness a hook payload names when it names none: the one whose
 # hook protocol the plugin implements.
@@ -289,14 +306,18 @@ class HookResult:
     chars: int = 0
     rule: str = RULE
     event_id: str | None = None
+    membership: Mapping[str, Any] | None = None
 
     @classmethod
     def empty(cls, surface: str) -> HookResult:
         return cls(stdout="", surface=surface)
 
     def to_response(self) -> dict[str, Any]:
-        """The endpoint's JSON fields, `stdout` first as it always was."""
-        return {
+        """The endpoint's JSON fields, `stdout` first as it always was;
+        ``membership`` only where the caller's resolution asks the hook
+        client for something (`location.resolve_hook`: the next round of
+        the witness exchange, or a token to re-mint in its namespace)."""
+        out: dict[str, Any] = {
             "stdout": self.stdout,
             "surface": self.surface,
             "ids": list(self.ids),
@@ -304,6 +325,9 @@ class HookResult:
             "rule": self.rule,
             "event_id": self.event_id,
         }
+        if self.membership:
+            out["membership"] = dict(self.membership)
+        return out
 
 
 # ---------------------------------------------------------------------------
@@ -311,24 +335,14 @@ class HookResult:
 # ---------------------------------------------------------------------------
 
 
-def in_repository(caller: Origin) -> bool:
-    """Whether the caller stands in a repository: a remote, or at least a
-    worktree root for a checkout that has none."""
-    return caller.repo is not None or caller.worktree_root is not None
-
-
-def in_project(memory_origin: Origin | None, caller: Origin) -> bool:
-    """Whether a memory was written in the caller's project.
-
-    Stricter than the search's auto-scope (`origin.should_include_for_
-    caller`), which admits a memory with no origin as global: here a
-    memory belongs only when its origin names the caller's repository.
-    With a remote on both sides that is `repos_match`, narrowed by
-    `worktrees_match` so a sibling worktree's notes stay where the search
-    keeps them. A caller whose checkout has no remote matches by worktree
-    root alone, and only memories that also carry no remote. A null repo
-    never matches a null repo: two repo-less origins are two unknowns,
-    not one project."""
+def _rc3_in_project(memory_origin: Origin | None, caller: Origin) -> bool:
+    """rc3's rule for whether a memory was written in the caller's
+    project, read from the origin columns (rc3's `in_project`). It exists
+    only for the rc3_admitted column (`_rc3_admitted`, design 8.11): the
+    answer recorded beside membership's, never a delivery. A memory with
+    a remote matches a caller with one by `repos_match`, narrowed by
+    `worktrees_match`; a caller with no remote matches by worktree root
+    alone, and only memories that carry no remote either."""
     if memory_origin is None:
         return False
     if caller.repo is not None:
@@ -343,6 +357,58 @@ def in_project(memory_origin: Origin | None, caller: Origin) -> bool:
         memory_origin.repo is None
         and memory_origin.worktree_root == caller.worktree_root
     )
+
+
+def _rc3_admitted(
+    memories: Iterable[Memory], caller: Origin, *, project_only: bool
+) -> list[str]:
+    """The ids of `memories`, in their order, that rc3's rule would have
+    delivered to `caller`, read from the origin columns: the rc3_admitted
+    column of the `session_brief` and `prompt_recall` rows (design 8.11).
+    It exists only for that column; no surface delivers by it.
+
+    rc3 delivered nothing to a caller git could not read. Under
+    `project_only` (the brief, and the recall under ``prompt_recall =
+    "project"``) it delivered only inside a repository and only what
+    `_rc3_in_project` admits; under ``"everywhere"`` what the search's
+    auto-scope admitted (`origin.should_include_for_caller` against the
+    caller's remote, every record for a caller with none)."""
+    if caller.git_indeterminate:
+        return []
+    if project_only and caller.repo is None and caller.worktree_root is None:
+        return []
+    admitted: list[str] = []
+    for memory in memories:
+        if project_only:
+            ok = _rc3_in_project(memory.origin, caller)
+        else:
+            ok = caller.repo is None or should_include_for_caller(
+                memory.origin,
+                caller.repo,
+                caller_worktree_root=caller.worktree_root,
+            )
+        if ok:
+            admitted.append(memory.id)
+    return admitted
+
+
+def _delivery_membership(
+    resolution: Resolution | None, admission: Admission
+) -> dict[str, Any]:
+    """The membership keys a `session_brief` or `prompt_recall` row carries
+    from rs-v5 (design 8.11): ``checkout``, the caller's checkout (None
+    where its resolution names none), and ``membership_rule``, the rule its
+    resolution named, or the outcome that admitted it nothing (a caller
+    nothing could be read for, a deferred read, a resolution that
+    raised)."""
+    if admission.nothing is not None:
+        rule = admission.nothing
+    else:
+        rule = resolution.rule if resolution is not None else NO_RESOLUTION
+    return {
+        "checkout": resolution.checkout if resolution is not None else None,
+        "membership_rule": rule,
+    }
 
 
 def summarize(body: str, limit: int = SUMMARY_CHARS) -> str:
@@ -404,13 +470,116 @@ def _origin_for(cwd: Path | None) -> Origin:
     return hook_origin_for(cwd)
 
 
+def _resolve_caller(
+    *,
+    store: Store,
+    cfg: Config,
+    cwd: Path | None,
+    origin: Origin | None,
+    posted: Mapping[str, Any] | None,
+    session_id: str | None,
+) -> Resolution | Exchange | None:
+    """The caller's membership resolution (design 3.2) from what its hook
+    posted (`location.resolve_hook`): an `Exchange` when the daemon cannot
+    read the caller's namespace and asks its client for the next answer.
+    The caller stands at `cwd`, else at the cwd of the `origin` it was
+    given, else (in-process) where the request declared
+    (`identity.workspace_declaration`) or at the process cwd. None, with
+    a warning, when the resolution raised: a hook never fails its turn."""
+    from .location import resolve_hook
+
+    where: Path | None = cwd
+    if where is None and origin is not None and origin.cwd:
+        where = Path(origin.cwd)
+    if where is None:
+        declared = identity.workspace_declaration()
+        if declared is not None:
+            where = declared[0]
+    try:
+        return resolve_hook(
+            store,
+            cfg,
+            None if where is None else str(where),
+            posted,
+            session=session_id,
+        )
+    except Exception as exc:  # noqa: BLE001 - reported, never raised at the hook
+        log.warning("membership resolution failed: %s: %s", exc.__class__.__name__, exc)
+        return None
+
+
+def membership_model(store: Store) -> Membership:
+    """A membership model over `store` for this process's machine, which
+    reads the homes and projects a hook's resolution is judged against
+    (`location.resolve_hook` keeps its own model), and the recall review's
+    silent stratum reads."""
+    from .location import NO_MACHINE, process_machine
+
+    try:
+        machine = process_machine().id
+    except OSError:
+        # The caller was resolved without a machine (`location.NO_MACHINE`).
+        machine = NO_MACHINE
+    return Membership(store, machine)
+
+
+def admission_for(
+    surface: str, store: Store, resolution: Resolution | None
+) -> Admission:
+    """The admission of `surface` (design 3.5) for a hook's caller: one per
+    request, built from its resolution. None (the resolution raised) is
+    admitted nothing."""
+    model = membership_model(store) if resolution is not None else None
+    return Admission(surface, resolution, model)
+
+
+def caller_admission(
+    surface: str,
+    *,
+    store: Store,
+    cfg: Config,
+    cwd: Path | None,
+    origin: Origin | None,
+    posted: Mapping[str, Any] | None,
+    session_id: str | None,
+) -> tuple[Admission, Resolution | Exchange | None]:
+    """The caller's resolution (`_resolve_caller`) and the admission of
+    `surface` built from it. A namespace the daemon cannot read (an
+    `Exchange`) and a resolution that raised are admitted nothing."""
+    resolved = _resolve_caller(
+        store=store,
+        cfg=cfg,
+        cwd=cwd,
+        origin=origin,
+        posted=posted,
+        session_id=session_id,
+    )
+    resolution = resolved if isinstance(resolved, Resolution) else None
+    return admission_for(surface, store, resolution), resolved
+
+
+def membership_lines(store: Store, caller: Resolution | None) -> list[str]:
+    """The lines a session's first output carries for its caller
+    (`Membership.first_output`: L1 to L10, every open proposal of the
+    checkout), or none."""
+    if caller is None:
+        return []
+    return membership_model(store).first_output(caller)
+
+
 def _open_store(cfg: Config) -> Store | None:
     """The store the config names, opened for the in-process hook path, or
-    None when there is none (a hook never creates one)."""
+    None when there is none (a hook never creates one). A store holding
+    records without homes is migrated at this open, once, when no daemon
+    serves the hook (design 8.6); the migration logs its own lines."""
+    from .cli._common import run_migration_at_open
+
     root = cfg.resolved_directory()
     if not (root / STORE_FILENAME).is_file():
         return None
-    return Store.open_or_create(root / STORE_FILENAME)
+    store = Store.open_or_create(root / STORE_FILENAME)
+    run_migration_at_open(store, cfg)
+    return store
 
 
 def _str_ids(value: Any) -> list[str]:
@@ -916,10 +1085,13 @@ class RecallState:
         memories: Sequence[Memory],
         *,
         caller_origin: Origin,
+        admission: CountedRecords | None = None,
     ) -> bool:
         """Resolve `memories`' commit legs into the memo on a worker thread
         (`fill_verdicts`), off the request path, so the next brief reads
-        them warm; what it kept is kept for `fill_report`. One fill per
+        them warm; what it kept is kept for `fill_report`. `admission` is
+        the records whose legs count, decided on the request's thread
+        (`Admission.counted`); with none, no leg is resolved. One fill per
         repository at a time: while one runs, another is not started (the
         rows it would have filled are still unresolved next call and are
         scheduled then). Returns whether a fill started; never one without
@@ -934,7 +1106,9 @@ class RecallState:
 
             def fill() -> None:
                 try:
-                    report = fill_verdicts(rows, caller_origin=caller_origin)
+                    report = fill_verdicts(
+                        rows, caller_origin=caller_origin, admission=admission
+                    )
                     with self._lock:
                         self._reports[repo_key] = report
                         self._reports.move_to_end(repo_key)
@@ -1019,21 +1193,41 @@ class _BriefSelection:
     memories: list[Memory]
     examined: int
     unresolved: int
+    suppressed: tuple[dict[str, str], ...] = ()
+    candidates: int = 0
+
+
+def _suppressed_reason(admission: Admission, memory_id: str) -> str:
+    """Why a surface did not deliver a record, as `Membership.admit_recall`
+    names it: ``no_home``, ``unresolved`` (decision B6), else the home's
+    relation to the caller."""
+    home = admission.home(memory_id)
+    if home is None:
+        return "no_home"
+    if home.unresolved:
+        return UNRESOLVED
+    return admission.relation(home)
 
 
 def _select_brief(
     store: Store,
     caller: Origin,
     *,
+    admission: Admission,
     state: RecallState,
     stale_after_days: int,
     now: datetime,
 ) -> _BriefSelection:
     """The brief's rows, newest `updated` first.
 
-    Eligible: written in the caller's project (`in_project`), stored and
+    Eligible: admitted by the SESSION_BRIEF surface for the caller
+    (`admission`, design 3.5: a home on the caller's chain), stored and
     verified label local or imported, category not ambient, no open
-    contradiction; within the newest `BRIEF_WINDOW`. Shown: the first
+    contradiction; within the newest `BRIEF_WINDOW`. When the store holds
+    candidates (the label and category pass) and the surface admits none
+    of them, the selection names the newest `BRIEF_MAX_POINTERS` of them
+    with why each was withheld, and how many there were, for the
+    `recall_suppressed` row (design 4, failure 8). Shown: the first
     `BRIEF_MAX_POINTERS` of those `memory_show` would read fresh. A store
     opened without its key verifies no label, so it shows nothing.
 
@@ -1046,12 +1240,28 @@ def _select_brief(
     the fill."""
     repo_key = brief_key(caller)
     ids = store.brief_rows(
-        admit=lambda memory_origin: in_project(memory_origin, caller),
+        admit=admission.admits_project,
         provenance=_DELIVERED_PROVENANCE,
         exclude_category=Category.AMBIENT.value,
     )[:BRIEF_WINDOW]
     if not ids:
-        return _BriefSelection([], 0, 0)
+        candidates = store.brief_rows(
+            admit=lambda _home: True,
+            provenance=_DELIVERED_PROVENANCE,
+            exclude_category=Category.AMBIENT.value,
+        )
+        named = candidates[:BRIEF_MAX_POINTERS]
+        admission.prime(named)
+        return _BriefSelection(
+            [],
+            0,
+            0,
+            suppressed=tuple(
+                {"id": rid, "reason": _suppressed_reason(admission, rid)}
+                for rid in named
+            ),
+            candidates=len(candidates),
+        )
     trust = store.trust_rows(ids)
     if trust is None:
         return _BriefSelection([], 0, 0)
@@ -1087,6 +1297,7 @@ def _select_brief(
                 caller_origin=caller,
                 now=now,
                 stale_after_days=stale_after_days,
+                admission=admission,
             )
             for memory, verdict in zip(chunk, verdicts):
                 examined += 1
@@ -1114,6 +1325,7 @@ def _select_brief(
                         caller_origin=caller,
                         now=now,
                         stale_after_days=stale_after_days,
+                        admission=admission,
                     ),
                 )
             }
@@ -1134,6 +1346,7 @@ def _select_brief(
             caller_origin=caller,
             now=now,
             stale_after_days=stale_after_days,
+            admission=admission,
         )
         for memory, full in zip(synchronous, resolved):
             examined += 1
@@ -1148,6 +1361,7 @@ def _select_brief(
             repo_key,
             pending,
             caller_origin=caller,
+            admission=admission.counted([memory.id for memory in pending]),
         )
     return _BriefSelection(picked, examined, len(pending))
 
@@ -1267,16 +1481,18 @@ def session_brief(
     store: Store | None = None,
     state: RecallState | None = None,
     now: datetime | None = None,
+    posted: Mapping[str, Any] | None = None,
+    resolution: Resolution | None = None,
 ) -> HookResult:
     """The SessionStart surface: open the session's segment (a new one on
     ``clear``, and on ``compact`` when its marker is read) and, inside a
-    repository, return the brief.
+    project, return the brief.
 
     Nothing is shown without a session id (the show has no session to be
     recorded under or to count against), with `session_brief` or
-    telemetry off, outside a repository or where git could not say
-    whether the caller stands in one, on an empty store, or when no row
-    passes (`_select_brief`). A shown brief is recorded as a
+    telemetry off, outside a project, for a caller nothing could be read
+    for (its row says so, `_brief_in_segment`), on an empty store, or
+    when no row passes (`_select_brief`). A shown brief is recorded as a
     `session_brief` event under the session id, stamped
     ``triggered_from="session_hook"`` so the hooks' server-session
     anchor (`hook._latest_in_process_session`) skips it like every other
@@ -1307,8 +1523,17 @@ def session_brief(
     One line leads whatever is shown, or stands alone, while the store
     was created fresh after a daemon saved the one it lost
     (`orphan_notice`): it is a data-loss alarm, so it shows with
-    `session_brief` or telemetry off, outside a repository and on an
-    empty store as well, given a session id."""
+    `session_brief` or telemetry off, outside a project and on an
+    empty store as well, given a session id.
+
+    The caller's membership is resolved first (`location.resolve_hook`
+    over what the hook `posted`, or `resolution` when the caller already
+    holds it), and the lines of its first output (`membership_lines`:
+    L1 to L10 and every open proposal of the checkout, design 5.4) come
+    right after that notice and before the brief, with the brief's
+    switches off as well. Where the daemon cannot read the caller's
+    namespace the result carries the exchange's next question in
+    ``membership`` and nothing else runs."""
     empty = HookResult.empty("session_brief")
     if not session_id:
         return empty
@@ -1317,6 +1542,23 @@ def session_brief(
         store = _open_store(cfg)
         if store is None:
             return empty
+    caller_resolution: Resolution | Exchange | None = resolution
+    if caller_resolution is None:
+        caller_resolution = _resolve_caller(
+            store=store,
+            cfg=cfg,
+            cwd=cwd,
+            origin=origin,
+            posted=posted,
+            session_id=str(session_id),
+        )
+    if isinstance(caller_resolution, Exchange):
+        return HookResult(
+            stdout="",
+            surface="session_brief",
+            membership={"ask": caller_resolution.to_reply()},
+        )
+    lines = membership_lines(store, caller_resolution)
     state = state if state is not None else RecallState(background=False)
     now = now or utcnow()
     key = (harness or DEFAULT_HARNESS, str(session_id))
@@ -1351,6 +1593,7 @@ def session_brief(
         store=store,
         state=state,
         now=now,
+        resolution=caller_resolution,
     )
     if (
         result.event_id is None
@@ -1377,10 +1620,18 @@ def session_brief(
             rule=RULE,
             **compaction,
         )
+    lead = "\n".join(lines)
+    if lead:
+        stdout = f"{lead}\n{result.stdout}" if result.stdout else lead
+        result = replace(result, stdout=stdout, chars=len(stdout))
     notice = orphan_notice(store)
     if notice:
         stdout = f"{notice}\n{result.stdout}" if result.stdout else notice
         result = replace(result, stdout=stdout, chars=len(stdout))
+    if caller_resolution is not None and caller_resolution.remint_token:
+        # The checkout's token is the client's to re-mint, in its own
+        # namespace (design 3.3, E21 g).
+        result = replace(result, membership={"remint": True})
     return result
 
 
@@ -1460,9 +1711,20 @@ def _brief_in_segment(
     store: Store,
     state: RecallState,
     now: datetime,
+    resolution: Resolution | None = None,
 ) -> HookResult:
     """The brief for the segment `session_brief` just opened or resumed,
     recorded when shown; empty when nothing is.
+
+    What the brief may show is the SESSION_BRIEF surface's admission for
+    the caller's `resolution` (design 3.5): its own project's memories
+    (the home on the caller's chain), nothing for a caller outside any
+    project. A caller whose resolution raised (None), read nothing
+    (INDETERMINATE) or is deferred (DEFERRED) is shown nothing and its
+    row says so (``membership: "admitted nothing: <outcome>"``, no ids);
+    the origin columns never stand in. A brief whose candidates the
+    surface admitted none of writes one `recall_suppressed` membership row
+    (``surface: session_brief``, design 4 failure 8).
 
     The cooldown's rule, on the brief: an id the segment has shown (by
     either surface, as `view.shown` has it) is not printed again. The
@@ -1477,55 +1739,109 @@ def _brief_in_segment(
     ``marker`` or ``marker_absent``) rides on the row. A brief with
     nothing left to print still records its row, with no ids and
     `omitted` naming the selection's, so the log shows the rule acted and
-    on what; nothing is recorded when the selection itself is empty."""
+    on what; nothing is recorded when the selection itself is empty.
+
+    From rs-v5 every row carries the caller's ``checkout`` and
+    ``membership_rule`` (`_delivery_membership`) and ``rc3_admitted``:
+    the printed ids rc3's rule would have delivered (`_rc3_admitted`,
+    design 8.11), empty on the row of a caller admitted nothing."""
     empty = HookResult.empty("session_brief")
     if not cfg.behavior.session_brief or not cfg.telemetry.enabled:
         return empty
     caller = origin if origin is not None else _origin_for(cwd)
-    if caller.git_indeterminate or not in_repository(caller):
-        return empty
     if store.count_memories() == 0:
+        return empty
+    admission = admission_for(SESSION_BRIEF, store, resolution)
+    membership = _delivery_membership(resolution, admission)
+
+    def record(ids: list[str], *, chars: int, extra: Mapping[str, Any]) -> str:
+        identity.bind_transcript(session_id=key[1], model=None, client=key[0])
+        event_id = generate_ulid()
+        recorder = Recorder(
+            store=store,
+            session_id=key[1],
+            enabled=cfg.telemetry.enabled,
+            worktree_root=caller.worktree_root,
+            triggered_from="session_hook",
+        )
+        fields: dict[str, Any] = {
+            "event_id": event_id,
+            "session_id": key[1],
+            "harness": key[0],
+            "source": opened_by,
+            "segment": view.segment,
+            "ids": ids,
+            "chars": chars,
+            **extra,
+            **membership,
+            "rule": RULE,
+            **compaction,
+        }
+        if transcript_path:
+            fields["transcript_path"] = transcript_path
+        recorder.record("session_brief", **fields)
+        return event_id
+
+    if admission.nothing is not None:
+        event_id = record(
+            [],
+            chars=0,
+            extra={
+                "omitted": [],
+                "membership": admitted_nothing(admission.nothing),
+                "rc3_admitted": [],
+            },
+        )
+        state.note_shown(
+            key, [], delivery=False, now=now, surface=SURFACE_BRIEF, event_id=event_id
+        )
+        return HookResult(
+            stdout="", surface="session_brief", rule=RULE, event_id=event_id
+        )
+    if not admission.in_project:
         return empty
     selection = _select_brief(
         store,
         caller,
+        admission=admission,
         state=state,
         stale_after_days=cfg.behavior.verification_stale_days,
         now=now,
     )
     if not selection.memories:
+        if selection.suppressed and resolution is not None:
+            store.record_membership(
+                "recall_suppressed",
+                {
+                    "surface": SESSION_BRIEF,
+                    "checkout": resolution.checkout,
+                    "caller_rule": resolution.rule,
+                    "suppressed": [dict(entry) for entry in selection.suppressed],
+                    "candidates": selection.candidates,
+                },
+                session=key[1],
+            )
         return empty
     kept = [memory for memory in selection.memories if memory.id not in view.shown]
     omitted = [memory.id for memory in selection.memories if memory.id in view.shown]
     text, ids = render_brief(kept, disputed_marks(store.pending_conflict_pairs()))
     if not ids and not omitted:
         return empty
-    identity.bind_transcript(session_id=key[1], model=None, client=key[0])
-    event_id = generate_ulid()
-    recorder = Recorder(
-        store=store,
-        session_id=key[1],
-        enabled=cfg.telemetry.enabled,
-        worktree_root=caller.worktree_root,
-        triggered_from="session_hook",
+    shown = set(ids)
+    event_id = record(
+        ids,
+        chars=len(text),
+        extra={
+            "omitted": omitted,
+            "rows_examined": selection.examined,
+            "unresolved": selection.unresolved,
+            "rc3_admitted": _rc3_admitted(
+                [memory for memory in kept if memory.id in shown],
+                caller,
+                project_only=True,
+            ),
+        },
     )
-    fields: dict[str, Any] = {
-        "event_id": event_id,
-        "session_id": key[1],
-        "harness": key[0],
-        "source": opened_by,
-        "segment": view.segment,
-        "ids": ids,
-        "chars": len(text),
-        "omitted": omitted,
-        "rows_examined": selection.examined,
-        "unresolved": selection.unresolved,
-        "rule": RULE,
-        **compaction,
-    }
-    if transcript_path:
-        fields["transcript_path"] = transcript_path
-    recorder.record("session_brief", **fields)
     state.note_shown(
         key, ids, delivery=False, now=now, surface=SURFACE_BRIEF, event_id=event_id
     )
@@ -1728,12 +2044,16 @@ def prompt_recall(
     store: Store | None = None,
     state: RecallState | None = None,
     now: datetime | None = None,
+    posted: Mapping[str, Any] | None = None,
+    resolution: Resolution | None = None,
 ) -> HookResult:
     """The UserPromptSubmit surface: probe the prompt and return up to
     three pointers, or nothing.
 
     The probe is the audit's (`hook._probe_message`), unchanged: the
-    production pool and ranker over the owner's words as the one
+    production pool (drawn under the POOL_PREFILTER admission of the same
+    resolution, design 3.5, so a record no surface may deliver never takes
+    a rank) and ranker over the owner's words as the one
     definition reads them (`owner_prompt.owner_text`: envelope blocks
     removed, cut at `PROMPT_CUT_CHARS`, the bytes the Stop probes and
     hashes for the same text), the content-token floor and the
@@ -1744,20 +2064,44 @@ def prompt_recall(
     owner types next. A ``no_signal`` report delivers nothing. Each hit
     is then a candidate,
     held back with a reason when it is ``low_relevance`` (not medium or
-    high), ``other_project`` (not written in the caller's project, under
-    the default `prompt_recall = "project"`), ``provenance`` (not local or
+    high), ``other_project`` (the admission does not admit its home,
+    `Membership.admit_recall`, which names the relation on the
+    entry and writes `recall_suppressed` when it withholds every relevant
+    hit), ``provenance`` (not local or
     imported, or unverifiable), ``contradicted`` (an open contradiction),
     ``seen_in_segment`` (shown, retrieved, written or updated in this
     session segment) or ``segment_cap`` (the segment has had its twelve). The
     probe's verdict and its retrieval shield do not gate delivery; the
     segment does.
 
-    Nothing outside a repository unless `prompt_recall = "everywhere"`;
-    nothing where git could not say where the caller stands; nothing
-    with telemetry off. A delivery is recorded as a `prompt_recall`
+    The switch names the admission (decision B21): under `prompt_recall =
+    "project"` the PROMPT_RECALL surface, the caller's own project and
+    nothing outside a project (design 3.5); under ``"everywhere"`` the
+    unscoped search's, every project's records and the global ones, inside
+    a project or outside one, never across a boundary and never an
+    unresolved home, with the pool drawn under the same admission. The
+    row names it (``admission``). Nothing for a caller whose resolution
+    read nothing, is deferred or raised; nothing with telemetry off. A delivery is recorded as a `prompt_recall`
     event BEFORE the block is returned: it is a member of the audit's
     retrieval kinds, so the Stop audit of the same turn sees the
-    delivery and reports ``ok`` rather than a silent miss."""
+    delivery and reports ``ok`` rather than a silent miss.
+
+    Before the probe the caller's membership is resolved
+    (`location.resolve_hook`, or `resolution` when given). A caller
+    nothing could be read for (INDETERMINATE) or whose HEAD or config is
+    still being fetched (DEFERRED) is shown nothing from any project: the
+    resolution wrote its row, and the result carries its line (L8, L9)
+    and no pointer; a resolution that raised is shown nothing either.
+    Where the daemon cannot read the caller's namespace
+    the result carries the exchange's next question in ``membership``.
+
+    From rs-v5 the row carries the caller's ``checkout`` and
+    ``membership_rule`` (`_delivery_membership`) and ``rc3_admitted``
+    (design 8.11): of the hits every gate but the admission passed, the
+    ones rc3's rule would have delivered (`_rc3_admitted`; under
+    ``"project"`` rc3's project test, under ``"everywhere"`` rc3's
+    auto-scope), less any pointer the render or the cooldown dropped from
+    this delivery."""
     empty = HookResult.empty("prompt_recall")
     cfg = config or load_config(None)
     mode = cfg.behavior.prompt_recall
@@ -1775,21 +2119,48 @@ def prompt_recall(
         # nothing is probed, recorded or claimed, and no id is held for the
         # rest of the segment on its account (RS-F1, RS-F5).
         return empty
+    caller_resolution: Resolution | Exchange | None = resolution
+    if caller_resolution is None:
+        caller_resolution = _resolve_caller(
+            store=store,
+            cfg=cfg,
+            cwd=cwd,
+            origin=origin,
+            posted=posted,
+            session_id=str(session_id),
+        )
+    if isinstance(caller_resolution, Exchange):
+        return HookResult(
+            stdout="",
+            surface="prompt_recall",
+            membership={"ask": caller_resolution.to_reply()},
+        )
+    # The admission the switch names (decision B21): the prompt recall's
+    # own under "project", the unscoped search's under "everywhere".
+    surface = PROMPT_RECALL if mode == "project" else SEARCH_UNSCOPED
+    admission = admission_for(surface, store, caller_resolution)
+    if admission.nothing is not None:
+        # Nothing was read where the caller stands, or the read is
+        # deferred, or the resolution raised: no surface admits anything,
+        # and the origin columns never stand in. The resolution wrote its
+        # row (`resolution_indeterminate`, `resolution_deferred`).
+        said = "\n".join(caller_resolution.lines) if caller_resolution else ""
+        return HookResult(stdout=said, surface="prompt_recall", chars=len(said))
+    remint: Mapping[str, Any] | None = None
+    if caller_resolution is not None and caller_resolution.remint_token:
+        # The checkout's token is the client's to re-mint, in its own
+        # namespace (design 3.3, E21 g); every answer below carries it.
+        remint = {"remint": True}
+        empty = replace(empty, membership=remint)
     now = now or utcnow()
     key = (harness or DEFAULT_HARNESS, str(session_id))
     # Same caller the Stop hook publishes (`hook.run_audit`), minus the
     # model: this hook fires before the assistant has answered.
     identity.bind_transcript(session_id=key[1], model=None, client=key[0])
     caller = origin if origin is not None else _origin_for(cwd)
-    if caller.git_indeterminate:
-        # Delivery is scoped on the caller's repository and worktree, and
-        # git could not say what they are. A null repo here would open
-        # the probe's auto-scope to every project's memories on a prompt
-        # that asked for none of them. No delivery is the only honest
-        # answer; the Stop audit declines to call the turn a miss for the
-        # same reason.
-        return empty
-    if mode == "project" and not in_repository(caller):
+    if surface == PROMPT_RECALL and not admission.in_project:
+        # PROMPT_RECALL admits nothing for a caller outside any project
+        # (design 3.5): nothing to probe for.
         return empty
 
     from .hook import (
@@ -1835,12 +2206,31 @@ def prompt_recall(
         user_message=query,
         session_id=key[1],
         server_session=server_session,
-        caller_origin=caller,
+        # The pool is drawn under the hooks' prefilter for "project" and
+        # under the unscoped search's admission for "everywhere", so a
+        # record the delivery may not admit never takes a rank.
+        admission=admission.on(POOL_PREFILTER)
+        if surface == PROMPT_RECALL
+        else admission,
         excluded_scopes=excluded_scopes,
         recent=recent,
+        worktree_root=caller.worktree_root,
     )
     if report.verdict == "no_signal" or not report.top_hits:
         return empty
+    # The relevant hits through the PROMPT_RECALL surface
+    # (`Membership.admit_recall`, which writes `recall_suppressed` when it
+    # withholds every one of them, design 4 failure 8).
+    model = admission.model
+    if model is None or caller_resolution is None:
+        return empty
+    turn = model.admit_recall(
+        caller_resolution,
+        [(hit.id, hit.relevance in _RELEVANT) for hit in report.top_hits],
+        admission=surface,
+    )
+    admitted_here = set(turn.delivered)
+    withheld = dict(turn.suppressed)
 
     sessions = {key[1]} | joined_sessions(
         recent, harness_session=key[1], worktree_root=caller.worktree_root
@@ -1859,28 +2249,45 @@ def prompt_recall(
     contradicted = store.contradicted_at(hit_ids)
     chosen: list[tuple[MissHit, Memory, TrustRow]] = []
     suppressed: list[dict[str, str]] = []
+    # The hits every gate but the admission passes, in rank order: the
+    # candidates rc3's rule is asked about for the rc3_admitted column
+    # (design 8.11), so the column differs from the delivery by the
+    # admission alone.
+    rc3_candidates: list[Memory] = []
     for hit in report.top_hits:
         memory = memories.get(hit.id)
         if memory is None:
             continue
         row = trust.get(hit.id) if trust is not None else None
-        reason: str | None = None
+        held: str | None = None
         if hit.relevance not in _RELEVANT:
-            reason = "low_relevance"
-        elif mode == "project" and not in_project(memory.origin, caller):
-            reason = "other_project"
+            held = "low_relevance"
         elif row is None or row.provenance not in _DELIVERED_PROVENANCE:
-            reason = "provenance"
+            held = "provenance"
         elif _contradiction_open(memory, contradicted):
-            reason = "contradicted"
+            held = "contradicted"
         elif hit.id in seen:
-            reason = "seen_in_segment"
+            held = "seen_in_segment"
         elif view.deliveries >= SEGMENT_DELIVERY_CAP:
-            reason = "segment_cap"
+            held = "segment_cap"
+        if held is None and len(rc3_candidates) < RECALL_MAX_POINTERS:
+            rc3_candidates.append(memory)
+        reason: str | None = None
+        relation: str | None = None
+        if held == "low_relevance":
+            reason = held
+        elif hit.id not in admitted_here:
+            reason = "other_project"
+            relation = withheld.get(hit.id)
+        elif held is not None:
+            reason = held
         elif len(chosen) >= RECALL_MAX_POINTERS:
             continue
         if reason is not None:
-            suppressed.append({"id": hit.id, "reason": reason})
+            entry = {"id": hit.id, "reason": reason}
+            if relation is not None:
+                entry["relation"] = relation
+            suppressed.append(entry)
             continue
         assert row is not None
         chosen.append((hit, memory, row))
@@ -1935,6 +2342,19 @@ def prompt_recall(
         harness=key[0],
     )
     fields["event_id"] = event_id
+    # The admission the delivery was decided under (decision B21).
+    fields["admission"] = surface
+    fields.update(_delivery_membership(caller_resolution, admission))
+    # A pointer the render or the cooldown dropped is dropped whatever the
+    # admission, so the column leaves it out as well.
+    dropped = {hit.id for hit, _memory, _row in chosen} - set(shown_ids)
+    fields["rc3_admitted"] = [
+        memory_id
+        for memory_id in _rc3_admitted(
+            rc3_candidates, caller, project_only=surface == PROMPT_RECALL
+        )
+        if memory_id not in dropped
+    ]
     recorder.record("prompt_recall", **fields)
     return HookResult(
         stdout=block,
@@ -1943,6 +2363,7 @@ def prompt_recall(
         chars=len(block),
         rule=RULE,
         event_id=str(fields["event_id"]),
+        membership=remint,
     )
 
 

@@ -42,9 +42,9 @@ exists, the data backing it never reached disk.
   writer, `cli/export.py`'s `-o` output writer, and `sync.py`'s
   `.gitignore` writer — inherit `NamedTemporaryFile`'s 0o600 default,
   which is strictly safe (owner-only) for these owner-scoped files.
-  `mode` itself currently has no callers; it's retained as the
-  documented chmod-after-rename affordance for a future genuinely
-  world-readable output writer.
+  `mode` has one caller, `project_file.write` with `rebind=True`,
+  which passes 0o644 for a `bettermemory.toml` the user commits into
+  a working tree.
 
 Both fsync helpers swallow `OSError` and return. fsync legitimately
 fails on some pseudo-filesystems (`/proc`, certain tmpfs/overlayfs
@@ -209,10 +209,10 @@ def atomic_write_bytes(
       chmod-after-rename affordance for a non-private payload that wants
       an explicit world- or group-readable bit: the world-readable
       instant between rename and chmod is harmless when the bytes aren't
-      private. Currently has no callers — the config/init/export/sync
-      writers inherit the tmp's 0o600 default (strictly safe for those
-      owner-scoped files); the parameter is retained as a documented
-      affordance.
+      private. Its caller is `project_file.write` with `rebind=True`,
+      which passes 0o644 for a `bettermemory.toml` the user commits. The
+      config, init, export and sync writers pass neither mode and inherit
+      the tmp's 0o600 default (strictly safe for those owner-scoped files).
     * ``mode_before_rename`` — applied via ``os.fchmod`` on the tmp file
       descriptor BEFORE the rename, plus a defensive post-rename
       ``os.chmod`` fallback. Use for privacy-critical payloads (the

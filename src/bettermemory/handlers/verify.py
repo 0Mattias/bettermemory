@@ -1,4 +1,14 @@
-"""memory_verify MCP tool — bump `last_verified_at` after spot-checking."""
+"""memory_verify MCP tool — bump `last_verified_at` after spot-checking.
+
+A verify reads the record's claims where design 3.6 reads them: at its
+home checkout's live view, translated across its recorded views, or in a
+stand-in checkout that confirms by presence and never convicts
+(`verify.ClaimAnchor`, from `_shared.caller_anchoring`). A record with no
+home row is homed at the caller's resolution when the caller's checkout is
+the tree it was read at, and the caller's HEAD is recorded as a witness of
+the caller's project, in the transaction that writes the stamp (design
+8.1).
+"""
 
 from __future__ import annotations
 
@@ -8,10 +18,14 @@ from typing import TYPE_CHECKING, Any
 
 from .._response import isoformat, isoformat_optional
 from ..claims import check_claim, claim_reason_is_indeterminate, load_claims
-from ..origin import head_sha, repos_match
+from ..models import Memory
+from ..origin import head_sha
 from ..store import ConcurrentUpdateError, MemoryNotFoundError, TombstonedError
 from ..symbols import check_symbol_citations
+from ..time_utils import isoformat_utc
 from ..verify import (
+    Anchoring,
+    ClaimAnchor,
     _worktree_root_is_live,
     detect_path_drift,
     unverifiable_attestations,
@@ -21,10 +35,14 @@ from ._shared import (
     _NOTE_MAX_LEN,
     _advance_turn,
     _validate_declared_claims,
+    caller_anchoring,
+    has_home,
+    request_cwd,
 )
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
+    from ..location import Caller
 
 # Handler-boundary caps on the verified_* attestation lists. The model
 # field validator (`Memory._cap_verified_list`) also caps the count at 64,
@@ -40,7 +58,9 @@ _MAX_VERIFIED_ENTRIES = 64
 _MAX_VERIFIED_ITEM_LEN = 1024
 
 
-def _refuse_stale_stored_claims(stored: list[str], origin_root: str | None) -> None:
+def _refuse_stale_stored_claims(
+    stored: list[str], origin_root: str | None, *, anchor: ClaimAnchor | None = None
+) -> None:
     """Refuse the verify when a STORED claim no longer holds.
 
     Runs only when the origin worktree is visible; an invisible tree
@@ -48,7 +68,16 @@ def _refuse_stale_stored_claims(stored: list[str], origin_root: str | None) -> N
     watching) rather than blocking verifies from a synced replica.
     Unparseable stored entries are skipped by `load_claims` — doctor's
     job, not this gate's.
+
+    With `anchor` the claims are read at the anchor's root in place of
+    `origin_root`, and only where that read convicts (the home checkout's
+    live view, design 3.6): a stand-in's contradiction is no evidence
+    about the home's tree, and no live view reads nothing.
     """
+    if anchor is not None:
+        if not anchor.convicting:
+            return
+        origin_root = anchor.root
     if origin_root is None:
         return
     try:
@@ -97,7 +126,10 @@ def _refuse_stale_stored_claims(stored: list[str], origin_root: str | None) -> N
 
 
 def _refuse_unverifiable_stored_attestations(
-    stored: list[str], origin_root: str | None
+    stored: list[str],
+    origin_root: str | None,
+    *,
+    anchor: ClaimAnchor | None = None,
 ) -> None:
     """Refuse a preserving re-verify when a STORED attestation is gone.
 
@@ -129,22 +161,30 @@ def _refuse_unverifiable_stored_attestations(
       constant-function failure `verify._worktree_root_is_live`
       documents — so an invisible tree reads as could-not-ask, never as
       a counterexample.
+
+    With `anchor` the stored list is read where design 3.6 reads it
+    (`unverifiable_attestations` with ``stored=True``): an absolute entry at
+    the live view of the checkout it was recorded under, a relative one at
+    the anchor's root, and only a read that convicts refuses.
     """
     if not stored:
         return
-    root: str | None = None
-    if origin_root is not None:
-        try:
-            resolved = Path(origin_root).resolve(strict=False)
-        except (OSError, ValueError):
-            resolved = None
-        # `os.path.isdir`, not `resolved.is_dir()`: the try above guards
-        # `resolve()` alone, and an unreadable worktree must read as
-        # invisible here (root stays None, attestations go unchecked)
-        # rather than raising out of the handler.
-        if resolved is not None and os.path.isdir(resolved):
-            root = origin_root
-    unseen = unverifiable_attestations(stored, worktree_root=root)
+    if anchor is not None:
+        unseen = unverifiable_attestations(stored, anchor=anchor, stored=True)
+    else:
+        root: str | None = None
+        if origin_root is not None:
+            try:
+                resolved = Path(origin_root).resolve(strict=False)
+            except (OSError, ValueError):
+                resolved = None
+            # `os.path.isdir`, not `resolved.is_dir()`: the try above
+            # guards `resolve()` alone, and an unreadable worktree must
+            # read as invisible here (root stays None, attestations go
+            # unchecked) rather than raising out of the handler.
+            if resolved is not None and os.path.isdir(resolved):
+                root = origin_root
+        unseen = unverifiable_attestations(stored, worktree_root=root)
     if unseen:
         raise ValueError(
             f"cannot attest {len(unseen)} stored path(s) that do not exist "
@@ -183,6 +223,7 @@ def _refuse_evidence_free_stamp(
     attests_paths: bool,
     attests_absence: bool,
     declares_claims: bool,
+    anchor: ClaimAnchor | None = None,
 ) -> None:
     """Refuse a stamp that names nothing it checked on a memory whose
     citations resolve.
@@ -207,15 +248,22 @@ def _refuse_evidence_free_stamp(
     The refusal lists the resolved citations, repo-relative when they sit
     under the worktree, as the list to attest — the same remedy shape as
     the vanished-attestation refusal, pointed the other way.
+
+    With `anchor` the citations are read where design 3.6 reads them, and
+    listed relative to the anchor's root.
     """
     if attests_paths or attests_absence or declares_claims:
         return
-    root = (
-        origin_root
-        if origin_root is not None and _worktree_root_is_live(origin_root)
-        else None
-    )
-    report = detect_path_drift(body, worktree_root=root)
+    if anchor is not None:
+        root = anchor.root
+        report = detect_path_drift(body, anchor=anchor)
+    else:
+        root = (
+            origin_root
+            if origin_root is not None and _worktree_root_is_live(origin_root)
+            else None
+        )
+        report = detect_path_drift(body, worktree_root=root)
     gone = set(report.missing) | set(report.expected_absent)
     resolved = [p for p in report.checked if p not in gone]
     if not resolved:
@@ -232,6 +280,101 @@ def _refuse_evidence_free_stamp(
         "for any that should be absent, or claims for what the body asserts "
         "about them."
     )
+
+
+def _record_root(snapshot: Memory, anchoring: Anchoring | None) -> str | None:
+    """The tree a record is read at by its recorded worktree: the worktree
+    its origin recorded (design 8.6); for a record that recorded none, its
+    anchor's root under the request's `anchoring` (`Anchoring.for_record`,
+    design 3.6), else None. No remote is compared (decision B23)."""
+    root = snapshot.origin.worktree_root if snapshot.origin is not None else None
+    if root is not None or anchoring is None:
+        return root
+    anchor = anchoring.for_record(snapshot.id)
+    return anchor.root if anchor is not None else None
+
+
+def _within(path: str | None, root: str | None) -> bool:
+    """Whether `path` is `root` or below it, read through symlinks."""
+    if path is None or root is None:
+        return False
+    try:
+        here, top = os.path.realpath(path), os.path.realpath(root)
+    except (OSError, ValueError):
+        return False
+    return here == top or here.startswith(top.rstrip(os.sep) + os.sep)
+
+
+def _is_callers_tree(root: str | None, caller_root: str | None) -> bool:
+    """Whether `root`, the tree a record with no home row was read at, is
+    the live view of the caller's checkout: the one place a verify can say
+    the record was written in (design 2.1). Elsewhere the record keeps no
+    home row until the migration homes it from its origin (design 8.6)."""
+    if root is None or caller_root is None:
+        return False
+    try:
+        return os.path.realpath(root) == os.path.realpath(caller_root)
+    except (OSError, ValueError):
+        return False
+
+
+def _stamp(
+    deps: ToolHandlers,
+    caller: Caller | None,
+    snapshot: Memory,
+    *,
+    home_it: bool,
+    verified_paths: list[str] | None,
+    verified_commits: list[str] | None,
+    verified_versions: list[str] | None,
+    verified_absent_paths: list[str] | None,
+    claims: list[str] | None,
+    verified_head: str | None,
+) -> Memory:
+    """Write the stamp, the record's home when `home_it` and it still has
+    none, and the caller's HEAD as a witness of the caller's project, in
+    one store transaction (design 8.1): all of them land or none does. The
+    home is the caller's (`location.Caller.home`: its resolution's, or the
+    provisional project of a location nothing could be read for, decision
+    B6), read again inside the transaction, so a home another writer gave
+    the record first stands. With no caller (a record with no home row
+    verified from outside the tree it was written in) the stamp is all
+    that is written."""
+    with deps.store.batch():
+        memory = deps.store.mark_verified(
+            snapshot.id,
+            verified_paths=verified_paths,
+            verified_commits=verified_commits,
+            verified_versions=verified_versions,
+            verified_absent_paths=verified_absent_paths,
+            claims=claims,
+            verified_head=verified_head,
+            expected_last_verified_at=snapshot.last_verified_at,
+            # Both snapshot fields ride the CAS: `last_verified_at`
+            # alone is None == None on a never-verified memory, so a
+            # concurrent edit between `load_one` and the store's
+            # under-lock compare would let this stamp land on prose
+            # the caller never checked. `updated` moves on the edit.
+            expected_updated=snapshot.updated,
+            check_expected=True,
+        )
+        if caller is None:
+            return memory
+        if home_it and caller.model.home(snapshot.id) is None:
+            home = caller.home()
+            deps.store.put_membership(
+                "home",
+                {
+                    "record_id": snapshot.id,
+                    "kind": "memory",
+                    "project": home.project,
+                    "checkout": home.checkout,
+                    "rule": home.rule,
+                    "decided": isoformat_utc(memory.last_verified_at or memory.updated),
+                },
+            )
+        caller.add_head_witness("verify")
+    return memory
 
 
 DESC_MEMORY_VERIFY = (
@@ -327,51 +470,44 @@ async def memory_verify(
     # `verified_paths=None` carries the stored list onto a fresh stamp, so
     # it is gated below as well, with synced-store scoping
     # (`_refuse_unverifiable_stored_attestations`).
-    origin_root = snapshot.origin.worktree_root if snapshot.origin else None
-    if (
-        origin_root is None
-        and snapshot.origin is not None
-        and snapshot.origin.repo is not None
-    ):
-        # Legacy record: `origin.repo` was captured before
-        # `worktree_root` existed as a field, so the record names its
-        # repo but not its tree. When the CALLER is sitting in a
-        # checkout of that same repo, that checkout speaks for the
-        # memory's tree — the exact trust rule the commit-drift leg
-        # applies via `repos_match` before counting the caller's
-        # commits against the memory. Without this fallback a
-        # pre-worktree memory can never carry claims at all (the 3.40.0
-        # backfill measured the population: 8 of 128 repo-matched
-        # records), and its attestation existence check stays blind for
-        # the same reason. Fallback is read-only derivation — nothing
-        # rewrites the stored origin.
-        from .. import _handlers as _h
-
-        caller = _h.capture_origin()
-        if (
-            caller is not None
-            and caller.repo is not None
-            and caller.worktree_root is not None
-            and repos_match(snapshot.origin.repo, caller.repo)
-        ):
-            origin_root = caller.worktree_root
+    # Where the claims are read (design 3.6). A homed record's anchor comes
+    # from the membership model and the caller's resolution: its home
+    # checkout's live view, a stand-in, or nothing. A record with no home
+    # row is read where its origin recorded it, as before the migration
+    # homes it (design 8.6), and is homed by this verify at the caller's
+    # resolution when that is the tree it was read at (design 2.1, 8.1); a
+    # caller outside that tree is not resolved, as nothing here reads it.
+    homed = has_home(deps.store, id)
+    origin_root = None if homed else _record_root(snapshot, None)
+    anchoring: Anchoring | None = None
+    caller: Caller | None = None
+    if homed or _within(request_cwd(), origin_root):
+        anchoring, caller = caller_anchoring(deps.store, deps.config)
+    anchor = anchoring.for_record(id) if anchoring is not None else None
+    # The root relative claims are read at, live: the anchor's, else the
+    # recorded worktree when it is a directory here.
+    live_root = (
+        anchor.root
+        if anchor is not None
+        else (
+            origin_root
+            if origin_root is not None and _worktree_root_is_live(origin_root)
+            else None
+        )
+    )
     if verified_paths:
-        # A RELATIVE attestation is judged against the memory's recorded
-        # worktree, and a root this machine cannot see cannot say a
-        # path under it is missing — every relative entry would read
-        # as fabricated at once, the constant-function failure
-        # `_worktree_root_is_live` documents. Anchor only a live root;
-        # with none, `unverifiable_attestations` skips relative entries
-        # as could-not-ask and still judges absolute ones, which were
-        # attested as on-this-machine observations. Same gate the
-        # stored-list arm below and `handlers/restore` apply.
-        unseen = unverifiable_attestations(
-            verified_paths,
-            worktree_root=(
-                origin_root
-                if origin_root is not None and _worktree_root_is_live(origin_root)
-                else None
-            ),
+        # A RELATIVE attestation is judged against the memory's tree, and a
+        # root this machine cannot see cannot say a path under it is
+        # missing: every relative entry would read as fabricated at once,
+        # the constant-function failure `_worktree_root_is_live` documents.
+        # Anchor only a live root; with none, `unverifiable_attestations`
+        # skips relative entries as could-not-ask and still judges absolute
+        # ones, which were attested as on-this-machine observations. Same
+        # gate the stored-list arm below and `handlers/restore` apply.
+        unseen = (
+            unverifiable_attestations(verified_paths, anchor=anchor)
+            if anchor is not None
+            else unverifiable_attestations(verified_paths, worktree_root=live_root)
         )
         if unseen:
             raise ValueError(
@@ -388,7 +524,7 @@ async def memory_verify(
         # (the explicit clear) needs no check. Scoped leniently for the
         # synced-store case: see `_refuse_unverifiable_stored_attestations`.
         _refuse_unverifiable_stored_attestations(
-            list(snapshot.verified_paths), origin_root
+            list(snapshot.verified_paths), origin_root, anchor=anchor
         )
 
     # Claims are the one attestation the tool can CHECK, so it does — in
@@ -402,23 +538,26 @@ async def memory_verify(
     # is what makes the read side's trust in claims transitive — every
     # `last_verified_at` on a claim-carrying memory was stamped over
     # claims that held at that instant. The stored re-check is skipped
-    # only when the origin worktree isn't visible from this machine
-    # (same read-side leniency as attestations: a synced store may
-    # legitimately verify prose aspects it cannot stat), never when the
-    # tree is present and disagrees.
+    # only when the claims' tree isn't visible from this machine (same
+    # read-side leniency as attestations: a synced store may
+    # legitimately verify prose aspects it cannot stat) or is a stand-in
+    # for it, never when the tree is present and disagrees.
     normalized_claims: list[str] | None = None
     if claims is not None:
         normalized_claims = (
             _validate_declared_claims(
                 claims,
-                worktree_root=origin_root,
+                worktree_root=(
+                    anchor.declared_root if anchor is not None else origin_root
+                ),
                 surface="memory_verify",
+                anchor_rule=anchor.rule if anchor is not None else None,
             )
             if claims
             else []
         )
     elif snapshot.claims:
-        _refuse_stale_stored_claims(snapshot.claims, origin_root)
+        _refuse_stale_stored_claims(snapshot.claims, origin_root, anchor=anchor)
 
     # The stamp has to name something it checked when there is something
     # to check. Evidence is what this call attests or what a `None`
@@ -432,15 +571,16 @@ async def memory_verify(
         attests_absence=bool(verified_absent_paths)
         or (verified_absent_paths is None and bool(snapshot.verified_absent_paths)),
         declares_claims=bool(claims) or (claims is None and bool(snapshot.claims)),
+        anchor=anchor,
     )
 
     # Symbol citations in the body, AST-checked against the memory's own
-    # recorded worktree. ADVISORY, and structurally so: the result is
-    # attached to this response and read by nothing else. No staleness
-    # verdict, no drift leg, no health rollup consumes it, and none may
-    # until a benchmark measures its precision on real prose — the reach
-    # measurement in `tests/test_symbol_existence.py` is the reason to be
-    # cautious, not the reason to be confident.
+    # tree. ADVISORY, and structurally so: the result is attached to this
+    # response and read by nothing else. No staleness verdict, no drift
+    # leg, no health rollup consumes it, and none may until a benchmark
+    # measures its precision on real prose; the reach measurement in
+    # `tests/test_symbol_existence.py` is the reason to be cautious, not
+    # the reason to be confident.
     #
     # Computed from the SNAPSHOT rather than from the object `mark_verified`
     # returns, so the evidence and the attestation describe the same
@@ -452,42 +592,53 @@ async def memory_verify(
     # persistence primitive (pinned by
     # `test_mark_verified_does_not_itself_check_path_existence`), and this
     # is policy in the same sense the attestation refusal above is.
-    symbol_drift = check_symbol_citations(snapshot.body, worktree_root=origin_root)
-
-    # The stamp's anchor: the commit the origin checkout stands at, read
-    # from the same live tree the attestation and claim checks above
-    # resolved against, so the record says which tree state it was
-    # verified at and the commit-drift leg can count from there in
-    # reachability space. None when no checkout answers — a memory
-    # written outside git, a synced replica whose worktree is not here,
-    # a record with no repository — and the leg keeps the author-date
-    # count for it, labelled as such.
-    verified_head = (
-        head_sha(Path(origin_root))
-        if origin_root is not None
-        and snapshot.origin is not None
-        and snapshot.origin.repo is not None
-        and _worktree_root_is_live(origin_root)
-        else None
+    symbol_drift = check_symbol_citations(
+        snapshot.body, worktree_root=origin_root, anchor=anchor
     )
 
+    # The stamp's anchor: the commit the tree the checks above read stands
+    # at, so the record says which tree state it was verified at and the
+    # commit-drift leg can count from there in reachability space. None
+    # when no checkout answers (a memory written outside git, a synced
+    # replica whose tree is not here, a record with no repository), and
+    # the leg keeps the author-date count for it, labelled as such.
+    # The basis stays the record's: under an anchor, a record whose origin
+    # names a repository and a tree is stamped at the home checkout's live
+    # view, and a read that does not convict stamps nothing.
+    if anchor is not None:
+        verified_head = (
+            head_sha(Path(anchor.root))
+            if anchor.convicting
+            and anchor.root is not None
+            and snapshot.origin is not None
+            and snapshot.origin.repo is not None
+            and _record_root(snapshot, anchoring) is not None
+            else None
+        )
+    else:
+        verified_head = (
+            head_sha(Path(origin_root))
+            if origin_root is not None
+            and snapshot.origin is not None
+            and snapshot.origin.repo is not None
+            and _worktree_root_is_live(origin_root)
+            else None
+        )
+
     try:
-        memory = deps.store.mark_verified(
-            id,
+        memory = _stamp(
+            deps,
+            caller,
+            snapshot,
+            home_it=anchor is None
+            and anchoring is not None
+            and _is_callers_tree(live_root, anchoring.caller_root),
             verified_paths=verified_paths,
             verified_commits=verified_commits,
             verified_versions=verified_versions,
             verified_absent_paths=verified_absent_paths,
             claims=normalized_claims,
             verified_head=verified_head,
-            expected_last_verified_at=snapshot.last_verified_at,
-            # Both snapshot fields ride the CAS: `last_verified_at`
-            # alone is None == None on a never-verified memory, so a
-            # concurrent edit between `load_one` above and the store's
-            # under-lock compare would let this stamp land on prose
-            # the caller never checked. `updated` moves on the edit.
-            expected_updated=snapshot.updated,
-            check_expected=True,
         )
     except TombstonedError as exc:
         raise ValueError(str(exc)) from exc

@@ -14,7 +14,7 @@ in two so the count can be read again by anyone holding the fixture:
            M4's way: the repository most memories written in that
            worktree carry, else the checkout's git remote, else none), a
            frozen project map (for each caller, which hit memories
-           `recall.in_project` admits, read once since it touches the
+           rc3's rule admits (`recall._rc3_in_project`), read once since it touches the
            filesystem), the hit memories' static facts (created, category,
            origin, provenance label, summary length) and the timelines the
            as-of reads need (contradicted uses, updates and verifies, the
@@ -37,7 +37,7 @@ count that moves can be traced to the step that moved it:
              (created before the turn) and no contradicted use was open at
              the turn (no update or verify of it between that use and the
              turn).
-  project    asof with the built candidate gate: `recall.in_project` on
+  project    asof with rc3's built candidate gate (`recall._rc3_in_project`) on
              the frozen caller (which also applies `worktrees_match`), and
              no ambient exclusion, which the built prompt recall does not
              make (the brief does).
@@ -186,7 +186,8 @@ def freeze(
 ) -> dict[str, Any]:
     """The fixture for the window [`since`, `until`) of `store`."""
     from bettermemory.models import Origin
-    from bettermemory.recall import in_project, summarize
+    from bettermemory.recall import _rc3_in_project as in_project
+    from bettermemory.recall import summarize
 
     conn = _connect(store)
     memories: dict[str, dict[str, Any]] = {}

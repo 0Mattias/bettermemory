@@ -20,6 +20,7 @@ from ..store import (
     UnmigratedV8DirectoryError,
     refuse_unmigrated_v8,
 )
+from ._common import migration_line, run_migration_at_open
 
 
 log = logging.getLogger("bettermemory")
@@ -64,6 +65,11 @@ def run_serve() -> None:
     directory = config.resolved_directory()
     exit_if_unmigrated_v8(directory / STORE_FILENAME)
     store = Store.open_or_create(directory / STORE_FILENAME)
+    # The migration's run at open (design 8.6), logged rather than printed
+    # apart: this process's stderr is the server's log.
+    report = run_migration_at_open(store, config, level=logging.WARNING)
+    if report is not None:
+        log.info("%s", migration_line(report))
 
     log.info("memory directory: %s", directory)
     log.info(

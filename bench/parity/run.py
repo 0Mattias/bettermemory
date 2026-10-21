@@ -218,8 +218,6 @@ def rank_prefilter(store: Store, query: str) -> dict[str, Any]:
         query,
         scopes=None,
         excluded_scopes=None,
-        repo_filter=None,
-        worktree_filter=None,
         min_survivors=MAX_RESULTS,
     )
     hits = run_search(

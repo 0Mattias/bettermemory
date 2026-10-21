@@ -29,6 +29,20 @@ from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
 
+from .test_membership_security import stand_in_checkout
+
+
+@pytest.fixture(autouse=True)
+def in_checkout(
+    workspace: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    """Every handoff here runs in a checkout: run-state keys on the
+    caller's checkout (design 3.6), and a caller outside any has no prior
+    session."""
+    return stand_in_checkout(tmp_path_factory.mktemp("checkout"), monkeypatch)
+
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
     """Invoke a tool and return its structured payload.
@@ -247,33 +261,27 @@ async def test_episode_handoff_rewinds_past_floor_only_to_older_real_takeaway(
 async def test_episode_handoff_rewinds_past_zero_episode_to_older_real_takeaway(
     memory_dir: Path,
 ) -> None:
-    """Rewind contract (episode-zero-episode): a ZERO-EPISODE session — one
-    that recorded events but wrote NO episodes at all (not even a floor) —
-    must not sever the handoff chain, exactly like the floor-only case.
-    Sequence:
+    """Rewind contract (episode-zero-episode): a ZERO-EPISODE session (one
+    that recorded events but wrote NO episodes at all, not even a floor)
+    must not sever the handoff chain. Sequence:
 
         S1: writes a REAL takeaway ("from S1")
-        S2: a search-only tick — records an event (memory_search) but never
+        S2: a search-only tick: records an event (memory_search) but never
             calls episode_handoff (no entry floor) and never episode_write,
-            so it has ZERO episodes on disk while its events carry S2's
-            worktree_root
+            so it has ZERO episodes on disk
         S3: calls episode_handoff at entry
 
-    S2 is S3's immediately-prior worktree session, and it is zero-episode.
-    The pre-fix zero-episode branch adopted-and-broke on the FIRST
-    worktree-matching zero-episode candidate (S2), AHEAD of the rewind,
-    returning `episodes: []` with `prior_session_id == S2` — S1's real
-    takeaway became unreachable, severing the chain (the exact bug the
-    round-120 rewind fixed for floor-only sessions, left unhandled for
-    zero-episode sessions). The fix treats S2 like a floor-only tick:
-    remember it as the fallback and walk PAST it to S1, surfacing S1's
-    takeaway plus the honest soft note.
+    Which sessions are this checkout's is read from the homes of their
+    episodes (design 3.6, `Membership.handoff`). S2 has no episode, so
+    nothing keys it to a checkout and the handoff never sees it: S1 is
+    the immediately-prior session of the checkout, its takeaway is
+    surfaced, and no note fires. In particular no note claims S2 wrote a
+    floor or called episode_handoff.
 
-    Mutation-soundness: reverting the fix (restoring the zero-episode
-    `resolved_session_id = sid; break`) makes the walk stop at S2 and
-    return `episodes: []` with `prior_session_id == S2` — both the
-    `takeaway == "from S1"` and `prior_session_id == S1` assertions below
-    fail. The note assertion fails if the soft note is dropped.
+    Mutation-soundness: a handoff that adopted S2 (a session with no
+    episode of this checkout) would return `episodes: []` with
+    `prior_session_id == S2`, and both the `takeaway == "from S1"` and
+    `prior_session_id == S1` assertions below fail.
     """
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
 
@@ -320,27 +328,19 @@ async def test_episode_handoff_rewinds_past_zero_episode_to_older_real_takeaway(
     assert res["prior_session_id"] == s1_session_id, (
         f"prior_session_id should rewind to S1, not the zero-episode S2; got: {res!r}"
     )
-    # The honest soft note still fires: the IMMEDIATELY-preceding session
-    # (S2) recorded no takeaway, even though an older one is surfaced.
-    assert "note" in res, (
-        f"zero-episode immediately-prior session should still surface the "
-        f"soft note alongside the rewound takeaway; got: {res!r}"
+    # S2 is invisible to the handoff (design 3.6): S1 is the immediately-
+    # prior session of the checkout, so no note fires, and above all none
+    # that claims S2 wrote a floor or called episode_handoff.
+    assert "note" not in res, (
+        f"a zero-episode session is not a session of the checkout; no note "
+        f"may describe it; got: {res!r}"
     )
-    # The note must be the ZERO-EPISODE variant, not the floor-only one: S2
-    # left NO floor (it never called episode_handoff), so a note claiming "it
-    # called episode_handoff (which wrote the session-tag floor...)" would be a
-    # lie. Mutation-sound: reverting the note split (routing zero-episode
-    # through the floor-only note) makes the "wrote the session-tag floor"
-    # clause appear and fails the `not in` assertions.
-    assert "left no handoff floor" in res["note"], (
-        f"zero-episode note must state no floor was left; got: {res['note']!r}"
+    note = res.get("note", "")
+    assert "wrote the session-tag floor" not in note, (
+        f"no note may claim a floor was written; got: {note!r}"
     )
-    assert "wrote the session-tag floor" not in res["note"], (
-        f"zero-episode note must NOT claim a floor was written; got: {res['note']!r}"
-    )
-    assert "it called episode_handoff" not in res["note"], (
-        f"zero-episode note must NOT claim episode_handoff was called; got: "
-        f"{res['note']!r}"
+    assert "it called episode_handoff" not in note, (
+        f"no note may claim episode_handoff was called; got: {note!r}"
     )
 
 
@@ -521,17 +521,18 @@ async def test_episode_handoff_skips_out_of_process_hook_phantom_sessions(
             same worktree_root, `triggered_from="stop_hook"`
         S3: calls episode_handoff at entry
 
-    Post-fix, P is invisible: S1 resolves as the immediately-prior
-    session and its takeaway surfaces with NO note. Pre-fix, P is a
-    zero-episode candidate: the rewind still reaches S1's takeaway, but
-    the handoff reports the misleading zero-episode `note` claiming the
-    immediately-preceding session journaled nothing — the exact shape
-    this store's own run log showed while the defect was live.
+    P is invisible: the handoff reads which sessions are the checkout's
+    from the homes of their episodes (design 3.6, `Membership.handoff`),
+    and P has none, so S1 resolves as the immediately-prior session and
+    its takeaway surfaces with NO note. A handoff that let a hook row
+    stand for a session would report a misleading note claiming the
+    immediately-preceding session journaled nothing.
 
-    Mutation-soundness: reverting the `_OUT_OF_PROCESS_TRIGGERS` skip in
-    the walk makes `"note" in res` true and the note assertion below
-    fail; the takeaway/id assertions keep the rewind contract honest
-    either way.
+    Mutation-soundness: a handoff that admitted P as a candidate makes
+    `"note" in res` true and the note assertion below fail; the
+    takeaway/id assertions keep the rewind contract honest either way.
+    The process cwd is a checkout (`in_checkout`), so the server stamps
+    its events with a worktree root to harvest.
     """
     from bettermemory.events import Recorder
 
@@ -583,3 +584,193 @@ async def test_episode_handoff_skips_out_of_process_hook_phantom_sessions(
         f"a hook-phantom candidate must not manufacture the zero-episode "
         f"rewind note; got: {res!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Decision B22: the notes come from the caller's checkout's own rows
+# ---------------------------------------------------------------------------
+
+
+def _brief_here(memory_dir: Path, cfg: Config, where: Path, session: str) -> None:
+    """A conversation, `session`, whose SessionStart brief showed a pointer
+    at `where` and that journals nothing: its `session_brief` row carries
+    the checkout it stood in (rule rs-v5, design 8.11)."""
+    from bettermemory.location import resolve_caller
+    from bettermemory.origin import Origin
+    from bettermemory.recall import RecallState, session_brief
+
+    store = Store(memory_dir)
+    home = resolve_caller(store, cfg, str(where)).home()
+    memory = store.write(
+        content=f"the brief pointer {session} shows in this checkout",
+        scopes=["tools"],
+        origin=Origin(cwd=str(where), worktree_root=str(where)),
+        home=home,
+    )
+    store.mark_verified(memory.id)
+    result = session_brief(
+        session_id=session,
+        cwd=where,
+        config=cfg,
+        store=store,
+        state=RecallState(background=False),
+    )
+    assert memory.id in result.ids
+    (row,) = [
+        e
+        for e in store.iter_events()
+        if e["kind"] == "session_brief" and e["session"] == session
+    ]
+    assert row["checkout"] == home.checkout
+
+
+async def test_b22_a_session_that_journaled_nothing_here_is_named_by_its_note(
+    memory_dir: Path, in_checkout: Path
+) -> None:
+    """S1 journals a takeaway; a newer conversation stands in the same
+    checkout (its brief row names it) and journals nothing. The handoff
+    rewinds past it to S1's takeaway and the note says the
+    immediately-preceding session journaled nothing and left no floor."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    server_s1 = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    ep_s1 = await _call(
+        server_s1, "episode", action="write", body="S1 body", takeaway="from S1"
+    )
+    _brief_here(memory_dir, cfg, in_checkout, "conv-quiet")
+
+    reader = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(reader, "episode", action="handoff")
+
+    assert res["prior_session_id"] == ep_s1["session_id"]
+    assert [e["takeaway"] for e in res["episodes"]] == ["from S1"]
+    note = res["note"]
+    assert "journaled no takeaway and left no handoff floor" in note
+    assert "in this checkout" in note
+    assert "it called episode_handoff" not in note
+
+
+async def test_b22_a_session_that_journaled_nothing_with_nothing_older(
+    memory_dir: Path, in_checkout: Path
+) -> None:
+    """With no takeaway to rewind to, the session that stood here and
+    journaled nothing is surfaced itself, by the id its rows carry, with
+    its note: never the first-ever shape while a session of this checkout
+    demonstrably ran."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    _brief_here(memory_dir, cfg, in_checkout, "conv-quiet")
+
+    reader = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(reader, "episode", action="handoff")
+
+    assert res["prior_session_id"] == "conv-quiet"
+    assert res["episodes"] == []
+    assert "journaled no takeaway and left no handoff floor" in res["note"]
+
+
+async def test_b22_a_floor_only_session_with_rows_here_keeps_the_floor_note(
+    memory_dir: Path, in_checkout: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S2's conversation stands in the checkout (a brief row after its
+    handoff) and journaled a floor: its handoff row names the conversation,
+    so it is not read as a session that journaled nothing, and the note is
+    the floor-only one."""
+    from bettermemory.identity import ENV_HARNESS_SESSION
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    server_s1 = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    ep_s1 = await _call(
+        server_s1, "episode", action="write", body="S1 body", takeaway="from S1"
+    )
+    monkeypatch.setenv(ENV_HARNESS_SESSION, "conv-floor")
+    server_s2 = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_s2, "episode", action="handoff")
+    monkeypatch.delenv(ENV_HARNESS_SESSION)
+    _brief_here(memory_dir, cfg, in_checkout, "conv-floor")
+
+    reader = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(reader, "episode", action="handoff")
+
+    assert res["prior_session_id"] == ep_s1["session_id"]
+    assert [e["takeaway"] for e in res["episodes"]] == ["from S1"]
+    assert "read-only tick" in res["note"]
+    assert "left no handoff floor" not in res["note"]
+
+
+async def test_b22_a_session_journaling_by_episode_write_alone_is_not_quiet(
+    memory_dir: Path, in_checkout: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A conversation journals by `episode_write` alone, never calling the
+    handoff, and its first row in the checkout (a brief) comes after the
+    takeaway. Its write row names the conversation, so it journaled: the
+    handoff surfaces its takeaway with no zero-episode note."""
+    from bettermemory.identity import ENV_HARNESS_SESSION
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    monkeypatch.setenv(ENV_HARNESS_SESSION, "conv-writer")
+    writer = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    ep_w = await _call(
+        writer, "episode", action="write", body="W body", takeaway="from W"
+    )
+    monkeypatch.delenv(ENV_HARNESS_SESSION)
+    _brief_here(memory_dir, cfg, in_checkout, "conv-writer")
+
+    reader = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(reader, "episode", action="handoff")
+
+    assert res["prior_session_id"] == ep_w["session_id"]
+    assert [e["takeaway"] for e in res["episodes"]] == ["from W"]
+    assert "note" not in res
+
+
+async def test_b22_an_all_hidden_session_keeps_its_note_over_an_older_quiet_one(
+    memory_dir: Path, in_checkout: Path
+) -> None:
+    """A session that stood here and journaled nothing, older than the
+    session whose takeaways are all hidden, is not the immediately-prior
+    one: the hidden session is surfaced with the scope-hide note."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    _brief_here(memory_dir, cfg, in_checkout, "conv-quiet")
+    server_s3 = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    ep_s3 = await _call(
+        server_s3,
+        "episode",
+        action="write",
+        body="S3 alpha body",
+        takeaway="S3 on alpha",
+        scopes=["projects:alpha"],
+    )
+
+    reader = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(reader, "memory_admin", action="disable_scope", scope="projects:alpha")
+    res = await _call(reader, "episode", action="handoff")
+
+    assert res["prior_session_id"] == ep_s3["session_id"]
+    assert res["episodes"] == []
+    assert "enable_scope" in res["note"]
+    assert "left no handoff floor" not in res["note"]
+
+
+async def test_b22_a_session_of_another_checkout_of_the_project_yields_no_note(
+    memory_dir: Path, in_checkout: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """A conversation that stood in a linked worktree of the caller's
+    repository (another checkout of the same project) and journaled
+    nothing is not this checkout's: its rows name the other checkout, so
+    the handoff surfaces S1's takeaway with no note."""
+    from .test_membership_security import _git
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    server_s1 = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    ep_s1 = await _call(
+        server_s1, "episode", action="write", body="S1 body", takeaway="from S1"
+    )
+    linked = tmp_path_factory.mktemp("linked") / "checkout-side"
+    _git(in_checkout, "worktree", "add", "-q", "-b", "side", str(linked))
+    _brief_here(memory_dir, cfg, linked.resolve(), "conv-elsewhere")
+
+    reader = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(reader, "episode", action="handoff")
+
+    assert res["prior_session_id"] == ep_s1["session_id"]
+    assert [e["takeaway"] for e in res["episodes"]] == ["from S1"]
+    assert "note" not in res

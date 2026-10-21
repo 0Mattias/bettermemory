@@ -13,6 +13,7 @@ extras imports) that doesn't belong here.
 
 from __future__ import annotations
 
+import logging
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -24,6 +25,9 @@ from ..store import STORE_FILENAME, Store
 
 if TYPE_CHECKING:
     from ..events import Recorder
+    from ..membership_migrate import MigrationReport
+
+log = logging.getLogger("bettermemory.membership")
 
 
 @dataclass(frozen=True)
@@ -41,7 +45,7 @@ class CliContext:
     store: Store
 
 
-def cli_context() -> CliContext:
+def cli_context(*, migrate: bool = True) -> CliContext:
     """Resolve the active config, storage directory, and Store.
 
     Replaces the ``config = load_config(); directory =
@@ -50,6 +54,11 @@ def cli_context() -> CliContext:
     pay the full triple — ``load_config`` re-reads the TOML on every
     call (it holds no cache), which is one small file parse per CLI
     invocation, nowhere near a hot path.
+
+    With `migrate` (the default) the migration runs at open when a record
+    has no home (`migrate_at_open`). `bettermemory membership import`
+    passes False and runs it after its own homing, so the records its
+    document names are homed by the document first.
     """
     config = load_config()
     directory = config.resolved_directory()
@@ -58,7 +67,73 @@ def cli_context() -> CliContext:
     # Stores with the pure constructor instead, so inspecting a store
     # cannot rebuild the index it was asked to inspect.
     store = Store.open_or_create(directory / STORE_FILENAME)
+    if migrate:
+        try:
+            migrate_at_open(store, config)
+        except BaseException:
+            store.close()
+            raise
     return CliContext(config=config, directory=directory, store=store)
+
+
+def migrate_at_open(store: Store, config: Config) -> None:
+    """The migration's run at open (design 8.6): when a record has no
+    home (the first open of an upgraded store, or a re-upgrade after a
+    rollback, design 8.12), home every record before the command runs,
+    and say so on stderr in one line. `bettermemory membership migrate`
+    opens its store itself and never comes here, so its dry run is not
+    preceded by a run. Without a machine id the command runs on the store
+    as it is, after one warning (`run_migration_at_open`)."""
+    report = run_migration_at_open(store, config, level=logging.WARNING)
+    if report is None:
+        return
+    sys.stderr.write(
+        f"bettermemory: membership migrated: {report.homed} records homed, "
+        f"{len(report.proposals)} legacy questions opened\n"
+    )
+
+
+def run_migration_at_open(
+    store: Store, config: Config, *, level: int = logging.INFO
+) -> MigrationReport | None:
+    """`membership_migrate.ensure_migrated` at an entry point's open
+    (design 8.6): the report of a run that homed records, else None.
+
+    A store opened for reading (``allow_rekey=False`` found no key) is left
+    as it is; the next open with its key migrates it. When this process
+    has no machine id (`location.process_machine` raises OSError: the state
+    directory could not be opened), one line is logged at `level`, the
+    store is left as it is, and the next open tries again. The hook
+    commands pass INFO, the default: Claude Code shows a hook's stderr to
+    the user, and no handler prints an INFO record in a hook process."""
+    from .. import location
+    from ..membership_migrate import ensure_migrated, unhomed
+
+    if not store.has_key or not unhomed(store):
+        return None
+    try:
+        identity = location.process_machine()
+    except OSError as exc:
+        log.log(
+            level,
+            "membership migration not run for %s: no machine id (%s); the "
+            "next open tries again",
+            store.path,
+            exc,
+        )
+        return None
+    return ensure_migrated(store, identity, config=config)
+
+
+def migration_line(report: MigrationReport) -> str:
+    """The one log line of a run at open that homed records: its totals."""
+    t = report.totals
+    return (
+        f"membership migrated: {report.homed} records homed ({t.memory_homes} "
+        f"memories, {t.tombstone_homes} removed memories, {t.episode_homes} "
+        f"episodes), {t.projects} projects, {t.checkouts} checkouts, "
+        f"{t.proposals} legacy questions, {t.log_rows} log rows"
+    )
 
 
 def cli_recorder(

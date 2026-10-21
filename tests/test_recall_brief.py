@@ -2,9 +2,10 @@
 
 Pinned against real temp git repositories, through the store directly:
 
-- selection: the repository rule (a remote on both sides, a repo-less
-  checkout by worktree root, a null repo never matching a null repo,
-  sibling worktrees kept apart), provenance local or imported only, no
+- selection: the project rule (design 3.5: the memories homed in the
+  caller's project, from any checkout of it, a linked worktree included;
+  a remote-less checkout a project of its own), provenance local or
+  imported only, no
   ambient notes, no open contradiction, strictly ``fresh`` as
   `memory_show` computes it with the trust rule, newest first, eight at
   most, 1,200 characters at most, nothing for an empty selection or
@@ -41,7 +42,10 @@ from bettermemory import _caches
 from bettermemory import _response as response_module
 from bettermemory import origin as origin_module
 from bettermemory import recall as recall_module
+from bettermemory.admission import CountedRecords
 from bettermemory.config import Config, StorageConfig, TelemetryConfig
+from bettermemory.location import Caller, resolve_caller
+from bettermemory.membership import RecordHome
 from bettermemory.models import Category, Memory
 from bettermemory.origin import Origin
 from bettermemory.recall import (
@@ -68,6 +72,7 @@ from bettermemory.verdict import (
 
 from . import _transcript_rows as tr
 from .test_server_commit_drift import _REMOTE, _commit_touching
+from .test_membership_security import checkout
 from .test_verdict import _repo
 
 _GIT_AVAILABLE = shutil.which("git") is not None
@@ -99,23 +104,65 @@ def _config(store_dir: Path, *, telemetry: bool = True, brief: bool = True) -> C
 
 
 class _World:
-    """One store and one repository the caller stands in."""
+    """One store and one repository the caller stands in.
+
+    A memory is briefed by its home (design 3.5), which `fresh` gives it
+    from the origin it is written with: the repository's project for an
+    origin in it (or below it), ``global`` for none or for a directory
+    outside any repository, and the project of another checkout (made on
+    first use, one per directory name) for any other origin. The origin
+    stays on the record as data."""
 
     def __init__(self, tmp_path: Path) -> None:
+        self.tmp_path = tmp_path
         self.repo = _repo(tmp_path)
         self.store_dir = tmp_path / "store"
         self.store = Store(self.store_dir)
         self.caller = _origin(self.repo)
         self.config = _config(self.store_dir)
         self.state = RecallState(background=True)
+        # A checkout seen before: its first sight's line (L2) is not what
+        # these tests read (`test_membership_resolution.
+        # test_first_sight_line_leads_the_brief` does).
+        self.home = self.resolve(self.repo).home()
+        self._homes: dict[str, RecordHome] = {}
+
+    def resolve(self, where: Path | None) -> Caller:
+        """The caller standing at `where` (None: nothing readable)."""
+        return resolve_caller(
+            self.store, self.config, None if where is None else str(where)
+        )
+
+    def other_home(self, name: str, *, remote: str | None = None) -> RecordHome:
+        """The home of a record written in another checkout, `name`, its
+        own project."""
+        if name not in self._homes:
+            other = checkout(self.tmp_path / "others" / name, remote=remote)
+            self._homes[name] = self.resolve(other).home()
+        return self._homes[name]
+
+    def home_of(self, origin: Origin | None) -> RecordHome:
+        """The home a record written with `origin` has (see the class)."""
+        if origin is None:
+            plain = self.tmp_path / "plain"
+            plain.mkdir(exist_ok=True)
+            return self.resolve(plain).home()
+        where = origin.worktree_root or origin.cwd
+        if where is not None and Path(where).is_relative_to(self.repo):
+            return self.home
+        if origin.repo is None and origin.worktree_root is None:
+            return self.home_of(None)
+        return self.other_home(Path(where or "other").name)
 
     def fresh(self, body: str, *, origin: Origin | None = None, **kw: Any) -> Memory:
         """A memory written here and verified now: fresh while nothing
         moves under its claims."""
+        where = origin if origin is not None else self.caller
+        kw.setdefault("home", self.home_of(where))
         written = self.store.write(
             content=body,
             scopes=["projects:foo"],
-            origin=origin if origin is not None else self.caller,
+            origin=where,
             **kw,
         )
         return self.store.mark_verified(written.id)
@@ -188,7 +235,7 @@ def test_the_brief_shape_and_its_event(world: _World) -> None:
     assert result.surface == "session_brief"
     assert result.ids == (second.id, first.id)
     assert result.chars == len(result.stdout)
-    assert result.rule == "rs-v4"
+    assert result.rule == "rs-v5"
     (event,) = world.briefs()
     assert event["event_id"] == result.event_id
     assert event["ids"] == [second.id, first.id]
@@ -197,7 +244,9 @@ def test_the_brief_shape_and_its_event(world: _World) -> None:
     assert event["chars"] == len(result.stdout)
     assert event["rows_examined"] == 2
     assert event["unresolved"] == 0
-    assert event["rule"] == "rs-v4"
+    assert event["rule"] == "rs-v5"
+    assert event["checkout"] == world.home.checkout
+    assert event["rc3_admitted"] == [second.id, first.id]
     assert event["triggered_from"] == "session_hook"
     assert event["session"] == "transcript-brief"
     assert event["transcript_path"] == "/tmp/t.jsonl"
@@ -223,40 +272,57 @@ def test_the_summary_is_collapsed_and_cut_to_80(world: _World) -> None:
     assert summary.endswith("…")
 
 
-def test_only_this_repository_is_briefed(world: _World, tmp_path: Path) -> None:
+def test_only_this_project_is_briefed(world: _World, tmp_path: Path) -> None:
+    """The brief shows the memories of the caller's project (design 3.5),
+    from whichever checkout of it they were written in, a linked worktree
+    of the repository included (D1); another repository's, a global one
+    and one written outside any checkout are not shown."""
     here = world.fresh("prefer short release notes in this project")
     world.fresh(
-        "another repository's deploy rule", origin=_origin(world.repo, _OTHER_REMOTE)
+        "another repository's deploy rule",
+        origin=_origin(tmp_path / "other", _OTHER_REMOTE),
+        home=world.other_home("other", remote=_OTHER_REMOTE),
     )
     # Global: no origin at all.
     world.store.mark_verified(
-        world.store.write(content="a global preference", scopes=["tools"]).id
+        world.store.write(
+            content="a global preference", scopes=["tools"], home=world.home_of(None)
+        ).id
     )
     # Written outside any repository: a cwd and nothing else.
     world.fresh("written outside a checkout", origin=Origin(cwd=str(tmp_path)))
-    # A live sibling worktree of the same repository.
+    # A linked worktree of the same repository: the same project.
     sibling = tmp_path / "sibling"
-    sibling.mkdir()
-    world.fresh(
+    subprocess.run(
+        ["git", "worktree", "add", "-q", "-b", "sibling", str(sibling)],
+        cwd=world.repo,
+        check=True,
+        capture_output=True,
+    )
+    theirs = world.fresh(
         "a sibling worktree's note",
         origin=Origin(cwd=str(sibling), repo=_REMOTE, worktree_root=str(sibling)),
+        home=world.resolve(sibling).home(),
     )
-    assert world.brief().ids == (here.id,)
+    assert world.brief().ids == (theirs.id, here.id)
 
 
-def test_a_repo_less_checkout_matches_by_worktree_root(
-    world: _World, tmp_path: Path
-) -> None:
-    """A checkout with no remote has a worktree root and no repo: its
-    memories match by root, and a null repo never matches a null repo
-    elsewhere."""
-    caller = _origin(world.repo, remote=None)
-    mine = world.fresh("prefer short release notes here", origin=caller)
+def test_a_remote_less_checkout_briefs_its_own(world: _World, tmp_path: Path) -> None:
+    """A checkout with no remote is a project of its own (design 2.1): its
+    memories are briefed there, and neither another remote-less
+    checkout's nor another repository's are."""
+    bare = checkout(tmp_path / "bare")
+    caller = _origin(bare, remote=None)
+    mine = world.fresh(
+        "prefer short release notes here",
+        origin=caller,
+        home=world.resolve(bare).home(),
+    )
     elsewhere = tmp_path / "elsewhere"
-    elsewhere.mkdir()
     world.fresh(
         "a note from another remote-less checkout",
         origin=Origin(cwd=str(elsewhere), worktree_root=str(elsewhere)),
+        home=world.other_home("elsewhere"),
     )
     world.fresh("a note with a remote", origin=world.caller)
     assert world.brief(origin=caller).ids == (mine.id,)
@@ -350,13 +416,19 @@ def test_nothing_to_brief_prints_nothing_and_records_nothing(world: _World) -> N
 
 
 def test_nothing_outside_a_repository(world: _World, tmp_path: Path) -> None:
+    """Outside any project the brief shows nothing and records nothing; a
+    caller nothing could be read for is shown nothing and its row says
+    so (design 3.5)."""
     world.fresh("prefer short release notes in this project")
     nowhere = Origin(cwd=str(tmp_path))
     assert world.brief(origin=nowhere).stdout == ""
-    unknown = Origin(cwd=str(world.repo))
-    unknown._git_indeterminate = True
-    assert world.brief(origin=unknown).stdout == ""
     assert world.briefs() == []
+    unknown = world.resolve(None).resolution
+    result = world.brief(resolution=unknown)
+    assert result.ids == ()
+    (row,) = world.briefs()
+    assert row["ids"] == []
+    assert row["membership"] == "admitted nothing: indeterminate"
 
 
 def test_off_switches(world: _World) -> None:
@@ -462,12 +534,12 @@ def test_a_resume_with_every_candidate_shown_prints_nothing_and_records_the_row(
 
     assert (resumed.stdout, resumed.ids, resumed.chars) == ("", (), 0)
     assert resumed.surface == "session_brief"
-    assert resumed.rule == "rs-v4"
+    assert resumed.rule == "rs-v5"
     assert resumed.event_id is not None and resumed.event_id != startup.event_id
     _, row = world.briefs()
     assert row["event_id"] == resumed.event_id
     assert (row["ids"], row["chars"], row["omitted"]) == ([], 0, [second.id, first.id])
-    assert (row["source"], row["segment"], row["rule"]) == ("resume", 0, "rs-v4")
+    assert (row["source"], row["segment"], row["rule"]) == ("resume", 0, "rs-v5")
     assert (row["rows_examined"], row["unresolved"]) == (2, 0)
     assert row["session"] == "transcript-brief"
     assert row["transcript_path"] == "/tmp/t.jsonl"
@@ -638,6 +710,13 @@ def test_a_warm_brief_runs_no_git(
     assert warm.stdout == cold.stdout
 
 
+def _counted(memories: list[Memory]) -> CountedRecords:
+    """The records a full scan reads verdicts for, named: what the commit
+    legs are read under (`admission.DriftScope`), as the brief names the
+    records its admission decided."""
+    return CountedRecords(frozenset(m.id for m in memories))
+
+
 def _spy_resolve(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, int]]:
     """Every `resolve_verdicts` the brief runs on the request path and every
     `fill_verdicts` its background fill runs: (thread name, rows)."""
@@ -688,6 +767,7 @@ def test_a_head_move_resolves_at_most_24_and_fills_the_rest(
         caller_origin=world.caller,
         now=datetime.now(timezone.utc),
         stale_after_days=world.config.behavior.verification_stale_days,
+        admission=_counted(every),
     )
     expected = [v.id for v in full if v.staleness_verdict == "fresh"][
         :BRIEF_MAX_POINTERS
@@ -836,11 +916,13 @@ def _full_scan(world: _World, memories: list[Memory]) -> list[str]:
     empty memo; the memo is restored afterwards."""
     saved = dict(response_module._DRIFT_MEMO)
     response_module._clear_drift_memo()
+    rows = [world.store.load_one(m.id) for m in reversed(memories)]
     full = resolve_verdicts(
-        [world.store.load_one(m.id) for m in reversed(memories)],
+        rows,
         caller_origin=world.caller,
         now=datetime.now(timezone.utc),
         stale_after_days=world.config.behavior.verification_stale_days,
+        admission=_counted(rows),
     )
     response_module._clear_drift_memo()
     response_module._remember_drift(saved)
@@ -995,13 +1077,21 @@ def test_a_fill_never_memoises_a_verdict_computed_across_a_claimed_change(
     now = datetime.now(timezone.utc)
     stale = world.config.behavior.verification_stale_days
     memoised = memoised_verdicts(
-        rows, caller_origin=world.caller, now=now, stale_after_days=stale
+        rows,
+        caller_origin=world.caller,
+        now=now,
+        stale_after_days=stale,
+        admission=_counted(rows),
     )
     response_module._clear_drift_memo()
     full = {
         v.id: v
         for v in resolve_verdicts(
-            rows, caller_origin=world.caller, now=now, stale_after_days=stale
+            rows,
+            caller_origin=world.caller,
+            now=now,
+            stale_after_days=stale,
+            admission=_counted(rows),
         )
     }
     assert sum(1 for v in full.values() if v.staleness_verdict == "fresh") == 16

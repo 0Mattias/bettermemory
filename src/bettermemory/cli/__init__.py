@@ -39,7 +39,10 @@ from . import (
     health_cmd,
     init as init_cmd,
     log_cmd,
+    membership_cmd,
+    memory_move_cmd,
     migrate,
+    project_cmd,
     prompt_recall_cmd,
     recall_cmd,
     rename_scope,
@@ -119,6 +122,9 @@ def _build_parser() -> tuple[
         "rollback": rollback.add_subparser(sub),
         "episodes": episodes.add_subparser(sub),
         "log": log_cmd.add_subparser(sub),
+        "project": project_cmd.add_subparser(sub),
+        "memory": memory_move_cmd.add_subparser(sub),
+        "membership": membership_cmd.add_subparser(sub),
         "audit-turn": audit_turn_cmd.add_subparser(sub),
         "session-start": session_start_cmd.add_subparser(sub),
         "prompt-recall": prompt_recall_cmd.add_subparser(sub),
@@ -230,6 +236,15 @@ def main() -> None:
         return
     if cmd == "log":
         log_cmd.run(args, sub_parser=subparsers["log"])
+        return
+    if cmd == "project":
+        project_cmd.run(args, sub_parser=subparsers["project"])
+        return
+    if cmd == "memory":
+        memory_move_cmd.run(args, sub_parser=subparsers["memory"])
+        return
+    if cmd == "membership":
+        membership_cmd.run(args, sub_parser=subparsers["membership"])
         return
     if cmd == "audit-turn":
         audit_turn_cmd.run(args)

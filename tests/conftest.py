@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
 # Make `src/` importable without depending on the editable install. This is
 # belt-and-suspenders: if the venv's editable .pth file is unreadable for any
@@ -246,6 +246,200 @@ def clear_caches() -> None:
     ``bettermemory._caches`` when it is imported.
     """
     _caches.clear_all()
+
+
+def _outside(base: str, path: object, *, existing_only: bool = False) -> str | None:
+    """The real path of `path` when it lies outside `base`, else None. A
+    value that is not a path is not checked; with `existing_only`, neither
+    is a path that does not exist."""
+    if not isinstance(path, (str, os.PathLike)):
+        return None
+    here = os.path.realpath(os.fspath(path))
+    if existing_only and not os.path.lexists(here):
+        return None
+    if here == base or here.startswith(base + os.sep):
+        return None
+    return here
+
+
+@pytest.fixture(scope="session", autouse=True)
+def scratch_session(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
+    """The whole session runs inside pytest's base temporary directory: the
+    environment names scratch directories before any fixture runs, and
+    every call that would reach a directory of the developer's fails the
+    test that made it.
+
+    Session scope because a module- or session-scoped fixture runs before
+    any function-scoped one: a bench fixture that wrote through
+    `memory_write` before `storage_dir` named the state directory opened
+    the machine (`location.process_machine`) in the developer's own state
+    directory and minted a machine id there. Here the state directory is
+    named and the process cwd is a scratch workspace for the whole session
+    (each test then has its own; `workspace`), `BETTERMEMORY_WORKSPACE`
+    from the shell is dropped, and the user's state and config directories
+    (`platformdirs`), where the state directory, the keys directory and
+    the config resolve when nothing names them, are the session's own: a
+    test that drops a variable to read the default reads a scratch one.
+    `BETTERMEMORY_DIR` and `BETTERMEMORY_KEYS_DIR` from the shell running
+    the suite are dropped: the developer's store and keys are not a
+    test's, and a test that keeps its keys where `log.default_keys_dir`
+    points reads them back through the default, not through a variable
+    the shell set.
+
+    The guards, each checked against the session's base temporary
+    directory, which holds every `tmp_path`, and each failing through
+    `pytest.fail`, which no `except Exception` in the code under test
+    absorbs:
+
+    - a location capture (`location.capture` and the uncached read under
+      it) of a path that exists outside it. A capture of a path that does
+      not exist (an origin a test made up, such as ``/projects/foo``)
+      stats it, finds nothing and reads nothing more;
+    - a checkout token write or re-mint, whatever the path;
+    - the state directory `_daemon_client.resolve_state_dir` resolves, and
+      the one `machine.open_machine` is given or resolves;
+    - the keys directory `store.resolve_keys_dir` and
+      `log.default_keys_dir` resolve.
+
+    A child process a test spawns inherits the environment named here or
+    the test's own; the guards themselves are in-process.
+    """
+    import platformdirs
+
+    from bettermemory import checkout_token, location, machine
+    from bettermemory import store as _store
+    from bettermemory.identity import ENV_WORKSPACE
+
+    base = os.path.realpath(tmp_path_factory.getbasetemp())
+    root = tmp_path_factory.mktemp("session")
+    workspace = root / "workspace"
+    workspace.mkdir()
+
+    def check(what: str, path: object, *, existing_only: bool = False) -> None:
+        here = _outside(base, path, existing_only=existing_only)
+        if here is not None:
+            pytest.fail(
+                f"a test reached {what} at {here}, outside its scratch "
+                f"directory {base}: give it a directory under tmp_path",
+                pytrace=False,
+            )
+
+    real_capture = location.capture
+    real_uncached = location._capture_uncached
+
+    def capture(cwd: str, **kw: Any) -> location.Capture:
+        check("a location capture", cwd, existing_only=True)
+        return real_capture(cwd, **kw)
+
+    def uncached(cwd: str, **kw: Any) -> location.Capture:
+        check("a location capture", cwd, existing_only=True)
+        return real_uncached(cwd, **kw)
+
+    # The originals stay reachable for a test that measures the capture's
+    # own cost (`test_membership_capture`, E16).
+    capture.__wrapped__ = real_capture  # type: ignore[attr-defined]
+    uncached.__wrapped__ = real_uncached  # type: ignore[attr-defined]
+    real_write, real_remint = checkout_token.write, checkout_token.remint
+
+    def write(git_dir: Any, **kw: Any) -> checkout_token.TokenWrite:
+        check("a checkout token write", git_dir)
+        return real_write(git_dir, **kw)
+
+    def remint(git_dir: Any, **kw: Any) -> checkout_token.TokenWrite:
+        check("a checkout token re-mint", git_dir)
+        return real_remint(git_dir, **kw)
+
+    real_state_dir = _daemon_client.resolve_state_dir
+
+    def resolve_state_dir() -> Path:
+        resolved = real_state_dir()
+        check("the state directory", resolved)
+        return resolved
+
+    real_open_machine = machine.open_machine
+
+    def open_machine(
+        state_dir: Path | None = None, *args: Any, **kw: Any
+    ) -> machine.MachineIdentity:
+        check(
+            "a machine opened",
+            state_dir if state_dir is not None else _daemon_client.resolve_state_dir(),
+        )
+        return real_open_machine(state_dir, *args, **kw)
+
+    real_resolve_keys, real_default_keys = (
+        _store.resolve_keys_dir,
+        _log.default_keys_dir,
+    )
+
+    def resolve_keys_dir() -> Path:
+        resolved = real_resolve_keys()
+        check("the keys directory", resolved)
+        return resolved
+
+    def default_keys_dir() -> Path:
+        resolved = real_default_keys()
+        check("the keys directory", resolved)
+        return resolved
+
+    def user_dir(kind: str) -> Any:
+        def resolved(appname: str | None = None, *args: Any, **kw: Any) -> str:
+            return str(root / kind / (appname or ""))
+
+        return resolved
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(platformdirs, "user_state_dir", user_dir("user-state"))
+        mp.setattr(platformdirs, "user_config_dir", user_dir("user-config"))
+        mp.setenv(_daemon_client.STATE_DIR_ENV, str(root / "state"))
+        mp.chdir(workspace)
+        mp.delenv(ENV_WORKSPACE, raising=False)
+        mp.delenv(_config.KEYS_DIR_ENV, raising=False)
+        mp.delenv(_config.ENV_DIR_OVERRIDE, raising=False)
+        mp.setattr(location, "capture", capture)
+        mp.setattr(location, "_capture_uncached", uncached)
+        mp.setattr(checkout_token, "write", write)
+        mp.setattr(checkout_token, "remint", remint)
+        mp.setattr(_daemon_client, "resolve_state_dir", resolve_state_dir)
+        mp.setattr(machine, "open_machine", open_machine)
+        mp.setattr(_store, "resolve_keys_dir", resolve_keys_dir)
+        mp.setattr(_log, "default_keys_dir", default_keys_dir)
+        yield root
+
+
+@pytest.fixture(autouse=True)
+def workspace(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Every test runs in a scratch workspace of its own: a plain
+    directory, outside any repository, made the process cwd.
+
+    A caller that names no directory is resolved where it stands
+    (`memory_write`, the hooks, `session-start`; design 3.1), and a first
+    sight in a repository writes a checkout token into its git directory:
+    resolved at the process cwd, a test run from a checkout wrote one into
+    that checkout. The process cwd rather than `BETTERMEMORY_WORKSPACE`:
+    a request over HTTP never reads the environment (`identity.resolve`),
+    so a daemon a test serves in process resolves an undeclared caller at
+    the process cwd whatever the variable says, and a test that stands in
+    a repository of its own (`monkeypatch.chdir`) would have the variable
+    answer ahead of it. A test that builds a repository names it (the cwd
+    it stands in or passes, or the variable). A sibling of `tmp_path`
+    rather than a child, since some tests count the entries under
+    `tmp_path`.
+
+    No caller an earlier test published survives into this one: an
+    in-process tool call or hook publishes its caller
+    (`identity.bind`, `identity.bind_transcript`) for the rest of the
+    task, and a workspace that caller declared, an earlier test's
+    directory, would answer `workspace_declaration` ahead of the cwd.
+    """
+    from bettermemory import identity
+
+    identity._CURRENT.set(None)
+    here = tmp_path_factory.mktemp("workspace")
+    monkeypatch.chdir(here)
+    return here
 
 
 @pytest.fixture

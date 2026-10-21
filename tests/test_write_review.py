@@ -12,6 +12,7 @@ that wants a review sets them through the `tau` fixture;
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from types import MappingProxyType
@@ -24,12 +25,15 @@ from bettermemory import _handlers
 from bettermemory import identity
 from bettermemory import review
 from bettermemory import supersession
+from bettermemory.admission import Admission
 from bettermemory.builder import build_server
 from bettermemory.config import BehaviorConfig, Config, StorageConfig
 from bettermemory.conflicts import ConflictQueue
 from bettermemory.events import Recorder
 from bettermemory.handlers.search import resolve_search_pool
+from bettermemory.location import resolve_caller
 from bettermemory.log import CONTROL_KINDS
+from bettermemory.membership import REVIEW_STRATA, RecordHome
 from bettermemory.models import generate_ulid
 from bettermemory.origin import Origin
 from bettermemory.search import search as run_search
@@ -37,6 +41,7 @@ from bettermemory.session import SessionState
 from bettermemory.store import MUTATION_KINDS, Store
 
 from ._mcp import call_tool
+from .test_membership_security import checkout, stand_in_checkout
 
 TAU = 0.5
 
@@ -89,16 +94,41 @@ def tau(monkeypatch: pytest.MonkeyPatch) -> float:
 
 
 @pytest.fixture(autouse=True)
-def _fixed_origin(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Every write captures the same origin, so the related set's repo and
-    worktree filters do not depend on where the suite runs."""
-    monkeypatch.setattr(_handlers, "capture_origin", lambda *a, **k: ORIGIN)
+def _in_checkout(
+    workspace: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    """Every write is made in a checkout: the review strata admit the
+    caller's own project and nothing outside any project (design 3.5), so
+    a write from the plain workspace would have no related set."""
+    return stand_in_checkout(tmp_path_factory.mktemp("checkout"), monkeypatch)
+
+
+@pytest.fixture(autouse=True)
+def _fixed_origin(_in_checkout: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every write captures the same origin, in the checkout the test
+    stands in: the write is resolved at its origin's cwd (design 8.1), and
+    the remote and branch it carries as data do not depend on where the
+    suite runs."""
+    here = Origin(
+        cwd=str(_in_checkout),
+        repo=ORIGIN.repo,
+        branch=ORIGIN.branch,
+        worktree_root=str(_in_checkout),
+    )
+    monkeypatch.setattr(_handlers, "capture_origin", lambda *a, **k: here)
     monkeypatch.delenv(identity.ENV_CLIENT, raising=False)
     monkeypatch.delenv(identity.ENV_MODEL, raising=False)
 
 
 class Harness:
-    """One server over one scratch store, with its recorder on."""
+    """One server over one scratch store, with its recorder on.
+
+    The caller is the checkout the test stands in, resolved once here so
+    its first sight is behind the writes. A seeded record is homed by the
+    origin it is written with (design 2.1): `ORIGIN` is the checkout's
+    project, `OTHER_ORIGIN` another checkout's (made on first use)."""
 
     def __init__(self, root: Path, *, behavior: BehaviorConfig | None = None) -> None:
         self.root = root
@@ -107,6 +137,8 @@ class Harness:
             behavior=behavior or BehaviorConfig(),
         )
         self.store = Store(root)
+        self.home = resolve_caller(self.store, self.config, os.getcwd()).home()
+        self._other: RecordHome | None = None
         self.state = SessionState()
         self.server = build_server(
             config=self.config,
@@ -115,11 +147,28 @@ class Harness:
             recorder=Recorder(store=self.store, session_id=self.state.session_id),
         )
 
+    def other_home(self) -> RecordHome:
+        """The home of a record written in another checkout, its own
+        project."""
+        if self._other is None:
+            beta = checkout(self.root.parent / "beta")
+            self._other = resolve_caller(self.store, self.config, str(beta)).home()
+        return self._other
+
+    def admission(self) -> Admission:
+        """The REVIEW_STRATA admission of a write made where the test
+        stands, resolved as the write handler resolves it."""
+        caller = resolve_caller(self.store, self.config, os.getcwd())
+        return Admission.of(REVIEW_STRATA, caller)
+
     def seed(self, content: str, *, scopes: list[str] | None = None, **kw: Any) -> str:
+        origin = kw.pop("origin", ORIGIN)
+        home = self.other_home() if origin is OTHER_ORIGIN else self.home
         memory = self.store.write(
             content=content,
             scopes=scopes or ["tools"],
-            origin=kw.pop("origin", ORIGIN),
+            origin=origin,
+            home=kw.pop("home", home),
             **kw,
         )
         return memory.id
@@ -342,19 +391,18 @@ def _seed_billing(harness: Harness) -> tuple[list[str], list[str]]:
 
 
 def _engine_top3(harness: Harness, content: str) -> list[str]:
+    admission = harness.admission()
     pool = resolve_search_pool(
         harness.store,
         content,
         excluded_scopes=set(),
-        repo_filter=ORIGIN.repo,
-        worktree_filter=ORIGIN.worktree_root,
+        admission=admission,
         min_survivors=review.RELATED_TOP,
     )
     hits = run_search(
         pool.memories,
         content,
-        repo_filter=ORIGIN.repo,
-        worktree_filter=ORIGIN.worktree_root,
+        admission=admission,
         max_results=review.RELATED_TOP,
         corpus_stats_provider=pool.corpus_stats_provider,
     )
@@ -500,8 +548,7 @@ async def test_first_call_may_omit_review_id(harness: Harness, tau: float) -> No
         harness.store,
         BACKUP_NEW,
         behavior=harness.config.behavior,
-        repo_filter=ORIGIN.repo,
-        worktree_filter=ORIGIN.worktree_root,
+        admission=harness.admission(),
     )
     assert related.ids == []
     old = harness.seed(BACKUP_OLD)
@@ -509,8 +556,7 @@ async def test_first_call_may_omit_review_id(harness: Harness, tau: float) -> No
         harness.store,
         BACKUP_NEW,
         behavior=harness.config.behavior,
-        repo_filter=ORIGIN.repo,
-        worktree_filter=ORIGIN.worktree_root,
+        admission=harness.admission(),
     )
     assert old in related.ids
     res = await harness.write(
@@ -603,8 +649,7 @@ def _related_now(harness: Harness, content: str) -> list[str]:
         harness.store,
         content,
         behavior=harness.config.behavior,
-        repo_filter=ORIGIN.repo,
-        worktree_filter=ORIGIN.worktree_root,
+        admission=harness.admission(),
     ).ids
 
 

@@ -51,6 +51,7 @@ from .search import raw_content_tokens
 from .time_utils import parse_event_ts
 
 if TYPE_CHECKING:
+    from .admission import Admission
     from .config import BehaviorConfig
     from .store import Store
 
@@ -342,22 +343,26 @@ def related_for(
     *,
     behavior: BehaviorConfig,
     excluded_scopes: AbstractSet[str] = frozenset(),
-    repo_filter: str | None = None,
-    worktree_filter: str | None = None,
+    admission: Admission | None = None,
     active: Sequence[Memory] | None = None,
     exclude_ids: Iterable[str] = (),
 ) -> RelatedSet:
     """The related set for a write of `content`.
 
     - The engine's top `RELATED_TOP`, from `handlers.search.resolve_search_pool`
-      plus `search.search`, under the write's repo and worktree and with
-      the session's disabled scopes excluded. Never the `memory_search`
-      handler, which would issue use tokens and record a search event.
+      plus `search.search`, under the writing caller's REVIEW_STRATA
+      admission (`admission`, design 3.5: its own project's memories,
+      nothing for a caller outside any project) and with the session's
+      disabled scopes excluded. Never the `memory_search` handler, which
+      would issue use tokens and record a search event.
     - Every memory the cue code (`supersession.detect_supersession`) would
       link or file, when `behavior.write_supersession` is on, added after
-      the engine's hits if not already among them, up to `RELATED_CAP` in
-      all. `exclude_ids` are the writer's declared `supersedes` targets,
-      which the cue code skips as it does in the commit.
+      the engine's hits if not already among them and if the admission
+      admits it, up to `RELATED_CAP` in all. `exclude_ids` are the
+      writer's declared `supersedes` targets, which the cue code skips as
+      it does in the commit.
+
+    `admission` None admits every memory (offline callers).
 
     `active` is the active set the cue code reads; it is loaded when None
     and the flag is on. The returned report is the one the commit uses.
@@ -370,16 +375,14 @@ def related_for(
         store,
         content,
         excluded_scopes=excluded,
-        repo_filter=repo_filter,
-        worktree_filter=worktree_filter,
+        admission=admission,
         min_survivors=RELATED_TOP,
     )
     hits = run_search(
         pool.memories,
         content,
         excluded_scopes=excluded,
-        repo_filter=repo_filter,
-        worktree_filter=worktree_filter,
+        admission=admission,
         max_results=RELATED_TOP,
         half_life_days=behavior.recency_boost_half_life_days,
         mode=behavior.search_mode or "hybrid",  # type: ignore[arg-type]
@@ -401,10 +404,15 @@ def related_for(
             content, existing, exclude_ids=list(exclude_ids)
         )
         active_by_id = {m.id: m for m in existing}
-        for match in [*report.supersedes, *report.conflicts]:
+        matches = [*report.supersedes, *report.conflicts]
+        if admission is not None:
+            admission.prime(match.memory_id for match in matches)
+        for match in matches:
             if len(ordered) >= RELATED_CAP:
                 break
             if match.memory_id in {m.id for m in ordered}:
+                continue
+            if admission is not None and not admission.admits_id(match.memory_id):
                 continue
             memory = active_by_id.get(match.memory_id)
             if memory is not None:

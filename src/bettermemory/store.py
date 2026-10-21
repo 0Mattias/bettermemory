@@ -142,6 +142,39 @@ FOLDED_TABLES = (
     "imports",
     "quarantine",
 )
+
+# The membership tables (design 8.5, decision D9): additive beside the
+# record tables, folded by the same replay. Each is a `_MembershipTable`
+# below; its mutation kinds are `<kind>_put` and `<kind>_delete`. They are
+# kept apart from `FOLDED_TABLES`, whose eight names the record fold
+# reports under `tables`; `refold` reports these under `membership`.
+MEMBERSHIP_TABLES = (
+    "machines",
+    "projects",
+    "project_witnesses",
+    "project_blobs",
+    "project_remotes",
+    "project_files",
+    "declared_remotes",
+    "checkouts",
+    "checkout_views",
+    "homes",
+    "proposals",
+)
+_MEMBERSHIP_MUTATION_TABLES = (
+    "machine",
+    "project",
+    "project_witness",
+    "project_blob",
+    "project_remote",
+    "project_file",
+    "declared_remote",
+    "checkout",
+    "checkout_view",
+    "home",
+    "proposal",
+)
+
 _MUTATION_TABLES = (
     "memory",
     "tombstone",
@@ -150,10 +183,54 @@ _MUTATION_TABLES = (
     "conflict",
     "import",
     "quarantine",
+    *_MEMBERSHIP_MUTATION_TABLES,
 )
 MUTATION_KINDS = frozenset(
     f"{table}_{op}" for table in _MUTATION_TABLES for op in ("put", "delete")
 )
+
+# The membership observability rows (design 8.10, and `store_forked` of
+# design 8.7): control rows of their own, written whatever the telemetry
+# setting, MAC'd and chained like every row, never read as telemetry
+# events. They change no table, so the fold passes over them.
+MEMBERSHIP_EVENT_KINDS = frozenset(
+    {
+        "resolution_indeterminate",
+        "resolution_deferred",
+        "resolution_session",
+        "resolution_joined",
+        "resolution_new",
+        "proposal_opened",
+        "proposal_answered",
+        "checkout_registered",
+        "checkout_moved",
+        "checkout_view_added",
+        "checkout_rekeyed",
+        "checkout_retired",
+        "token_superseded",
+        "token_reminted",
+        "remote_declared",
+        "project_minted",
+        "project_merged",
+        "project_file_bound",
+        "project_reparented",
+        "machine_cloned",
+        "machine_facts_updated",
+        "witness_put",
+        "witness_released",
+        "import_homed",
+        "recall_suppressed",
+        "membership_migrated",
+        "store_forked",
+    }
+)
+MEMBERSHIP_MUTATION_KINDS = frozenset(
+    f"{table}_{op}" for table in _MEMBERSHIP_MUTATION_TABLES for op in ("put", "delete")
+)
+
+# Every kind the telemetry readers pass over: mutations, control rows and
+# the membership rows.
+_NOT_TELEMETRY = MUTATION_KINDS | CONTROL_KINDS | MEMBERSHIP_EVENT_KINDS
 
 # Key columns per folded table, for the fold's row comparison.
 _TABLE_KEYS: dict[str, tuple[str, ...]] = {
@@ -165,7 +242,174 @@ _TABLE_KEYS: dict[str, tuple[str, ...]] = {
     "conflicts": ("id",),
     "imports": ("source",),
     "quarantine": ("name",),
+    "machines": ("id",),
+    "projects": ("id",),
+    "project_witnesses": ("project", "commit_id"),
+    "project_blobs": ("project", "blob"),
+    "project_remotes": ("project", "remote_key"),
+    "project_files": ("file_id",),
+    "declared_remotes": ("remote_key",),
+    "checkouts": ("id",),
+    "checkout_views": ("checkout", "machine", "path"),
+    "homes": ("record_id",),
+    "proposals": ("id",),
 }
+
+
+@dataclass(frozen=True)
+class _MembershipTable:
+    """One membership table as the mutation rows carry it: the SQL table,
+    the kind prefix of its rows, its key and every column in order. A
+    column whose name ends in ``_json`` holds a JSON value in the payload
+    and its canonical text in the table. ``optional`` columns came after
+    the table: a row written before one reads it as null, and the
+    additive step adds it to a table that lacks it."""
+
+    table: str
+    kind: str
+    key: tuple[str, ...]
+    columns: tuple[str, ...]
+    optional: tuple[str, ...] = ()
+
+
+_MEMBERSHIP_SPECS: dict[str, _MembershipTable] = {
+    spec.kind: spec
+    for spec in (
+        _MembershipTable(
+            "machines",
+            "machine",
+            ("id",),
+            ("id", "facts_json", "predecessor", "minted"),
+        ),
+        _MembershipTable(
+            "projects",
+            "project",
+            ("id",),
+            (
+                "id",
+                "name",
+                "merged_into",
+                "provisional",
+                "parent",
+                "tenant",
+                "folder",
+                "boundary",
+                "minted",
+            ),
+        ),
+        _MembershipTable(
+            "project_witnesses",
+            "project_witness",
+            ("project", "commit_id"),
+            ("project", "commit_id", "arrival", "source", "fingerprint"),
+        ),
+        _MembershipTable(
+            "project_blobs",
+            "project_blob",
+            ("project", "blob"),
+            ("project", "blob", "witness"),
+        ),
+        _MembershipTable(
+            "project_remotes",
+            "project_remote",
+            ("project", "remote_key"),
+            ("project", "remote_key"),
+        ),
+        _MembershipTable(
+            "project_files",
+            "project_file",
+            ("file_id",),
+            ("file_id", "project", "evidence"),
+        ),
+        _MembershipTable(
+            "declared_remotes",
+            "declared_remote",
+            ("remote_key",),
+            ("remote_key", "project", "principal"),
+        ),
+        _MembershipTable(
+            "checkouts",
+            "checkout",
+            ("id",),
+            (
+                "id",
+                "project",
+                "machine",
+                "kind",
+                "object_device",
+                "object_inode",
+                "object_birth",
+                "common_device",
+                "common_inode",
+                "common_birth",
+                "git_dir",
+                "token",
+                "token_status",
+                "stamps_json",
+                "last_head",
+                "branch",
+                "remotes_json",
+                "manifest_json",
+                "legacy",
+                "retired",
+                "registered",
+                "unresolved_json",
+            ),
+            optional=("unresolved_json",),
+        ),
+        _MembershipTable(
+            "checkout_views",
+            "checkout_view",
+            ("checkout", "machine", "path"),
+            ("checkout", "machine", "path", "first_seen", "last_seen", "seen_order"),
+        ),
+        _MembershipTable(
+            "homes",
+            "home",
+            ("record_id",),
+            ("record_id", "kind", "project", "checkout", "rule", "decided"),
+        ),
+        _MembershipTable(
+            "proposals",
+            "proposal",
+            ("id",),
+            (
+                "id",
+                "checkout",
+                "kind",
+                "candidates_json",
+                "evidence_json",
+                "reason",
+                "line",
+                "state",
+                "answer",
+                "answered_by",
+                "signature_json",
+                "opened",
+            ),
+        ),
+    )
+}
+_MEMBERSHIP_BY_TABLE: dict[str, _MembershipTable] = {
+    spec.table: spec for spec in _MEMBERSHIP_SPECS.values()
+}
+
+# The meta key of the store id of design 8.7 (decision D16): minted with
+# the store, carried by exports, replaced when an import shows the store
+# was copied whole and both copies wrote (`store_forked`). It is not the
+# `store_id` the key files are named by, which a fork leaves as it is.
+MEMBERSHIP_STORE_ID = "membership_store_id"
+
+
+class RecordHome(NamedTuple):
+    """The home a memory or an episode is written with (design 2.1): the
+    project id (``global`` outside any repository and any project file),
+    the checkout id, and the rule of the ladder that decided it."""
+
+    project: str
+    checkout: str | None
+    rule: str
+
 
 _CONFLICT_COLUMNS = (
     "id",
@@ -481,6 +725,151 @@ CREATE TABLE IF NOT EXISTS quarantine (
     size INTEGER,
     sha256 TEXT
 );
+"""
+
+# The membership tables and their indexes (design 8.5). Additive: a store
+# created by an earlier build gets them at its first open by this one
+# (`_add_membership_tables`), and an earlier build opening a store that
+# has them reads its own tables as before. Object keys are text, so a
+# 64-bit NTFS file index or a 128-bit ReFS id fits as it is.
+MEMBERSHIP_SCHEMA = """
+CREATE TABLE IF NOT EXISTS machines (
+    id TEXT PRIMARY KEY,
+    facts_json TEXT NOT NULL DEFAULT '{}',
+    predecessor TEXT,
+    minted TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    merged_into TEXT,
+    provisional TEXT,
+    parent TEXT,
+    tenant TEXT,
+    folder INTEGER NOT NULL DEFAULT 0,
+    boundary INTEGER NOT NULL DEFAULT 0,
+    minted TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS projects_by_merged_into ON projects(merged_into);
+
+CREATE TABLE IF NOT EXISTS project_witnesses (
+    project TEXT NOT NULL,
+    commit_id TEXT NOT NULL,
+    arrival INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    fingerprint TEXT,
+    PRIMARY KEY (project, commit_id)
+);
+
+CREATE INDEX IF NOT EXISTS project_witnesses_by_commit ON project_witnesses(commit_id);
+CREATE INDEX IF NOT EXISTS project_witnesses_by_fingerprint
+    ON project_witnesses(fingerprint);
+
+CREATE TABLE IF NOT EXISTS project_blobs (
+    project TEXT NOT NULL,
+    blob TEXT NOT NULL,
+    witness TEXT NOT NULL,
+    PRIMARY KEY (project, blob)
+);
+
+CREATE INDEX IF NOT EXISTS project_blobs_by_witness ON project_blobs(project, witness);
+
+CREATE TABLE IF NOT EXISTS project_remotes (
+    project TEXT NOT NULL,
+    remote_key TEXT NOT NULL,
+    PRIMARY KEY (project, remote_key)
+);
+
+CREATE INDEX IF NOT EXISTS project_remotes_by_key ON project_remotes(remote_key);
+
+CREATE TABLE IF NOT EXISTS project_files (
+    file_id TEXT PRIMARY KEY,
+    project TEXT NOT NULL,
+    evidence TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS project_files_by_project ON project_files(project);
+
+CREATE TABLE IF NOT EXISTS declared_remotes (
+    remote_key TEXT PRIMARY KEY,
+    project TEXT NOT NULL,
+    principal TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS checkouts (
+    id TEXT PRIMARY KEY,
+    project TEXT NOT NULL,
+    machine TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    object_device TEXT,
+    object_inode TEXT,
+    object_birth TEXT,
+    common_device TEXT,
+    common_inode TEXT,
+    common_birth TEXT,
+    git_dir TEXT,
+    token TEXT,
+    token_status TEXT NOT NULL,
+    stamps_json TEXT NOT NULL DEFAULT '[]',
+    last_head TEXT,
+    branch TEXT,
+    remotes_json TEXT NOT NULL DEFAULT '[]',
+    manifest_json TEXT,
+    legacy INTEGER NOT NULL DEFAULT 0,
+    retired INTEGER NOT NULL DEFAULT 0,
+    registered TEXT NOT NULL,
+    unresolved_json TEXT
+);
+
+CREATE INDEX IF NOT EXISTS checkouts_by_object
+    ON checkouts(machine, object_device, object_inode);
+CREATE INDEX IF NOT EXISTS checkouts_by_common
+    ON checkouts(machine, common_device, common_inode);
+CREATE INDEX IF NOT EXISTS checkouts_by_token ON checkouts(token);
+CREATE INDEX IF NOT EXISTS checkouts_by_project ON checkouts(project);
+
+CREATE TABLE IF NOT EXISTS checkout_views (
+    checkout TEXT NOT NULL,
+    machine TEXT NOT NULL,
+    path TEXT NOT NULL,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    seen_order INTEGER NOT NULL,
+    PRIMARY KEY (checkout, machine, path)
+);
+
+CREATE INDEX IF NOT EXISTS checkout_views_by_path ON checkout_views(machine, path);
+
+CREATE TABLE IF NOT EXISTS homes (
+    record_id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    project TEXT NOT NULL,
+    checkout TEXT,
+    rule TEXT NOT NULL,
+    decided TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS homes_by_project ON homes(project);
+CREATE INDEX IF NOT EXISTS homes_by_checkout ON homes(checkout);
+
+CREATE TABLE IF NOT EXISTS proposals (
+    id TEXT PRIMARY KEY,
+    checkout TEXT,
+    kind TEXT NOT NULL,
+    candidates_json TEXT NOT NULL DEFAULT '[]',
+    evidence_json TEXT NOT NULL DEFAULT '{}',
+    reason TEXT NOT NULL,
+    line TEXT NOT NULL,
+    state TEXT NOT NULL,
+    answer TEXT,
+    answered_by TEXT,
+    signature_json TEXT,
+    opened TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS proposals_by_checkout ON proposals(checkout, state);
 """
 
 
@@ -1056,8 +1445,89 @@ def _apply_mutation(
         )
     elif kind == "quarantine_delete":
         conn.execute("DELETE FROM quarantine WHERE name = ?", (str(payload["name"]),))
+    elif kind.endswith("_put") and kind[: -len("_put")] in _MEMBERSHIP_SPECS:
+        spec = _MEMBERSHIP_SPECS[kind[: -len("_put")]]
+        conn.execute(
+            f"INSERT OR REPLACE INTO {spec.table}({', '.join(spec.columns)}) "
+            f"VALUES ({', '.join('?' for _ in spec.columns)})",
+            _membership_values(spec, payload[spec.kind]),
+        )
+    elif kind.endswith("_delete") and kind[: -len("_delete")] in _MEMBERSHIP_SPECS:
+        spec = _MEMBERSHIP_SPECS[kind[: -len("_delete")]]
+        conn.execute(
+            f"DELETE FROM {spec.table} WHERE "
+            + " AND ".join(f"{column} = ?" for column in spec.key),
+            _membership_key(spec, payload),
+        )
     else:
         raise ValueError(f"unknown mutation kind {kind!r}")
+
+
+def _membership_values(spec: _MembershipTable, row: Any) -> tuple[Any, ...]:
+    """The column values of a membership row, in the table's column order:
+    every column present and no other, the key columns non-empty text,
+    the rest text, integers or null, a ``_json`` column's value as its
+    canonical JSON text (null stays null). Raises KeyError, TypeError or
+    ValueError on a row that does not fit, which the fold reports as
+    ``payload_invalid``."""
+    if not isinstance(row, Mapping):
+        raise TypeError(f"a {spec.kind} row must be an object")
+    unknown = set(row) - set(spec.columns)
+    if unknown:
+        raise ValueError(f"unknown {spec.kind} columns {sorted(unknown)}")
+    values: list[Any] = []
+    for column in spec.columns:
+        value = row.get(column) if column in spec.optional else row[column]
+        if column.endswith("_json"):
+            values.append(None if value is None else _json_text(value))
+        elif isinstance(value, bool):
+            values.append(int(value))
+        elif value is None or isinstance(value, (str, int)):
+            values.append(value)
+        else:
+            raise TypeError(f"{spec.kind}.{column} must be text, an integer or null")
+    _membership_key(spec, row)
+    return tuple(values)
+
+
+def _membership_spec(kind: str) -> _MembershipTable:
+    spec = _MEMBERSHIP_SPECS.get(kind)
+    if spec is None:
+        raise ValueError(f"{kind!r} is not a membership row kind")
+    return spec
+
+
+def _membership_column(spec: _MembershipTable, column: str) -> None:
+    if column not in spec.columns:
+        raise ValueError(f"{spec.table} has no column {column!r}")
+
+
+def _sort_rows(rows: list[dict[str, Any]], order_by: Sequence[str]) -> None:
+    """Sort rows read in several batches as one ``ORDER BY`` would: null
+    first ascending, last descending, the first name deciding first."""
+    for name in reversed(order_by):
+        column = name.lstrip("-")
+        rows.sort(
+            key=lambda row: (
+                row[column] is not None,
+                row[column] if row[column] is not None else 0,
+            ),
+            reverse=name.startswith("-"),
+        )
+
+
+def _membership_key(
+    spec: _MembershipTable, payload: Mapping[str, Any]
+) -> tuple[str, ...]:
+    """The key column values a membership row or deletion names, each
+    non-empty text."""
+    key: list[str] = []
+    for column in spec.key:
+        value = payload[column]
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"{spec.kind}.{column} must be non-empty text")
+        key.append(value)
+    return tuple(key)
 
 
 def _table_rows(
@@ -1152,19 +1622,30 @@ def _clear_event_windows() -> None:
         _EVENT_WINDOWS.clear()
 
 
+# Every memory row's admission inputs for the document frequencies: its
+# scopes, the project its ``homes`` row names (null for a row with none)
+# and its declared writer, in one query.
+_ADMISSION_INPUTS = (
+    "SELECT m.id AS id, m.scopes_json AS scopes_json, h.project AS home_project, "
+    "m.actor_client AS actor_client, m.actor_model AS actor_model "
+    "FROM memories m LEFT JOIN homes h ON h.record_id = m.id"
+)
+
+
 @dataclass
 class _DocFreqInputs:
     """What `Store.document_frequencies(..., memoised=True)` keeps for one
     store while its memories stay as they were: the admission inputs of
     every memory row whose scopes parse, grouped by equal inputs, and each
     term's FTS hits. A row is a bit, its position in the scan; `groups`
-    maps `(scopes, origin, actor)` to the mask of the rows that carry them,
-    and `terms` maps a term to the masks of the rows whose body matches it
-    and whose body or scopes match it. `head` is the log's last memory row,
-    `(seq, mac)`, when the inputs were read."""
+    maps `(scopes, home project, actor)` to the mask of the rows that carry
+    them (the project the row's ``homes`` row names, None for a row with
+    none), and `terms` maps a term to the masks of the rows whose body
+    matches it and whose body or scopes match it. `head` is the log's last
+    memory or home row, `(seq, mac)`, when the inputs were read."""
 
     head: tuple[int, str]
-    groups: tuple[tuple[list[str], Origin | None, Actor | None, int], ...]
+    groups: tuple[tuple[list[str], str | None, Actor | None, int], ...]
     index: dict[str, int]
     terms: OrderedDict[str, tuple[int, int]]
 
@@ -1183,11 +1664,14 @@ class _DocFreqInputs:
 # call whose key differs reads them again. A write, an update, a
 # tombstone, a restore, a deletion and an import each append such a row; a
 # telemetry row does not, so the searches' own events leave the memo warm.
+# A record's home is a `home_put` row (beside its memory's, or alone from
+# the migration and an import), so the key is the last row of either.
 # What is not kept is the admission itself: `admit` is the search's
-# predicate, which stats recorded worktree roots and reads the caller's
-# registered remote spellings, so it runs on every call, once per distinct
-# `(scopes, origin, actor)` instead of once per row; the counts are then
-# those of the uncached call. A read inside an open transaction is served
+# predicate (`admission.Admission`), which follows the project table's
+# merges and boundaries for the caller, so it runs on every call, once per
+# distinct `(scopes, home project, actor)` instead of once per row; the
+# counts are then those of the uncached call. A read inside an open
+# transaction is served
 # uncached, and a result is kept only when the key read after it is the
 # key read before it, so a memory committed meanwhile by another
 # connection is never kept under the older key. An edit to the memories
@@ -1228,7 +1712,7 @@ def _event_from_columns(
     ``session`` (when the row has one), ``kind``, then the payload's
     fields. None for a mutation or control row, and for a payload that is
     not a JSON object."""
-    if kind in MUTATION_KINDS or kind in CONTROL_KINDS:
+    if kind in _NOT_TELEMETRY:
         return None
     try:
         fields = json.loads(payload)
@@ -1262,7 +1746,7 @@ def event_import_payload(
     kind = event.get("kind")
     if not isinstance(kind, str) or not kind:
         raise ValueError("an event needs a string kind")
-    if kind in MUTATION_KINDS or kind in CONTROL_KINDS:
+    if kind in _NOT_TELEMETRY:
         raise ValueError(f"{kind!r} is a mutation or control kind, not an event")
     ts = event.get("ts")
     session = event.get("session")
@@ -1386,6 +1870,82 @@ def holds_v8_files(directory: Path) -> bool:
     return False
 
 
+_MEMBERSHIP_STATEMENTS = tuple(
+    statement.strip() for statement in MEMBERSHIP_SCHEMA.split(";") if statement.strip()
+)
+_MEMBERSHIP_OBJECTS = frozenset(re.findall(r"IF NOT EXISTS (\w+)", MEMBERSHIP_SCHEMA))
+
+
+def _add_membership_tables(
+    conn: sqlite3.Connection, path: Path, meta: dict[str, str]
+) -> None:
+    """The additive schema step of decision D9, run at every open: the
+    membership tables and indexes where any is missing, and the store id
+    of design 8.7 where an earlier build created the store. Nothing is
+    written when both are there. The step runs under the store's write
+    lock (``BEGIN IMMEDIATE``), so two processes opening one store at once
+    create the tables once, and every statement is ``IF NOT EXISTS``. A
+    store file that cannot be written (a read-only copy) is left as it
+    is, said in the log; its membership reads then find no tables, and
+    the fold reads a missing table as empty. ``meta`` gains the minted
+    store id. A table an earlier build of these tables created without an
+    optional column gains it (``ALTER TABLE ... ADD COLUMN``)."""
+    master = {
+        str(row[0]): str(row[1] or "")
+        for row in conn.execute(
+            "SELECT name, sql FROM sqlite_master WHERE name IS NOT NULL"
+        )
+    }
+    lacking = [
+        spec
+        for spec in _MEMBERSHIP_SPECS.values()
+        if spec.table in master
+        and any(
+            not re.search(rf"\b{column}\b", master[spec.table])
+            for column in spec.optional
+        )
+    ]
+    if (
+        _MEMBERSHIP_OBJECTS <= set(master)
+        and meta.get(MEMBERSHIP_STORE_ID)
+        and not lacking
+    ):
+        return
+    minted = secrets.token_hex(16)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in _MEMBERSHIP_STATEMENTS:
+                conn.execute(statement)
+            for spec in lacking:
+                have = {
+                    str(row[1])
+                    for row in conn.execute(f"PRAGMA table_info({spec.table})")
+                }
+                for column in spec.optional:
+                    if column not in have:
+                        conn.execute(
+                            f"ALTER TABLE {spec.table} ADD COLUMN {column} TEXT"
+                        )
+            conn.execute(
+                "INSERT OR IGNORE INTO meta(key, value) VALUES (?, ?)",
+                (MEMBERSHIP_STORE_ID, minted),
+            )
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+        conn.execute("COMMIT")
+    except sqlite3.OperationalError as exc:
+        if "readonly" not in str(exc).replace(" ", "").lower():
+            raise
+        log.warning("store %s is read-only; membership tables not added", path)
+        return
+    row = conn.execute(
+        "SELECT value FROM meta WHERE key = ?", (MEMBERSHIP_STORE_ID,)
+    ).fetchone()
+    meta[MEMBERSHIP_STORE_ID] = str(row[0])
+
+
 class Store:
     """One store, one file, one connection. ``Store(directory)`` opens the
     store in the directory, creating it on first use, which is what every
@@ -1459,6 +2019,7 @@ class Store:
         conn = _connect(path)
         try:
             conn.executescript(SCHEMA)
+            conn.executescript(MEMBERSHIP_SCHEMA)
             store_id = secrets.token_hex(16)
             keyring = KeyRing(
                 Path(keys_dir) if keys_dir is not None else resolve_keys_dir(),
@@ -1475,6 +2036,7 @@ class Store:
                 "engine_version": __version__,
                 "key_fingerprint": fingerprint(key),
                 "created": created,
+                MEMBERSHIP_STORE_ID: secrets.token_hex(16),
             }
             if orphans:
                 meta[CREATED_AFTER_ORPHANS] = json.dumps([p.name for p in orphans])
@@ -1531,6 +2093,7 @@ class Store:
                 raise ValueError(
                     f"{path} is schema {schema}; this build reads up to {SCHEMA_VERSION}"
                 )
+            _add_membership_tables(conn, path, meta)
             keyring = KeyRing(
                 Path(keys_dir) if keys_dir is not None else resolve_keys_dir(),
                 store_id,
@@ -1725,12 +2288,48 @@ class Store:
         payload: Mapping[str, Any],
         *,
         session: str | None,
-    ) -> None:
+    ) -> LogRow:
         """Log a mutation and apply it, inside the caller's transaction.
         The row is appended first so the record it puts can carry the
         row's MAC."""
         row = self._append(conn, kind, payload, session=session)
         _apply_mutation(conn, kind, payload, log_mac=row.mac)
+        return row
+
+    def _home_row(
+        self, record_id: str, kind: str, home: RecordHome | None
+    ) -> dict[str, Any] | None:
+        """The ``homes`` row a put writes beside its record, or None: no
+        home given, or the record already has this very home. A record's
+        home is written once (design 1); a put that names another home for
+        a homed record raises ValueError before anything is written."""
+        if home is None:
+            return None
+        project, checkout, rule = home
+        if not isinstance(project, str) or not project:
+            raise ValueError("a home names a project (or global)")
+        if not isinstance(rule, str) or not rule:
+            raise ValueError("a home names the rule that decided it")
+        existing = self._conn.execute(
+            "SELECT project, checkout, rule FROM homes WHERE record_id = ?",
+            (record_id,),
+        ).fetchone()
+        if existing is not None:
+            if (existing["project"], existing["checkout"], existing["rule"]) == (
+                project,
+                checkout,
+                rule,
+            ):
+                return None
+            raise ValueError(f"{record_id} already has a home; a home is written once")
+        return {
+            "record_id": record_id,
+            "kind": kind,
+            "project": project,
+            "checkout": checkout,
+            "rule": rule,
+            "decided": isoformat_utc(datetime.now(timezone.utc)),
+        }
 
     # -- memories -----------------------------------------------------------
 
@@ -1741,11 +2340,14 @@ class Store:
         provenance: str | None = None,
         filename: str | None = None,
         session: str | None = None,
+        home: RecordHome | None = None,
     ) -> Memory:
         """Insert or replace the record. ``provenance`` None keeps the row's
         label (``local`` for a new row); ``filename`` None keeps the row's
         name. Both are resolved before the row is logged, so the log
-        carries what the table holds."""
+        carries what the table holds. ``home`` (design 8.5) writes the
+        record's ``homes`` row in the same transaction; None leaves the
+        homes table as it is."""
         if provenance is not None and provenance not in _WRITABLE_PROVENANCE:
             raise ValueError(
                 f"provenance must be one of {sorted(_WRITABLE_PROVENANCE)}, got {provenance!r}"
@@ -1762,7 +2364,10 @@ class Store:
             "filename": filename,
         }
         with self._transaction() as tx:
+            home_row = self._home_row(memory.id, "memory", home)
             self._mutate(tx, "memory_put", payload, session=session)
+            if home_row is not None:
+                self._mutate(tx, "home_put", {"home": home_row}, session=session)
         return memory
 
     def get_memory(self, memory_id: str) -> Memory:
@@ -1987,10 +2592,21 @@ class Store:
 
     # -- episodes -----------------------------------------------------------
 
-    def put_episode(self, episode: Episode, *, session: str | None = None) -> Episode:
+    def put_episode(
+        self,
+        episode: Episode,
+        *,
+        session: str | None = None,
+        home: RecordHome | None = None,
+    ) -> Episode:
+        """Insert or replace the episode; ``home`` writes its ``homes`` row
+        in the same transaction, as ``put_memory`` does."""
         payload = {"episode": episode.model_dump(mode="json")}
         with self._transaction() as tx:
+            home_row = self._home_row(episode.id, "episode", home)
             self._mutate(tx, "episode_put", payload, session=session)
+            if home_row is not None:
+                self._mutate(tx, "home_put", {"home": home_row}, session=session)
         return episode
 
     def get_episode(self, episode_id: str) -> Episode:
@@ -2206,6 +2822,232 @@ class Store:
         with self._transaction() as tx:
             self._mutate(tx, "quarantine_delete", {"name": name}, session=session)
 
+    # -- membership (design 8.5) --------------------------------------------
+    #
+    # The tables `membership.py` reads and writes. Every change is a
+    # mutation row of the table's own kind, applied by `_apply_mutation`
+    # as the fold applies it; the membership rows of design 8.10 are
+    # control rows written by `record_membership`. Nothing here decides
+    # membership: these are the rows, `membership.py` is the rule.
+
+    @property
+    def in_batch(self) -> bool:
+        """Whether a `batch` is open on this store."""
+        return self._in_batch
+
+    @property
+    def membership_store_id(self) -> str:
+        """The store id of design 8.7: what exports carry and what, beside
+        the machine id, keys a machine at sync and import."""
+        row = self._conn.execute(
+            "SELECT value FROM meta WHERE key = ?", (MEMBERSHIP_STORE_ID,)
+        ).fetchone()
+        if row is None:
+            raise RuntimeError(f"store {self._path} carries no membership store id")
+        return str(row[0])
+
+    def put_membership(
+        self, kind: str, row: Mapping[str, Any], *, session: str | None = None
+    ) -> LogRow:
+        """Insert or replace one row of the membership table whose mutation
+        kind prefix is `kind` (``home``, ``checkout``, ...): every column
+        given, a ``_json`` column as its JSON value. The row is checked
+        before it is logged, so a malformed one raises and writes
+        nothing."""
+        spec = _membership_spec(kind)
+        payload = {spec.kind: dict(row)}
+        _membership_values(spec, payload[spec.kind])
+        with self._transaction() as tx:
+            return self._mutate(tx, f"{spec.kind}_put", payload, session=session)
+
+    def delete_membership(
+        self, kind: str, key: Mapping[str, Any], *, session: str | None = None
+    ) -> LogRow:
+        """Delete the membership row `key` names (its key columns)."""
+        spec = _membership_spec(kind)
+        payload = {column: key[column] for column in spec.key}
+        _membership_key(spec, payload)
+        with self._transaction() as tx:
+            return self._mutate(tx, f"{spec.kind}_delete", payload, session=session)
+
+    def record_membership(
+        self, kind: str, payload: Mapping[str, Any], *, session: str | None = None
+    ) -> LogRow:
+        """One membership row of design 8.10 (`MEMBERSHIP_EVENT_KINDS`),
+        written whether or not telemetry is on. Inside a `batch` it commits
+        with the batch."""
+        if kind not in MEMBERSHIP_EVENT_KINDS:
+            raise ValueError(f"{kind!r} is not a membership row kind")
+        with self._transaction() as tx:
+            return self._append(tx, kind, dict(payload), session=session)
+
+    def membership_rows(
+        self,
+        table: str,
+        *,
+        where: Mapping[str, Any] | None = None,
+        column_in: tuple[str, Collection[Any]] | None = None,
+        order_by: Sequence[str] = (),
+    ) -> list[dict[str, Any]]:
+        """Rows of a membership table as dicts, a ``_json`` column parsed
+        back to its value: those whose columns equal `where` (None matches
+        null) and whose `column_in` column holds one of its values, ordered
+        by `order_by` (a leading ``-`` sorts that column descending), else
+        by the key. Column names are checked against the table."""
+        spec = _MEMBERSHIP_BY_TABLE.get(table)
+        if spec is None:
+            raise ValueError(f"{table!r} is not a membership table")
+        clauses: list[str] = []
+        params: list[Any] = []
+        for column, value in (where or {}).items():
+            _membership_column(spec, column)
+            if value is None:
+                clauses.append(f"{column} IS NULL")
+            else:
+                clauses.append(f"{column} = ?")
+                params.append(value)
+        order: list[str] = []
+        for name in order_by or spec.key:
+            column = name.lstrip("-")
+            _membership_column(spec, column)
+            order.append(f"{column} DESC" if name.startswith("-") else column)
+        select = f"SELECT {', '.join(spec.columns)} FROM {table}"
+        batches: list[list[Any]] = [[]]
+        if column_in is not None:
+            column, values = column_in
+            _membership_column(spec, column)
+            wanted = list(dict.fromkeys(values))
+            if not wanted:
+                return []
+            batches = [
+                wanted[start : start + _PROVENANCE_BATCH]
+                for start in range(0, len(wanted), _PROVENANCE_BATCH)
+            ]
+        out: list[dict[str, Any]] = []
+        for batch in batches:
+            batch_clauses = list(clauses)
+            if column_in is not None:
+                batch_clauses.append(
+                    f"{column_in[0]} IN ({','.join('?' * len(batch))})"
+                )
+            sql = select
+            if batch_clauses:
+                sql += " WHERE " + " AND ".join(batch_clauses)
+            sql += " ORDER BY " + ", ".join(order)
+            for raw in self._conn.execute(sql, (*params, *batch)):
+                out.append(
+                    {
+                        column: (
+                            _load_json(raw[column], None)
+                            if column.endswith("_json")
+                            else raw[column]
+                        )
+                        for column in spec.columns
+                    }
+                )
+        if len(batches) > 1:
+            _sort_rows(out, list(order_by or spec.key))
+        return out
+
+    def next_membership_id(self, table: str, prefix: str) -> str:
+        """The next local id of a membership table: `prefix` and one more
+        than the highest number its ids carry, at least three digits
+        (``P001``). Read inside the caller's transaction, so two writers
+        never mint one id."""
+        spec = _MEMBERSHIP_BY_TABLE.get(table)
+        if spec is None or spec.key != ("id",):
+            raise ValueError(f"{table!r} has no minted id")
+        row = self._conn.execute(
+            f"SELECT MAX(CAST(SUBSTR(id, ?) AS INTEGER)) FROM {table} WHERE id LIKE ?",
+            (len(prefix) + 1, f"{prefix}%"),
+        ).fetchone()
+        number = int(row[0] or 0) + 1
+        return f"{prefix}{number:03d}"
+
+    def next_membership_number(self, table: str, column: str) -> int:
+        """One more than the highest value of an integer column of a
+        membership table (a witness's arrival, a view's sighting order)."""
+        spec = _MEMBERSHIP_BY_TABLE.get(table)
+        if spec is None:
+            raise ValueError(f"{table!r} is not a membership table")
+        _membership_column(spec, column)
+        row = self._conn.execute(f"SELECT MAX({column}) FROM {table}").fetchone()
+        return int(row[0] or 0) + 1
+
+    def membership_log(
+        self, kinds: Collection[str] | None = None, *, since_seq: int = 0
+    ) -> Iterator[LogRow]:
+        """The membership rows after `since_seq`, in log order: the
+        mutation rows of the membership tables and the rows of design
+        8.10, or only those of `kinds`, read through the log's kind
+        index."""
+        allowed = MEMBERSHIP_MUTATION_KINDS | MEMBERSHIP_EVENT_KINDS
+        names = sorted(allowed if kinds is None else set(kinds) & allowed)
+        if not names:
+            return
+        placeholders = ",".join("?" * len(names))
+        for raw in self._conn.execute(
+            "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log "
+            f"WHERE kind IN ({placeholders}) AND seq > ? ORDER BY seq",
+            (*names, int(since_seq)),
+        ):
+            yield LogRow(
+                int(raw[0]),
+                str(raw[1]),
+                None if raw[2] is None else str(raw[2]),
+                str(raw[3]),
+                str(raw[4]),
+                str(raw[5]),
+                str(raw[6]),
+            )
+
+    def wrote_record(self, record_id: str) -> bool:
+        """Whether this store's own log ever put the record `record_id`: a
+        memory, tombstone or episode row naming it, or its home."""
+        if (
+            self._conn.execute(
+                "SELECT 1 FROM homes WHERE record_id = ?", (record_id,)
+            ).fetchone()
+            is not None
+        ):
+            return True
+        needle = canonical_payload({"id": record_id})[1:-1]
+        return (
+            self._conn.execute(
+                "SELECT 1 FROM log WHERE kind IN "
+                "('memory_put', 'tombstone_put', 'episode_put') "
+                "AND instr(payload, ?) > 0 LIMIT 1",
+                (needle,),
+            ).fetchone()
+            is not None
+        )
+
+    def reissue_membership_store_id(
+        self, *, record_id: str, source: str, session: str | None = None
+    ) -> tuple[str, str]:
+        """A new store id after a fork (design 8.7): the meta value
+        replaced and a ``store_forked`` row naming the old and new ids,
+        the record that showed the fork and where it came from, in one
+        transaction. Returns ``(old, new)``."""
+        old = self.membership_store_id
+        new = secrets.token_hex(16)
+        with self._transaction() as tx:
+            tx.execute(
+                "UPDATE meta SET value = ? WHERE key = ?", (new, MEMBERSHIP_STORE_ID)
+            )
+            self._append(
+                tx,
+                "store_forked",
+                {
+                    "old_store": old,
+                    "new_store": new,
+                    "record": record_id,
+                    "source": source,
+                },
+                session=session,
+            )
+        return old, new
+
     # -- telemetry ----------------------------------------------------------
 
     def record_event(
@@ -2223,7 +3065,7 @@ class Store:
         failure is logged and swallowed, so telemetry never fails the tool
         call it describes; a kind that names a mutation or a control row
         is a programming error and always raises."""
-        if kind in MUTATION_KINDS or kind in CONTROL_KINDS:
+        if kind in _NOT_TELEMETRY:
             raise ValueError(f"{kind!r} is a mutation or control kind, not an event")
         payload: dict[str, Any] = _redact_event_fields(dict(fields))
         if actor is not None:
@@ -2268,7 +3110,7 @@ class Store:
             (f"%{needle}%",),
         ):
             kind = str(row["kind"])
-            if kind in MUTATION_KINDS or kind in CONTROL_KINDS:
+            if kind in _NOT_TELEMETRY:
                 continue
             out.add(
                 (
@@ -2286,7 +3128,7 @@ class Store:
         fields. Mutation and control rows are not events and are
         skipped; so is a row whose payload is not an object."""
         for row in iter_rows(self._conn, since_seq):
-            if row.kind in MUTATION_KINDS or row.kind in CONTROL_KINDS:
+            if row.kind in _NOT_TELEMETRY:
                 continue
             try:
                 payload = json.loads(row.payload)
@@ -2628,11 +3470,13 @@ class Store:
         links: list[Any] | None = None,
         actor: Actor | dict[str, Any] | None = None,
         session: str | None = None,
+        home: RecordHome | None = None,
     ) -> Memory:
         """Create a new memory: mints the id, stamps created and updated,
         stores the body stripped with one trailing newline. `claims` are
         stored verbatim; parsing and the declare-time check are the write
-        handler's job, since they need the origin worktree."""
+        handler's job, since they need the origin worktree. `home` is
+        written with the record (`put_memory`)."""
         now = utcnow()
         memory = Memory(
             id=generate_ulid(),
@@ -2653,7 +3497,7 @@ class Store:
                 for entry in (links or [])
             ],
         )
-        return self.put_memory(memory, provenance=LOCAL, session=session)
+        return self.put_memory(memory, provenance=LOCAL, session=session, home=home)
 
     def update(
         self,
@@ -3031,14 +3875,16 @@ class Store:
         self,
         terms: Sequence[str],
         *,
-        admit: Callable[[list[str], Origin | None, Actor | None], bool],
+        admit: Callable[[list[str], str | None, Actor | None], bool],
         memoised: bool = False,
     ) -> tuple[int, dict[str, int], dict[str, int]] | None:
         """Document frequencies for `terms` over the admitted collection,
         the v8 index's `corpus_document_frequencies`: `(size, body_df,
         scope_df)`, where `admit` is the search's own admission predicate
-        over `(scopes, origin, actor)` so the denominator is the ranked
-        set. None when no term or no admitted document. With `memoised`,
+        over `(scopes, home project, actor)` (the project the record's
+        ``homes`` row names, read in the same query; None for a record
+        with none) so the denominator is the ranked set. None when no term
+        or no admitted document. With `memoised`,
         the rows' admission inputs and the terms' hits come from the
         store's document frequency memo (`_DOC_FREQS`), read again only
         after a memory changed; the answer is the same."""
@@ -3048,17 +3894,7 @@ class Store:
         if memoised and not (self._in_batch or self._conn.in_transaction):
             return self._memoised_document_frequencies(unique, admit)
         admitted: set[str] = set()
-        for row in self._conn.execute(
-            "SELECT id, scopes_json, origin_repo, origin_worktree, "
-            "actor_client, actor_model FROM memories"
-        ):
-            repo = row["origin_repo"]
-            worktree = row["origin_worktree"]
-            origin = (
-                Origin(repo=repo, worktree_root=worktree)
-                if (repo is not None or worktree is not None)
-                else None
-            )
+        for row in self._conn.execute(_ADMISSION_INPUTS):
             client = row["actor_client"]
             model = row["actor_model"]
             actor = (
@@ -3069,7 +3905,7 @@ class Store:
             scopes = _load_json(row["scopes_json"], None)
             if not isinstance(scopes, list):
                 continue
-            if admit(list(scopes), origin, actor):
+            if admit(list(scopes), row["home_project"], actor):
                 admitted.add(str(row["id"]))
         if not admitted:
             return None
@@ -3098,13 +3934,15 @@ class Store:
         return len(admitted), body_df, scope_df
 
     def _memory_head(self) -> tuple[int, str]:
-        """The log's last memory row, `(seq, mac)`: the key of the
+        """The log's last memory or home row, `(seq, mac)`: the key of the
         document frequency memo. `(0, "")` on a log with none. Each MAX is
         one probe of `log_by_kind`."""
         row = self._conn.execute(
             "SELECT seq, mac FROM log WHERE seq = (SELECT MAX(s) FROM ("
             "SELECT MAX(seq) AS s FROM log WHERE kind = 'memory_put' "
-            "UNION ALL SELECT MAX(seq) AS s FROM log WHERE kind = 'memory_delete'))"
+            "UNION ALL SELECT MAX(seq) AS s FROM log WHERE kind = 'memory_delete' "
+            "UNION ALL SELECT MAX(seq) AS s FROM log WHERE kind = 'home_put' "
+            "UNION ALL SELECT MAX(seq) AS s FROM log WHERE kind = 'home_delete'))"
         ).fetchone()
         if row is None:
             return 0, ""
@@ -3115,42 +3953,33 @@ class Store:
         `document_frequencies` reads them, grouped by equal inputs."""
         index: dict[str, int] = {}
         grouped: dict[
-            tuple[Any, ...], tuple[list[str], Origin | None, Actor | None, list[int]]
+            tuple[Any, ...], tuple[list[str], str | None, Actor | None, list[int]]
         ] = {}
-        for row in self._conn.execute(
-            "SELECT id, scopes_json, origin_repo, origin_worktree, "
-            "actor_client, actor_model FROM memories"
-        ):
+        for row in self._conn.execute(_ADMISSION_INPUTS):
             scopes = _load_json(row["scopes_json"], None)
             if not isinstance(scopes, list):
                 continue
             position = len(index)
             index[str(row["id"])] = position
-            repo = row["origin_repo"]
-            worktree = row["origin_worktree"]
+            home_project = row["home_project"]
             client = row["actor_client"]
             model = row["actor_model"]
-            group_key = (row["scopes_json"], repo, worktree, client, model)
+            group_key = (row["scopes_json"], home_project, client, model)
             group = grouped.get(group_key)
             if group is None:
-                origin = (
-                    Origin(repo=repo, worktree_root=worktree)
-                    if (repo is not None or worktree is not None)
-                    else None
-                )
                 actor = (
                     Actor(client=client, model=model)
                     if (client is not None or model is not None)
                     else None
                 )
-                group = (list(scopes), origin, actor, [])
+                group = (list(scopes), home_project, actor, [])
                 grouped[group_key] = group
             group[3].append(position)
         return _DocFreqInputs(
             head=head,
             groups=tuple(
-                (scopes, origin, actor, _row_mask(positions, len(index)))
-                for scopes, origin, actor, positions in grouped.values()
+                (scopes, home_project, actor, _row_mask(positions, len(index)))
+                for scopes, home_project, actor, positions in grouped.values()
             ),
             index=index,
             terms=OrderedDict(),
@@ -3179,7 +4008,7 @@ class Store:
     def _memoised_document_frequencies(
         self,
         unique: list[str],
-        admit: Callable[[list[str], Origin | None, Actor | None], bool],
+        admit: Callable[[list[str], str | None, Actor | None], bool],
     ) -> tuple[int, dict[str, int], dict[str, int]] | None:
         """`document_frequencies` through the document frequency memo."""
         key = (str(self._path), self._store_id)
@@ -3202,8 +4031,8 @@ class Store:
         # The predicate runs on every call, once per group: it is not a
         # function of the store alone.
         admitted = 0
-        for scopes, origin, actor, mask in entry.groups:
-            if admit(list(scopes), origin, actor):
+        for scopes, home_project, actor, mask in entry.groups:
+            if admit(list(scopes), home_project, actor):
                 admitted |= mask
         found: dict[str, tuple[int, int]] = {}
         if admitted:
@@ -3253,26 +4082,22 @@ class Store:
                 _DOC_FREQS.popitem(last=False)
 
     def scope_counts(
-        self, *, admit: Callable[[list[str], Origin | None], bool]
+        self, *, admit: Callable[[list[str], str | None], bool]
     ) -> tuple[int, dict[str, int]]:
         """How many admitted memories there are and how many carry each
-        scope, without reading a body."""
+        scope, without reading a body. `admit` reads the scopes and the
+        project the record's ``homes`` row names (None for none), joined
+        in the one query."""
         total = 0
         counts: dict[str, int] = {}
         for row in self._conn.execute(
-            "SELECT scopes_json, origin_repo, origin_worktree FROM memories"
+            "SELECT m.scopes_json AS scopes_json, h.project AS home_project "
+            "FROM memories m LEFT JOIN homes h ON h.record_id = m.id"
         ):
-            repo = row["origin_repo"]
-            worktree = row["origin_worktree"]
-            origin = (
-                Origin(repo=repo, worktree_root=worktree)
-                if (repo is not None or worktree is not None)
-                else None
-            )
             scopes = _load_json(row["scopes_json"], None)
             if not isinstance(scopes, list):
                 continue
-            if not admit(list(scopes), origin):
+            if not admit(list(scopes), row["home_project"]):
                 continue
             total += 1
             for scope in scopes:
@@ -3283,63 +4108,54 @@ class Store:
         self,
         *,
         category: str,
-        admit: Callable[[list[str], Origin | None], bool],
+        admit: Callable[[list[str], str | None], bool],
     ) -> list[str]:
-        """The ids of admitted memories in `category`, in id order."""
+        """The ids of admitted memories in `category`, in id order; `admit`
+        reads the scopes and the home project as `scope_counts` does."""
         out: list[str] = []
         for row in self._conn.execute(
-            "SELECT id, scopes_json, origin_repo, origin_worktree "
-            "FROM memories WHERE category = ? ORDER BY id",
+            "SELECT m.id AS id, m.scopes_json AS scopes_json, "
+            "h.project AS home_project "
+            "FROM memories m LEFT JOIN homes h ON h.record_id = m.id "
+            "WHERE m.category = ? ORDER BY m.id",
             (category,),
         ):
-            repo = row["origin_repo"]
-            worktree = row["origin_worktree"]
-            origin = (
-                Origin(repo=repo, worktree_root=worktree)
-                if (repo is not None or worktree is not None)
-                else None
-            )
             scopes = _load_json(row["scopes_json"], None)
             if not isinstance(scopes, list):
                 continue
-            if admit(list(scopes), origin):
+            if admit(list(scopes), row["home_project"]):
                 out.append(str(row["id"]))
         return out
 
     def brief_rows(
         self,
         *,
-        admit: Callable[[Origin | None], bool],
+        admit: Callable[[str | None], bool],
         provenance: Collection[str],
         exclude_category: str,
     ) -> list[str]:
         """The ids of admitted memories the session brief may consider,
         newest ``updated`` first (id breaking a tie): stored label in
-        `provenance`, category other than `exclude_category`, origin
-        admitted by `admit`. Reads the origin columns, never a body. The
-        stored label is a pre-filter only: the caller re-reads the
-        verified one (`trust_rows`), which a failed pointer turns into
-        ``unaccounted``."""
+        `provenance`, category other than `exclude_category`, home admitted
+        by `admit`, which reads the project the record's ``homes`` row
+        names (None for a record with none), joined in the one query.
+        Never reads a body. The stored label is a pre-filter only: the
+        caller re-reads the verified one (`trust_rows`), which a failed
+        pointer turns into ``unaccounted``."""
         labels = sorted(set(provenance))
         if not labels:
             return []
         placeholders = ",".join("?" * len(labels))
         out: list[str] = []
         for row in self._conn.execute(
-            "SELECT id, origin_repo, origin_worktree FROM memories "
-            f"WHERE provenance IN ({placeholders}) "
-            "AND (category IS NULL OR category != ?) "
-            "ORDER BY updated DESC, id DESC",
+            "SELECT m.id AS id, h.project AS home_project FROM memories m "
+            "LEFT JOIN homes h ON h.record_id = m.id "
+            f"WHERE m.provenance IN ({placeholders}) "
+            "AND (m.category IS NULL OR m.category != ?) "
+            "ORDER BY m.updated DESC, m.id DESC",
             (*labels, exclude_category),
         ):
-            repo = row["origin_repo"]
-            worktree = row["origin_worktree"]
-            origin = (
-                Origin(repo=repo, worktree_root=worktree)
-                if (repo is not None or worktree is not None)
-                else None
-            )
-            if admit(origin):
+            if admit(row["home_project"]):
                 out.append(str(row["id"]))
         return out
 
@@ -3554,7 +4370,7 @@ class Store:
         for raw in read:
             head_seq, head_mac = int(raw["seq"]), str(raw["mac"])
             kind = str(raw["kind"])
-            if not raw["inside"] or kind in MUTATION_KINDS or kind in CONTROL_KINDS:
+            if not raw["inside"] or kind in _NOT_TELEMETRY:
                 continue
             rows.append(
                 _WindowRow(
@@ -3597,8 +4413,10 @@ class Store:
         swarm_id: str | None = None,
         origin: Origin | None = None,
         now: datetime | None = None,
+        home: RecordHome | None = None,
     ) -> Episode:
-        """Append one journal entry for `session_id`."""
+        """Append one journal entry for `session_id`, with its home when
+        `home` is given (`put_episode`)."""
         if not body or not body.strip():
             raise ValueError("episode body must be a non-empty string")
         episode = Episode(
@@ -3611,7 +4429,7 @@ class Store:
             swarm_id=swarm_id,
             origin=origin,
         )
-        return self.put_episode(episode, session=session_id)
+        return self.put_episode(episode, session=session_id, home=home)
 
     def write_floor(
         self,
@@ -3619,10 +4437,11 @@ class Store:
         session_id: str,
         origin: Origin | None = None,
         now: datetime | None = None,
+        home: RecordHome | None = None,
     ) -> Episode:
         """The session-tag floor the handoff writes at its entry, so a
         session that crashes before its first takeaway still marks its
-        worktree."""
+        worktree; homed like any episode when `home` is given."""
         episode = Episode(
             id=generate_ulid(),
             session_id=session_id,
@@ -3633,7 +4452,7 @@ class Store:
             origin=origin,
             is_floor=True,
         )
-        return self.put_episode(episode, session=session_id)
+        return self.put_episode(episode, session=session_id, home=home)
 
     def episodes_by_session(self, session_id: str) -> list[Episode]:
         out = list(self.iter_episodes(session_id=session_id))
@@ -3761,12 +4580,16 @@ class Store:
         rows the replay does not produce (planted or edited), ``missing``
         the replayed rows the live table lacks (deleted). A row whose
         payload cannot be applied is reported as ``payload_invalid`` and
-        skipped."""
+        skipped. The membership tables are folded by the same replay and
+        reported under ``membership``, table by table; a membership table
+        the live store lacks (a read-only store an earlier build created)
+        reads as empty."""
         scratch = sqlite3.connect(":memory:", isolation_level=None)
         scratch.row_factory = sqlite3.Row
         problems: list[dict[str, Any]] = []
         try:
             scratch.executescript(SCHEMA)
+            scratch.executescript(MEMBERSHIP_SCHEMA)
             scratch.execute("BEGIN")
             for row in iter_rows(self._conn):
                 if row.kind not in MUTATION_KINDS:
@@ -3787,9 +4610,16 @@ class Store:
                     )
             scratch.execute("COMMIT")
             tables: dict[str, Any] = {}
+            membership: dict[str, Any] = {}
             diverged = bool(problems)
-            for table in FOLDED_TABLES:
-                live = _table_rows(self._conn, table)
+            present = {
+                str(r[0])
+                for r in self._conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+            for table in (*FOLDED_TABLES, *MEMBERSHIP_TABLES):
+                live = _table_rows(self._conn, table) if table in present else {}
                 folded = _table_rows(scratch, table)
                 unaccounted = sorted(
                     (
@@ -3804,7 +4634,8 @@ class Store:
                 )
                 if unaccounted or missing:
                     diverged = True
-                tables[table] = {
+                report = tables if table in FOLDED_TABLES else membership
+                report[table] = {
                     "unaccounted": unaccounted,
                     "missing": missing,
                     "rows": len(live),
@@ -3819,6 +4650,7 @@ class Store:
             return {
                 "status": "diverged" if diverged else "ok",
                 "tables": tables,
+                "membership": membership,
                 "problems": problems,
             }
         finally:
@@ -3847,7 +4679,11 @@ class Store:
             "segments": chain["segments"],
             "head": chain["head"],
             "problems": problems,
-            "fold": {"status": fold["status"], "tables": fold["tables"]},
+            "fold": {
+                "status": fold["status"],
+                "tables": fold["tables"],
+                "membership": fold["membership"],
+            },
             "unaccounted_ids": list(fold["tables"]["memories"]["unaccounted"]),
         }
 
@@ -3923,7 +4759,13 @@ __all__ = [
     "IMPORTED",
     "IMPORTED_FROM_V8",
     "LOCAL",
+    "MEMBERSHIP_EVENT_KINDS",
+    "MEMBERSHIP_MUTATION_KINDS",
+    "MEMBERSHIP_SCHEMA",
+    "MEMBERSHIP_STORE_ID",
+    "MEMBERSHIP_TABLES",
     "MUTATION_KINDS",
+    "RecordHome",
     "PROVENANCE_LABELS",
     "SCHEMA",
     "SCHEMA_VERSION",

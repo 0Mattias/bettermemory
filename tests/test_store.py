@@ -1470,37 +1470,83 @@ def test_prune_tombstones_by_age(store: Store) -> None:
 
 
 def test_document_frequencies_equal_a_python_count(store: Store) -> None:
+    """The document frequencies over the collection the search's own
+    predicate admits (`candidate_admitted` under an admission, design
+    3.5) equal a count over the same records in Python: the home is read
+    in the store's query, the origin column decides nothing."""
+    from bettermemory.admission import Admission
+    from bettermemory.membership import (
+        GLOBAL,
+        SEARCH_AUTO_SCOPE,
+        SILENT,
+        Membership,
+        RecordHome,
+        Resolution,
+    )
     from bettermemory.search import candidate_admitted, tokenize
 
+    halden = RecordHome("P_HALDEN", None, "test")
+    verendo = RecordHome("P_VERENDO", None, "test")
     docs = [
-        ("the halden port is 5432", ["projects:halden"], "https://x/halden.git"),
-        ("the halden port moved", ["projects:halden"], "https://x/halden.git"),
-        ("postgres port for verendo", ["projects:verendo"], "https://x/verendo.git"),
-        ("port notes", ["tools"], None),
+        (
+            "the halden port is 5432",
+            ["projects:halden"],
+            "https://x/halden.git",
+            halden,
+        ),
+        ("the halden port moved", ["projects:halden"], "https://x/halden.git", halden),
+        (
+            "postgres port for verendo",
+            ["projects:verendo"],
+            "https://x/verendo.git",
+            verendo,
+        ),
+        ("port notes", ["tools"], None, RecordHome(GLOBAL, None, "outside_repository")),
     ]
-    for body, scopes, repo in docs:
+    for body, scopes, repo, home in docs:
         store.write(
             content=body,
             scopes=scopes,
             origin=Origin(repo=repo) if repo else None,
+            home=home,
         )
+    # A record with no home row is admitted nowhere.
+    store.write(content="the halden port, homeless", scopes=["projects:halden"])
     terms = ["port", "halden", "postgres", "absent"]
+    model = Membership(store, "machine-test")
+    caller = Resolution(
+        outcome=SILENT,
+        project="P_HALDEN",
+        checkout=None,
+        rule="test",
+        chain=("P_HALDEN",),
+    )
+    admission = Admission(SEARCH_AUTO_SCOPE, caller, model)
 
-    def admit(scopes: list[str], origin: Any, actor: Any) -> bool:
+    def admit(scopes: list[str], home: str | None, actor: Any) -> bool:
         return candidate_admitted(
             scopes,
-            origin,
+            home,
             actor,
             scope_filter=None,
             excluded=set(),
-            repo_filter="https://x/halden.git",
-            worktree_filter=None,
+            admission=admission,
         )
 
     resolved = store.document_frequencies(terms, admit=admit)
     assert resolved is not None
     size, body_df, scope_df = resolved
-    admitted = [m for m in store.load_all() if admit(m.scopes, m.origin, m.actor)]
+    everything = store.load_all()
+    homes = model.homes([m.id for m in everything])
+    admitted = [
+        m
+        for m in everything
+        if admit(
+            m.scopes,
+            homes[m.id].recorded_project if m.id in homes else None,
+            m.actor,
+        )
+    ]
     assert size == len(admitted) == 3
     for term in terms:
         expected_body = sum(1 for m in admitted if term in tokenize(m.body))
@@ -1516,23 +1562,37 @@ def test_document_frequencies_equal_a_python_count(store: Store) -> None:
 
 
 def test_scope_counts_and_category_rows(store: Store) -> None:
+    """`admit` reads the scopes and the project the record's ``homes``
+    row names, None for a record with none (design 3.5)."""
+    from bettermemory.membership import RecordHome
+
+    here = RecordHome("P_X", None, "test")
     a = store.write(
-        content="one", scopes=["tools", "projects:x"], category=Category.AMBIENT
+        content="one",
+        scopes=["tools", "projects:x"],
+        category=Category.AMBIENT,
+        home=here,
     )
     b = store.write(
         content="two",
         scopes=["tools"],
         origin=Origin(repo="https://x/other.git"),
         category=Category.AMBIENT,
+        home=RecordHome("P_OTHER", None, "test"),
     )
-    store.write(content="three", scopes=["career"])
-    total, counts = store.scope_counts(admit=lambda scopes, origin: origin is None)
+    store.write(content="three", scopes=["career"], home=here)
+    store.write(content="four", scopes=["career", "tools"])
+    total, counts = store.scope_counts(admit=lambda scopes, home: home == "P_X")
     assert total == 2
     assert counts == {"tools": 1, "projects:x": 1, "career": 1}
+    assert store.scope_counts(admit=lambda scopes, home: home is None) == (
+        1,
+        {"career": 1, "tools": 1},
+    )
     rows = store.category_rows(category="ambient", admit=lambda *_: True)
     assert rows == sorted([a.id, b.id])
     assert store.category_rows(
-        category="ambient", admit=lambda scopes, origin: origin is None
+        category="ambient", admit=lambda scopes, home: home == "P_X"
     ) == [a.id]
 
 

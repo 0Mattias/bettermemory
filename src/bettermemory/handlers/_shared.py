@@ -14,22 +14,35 @@ suite (`tests/test_server_origin.py`,
 through the same shim is what makes the patch propagate to the new
 per-tool modules. Same pattern for any future cross-cutting symbol
 the test suite wants to override.
+
+The caller's root for a record's claims is resolved here once for every
+handler that reads claims (`caller_anchoring`, design 3.6): the caller
+resolved by `location.resolve_caller` and the membership model that
+resolved it, from which `verify.Anchoring` reads each record's anchor.
+Nothing here compares a recorded worktree with the caller's directory.
 """
 
 from __future__ import annotations
 
 import os
 import time
-from typing import Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from mcp.server.mcpserver import Context as _SDKContext
 
+from .. import identity
 from ..capture import token_of
 from ..claims import check_claim, claim_reason_is_indeterminate, parse_claims
 from ..events import Recorder
 from ..models import Category, Confidence, Source, validate_scope
 from ..session import PendingUseToken, SessionState
 from ..time_utils import parse_event_ts
+from ..verify import Anchoring
+
+if TYPE_CHECKING:
+    from ..config import Config
+    from ..location import Caller
+    from ..store import Store
 
 
 # Local alias filling the SDK Context's two generic params with Any —
@@ -290,6 +303,7 @@ def _validate_declared_claims(
     *,
     worktree_root: str | None,
     surface: str,
+    anchor_rule: str | None = None,
 ) -> list[str]:
     """Type-check, parse, and oracle-check a declared `claims` list.
 
@@ -305,6 +319,8 @@ def _validate_declared_claims(
     `surface` names the caller in the refusal ("memory_write" /
     "memory_verify"); the remedies differ only in where the worktree
     root comes from, and the message says which one was missing.
+    `anchor_rule` is the rule of the record's claim anchor when the root
+    is its live view (design 3.6), named in the refusal when there is none.
     """
     from pathlib import Path
 
@@ -314,16 +330,24 @@ def _validate_declared_claims(
     if not parsed:
         return []
     if worktree_root is None:
-        raise ValueError(
-            f"claims are checked against a worktree at declaration, and "
-            f"{surface} has none to check against"
-            + (
+        if anchor_rule is not None:
+            remedy = (
+                " (the memory's checkout is not visible from this machine:"
+                f" {anchor_rule}). Verify from its checkout, or drop the claims."
+            )
+        elif surface == "memory_write":
+            remedy = (
                 " (the caller is not inside a git worktree). Write from "
                 "the repo the claims are about, or drop the claims."
-                if surface == "memory_write"
-                else " (the memory records no origin worktree). Re-write "
+            )
+        else:
+            remedy = (
+                " (the memory records no origin worktree). Re-write "
                 "the memory from its repo, or drop the claims."
             )
+        raise ValueError(
+            f"claims are checked against a worktree at declaration, and "
+            f"{surface} has none to check against" + remedy
         )
     root = Path(worktree_root)
     # `os.path.isdir` rather than `Path.is_dir()`: the latter re-raises
@@ -369,6 +393,41 @@ def _validate_declared_claims(
             "that can read the tree, or drop it."
         )
     return [claim.render() for claim in parsed]
+
+
+# ---------------------------------------------------------------------------
+# The caller's root for a record's claims (design 3.6)
+# ---------------------------------------------------------------------------
+
+
+def request_cwd() -> str | None:
+    """The directory this request speaks for, as `origin.capture` names it
+    (the declared workspace, else the process's working directory), read
+    through `_handlers.capture_origin` as every handler reads it; None when
+    that directory no longer exists."""
+    from .. import _handlers as _h
+
+    return _h.capture_origin().cwd
+
+
+def has_home(store: Store, record_id: str) -> bool:
+    """Whether the record has a home row (design 2.1), read from the store
+    alone, so a request about a record with none captures no location."""
+    return bool(store.membership_rows("homes", where={"record_id": record_id}))
+
+
+def caller_anchoring(store: Store, config: Config) -> tuple[Anchoring, Caller]:
+    """Where the claims of the records this request reads are read (design
+    3.6), and the caller they are read for: the caller resolved at
+    `request_cwd` (`location.resolve_caller`, with the harness session it
+    carries, decision B6) and an `Anchoring` over the model that resolved
+    it, from which each record's anchor follows."""
+    from .. import location
+
+    caller = location.resolve_caller(
+        store, config, request_cwd(), session=identity.current_harness_session()
+    )
+    return Anchoring(caller.model, caller.resolution), caller
 
 
 def _drain_expired_use_tokens(
@@ -782,4 +841,7 @@ __all__ = [
     "_validate_declared_claims",
     "_validate_scope_count",
     "_validate_write_payload",
+    "caller_anchoring",
+    "has_home",
+    "request_cwd",
 ]

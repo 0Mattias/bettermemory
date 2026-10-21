@@ -21,6 +21,7 @@ from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
 from ._mcp import input_schema as _input_schema
+from .test_membership_security import stand_in_checkout
 
 
 @pytest.fixture
@@ -31,6 +32,41 @@ def server(memory_dir: Path) -> Any:
         store=Store(memory_dir),
         state=SessionState(),
     )
+
+
+def _stand_in(
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+) -> Path:
+    """Make the process cwd a fresh checkout, `name`, its own project: a
+    tool call then resolves its caller there (design 3.1), and a record it
+    writes is homed in that project."""
+    return stand_in_checkout(tmp_path_factory.mktemp(name), monkeypatch)
+
+
+@pytest.fixture
+def in_checkout(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Stand the test in a checkout: the handoff keys run-state on the
+    caller's checkout (design 3.6), and a caller outside any has no prior
+    session."""
+    return _stand_in(tmp_path_factory, monkeypatch, "checkout")
+
+
+def _linked_worktree(repo: Path, path: Path, branch: str) -> Path:
+    """A linked worktree of `repo` at `path` on a new `branch`: another
+    checkout of the same project (design 2.1, D1)."""
+    import subprocess
+
+    subprocess.run(
+        ["git", "worktree", "add", "-q", "-b", branch, str(path)],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    return path
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
@@ -78,6 +114,14 @@ def _plant(store: Store, body: str, scopes: list[str]) -> str:
     )
     store.conn.execute(
         _store._UPSERT_MEMORY, tuple(columns[c] for c in _store._MEMORY_COLUMNS)
+    )
+    # The hand plants the row's home too, written outside any project, so
+    # the surfaces may deliver it (design 3.5; a record with no home row
+    # reaches no caller) and only the pointer check tells it apart.
+    store.conn.execute(
+        "INSERT INTO homes (record_id, kind, project, checkout, rule, decided) "
+        "VALUES (?, 'memory', 'global', NULL, 'outside_repository', ?)",
+        (planted.id, now.isoformat()),
     )
     store.conn.commit()
     return planted.id
@@ -935,43 +979,23 @@ async def test_search_depends_on_resolved_skips_tombstoned_target(
 
 async def test_search_depends_on_resolved_skips_cross_project_target(
     memory_dir: Path,
-    monkeypatch: Any,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A depended-on memory in a different project must NOT be inlined
     via `depends_on_resolved` when the search is auto-scoped to the
-    caller's repo. The hit itself is correctly scope-filtered upstream,
+    caller's project. The hit itself is correctly filtered upstream,
     but the dependency auto-pull built its side-map from the pre-filter
     loader output and would otherwise resolve cross-project targets —
     leaking memory that the caller's auto-scope was explicitly hiding.
+    The link surface admits the caller's project, its sub-projects and
+    global records only (LINKS, design 3.5); each memory is homed in the
+    checkout it is written in.
     """
-    import bettermemory._handlers as handlers_module
-    import bettermemory.server as server_module
-    from bettermemory.origin import Origin
-
-    origin_foo = Origin(
-        cwd="/work/foo",
-        repo="git@github.com:example/foo.git",
-        branch="main",
-        worktree_root="/work/foo",
-    )
-    origin_bar = Origin(
-        cwd="/work/bar",
-        repo="git@github.com:example/bar.git",
-        branch="main",
-        worktree_root="/work/bar",
-    )
-
-    def make_capture(origin: Origin):
-        def _capture(cwd: Any = None) -> Origin:
-            return origin
-
-        return _capture
-
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
 
-    # Write the cross-project target (memory_B) as if we were in repo bar.
-    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_bar))
-    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_bar))
+    # Write the cross-project target (memory_B) standing in checkout bar.
+    _stand_in(tmp_path_factory, monkeypatch, "bar")
     server_bar = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     target = await _call(
         server_bar,
@@ -981,10 +1005,9 @@ async def test_search_depends_on_resolved_skips_cross_project_target(
         category="fact",
     )
 
-    # Switch to repo foo and write the dependent (memory_A) with a
+    # Switch to checkout foo and write the dependent (memory_A) with a
     # depends_on link pointing at the cross-project target.
-    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_foo))
-    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_foo))
+    _stand_in(tmp_path_factory, monkeypatch, "foo")
     server_foo = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     dependent = await _call(
         server_foo,
@@ -1000,7 +1023,7 @@ async def test_search_depends_on_resolved_skips_cross_project_target(
         links=[{"type": "depends_on", "target_id": target["id"]}],
     )
 
-    # Search from repo foo (auto_scope defaults True). The hit list
+    # Search from checkout foo (auto_scope defaults True). The hit list
     # must contain A; A's depends_on_resolved must NOT contain B.
     hits = _unwrap(
         await _call(server_foo, "memory_search", query="cross-project dependency")
@@ -1158,45 +1181,22 @@ async def test_search_depends_on_resolved_targeted_load_honors_disabled_scope(
 
 async def test_search_depends_on_resolved_targeted_load_honors_cross_project_origin(
     memory_dir: Path,
-    monkeypatch: Any,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Counterpart to bf92912 for the targeted-load path against the
     auto-scope filter. A cross-topic `depends_on` target written
-    from a different repo must NOT surface via the targeted-load
-    fallback when the caller is auto-scoped to their own repo —
-    `should_include_for_caller` re-runs at load time, mirroring
-    the side-map path."""
+    in another project must NOT surface via the targeted-load
+    fallback when the caller is auto-scoped to its own project: the
+    LINKS admission (design 3.5) re-runs at load time, mirroring the
+    side-map path."""
     monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
-    import bettermemory._handlers as handlers_module
-    import bettermemory.server as server_module
-    from bettermemory.origin import Origin
-
-    origin_foo = Origin(
-        cwd="/work/foo",
-        repo="git@github.com:example/foo.git",
-        branch="main",
-        worktree_root="/work/foo",
-    )
-    origin_bar = Origin(
-        cwd="/work/bar",
-        repo="git@github.com:example/bar.git",
-        branch="main",
-        worktree_root="/work/bar",
-    )
-
-    def make_capture(origin: Origin):
-        def _capture(cwd: Any = None) -> Origin:
-            return origin
-
-        return _capture
-
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
 
-    # Write the cross-project target as repo bar. Body is deliberately
-    # NOT matching the eventual query so the FTS prefilter cannot
-    # rescue it — pure targeted-load path.
-    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_bar))
-    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_bar))
+    # Write the cross-project target standing in checkout bar. Body is
+    # deliberately NOT matching the eventual query so the FTS prefilter
+    # cannot rescue it: pure targeted-load path.
+    _stand_in(tmp_path_factory, monkeypatch, "bar")
     server_bar = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     target = await _call(
         server_bar,
@@ -1206,10 +1206,9 @@ async def test_search_depends_on_resolved_targeted_load_honors_cross_project_ori
         category="fact",
     )
 
-    # Switch to repo foo and write the dependent with a depends_on
+    # Switch to checkout foo and write the dependent with a depends_on
     # link pointing at the cross-project target.
-    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_foo))
-    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_foo))
+    _stand_in(tmp_path_factory, monkeypatch, "foo")
     server_foo = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     dependent = await _call(
         server_foo,
@@ -1225,10 +1224,10 @@ async def test_search_depends_on_resolved_targeted_load_honors_cross_project_ori
         links=[{"type": "depends_on", "target_id": target["id"]}],
     )
 
-    # Search from repo foo (auto_scope defaults True). B's query
+    # Search from checkout foo (auto_scope defaults True). B's query
     # ("rate limiter") does not match A's body — the targeted-load
     # is the only path that could surface A, and it must drop A
-    # because the cross-project origin filter is applied at load.
+    # because the LINKS admission is applied at load.
     hits = _unwrap(await _call(server_foo, "memory_search", query="rate limiter"))
     hit = next(h for h in hits if h["id"] == dependent["id"])
     resolved = hit.get("depends_on_resolved")
@@ -1833,6 +1832,7 @@ async def test_episode_handoff_empty_when_no_prior_session(server: Any) -> None:
     assert res["episodes"] == []
 
 
+@pytest.mark.usefixtures("in_checkout")
 async def test_episode_handoff_surfaces_prior_session_takeaways(
     memory_dir: Path,
 ) -> None:
@@ -1870,6 +1870,7 @@ async def test_episode_handoff_surfaces_prior_session_takeaways(
     assert "iter 1" in res["episodes"][0]["body"]
 
 
+@pytest.mark.usefixtures("in_checkout")
 async def test_episode_handoff_respects_max_episodes_cap(memory_dir: Path) -> None:
     """`max_episodes` defaults to 5 and caps at 50. When the prior
     session has more episodes than requested, surface the most recent
@@ -1894,6 +1895,7 @@ async def test_episode_handoff_respects_max_episodes_cap(memory_dir: Path) -> No
     assert takeaways == ["takeaway 4", "takeaway 5", "takeaway 6"]
 
 
+@pytest.mark.usefixtures("in_checkout")
 async def test_episode_handoff_walks_past_session_with_only_suppressed_scopes(
     memory_dir: Path,
 ) -> None:
@@ -2005,6 +2007,7 @@ async def test_episode_handoff_filters_emit_under_explicit_prior_session_id(
     assert takeaways == ["tools takeaway"]
 
 
+@pytest.mark.usefixtures("in_checkout")
 async def test_episode_handoff_no_filter_when_disabled_scopes_empty(
     memory_dir: Path,
 ) -> None:
@@ -2079,52 +2082,25 @@ async def test_episode_handoff_respects_explicit_prior_session_id(
 
 async def test_episode_handoff_filters_prior_session_by_caller_worktree(
     memory_dir: Path,
-    monkeypatch: Any,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Two worktrees of one repo sharing a memory root must not see each
-    other's iteration takeaways through the auto-resolve path. Worktree
-    A writes an event + episode; a fresh server in worktree B asks for
-    a handoff with no explicit `prior_session_id` and gets the empty
-    result. `memory_search` already enforces this via
-    `should_include_for_caller`; the handoff has to mirror
-    that or it becomes the cross-tree leak path.
+    other's iteration takeaways through the auto-resolve path. The
+    repository's primary checkout A writes an episode; a fresh server in
+    a linked worktree B of the same repository asks for a handoff with no
+    explicit `prior_session_id` and gets the empty result. The two
+    checkouts share the project's memories (D1) but never each other's
+    run-state: the handoff keys on the checkout (design 3.6,
+    `Membership.handoff`), and nothing takes a live sibling's run-state.
 
     The caller's explicit-override semantic is preserved by
     `test_episode_handoff_respects_explicit_prior_session_id` above —
     this case only pins the auto-resolve filter."""
-    import bettermemory._handlers as handlers_module
-    import bettermemory.server as server_module
-    from bettermemory.origin import Origin
-
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
 
-    origin_a = Origin(
-        cwd="/worktrees/repo-feature-x",
-        repo="git@github.com:example/repo.git",
-        branch="feature-x",
-        worktree_root="/worktrees/repo-feature-x",
-    )
-    origin_b = Origin(
-        cwd="/worktrees/repo-bug-fix",
-        repo="git@github.com:example/repo.git",
-        branch="bug-fix",
-        worktree_root="/worktrees/repo-bug-fix",
-    )
-
-    # Patch capture_origin to return A's origin while server_a builds /
-    # writes. The handlers re-resolve the symbol from the module on each
-    # call, so re-assigning later for server_b is enough. `monkeypatch`
-    # restores both bindings at test teardown so we don't leak the
-    # fake into sibling tests.
-    def make_capture(origin: Origin):
-        def _capture(cwd: Any = None) -> Origin:
-            return origin
-
-        return _capture
-
-    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_a))
-    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_a))
-
+    # Worktree A: the repository's primary checkout.
+    repo = _stand_in(tmp_path_factory, monkeypatch, "repo")
     server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     await _call(
         server_a,
@@ -2134,15 +2110,15 @@ async def test_episode_handoff_filters_prior_session_by_caller_worktree(
         takeaway="feature-x branch: blocked on auth refactor",
     )
 
-    # Now flip to worktree B and ask for the handoff. server_b inherits
-    # the same memory root, the same event log (which carries A's
-    # session_id), but its caller-origin says it's in a different
-    # worktree of the same repo. The fix is what makes that case
-    # surface NO prior session — without it, A's takeaway would leak in
-    # as "what the prior session concluded" for B.
-    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_b))
-    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_b))
-
+    # Now move to worktree B and ask for the handoff. server_b shares
+    # the memory root and the event log (which carries A's session_id),
+    # but its caller stands in another checkout of the same repository.
+    # B must surface NO prior session; otherwise A's takeaway would leak
+    # in as "what the prior session concluded" for B.
+    worktree_b = _linked_worktree(
+        repo, tmp_path_factory.mktemp("linked") / "repo-bug-fix", "bug-fix"
+    )
+    monkeypatch.chdir(worktree_b)
     server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     res = await _call(server_b, "episode", action="handoff")
     # The cross-worktree case must look like "no prior session in this
@@ -2153,61 +2129,30 @@ async def test_episode_handoff_filters_prior_session_by_caller_worktree(
 
 async def test_episode_handoff_skips_zero_episode_candidate_from_other_worktree(
     memory_dir: Path,
-    monkeypatch: Any,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The zero-episode adoption branch must honor the same worktree
-    contract as the episode-bearing branch. Worktree A records events
-    (memory_write / memory_search) but never calls `episode_write` —
-    its session_id surfaces in the event log with no episode files on
-    disk. A fresh server in worktree B asks for a handoff; the tick-22
-    fix says it must NOT adopt A's session_id as "the prior session
-    in B's worktree".
+    """A session of another worktree that records events (memory_write /
+    memory_search) but never calls `episode_write` has its session_id in
+    the event log and no episode on disk. A fresh server in the
+    repository's primary checkout asks for a handoff; it must NOT adopt
+    that session_id as "the prior session" of its checkout.
 
-    Since queue #28, A's events carry a `worktree_root` origin (here
-    "/worktrees/repo-feature-x"), so this exercises the named-A !=
-    named-B skip: `_worktrees_equal_strict` compares two distinct named
-    worktrees of the same repo and rejects. (The legacy branch — a
-    zero-episode candidate whose events lack `worktree_root` at all,
-    which a named caller must also reject — is covered by
-    test_episode_handoff_skips_zero_episode_legacy_candidate_no_worktree.)
-
-    Pre-tick-22 the walk hit A's session, saw `candidate_eps == []`,
-    and adopted unconditionally — a leak of A's session_id as B's
-    "prior session", even though the bare ULID has no body to surface
-    it still conflicts with the explicit "this worktree" contract
-    that tick-2 established for sessions with episodes."""
-    import bettermemory._handlers as handlers_module
-    import bettermemory.server as server_module
-    from bettermemory.origin import Origin
-
+    Which sessions are a checkout's is read from the homes of their
+    episodes (design 3.6, `Membership.handoff`): the zero-episode session
+    has none, so nothing keys it to any checkout, and the linked worktree
+    it ran in is a live sibling whose run-state is never taken anyway."""
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
 
-    origin_a = Origin(
-        cwd="/worktrees/repo-feature-x",
-        repo="git@github.com:example/repo.git",
-        branch="feature-x",
-        worktree_root="/worktrees/repo-feature-x",
+    repo = _stand_in(tmp_path_factory, monkeypatch, "repo")
+    worktree_a = _linked_worktree(
+        repo, tmp_path_factory.mktemp("linked") / "repo-feature-x", "feature-x"
     )
-    origin_b = Origin(
-        cwd="/worktrees/repo-bug-fix",
-        repo="git@github.com:example/repo.git",
-        branch="bug-fix",
-        worktree_root="/worktrees/repo-bug-fix",
-    )
-
-    def make_capture(origin: Origin) -> Any:
-        def _capture(cwd: Any = None) -> Origin:
-            return origin
-
-        return _capture
-
-    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_a))
-    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_a))
 
     # Worktree A: write a memory + run a search. Both record events
     # under A's session_id but neither creates an episode on disk. A
-    # is therefore a "zero-episode session" from the episode_handoff
-    # walk's perspective.
+    # is therefore a "zero-episode session".
+    monkeypatch.chdir(worktree_a)
     server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     await _call(
         server_a,
@@ -2217,16 +2162,10 @@ async def test_episode_handoff_skips_zero_episode_candidate_from_other_worktree(
     )
     await _call(server_a, "memory_search", query="A's search")
 
-    # Flip to worktree B and ask for the handoff. Pre-fix, the walk
-    # would hit A's session_id from the event log, find zero episodes,
-    # and adopt it unconditionally. Post-fix, the strict
-    # None-only-matches-None rule treats A's unknown worktree as not
-    # matching B's named worktree, so the walk continues past — and
-    # since there's no older session, the result is the empty-store
-    # shape.
-    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_b))
-    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_b))
-
+    # Move to the primary checkout and ask for the handoff: A's session
+    # is not adopted, and since there's no older session, the result is
+    # the empty-store shape.
+    monkeypatch.chdir(repo)
     server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     res = await _call(server_b, "episode", action="handoff")
     assert res["prior_session_id"] is None
@@ -2235,108 +2174,44 @@ async def test_episode_handoff_skips_zero_episode_candidate_from_other_worktree(
 
 async def test_episode_handoff_skips_zero_episode_legacy_candidate_no_worktree(
     memory_dir: Path,
-    monkeypatch: Any,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Backward-compat fallback (queue #28): a zero-episode candidate
-    whose events LACK `worktree_root` (legacy / pre-#28 events) must NOT
-    be adopted by a caller in a named worktree.
-
-    `Recorder.record` only stamps `worktree_root` when the captured
-    origin has one, so an origin with `worktree_root=None` produces
-    exactly the legacy event shape (no field on disk). The handoff then
-    resolves the candidate's worktree to None and
-    `_worktrees_equal_strict(None, named_B)` rejects — reproducing the
-    conservative pre-#28 behavior. This is the branch whose dedicated
-    guard evaporated when test 3042 moved A's events to carry a
-    worktree; pin it explicitly so the fallback can't silently regress.
-    """
-    import bettermemory._handlers as handlers_module
-    import bettermemory.server as server_module
-    from bettermemory.origin import Origin
-
+    """A zero-episode session that ran outside any checkout (its events
+    carry no `worktree_root`) must NOT be adopted by a caller standing in
+    a checkout. The session has no episode homed in that checkout, so
+    `Membership.handoff` never names it (design 3.6)."""
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
 
-    # A's origin has NO worktree_root -> its events carry no worktree
-    # field, the legacy/pre-#28 shape.
-    origin_a_legacy = Origin(
-        cwd="/some/dir",
-        repo="git@github.com:example/repo.git",
-        branch="feature-x",
-        worktree_root=None,
-    )
-    origin_b = Origin(
-        cwd="/worktrees/repo-bug-fix",
-        repo="git@github.com:example/repo.git",
-        branch="bug-fix",
-        worktree_root="/worktrees/repo-bug-fix",
-    )
-
-    def make_capture(origin: Origin) -> Any:
-        def _capture(cwd: Any = None) -> Origin:
-            return origin
-
-        return _capture
-
-    monkeypatch.setattr(
-        handlers_module, "capture_origin", make_capture(origin_a_legacy)
-    )
-    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_a_legacy))
-
+    # A runs where the test starts: a plain directory outside any
+    # repository, so its events carry no worktree field.
     server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     await _call(server_a, "memory_write", content="A wrote this fact", scopes=["tools"])
     await _call(server_a, "memory_search", query="A's search")
+    assert not any(
+        "worktree_root" in event for event in Store(memory_dir).iter_events()
+    )
 
-    # Caller B is in a named worktree. The legacy candidate's worktree
-    # resolves to None; the strict rule rejects None vs named, so B must
-    # see the empty-store shape.
-    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_b))
-    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_b))
-
+    # Caller B stands in a checkout and must see the empty-store shape.
+    _stand_in(tmp_path_factory, monkeypatch, "repo")
     server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     res = await _call(server_b, "episode", action="handoff")
     assert res["prior_session_id"] is None
     assert res["episodes"] == []
 
 
-async def test_episode_handoff_adopts_zero_episode_candidate_when_caller_has_no_worktree(
+async def test_episode_handoff_outside_any_checkout_has_no_prior_session(
     memory_dir: Path,
-    monkeypatch: Any,
 ) -> None:
-    """Companion to the cross-worktree skip test. A caller whose origin
-    has no worktree_root (running outside any git checkout) DOES adopt
-    a zero-episode candidate — under the strict None-only-matches-None
-    rule, unknown == None matches when the caller is also None.
-
-    This pins the "all-null state" branch tick-22 explicitly preserves:
-    when neither side has worktree info, the legacy zero-episode
-    adoption still fires so callers without a worktree get the
-    `{prior_session_id: sess_xxx, episodes: []}` middle state the
-    module docstring promises."""
-    import bettermemory._handlers as handlers_module
-    import bettermemory.server as server_module
-    from bettermemory.origin import Origin
-
+    """A caller outside any checkout has no checkout to key run-state on
+    (design 3.6, `Membership.handoff` rule ``no_checkout``): the auto
+    path returns the first-ever shape even though a session that ran
+    outside any checkout, with events and a takeaway, precedes it. The
+    explicit `prior_session_id` still reads that session's takeaways:
+    naming a session is the caller's own consent."""
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
 
-    origin_none = Origin(
-        cwd="/tmp/no-checkout",
-        repo=None,
-        branch=None,
-        worktree_root=None,
-    )
-
-    def make_capture(origin: Origin) -> Any:
-        def _capture(cwd: Any = None) -> Origin:
-            return origin
-
-        return _capture
-
-    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_none))
-    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_none))
-
-    # Session A: records events under origin_none (no worktree) but
-    # writes no episodes. Zero-episode session with caller-side None
-    # worktree.
+    # Session A: records events and a takeaway outside any checkout.
     server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     await _call(
         server_a,
@@ -2344,22 +2219,26 @@ async def test_episode_handoff_adopts_zero_episode_candidate_when_caller_has_no_
         content="A's no-worktree fact",
         scopes=["tools"],
     )
+    ep_a = await _call(
+        server_a, "episode", action="write", body="A's body", takeaway="from A"
+    )
 
-    # A fresh server, still in the no-worktree state, asks for the
-    # handoff. Pre-tick-22 this was the adopted behavior; tick-22
-    # preserves it via `_worktrees_equal_strict(None, None) -> True`.
+    # A fresh server, still outside any checkout, asks for the handoff.
     server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     res = await _call(server_b, "episode", action="handoff")
-    assert res["prior_session_id"] is not None
-    assert res["prior_session_id"].startswith("sess_")
-    # Zero episodes on disk means the "middle state" — session_id
-    # surfaced, episodes empty.
+    assert res["prior_session_id"] is None
     assert res["episodes"] == []
+    assert "note" not in res
+
+    named = await _call(
+        server_b, "episode", action="handoff", prior_session_id=ep_a["session_id"]
+    )
+    assert named["prior_session_id"] == ep_a["session_id"]
+    assert [e["takeaway"] for e in named["episodes"]] == ["from A"]
 
 
-async def test_loop_iteration_end_to_end_pattern(
-    memory_dir: Path, monkeypatch: Any
-) -> None:
+@pytest.mark.usefixtures("in_checkout")
+async def test_loop_iteration_end_to_end_pattern(memory_dir: Path) -> None:
     """End-to-end exercise of the loop-iteration pattern documented in
     SKILL.md and the server-level instructions block.
 
@@ -2378,31 +2257,12 @@ async def test_loop_iteration_end_to_end_pattern(
        twice in one iteration returns the same rows.
 
     Pins the contract the docs / SKILL.md describe so a future refactor
-    of either episode action surfaces immediately."""
-    import bettermemory._handlers as handlers_module
-    import bettermemory.server as server_module
-    from bettermemory.origin import Origin
+    of either episode action surfaces immediately.
 
+    Both sessions stand in the same checkout (`in_checkout`): the
+    handoff keys run-state on it (design 3.6), so the adoption below is
+    the own-checkout match, never a match by absence."""
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
-
-    # Pin both sessions to the SAME named worktree. Without this the test
-    # captures the ambient cwd: inside a git checkout both servers get
-    # the real (equal) toplevel, but from a non-git dir both get a None
-    # worktree and the handoff adoption succeeds via None==None, which
-    # would make the worktree-match assertion vacuous. Pinning a named
-    # worktree forces the named == named match path.
-    shared_origin = Origin(
-        cwd="/worktrees/repo-loop",
-        repo="git@github.com:example/repo.git",
-        branch="loop",
-        worktree_root="/worktrees/repo-loop",
-    )
-
-    def _capture(cwd: Any = None) -> Origin:
-        return shared_origin
-
-    monkeypatch.setattr(handlers_module, "capture_origin", _capture)
-    monkeypatch.setattr(server_module, "capture_origin", _capture)
 
     # Iteration A: durable memory + journal entry.
     server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
@@ -2453,7 +2313,7 @@ async def test_loop_iteration_end_to_end_pattern(
     # A's pre-boundary memory is NOT — it sits before the boundary.
     assert not any("alpha gophers" in body for body in own_bodies)
 
-    # Second handoff: A is still the prior session in this worktree and
+    # Second handoff: A is still the prior session in this checkout and
     # its takeaway is still there to read.
     handoff_2 = await _call(server_b, "episode", action="handoff")
     assert handoff_2["prior_session_id"] == a_session_id
@@ -2540,6 +2400,7 @@ async def test_handoff_skips_floor_when_real_takeaway_already_exists(
     assert eps[0].takeaway == "real takeaway"
 
 
+@pytest.mark.usefixtures("in_checkout")
 async def test_handoff_followed_by_episode_write_yields_floor_plus_real(
     memory_dir: Path,
 ) -> None:
@@ -2582,6 +2443,7 @@ async def test_handoff_followed_by_episode_write_yields_floor_plus_real(
     assert "note" not in res
 
 
+@pytest.mark.usefixtures("in_checkout")
 async def test_handoff_crash_recovery_floor_only_session_adopted_as_prior(
     memory_dir: Path,
 ) -> None:
@@ -2658,60 +2520,39 @@ async def test_handoff_floor_distinguishes_crash_vs_normal_empty(
 
 async def test_handoff_floor_carries_caller_worktree_for_filter_match(
     memory_dir: Path,
-    monkeypatch: Any,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """E2 worktree-filter test: a floor-only session in worktree A is
-    adopted by a caller in worktree A, NOT by a caller in worktree B.
-    The fix's whole point is that the floor's origin.worktree_root is
-    what the filter matches against."""
-    import bettermemory._handlers as handlers_module
-    import bettermemory.server as server_module
-    from bettermemory.origin import Origin
-
+    """E2 checkout-filter test: a floor-only session in checkout A is
+    adopted by a caller in checkout A, NOT by a caller in a linked
+    worktree B of the same repository. The floor is homed in the
+    checkout its session stood in, and that home is what the handoff
+    keys on (design 3.6, `Membership.handoff`)."""
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
 
-    origin_a = Origin(
-        cwd="/worktrees/repo-feature-x",
-        repo="git@github.com:example/repo.git",
-        branch="feature-x",
-        worktree_root="/worktrees/repo-feature-x",
-    )
-    origin_b = Origin(
-        cwd="/worktrees/repo-bug-fix",
-        repo="git@github.com:example/repo.git",
-        branch="bug-fix",
-        worktree_root="/worktrees/repo-bug-fix",
-    )
-
-    def make_capture(origin: Origin) -> Any:
-        def _capture(cwd: Any = None) -> Origin:
-            return origin
-
-        return _capture
-
-    # Tick T in worktree A: handoff → crash (no episode_write). The
-    # handoff writes a floor with origin_a.
-    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_a))
-    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_a))
+    # Tick T in checkout A: handoff → crash (no episode_write). The
+    # handoff writes a floor homed in A.
+    repo = _stand_in(tmp_path_factory, monkeypatch, "repo")
     server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     await _call(server_a, "episode", action="handoff")
     # No episode_write — simulated crash before takeaway.
 
-    # T+1 in worktree B: handoff should NOT see A's floor — A's
-    # worktree is /repo-feature-x, B's is /repo-bug-fix.
-    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_b))
-    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_b))
+    # T+1 in worktree B: handoff should NOT see A's floor: it is homed
+    # in checkout A, and B is another checkout.
+    worktree_b = _linked_worktree(
+        repo, tmp_path_factory.mktemp("linked") / "repo-bug-fix", "bug-fix"
+    )
+    monkeypatch.chdir(worktree_b)
     server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     res_b = await _call(server_b, "episode", action="handoff")
-    # B doesn't adopt A's session — different worktree.
+    # B doesn't adopt A's session: different checkout.
     assert res_b["prior_session_id"] is None
     assert res_b["episodes"] == []
     assert "note" not in res_b
 
-    # Now a peer in worktree A asks for handoff. It DOES adopt T's
+    # Now a peer in checkout A asks for handoff. It DOES adopt T's
     # floor-only session, surfacing the crash-signal note.
-    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_a))
-    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_a))
+    monkeypatch.chdir(repo)
     server_a_peer = build_server(
         config=cfg, store=Store(memory_dir), state=SessionState()
     )

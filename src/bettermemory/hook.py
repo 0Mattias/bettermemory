@@ -141,6 +141,7 @@ from .time_utils import parse_event_ts
 from .transcript import stop_turn
 
 if TYPE_CHECKING:
+    from .admission import Admission
     from .recall import RecallState
 
 
@@ -247,12 +248,18 @@ def _probe_message(
     user_message: str,
     session_id: str,
     server_session: str | None,
-    caller_origin: Origin,
+    admission: Admission,
     excluded_scopes: set[str],
     recent: list[dict[str, Any]],
+    worktree_root: str | None = None,
 ) -> MissReport:
     """The one probe both hooks run: production pool, production
     ranking inputs, `probe_for_miss`, nothing else.
+
+    `admission` is the caller's POOL_PREFILTER admission (design 3.5),
+    built once by the hook from the caller's resolution: the pool, the
+    ranked set, the document frequencies and the audit's project tests
+    all decide through it.
 
     Shared by `run_audit` (Stop — the after-the-fact audit) and
     `recall.prompt_recall` (UserPromptSubmit — the same probe run before
@@ -273,8 +280,8 @@ def _probe_message(
     # miss verdict reads only the rank-1 hit, so a memory production's
     # prefilter would have dropped could take that slot and decide the
     # verdict on its own. The filters handed here are the ones
-    # `probe_for_miss` re-applies inside `run_search` (it derives the
-    # repo/worktree pair from `caller_origin` exactly this way), so the
+    # `probe_for_miss` re-applies inside `run_search` (the same
+    # admission object), so the
     # document frequencies price exactly the collection about to be
     # ranked. `min_survivors` is the width of a DEFAULT `memory_search`
     # (`default_search_width` — the config knob under the same clamp a
@@ -291,8 +298,7 @@ def _probe_message(
         store,
         user_message,
         excluded_scopes=excluded_scopes,
-        repo_filter=caller_origin.repo,
-        worktree_filter=caller_origin.worktree_root,
+        admission=admission,
         min_survivors=default_search_width(cfg.behavior),
     )
     # The ranker knobs production `memory_search` threads — the recency
@@ -322,7 +328,8 @@ def _probe_message(
         # reads the hits, not this verdict: its anti-spam bound is its
         # own per-session cooldown (`recall.RecallState`).
         lookback_seconds=_ATTRIBUTION_LOOKBACK_SECONDS,
-        caller_origin=caller_origin,
+        admission=admission,
+        worktree_root=worktree_root,
         excluded_scopes=excluded_scopes,
         mode=cfg.behavior.search_mode or "hybrid",
         half_life_days=cfg.behavior.recency_boost_half_life_days,
@@ -352,6 +359,7 @@ def audit_transcript(
     harness: str | None = None,
     prompt_id: str | None = None,
     state: RecallState | None = None,
+    posted: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """`run_audit` over the turn a Claude Code transcript holds for this
     Stop: the body of the Stop hook, shared by the `audit-turn` process
@@ -368,7 +376,8 @@ def audit_transcript(
     no reply. Which one it was goes on the `turn_audited` row as
     `reply_source` ("payload" or "tail"; no key without a reply).
     `harness`, `prompt_id` and `state` go to `run_audit` for the
-    settlement of shown pointers."""
+    settlement of shown pointers; `posted` (what the hook client posted
+    about where it stands) for the caller's resolution."""
     transcript_path = Path(transcript_path).expanduser()
     if not transcript_path.is_file():
         return None
@@ -395,6 +404,7 @@ def audit_transcript(
         reply_source=reply_source,
         transcript_path=str(transcript_path),
         state=state,
+        posted=posted,
     )
 
 
@@ -413,6 +423,7 @@ def run_audit(
     reply_source: str | None = None,
     transcript_path: str | None = None,
     state: RecallState | None = None,
+    posted: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Pure-function entry point: given a user message and session
     id, run the probe and emit events. Returns a small dict suitable
@@ -467,9 +478,19 @@ def run_audit(
     The in-process rows the hook joins are found by the harness join
     first (`bridged_session`: tool events stamped with this hook's
     session id as their ``harness_session``), the worktree bridge only
-    when none is stamped."""
+    when none is stamped.
+
+    The probe's pool is the caller's: its membership is resolved
+    (`recall.caller_admission`, from what the hook `posted`, else at
+    `cwd`) and the POOL_PREFILTER admission built from it (design 3.5).
+    A caller whose resolution raised, read nothing, or is deferred is
+    admitted nothing, so its probe ranks nothing and reports
+    ``no_signal``; a namespace the daemon cannot read is the same here,
+    since the Stop has no round left to ask its client."""
+    from .membership import POOL_PREFILTER
     from .recall import RecallState as _RecallState
     from .recall import (
+        caller_admission,
         confirm_compaction,
         previous_audit_at,
         review_unanswered,
@@ -517,16 +538,13 @@ def run_audit(
     # transcript id as the session — every value declared, the principal
     # stays None) beside the top-level `client_model` eval slices on.
     identity.bind_transcript(session_id=session_id, model=client_model)
-    # Capture once; reused for the probe's auto-scope and stamped on the
-    # hook's events so episode_handoff can worktree-match this turn's
-    # session (queue #28). The hook runs as a fresh process in the
+    # Capture once; stamped on the hook's events and read by the session
+    # joins below (queue #28). The hook runs as a fresh process in the
     # turn's cwd, or the daemon's endpoint is handed that cwd by the
     # hook client, so this reflects the user's working repo. When git
     # could not be asked (`caller_origin.git_indeterminate`) the nulls
-    # below mean "unknown", not "nowhere": the two shields that key on
-    # `worktree_root` then match every window, which errs toward
-    # suppressing a miss, and `probe_for_miss` declines to declare one
-    # outright (`suppressed_by="origin_indeterminate"`).
+    # below mean "unknown", not "nowhere". What the probe ranks is the
+    # caller's membership admission, resolved below.
     caller_origin = _origin_for(cwd)
     # Reconstruct the session-disabled scope set from the event log so the
     # probe shields the same scopes the in-process audit would. Without
@@ -554,19 +572,29 @@ def run_audit(
             lookback_seconds=_ATTRIBUTION_LOOKBACK_SECONDS,
         )
     else:
+        admission, _resolution = caller_admission(
+            POOL_PREFILTER,
+            store=store,
+            cfg=cfg,
+            cwd=cwd,
+            origin=caller_origin,
+            posted=posted,
+            session_id=session_id,
+        )
         report = _probe_message(
             cfg=cfg,
             store=store,
             user_message=user_message,
             session_id=session_id,
             server_session=server_session,
-            caller_origin=caller_origin,
+            admission=admission,
             excluded_scopes=_disabled_scopes_from_events(
                 recent,
                 worktree_root=caller_origin.worktree_root,
                 server_session=server_session,
             ),
             recent=recent,
+            worktree_root=caller_origin.worktree_root,
         )
     # Emit the audit event so cadence is visible even when there's
     # nothing to flag — matches the MCP handler's discipline. Honour

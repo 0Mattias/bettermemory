@@ -36,7 +36,10 @@ import pytest
 
 from bettermemory import _caches
 from bettermemory import origin as origin_module
-from bettermemory.config import Config
+from bettermemory.admission import Admission, CountedRecords
+from bettermemory.config import Config, StorageConfig
+from bettermemory.location import resolve_caller
+from bettermemory.membership import LINKS
 from bettermemory.models import Memory
 from bettermemory.origin import Origin
 from bettermemory.store import Store
@@ -47,12 +50,14 @@ from bettermemory.verdict import (
     memory_verdict,
     resolve_verdicts,
 )
+from bettermemory.verify import Anchoring
 
 from .test_server_commit_drift import (
     _REMOTE,
     _call,
     _commit_touching,
     _init_repo,
+    _stamp_without_head,
     _unwrap,
     server_with_fake_origin,  # noqa: F401  (the fixture, used by name)
 )
@@ -111,12 +116,20 @@ def _origin(repo: Path, remote: str = _REMOTE) -> Origin:
     return Origin(cwd=str(repo), repo=remote, branch="main", worktree_root=str(repo))
 
 
+def _counted(memories: list[Memory]) -> CountedRecords:
+    """The records a test reads verdicts for, named: what the commit legs
+    are read under (`admission.DriftScope`; no leg is counted for a record
+    nothing admitted)."""
+    return CountedRecords(frozenset(m.id for m in memories))
+
+
 def _verdicts(memories: list[Memory], origin: Origin | None) -> list[MemoryVerdict]:
     return resolve_verdicts(
         memories,
         caller_origin=origin,
         now=datetime.now(timezone.utc),
         stale_after_days=_STALE_AFTER_DAYS,
+        admission=_counted(memories),
     )
 
 
@@ -128,7 +141,30 @@ def _memoised(
         caller_origin=origin,
         now=datetime.now(timezone.utc),
         stale_after_days=_STALE_AFTER_DAYS,
+        admission=_counted(memories),
     )
+
+
+def _shown_verdict(memory_dir: Path, memory: Memory, caller: Origin) -> MemoryVerdict:
+    """The verdict as `memory_show` computes it for a caller standing at
+    `caller.cwd`: its claims anchored for the caller resolved there
+    (`verify.Anchoring`, design 3.6), and its commit leg counted only
+    where the LINKS surface admits the record's home and that home is a
+    project's (`Admission.drift_counts`, design 3.5)."""
+    assert caller.cwd is not None
+    store = Store(memory_dir)
+    config = Config(storage=StorageConfig(directory=str(memory_dir)))
+    resolved = resolve_caller(store, config, caller.cwd)
+    links = Admission.of(LINKS, resolved)
+    (verdict,) = resolve_verdicts(
+        [memory],
+        caller_origin=caller if links.drift_counts(memory.id) else None,
+        now=datetime.now(timezone.utc),
+        stale_after_days=_STALE_AFTER_DAYS,
+        anchoring=Anchoring(resolved.model, resolved.resolution),
+        admission=links,
+    )
+    return verdict
 
 
 def _parts(verdict: MemoryVerdict) -> dict[str, Any]:
@@ -218,7 +254,7 @@ async def test_verdict_agrees_with_show_and_search(
         server = server_with_fake_origin(caller)
 
     memory = Store(memory_dir).load_one(memory_id)
-    (computed,) = _verdicts([memory], caller)
+    computed = _shown_verdict(memory_dir, memory, caller)
     assert computed.staleness_verdict == expected
 
     shown = await _call(server, "memory_show", id=memory_id)
@@ -246,6 +282,7 @@ async def test_verdict_agrees_with_show_and_search(
 @_MEMO_IS_POSIX
 async def test_second_memory_show_spawns_no_git(
     server_with_fake_origin: Any,  # noqa: F811
+    memory_dir: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     drifted: bool,
@@ -255,8 +292,8 @@ async def test_second_memory_show_spawns_no_git(
     memo the search fills never consulted. A clean row (the quiescent
     applicability log) and a drifting one (the narrowing; a path-filtered
     log on the author-date basis) both run nothing the second time, on
-    either basis. A caller with no worktree root stamps no head, so its
-    rows count in author-date space."""
+    either basis. A record whose stamp carries no head counts in
+    author-date space (`_stamp_without_head`)."""
     repo = _repo(tmp_path)
     origin = (
         _origin(repo)
@@ -268,6 +305,8 @@ async def test_second_memory_show_spawns_no_git(
         server, "memory_write", content="widget rule in notes.md", scopes=["tools"]
     )
     await _call(server, "memory_verify", id=written["id"])
+    if basis == "author-date":
+        _stamp_without_head(memory_dir, written["id"])
     if drifted:
         _commit_touching(repo, "post", when=_FUTURE)
 
@@ -426,6 +465,7 @@ async def _resolved_row(
         caller_origin=origin,
         now=datetime.now(timezone.utc),
         stale_after_days=_STALE_AFTER_DAYS,
+        admission=_counted([memory]),
     )
     return written["id"], verdict
 
@@ -496,6 +536,7 @@ async def test_a_body_update_moves_the_verdict(
         caller_origin=origin,
         now=datetime.now(timezone.utc),
         stale_after_days=_STALE_AFTER_DAYS,
+        admission=_counted([memory]),
     )
 
 

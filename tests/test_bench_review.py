@@ -27,7 +27,8 @@ import re
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -35,6 +36,8 @@ from typing import Any
 import pytest
 
 from bettermemory import durability, review, supersession
+
+from .test_membership_security import stand_in_checkout
 
 _ROOT = Path(__file__).resolve().parents[1]
 _BENCH = _ROOT / "bench" / "integrity"
@@ -86,9 +89,22 @@ _AWS = _shaped("AKIA", "IOSFODNN7EXAMPLE")
 # ---------------------------------------------------------------------------
 
 
+@contextmanager
+def _standing_in_checkout(base: Path) -> Iterator[Path]:
+    """The process stands in a fresh checkout under `base` while the block
+    runs. An export's adds go through `memory_write` at the process cwd,
+    and the related set of each is the review strata of the writing
+    caller's project (design 3.5), which a caller outside any project is
+    admitted nothing of."""
+    base.mkdir(parents=True, exist_ok=True)
+    with pytest.MonkeyPatch.context() as mp:
+        yield stand_in_checkout(base, mp)
+
+
 def _export(tmp: Path, corpus: Path = DEV, **kw: Any) -> SimpleNamespace:
     receipts = tmp / "receipts"
-    summary = ri.export(corpus, receipts=receipts, scratch=tmp / "scratch", **kw)
+    with _standing_in_checkout(tmp / "checkout"):
+        summary = ri.export(corpus, receipts=receipts, scratch=tmp / "scratch", **kw)
     return _receipts(Path(summary["receipts"]), summary)
 
 
@@ -1335,15 +1351,16 @@ def _review_sealed(tmp: Path) -> SimpleNamespace:
 def _test_export(
     tmp: Path, sealed: SimpleNamespace, name: str, **kw: Any
 ) -> SimpleNamespace:
-    summary = ri.export(
-        TEST,
-        receipts=tmp / name,
-        scratch=tmp / f"{name}-scratch",
-        operating_points=sealed.points,
-        seals=sealed.seals,
-        review_seals=sealed.review_seals,
-        **kw,
-    )
+    with _standing_in_checkout(tmp / f"{name}-checkout"):
+        summary = ri.export(
+            TEST,
+            receipts=tmp / name,
+            scratch=tmp / f"{name}-scratch",
+            operating_points=sealed.points,
+            seals=sealed.seals,
+            review_seals=sealed.review_seals,
+            **kw,
+        )
     return _receipts(Path(summary["receipts"]), summary)
 
 

@@ -78,6 +78,7 @@ if str(_SRC) not in sys.path:
 
 from bettermemory.origin import Origin  # noqa: E402
 from bettermemory.verify import (  # noqa: E402
+    ClaimAnchor,
     compute_commit_drift,
     compute_staleness_verdict,
     compute_verification_status,
@@ -475,6 +476,13 @@ def window_diff_text(repo: Path, t0: str, t1: str, subdir: str) -> str:
     )
 
 
+def _home_checkout(tree: Path) -> ClaimAnchor:
+    """The memory's anchor in the bench: its home checkout's live view is
+    the tree the caller stands in, so the commit leg counts there
+    (`ClaimAnchor.commit_root`)."""
+    return ClaimAnchor(root=str(tree), rule="home_checkout")
+
+
 def verdict_for(
     claim: Claim,
     *,
@@ -498,7 +506,9 @@ def verdict_for(
     t0 for the reachability arm, None for the author-date arm. The
     calendar leg is held fresh by evaluating it one day after the stamp,
     the same way the drift-only arms hold it, so the two basis arms
-    measure the commit leg alone.
+    measure the commit leg alone. In every arm the tree the caller stands
+    in is the memory's home checkout (`_home_checkout`): the commits are
+    counted where the record's anchor resolves (design 3.6, decision B23).
 
     `tree1` is the t1 END OF THE WINDOW as a materialised tree, and it is
     what absolute citations point at. `repo` is only the git directory,
@@ -532,6 +542,7 @@ def verdict_for(
             verified_paths=[claim.rel_path],
             body=body,
             verified_head=anchor_sha,
+            anchor=_home_checkout(tree1),
         )
         count = drift_status.commits_since_verify if drift_status is not None else 0
         verdict = compute_staleness_verdict(
@@ -554,6 +565,7 @@ def verdict_for(
         caller_origin=caller,
         verified_paths=[claim.rel_path],
         body=body,
+        anchor=_home_checkout(repo),
     )
     commits = commits_touching.get(claim.rel_path, 0)
     count = commits if drift_status is not None else 0

@@ -5,6 +5,7 @@ to a self-describing JSON document.
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import sys
 from typing import Any
 
@@ -163,6 +164,18 @@ def _cli_export_mirror(
     sys.stdout.write(report.render_text())
 
 
+def _membership_part(store: Store, record_ids: list[str]) -> dict[str, Any] | None:
+    """The exported records' homes and their projects' portable identities
+    with this store's id (design 8.7), or None for a store an earlier build
+    left without membership tables or id."""
+    from ..membership import portable_export
+
+    try:
+        return portable_export(store, record_ids)
+    except (sqlite3.Error, RuntimeError):
+        return None
+
+
 def _cli_export(
     *,
     output: str | None,
@@ -182,9 +195,18 @@ def _cli_export(
           "source_directory": "/Users/me/.claude-memory",
           "active_memories":     [<full Memory dict>, ...],
           "tombstoned_memories": [<full TombstonedMemory dict>, ...],
+          "membership": {"store_id": ..., "projects": [...], "homes": {...}},
           "skipped_active_files": 0,
           "skipped_tombstone_files": 0
         }
+
+    `membership` carries what an importer needs to home the exported
+    records (design 8.7): this store's id, the portable identity of each
+    exported record's project and of the parents on its chain (file ids,
+    witness commits, remote keys; no local id and no path), and each
+    record's home keyed by record id, naming its project by position
+    (null for global). `bettermemory membership import` reads it. It is
+    null for a store that carries no membership tables.
 
     `tombstoned_memories` is omitted entirely when --no-tombstones is
     passed (vs. emitted as []) so a consumer can distinguish "not
@@ -312,6 +334,7 @@ def _cli_export(
         "source_directory": str(directory),
         "active_memories": [m.model_dump(mode="json") for m in active],
     }
+    record_ids = [m.id for m in active]
     tombstoned_count = 0
     # `None` (JSON null) rather than 0 when the tombstone half was never
     # read — see the docstring: 0 would assert an absence nobody checked.
@@ -331,6 +354,9 @@ def _cli_export(
             tombstoned = [t for t in tombstoned if scope_set.intersection(t.scopes)]
         payload["tombstoned_memories"] = [t.model_dump(mode="json") for t in tombstoned]
         tombstoned_count = len(tombstoned)
+        record_ids.extend(t.id for t in tombstoned)
+
+    payload["membership"] = _membership_part(store, record_ids)
 
     payload["skipped_active_files"] = skipped_active_files
     payload["skipped_tombstone_files"] = skipped_tombstone_files

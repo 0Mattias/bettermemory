@@ -13,6 +13,7 @@ sets them at interpreter start (conftest's `child_tau_env`).
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,13 +24,16 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from bettermemory import hook, identity
+from bettermemory._daemon_client import STORE_FILENAME, spawn_lock_file_for
 from bettermemory import review
 from bettermemory.config import BehaviorConfig, Config, ScopesConfig, StorageConfig
+from bettermemory.location import resolve_caller
 from bettermemory.store import Store
 
 from .conftest import child_tau_env
 from .test_daemon import _auth, mcp_session, running_app
 from .test_daemon_lifecycle import _cli, _env, _wait_running
+from .test_membership_security import stand_in_checkout
 
 TAU = 0.5
 
@@ -60,6 +64,26 @@ def tau(monkeypatch: pytest.MonkeyPatch) -> float:
     monkeypatch.setattr(review, "TAU_UNSAFE", TAU)
     monkeypatch.setattr(review, "TAU_SECRET", TAU)
     return TAU
+
+
+@pytest.fixture(autouse=True)
+def _in_checkout(
+    workspace: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    """Every path serves a caller standing in one checkout: the daemon
+    resolves an undeclared caller at its process cwd, a child inherits
+    this one, and the review strata admit the caller's own project and
+    nothing outside any project (design 3.5)."""
+    return stand_in_checkout(tmp_path_factory.mktemp("checkout"), monkeypatch)
+
+
+def _seed(store: Store, config: Config, content: str, *, scopes: list[str]) -> str:
+    """A record written where the test stands, homed in its project
+    (design 2.1)."""
+    home = resolve_caller(store, config, os.getcwd()).home()
+    return store.write(content=content, scopes=scopes, home=home).id
 
 
 @pytest.fixture(autouse=True)
@@ -121,7 +145,7 @@ async def test_review_round_trip_over_streamable_http(
     daemon_store: Store,
     tau: float,
 ) -> None:
-    old = daemon_store.write(content=OLD, scopes=["tools"]).id
+    old = _seed(daemon_store, daemon_config, OLD, scopes=["tools"])
     headers = _auth(
         **{identity.HEADER_CLIENT: "http-host", identity.HEADER_MODEL: "writer-a"}
     )
@@ -140,7 +164,7 @@ async def test_review_round_trip_through_stdio_shim(
     tmp_path: Path, tau_daemon_env: dict[str, str]
 ) -> None:
     with Store(tmp_path / "store") as store:
-        old = store.write(content=OLD, scopes=["tools"]).id
+        old = _seed(store, _config(tmp_path / "store"), OLD, scopes=["tools"])
     assert _cli(["up", "--port", "0"], tau_daemon_env).returncode == 0
     _wait_running(tmp_path)
     params = StdioServerParameters(
@@ -161,12 +185,18 @@ async def test_review_round_trip_through_stdio_shim(
 async def test_in_process_fallback_serves_the_same_review(
     tmp_path: Path, tau: float
 ) -> None:
+    """No daemon can be started (its spawn lock cannot be opened), so the
+    shim serves the store in-process, and the review it serves is the
+    daemon's. The state directory itself stays usable: it holds this
+    machine's identity, and a process without one is admitted nothing on
+    any surface (decision B16, design 3.5), the review strata included."""
     env = _tau_env(tmp_path)
-    blocker = tmp_path / "blocker"
-    blocker.write_bytes(b"not a directory")
-    env["BETTERMEMORY_STATE_DIR"] = str(blocker / "state")
+    store_path = Path(env["BETTERMEMORY_DIR"]).expanduser().resolve() / STORE_FILENAME
+    spawn_lock_file_for(Path(env["BETTERMEMORY_STATE_DIR"]), store_path).mkdir(
+        parents=True
+    )
     with Store(tmp_path / "store") as store:
-        old = store.write(content=OLD, scopes=["tools"]).id
+        old = _seed(store, _config(tmp_path / "store"), OLD, scopes=["tools"])
     stderr_path = tmp_path / "shim.stderr"
     with stderr_path.open("w") as stderr:
         params = StdioServerParameters(
@@ -207,7 +237,7 @@ async def test_bare_http_client_without_identity_headers_gets_review_and_client_
     daemon_store: Store,
     tau: float,
 ) -> None:
-    daemon_store.write(content=OLD, scopes=["tools"])
+    _seed(daemon_store, daemon_config, OLD, scopes=["tools"])
     async with running_app(daemon_config, daemon_store) as client:
         async with mcp_session(client, headers=_auth()) as session:
             first, second = await _round_trip(session)
@@ -227,10 +257,13 @@ async def test_two_shim_sessions_share_no_review_state(
     per process) each get their own review, over their own related set.
     The session ids are this test's own: the daemon's session registry is
     process-wide, and test_daemon.py's sessions disable scopes in it."""
-    visible = daemon_store.write(content=OLD, scopes=["tools"]).id
-    hidden = daemon_store.write(
-        content="Restic backups of the archive volumes rotate monthly.", scopes=["ops"]
-    ).id
+    visible = _seed(daemon_store, daemon_config, OLD, scopes=["tools"])
+    hidden = _seed(
+        daemon_store,
+        daemon_config,
+        "Restic backups of the archive volumes rotate monthly.",
+        scopes=["ops"],
+    )
     args = {"content": NEW, "scopes": ["tools"]}
     async with running_app(daemon_config, daemon_store) as client:
         async with mcp_session(
@@ -284,7 +317,7 @@ async def test_hook_endpoints_unchanged_by_review(
     # instant makes the two passes comparable byte for byte.
     frozen = datetime.now(timezone.utc)
     monkeypatch.setattr(hook, "utcnow", lambda: frozen)
-    daemon_store.write(content=OLD, scopes=["tools"])
+    _seed(daemon_store, daemon_config, OLD, scopes=["tools"])
     transcript = tmp_path / "transcript.jsonl"
     rows = [
         {"type": "user", "message": {"role": "user", "content": "how are backups run"}},

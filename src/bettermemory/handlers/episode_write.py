@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from .. import identity
+from ..events import HARNESS_SESSION_FIELD
 from ._shared import (
     Context,
     _advance_turn,
@@ -135,18 +137,34 @@ async def episode_write(
     # event log actually carries.
     session_id = deps.recorder.session_for_request()
 
+    # The episode is homed to the caller's checkout (design 3.6, 8.4),
+    # resolved at its origin's cwd; the record, its home and HEAD as a
+    # witness of the project commit in one transaction (design 8.1).
+    from ..location import resolve_caller
+
+    cwd = origin.cwd if origin is not None else None
+    caller = resolve_caller(
+        deps.store,
+        deps.config,
+        cwd or None,
+        session=identity.current_harness_session(),
+    )
+
     # `swarm_id` (when set) is validated by the Episode model's
     # `_check_swarm_id` (charset + length) inside `store.write`; an
     # invalid value raises ValueError that surfaces uniformly with the
     # body/takeaway/scope caps above.
-    episode = deps.store.write_episode(
-        session_id=session_id,
-        body=body,
-        takeaway=takeaway,
-        scopes=list(scopes or []),
-        swarm_id=swarm_id,
-        origin=origin,
-    )
+    with deps.store.batch():
+        episode = deps.store.write_episode(
+            session_id=session_id,
+            body=body,
+            takeaway=takeaway,
+            scopes=list(scopes or []),
+            swarm_id=swarm_id,
+            origin=origin,
+            home=caller.home(),
+        )
+        caller.add_head_witness("episode")
     # Prune old session dirs as a cheap side effect of the write path.
     # Exempt the active session so a long-paused worktree's history
     # survives across the pause. The prune walks one level (session
@@ -154,6 +172,10 @@ async def episode_write(
     # number of sessions in the worktree's lifetime, which is small.
     pruned = deps.store.prune_episode_sessions(keep_session_id=session_id)
 
+    # The conversation this server session serves, when the request named
+    # it: the handoff reads it to know that conversation journaled
+    # (decision B22, `episode_handoff._quiet_session`).
+    harness = identity.current_harness_session()
     deps.recorder.record(
         "episode_write",
         id=episode.id,
@@ -162,6 +184,7 @@ async def episode_write(
         has_takeaway=episode.takeaway is not None,
         swarm_id=episode.swarm_id,
         pruned_sessions=pruned,
+        **({HARNESS_SESSION_FIELD: harness} if harness is not None else {}),
     )
     return {
         "status": "committed",

@@ -23,6 +23,7 @@ import pytest
 
 from bettermemory.config import Config, StorageConfig
 from bettermemory.identity import Actor, actor_matches
+from bettermemory.membership import GLOBAL, RecordHome
 from bettermemory.search import candidate_admitted
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
@@ -32,6 +33,11 @@ from ._mcp import call_tool as _mcp_call
 
 CODE = Actor(client="claude-code", model="opus", sources={"client": "client-info"})
 HERMES = Actor(client="hermes", model="sonnet", sources={"client": "env"})
+
+#: The home of a record written outside any project, where these tests'
+#: server stands (the test workspace): every search it makes admits
+#: ``global`` records (design 3.5), so the filters alone select.
+OUTSIDE = RecordHome(GLOBAL, None, "outside_repository")
 
 
 @pytest.fixture
@@ -76,8 +82,8 @@ def test_actor_matches_ands_the_two_fields() -> None:
 
 
 def test_an_undeclared_writer_matches_no_filter_value() -> None:
-    """The selection-vs-admission line. `repo_filter` passes an
-    unlabelled memory because no origin means global; this must not,
+    """The selection-vs-admission line. The membership admission passes a
+    record homed ``global`` to every caller's search; this must not,
     or "what did hermes write" answers with everything written before
     the writer was recorded at all."""
     assert not actor_matches(None, client="hermes", model=None)
@@ -95,8 +101,7 @@ def test_candidate_admitted_reads_the_same_rule() -> None:
             actor,
             scope_filter=None,
             excluded=set(),
-            repo_filter=None,
-            worktree_filter=None,
+            admission=None,
             client_filter=client,
         )
 
@@ -159,15 +164,14 @@ def test_document_frequencies_bind_the_actor_filter(store: Store) -> None:
     store.write(content="alpha two", scopes=["tools"], actor=CODE)
     store.write(content="alpha three", scopes=["tools"])
 
-    def _admit(scopes: list[str], origin: Any, actor: Actor | None) -> bool:
+    def _admit(scopes: list[str], home: str | None, actor: Actor | None) -> bool:
         return candidate_admitted(
             scopes,
-            origin,
+            home,
             actor,
             scope_filter=None,
             excluded=set(),
-            repo_filter=None,
-            worktree_filter=None,
+            admission=None,
             client_filter="hermes",
         )
 
@@ -195,9 +199,9 @@ async def test_the_where_and_the_predicate_are_one_set(
     Parametrised rather than asserted twice so the two paths cannot be
     given different expectations by hand."""
     monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", threshold)
-    a = store.write(content="alpha one", scopes=["tools"], actor=HERMES)
-    store.write(content="alpha two", scopes=["tools"], actor=CODE)
-    store.write(content="alpha three", scopes=["tools"])
+    a = store.write(content="alpha one", scopes=["tools"], actor=HERMES, home=OUTSIDE)
+    store.write(content="alpha two", scopes=["tools"], actor=CODE, home=OUTSIDE)
+    store.write(content="alpha three", scopes=["tools"], home=OUTSIDE)
 
     hits = await _call(server, "memory_search", query="alpha", client="hermes")
     assert [h["id"] for h in hits] == [a.id]
@@ -219,14 +223,15 @@ async def test_the_prefilter_cap_is_spent_on_eligible_rows(
     turns this red, which is what makes it a test of the design and not
     of pytest.
 
-    `auto_scope=False` is load-bearing here and not incidental. With it
-    on, a repo filter is active, which arms `resolve_search_pool`'s
-    cap-starvation guard; the guard then reloads the whole store and
-    finds the rare row anyway. That second net is real and worth having,
-    but it only exists when some OTHER post-cap filter happens to be
-    active — so a gate that leaned on it would be measuring the guard
-    rather than the `WHERE`, and would go on passing after the `WHERE`
-    was deleted by anyone who ran it from outside a git checkout.
+    Every search carries the caller's membership admission (design 3.5),
+    a post-cap filter, so `resolve_search_pool`'s cap-starvation guard is
+    armed whether or not the search is auto-scoped: on a slice the
+    `WHERE` did not spend on eligible rows the guard reloads the whole
+    store and finds the rare row anyway. That second net is real and
+    worth having, so the test pins that it never fired: the pool was the
+    filtered slice, with no reload. A gate that let the reload answer
+    would be measuring the guard rather than the `WHERE`, and would go on
+    passing after the `WHERE` was deleted.
     """
     monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
     for i in range(60):
@@ -234,13 +239,17 @@ async def test_the_prefilter_cap_is_spent_on_eligible_rows(
             content=f"alpha alpha alpha alpha loud note {i}",
             scopes=["tools"],
             actor=CODE,
+            home=OUTSIDE,
         )
     # One mention, buried in a long body: BM25 saturates term frequency and
     # penalises length, so this row sorts below all sixty and lands outside
     # a 50-row cap taken on relevance alone.
     filler = " ".join(f"padding{i}" for i in range(400))
     rare = store.write(
-        content=f"quiet note alpha {filler}", scopes=["tools"], actor=HERMES
+        content=f"quiet note alpha {filler}",
+        scopes=["tools"],
+        actor=HERMES,
+        home=OUTSIDE,
     )
 
     # The premise the gate rests on, asserted rather than assumed: without
@@ -248,17 +257,26 @@ async def test_the_prefilter_cap_is_spent_on_eligible_rows(
     unfiltered = {mid for mid, _ in store.query_candidates("alpha", max_results=50)}
     assert rare.id not in unfiltered, "the cap must actually exclude it"
 
+    reloads: list[int] = []
+    real_load_all = Store.load_all
+
+    def load_all(self: Store, *args: Any, **kwargs: Any) -> Any:
+        reloads.append(1)
+        return real_load_all(self, *args, **kwargs)
+
+    monkeypatch.setattr(Store, "load_all", load_all)
     hits = await _call(
         server, "memory_search", query="alpha", client="hermes", auto_scope=False
     )
     assert [h["id"] for h in hits] == [rare.id]
+    assert reloads == [], "the starvation guard reloaded: the WHERE did not serve"
 
 
 async def test_search_is_unchanged_when_no_filter_is_passed(
     server: Any, store: Store
 ) -> None:
-    store.write(content="alpha one", scopes=["tools"], actor=HERMES)
-    store.write(content="alpha two", scopes=["tools"])
+    store.write(content="alpha one", scopes=["tools"], actor=HERMES, home=OUTSIDE)
+    store.write(content="alpha two", scopes=["tools"], home=OUTSIDE)
 
     hits = await _call(server, "memory_search", query="alpha")
     assert len(hits) == 2
@@ -267,6 +285,6 @@ async def test_search_is_unchanged_when_no_filter_is_passed(
 async def test_search_undeclared_rows_match_no_client(
     server: Any, store: Store
 ) -> None:
-    store.write(content="alpha one", scopes=["tools"])
+    store.write(content="alpha one", scopes=["tools"], home=OUTSIDE)
     hits = await _call(server, "memory_search", query="alpha", client="hermes")
     assert hits == []

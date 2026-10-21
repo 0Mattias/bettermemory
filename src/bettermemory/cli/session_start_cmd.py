@@ -39,7 +39,11 @@ hook-error banner.
 from __future__ import annotations
 
 import argparse
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ..config import Config
+    from ..store import Store
 
 # The stdin payload's bound, the hooks' (`hook._STDIN_PAYLOAD_CAP_BYTES`).
 _STDIN_CAP_BYTES = 64 * 1024
@@ -236,6 +240,7 @@ def _build_context_block(
 
     cwd = text("cwd")
     with Store.open(store_path, allow_rekey=False) as store:
+        _migrate(store, config)
         result = session_brief(
             session_id=session_id or text("session_id"),
             source=source or text("source"),
@@ -252,3 +257,17 @@ def _build_context_block(
             file=sys.stderr,
         )
     return result.stdout or None
+
+
+def _migrate(store: Store, config: Config) -> None:
+    """The migration's run at this open (design 8.6), for the path with no
+    daemon: logged at INFO, never written to stderr, which Claude Code
+    shows the user. A store opened without its key is left as it is
+    (`_common.run_migration_at_open`)."""
+    import logging
+
+    from ._common import migration_line, run_migration_at_open
+
+    report = run_migration_at_open(store, config)
+    if report is not None:
+        logging.getLogger("bettermemory.membership").info("%s", migration_line(report))

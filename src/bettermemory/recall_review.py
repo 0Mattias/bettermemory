@@ -7,7 +7,8 @@
 - briefs: `session_brief` rows (4), each with its pointers;
 - silent prompts (4): Stop turns the recall delivered nothing on, in
   which the conversation then retrieved (a search hit or a show) a
-  memory written in the caller's project, with those memories.
+  memory of the caller's project (its home, `membership.relation`), with
+  those memories.
 
 The prompt each sample answers is read from the session's transcript at
 review time and never stored: a delivery's as the user row, the human's
@@ -42,13 +43,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from .admission import Admission, recorded_caller
 from .events import redact_query
 from .hook import event_joined, joined_sessions
+from .membership import PROMPT_RECALL, Membership
 from .models import Memory
-from .origin import Origin
-from .origin import capture as capture_origin
 from .owner_prompt import owner_prompt, submitted_text
-from .recall import DEFAULT_HARNESS, clean_prompt, in_project, in_repository
+from .recall import DEFAULT_HARNESS, clean_prompt
 from .recall_counters import (
     RECALL_GRADE,
     STRATUM_BRIEF,
@@ -199,31 +200,29 @@ def _shows(
 
 def _project_test(
     memories: Mapping[str, Memory],
+    model: Membership | None,
 ) -> Callable[[str, str | None], bool]:
-    """Whether a memory was written in the project of a turn's worktree:
-    the recall's own test (`recall.in_project`) against the worktree's
-    origin as git reads it now, or, where that directory is no longer a
-    repository, the same worktree root on the memory's origin."""
-    callers: dict[str, Origin | None] = {}
+    """Whether a memory is of the project of a turn's worktree: the
+    recall's own membership test on the memory's home (`Admission.
+    same_project`: on the chain of the checkout recorded at that worktree,
+    or a sub-project of it, design 3.5 and D13). A worktree no checkout
+    was recorded at, a memory with no home, and a call with no `model`
+    answer no; the origin columns never decide."""
+    admissions: dict[str, Admission | None] = {}
 
-    def caller_for(worktree: str) -> Origin | None:
-        if worktree not in callers:
-            caller: Origin | None = None
-            if Path(worktree).is_dir():
-                found = capture_origin(Path(worktree))
-                if in_repository(found) and not found.git_indeterminate:
-                    caller = found
-            callers[worktree] = caller
-        return callers[worktree]
+    def admission_for(worktree: str) -> Admission | None:
+        if worktree not in admissions:
+            caller = recorded_caller(model, worktree) if model is not None else None
+            admissions[worktree] = (
+                Admission(PROMPT_RECALL, caller, model) if caller is not None else None
+            )
+        return admissions[worktree]
 
     def test(memory_id: str, worktree: str | None) -> bool:
-        memory = memories.get(memory_id)
-        if memory is None or memory.origin is None or worktree is None:
+        if memory_id not in memories or worktree is None:
             return False
-        caller = caller_for(worktree)
-        if caller is None:
-            return memory.origin.worktree_root == worktree
-        return in_project(memory.origin, caller)
+        admission = admission_for(worktree)
+        return admission is not None and admission.same_project(memory_id)
 
     return test
 
@@ -233,16 +232,18 @@ def _silent(
     start: datetime | None,
     end: datetime | None,
     memories: Mapping[str, Memory],
+    model: Membership | None = None,
 ) -> list[Candidate]:
     """Stop turns inside the window the recall delivered nothing on, in
-    which the conversation retrieved a memory of its project.
+    which the conversation retrieved a memory of its project
+    (`_project_test`).
 
     A turn runs from the session's previous Stop (`TURN_LOOKBACK` before
     its own when it has none) to its own; a repeat audit is not a turn.
     The conversation's retrievals are joined as the hooks join them: the
     harness stamp first, the worktree bridge over the turn's rows when
     nothing is stamped."""
-    project = _project_test(memories)
+    project = _project_test(memories, model)
     previous: dict[str, datetime] = {}
     # The log is in time order, so a turn's rows are one slice of it.
     stamped = [
@@ -315,14 +316,17 @@ def candidates(
     start: datetime | None,
     end: datetime | None,
     memories: Mapping[str, Memory],
+    model: Membership | None = None,
 ) -> dict[str, list[Candidate]]:
-    """Every gradable sample of the window, per stratum, oldest first."""
+    """Every gradable sample of the window, per stratum, oldest first.
+    `model` reads the homes and the recorded checkouts the silent stratum
+    is judged by; without it that stratum is empty."""
     rows = [dict(e) for e in events if isinstance(e, Mapping)]
     shows = _shows(rows, start, end)
     return {
         STRATUM_DELIVERY: [c for c in shows if c.stratum == STRATUM_DELIVERY],
         STRATUM_BRIEF: [c for c in shows if c.stratum == STRATUM_BRIEF],
-        STRATUM_SILENT: _silent(rows, start, end, memories),
+        STRATUM_SILENT: _silent(rows, start, end, memories, model),
     }
 
 
@@ -375,9 +379,14 @@ def find_candidate(
     sample_id: str,
     *,
     memories: Mapping[str, Memory],
+    model: Membership | None = None,
 ) -> Candidate | None:
-    """The sample `sample_id` names, from the whole log."""
-    for pool in candidates(events, start=None, end=None, memories=memories).values():
+    """The sample `sample_id` names, from the whole log (`model` as for
+    `candidates`)."""
+    population = candidates(
+        events, start=None, end=None, memories=memories, model=model
+    )
+    for pool in population.values():
         for candidate in pool:
             if candidate.sample_id == sample_id:
                 return candidate

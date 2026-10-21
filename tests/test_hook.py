@@ -41,11 +41,13 @@ from bettermemory.hook import (
     run_audit,
     run_prompt_recall,
 )
+from bettermemory.membership import RecordHome
 from bettermemory.models import Memory
 from bettermemory.store import STORE_FILENAME, Store
 from bettermemory.transcript import stop_turn
 
 from . import _transcript_rows as tr
+from .test_membership_security import checkout
 
 
 # ---------------------------------------------------------------------------
@@ -1466,6 +1468,15 @@ _MISS_BODY = "backup strategy uses triangular restic replication"
 _MISS_QUERY = "backup strategy"
 
 
+def _global_home(store: Store, mem_dir: Path) -> RecordHome:
+    """The home of a record written outside any project: the caller these
+    audits run as stands in the plain test workspace, whose pool prefilter
+    admits global records only (design 3.5)."""
+    from bettermemory.location import resolve_caller
+
+    return resolve_caller(store, _miss_config(mem_dir), str(mem_dir)).home()  # type: ignore[arg-type]
+
+
 def _write_miss_memory(mem_dir: Path) -> str:
     """Seed the high-relevance memory, backdated past the created-time
     filter in `probe_for_miss` (a memory born inside the lookback window
@@ -1477,7 +1488,11 @@ def _write_miss_memory(mem_dir: Path) -> str:
     test_audit.py; an hour comfortably predates the clamped maximum
     lookback (600s). Returns the memory id."""
     store = Store(mem_dir)
-    written = store.write(content=_MISS_BODY, scopes=["infrastructure"])
+    written = store.write(
+        content=_MISS_BODY,
+        scopes=["infrastructure"],
+        home=_global_home(store, mem_dir),
+    )
     _backdate(store, written, timedelta(hours=1))
     return written.id
 
@@ -1680,7 +1695,11 @@ def test_run_audit_flags_miss_on_memory_minutes_old(tmp_path: Path) -> None:
     mem_dir = tmp_path / "mem"
     mem_dir.mkdir()
     store = Store(mem_dir)
-    written = store.write(content=_MISS_BODY, scopes=["infrastructure"])
+    written = store.write(
+        content=_MISS_BODY,
+        scopes=["infrastructure"],
+        home=_global_home(store, mem_dir),
+    )
     # Backdate to 300s — outside the 60s creation shield, INSIDE the
     # hook's 600s attribution lookback. (`_write_miss_memory`'s 1h
     # backdate clears both windows, so it cannot discriminate.)
@@ -1985,22 +2004,32 @@ def _write_prefilter_starved_store(mem_dir: Path, worktree: str) -> str:
     mentions each term twice inside a long body — length normalisation
     drops it past the cap — but the keyword scorer caps per-term TF at
     2, so over the FULL corpus it ties the decoys and its freshness wins
-    rank 1. It is also the only project-scoped memory written from the
-    caller's repo, so holding rank 1 lets `_caller_in_top_hit_project`
-    suppress the verdict to `ok`."""
+    rank 1. It is also the only memory homed in the caller's project (the
+    checkout at `worktree`; the decoys are global), so holding rank 1
+    lets `_caller_in_top_hit_project` suppress the verdict to `ok`."""
+    from bettermemory.location import resolve_caller
     from bettermemory.origin import Origin
 
     store = Store(mem_dir)
+    plain = _global_home(store, mem_dir)
     dense = "alpha beta " * 6
     for i in range(60):
         store.write(
-            content=f"{dense}filler-{i}", scopes=["infrastructure"], origin=None
+            content=f"{dense}filler-{i}",
+            scopes=["infrastructure"],
+            origin=None,
+            home=plain,
         )
     padding = " ".join(f"pad{j}" for j in range(200))
     target = store.write(
         content=f"alpha beta alpha beta {padding} tail",
         scopes=["projects:repo-a"],
         origin=Origin(cwd=worktree, repo=_STARVED_REPO, worktree_root=worktree),
+        home=resolve_caller(
+            store,
+            _miss_config(mem_dir),  # type: ignore[arg-type]
+            worktree,
+        ).home(),
     )
     for mem in store.load_all():
         age = timedelta(minutes=30) if mem.id == target.id else timedelta(days=30)
@@ -2039,7 +2068,7 @@ def test_run_audit_ranks_productions_candidate_pool(
 
     mem_dir = tmp_path / "mem"
     mem_dir.mkdir()
-    worktree = str(tmp_path / "repo-a-wt")
+    worktree = str(checkout(tmp_path / "repo-a-wt"))
     target_id = _write_prefilter_starved_store(mem_dir, worktree)
     monkeypatch.setattr(
         "bettermemory.hook.capture_origin",
@@ -2073,32 +2102,37 @@ def test_run_audit_ranks_productions_candidate_pool(
 def test_run_audit_declines_a_miss_when_git_could_not_be_asked(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The Stop hook captures origin with `capture_origin()` and reads a
-    null `repo` as "the caller is nowhere", which drops the project-
-    cohort shield. When the null came from git not answering — no
-    binary, a timeout — the caller may well be inside the matching
-    repo, and the turn used to be logged as a `search_miss`. The
-    measured null (git said "not a repository") still misses."""
+    """When nothing could be read where the caller stands (git not
+    answering: no binary, a timeout), the caller may well be inside the
+    project of the top hit, and the turn used to be logged as a
+    `search_miss`. Its resolution is INDETERMINATE, which every surface
+    admits nothing (design 3.5): the probe ranks nothing and reports
+    `no_signal`, never a miss. The measured outside (git said "not a
+    repository") still misses."""
+    from bettermemory import location
     from bettermemory.origin import Origin
 
     mem_dir = tmp_path / "mem"
     mem_dir.mkdir()
     _write_miss_memory(mem_dir)
-
-    unknown = Origin(cwd=str(tmp_path))
-    unknown._git_indeterminate = True
-    monkeypatch.setattr("bettermemory.hook.capture_origin", lambda *a, **k: unknown)
-    result = run_audit(
-        user_message=_MISS_QUERY,
-        assistant_response=None,
-        session_id="claude-origin-unknown",
-        config=_miss_config(mem_dir),  # type: ignore[arg-type]
-    )
-    assert result["verdict"] == "ok"
-    assert not [e for e in _events(mem_dir) if e["kind"] == "search_miss"]
+    cfg = _miss_config(mem_dir)
+    unread = location.resolve_caller(Store(mem_dir), cfg, None).resolution  # type: ignore[arg-type]
+    assert unread.outcome == "indeterminate"
 
     nowhere = Origin(cwd=str(tmp_path))
     monkeypatch.setattr("bettermemory.hook.capture_origin", lambda *a, **k: nowhere)
+    with monkeypatch.context() as patched:
+        patched.setattr(location, "resolve_hook", lambda *a, **k: unread)
+        result = run_audit(
+            user_message=_MISS_QUERY,
+            assistant_response=None,
+            session_id="claude-origin-unknown",
+            config=cfg,  # type: ignore[arg-type]
+        )
+    assert result["verdict"] == "no_signal"
+    assert result["top_hits"] == []
+    assert not [e for e in _events(mem_dir) if e["kind"] == "search_miss"]
+
     result = run_audit(
         user_message=_MISS_QUERY,
         assistant_response=None,
@@ -2122,9 +2156,9 @@ _HOOK_REPO = "git@github.com:owner/foo.git"
 
 
 def _pin_caller_in_repo(monkeypatch: pytest.MonkeyPatch, worktree: Path) -> None:
-    """Stand the hook's caller in `_HOOK_REPO` at `worktree`, whatever
-    directory the payload names: the recall delivers only memories
-    written in the caller's project."""
+    """Stand the hook's caller in the checkout at `worktree`, whatever
+    directory the payload names: the recall delivers only memories homed
+    in the caller's project (design 3.5)."""
     from bettermemory.origin import Origin
 
     caller = Origin(cwd=str(worktree), repo=_HOOK_REPO, worktree_root=str(worktree))
@@ -2132,8 +2166,10 @@ def _pin_caller_in_repo(monkeypatch: pytest.MonkeyPatch, worktree: Path) -> None
 
 
 def _write_project_memory(mem_dir: Path, worktree: Path) -> str:
-    """The high-relevance memory, written in `_HOOK_REPO` at `worktree`
-    and backdated past the probe's creation shield."""
+    """The high-relevance memory, written in the checkout at `worktree`
+    (homed in its project) and backdated past the probe's creation
+    shield."""
+    from bettermemory.location import resolve_caller
     from bettermemory.origin import Origin
 
     store = Store(mem_dir)
@@ -2141,6 +2177,11 @@ def _write_project_memory(mem_dir: Path, worktree: Path) -> str:
         content=_MISS_BODY,
         scopes=["projects:foo"],
         origin=Origin(cwd=str(worktree), repo=_HOOK_REPO, worktree_root=str(worktree)),
+        home=resolve_caller(
+            store,
+            _miss_config(mem_dir),  # type: ignore[arg-type]
+            str(worktree),
+        ).home(),
     )
     _backdate(store, written, timedelta(hours=1))
     return written.id
@@ -2155,8 +2196,7 @@ def test_stop_audit_reports_ok_after_recall(
     reports `ok` with no `search_miss`."""
     mem_dir = tmp_path / "mem"
     mem_dir.mkdir()
-    worktree = tmp_path / "foo"
-    worktree.mkdir()
+    worktree = checkout(tmp_path / "foo")
     _write_project_memory(mem_dir, worktree)
     _pin_caller_in_repo(monkeypatch, worktree)
     cfg = _miss_config(mem_dir)
@@ -2164,6 +2204,7 @@ def test_stop_audit_reports_ok_after_recall(
     block = run_prompt_recall(
         prompt=_MISS_QUERY,
         session_id="transcript-turn",
+        cwd=worktree,
         config=cfg,  # type: ignore[arg-type]
     )
     assert block is not None
@@ -2219,8 +2260,7 @@ def test_prompt_main_injects_and_exits_zero(
     mem_dir = tmp_path / "mem"
     mem_dir.mkdir()
     monkeypatch.setenv("BETTERMEMORY_DIR", str(mem_dir))
-    worktree = tmp_path / "foo"
-    worktree.mkdir()
+    worktree = checkout(tmp_path / "foo")
     memory_id = _write_project_memory(mem_dir, worktree)
     _pin_caller_in_repo(monkeypatch, worktree)
 

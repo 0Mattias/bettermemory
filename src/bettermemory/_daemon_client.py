@@ -7,7 +7,13 @@ top of the interpreter: `import json, urllib.request, socket` measures
 about 26 ms on the author's machine against 316 ms for `import mcp`.
 `_entry.main` dispatches the hook words to `hook_main` before anything
 heavier is imported, and `tests/test_hook_client.py` checks the path with
-`-X importtime`.
+`-X importtime`. Each hook posts where its caller stands (`location.probe`,
+design 8.1); where the daemon cannot read that path, the client captures
+its location in its own namespace, writes the checkout token there, and
+answers the daemon's questions about its repository from its own files
+(`_membership_rounds`, design 8.7). `location` and the modules it imports
+(`checkout_token`, `project_file`, `gitobjects`, `githead`) are standard
+library only; `machine` is imported only in that exchange.
 
 One daemon per store. The state file is named after the store it serves
 (`daemon-<sha256(store path)[:16]>.json` under the state directory), so a
@@ -738,6 +744,73 @@ def _parse_hook_argv(argv: list[str]) -> tuple[str | None, dict[str, Any], bool]
     return event, flags, quiet
 
 
+def _location_probe(payload: dict[str, Any]) -> None:
+    """Put the caller's namespace probe in the payload (design 8.1,
+    `location.probe`): the cwd resolved, its object and the host's name,
+    which the daemon compares with its own reading of that path."""
+    from . import location
+
+    cwd = payload.get("cwd")
+    if isinstance(cwd, str) and cwd:
+        payload["location"] = location.probe(cwd)
+
+
+def _membership_rounds(
+    state: dict[str, Any], event: str, payload: dict[str, Any], reply: dict[str, Any]
+) -> dict[str, Any]:
+    """The client's half of the witness exchange (design 8.7): while the
+    daemon's reply asks (``membership.ask``), the client captures its
+    location in its own namespace (`location.capture`, writing the
+    checkout token under the policy the daemon names, decision D11),
+    opens its own machine (`machine.open_machine`) and answers each
+    question about its repository from its own files (`location.answer`),
+    and posts again; at most `location.EXCHANGE_ROUNDS` rounds. A final
+    reply asking for a re-mint (``membership.remint``) re-mints the token
+    of the checkout captured here (design 3.3). The daemon never reads
+    the client's paths."""
+    from . import checkout_token, location
+
+    capture: location.Capture | None = None
+    policy = False
+    answers: dict[str, Any] = {}
+    for _ in range(location.EXCHANGE_ROUNDS):
+        said = reply.get("membership")
+        question = said.get("ask") if isinstance(said, dict) else None
+        if not isinstance(question, dict):
+            break
+        policy = bool(question.get("write_token"))
+        cwd = payload.get("cwd")
+        if not isinstance(cwd, str) or not cwd:
+            break
+        if capture is None or question.get("location") or question.get("machine"):
+            from .machine import open_machine
+
+            capture = location.capture(cwd, write_token=policy)
+            payload["location"] = capture.to_token()
+            payload["machine"] = location.identity_to_json(open_machine())
+        else:
+            answers = location.answer(question, answers, capture)
+            payload["answers"] = answers
+        reply = post(
+            state["port"],
+            state["token"],
+            HOOK_PATH + event,
+            payload,
+            timeout=HOOK_TIMEOUT_SECONDS,
+        )
+    said = reply.get("membership")
+    if (
+        isinstance(said, dict)
+        and said.get("remint")
+        and capture is not None
+        and capture.git_dir
+    ):
+        checkout_token.remint(
+            capture.git_dir, policy=policy, bare=capture.kind == location.BARE
+        )
+    return reply
+
+
 def _blackhole_stdout() -> None:
     try:
         sys.stdout = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
@@ -761,6 +834,7 @@ def hook_main(argv: list[str]) -> int:
         payload = _read_stdin_payload()
         payload.update(flags)
         payload.setdefault("cwd", os.getcwd())
+        _location_probe(payload)
         payload["quiet"] = quiet
         payload.pop("attended", None)
         if os.environ.get(ATTENDED_ENV) == "1":
@@ -785,6 +859,7 @@ def hook_main(argv: list[str]) -> int:
             payload,
             timeout=HOOK_TIMEOUT_SECONDS,
         )
+        reply = _membership_rounds(state, event, payload, reply)
     except Exception as exc:  # noqa: BLE001 - the hook contract is exit 0
         print(
             f"bettermemory hook {event}: {exc.__class__.__name__}: {exc}",

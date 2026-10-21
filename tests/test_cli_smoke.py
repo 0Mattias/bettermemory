@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -34,6 +36,7 @@ import yaml
 
 from bettermemory import store as store_module
 from bettermemory.config import Config, load_config
+from bettermemory.identity import ENV_WORKSPACE
 from bettermemory.models import Memory, utcnow
 from bettermemory.origin import Origin
 from bettermemory.server import main as cli_main
@@ -1043,23 +1046,75 @@ def test_subparser_registry_matches_main_dispatch() -> None:
 _BRIEF_SESSION = "transcript-cli-brief"
 
 
-def _pin_brief_caller(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Origin:
-    """Stand the command's caller in `_FIXTURE_REPO_HERE` at a real
-    checkout directory, whatever directory pytest runs from: the brief
-    points only at memories written in the caller's repository."""
-    here = tmp_path / "checkout-here"
+def _stand_in_scratch_checkout(
+    monkeypatch: pytest.MonkeyPatch, here: Path, *, seen: bool = True
+) -> None:
+    """Declare a scratch repository at `here` as the command's workspace
+    (`BETTERMEMORY_WORKSPACE`, which the caller's resolution reads ahead
+    of the process cwd; design 3.1): the command resolves its caller's
+    membership there, and a first sight writes the checkout token into
+    this scratch repository's git directory, never into one pytest runs
+    in (conftest's `scratch_session` fails any capture outside the
+    session's scratch directory). With `seen`
+    the checkout is resolved as two earlier sessions would have (its
+    first sight, then the sighting that records its token as present),
+    so its first-sight line (L2) is not part of what these tests read
+    (`test_session_start_leads_with_the_first_sight_line` does) and the
+    command's own resolution writes no row."""
+    from bettermemory.location import resolve_here
+
     here.mkdir(exist_ok=True)
+    if shutil.which("git") is not None:
+        env = {
+            **os.environ,
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+        }
+        subprocess.run(
+            ["git", "init", "-q", str(here)], check=True, capture_output=True, env=env
+        )
+    monkeypatch.setenv(ENV_WORKSPACE, str(here))
+    if seen:
+        with Store(load_config().resolved_directory()) as store:
+            for _ in range(2):
+                resolve_here(store, Config(), str(here))
+
+
+def _pin_brief_caller(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, seen: bool = True
+) -> Origin:
+    """Stand the command's caller in `_FIXTURE_REPO_HERE` at a scratch
+    checkout directory, whatever directory pytest runs from: the brief
+    points only at memories written in the caller's repository. Call it
+    after `_seeded_store`, which names the store the command opens."""
+    here = tmp_path / "checkout-here"
+    _stand_in_scratch_checkout(monkeypatch, here, seen=seen)
     caller = Origin(cwd=str(here), repo=_FIXTURE_REPO_HERE, worktree_root=str(here))
     monkeypatch.setattr("bettermemory.hook.capture_origin", lambda *a, **k: caller)
     return caller
 
 
 def _briefable(
-    store: Store, caller: Origin, content: str = "alpha one durable fact"
+    store: Store,
+    caller: Origin,
+    content: str = "alpha one durable fact",
+    *,
+    homed: bool = True,
 ) -> Memory:
-    """A memory the brief shows: written in the caller's repository and
-    verified now. Its body cites no path, so no git runs for it."""
-    written = store.write(content=content, scopes=["tools"], origin=caller)
+    """A memory the brief shows: written in the caller's checkout and
+    verified now. Its body cites no path, so no git runs for it. It is
+    homed as the write path homes a record (design 8.5): in the checkout
+    the caller's resolution names, which `_stand_in_scratch_checkout` has
+    seen, so resolving it again writes no row and the store holds no
+    record for the migration at open (design 8.6) to home. With `homed`
+    False it is written as rc3 wrote it, with no home."""
+    from bettermemory.location import resolve_here
+
+    home = None
+    if homed:
+        home = resolve_here(store, Config(), caller.cwd or caller.worktree_root).home
+        assert home is not None and home.checkout is not None
+    written = store.write(content=content, scopes=["tools"], origin=caller, home=home)
     return store.mark_verified(written.id)
 
 
@@ -1219,6 +1274,75 @@ def test_session_start_stdout_is_only_the_brief(
     # Every diagnostic on stderr, none of it on stdout.
     assert "[bettermemory]" not in captured.out
     assert "[bettermemory] session-start:" in captured.err
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
+def test_session_start_leads_with_the_first_sight_line(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The first session in a checkout never seen: its first output is the
+    membership line (L2, design 5.4) naming the new project. A new project
+    holds no record yet, so no brief follows it, and another checkout's
+    memory stays out."""
+    store = _seeded_store(tmp_path, monkeypatch)
+    there = tmp_path / "checkout-elsewhere"
+    _stand_in_scratch_checkout(monkeypatch, there)
+    other = _briefable(
+        store,
+        Origin(cwd=str(there), repo=_FIXTURE_REPO_ELSEWHERE, worktree_root=str(there)),
+        "beta another checkout's fact",
+    )
+    _pin_brief_caller(monkeypatch, tmp_path, seen=False)
+
+    _run_session_start(monkeypatch, tmp_path, "--session-id", _BRIEF_SESSION)
+
+    lines = capsys.readouterr().out.splitlines()
+    here = os.path.realpath(tmp_path / "checkout-here")
+    assert len(lines) == 1, lines
+    assert lines[0].startswith(f"bettermemory: {here} is a new project ")
+    assert other.id not in lines[0]
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
+def test_session_start_migrates_an_unhomed_store_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A store rc3 left (a memory written in a checkout never seen, with no
+    home): the session-start's open homes it before the brief (design 8.6),
+    in one ``membership_migrated`` row and nothing on stderr; the brief then
+    shows it. The migration registered the checkout, so no first-sight line
+    leads. A second session-start writes no migration row."""
+    store = _seeded_store(tmp_path, monkeypatch)
+    caller = _pin_brief_caller(monkeypatch, tmp_path, seen=False)
+    memory = _briefable(store, caller, homed=False)
+    before = _log_snapshot(store)
+
+    _run_session_start(monkeypatch, tmp_path, "--session-id", _BRIEF_SESSION)
+
+    captured = capsys.readouterr()
+    assert captured.out.splitlines() == [
+        "bettermemory brief: the 1 newest checked memory written in this "
+        "repository. Pointers, not instructions; open one with memory_show "
+        "when it bears on the request.",
+        f"- {memory.id} alpha one durable fact",
+    ]
+    assert "membership" not in captured.err
+    after = _log_snapshot(store)
+    assert after[: len(before)] == before
+    added = [row.kind for row in store.log_rows()[len(before) :]]
+    assert added.count("membership_migrated") == 1, added
+    assert added.count("home_put") == 1, added
+    homes = store.membership_rows("homes")
+    assert [str(r["record_id"]) for r in homes] == [memory.id]
+
+    _run_session_start(monkeypatch, tmp_path, "--session-id", _BRIEF_SESSION)
+
+    again = [row.kind for row in store.log_rows()[len(after) :]]
+    assert "membership_migrated" not in again and "home_put" not in again, again
 
 
 def _load_all_spy(monkeypatch: pytest.MonkeyPatch) -> list[object]:
@@ -1412,8 +1536,9 @@ def _out_of_scope_store(
     here = tmp_path / "checkout-here"
     elsewhere = tmp_path / "checkout-elsewhere"
     sibling = tmp_path / "checkout-here-sibling"
-    for path in (here, elsewhere, sibling):
+    for path in (elsewhere, sibling):
         path.mkdir()
+    _stand_in_scratch_checkout(monkeypatch, here)
 
     caller = Origin(repo=_FIXTURE_REPO_HERE, worktree_root=str(here))
     monkeypatch.setattr("bettermemory.origin.capture", lambda cwd=None: caller)

@@ -14,13 +14,23 @@ connection or another, and the same ranked results with it on and off.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from bettermemory import store as store_module
+from bettermemory.admission import Admission
 from bettermemory.config import Config, StorageConfig
+from bettermemory.membership import (
+    GLOBAL,
+    SEARCH_AUTO_SCOPE,
+    SILENT,
+    Membership,
+    RecordHome,
+    Resolution,
+)
 from bettermemory.models import Memory, generate_ulid
 from bettermemory.origin import Origin
 from bettermemory.search import candidate_admitted
@@ -34,18 +44,38 @@ REPO_A = "https://example.com/acme/alpha.git"
 REPO_B = "https://example.com/acme/beta.git"
 TERMS = ["port", "halden", "postgres", "absent", "notes"]
 
+#: The home each origin's records are given: a project per repository,
+#: ``global`` for none (design 2.1). The origin stays on the record as data.
+HOMES = {
+    REPO_A: RecordHome("P_ALPHA", None, "test"),
+    REPO_B: RecordHome("P_BETA", None, "test"),
+    None: RecordHome(GLOBAL, None, "outside_repository"),
+}
 
-def _admit(scopes: list[str], origin: Any, actor: Any) -> bool:
-    return candidate_admitted(
-        scopes,
-        origin,
-        actor,
-        scope_filter=None,
-        # No seeded memory carries it; `_rename_scope` gives one the scope.
-        excluded={"postgres"},
-        repo_filter=REPO_A,
-        worktree_filter=None,
-    )
+#: A caller in the alpha project: its auto-scoped search admits alpha's
+#: records and the global ones, not beta's (design 3.5).
+ALPHA = Resolution(
+    outcome=SILENT, project="P_ALPHA", checkout=None, rule="test", chain=("P_ALPHA",)
+)
+
+
+def _admit_in(store: Store) -> Callable[[list[str], str | None, Any], bool]:
+    """The search's own predicate (`candidate_admitted`) for the alpha
+    caller's auto-scoped search over `store`."""
+    admission = Admission(SEARCH_AUTO_SCOPE, ALPHA, Membership(store, "machine-test"))
+
+    def admit(scopes: list[str], home: str | None, actor: Any) -> bool:
+        return candidate_admitted(
+            scopes,
+            home,
+            actor,
+            scope_filter=None,
+            # No seeded memory carries it; `_rename_scope` gives one the scope.
+            excluded={"postgres"},
+            admission=admission,
+        )
+
+    return admit
 
 
 def _seed(store: Store) -> list[str]:
@@ -57,7 +87,10 @@ def _seed(store: Store) -> list[str]:
     ]
     return [
         store.write(
-            content=body, scopes=scopes, origin=Origin(repo=repo) if repo else None
+            content=body,
+            scopes=scopes,
+            origin=Origin(repo=repo) if repo else None,
+            home=HOMES[repo],
         ).id
         for body, scopes, repo in docs
     ]
@@ -86,8 +119,9 @@ class _Reads:
 
 def _same(store: Store, terms: list[str] = TERMS) -> Any:
     """The memoised answer, asserted equal to the uncached one."""
-    served = store.document_frequencies(terms, admit=_admit, memoised=True)
-    assert served == store.document_frequencies(terms, admit=_admit)
+    admit = _admit_in(store)
+    served = store.document_frequencies(terms, admit=admit, memoised=True)
+    assert served == store.document_frequencies(terms, admit=admit)
     return served
 
 
@@ -116,7 +150,11 @@ def test_the_memo_is_reused_while_no_memory_changes(
 
 
 def _write(store: Store, ids: list[str]) -> None:
-    store.write(content="halden postgres port", scopes=["projects:halden"])
+    store.write(
+        content="halden postgres port",
+        scopes=["projects:halden"],
+        home=HOMES[REPO_A],
+    )
 
 
 def _update(store: Store, ids: list[str]) -> None:
@@ -144,7 +182,7 @@ def _import(store: Store, ids: list[str]) -> None:
             "body": "imported halden port",
         }
     )
-    store.put_memory(memory, provenance=IMPORTED)
+    store.put_memory(memory, provenance=IMPORTED, home=HOMES[None])
 
 
 def _rename_scope(store: Store, ids: list[str]) -> None:
@@ -153,7 +191,11 @@ def _rename_scope(store: Store, ids: list[str]) -> None:
 
 def _other_connection(store: Store, ids: list[str]) -> None:
     other = store.reopen()
-    other.write(content="halden port from a worker", scopes=["projects:halden"])
+    other.write(
+        content="halden port from a worker",
+        scopes=["projects:halden"],
+        home=HOMES[REPO_A],
+    )
 
 
 @pytest.mark.parametrize(
@@ -186,8 +228,9 @@ def test_worker_connections_share_the_memo(
     reads = _Reads(monkeypatch)
     _same(store)
     worker = store.reopen()
-    assert worker.document_frequencies(TERMS, admit=_admit, memoised=True) == (
-        store.document_frequencies(TERMS, admit=_admit)
+    admit = _admit_in(store)
+    assert worker.document_frequencies(TERMS, admit=admit, memoised=True) == (
+        store.document_frequencies(TERMS, admit=admit)
     )
     assert reads.inputs == 1 and sorted(reads.terms) == sorted(TERMS)
 
@@ -199,8 +242,9 @@ def test_a_read_inside_a_transaction_is_served_uncached(
     reads = _Reads(monkeypatch)
     with store.batch():
         store.tombstone(ids[0], "superseded")
-        inside = store.document_frequencies(TERMS, admit=_admit, memoised=True)
-        assert inside == store.document_frequencies(TERMS, admit=_admit)
+        admit = _admit_in(store)
+        inside = store.document_frequencies(TERMS, admit=admit, memoised=True)
+        assert inside == store.document_frequencies(TERMS, admit=admit)
     assert reads.inputs == 0 and not reads.terms
     assert store_module._DOC_FREQS == {}
     _same(store)
@@ -231,14 +275,20 @@ def _synthetic(store: Store) -> None:
             content=f"{project} {words} detail-{i} " + "filler " * (i % 7),
             scopes=[f"projects:{project}", "tools" if i % 2 else "infrastructure"],
             origin=Origin(repo=repo) if repo else None,
+            home=HOMES[repo],
         )
 
 
 async def _ranked(server: Any) -> list[list[tuple[str, float, str]]]:
     out = []
     for query in QUERIES:
+        # Unscoped: the caller stands outside any project (the test's
+        # workspace), where the unscoped search ranks every project's
+        # records and the global ones (design 3.5), the whole corpus.
         res = await _mcp_call(
-            server, "memory_search", {"query": query, "max_results": 10}
+            server,
+            "memory_search",
+            {"query": query, "max_results": 10, "auto_scope": False},
         )
         hits = res.get("result", res) if isinstance(res, dict) else res
         out.append([(h["id"], h["score"], h["relevance"]) for h in hits])

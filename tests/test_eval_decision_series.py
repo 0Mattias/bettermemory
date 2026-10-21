@@ -47,8 +47,12 @@ from .test_daemon import _auth, mcp_session, running_app
 
 
 @pytest.fixture(autouse=True)
-def _setup(monkeypatch: pytest.MonkeyPatch) -> None:
-    fix_origin_and_identity(monkeypatch)
+def _setup(
+    workspace: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fix_origin_and_identity(monkeypatch, tmp_path_factory.mktemp("checkout"))
     set_tau(monkeypatch)
 
 

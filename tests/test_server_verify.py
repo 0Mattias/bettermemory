@@ -395,25 +395,23 @@ async def test_a_legacy_record_takes_the_head_of_the_callers_checkout(
     memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A record that names its repository but not its worktree (written
-    before `worktree_root` existed) borrows the caller's checkout of the
-    same repository for its tree — the rule the attestation check
-    already applies — so its anchor is that checkout's HEAD."""
-    import bettermemory._handlers as handlers_module
+    before `worktree_root` existed), homed in the caller's checkout's
+    project as the migration homes it, reads its tree at its anchor: the
+    home checkout's live view (design 3.6), never a checkout found by
+    comparing remotes (decision B23). Its stamp is that checkout's
+    HEAD."""
+    from bettermemory.location import resolve_caller
 
     root = tmp_path / "checkout"
     head = _repo_with_a_commit(root)
-    monkeypatch.setattr(
-        handlers_module,
-        "capture_origin",
-        lambda cwd=None: Origin(
-            cwd=str(root), repo=_REMOTE, branch="main", worktree_root=str(root)
-        ),
-    )
+    monkeypatch.chdir(root)
     server, store = _server(memory_dir)
+    config = Config(storage=StorageConfig(directory=str(memory_dir)))
     legacy = store.write(
         content="widgets live in notes.md",
         scopes=["tools"],
         origin=Origin(cwd=str(root), repo=_REMOTE),
+        home=resolve_caller(store, config, str(root)).home(),
     )
     res = await _call(
         server, "memory_verify", id=legacy.id, verified_paths=["notes.md"]

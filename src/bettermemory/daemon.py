@@ -28,6 +28,17 @@ daemon's, one for its lifetime, lock-guarded.
 Every hook endpoint answers ``stdout`` (the text the harness injects,
 unchanged) and beside it ``surface``, ``ids``, ``chars``, ``rule`` and
 ``event_id``: what an adapter for another harness wraps.
+
+The session-start and prompt bodies resolve the caller's membership
+first (`location.resolve_hook`, design 3.1 and 8.1) from what the hook
+client posted: its ``location`` (a namespace probe, or the location
+token), and in later rounds its ``machine`` and ``answers``. Resolutions
+of one location run one at a time in this process (a per-location lock),
+each inside the model's ``BEGIN IMMEDIATE`` transaction, which re-checks
+the object key, so the hook workers and a CLI process beside the daemon
+register a new checkout once (E28). A reply's ``membership`` field carries
+the witness exchange's next question to a client whose namespace the
+daemon cannot read, or the request to re-mint its token (design 8.7).
 """
 
 from __future__ import annotations
@@ -129,6 +140,18 @@ async def _json_body(request: Request) -> dict[str, Any]:
 def _cwd_of(payload: dict[str, Any]) -> Path | None:
     cwd = payload.get("cwd")
     return Path(str(cwd)) if isinstance(cwd, str) and cwd else None
+
+
+def _posted(payload: dict[str, Any]) -> dict[str, Any]:
+    """What a hook client posted about where it stands (design 8.1): its
+    ``location`` (a namespace probe, or the location token), and in later
+    rounds of the witness exchange its ``machine`` and ``answers``
+    (`location.resolve_hook`)."""
+    return {
+        name: payload[name]
+        for name in ("location", "machine", "answers")
+        if isinstance(payload.get(name), dict)
+    }
 
 
 def _text(payload: dict[str, Any], name: str) -> str | None:
@@ -288,6 +311,7 @@ def build_app(
                 config=config,
                 store=worker_store,
                 state=recall_state,
+                posted=_posted(payload),
             )
 
         try:
@@ -318,6 +342,7 @@ def build_app(
                 config=config,
                 store=worker_store,
                 state=recall_state,
+                posted=_posted(payload),
             )
 
         try:
@@ -375,6 +400,7 @@ def build_app(
                     harness=_text(payload, "harness"),
                     prompt_id=_text(payload, "prompt_id"),
                     state=recall_state,
+                    posted=_posted(payload),
                 ), step
             except Exception as exc:  # noqa: BLE001
                 if step is None or step.instruction is None:
@@ -844,6 +870,48 @@ def serve(
         release_lock(lock)
 
 
+def _migrate_at_start(store: Store, config: Config) -> None:
+    """The migration's run at the daemon's open (design 8.6), under the
+    store's lock and before the port is bound, so it runs once per start
+    and before any request: when a record has no home (the first start of
+    an upgraded store, or a re-upgrade after a rollback, design 8.12), every
+    record is homed and one line logs the run's totals. Without a machine
+    id (`location.process_machine` raises OSError) one warning is logged,
+    the store is served as it is, and the next start tries again."""
+    from . import location
+    from .membership_migrate import ensure_migrated, unhomed
+
+    if not store.has_key or not unhomed(store):
+        return
+    try:
+        identity = location.process_machine()
+    except OSError as exc:
+        log.warning(
+            "membership migration not run for %s: no machine id (%s); the "
+            "next start tries again",
+            store.path,
+            exc,
+        )
+        return
+    report = ensure_migrated(store, identity, config=config)
+    if report is None:
+        return
+    totals = report.totals
+    log.info(
+        "membership migrated: %d records homed (%d memories, %d removed "
+        "memories, %d episodes), %d projects, %d checkouts, %d legacy "
+        "questions, %d log rows",
+        report.homed,
+        totals.memory_homes,
+        totals.tombstone_homes,
+        totals.episode_homes,
+        totals.projects,
+        totals.checkouts,
+        totals.proposals,
+        totals.log_rows,
+    )
+
+
 def _serve_locked(
     *,
     config: Config,
@@ -855,6 +923,7 @@ def _serve_locked(
     """`serve`, with the store's lock held."""
     import uvicorn
 
+    _migrate_at_start(store, config)
     requested = config.daemon.port if port is None else port
     sock = bind(host, requested)
     bound_port = int(sock.getsockname()[1])

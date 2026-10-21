@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import bisect
 import statistics
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -381,11 +381,19 @@ def compute_surface_report(
     *,
     start: datetime | None,
     end: datetime | None,
+    pick: Callable[[Mapping[str, Any]], bool] | None = None,
 ) -> dict[str, Any] | None:
     """The surfaces section over [start, end), or None when the window
     holds none of the recall surface's rows (a show, a settlement, a
     `segment_opened`, a `review_unanswered` or a `recall_grade`), so a
-    log written before the surface reports exactly as it did."""
+    log written before the surface reports exactly as it did.
+
+    `pick`, when given, picks the shows the two surfaces' counts are
+    taken over (`eval.surface_rule_split`, the split on each show's rule,
+    design 8.11). Every row still joins its conversation and every show
+    still ends the follow-ups of the id's earlier show, so the counts of
+    disjoint picks add up to the unpicked section; whether the section is
+    None does not depend on the pick."""
     rows = [e for e in events if isinstance(e, Mapping) and is_surface_row(e)]
     in_window = [
         row for row in rows if _in_window(parse_event_ts(row.get("ts")), start, end)
@@ -409,7 +417,8 @@ def compute_surface_report(
     sessions: set[str] = set()
     segments: set[tuple[str, int]] = set()
     rules: set[str] = set()
-    for index, show in shows:
+    picked = shows if pick is None else [(i, row) for i, row in shows if pick(row)]
+    for index, show in picked:
         surface = surface_of(show)
         session = session_of(show)
         stamp = parse_event_ts(show.get("ts"))

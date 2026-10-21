@@ -20,8 +20,9 @@ from mcp.client.streamable_http import streamable_http_client
 
 from bettermemory import __version__
 from bettermemory.config import BehaviorConfig, Config, ScopesConfig, StorageConfig
-from bettermemory.daemon import build_app
+from bettermemory.daemon import _migrate_at_start, build_app
 from bettermemory.identity import HEADER_SESSION
+from bettermemory.location import resolve_caller, resolve_here
 from bettermemory.store import Store
 
 TOKEN = "test-token-0123456789abcdef"
@@ -58,8 +59,12 @@ async def running_app(
     config: Config, store: Store, *, shutdown_calls: list[int] | None = None
 ) -> AsyncIterator[httpx2.AsyncClient]:
     """The app inside its lifespan (the SDK's session manager must be
-    running before the first ``/mcp`` request), behind an ASGI transport."""
+    running before the first ``/mcp`` request), behind an ASGI transport,
+    over the store as the daemon's start leaves it: migrated before the
+    app is built (`daemon._migrate_at_start`, design 8.6), so a record
+    seeded without a home is homed as an upgrade homes it."""
     calls = shutdown_calls if shutdown_calls is not None else []
+    _migrate_at_start(store, config)
     app = build_app(
         config=config,
         store=store,
@@ -201,6 +206,8 @@ async def test_session_start_endpoint_returns_the_brief(
         origin=capture(repo),
     )
     daemon_store.mark_verified(written.id)
+    # A checkout seen before: its first sight's line is not read here.
+    resolve_here(daemon_store, daemon_config, str(repo))
     async with running_app(daemon_config, daemon_store) as client:
         response = await client.post(
             "/api/v1/hook/session-start",
@@ -216,7 +223,7 @@ async def test_session_start_endpoint_returns_the_brief(
     assert body["surface"] == "session_brief"
     assert body["ids"] == [written.id]
     assert body["chars"] == len(body["stdout"])
-    assert body["rule"] == "rs-v4"
+    assert body["rule"] == "rs-v5"
     events = [e for e in daemon_store.iter_events() if e["kind"] == "session_brief"]
     assert [e["event_id"] for e in events] == [body["event_id"]]
 
@@ -401,10 +408,16 @@ async def test_a_cli_write_is_visible_to_the_next_request(
 ) -> None:
     """The daemon holds no cache of rows: a second connection to the
     same file (what a CLI command opens) writes, and the daemon's next
-    search finds it."""
+    search finds it. The write is homed as the write handler homes it,
+    by the caller resolved at the request's directory (design 8.1)."""
     async with running_app(daemon_config, daemon_store) as client:
         with Store(tmp_path / "store") as other:
-            other.write(content="written by another process entirely", scopes=["tools"])
+            caller = resolve_caller(other, daemon_config, Path.cwd())
+            other.write(
+                content="written by another process entirely",
+                scopes=["tools"],
+                home=caller.home(),
+            )
         async with mcp_session(client, headers=_auth()) as session:
             found = await session.call_tool(
                 "memory_search", {"query": "written by another process"}

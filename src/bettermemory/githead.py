@@ -44,6 +44,10 @@ to either (``write_ref_to_lockfile``), so the stored hash is the commit
 database nor the repository's hash algorithm is consulted, so a ref
 written by hand that names a missing object, or a hash of the other
 algorithm's length, is returned as written; git writes neither.
+`head_commit` answers where HEAD ends at a ref outside ``refs/heads/``
+too, by reading the object the ref names through
+`gitobjects.ObjectReader` and peeling a tag to its commit, as
+``HEAD^{commit}`` does.
 """
 
 from __future__ import annotations
@@ -63,6 +67,7 @@ __all__ = [
     "find_gitdir",
     "gitdir_at",
     "head_bytes",
+    "head_commit",
     "head_ref",
     "head_sha",
     "signature",
@@ -579,6 +584,49 @@ def head_sha(gd: GitDir) -> str | None:
     if name is not None and not name.startswith(b"refs/heads/"):
         return None
     return sha
+
+
+#: Tag objects `head_commit` peels through before it gives up, as git's
+#: ``peel_object`` follows a chain of tags.
+_PEEL_DEPTH = 8
+
+
+def head_commit(gd: GitDir) -> str | None:
+    """The commit ``git rev-parse --verify HEAD^{commit}`` prints, read
+    from the files: `head_sha` where it answers, and where HEAD ends at a
+    ref outside ``refs/heads/`` (whose hash may name a tag object) the
+    object that hash names peeled through `gitobjects.ObjectReader`: a
+    commit is the answer, a tag is followed to its ``object``, anything
+    else, an object the reader cannot read, or a chain past
+    `_PEEL_DEPTH` declines (design 3.1, 8.7). Discovery declines on every
+    platform but POSIX as before (`find_gitdir`); this reads only the
+    git directory it is given."""
+    sha = head_sha(gd)
+    if sha is not None:
+        return sha
+    try:
+        name, target = _resolve(gd)
+    except (_Unsettled, OSError, ValueError):
+        return None
+    if name is None or target is None:
+        return None
+    from .gitobjects import ObjectReader
+
+    reader = ObjectReader(gd.commondir)
+    for _ in range(_PEEL_DEPTH):
+        found = reader.read(target)
+        if found is None:
+            return None
+        kind, body = found
+        if kind == "commit":
+            return target
+        if kind != "tag" or not body.startswith(b"object "):
+            return None
+        line = body.split(b"\n", 1)[0][len(b"object ") :].strip()
+        if not _FULL_HASH.fullmatch(line):
+            return None
+        target = line.decode("ascii")
+    return None
 
 
 def head_ref(gd: GitDir) -> str | None:

@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import json
+import sqlite3
 import sys
+from typing import Any
 
 from ..health import report_for_store
 from ..origin import capture as capture_origin
+from ..store import Store
 from ._common import cli_context
 
 
@@ -69,7 +73,7 @@ def _cli_health(
     min_applied: int | None = None,
 ) -> None:
     """`bettermemory health` — print the aggregate report."""
-    from ..health import render_json, render_text
+    from ..health import render_text
 
     ctx = cli_context()
     # `--min-applied` overrides the config default; fall through to the
@@ -100,4 +104,25 @@ def _cli_health(
         # memories live in this store.
         caller_origin=capture_origin(),
     )
-    sys.stdout.write(render_json(report) if json_out else render_text(report))
+    section = _membership_section(ctx.store)
+    if json_out:
+        out = report.to_dict()
+        out["membership"] = section[0] if section is not None else None
+        sys.stdout.write(json.dumps(out, indent=2) + "\n")
+        return
+    text = render_text(report)
+    if section is not None:
+        text += "\n" + "\n".join(section[1]) + "\n"
+    sys.stdout.write(text)
+
+
+def _membership_section(store: Store) -> tuple[dict[str, Any], list[str]] | None:
+    """The membership section of design 8.10, as JSON and as text lines;
+    None for a store an earlier build left without membership tables."""
+    from .membership_cmd import health_dict, health_lines, health_model
+
+    try:
+        section = health_dict(health_model(store))
+    except (sqlite3.Error, RuntimeError):
+        return None
+    return section, health_lines(section)

@@ -564,49 +564,8 @@ def _spellings_match(memory_repo: str, current_repo: str) -> bool:
 
 
 def worktrees_match(memory_worktree: str | None, caller_worktree: str | None) -> bool:
-    """True if a memory whose origin.worktree_root is `memory_worktree`
-    belongs to a caller currently in `caller_worktree`.
-
-    Either side null → True. A legacy memory has no `worktree_root`
-    field; a caller running outside any git checkout has no worktree
-    to compare against; in either case we have no boundary to
-    enforce, and the auto-scope filter falls back to repo-only
-    matching.
-
-    Both sides set and unequal → two relaxations before excluding,
-    closing the "linked-worktree blackout" without reopening the
-    worktree-leakage hole the strict check exists to plug:
-
-    1. **Caller in a linked worktree of the memory's checkout.** Agent
-       harnesses routinely spawn sessions in ephemeral `git worktree`
-       checkouts (this project's own audit-loop fan-out does). Strict
-       equality made EVERY memory written in the primary checkout —
-       the repo's shared knowledge — invisible to those sessions. A
-       linked worktree's root carries a `.git` FILE pointing at
-       `<primary>/.git/worktrees/<name>`, so the caller's primary is
-       derivable from the filesystem alone; when it equals the
-       memory's recorded worktree, the memory surfaces. Asymmetric by
-       design: notes written in a LIVE sibling worktree still stay
-       isolated from the primary and from other siblings (their
-       recorded root is the sibling path, which is neither the
-       caller's root nor anyone's primary).
-
-    2. **Dead-worktree degrade.** A memory written from a
-       since-deleted worktree (ephemeral agent checkout, removed
-       clone) would otherwise be invisible from EVERY worktree
-       forever. When the recorded root is POSITIVELY GONE, degrade
-       to repo-level matching — there is no live workspace left to
-       isolate from.
-
-       "Gone" is strictly narrower than "this process could not
-       stat it". An indeterminate answer — permission denied on a
-       parent, an unmounted volume, a detached network share, a
-       path under another user account — is NOT evidence of death,
-       and degrading on it would silently widen what the caller
-       sees for as long as the condition lasts. Those hold the
-       isolation instead. `_worktree_root_is_gone` owns the
-       classification; read it rather than a restatement here.
-    """
+    """rc3's worktree test over the origin columns, kept for the
+    rc3_admitted shadow column (design 8.11); no delivery decides by it."""
     if memory_worktree is None or caller_worktree is None:
         return True
     if memory_worktree == caller_worktree:
@@ -657,34 +616,9 @@ _WORKTREE_GONE_WINERRORS = frozenset({123, 1921})
 
 
 def _worktree_root_is_gone(worktree: str) -> bool:
-    """True only when the OS positively reported that nothing exists at
-    `worktree` — the narrow condition the dead-worktree degrade needs.
-
-    Deliberately not `Path.exists()`. That helper answers a different
-    question: it collapses "nothing is there" together with a fixed
-    subset of "I could not find out" into one `False`, and RAISES for
-    the rest of that subset (`pathlib._ignore_error` — EACCES,
-    ENOTCONN, ENAMETOOLONG and friends propagate). Under a
-    degrade-on-falsey caller both halves of the collapse fail OPEN, and
-    so does wrapping the raise in a bare `except OSError` — every
-    unstattable path reads as a dead one and relaxes the isolation
-    boundary for as long as it stays unstattable.
-
-    `verify._path_exists` makes the opposite call from the same raw
-    material, and the contrast is the point: an indeterminate stat
-    there folds into the `missing` path-drift bucket, i.e. toward MORE
-    signal, and over-reporting drift is that surface's safe direction.
-    Here the safe direction is the other one, so the two cannot share
-    an implementation.
-
-    Follows symlinks (`os.stat`, not `os.lstat`) — a recorded root that
-    is now a dangling symlink names no live checkout, and it keeps the
-    resolution semantics `_git_worktree_root` captured under.
-    Uncached on purpose: liveness genuinely changes under a
-    long-running server (a worktree is removed, a volume is remounted),
-    and a cache would freeze the first answer — including a transient
-    failure — for the rest of the process.
-    """
+    """Whether the OS positively reported that nothing exists at
+    `worktree`, as `worktrees_match` reads it for the rc3_admitted shadow
+    column (design 8.11)."""
     try:
         os.stat(worktree)
     except ValueError:
@@ -713,17 +647,9 @@ def _worktree_root_is_gone(worktree: str) -> bool:
 
 @lru_cache(maxsize=64)
 def _primary_root_of(worktree: str) -> str | None:
-    """Primary checkout root for a LINKED worktree; None for a primary
-    checkout, a bare path, or anything unreadable.
-
-    A linked worktree's root contains a `.git` FILE (the primary's has a
-    `.git` DIRECTORY) whose single line reads
-    ``gitdir: <primary>/.git/worktrees/<name>`` — pure filesystem
-    introspection, no subprocess. Cached per path for the process
-    lifetime: worktree topology doesn't change under a running server,
-    and the cache keeps the per-candidate filter cost at dict-lookup
-    level during a search sweep.
-    """
+    """The primary checkout root of a linked worktree (None for a
+    primary checkout, a bare path or anything unreadable), as
+    `worktrees_match` reads it for the rc3_admitted shadow column."""
     gitfile = Path(worktree) / ".git"
     try:
         if not gitfile.is_file():
@@ -752,51 +678,9 @@ def should_include_for_caller(
     caller_worktree_root: str | None = None,
     caller_repo_alternates: tuple[str, ...] | None = None,
 ) -> bool:
-    """True if a memory with this origin should surface for a caller in `caller_repo`.
-
-    Thin wrapper over `repos_match` that handles the
-    `memory.origin.repo if memory.origin else None` extraction once. Every
-    *surface* filter — `memory_search`'s auto-scope and the matching
-    branch in `memory_scope_overview` — was repeating this pattern,
-    with the scope-overview callsite explicitly noting that it was
-    reimplementing the search filter to stay in sync. Folding the
-    extraction-plus-match into one named helper means there is exactly
-    one place that defines "this memory belongs to this caller's
-    project", so the surface filter is provably consistent.
-
-    Auto-scope semantics flow through `repos_match`: a null
-    `memory_origin` (legacy file with no origin block, or a write from
-    outside any repo) is treated as global and matches every caller;
-    likewise a null `caller_repo` (running outside any repo) matches
-    every memory.
-
-    `caller_repo_alternates` passes through to `repos_match`'s
-    `caller_alternates` — extra official spellings of the caller's own
-    remote that also count as a repo match. When omitted, `repos_match`
-    falls back to the spellings `capture()` registered for
-    `caller_repo` in this process, so string-threading call sites get
-    the old-capture-idiom bridge without any plumbing changes.
-
-    `caller_worktree_root` opts into the secondary worktree filter: when
-    both the memory and the caller carry a populated `worktree_root` and
-    the two differ, the memory is excluded even if `repos_match` says
-    yes. This is what keeps notes written in one worktree of a
-    repository (`~/repo-feature-x/`) from leaking into searches run
-    from a sibling worktree of the same repository
-    (`~/repo-bug-fix/`); a single-tree checkout never has two
-    worktree roots in play, so the secondary filter is a no-op there.
-    Legacy memories (no `worktree_root`) always pass — adding the
-    filter must not silently hide writes that predate it.
-
-    **Not the right helper for commit-drift**: the commit-drift path in
-    `verify`, `_response.attach_commit_drift_counts`, and the
-    `health._compute_commit_drift_debt` rollup need a stricter check that
-    rejects global memories (no repo anchor means nothing to count
-    commits against). Those sites call `repos_match` directly after a
-    `null → return None` check. Mixing the two would silently start
-    reporting drift counts of "all commits since verify" for global
-    memories, which would be both wrong and very noisy.
-    """
+    """rc3's membership test over the origin columns, kept to compute
+    the rc3_admitted shadow column (design 8.11); every delivery decides
+    through `membership.admitted` instead (design 3.5)."""
     memory_repo = memory_origin.repo if memory_origin else None
     if not repos_match(
         memory_repo, caller_repo, caller_alternates=caller_repo_alternates

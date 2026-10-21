@@ -27,8 +27,11 @@ import pytest
 
 from bettermemory import _caches, _response, githead, origin, verify
 from bettermemory._response import ResponseBuilder
+from bettermemory.admission import CountedRecords
 from bettermemory.config import Config, StorageConfig
 from bettermemory.events import Recorder
+from bettermemory.location import resolve_caller
+from bettermemory.membership import RecordHome
 from bettermemory.origin import Origin
 from bettermemory.search import search as run_search
 from bettermemory.server import build_server
@@ -75,6 +78,13 @@ def other():
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+
+def _counted(memories: Any) -> CountedRecords:
+    """The records a test reads drift for, named: what the drift pass
+    reads under (`admission.DriftScope`; a pass counts no record nothing
+    admitted)."""
+    return CountedRecords(frozenset(m.id for m in memories))
 
 
 def _git(repo: Path, *args: str, when: datetime | None = None) -> str:
@@ -146,9 +156,13 @@ def _write(
     claims: list[str] | None = None,
     verified_head: str | None = None,
     verified_paths: list[str] | None = None,
+    home: RecordHome | None = None,
 ) -> str:
+    """A memory written with `caller`'s origin and stamped verified at
+    `at`; `home` is its ``homes`` row, which a surface that decides
+    membership reads (design 3.5)."""
     memory = store.write(
-        content=content, scopes=["tools"], origin=caller, claims=claims
+        content=content, scopes=["tools"], origin=caller, claims=claims, home=home
     )
     _stamp(
         store,
@@ -208,7 +222,9 @@ def _attach(
 
     monkeypatch.setattr(subprocess, "run", spy)
     try:
-        builder.attach_commit_drift_counts(out, hits, memories, caller_origin=caller)
+        builder.attach_commit_drift_counts(
+            out, hits, memories, caller_origin=caller, admission=_counted(memories)
+        )
     finally:
         monkeypatch.setattr(subprocess, "run", real_run)
     return out, calls
@@ -553,7 +569,9 @@ def test_a_git_process_that_could_not_run_is_not_memoised(
     hits = run_search(memories, "widget rule", max_results=50)
     builder = ResponseBuilder(stale_after_days=30)
     out = [builder.hit_to_dict(hit, now=_NOW) for hit in hits]
-    builder.attach_commit_drift_counts(out, hits, memories, caller_origin=caller)
+    builder.attach_commit_drift_counts(
+        out, hits, memories, caller_origin=caller, admission=_counted(memories)
+    )
     monkeypatch.setattr(subprocess, "run", real_run)
     assert _by_id(out)[memory_id]["commit_drift_count"] == 2, "the unfiltered fallback"
 
@@ -1054,9 +1072,17 @@ async def test_memory_show_reads_the_same_block_around_a_warm_search(
         repo, "seed", when=_T0, files={"notes0.md": "a\n", "notes1.md": "b\n"}
     )
     store = Store(memory_dir)
+    config = Config(storage=StorageConfig(directory=str(memory_dir)))
     caller = _caller(repo)
+    # Homed in the repository's project, where the caller stands: the
+    # commit leg is counted for a record of the caller's project.
+    home = resolve_caller(store, config, str(repo)).home()
     author = _write(
-        store, caller, monkeypatch, f"quokka widget rule lives in {repo / 'notes0.md'}"
+        store,
+        caller,
+        monkeypatch,
+        f"quokka widget rule lives in {repo / 'notes0.md'}",
+        home=home,
     )
     reach = _write(
         store,
@@ -1064,12 +1090,13 @@ async def test_memory_show_reads_the_same_block_around_a_warm_search(
         monkeypatch,
         f"quokka widget lore lives in {repo / 'notes1.md'}",
         verified_head=anchor,
+        home=home,
     )
     _commit(repo, "post", when=_T1, files={"notes0.md": "a1\n", "notes1.md": "b1\n"})
 
     state = SessionState()
     server = build_server(
-        config=Config(storage=StorageConfig(directory=str(memory_dir))),
+        config=config,
         store=store,
         state=state,
         recorder=Recorder(store=store, session_id=state.session_id),
@@ -3207,7 +3234,9 @@ def test_the_drift_memo_touches_a_hit_under_its_lock(
         subset = [m for m in memories if m.id == memory_id]
         hits = run_search(subset, "widget rule", max_results=50)
         out = [builder.hit_to_dict(hit, now=_NOW) for hit in hits]
-        builder.attach_commit_drift_counts(out, hits, subset, caller_origin=caller)
+        builder.attach_commit_drift_counts(
+            out, hits, subset, caller_origin=caller, admission=_counted(subset)
+        )
         return out
 
     first = attach_one(touched)

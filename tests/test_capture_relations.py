@@ -15,6 +15,7 @@ two-call review.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -27,21 +28,17 @@ from bettermemory.builder import build_server
 from bettermemory.config import Config, StorageConfig, TelemetryConfig
 from bettermemory.conflicts import ConflictQueue
 from bettermemory.events import Recorder
+from bettermemory.location import resolve_caller
 from bettermemory.log import CAPTURE_CLOSE, CAPTURE_RELATIONS
 from bettermemory.origin import Origin
 from bettermemory.session import SessionState
 from bettermemory.store import Store
 
 from ._mcp import call_tool
+from .test_membership_security import stand_in_checkout
 
 TAU = 0.5
-WORKTREE = "/work/alpha"
-ORIGIN = Origin(
-    cwd=WORKTREE,
-    repo="https://example.test/alpha.git",
-    branch="main",
-    worktree_root=WORKTREE,
-)
+REMOTE = "https://example.test/alpha.git"
 STOP_SESSION = "0b9e6f6a-7d0c-4a58-9b8e-stopsession1"
 SCORES = {"unsafe": 0.0, "secret": 0.0}
 
@@ -67,9 +64,25 @@ def _long_record() -> str:
     )
 
 
+def _here() -> Origin:
+    """The origin of a write made where the test stands."""
+    cwd = os.getcwd()
+    return Origin(cwd=cwd, repo=REMOTE, branch="main", worktree_root=cwd)
+
+
 @pytest.fixture(autouse=True)
-def _setup(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(_handlers, "capture_origin", lambda *a, **k: ORIGIN)
+def _setup(
+    workspace: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every write is made in one checkout, at one origin there: the write
+    is resolved at its origin's cwd (design 8.1), and its related set is
+    the review strata of that checkout's project (design 3.5), which a
+    caller outside any project is admitted nothing of."""
+    stand_in_checkout(tmp_path_factory.mktemp("checkout"), monkeypatch)
+    origin = _here()
+    monkeypatch.setattr(_handlers, "capture_origin", lambda *a, **k: origin)
     monkeypatch.delenv(identity.ENV_CLIENT, raising=False)
     monkeypatch.delenv(identity.ENV_MODEL, raising=False)
     monkeypatch.setenv(identity.ENV_HARNESS_SESSION, STOP_SESSION)
@@ -78,12 +91,18 @@ def _setup(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class World:
+    """One server over one scratch store, in the checkout the test stands
+    in, resolved once here so its first sight is behind the writes; a
+    seeded record is homed in its project (design 2.1)."""
+
     def __init__(self, root: Path, *, telemetry: bool = True) -> None:
         self.config = Config(
             storage=StorageConfig(directory=str(root)),
             telemetry=TelemetryConfig(enabled=telemetry),
         )
         self.store = Store(root)
+        self.origin = _here()
+        self.home = resolve_caller(self.store, self.config, self.origin.cwd).home()
         self.state = SessionState()
         self.server = build_server(
             config=self.config,
@@ -95,7 +114,9 @@ class World:
         )
 
     def seed(self, content: str) -> str:
-        return self.store.write(content=content, scopes=["tools"], origin=ORIGIN).id
+        return self.store.write(
+            content=content, scopes=["tools"], origin=self.origin, home=self.home
+        ).id
 
     def open(self) -> capture.Batch:
         return capture.open_batch(
@@ -103,7 +124,7 @@ class World:
             session_id=STOP_SESSION,
             transcript_bytes=100_000,
             offset=0,
-            worktree_root=WORKTREE,
+            worktree_root=self.origin.worktree_root,
         )
 
     def close(self, batch: capture.Batch) -> capture.Close:

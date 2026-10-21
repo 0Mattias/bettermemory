@@ -253,7 +253,7 @@ def test_a_later_read_confirms_a_marker_written_after_the_hook(
     )
     assert confirmed["opened_at"] == isoformat_utc(signal)
     assert confirmed["triggered_from"] == triggered_from
-    assert confirmed["rule"] == "rs-v4"
+    assert confirmed["rule"] == "rs-v5"
     view = session.segment()
     assert (view.segment, view.marker, view.started_at) == (1, "boundary-1", signal)
     if confirming != "prompt":

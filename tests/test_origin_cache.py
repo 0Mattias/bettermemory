@@ -201,16 +201,23 @@ def test_a_lone_session_start_block_after_idle_reuses_the_capture(
     the four probes once, and read the same brief. The memory cites no
     path, so its verdict needs no git of its own."""
     from bettermemory.config import Config, StorageConfig
+    from bettermemory.location import resolve_here
     from bettermemory.recall import session_brief
     from bettermemory.store import Store
 
     repo = _repo(tmp_path / "repo")
     config = Config(storage=StorageConfig(directory=str(tmp_path / "store")))
     with Store(tmp_path / "store") as store:
+        # A checkout seen before: its first sight's line is not read here.
+        # The memory is homed in its project, which the brief shows
+        # (design 3.5).
+        here = resolve_here(store, config, str(repo))
+        assert here.home is not None
         written = store.write(
             content="prefer short release notes in this project",
             scopes=["tools"],
             origin=capture(repo),
+            home=here.home,
         )
         store.mark_verified(written.id)
         _caches.clear_all()

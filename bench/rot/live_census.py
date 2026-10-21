@@ -65,6 +65,7 @@ from bettermemory.log import last_row  # noqa: E402
 from bettermemory.origin import Origin  # noqa: E402
 from bettermemory.store import Store, store_path  # noqa: E402
 from bettermemory.verify import (  # noqa: E402
+    ClaimAnchor,
     compute_commit_drift,
     compute_staleness_verdict,
     compute_verification_status,
@@ -224,6 +225,14 @@ def census_population(rows: list[dict[str, Any]], this_repo: str) -> dict[str, A
 # ─── Census B: claim truth against the delivered verdict, now ───
 
 
+def _home_checkout(tree: Path) -> ClaimAnchor:
+    """The memory's anchor in the census: its home checkout's live view is
+    the tree the read stands in (its recorded worktree), so the commit leg
+    counts there (`ClaimAnchor.commit_root`), as `bench/rot/run.py` anchors
+    it. Without an anchor the leg reads not applicable (decision B23)."""
+    return ClaimAnchor(root=str(tree), rule="home_checkout")
+
+
 def _verdict_from_own_worktree(
     row: dict[str, Any], stale_days: int, now: datetime
 ) -> str:
@@ -251,6 +260,7 @@ def _verdict_from_own_worktree(
         verified_paths=row["verified_paths"],
         body=row["body"],
         claims=row["claims_raw"],
+        anchor=_home_checkout(Path(worktree)) if worktree else None,
     )
     return compute_staleness_verdict(
         verification=verification,

@@ -49,6 +49,12 @@ each call opens its own pass.
 The caller's origin is an argument, never captured here: `memory_show`
 passes `_handlers.capture_origin()`, the hook the origin it builds from
 its payload's directory.
+
+So is the claims' anchoring (design 3.6): `anchoring` reads each homed
+record's path claims at its home checkout's live view, translated across
+its recorded views, or in a stand-in that confirms by presence and never
+convicts (`verify.Anchoring`). A record with no home row, and every record
+when no anchoring is passed, is read at its recorded root as before.
 """
 
 from __future__ import annotations
@@ -57,11 +63,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ._response import _DriftPass
 from .models import Memory
 from .origin import Origin
 from .verify import (
+    Anchoring,
     CommitDriftStatus,
     PathDriftReport,
     VerificationStatus,
@@ -70,6 +78,9 @@ from .verify import (
     compute_verification_status,
     detect_path_drift,
 )
+
+if TYPE_CHECKING:
+    from .admission import DriftScope
 
 __all__ = [
     "FillReport",
@@ -117,9 +128,16 @@ def resolve_verdicts(
     caller_origin: Origin | None,
     now: datetime,
     stale_after_days: int,
+    anchoring: Anchoring | None = None,
+    admission: DriftScope | None = None,
 ) -> list[MemoryVerdict]:
     """Every memory's verdict, in order, resolving each commit leg the memo
     does not hold and keeping what the pass resolved in `_DRIFT_MEMO`.
+
+    `admission` is what the commit legs are read under
+    (`admission.DriftScope`: the surface's admission for the caller, or
+    the records one decided); a record it does not count, and every
+    record when it is None, has no commit leg (`_open_pass`).
 
     One pass over the batch (`_response._DriftPass`), so the rows share
     what a search's hits share: the head's history read once, a walk
@@ -132,10 +150,18 @@ def resolve_verdicts(
     rows it resolves synchronously. The brief's background fill, which
     resolves the rest for the next call, runs `fill_verdicts`, which
     stores row by row."""
-    drift = _open_pass(caller_origin)
+    drift = _open_pass(caller_origin, admission)
+    if anchoring is not None:
+        anchoring.prime([memory.id for memory in memories])
     out: list[MemoryVerdict] = []
     for memory in memories:
-        verdict = _verdict(memory, drift, now=now, stale_after_days=stale_after_days)
+        verdict = _verdict(
+            memory,
+            drift,
+            now=now,
+            stale_after_days=stale_after_days,
+            anchoring=anchoring,
+        )
         assert isinstance(verdict, MemoryVerdict)  # resolve=True answers every row
         out.append(verdict)
     if drift is not None:
@@ -167,6 +193,7 @@ def fill_verdicts(
     memories: Sequence[Memory],
     *,
     caller_origin: Origin | None,
+    admission: DriftScope | None = None,
 ) -> FillReport:
     """Resolve each memory's commit leg the memo does not hold into
     `_DRIFT_MEMO`, for the next `memoised_verdicts` to read: the session
@@ -197,17 +224,22 @@ def fill_verdicts(
     has failed once stores nothing more (`_DriftPass.store`). The cost is
     one check per row resolved with git: stats of the held files and
     directories and of the files that name the head, beside the git
-    process the row ran."""
+    process the row ran.
+
+    `admission` as for `resolve_verdicts`; the fill runs on a worker
+    thread, so it is a `CountedRecords` decided on the request's
+    (`Admission.counted`)."""
     rows = list(memories)
-    if caller_origin is None or caller_origin.cwd is None:
+    if caller_origin is None or caller_origin.cwd is None or admission is None:
         return FillReport(rows=len(rows))
     if caller_origin.repo is None:
         return FillReport(rows=len(rows))
     cwd = Path(caller_origin.cwd)
     repo = caller_origin.repo
+    scope = admission
 
     def attempt(batch: list[Memory]) -> tuple[int, int, list[Memory]]:
-        drift = _DriftPass(cwd, repo)
+        drift = _DriftPass(cwd, repo, scope)
         resolved = kept = 0
         discarded: list[Memory] = []
         for memory in batch:
@@ -220,7 +252,7 @@ def fill_verdicts(
                 kept += count
             else:
                 discarded.append(memory)
-                drift = _DriftPass(cwd, repo)
+                drift = _DriftPass(cwd, repo, scope)
         return resolved, kept, discarded
 
     resolved, kept, discarded = attempt(rows)
@@ -242,6 +274,8 @@ def memoised_verdicts(
     caller_origin: Origin | None,
     now: datetime,
     stale_after_days: int,
+    anchoring: Anchoring | None = None,
+    admission: DriftScope | None = None,
 ) -> list[MemoryVerdict | UnresolvedVerdict]:
     """Every memory's verdict, in order, from the memo alone: no git
     process runs.
@@ -256,11 +290,19 @@ def memoised_verdicts(
     POSIX, a reftable repository, a `config` that moves the working
     tree), where only `resolve_verdicts` answers. Building a key stats
     files only (the head, the attribute files a governed claim reads, the
-    files beside the history), so the call is safe on a hook's deadline."""
-    drift = _open_pass(caller_origin)
+    files beside the history), so the call is safe on a hook's deadline.
+    `admission` as for `resolve_verdicts`."""
+    drift = _open_pass(caller_origin, admission)
+    if anchoring is not None:
+        anchoring.prime([memory.id for memory in memories])
     return [
         _verdict(
-            memory, drift, now=now, stale_after_days=stale_after_days, resolve=False
+            memory,
+            drift,
+            now=now,
+            stale_after_days=stale_after_days,
+            resolve=False,
+            anchoring=anchoring,
         )
         for memory in memories
     ]
@@ -272,6 +314,8 @@ def memory_verdict(
     caller_origin: Origin | None,
     now: datetime,
     stale_after_days: int,
+    anchoring: Anchoring | None = None,
+    admission: DriftScope | None = None,
 ) -> MemoryVerdict:
     """`resolve_verdicts` for one memory: `memory_show`'s verdict."""
     (verdict,) = resolve_verdicts(
@@ -279,20 +323,25 @@ def memory_verdict(
         caller_origin=caller_origin,
         now=now,
         stale_after_days=stale_after_days,
+        anchoring=anchoring,
+        admission=admission,
     )
     return verdict
 
 
-def _open_pass(caller_origin: Origin | None) -> _DriftPass | None:
-    """The pass a call's commit legs run through, or None when the caller
-    is in no repository (no directory, or no remote to match against),
-    where no memory's leg applies, as `verify.compute_commit_drift`
-    returns None there."""
-    if caller_origin is None:
+def _open_pass(
+    caller_origin: Origin | None, admission: DriftScope | None
+) -> _DriftPass | None:
+    """The pass a call's commit legs run through, under `admission`, or
+    None when there is none to read under (a pass never counts a record
+    no admission admitted) or the caller is in no repository (no
+    directory, or no remote), where no memory's leg applies, as
+    `verify.compute_commit_drift` returns None there."""
+    if caller_origin is None or admission is None:
         return None
     if caller_origin.cwd is None or caller_origin.repo is None:
         return None
-    return _DriftPass(Path(caller_origin.cwd), caller_origin.repo)
+    return _DriftPass(Path(caller_origin.cwd), caller_origin.repo, admission)
 
 
 def _verdict(
@@ -302,6 +351,7 @@ def _verdict(
     now: datetime,
     stale_after_days: int,
     resolve: bool = True,
+    anchoring: Anchoring | None = None,
 ) -> MemoryVerdict | UnresolvedVerdict:
     """One row's verdict through `drift`, or unresolved where `resolve` is
     False and the commit leg needs git the memo does not spare."""
@@ -314,14 +364,21 @@ def _verdict(
     )
     # Path drift runs against the full body; `verified_paths` is threaded
     # in so a path the user has previously attested lands in
-    # `path_drift.verified`, and the record's own worktree anchors the
-    # relative claims. Stats only, and never memoised: a file can vanish
+    # `path_drift.verified`. A homed record's claims are read where design
+    # 3.6 reads them (its anchor); a record with no home row at its
+    # recorded worktree. Stats only, and never memoised: a file can vanish
     # without anything the commit memo keys on moving.
+    anchor = anchoring.for_record(memory.id) if anchoring is not None else None
     path_drift = detect_path_drift(
         memory.body,
         verified_paths=memory.verified_paths,
         absent_paths=memory.verified_absent_paths,
-        worktree_root=memory.origin.worktree_root if memory.origin else None,
+        worktree_root=(
+            memory.origin.worktree_root
+            if anchor is None and memory.origin is not None
+            else None
+        ),
+        anchor=anchor,
     )
     commit_drift: CommitDriftStatus | None = None
     if drift is not None:

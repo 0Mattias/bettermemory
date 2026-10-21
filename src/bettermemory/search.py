@@ -38,7 +38,7 @@ from collections import OrderedDict
 from collections.abc import Set as AbstractSet
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
-from typing import Any, Callable, Literal, NamedTuple
+from typing import TYPE_CHECKING, Any, Callable, Literal, NamedTuple
 
 from . import _caches
 from .expansion import (
@@ -55,8 +55,10 @@ from .models import (
     snippet_window,
 )
 from .identity import Actor, actor_matches
-from .origin import Origin, should_include_for_caller
 from .verify import detect_path_drift
+
+if TYPE_CHECKING:
+    from .admission import Admission
 
 log = logging.getLogger("bettermemory.search")
 
@@ -2797,77 +2799,77 @@ def _filter_candidates(
     *,
     scopes: list[str] | None,
     excluded_scopes: set[str] | None,
-    repo_filter: str | None,
-    worktree_filter: str | None,
+    admission: Admission | None,
     client_filter: str | None = None,
     model_filter: str | None = None,
 ) -> list[Memory]:
-    """Apply scope / excluded-scope / repo / worktree / actor filters.
+    """Apply scope / excluded-scope / membership / actor filters.
 
     Extracted from `search()` so each search mode walks the same
     pre-filtered candidate list — fairness across rankers requires it,
     and it makes the per-mode scorers obviously equivalent on the
-    filtering side. Order of `memories` is preserved.
+    filtering side. Order of `memories` is preserved. The candidates'
+    home rows are read in one read (`Admission.prime`).
     """
     scope_filter = set(scopes) if scopes else None
     excluded = excluded_scopes or set()
-    return [
-        memory
-        for memory in memories
+    if admission is not None:
+        admission.prime(memory.id for memory in memories)
+    out: list[Memory] = []
+    for memory in memories:
+        home = admission.home(memory.id) if admission is not None else None
         if candidate_admitted(
             memory.scopes,
-            memory.origin,
+            home.recorded_project if home is not None else None,
             memory.actor,
             scope_filter=scope_filter,
             excluded=excluded,
-            repo_filter=repo_filter,
-            worktree_filter=worktree_filter,
+            admission=admission,
             client_filter=client_filter,
             model_filter=model_filter,
-        )
-    ]
+        ):
+            out.append(memory)
+    return out
 
 
 def candidate_admitted(
     memory_scopes: list[str],
-    memory_origin: Origin | None,
+    memory_home: str | None,
     memory_actor: Actor | None,
     *,
     scope_filter: set[str] | None,
     excluded: set[str],
-    repo_filter: str | None,
-    worktree_filter: str | None,
+    admission: Admission | None,
     client_filter: str | None = None,
     model_filter: str | None = None,
 ) -> bool:
     """Does one memory survive the search filters?
 
     Split out of `_filter_candidates` so the BM25 corpus-statistics path
-    can decide admission from an INDEX row — id, scopes, origin — without
-    parsing a body. Both callers therefore run the identical predicate:
-    the IDF denominator is provably the same collection that gets ranked,
-    rather than a SQL approximation of it kept in sync by hand.
+    can decide admission from a store row (id, scopes, the project its
+    ``homes`` row names, actor) without parsing a body. Both callers
+    therefore run the identical predicate: the IDF denominator is
+    provably the same collection that gets ranked.
 
-    That parity is not optional here. `repos_match` compares on
-    `(host, owner, name)` and additionally consults per-process alternate
-    spellings registered by `origin.capture`, so the admission rule is not
-    expressible in SQL at all — any index-side filter would silently
-    disagree with the ranked set for exactly the multi-remote stores the
-    alternates mechanism exists to serve.
+    `memory_home` is the project the record's ``homes`` row names (None
+    for a record with none) and `admission` the request's
+    (`admission.Admission`, built once per request from the caller's
+    resolution): `membership.admitted` on the search's surface decides
+    (design 3.5), and a record with no home is admitted nowhere. None
+    admits every record: offline callers (the benches, an eval replay)
+    that rank a store as a whole, never a caller's request.
 
     `client_filter` / `model_filter` (7.12.0) select on the writing
-    request's DECLARED identity, and differ from the repo rule in two
-    ways worth stating where the rule lives:
+    request's DECLARED identity, and differ from the membership rule in
+    two ways worth stating where the rule lives:
 
     * They are exact and case-sensitive, with no normalisation on either
       side — which is what lets `index.query` ALSO spell them as a SQL
       `WHERE` (to spend its candidate cap on eligible rows) without the
       two spellings being able to disagree.
-    * A memory with no actor matches NEITHER. `repo_filter` deliberately
-      passes an unlabelled memory — it is an admission rule, and no
-      origin means global. This is a selection: 'what did this client
-      write' must not answer with everything written before 7.10.0, when
-      nothing recorded a writer at all.
+    * A memory with no actor matches NEITHER. This is a selection: 'what
+      did this client write' must not answer with everything written
+      before 7.10.0, when nothing recorded a writer at all.
 
     The filters read only the two DECLARED fields. `principal` — the
     attested one — is not selectable, and the omission is deliberate:
@@ -2879,11 +2881,7 @@ def candidate_admitted(
         return False
     if scope_filter is not None and not (memory_scope_set & scope_filter):
         return False
-    if repo_filter is not None and not should_include_for_caller(
-        memory_origin,
-        repo_filter,
-        caller_worktree_root=worktree_filter,
-    ):
+    if admission is not None and not admission.admits_project(memory_home):
         return False
     if not actor_matches(memory_actor, client=client_filter, model=model_filter):
         return False
@@ -3389,8 +3387,7 @@ def search(
     *,
     scopes: list[str] | None = None,
     excluded_scopes: set[str] | None = None,
-    repo_filter: str | None = None,
-    worktree_filter: str | None = None,
+    admission: Admission | None = None,
     client_filter: str | None = None,
     model_filter: str | None = None,
     max_results: int = 5,
@@ -3409,21 +3406,13 @@ def search(
     - `scopes`: if given, only consider memories tagged with at least one.
     - `excluded_scopes`: any memory tagged with one of these is dropped.
       (Used for session-disabled scopes.)
-    - `repo_filter`: a remote URL. When provided, memories whose
-      `origin.repo` doesn't match (compared via `origin.repos_match`) are
-      dropped. Memories with no `origin.repo` (legacy or non-repo writes)
-      pass through — they're treated as global.
-    - `worktree_filter`: the caller's `git rev-parse --show-toplevel`
-      path. Layered on top of `repo_filter` to catch worktree leakage:
-      a memory written from one worktree of a repo shouldn't surface
-      in a search run from a sibling worktree of the same repo.
-      Memories with no `worktree_root` (legacy or non-repo writes)
-      pass through. No-op without `repo_filter` — a worktree path
-      without a repo identifier doesn't carry enough context to
-      filter on.
+    - `admission`: the request's membership admission
+      (`admission.Admission`): a memory whose home the search's surface
+      does not admit for the caller is dropped (design 3.5), and so is a
+      memory with no home. None ranks every memory (offline callers).
     - `client_filter` / `model_filter`: the writing request's DECLARED
       identity (`Memory.actor.client` / `.model`), matched exactly and
-      case-sensitively. Unlike the two filters above, a memory carrying
+      case-sensitively. Unlike the admission, a memory carrying
       NO actor is dropped rather than passed: these select a writer
       rather than admitting a caller, and every memory written before
       7.10.0 has no actor to select on. Declared means forgeable —
@@ -3438,7 +3427,7 @@ def search(
       60 is the canonical default and almost always correct.
     - `allow_empty_query`: when True, an empty or stopword-only query
       no longer short-circuits to `[]`. Instead the function runs the
-      `_filter_candidates` pass (scope / repo / worktree / excluded)
+      `_filter_candidates` pass (scope / membership / excluded)
       and returns the survivors sorted by `updated` desc — a browse
       mode. Hits get `score=0.0`, no `match_terms`, and the default
       "low" relevance label. Used by callers that already narrowed
@@ -3576,8 +3565,7 @@ def search(
             memories,
             scopes=scopes,
             excluded_scopes=excluded_scopes,
-            repo_filter=repo_filter,
-            worktree_filter=worktree_filter,
+            admission=admission,
             client_filter=client_filter,
             model_filter=model_filter,
         )
@@ -3592,8 +3580,7 @@ def search(
         memories,
         scopes=scopes,
         excluded_scopes=excluded_scopes,
-        repo_filter=repo_filter,
-        worktree_filter=worktree_filter,
+        admission=admission,
         client_filter=client_filter,
         model_filter=model_filter,
     )

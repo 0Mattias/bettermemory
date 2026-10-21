@@ -26,6 +26,8 @@ import pytest
 
 from bettermemory import _daemon_client, config
 from bettermemory._daemon_client import write_state
+from bettermemory.location import resolve_here
+from bettermemory.machine import open_machine
 from bettermemory.store import Store
 
 from .conftest import shielded_child_env
@@ -74,6 +76,11 @@ def _briefable_repo(tmp_path: Path) -> Path:
             origin=capture(repo),
         )
         store.mark_verified(written.id)
+        # A checkout the daemon's machine has seen before: its first
+        # sight's line is not what these tests read.
+        resolve_here(
+            store, config.Config(), str(repo), identity=open_machine(tmp_path / "state")
+        )
     return repo
 
 

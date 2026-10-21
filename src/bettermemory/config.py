@@ -106,12 +106,12 @@ write_supersession = true
 # this session segment has not already been shown, retrieved, written or
 # updated.
 # At most twelve deliveries per segment; a compact or a clear opens a new
-# one. "project" (default) delivers only memories written in the
-# repository the prompt comes from; "everywhere" also delivers global
-# memories (no repository of their own; the probe's auto-scope still
-# keeps other repositories' memories out), and works outside any
-# repository;
-# "off" returns to purely opt-in retrieval. Each delivery is recorded as
+# one. "project" (default) delivers only memories of the project the
+# prompt comes from (inside a project only); "everywhere" delivers as an
+# unscoped search reaches: every project's memories and the ones written
+# outside any project, inside a project or outside one, never a memory
+# across a boundary (`boundary = true`) and never one whose location
+# could not be read; "off" returns to purely opt-in retrieval. Each delivery is recorded as
 # a `prompt_recall` event, so it needs telemetry.enabled (off-the-books
 # injections are refused). true / false in an older config read as
 # "project" / "off".
@@ -261,6 +261,25 @@ stop_checkpoint = false
 checkpoint_tokens = 12000
 # At most this many capture requests per store per UTC day.
 daily_cap = 12
+
+[membership]
+# Which project a session belongs to is decided from what its checkout
+# shows: its git directory, its commits, its remotes, its
+# bettermemory.toml, and a checkout token. The token is the one file
+# bettermemory writes into a repository: `info/bettermemory` inside the git
+# directory (`.git/info/bettermemory`), never in the working tree. git does
+# not track it, `git clone` does not copy it, and a moved or copied checkout
+# carries it. It is never written into a bare repository, another user's
+# repository or a read-only one. With `write_token = false` it is written
+# nowhere and the other evidence decides alone: a moved or copied checkout
+# with no commits, which its token would have recognised, is asked about.
+write_token = true
+# With `strict = true`, a checkout that would join a project because it
+# holds the project's commits asks once instead. Joins by a
+# bettermemory.toml, by your own `bettermemory project join`, by the same
+# git directory or object store, or by a restore at the project's old path
+# stay silent.
+strict = false
 """
 
 
@@ -306,9 +325,10 @@ class BehaviorConfig:
     write_supersession: bool = True
     # Recall at prompt time (`recall.prompt_recall`, wired to the plugin's
     # UserPromptSubmit hook): "project" (default) delivers pointers to
-    # memories written in the caller's repository, "everywhere" also
-    # global memories (the probe's auto-scope still excludes other
-    # repositories' memories), "off" nothing. The loader reads a
+    # memories of the caller's project (the prompt recall's admission,
+    # design 3.5), "everywhere" those an unscoped search admits (every
+    # project's and the global ones, never across a boundary, decision
+    # B21), "off" nothing. The loader reads a
     # legacy boolean as "project" / "off" (`_coerce_prompt_recall`).
     # Requires `telemetry.enabled` at the call site: an unlogged injection
     # is invisible to the Stop-hook shield and unmeasurable, so the recall
@@ -422,6 +442,17 @@ class CaptureConfig:
 
 
 @dataclass
+class MembershipConfig:
+    """Membership by checkout and project. `write_token` is the policy
+    switch for the checkout token (design 1.1, decision D11); `strict` is
+    the A3 switch, under which a join resting on history without the
+    project file asks once (decision D8)."""
+
+    write_token: bool = True
+    strict: bool = False
+
+
+@dataclass
 class Config:
     storage: StorageConfig = field(default_factory=StorageConfig)
     behavior: BehaviorConfig = field(default_factory=BehaviorConfig)
@@ -429,6 +460,7 @@ class Config:
     telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
     capture: CaptureConfig = field(default_factory=CaptureConfig)
+    membership: MembershipConfig = field(default_factory=MembershipConfig)
     config_path: Path | None = None
 
     # ---- methods ----------------------------------------------------------
@@ -1123,6 +1155,9 @@ def load_config(path: Path | None = None) -> Config:
     capture_raw = data.get("capture", {})
     if not isinstance(capture_raw, dict):
         capture_raw = {}
+    membership_raw = data.get("membership", {})
+    if not isinstance(membership_raw, dict):
+        membership_raw = {}
 
     # T9: back-compat for the 3.1.x -> 3.2.0 TOML key rename. Mutates
     # `behavior_raw` so the downstream `behavior_raw.get(...)` lookups
@@ -1272,6 +1307,10 @@ def load_config(path: Path | None = None) -> Config:
                 label="[capture] daily_cap",
                 config_path=config_path,
             ),
+        ),
+        membership=MembershipConfig(
+            write_token=_coerce_bool(membership_raw.get("write_token"), True),
+            strict=_coerce_bool(membership_raw.get("strict"), False),
         ),
         config_path=config_path,
     )

@@ -33,7 +33,7 @@ from bettermemory.log import (
 )
 from bettermemory.origin import Origin
 from bettermemory.session import SessionState
-from bettermemory.store import Store
+from bettermemory.store import MEMBERSHIP_EVENT_KINDS, MEMBERSHIP_MUTATION_KINDS, Store
 
 from ._mcp import call_tool
 
@@ -126,10 +126,19 @@ async def test_a_capture_write_with_the_token_joins_its_batch(world: World) -> N
     assert member.harness_session == STOP_SESSION
     assert member.server_session == world.state.session_id
     assert member.joined_by == capture.JOINED_BY_STOP_SESSION
-    # The member row commits with the memory: the row right after its put.
+    # The member row commits with the memory: after its put only the
+    # membership rows of the same write (its home, a HEAD witness) come
+    # before it, and the home row names this memory.
     rows = world.store.log_rows()
     put = next(r for r in rows if r.kind == "memory_put" and memory.id in r.payload)
-    assert rows[rows.index(put) + 1].kind == CAPTURE_MEMBER
+    after = rows[rows.index(put) + 1 :]
+    member_at = next(i for i, r in enumerate(after) if r.kind == CAPTURE_MEMBER)
+    between = after[:member_at]
+    assert {r.kind for r in between} <= (
+        MEMBERSHIP_MUTATION_KINDS | MEMBERSHIP_EVENT_KINDS
+    ), [r.kind for r in between]
+    assert any(r.kind == "home_put" and memory.id in r.payload for r in between)
+    assert memory.id in after[member_at].payload
     committed = [e for e in world.store.iter_events() if e.get("status") == "committed"]
     assert committed[-1]["capture_batch"] == batch.batch
 

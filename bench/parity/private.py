@@ -3,8 +3,8 @@ replayed over a scratch copy of the live store.
 
 The public fixture (run.py) proves the port on a corpus anyone can rebuild.
 This one proves it on the store that matters: the calls a real model made
-against a real store over months, with the scopes, widths and repo filters
-it actually passed. Everything here is private, so the OUTPUT NEVER ENTERS
+against a real store over months, with the scopes, widths and auto-scope
+switch it actually passed. Everything here is private, so the OUTPUT NEVER ENTERS
 THE REPO: it is written under ~/.cache/bettermemory-v9 by default, and the
 harness refuses a path inside the checkout.
 
@@ -17,12 +17,15 @@ never mutated either); the live store is never opened.
 
 WHAT IS REPLAYED. The handler's own steps, with the two things a replay
 must pin held fixed: the clock (PINNED_NOW, so recency and the verification
-verdict cannot drift between runs) and the caller's origin (resolved once
-per working directory with `origin.capture`, exactly what the handler's
-auto-scope reads; a directory that no longer exists resolves to no repo,
-which is what the handler would see too). Each call then goes through
-`resolve_search_pool` and `search.search` with the same arguments
-`memory_search` passes. `since_prior_session` calls are skipped, because
+verdict cannot drift between runs) and the caller's admission (design 3.5:
+the search's surface, auto-scoped or unscoped as the call asked, for the
+checkout the store recorded at the call's directory or the nearest one
+above it, `admission.recorded_caller`, read without writing; a directory
+with no recorded checkout replays as a caller outside any project). The
+copy must be a migrated store, since a record with no home is admitted
+nowhere. Each call then goes through `resolve_search_pool` and
+`search.search` with the same arguments `memory_search` passes. The
+origin `origin.capture` reads at the directory stays in the spec as data. `since_prior_session` calls are skipped, because
 their pool is a slice of the event log by session boundary, not a ranking.
 
 ONE ARM. `default` ranks with the shipped configuration. bettermemory 9
@@ -56,6 +59,7 @@ if str(_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(_ROOT / "src"))
 
 from bettermemory import origin as _origin  # noqa: E402
+from bettermemory.admission import Admission, recorded_caller  # noqa: E402
 from bettermemory._handlers import (  # noqa: E402
     _INDEX_THRESHOLD_DEFAULT,
     _PREFILTER_CAP,
@@ -64,6 +68,15 @@ from bettermemory.config import BehaviorConfig  # noqa: E402
 from bettermemory.handlers.search import (  # noqa: E402
     clamp_search_width,
     resolve_search_pool,
+)
+from bettermemory.location import NO_MACHINE  # noqa: E402
+from bettermemory.membership import (  # noqa: E402
+    GLOBAL,
+    GLOBAL_OUTCOME,
+    SEARCH_AUTO_SCOPE,
+    SEARCH_UNSCOPED,
+    Membership,
+    Resolution,
 )
 from bettermemory.models import validate_scope  # noqa: E402
 from bettermemory.search import search as run_search  # noqa: E402
@@ -226,12 +239,30 @@ def unique_specs(
 # ---------------------------------------------------------------------------
 
 
+def caller_admission(model: Membership, spec: dict[str, Any]) -> Admission:
+    """The call's admission: SEARCH_AUTO_SCOPE or SEARCH_UNSCOPED as it
+    asked, for the checkout recorded at its directory (see the module
+    docstring)."""
+    surface = SEARCH_AUTO_SCOPE if spec["auto_scope"] else SEARCH_UNSCOPED
+    caller = recorded_caller(model, spec["cwd"]) if spec["cwd"] else None
+    if caller is None:
+        caller = Resolution(
+            outcome=GLOBAL_OUTCOME,
+            project=GLOBAL,
+            checkout=None,
+            rule="no_recorded_view",
+        )
+    return Admission(surface, caller, model)
+
+
 def replay(
     store: Store,
     spec: dict[str, Any],
     behavior: BehaviorConfig,
+    model: Membership | None = None,
 ) -> dict[str, Any]:
-    """`memory_search`'s pool and rank steps, with the clock pinned."""
+    """`memory_search`'s pool and rank steps, with the clock pinned.
+    `model` reads the copy's homes and checkouts (one per run)."""
     width = clamp_search_width(
         spec["max_results"]
         if spec["max_results"] is not None
@@ -239,15 +270,15 @@ def replay(
     )
     mode = spec["mode"] or behavior.search_mode or "hybrid"
     scopes = spec["scopes"]
-    repo_filter = spec["origin"]["repo"] if spec["auto_scope"] else None
-    worktree_filter = spec["origin"]["worktree_root"] if spec["auto_scope"] else None
+    admission = caller_admission(
+        model if model is not None else Membership(store, NO_MACHINE), spec
+    )
     pool = resolve_search_pool(
         store,
         spec["query"],
         scopes=scopes,
         excluded_scopes=set(),
-        repo_filter=repo_filter,
-        worktree_filter=worktree_filter,
+        admission=admission,
         client_filter=spec["client"],
         model_filter=spec["model"],
         min_survivors=width,
@@ -257,8 +288,7 @@ def replay(
         spec["query"],
         scopes=scopes,
         excluded_scopes=set(),
-        repo_filter=repo_filter,
-        worktree_filter=worktree_filter,
+        admission=admission,
         client_filter=spec["client"],
         model_filter=spec["model"],
         max_results=width,
@@ -325,11 +355,12 @@ def run_private(store_root: Path, transcripts: Path = TRANSCRIPTS) -> dict[str, 
     status = store.status()
     calls = extract_calls(transcripts)
     specs, skipped = unique_specs(calls)
+    model = Membership(store, NO_MACHINE)
     rows: list[dict[str, Any]] = []
     for spec in specs:
         row = dict(spec)
         for arm, behavior in ARMS.items():
-            row[arm] = replay(store, spec, behavior)
+            row[arm] = replay(store, spec, behavior, model)
         rows.append(row)
     return {
         "kind": "rank-parity/private",

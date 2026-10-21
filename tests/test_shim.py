@@ -29,6 +29,8 @@ from mcp.shared.exceptions import MCPError
 from bettermemory import __version__
 from bettermemory._daemon_client import health, read_state, write_state
 from bettermemory.builder import INSTRUCTIONS
+from bettermemory.config import Config, StorageConfig
+from bettermemory.location import resolve_caller
 from bettermemory.store import Store
 
 from .conftest import child_tau_env
@@ -124,7 +126,14 @@ async def test_two_shims_share_the_store_and_keep_separate_session_state(
     assert _cli(["up", "--port", "0"], daemon_env).returncode == 0
     _wait_running(tmp_path)
     with Store(tmp_path / "store") as store:
-        store.write(content="a fact filed under tools", scopes=["tools"])
+        # Homed as the write handler homes it, by the caller resolved where
+        # the shims stand (design 8.1): a record with no home row reaches
+        # no caller (design 3.5).
+        config = Config(storage=StorageConfig(directory=str(tmp_path / "store")))
+        caller = resolve_caller(store, config, Path.cwd())
+        store.write(
+            content="a fact filed under tools", scopes=["tools"], home=caller.home()
+        )
     async with stdio_client(_shim_params(daemon_env)) as (ra, wa):
         async with ClientSession(ra, wa) as a:
             await a.initialize()

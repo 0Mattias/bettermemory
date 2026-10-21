@@ -10,8 +10,13 @@ from ..claims import check_claim, claim_reason_is_indeterminate, load_claims
 from ..models import Memory, TombstonedMemory
 from ..origin import commit_reachable
 from ..store import MemoryNotFoundError, NotTombstonedError, Store
-from ..verify import _worktree_root_is_live, unverifiable_attestations
-from ._shared import Context, _advance_turn
+from ..verify import (
+    Anchoring,
+    ClaimAnchor,
+    _worktree_root_is_live,
+    unverifiable_attestations,
+)
+from ._shared import Context, _advance_turn, caller_anchoring, has_home
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
@@ -84,7 +89,9 @@ class TrustStrip:
         return out
 
 
-def trust_strip_for(tombstone: TombstonedMemory) -> TrustStrip:
+def trust_strip_for(
+    tombstone: TombstonedMemory, anchoring: Anchoring | None = None
+) -> TrustStrip:
     """Judge a tombstone's trust fields the way `memory_verify` judges a
     stored record before it re-stamps one.
 
@@ -99,7 +106,14 @@ def trust_strip_for(tombstone: TombstonedMemory) -> TrustStrip:
     machine never had), ABSOLUTE attestations always, since they were
     attested as on-this-machine observations. Stored entries `load_claims`
     cannot parse are kept — doctor's job, not this gate's.
+
+    With `anchoring` a homed record's fields are judged where design 3.6
+    reads them (`_anchored_strip`); a record with no home row, and every
+    record without `anchoring`, at its recorded worktree as above.
     """
+    anchor = anchoring.for_record(tombstone.id) if anchoring is not None else None
+    if anchor is not None:
+        return _anchored_strip(tombstone, anchor)
     root = tombstone.origin.worktree_root if tombstone.origin else None
     live_root = root if root is not None and _worktree_root_is_live(root) else None
     dropped_claims: list[str] = []
@@ -140,18 +154,59 @@ def trust_strip_for(tombstone: TombstonedMemory) -> TrustStrip:
     )
 
 
-def restore_with_trust_check(store: Store, memory_id: str) -> tuple[Memory, TrustStrip]:
+def _anchored_strip(tombstone: TombstonedMemory, anchor: ClaimAnchor) -> TrustStrip:
+    """`trust_strip_for` read through the record's claim anchor (design
+    3.6). A stored claim is dropped only on a contradiction at the home
+    checkout's live view: a stand-in's contradiction is no evidence about
+    the home's tree, and no live view reads nothing. An attested path is
+    dropped only where its read convicts (`unverifiable_attestations` with
+    ``stored=True``). The stamp's commit is resolved where a cited commit
+    is (`ClaimAnchor.commit_root`) and dropped only when the home
+    checkout's HEAD no longer descends from it; resolved in the caller's
+    store, or nowhere, it stays."""
+    dropped_claims: list[str] = []
+    if anchor.convicting and anchor.root is not None and tombstone.claims:
+        root_path = Path(anchor.root).resolve(strict=False)
+        for raw in tombstone.claims:
+            parsed = load_claims([raw])
+            if not parsed:
+                continue
+            reason = check_claim(parsed[0], root_path)
+            if reason is not None and not claim_reason_is_indeterminate(reason):
+                dropped_claims.append(raw)
+    dropped_paths = (
+        unverifiable_attestations(tombstone.verified_paths, anchor=anchor, stored=True)
+        if tombstone.verified_paths
+        else []
+    )
+    dropped_head = False
+    if tombstone.verified_head is not None:
+        commit_root, rule = anchor.commit_root(tombstone.verified_head)
+        dropped_head = (
+            commit_root is not None
+            and rule == "home_checkout"
+            and commit_reachable(Path(commit_root), tombstone.verified_head) is False
+        )
+    return TrustStrip(
+        claims=dropped_claims, verified_paths=dropped_paths, verified_head=dropped_head
+    )
+
+
+def restore_with_trust_check(
+    store: Store, memory_id: str, anchoring: Anchoring | None = None
+) -> tuple[Memory, TrustStrip]:
     """The restore every surface runs: judge the tombstone's trust
     fields, then restore with the failures dropped and the stamp cleared
     when anything was. Raises what `Store.restore` raises; a tombstone
     that cannot be loaded here is handed to `restore` unjudged so the
-    refusal it produces is the canonical one."""
+    refusal it produces is the canonical one. `anchoring` reads a homed
+    record's fields where design 3.6 reads them (`trust_strip_for`)."""
     try:
         tombstone = store.load_tombstone(memory_id)
     except (MemoryNotFoundError, NotTombstonedError):
         strip = TrustStrip()
     else:
-        strip = trust_strip_for(tombstone)
+        strip = trust_strip_for(tombstone, anchoring)
     memory = store.restore_trimmed(
         memory_id,
         drop_claims=strip.claims,
@@ -176,8 +231,15 @@ async def memory_restore(
 ) -> dict[str, Any]:
     state = deps.sessions.for_request(ctx)
     _advance_turn(state, deps.recorder)
+    # A record with no home row is read at its recorded tree as before
+    # (design 8.6) and needs no caller; a homed one is read at its anchor.
+    anchoring = (
+        caller_anchoring(deps.store, deps.config)[0]
+        if has_home(deps.store, id)
+        else None
+    )
     try:
-        memory, strip = restore_with_trust_check(deps.store, id)
+        memory, strip = restore_with_trust_check(deps.store, id, anchoring)
     except NotTombstonedError as exc:
         raise ValueError(str(exc)) from exc
     except MemoryNotFoundError as exc:

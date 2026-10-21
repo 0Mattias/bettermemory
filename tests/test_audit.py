@@ -17,11 +17,16 @@ tests/test_telemetry_v2.py.
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from bettermemory.admission import Admission
 from bettermemory.audit import (
     DEFAULT_LOOKBACK_SECONDS,
     THRESHOLD_RULE_V1,
@@ -32,9 +37,29 @@ from bettermemory.audit import (
     probe_for_miss,
     prompt_recall_fields,
 )
+from bettermemory.config import Config, StorageConfig
 from bettermemory.health import compute_health, curation_counts
+from bettermemory.location import resolve_caller
+from bettermemory.membership import (
+    GLOBAL,
+    GLOBAL_OUTCOME,
+    INDETERMINATE,
+    POOL_PREFILTER,
+    SILENT,
+    Membership,
+    RecordHome,
+    Resolution,
+)
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.origin import Origin
+from bettermemory.store import Store
+
+from .test_membership_security import checkout
+
+#: The project a record written in the ``foo`` repository is homed in, and
+#: another repository's (design 2.1).
+FOO = "P_FOO"
+BAR = "P_BAR"
 
 
 # ---------------------------------------------------------------------------
@@ -44,6 +69,53 @@ from bettermemory.origin import Origin
 
 def _utc(year: int, month: int, day: int, hour: int = 12) -> datetime:
     return datetime(year, month, day, hour, tzinfo=timezone.utc)
+
+
+class _Homes:
+    """A store holding the probe's memories with their homes, and the
+    POOL_PREFILTER admission (design 3.5) of a caller standing in one of
+    its projects, outside any (``global``), or where nothing could be
+    read (None). `probe_for_miss` still ranks the list it is handed; the
+    admission reads each record's home from the store."""
+
+    def __init__(self, root: Path) -> None:
+        self.store = Store(root)
+        self.model = Membership(self.store, "machine-test")
+
+    def put(self, memory: Memory, project: str) -> Memory:
+        """`memory`, stored with a home in `project` (or ``global``)."""
+        rule = "outside_repository" if project == GLOBAL else "test"
+        self.store.put_memory(memory, home=RecordHome(project, None, rule))
+        return memory
+
+    def admission(self, project: str | None) -> Admission:
+        if project is None:
+            caller = Resolution(
+                outcome=INDETERMINATE, project=None, checkout=None, rule="unreadable"
+            )
+        elif project == GLOBAL:
+            caller = Resolution(
+                outcome=GLOBAL_OUTCOME,
+                project=GLOBAL,
+                checkout=None,
+                rule="outside_repository",
+            )
+        else:
+            caller = Resolution(
+                outcome=SILENT,
+                project=project,
+                checkout=None,
+                rule="test",
+                chain=(project,),
+            )
+        return Admission(POOL_PREFILTER, caller, self.model)
+
+
+@pytest.fixture
+def homes(tmp_path: Path) -> Iterator[_Homes]:
+    made = _Homes(tmp_path / "store")
+    yield made
+    made.store.close()
 
 
 def _memory(
@@ -676,68 +748,70 @@ def test_creation_shield_still_drops_same_turn_write_at_wide_lookback() -> None:
     assert report.top_hits == ()
 
 
-def test_same_worktree_retrieval_shields_under_any_session() -> None:
-    """Round-88 regression (same-worktree anchor collision): the
-    retrieval shield's question is "did the model retrieve in THIS
-    worktree within the window", but it used to match a single anchored
-    session id — so a concurrent same-worktree session (or a
-    mid-conversation server restart) whose later event flipped the
-    anchor orphaned every in-window retrieval the previous session made
-    and re-fired a false miss. A `search` stamped with the caller's
-    `worktree_root` must shield regardless of which session emitted it."""
+def test_same_project_retrieval_shields_under_any_session(homes: _Homes) -> None:
+    """Round-88 regression (same-project anchor collision): the retrieval
+    shield's question is "did the model retrieve this project's memory
+    within the window", but it used to match a single anchored session
+    id, so a concurrent session in the project (or a mid-conversation
+    server restart) whose later event flipped the anchor orphaned every
+    in-window retrieval the previous session made and re-fired a false
+    miss. A `search` that returned a record homed in the caller's
+    project must shield regardless of which session emitted it (design
+    3.5)."""
     now = _utc(2026, 5, 1)
-    m = _memory("backup strategy uses triangular restic replication")
+    m = homes.put(_memory("backup strategy uses triangular restic replication"), FOO)
     search_ev = _search_event(
         session="sess_A", ts=now - timedelta(seconds=300), returned=[m.id]
     )
-    search_ev["worktree_root"] = "/wt/this"
     report = probe_for_miss(
         [m],
         "backup strategy",
         recent_events=[search_ev],
         session_id="claude-x",
-        # The anchor flipped to the OTHER same-worktree session — the
+        # The anchor flipped to the OTHER session of the project: the
         # repro's `write under sess_B at T-60s` shape.
         retrieval_session_id="sess_B",
         now=now,
         lookback_seconds=600,
-        caller_origin=Origin(worktree_root="/wt/this"),
+        admission=homes.admission(FOO),
     )
     assert report.verdict == "ok", (
-        "a same-worktree in-window search must shield even when the "
+        "a same-project in-window search must shield even when the "
         "session anchor points at the other session"
     )
     assert report.recent_retrieval_count == 1
 
 
-def test_foreign_worktree_retrieval_does_not_shield_under_any_session() -> None:
-    """Control for the worktree-wide shield: a retrieval stamped with a
-    DIFFERENT worktree stays invisible to the shield unless its session
-    matches the anchor — the any-session widening is scoped to the
-    caller's own checkout, so the cross-worktree anti-hijack stance
-    (foreign windows' searches must not shield this window's miss)
-    is preserved."""
+def test_foreign_project_retrieval_does_not_shield_under_any_session(
+    homes: _Homes,
+) -> None:
+    """Control for the project-wide shield: a retrieval that returned
+    only another project's records stays invisible to the shield unless
+    its session matches the anchor. The any-session widening is scoped
+    to the caller's own project, so the anti-hijack stance (another
+    window's searches must not shield this window's miss) is
+    preserved."""
     now = _utc(2026, 5, 1)
-    m = _memory("backup strategy uses triangular restic replication")
+    m = homes.put(_memory("backup strategy uses triangular restic replication"), FOO)
+    theirs = homes.put(_memory("the bar service deploy checklist"), BAR)
     search_ev = _search_event(
-        session="sess_A", ts=now - timedelta(seconds=300), returned=[m.id]
+        session="sess_A", ts=now - timedelta(seconds=300), returned=[theirs.id]
     )
-    search_ev["worktree_root"] = "/wt/other"
     report = probe_for_miss(
-        [m],
+        [m, theirs],
         "backup strategy",
         recent_events=[search_ev],
         session_id="claude-x",
         retrieval_session_id="sess_B",
         now=now,
         lookback_seconds=600,
-        caller_origin=Origin(worktree_root="/wt/this"),
+        admission=homes.admission(FOO),
     )
     assert report.verdict == "miss"
     assert report.recent_retrieval_count == 0
 
 
-def test_caller_in_project_suppresses_high_relevance_miss() -> None:
+def test_caller_in_project_suppresses_high_relevance_miss(homes: _Homes) -> None:
     """When the caller is in the same git project as the top-hit memory
     was written from, the probe returns ``"ok"`` instead of ``"miss"`` —
     the model has that project's source tree open, so the absence of a
@@ -746,7 +820,8 @@ def test_caller_in_project_suppresses_high_relevance_miss() -> None:
     Surfaced by 2.7.x dogfood: ~95% of ``search_miss`` events were of
     the form "update bettermemory" / "push it" asked from inside the
     bettermemory repo, where the model already had bettermemory's
-    source open and didn't need a memory lookup."""
+    source open and didn't need a memory lookup. The record's home is
+    the caller's project (design 3.5)."""
     repo = "git@github.com:owner/foo.git"
     mem = Memory(
         id=generate_ulid(),
@@ -758,14 +833,14 @@ def test_caller_in_project_suppresses_high_relevance_miss() -> None:
         body="foo indexer notes about the ingestion pipeline",
         origin=Origin(cwd="/tmp/foo", repo=repo, worktree_root="/tmp/foo"),
     )
-    caller = Origin(cwd="/tmp/foo", repo=repo, worktree_root="/tmp/foo")
+    homes.put(mem, FOO)
     report = probe_for_miss(
         [mem],
         "foo indexer notes",
         recent_events=[],
         session_id="sess_x",
         now=_utc(2026, 5, 1),
-        caller_origin=caller,
+        admission=homes.admission(FOO),
     )
     # Sanity: without suppression this would be a miss — high
     # relevance hit, no recent retrieval.
@@ -905,11 +980,12 @@ def test_prompt_recall_fields_recall_surface_additions() -> None:
     }
 
 
-def test_global_memory_top_hit_does_not_suppress() -> None:
+def test_global_memory_top_hit_does_not_suppress(homes: _Homes) -> None:
     """A global (non-project-scoped) top hit doesn't trigger the
-    project-cwd suppression even when the caller is inside a repo —
-    cross-cutting notes (auth keys, home-dir scripts, etc.) should
-    still surface as misses when the model didn't search."""
+    project-cwd suppression even when the caller is inside a repo and the
+    record is homed in its project: cross-cutting notes (auth keys,
+    home-dir scripts, etc.) should still surface as misses when the
+    model didn't search."""
     repo = "git@github.com:owner/foo.git"
     mem = Memory(
         id=generate_ulid(),
@@ -921,21 +997,23 @@ def test_global_memory_top_hit_does_not_suppress() -> None:
         body="restic backup strategy for the home dir",
         origin=Origin(cwd="/tmp/foo", repo=repo, worktree_root="/tmp/foo"),
     )
-    caller = Origin(cwd="/tmp/foo", repo=repo, worktree_root="/tmp/foo")
+    homes.put(mem, FOO)
     report = probe_for_miss(
         [mem],
         "restic backup strategy",
         recent_events=[],
         session_id="sess_x",
         now=_utc(2026, 5, 1),
-        caller_origin=caller,
+        admission=homes.admission(FOO),
     )
     # No project: scope on the hit → suppression doesn't apply → miss
     # fires normally.
     assert report.verdict == "miss"
 
 
-def test_low_rank_project_hit_does_not_suppress_global_top_hit_miss() -> None:
+def test_low_rank_project_hit_does_not_suppress_global_top_hit_miss(
+    homes: _Homes,
+) -> None:
     """Mixed-store regression: the verdict threshold reads only the top
     hit, so only that hit can explain away the missing search. A
     low-relevance ``projects:`` memory at rank 2 must not swallow a real
@@ -966,13 +1044,15 @@ def test_low_rank_project_hit_does_not_suppress_global_top_hit_miss() -> None:
         body="foo deploy notes: backup the postgres db before each release",
         origin=origin,
     )
+    homes.put(global_mem, FOO)
+    homes.put(project_mem, FOO)
     report = probe_for_miss(
         [global_mem, project_mem],
         "restic backup strategy",
         recent_events=[],
         session_id="sess_x",
         now=_utc(2026, 5, 1),
-        caller_origin=origin,
+        admission=homes.admission(FOO),
     )
     # Sanity: the global memory decides the threshold at rank 1 and the
     # same-repo project memory really is retained at a lower rank — the
@@ -986,11 +1066,12 @@ def test_low_rank_project_hit_does_not_suppress_global_top_hit_miss() -> None:
     assert report.verdict == "miss"
 
 
-def test_caller_outside_any_repo_does_not_suppress() -> None:
-    """When the caller isn't inside a git checkout (caller_origin.repo
-    is None), there's no project boundary to suppress against — every
-    high-relevance hit fires as a normal miss."""
-    repo = "git@github.com:owner/foo.git"
+def test_caller_outside_any_repo_does_not_suppress(homes: _Homes) -> None:
+    """When the caller isn't inside any project (its resolution is
+    ``global``), there's no project boundary to suppress against: every
+    high-relevance hit it can reach fires as a normal miss, a
+    project-tagged one written outside any project (homed ``global``,
+    the records its pool admits, design 3.5) included."""
     mem = Memory(
         id=generate_ulid(),
         created=_utc(2026, 1, 1),
@@ -999,25 +1080,28 @@ def test_caller_outside_any_repo_does_not_suppress() -> None:
         confidence=Confidence.MEDIUM,
         source=Source.EXPLICIT,
         body="foo indexer notes",
-        origin=Origin(cwd="/tmp/foo", repo=repo, worktree_root="/tmp/foo"),
+        origin=Origin(cwd="/home/user"),
     )
-    # Caller has a cwd but no repo (e.g. running from a home dir).
-    caller = Origin(cwd="/home/user")
+    homes.put(mem, GLOBAL)
+    # The caller has a cwd but no project (e.g. running from a home dir).
     report = probe_for_miss(
         [mem],
         "foo indexer notes",
         recent_events=[],
         session_id="sess_x",
         now=_utc(2026, 5, 1),
-        caller_origin=caller,
+        admission=homes.admission(GLOBAL),
     )
+    assert report.top_hits[0].id == mem.id
     assert report.verdict == "miss"
 
 
-def test_legacy_memory_without_origin_does_not_suppress() -> None:
-    """A memory written before the origin field shipped (origin=None)
-    can't trigger suppression — we have no evidence to compare against
-    the caller's repo. The miss surfaces as it would have pre-fix."""
+def test_legacy_memory_without_origin_does_not_suppress(homes: _Homes) -> None:
+    """A memory written before the origin field shipped (origin=None) is
+    homed ``global`` (no project to place it in, design 2.1), so it
+    can't trigger suppression: nothing ties it to the caller's project.
+    The miss surfaces as it would have pre-fix. A record with no home
+    row at all is admitted nowhere, so it is not even ranked."""
     mem = Memory(
         id=generate_ulid(),
         created=_utc(2026, 1, 1),
@@ -1028,29 +1112,29 @@ def test_legacy_memory_without_origin_does_not_suppress() -> None:
         body="foo indexer notes",
         origin=None,
     )
-    caller = Origin(
-        cwd="/tmp/foo",
-        repo="git@github.com:owner/foo.git",
-        worktree_root="/tmp/foo",
-    )
+    homeless = mem.model_copy(update={"id": generate_ulid()})
+    homes.store.put_memory(homeless)
+    homes.put(mem, GLOBAL)
     report = probe_for_miss(
-        [mem],
+        [mem, homeless],
         "foo indexer notes",
         recent_events=[],
         session_id="sess_x",
         now=_utc(2026, 5, 1),
-        caller_origin=caller,
+        admission=homes.admission(FOO),
     )
+    assert [h.id for h in report.top_hits] == [mem.id]
     assert report.verdict == "miss"
 
 
-def test_caller_in_top_hit_project_helper_cross_repo() -> None:
-    """Direct unit test for the helper: a project-tagged memory written
-    from one repo doesn't suppress a caller in a different repo. The
-    auto-scope filter usually keeps these out of the top hits, but the
-    helper checks repos_match explicitly so offline callers that
-    bypass auto-scope (eval replays, curation passes) don't lose the
-    cross-project signal."""
+def test_caller_in_top_hit_project_helper_cross_repo(homes: _Homes) -> None:
+    """Direct unit test for the helper: a project-tagged memory homed in
+    one repository's project doesn't suppress a caller in another's. The
+    pool prefilter usually keeps these out of the top hits, but the
+    helper reads the home explicitly (`Admission.same_project`, design
+    3.5) so a caller that bypasses the pool's admission doesn't lose the
+    cross-project signal; offline callers pass no admission at all and
+    never suppress."""
     from bettermemory.audit import MissHit
 
     mem = Memory(
@@ -1067,11 +1151,7 @@ def test_caller_in_top_hit_project_helper_cross_repo() -> None:
             worktree_root="/tmp/foo",
         ),
     )
-    caller = Origin(
-        cwd="/tmp/bar",
-        repo="git@github.com:owner/bar.git",
-        worktree_root="/tmp/bar",
-    )
+    homes.put(mem, FOO)
     hit = MissHit(
         id=mem.id,
         score=99.0,
@@ -1079,36 +1159,43 @@ def test_caller_in_top_hit_project_helper_cross_repo() -> None:
         scopes=("projects:foo",),
         snippet="foo indexer notes",
     )
-    assert _caller_in_top_hit_project((hit,), [mem], caller) is False
+    assert _caller_in_top_hit_project((hit,), homes.admission(BAR)) is False
+    assert _caller_in_top_hit_project((hit,), None) is False
+    assert _caller_in_top_hit_project((hit,), homes.admission(FOO)) is True
 
 
-def test_caller_in_top_hit_project_helper_normalizes_remote_urls() -> None:
-    """SSH and HTTPS forms of the same remote URL should match — relies
-    on repos_match's URL normalisation. Without this, a memory written
-    via ``git@github.com:owner/foo.git`` wouldn't suppress for a caller
-    in the HTTPS-cloned ``https://github.com/owner/foo`` worktree of
-    the same repo (and vice versa)."""
+_GIT = shutil.which("git") is not None
+
+
+@pytest.mark.skipif(not _GIT, reason="git not on PATH")
+def test_caller_in_top_hit_project_helper_across_remote_spellings(
+    tmp_path: Path,
+) -> None:
+    """SSH and HTTPS forms of the same remote are one project: a memory
+    written in a clone whose ``origin`` reads ``git@github.com:owner/foo.git``
+    suppresses for a caller in another clone of the repository whose
+    ``origin`` reads ``https://github.com/owner/foo`` (and the other way),
+    because both clones resolve to the one project (witness R and the
+    shared commits, design 2.2) where the record is homed."""
     from bettermemory.audit import MissHit
 
-    mem = Memory(
-        id=generate_ulid(),
-        created=_utc(2026, 1, 1),
-        updated=_utc(2026, 1, 1),
-        scopes=["projects:foo"],
-        confidence=Confidence.MEDIUM,
-        source=Source.EXPLICIT,
-        body="foo notes",
-        origin=Origin(
-            cwd="/tmp/foo",
-            repo="git@github.com:owner/foo.git",
-            worktree_root="/tmp/foo",
-        ),
+    store = Store(tmp_path / "store")
+    config = Config(storage=StorageConfig(directory=str(tmp_path / "store")))
+    ssh = checkout(tmp_path / "ssh", remote="git@github.com:owner/foo.git")
+    https = tmp_path / "https"
+    subprocess.run(
+        ["git", "clone", "-q", str(ssh), str(https)], check=True, capture_output=True
     )
-    caller = Origin(
-        cwd="/tmp/foo",
-        repo="https://github.com/owner/foo",
-        worktree_root="/tmp/foo",
+    subprocess.run(
+        ["git", "remote", "set-url", "origin", "https://github.com/owner/foo"],
+        cwd=https,
+        check=True,
+        capture_output=True,
     )
+    writer = resolve_caller(store, config, str(ssh))
+    reader = resolve_caller(store, config, str(https))
+    assert reader.resolution.project == writer.resolution.project
+    mem = store.write(content="foo notes", scopes=["projects:foo"], home=writer.home())
     hit = MissHit(
         id=mem.id,
         score=99.0,
@@ -1116,7 +1203,10 @@ def test_caller_in_top_hit_project_helper_normalizes_remote_urls() -> None:
         scopes=("projects:foo",),
         snippet="foo notes",
     )
-    assert _caller_in_top_hit_project((hit,), [mem], caller) is True
+    for caller in (reader, writer):
+        admission = Admission.of(POOL_PREFILTER, caller)
+        assert _caller_in_top_hit_project((hit,), admission) is True
+    store.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1955,15 +2045,14 @@ def test_unrelated_session_still_does_not_shield_with_anchor_present() -> None:
     assert report.recent_retrieval_count == 0
 
 
-def test_an_indeterminate_origin_declines_to_declare_a_miss() -> None:
-    """`origin.capture()` returns a null `repo` both when git said "not a
-    repository" and when git could not be asked at all — no binary, a
-    timeout. The project-cohort shield reads the null as "the caller is
-    nowhere" and stands down, so a turn asked from inside the matching
-    repo while git was unreachable was published as a `miss` against
-    the model. A miss is a verdict; could-not-ask never manufactures
-    one. The measured null (git answered "no") still misses."""
-    repo = "git@github.com:owner/foo.git"
+def test_an_indeterminate_origin_declines_to_declare_a_miss(homes: _Homes) -> None:
+    """A caller nothing could be read for (INDETERMINATE) is not a caller
+    outside any project. The measured answer (git said "not a
+    repository": the ``global`` caller) still misses on a record its
+    pool admits. A caller whose resolution read nothing is admitted
+    nothing on every surface (design 3.5), so its probe ranks nothing
+    and the verdict is ``no_signal``: a miss is a verdict, and
+    could-not-ask never manufactures one."""
     mem = Memory(
         id=generate_ulid(),
         created=_utc(2026, 1, 1),
@@ -1972,34 +2061,33 @@ def test_an_indeterminate_origin_declines_to_declare_a_miss() -> None:
         confidence=Confidence.MEDIUM,
         source=Source.EXPLICIT,
         body="foo indexer notes about the ingestion pipeline",
-        origin=Origin(cwd="/tmp/foo", repo=repo, worktree_root="/tmp/foo"),
+        origin=Origin(cwd="/tmp/foo"),
     )
-    nowhere = Origin(cwd="/tmp/foo")
-    assert nowhere.git_indeterminate is False
+    homes.put(mem, GLOBAL)
     answered = probe_for_miss(
         [mem],
         "foo indexer notes",
         recent_events=[],
         session_id="sess_x",
         now=_utc(2026, 5, 1),
-        caller_origin=nowhere,
+        admission=homes.admission(GLOBAL),
     )
+    assert answered.top_hits[0].relevance == "high", "the hit clears"
     assert answered.verdict == "miss"
     assert answered.suppressed_by is None
 
-    unknown = Origin(cwd="/tmp/foo")
-    unknown._git_indeterminate = True
+    unknown = homes.admission(None)
+    assert unknown.nothing == INDETERMINATE
     declined = probe_for_miss(
         [mem],
         "foo indexer notes",
         recent_events=[],
         session_id="sess_x",
         now=_utc(2026, 5, 1),
-        caller_origin=unknown,
+        admission=unknown,
     )
-    assert declined.top_hits[0].relevance == "high", "the hit still clears"
-    assert declined.verdict == "ok"
-    assert declined.suppressed_by == "origin_indeterminate"
+    assert declined.top_hits == ()
+    assert declined.verdict == "no_signal"
 
 
 # ---------------------------------------------------------------------------

@@ -15,6 +15,13 @@ on:
   # remedy was an empty commit. `gh workflow run CI --ref main` is the
   # honest version of that: same matrix, same gate, no history noise.
   workflow_dispatch:
+    # The membership legs below run on a dispatch only when this is ticked;
+    # under workflow_call it is never set, so release.yml's gate skips them.
+    inputs:
+      membership_legs:
+        description: "Also run the membership legs (docker, NFS, SMB)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -78,6 +85,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -241,3 +250,151 @@ jobs:
                           github.event.pull_request.head.sha)
                 || format('{0}..{1}', github.event.before, github.sha) }}
         run: python3 tools/commit_lint.py --range "$RANGE"
+
+  # The membership legs (RS-F6, design 8.7, plan phase 7): the
+  # environments the design argued, run for real on ubuntu-latest. Each
+  # runs on a dispatch of this workflow with `membership_legs` ticked or on
+  # a push to main or v9, never on a pull request, so the owner runs them
+  # on his word. release.yml's gate is unchanged: under workflow_call the
+  # github context is the caller's (a tag push, or a dispatch of the
+  # release), and `inputs` holds only workflow_call inputs, so
+  # `inputs.membership_legs` is unset there and both release paths skip
+  # these legs.
+  membership-docker:
+    name: membership in containers (docker, E10)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.membership_legs)
+      || (github.event_name == 'push'
+      && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/v9'))
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+
+      - name: Sync dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Show the docker engine
+        run: |
+          docker version
+          docker info --format 'storage driver {{.Driver}}, kernel {{.KernelVersion}}, {{.OperatingSystem}}'
+
+      # I39 to I42: the test builds tools/ci/Dockerfile, runs every
+      # container with --network none as the runner's uid, prints each
+      # container's `mount | grep` and `stat` lines (-rA shows them for a
+      # passed test), and removes its image and containers. On Linux a bind
+      # mount keeps the host's device and inode; the container is still a
+      # machine of its own.
+      - name: Membership tests in containers
+        env:
+          BETTERMEMORY_CI_DOCKER: "1"
+        run: uv run pytest -p no:cacheprovider -rA tests/test_membership_container.py
+
+  membership-nfs:
+    name: membership on NFSv3 (loopback)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.membership_legs)
+      || (github.event_name == 'push'
+      && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/v9'))
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+
+      - name: Sync dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Export a loopback directory over NFSv3 and mount it
+        run: sudo bash tools/ci/nfs_export.sh "$(id -u)" "$(id -g)"
+
+      # NFSv3 carries no birth time: the stat shows "Birth: -".
+      - name: Show the mount
+        run: bash tools/ci/show_mount.sh /mnt/nfs
+
+      # --basetemp puts every tmp_path fixture on the mount: E11, E15, E19,
+      # E20 and E33 with the repositories, tokens and stores on NFS.
+      - name: Membership tests on NFS
+        run: >-
+          uv run pytest -p no:cacheprovider --basetemp=/mnt/nfs/pytest -q -rfEs
+          tests/test_checkout_token.py tests/test_project_file.py
+          tests/test_gitobjects.py tests/test_membership_capture.py
+          tests/test_membership_resolution.py
+
+  membership-smb:
+    name: membership on SMB 3.0 (loopback)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.membership_legs)
+      || (github.event_name == 'push'
+      && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/v9'))
+    env:
+      # The share's Samba user, made by the job on a throwaway runner and
+      # reachable on its loopback only: not a secret of the repository.
+      BM_SMB_USER: bmci
+      BM_SMB_PASSWORD: bmci-loopback-only
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+
+      - name: Sync dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Share a loopback directory over SMB 3.0 and mount it
+        id: share
+        run: >-
+          sudo bash tools/ci/smb_share.sh setup "$(id -u)" "$(id -g)"
+          "$BM_SMB_USER" "$BM_SMB_PASSWORD"
+
+      - name: Show the mount
+        run: bash tools/ci/show_mount.sh /mnt/smb
+
+      - name: Membership tests on SMB
+        run: >-
+          uv run pytest -p no:cacheprovider --basetemp=/mnt/smb/pytest -q -rfEs
+          tests/test_checkout_token.py tests/test_project_file.py
+          tests/test_gitobjects.py tests/test_membership_capture.py
+          tests/test_membership_resolution.py
+
+      # E11 c: a remount can renumber objects. The step prints one file's
+      # device and inode before and after; the token tests then run again
+      # on the remounted share. Both run whenever the share was mounted,
+      # so a failure above still leaves the remount in the log.
+      - name: Unmount and mount the share again
+        if: ${{ !cancelled() && steps.share.outcome == 'success' }}
+        run: >-
+          sudo bash tools/ci/smb_share.sh remount "$(id -u)" "$(id -g)"
+          "$BM_SMB_USER" "$BM_SMB_PASSWORD"
+
+      - name: Show the mount after the remount
+        if: ${{ !cancelled() && steps.share.outcome == 'success' }}
+        run: bash tools/ci/show_mount.sh /mnt/smb
+
+      - name: Checkout token tests on the remounted share
+        if: ${{ !cancelled() && steps.share.outcome == 'success' }}
+        run: >-
+          uv run pytest -p no:cacheprovider --basetemp=/mnt/smb/pytest-remounted
+          -q -rfEs tests/test_checkout_token.py

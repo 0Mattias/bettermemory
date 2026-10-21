@@ -68,17 +68,18 @@ from ..search import (
 )
 from ..store import MemoryNotFoundError, Store, TombstonedError
 from ..verdict import memory_verdict
-from ._shared import Context, _advance_turn, _attach_use_tokens
+from ._shared import Context, _advance_turn, _attach_use_tokens, caller_anchoring
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
+    from ..admission import Admission
     from ..config import BehaviorConfig
 
 
 DESC_MEMORY_SEARCH = (
     "Rank stored memories for `query`; hits carry a snippet, relevance, "
-    "use_token and staleness_verdict. Auto-scoped to the caller's repo and "
-    "worktree (auto_scope=False: cross-project). `scopes` keeps tags, "
+    "use_token and staleness_verdict. Auto-scoped to the caller's project "
+    "(auto_scope=False: cross-project). `scopes` keeps tags, "
     "`exclude_scopes` drops them; `since_prior_session`: this session's "
     "changes; `expand_top`: the top hit's body and drift; `client`, "
     "`model`: one writer."
@@ -169,8 +170,7 @@ def resolve_search_pool(
     *,
     scopes: list[str] | None = None,
     excluded_scopes: set[str] | None = None,
-    repo_filter: str | None = None,
-    worktree_filter: str | None = None,
+    admission: Admission | None = None,
     client_filter: str | None = None,
     model_filter: str | None = None,
     min_survivors: int,
@@ -195,8 +195,8 @@ def resolve_search_pool(
     - the cap-starvation guard, which dry-runs the authoritative post-cap
       filter (`_filter_candidates`) on a cap-SATURATED slice and reloads
       the full corpus when fewer than `min_survivors` candidates survive.
-      The FTS prefilter threads only `scopes` into SQL; the repo/worktree
-      auto-scope filter and session-disabled scopes apply post-cap, so on
+      The FTS prefilter threads only `scopes` into SQL; the membership
+      admission and session-disabled scopes apply post-cap, so on
       a saturated slice they can strip every candidate even though
       in-filter matches exist past the cap. The saturation signal comes
       from the loader (keyed on the INDEX row count) — NOT from
@@ -250,13 +250,18 @@ def resolve_search_pool(
     would make this turn's verdict depend on unrelated history — so it is
     left open rather than guessed.
 
-    Pass the same `scopes` / `excluded_scopes` / `repo_filter` /
-    `worktree_filter` / `client_filter` / `model_filter` that will be
-    handed to `search.search`: the corpus-statistics predicate binds them
-    so document frequencies come from exactly the collection about to be
-    ranked. The two audit producers leave the actor filters at None and
-    must keep doing so: the probe measures what PRODUCTION retrieval
-    would have surfaced, and production retrieval never carries one. Under auto-scope that
+    Pass the same `scopes` / `excluded_scopes` / `admission` /
+    `client_filter` / `model_filter` that will be handed to
+    `search.search`: the corpus-statistics predicate binds them so
+    document frequencies come from exactly the collection about to be
+    ranked. `admission` is the request's (`admission.Admission`, built
+    once from the caller's resolution): `memory_search` passes the
+    SEARCH_AUTO_SCOPE or SEARCH_UNSCOPED surface, the hooks' probe the
+    POOL_PREFILTER surface, the review's related set REVIEW_STRATA (design
+    3.5); None only for offline callers that rank a whole store. The two
+    audit producers leave the actor filters at None and must keep doing
+    so: the probe measures what PRODUCTION retrieval would have surfaced,
+    and production retrieval never carries one. Under auto-scope that
     differs sharply from the whole store — a store spanning several
     projects would otherwise price term rarity against memories the
     caller cannot retrieve.
@@ -280,16 +285,13 @@ def resolve_search_pool(
     # slice is already 50 rows that PASS them and there is no post-cap
     # attrition for the guard to catch — counting them would arm a
     # starvation reload that can only ever reload the same set.
-    post_cap_filter_active = (
-        repo_filter is not None or worktree_filter is not None or bool(excluded)
-    )
+    post_cap_filter_active = admission is not None or bool(excluded)
     if post_cap_filter_active and prefilter_saturated:
         survivors = _filter_candidates(
             memories,
             scopes=scopes,
             excluded_scopes=excluded,
-            repo_filter=repo_filter,
-            worktree_filter=worktree_filter,
+            admission=admission,
             client_filter=client_filter,
             model_filter=model_filter,
         )
@@ -304,15 +306,14 @@ def resolve_search_pool(
             prefiltered = False
 
     def _corpus_stats(terms: list[str]) -> CorpusStats | None:
-        def _admit(memory_scopes: list[str], origin: Any, actor: Any) -> bool:
+        def _admit(memory_scopes: list[str], home: str | None, actor: Any) -> bool:
             return candidate_admitted(
                 memory_scopes,
-                origin,
+                home,
                 actor,
                 scope_filter=set(scopes) if scopes else None,
                 excluded=excluded,
-                repo_filter=repo_filter,
-                worktree_filter=worktree_filter,
+                admission=admission,
                 client_filter=client_filter,
                 model_filter=model_filter,
             )
@@ -383,21 +384,22 @@ async def memory_search(
     # cannot come back through the pool, the ranking, or a link edge.
     excluded = set(state.disabled_scopes) | set(exclude_scopes or ())
 
-    # Capture caller origin once: it serves both the auto-scope filter
-    # (drop memories from a different repo) and the commit_drift signal
-    # on an expanded top hit (count repo-local commits since the last
-    # verify of the matching memory). When the caller isn't in a repo,
-    # `current_origin.repo` is None — auto-scope becomes a no-op and
-    # commit_drift stays silent. Calling capture_origin once keeps the
-    # subprocess cost paid in one place and makes the two consumers
-    # agree on what "current repo" means for this request.
+    # The caller is resolved once (`_shared.caller_anchoring`, design 3.1)
+    # and its admission built once (`admission.Admission`): the search's
+    # own surface (design 3.5), SEARCH_AUTO_SCOPE, or SEARCH_UNSCOPED when
+    # the caller turned auto-scope off (every project but across a
+    # boundary, E34 d), decides the pool, the ranked set and the document
+    # frequencies; the LINKS surface decides what a hit's links pull in and
+    # whose commits its drift count reads. The origin is the caller's
+    # directory, which the commit_drift signal counts commits in.
+    from ..admission import Admission
+    from ..membership import LINKS, SEARCH_AUTO_SCOPE, SEARCH_UNSCOPED
+
     current_origin = _h.capture_origin()
-    repo_filter: str | None = current_origin.repo if auto_scope else None
-    # Worktree filter rides along on the same auto_scope toggle as the
-    # repo filter — both are pieces of the same "drop cross-context
-    # memories" defaults pass. Disabling auto_scope drops both, so a
-    # cross-project search keeps working without needing a second flag.
-    worktree_filter: str | None = current_origin.worktree_root if auto_scope else None
+    anchoring, caller = caller_anchoring(deps.store, deps.config)
+    surface = SEARCH_AUTO_SCOPE if auto_scope else SEARCH_UNSCOPED
+    admission = Admission.of(surface, caller)
+    links = admission.on(LINKS)
 
     # Prior-session boundary filter (loop-iteration entry path).
     # When set, narrow candidates to memories whose `updated` is
@@ -480,8 +482,7 @@ async def memory_search(
             query,
             scopes=scopes,
             excluded_scopes=excluded,
-            repo_filter=repo_filter,
-            worktree_filter=worktree_filter,
+            admission=admission,
             client_filter=client,
             model_filter=model,
             min_survivors=max_results,
@@ -499,8 +500,7 @@ async def memory_search(
         query,
         scopes=scopes,
         excluded_scopes=excluded,
-        repo_filter=repo_filter,
-        worktree_filter=worktree_filter,
+        admission=admission,
         client_filter=client,
         model_filter=model,
         max_results=max_results,
@@ -555,7 +555,7 @@ async def memory_search(
     # status / recommendation) is still attached to the expanded top
     # hit below; the count here is the lightweight triage signal.
     deps.responses.attach_commit_drift_counts(
-        out, hits, memories, caller_origin=current_origin
+        out, hits, memories, caller_origin=current_origin, admission=links
     )
     # Per-hit `provenance` (schema v7): how the record entered the store,
     # read from the index in one batched query. Omitted while the index
@@ -614,7 +614,7 @@ async def memory_search(
             out,
             hits,
             memories,
-            caller_origin=current_origin if auto_scope else None,
+            admission=links,
             excluded_scopes=excluded,
             # Pass the store so the helper can targeted-load
             # `depends_on` targets unrelated to the query. The
@@ -625,8 +625,8 @@ async def memory_search(
             # (B depends_on A precisely because A provides context
             # B's query won't surface on its own). Filter discipline
             # for the targeted-load path is identical to the side-map
-            # path: `caller_origin` + `excluded_scopes` re-applied at
-            # load time to prevent cross-project / disabled-scope leak.
+            # path: the LINKS admission + `excluded_scopes` re-applied
+            # at load time to prevent cross-project / disabled-scope leak.
             store=deps.store,
         )
 
@@ -644,7 +644,7 @@ async def memory_search(
             hits,
             memories,
             store=deps.store,
-            caller_origin=current_origin if auto_scope else None,
+            admission=links,
             excluded_scopes=excluded,
         )
 
@@ -721,9 +721,13 @@ async def memory_search(
             # turn — see `resolve_commit_drift_count`'s docstring.
             shown = memory_verdict(
                 memory,
-                caller_origin=current_origin,
+                caller_origin=(
+                    current_origin if links.drift_counts(memory.id) else None
+                ),
                 now=now,
                 stale_after_days=deps.config.behavior.verification_stale_days,
+                anchoring=anchoring,
+                admission=links,
             )
             drift = shown.path_drift
             if drift.has_drift or drift.verified or drift.expected_absent:
@@ -775,6 +779,7 @@ async def memory_search(
     _attach_use_tokens(out, state)
 
     from .._response import isoformat_optional
+    from ..admission import admitted_nothing
 
     # Shadow-label calibration features, event-log only (the response
     # dicts deliberately do NOT carry them — a surfaced v2 label would
@@ -823,7 +828,12 @@ async def memory_search(
         expanded_commit_drift_status=expanded_commit_drift_status,
         expanded_commits_since_verify=expanded_commits_since_verify,
         auto_scope=auto_scope,
-        repo_filter=repo_filter,
+        membership_surface=surface,
+        **(
+            {"membership": admitted_nothing(admission.nothing)}
+            if admission.nothing is not None
+            else {}
+        ),
         since_prior_session=since_prior_session,
         prior_session_boundary=isoformat_optional(prior_boundary),
         **search_extra,

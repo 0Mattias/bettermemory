@@ -14,7 +14,7 @@ from .._response import isoformat, isoformat_optional
 from ..models import utcnow
 from ..store import MemoryNotFoundError, TombstonedError
 from ..verdict import memory_verdict
-from ._shared import Context, _advance_turn
+from ._shared import Context, _advance_turn, caller_anchoring
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
@@ -64,9 +64,10 @@ async def memory_show(
     # populated otherwise; that's the actionable handle.
     #
     # Commit-drift is the cwd-aware sibling of verification: when the
-    # caller is currently inside a checkout of the same repo the
-    # memory came from, count commits authored since the last verify.
-    # Stays null when the caller isn't in the matching repo or the
+    # caller's project is the memory's (its home, through the LINKS
+    # admission: `Admission.drift_counts`, design 3.5), count commits
+    # authored since the last verify in the caller's checkout.
+    # Stays null when the memory is another project's or the
     # memory has no anchor to count from — emitting an "unknown"
     # branch every consumer would have to filter is worse than
     # silence, mirroring path_drift's null-when-clean contract.
@@ -83,11 +84,21 @@ async def memory_show(
     # emitted below in the `path_drift` block — prose absences stay
     # visible as evidence, they just no longer raise the tier. Rationale
     # and the 15-vs-3 measurement live on `verdict_from_signals`.
+    # The caller is resolved once (design 3.1): its anchoring reads the
+    # record's claims where design 3.6 reads them, and its LINKS admission
+    # decides whether the commit leg is counted here at all.
+    from ..admission import Admission
+    from ..membership import LINKS
+
+    anchoring, caller = caller_anchoring(deps.store, deps.config)
+    links = Admission.of(LINKS, caller)
     shown = memory_verdict(
         memory,
-        caller_origin=_h.capture_origin(),
+        caller_origin=_h.capture_origin() if links.drift_counts(memory.id) else None,
         now=utcnow(),
         stale_after_days=deps.config.behavior.verification_stale_days,
+        anchoring=anchoring,
+        admission=links,
     )
     drift = shown.path_drift
     verification = shown.verification

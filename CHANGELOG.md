@@ -25,6 +25,154 @@ bettermemory` and the plugin's `uvx bettermemory` keep resolving 8.0.0
 until the stable `9.0.0` is tagged. Ask for a candidate by version
 (`uvx bettermemory==9.0.0rc1`) to run it.
 
+### 9.0.0rc4
+
+The fourth candidate carries the recall fixes and membership by checkout
+and project. The store's schema version does not move: the membership
+tables and log kinds sit beside the record tables, rc3 reinstalled over
+an rc4 store reads it as it read its own, and the next rc4 open homes
+what rc3 wrote meanwhile.
+
+#### Added
+
+- **The recall fixes** (`06c81f86`, `7032be0c`; the recall surface under
+  Added below has the detail). One definition of an owner prompt, read by
+  the prompt recall, the Stop audit, capture and the recall review; the
+  Stop reads the turn its `prompt_id` names and no other, from the end of
+  the transcript; a compact opens a segment only on the compaction
+  marker its transcript holds. The rule name moves to `rs-v4`.
+- **Membership by checkout and project.** Each memory and episode is
+  homed in the checkout it was written in and that checkout's project,
+  in the record's own transaction, and the home is never rewritten; a
+  write outside any repository and any project file is global. A
+  checkout is one git directory, or a folder with a project file, on one
+  machine. A project is the set of checkouts one body of evidence ties
+  together: the git directory's filesystem object, its object store, the
+  commits it holds, its remotes, its project file, its checkout token,
+  the path a checkout was seen at and its content. Copies, clones, linked
+  worktrees, containers and other machines' checkouts of one project
+  share its memories; episodes, the handoff and recall segments stay with
+  their checkout. (`src/bettermemory/membership.py`, `location.py`,
+  `gitobjects.py`, `machine.py`, `admission.py`)
+- **Three outcomes, said in the session's first output.** Silent: two
+  independent witnesses agree, or the same git directory or object store,
+  or a declaration; the session gets its project's memories from the
+  first prompt and no line. Ask once: one witness, witnesses that
+  contradict each other, or content alone; the checkout gets a
+  provisional project, nothing of another project is delivered there,
+  what is written there stays with it, and every session's first output
+  there names the question and its two commands until `bettermemory
+  project join <id>`, `bettermemory project new` or new evidence (a
+  commit, a fetch, a committed project file) answers it. New: a new
+  project, named in one line. The lines say which: this folder may be a
+  known project, and the evidence in words; a new project; a project file
+  that names another project than the commits the repository holds; a
+  checkout joined, and by what; a remote that moved away from the
+  project's; the records of a folder that is gone that may belong to the
+  project here; a sub-project file that names a project outside its
+  repository; a folder that cannot be read, where nothing from any
+  project is shown; a HEAD or config a file provider evicted, where that
+  prompt shows nothing and the next decides; an imported project that may
+  be one here; and a match across a tenant boundary, kept apart.
+- **Who sees what.** The session brief, the prompt recall and the write
+  review's related statements deliver only the caller's own project, with
+  the projects it is a part of and the workspaces around it.
+  `memory_search` with `auto_scope` on, the hook's candidate pool and the
+  links on a hit add the sub-projects inside it and the global records. A
+  search with `auto_scope` off reaches every project except across a
+  tenant boundary. Outside any project the brief and the recall deliver
+  nothing, the scoped search the global records, and the unscoped one the
+  global records and every project's. A caller whose folder could not be
+  read is shown nothing.
+- **`bettermemory project`**: `list`, `show <id>`, `why <record id>` (the
+  project, checkout and rule of a record's home and every log row behind
+  it), `pending` (every open question with its line) and the declarations
+  `join <id>`, `new` and `init [--new | --rebind] [--name N]
+  [--boundary]`. **`bettermemory memory move <record id> --project <id |
+  global>`** re-homes one record. A declaration refuses without a
+  terminal, prints what it is about to do, asks for the project's or the
+  folder's name typed exactly, and is logged with the OS user. `bettermemory
+  init --client claude-code` adds `Bash(bettermemory project:*)` and
+  `Bash(bettermemory memory move:*)` to `permissions.deny` in Claude Code's
+  `settings.json`, so an agent's shell cannot run them.
+  (`src/bettermemory/cli/project_cmd.py`, `cli/memory_move_cmd.py`)
+- **`bettermemory membership migrate [--dry-run]`** builds the membership
+  tables from the store's own records and prints its report: each
+  recorded root, what was found there, the project and checkout its
+  records were homed to and by which rule, the questions opened, the rows
+  written, and the record rows rewritten, which is none. `--dry-run`
+  prints the report of a run rolled back. `membership export [-o FILE]`
+  and `membership import FILE` carry the projects' portable identities
+  (file ids, witness commits, remote keys; no local id and no path) and
+  the records' homes between stores, and `bettermemory export` carries
+  the same for what it exports. (`src/bettermemory/membership_migrate.py`,
+  `cli/membership_cmd.py`)
+- **The checkout token**, `info/bettermemory` in a checkout's git
+  directory (`.git/info/bettermemory`; in a linked worktree under
+  `.git/worktrees/<name>/`), is the one file bettermemory writes into a
+  repository on its own: two lines, `bettermemory checkout token v1` and
+  26 random characters. git never tracks or clones it, and whatever
+  copies a git directory copies it, which is how a moved or copied
+  checkout is recognised. It is written at a checkout's first sight and
+  never into a bare repository, another user's repository or a read-only
+  one; the first-sight line says when it was not written, and why.
+  (`src/bettermemory/checkout_token.py`)
+- **The project file**, `bettermemory.toml`, written by `bettermemory
+  project init` and committed by you: `[project]` with `id =
+  "bmp_<26 characters>"`, `name`, and optionally `boundary = true`. At a
+  repository's root it binds the repository's project for every clone;
+  below the root it names a sub-project; in a folder around repositories
+  it makes a workspace; in a plain folder, a folder project; with
+  `boundary = true`, a tenant that nothing crosses.
+  (`src/bettermemory/project_file.py`)
+- **`[membership]`** in `config.toml`: `write_token = true` (false writes
+  the token nowhere and leaves the other evidence to decide) and `strict
+  = false` (true asks once where a checkout would join a project because
+  it holds the project's commits; joins by the project file, a
+  declaration, the same git directory or object store, or the project's
+  old path stay silent).
+- `bettermemory health` and the `health` action gain a membership
+  section: open questions with their lines, provisional projects,
+  suppressed recall turns per checkout, captures that could not be read
+  or were deferred, and checkouts with no live view.
+- **Rule `rs-v5`.** The session brief and the prompt recall deliver by
+  membership, and their `session_brief` and `prompt_recall` rows carry
+  the caller's `checkout` and `membership_rule` (its resolution's rule,
+  or the outcome that admitted it nothing). `rs-v4` never ran on a live
+  store, so a live log goes from `rs-v3` rows to `rs-v5` rows; every
+  read splits on the row's rule. The episode handoff names a prior
+  session that stood in the caller's checkout and journaled nothing, by
+  the checkout on its rows, with the zero-episode note.
+  (`src/bettermemory/recall.py`, `handlers/episode_handoff.py`)
+- **The shadow column.** Each `session_brief` and `prompt_recall` row
+  carries `rc3_admitted`, the ids rc3's rule would have delivered,
+  computed from the origin columns. `bettermemory eval` reports the
+  recall surfaces' rates for `rs-v5` and for the earlier rules together
+  (`by_rule`), and `membership_delta`: the `rs-v5` rows whose delivered
+  pointers differ from rc3's, counted as pointers delivered and not
+  rc3-admitted and pointers rc3-admitted and not delivered. `--report`
+  shows both groups. (`src/bettermemory/eval.py`, `docs/eval.md`)
+
+#### Changed
+
+- **Auto-scope is membership.** `memory_search`'s `auto_scope`, the
+  hooks' pool, the brief and the recall decide by the caller's project and
+  each record's home, through one function, where they compared the
+  origin's repository and worktree. The origin columns are still written.
+
+#### Migration
+
+The membership tables are built at the first open by an rc4 build, with
+nothing to run: the daemon at its start, under the store's lock;
+`bettermemory serve`; any CLI command; the in-process hook commands.
+Every memory, removed memory and episode is homed once, in one
+transaction ending in one `membership_migrated` row, and nothing is
+written into any repository (each checkout gets its token at its next
+sighting). The CLI says so in one line on stderr; the daemon, `serve` and
+the hook commands log it. `bettermemory membership migrate --dry-run`
+prints the report beforehand and writes nothing. A store whose records
+are all homed is not written.
+
 ### Added
 
 - **The bettermemory 9 store and its hash-chained log.** One SQLite

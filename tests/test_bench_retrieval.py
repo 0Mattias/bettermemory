@@ -333,9 +333,9 @@ def test_the_prefiltered_arm_never_passes_a_post_cap_filter(
 ) -> None:
     """`resolve_search_pool` reloads the whole corpus and clears the
     prefiltered flag when a post-cap filter starves a saturated slice. That
-    guard is gated on `repo_filter` / `worktree_filter` / `excluded_scopes`,
-    so passing any of them here would let the arm quietly measure
-    `load_all` on exactly the queries where the cap binds hardest."""
+    guard is gated on an `admission` or `excluded_scopes`, so passing
+    either here would let the arm quietly measure `load_all` on exactly
+    the queries where the cap binds hardest."""
     from bettermemory.store import Store
 
     seen: list[dict[str, Any]] = []
@@ -357,8 +357,8 @@ def test_the_prefiltered_arm_never_passes_a_post_cap_filter(
     for kwargs in seen:
         assert kwargs["scopes"] is None
         assert kwargs["excluded_scopes"] is None
-        assert kwargs["repo_filter"] is None
-        assert kwargs["worktree_filter"] is None
+        assert kwargs.get("admission") is None
+        assert "repo_filter" not in kwargs and "worktree_filter" not in kwargs
 
 
 def test_the_prefiltered_arm_records_every_query_whose_pool_fell_back(

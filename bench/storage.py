@@ -148,7 +148,6 @@ def _run_size(n: int, *, search_repeats: int, load_repeats: int) -> dict[str, An
                 query="postgres backup",
                 scopes=None,
                 excluded_scopes=set(),
-                repo_filter=None,
                 max_results=5,
                 half_life_days=BehaviorConfig().recency_boost_half_life_days,
             ),

@@ -49,10 +49,10 @@ from .durability import canonical_marker
 from .events import _event_id_list
 from .store import EpisodeVolume
 from .models import Category, Memory, first_summary_line
+from . import location
 from .origin import (
     Origin,
     ReachableWalk,
-    _worktree_root_is_gone,
     capture,
     commit_author_timestamps,
     commits_since_anchor,
@@ -63,6 +63,7 @@ from .claims import load_claims
 from .verify import (
     BASIS_AUTHOR_DATE,
     BASIS_REACHABILITY,
+    Anchoring,
     commit_drift_anchor_paths,
     resolve_commit_drift,
     resolve_commit_drift_count,
@@ -893,20 +894,29 @@ class CommitDriftDebt:
     Cwd-scoped by design: a health run from one repo answers a different
     question than the same run from another. Don't compare rows across
     runs from different cwds.
+
+    `unconfirmed` counts the homed candidates whose cited commit no live
+    store here could resolve (design 3.6: not the home checkout's, which
+    has no live view here, nor the caller's, which does not hold it), so
+    their commits were not counted; present in the payload when non-zero.
     """
 
     current_repo: str | None
     current_cwd: str | None
     rows: list[CommitDriftRow] = field(default_factory=list)
     total_drifted: int = 0
+    unconfirmed: int = 0
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "current_repo": self.current_repo,
             "current_cwd": self.current_cwd,
             "total_drifted": self.total_drifted,
             "rows": [r.to_dict() for r in self.rows],
         }
+        if self.unconfirmed:
+            out["unconfirmed"] = self.unconfirmed
+        return out
 
 
 # Cap on distinct foreign worktrees a single health run walks git in.
@@ -2144,8 +2154,14 @@ def compute_health(
     tombstoned_ids: set[str] | None = None,
     hook_telemetry_events: int | None = None,
     typo_scope_exceptions: Iterable[str] | None = None,
+    anchoring: Anchoring | None = None,
 ) -> HealthReport:
     """Build a `HealthReport` from active memories + the event stream.
+
+    `anchoring` reads each homed record's commit leg where design 3.6
+    resolves its cited commit (`verify.ClaimAnchor.commit_root`), in
+    `commit_drift_debt` and `cross_repo_drift`; a record with no home row,
+    and every record without it, is read as before.
 
     `events` is expected to be in chronological order — the function
     relies on that for "last_*" timestamps. `iter_all_events` returns
@@ -2531,6 +2547,8 @@ def compute_health(
         stale_checkable=sum(1 for s in stale_all if _is_checkable(s.id)),
     )
 
+    if anchoring is not None:
+        anchoring.prime(list(by_id))
     commit_drift_debt = _compute_commit_drift_debt(
         by_id=by_id,
         origin_repo_by_id=origin_repo_by_id,
@@ -2538,6 +2556,7 @@ def compute_health(
         claims_by_id=claims_by_id,
         verified_head_by_id=verified_head_by_id,
         caller_origin=caller_origin,
+        anchoring=anchoring,
     )
 
     cross_repo_drift = _compute_cross_repo_drift(
@@ -2548,6 +2567,7 @@ def compute_health(
         claims_by_id=claims_by_id,
         verified_head_by_id=verified_head_by_id,
         caller_origin=caller_origin,
+        anchoring=anchoring,
     )
 
     # Cold-endorsement memories — distinct memories the ranker keeps
@@ -2916,6 +2936,7 @@ def _compute_cross_repo_drift(
     claims_by_id: dict[str, tuple[str, ...]] | None,
     verified_head_by_id: dict[str, str | None] | None = None,
     caller_origin: Origin | None,
+    anchoring: Anchoring | None = None,
 ) -> CrossRepoDrift | None:
     """The estate check: drift for memories anchored in repos the
     caller is NOT standing in.
@@ -2948,12 +2969,48 @@ def _compute_cross_repo_drift(
     the same philosophy as `commit_drift_debt`'s None. A walked clean
     group IS emitted, with zero rows: "checked N, clean" and "didn't
     check" must not read the same, and neither must "checked nothing".
+
+    With `anchoring`, a homed record is grouped where design 3.6 resolves
+    its cited commit (`verify.ClaimAnchor.commit_root`): its home
+    checkout's live view, which the membership model recognised by its
+    object, so no re-identification runs; else the caller's checkout when
+    it holds the commit. With neither, the record is listed in `skipped`
+    with the anchor's rule as the reason, unconfirmed, never counted.
     """
     groups: dict[tuple[str, str], list[MemoryStats]] = {}
+    # Homed groups, keyed by (the repo or project they are listed under,
+    # the live view they are read at); the membership model has already
+    # read that view as the checkout itself.
+    homed: dict[tuple[str, str], list[MemoryStats]] = {}
+    unconfirmed: dict[tuple[str, str], str] = {}
     unanchorable = 0
     for stats in by_id.values():
         origin_repo = origin_repo_by_id.get(stats.id)
         worktree = origin_worktree_by_id.get(stats.id)
+        anchor = anchoring.for_record(stats.id) if anchoring is not None else None
+        if anchor is not None:
+            if (
+                origin_repo
+                and caller_origin is not None
+                and caller_origin.repo
+                and repos_match(origin_repo, caller_origin.repo)
+            ):
+                continue
+            if stats.last_verified_at is None:
+                continue
+            if not anchor_paths_by_id.get(stats.id) and not (
+                claims_by_id and claims_by_id.get(stats.id)
+            ):
+                continue
+            home = anchoring.home(stats.id) if anchoring is not None else None
+            label = origin_repo or (home.project if home is not None else stats.id)
+            cited = verified_head_by_id.get(stats.id) if verified_head_by_id else None
+            commit_root, _rule = anchor.commit_root(cited)
+            if commit_root is None:
+                unconfirmed.setdefault((label, worktree or ""), anchor.rule)
+                continue
+            homed.setdefault((label, commit_root), []).append(stats)
+            continue
         if not origin_repo or not worktree:
             # COUNTED, not dropped. With no recorded repo or worktree
             # there is nothing to resolve on disk and no anchor to count
@@ -2980,7 +3037,7 @@ def _compute_cross_repo_drift(
         ):
             continue
         groups.setdefault((origin_repo, worktree), []).append(stats)
-    if not groups:
+    if not groups and not homed and not unconfirmed:
         # `unanchorable` alone still earns a payload. Returning None here
         # would say "no foreign records to check", when what happened is
         # "N foreign-or-unknown records could not be checked" — the same
@@ -2989,11 +3046,23 @@ def _compute_cross_repo_drift(
             return CrossRepoDrift(unanchorable=unanchorable)
         return None
 
-    ordered = sorted(groups.items(), key=lambda kv: len(kv[1]), reverse=True)
+    ordered = sorted(
+        [(key, members, False) for key, members in groups.items()]
+        + [(key, members, True) for key, members in homed.items()],
+        key=lambda entry: len(entry[1]),
+        reverse=True,
+    )
     out_groups: list[CrossRepoDriftGroup] = []
-    skipped: list[dict[str, str]] = []
+    skipped: list[dict[str, str]] = [
+        {
+            "repo": repo,
+            "worktree_root": worktree,
+            "reason": f"unconfirmed: no live checkout holds its cited commit ({rule})",
+        }
+        for (repo, worktree), rule in unconfirmed.items()
+    ]
     walked = 0
-    for (repo, worktree), candidates in ordered:
+    for (repo, worktree), candidates, is_live_view in ordered:
         if walked >= _CROSS_REPO_MAX_ROOTS:
             skipped.append(
                 {
@@ -3004,6 +3073,27 @@ def _compute_cross_repo_drift(
             )
             continue
         root = Path(worktree)
+        if is_live_view:
+            walked += 1
+            group = _cross_repo_group(
+                repo,
+                worktree,
+                candidates,
+                anchor_paths_by_id=anchor_paths_by_id,
+                claims_by_id=claims_by_id,
+                verified_head_by_id=verified_head_by_id,
+            )
+            if group is None:
+                skipped.append(
+                    {
+                        "repo": repo,
+                        "worktree_root": worktree,
+                        "reason": "git unreachable in the home checkout",
+                    }
+                )
+            else:
+                out_groups.append(group)
+            continue
         # Liveness in THREE states, not two, because the two-state read
         # asserted things it could not know — and crashed on one of them.
         #
@@ -3021,19 +3111,20 @@ def _compute_cross_repo_drift(
         # or disconnected volume), which then got reported as the
         # positive finding "worktree missing on disk".
         #
-        # `origin._worktree_root_is_gone` is this package's settled
-        # answer to exactly that question — an errno taxonomy whose
-        # unclassified default is "cannot tell", so a new error class
+        # `location.view_state` is the package's settled answer to
+        # exactly that question, the one the membership model reads a
+        # view's liveness by (design 3.6): an errno taxonomy whose
+        # unclassified default is "unreachable", so a new error class
         # holds the boundary instead of opening it. `verify` and
         # `symbols` already route their root probes through their own
-        # guards for the same reason; this call site was the one that
-        # never adopted the doctrine, and the only unguarded one left.
+        # guards for the same reason. Only a record with no home row
+        # still reaches this recorded-root path.
         #
         # So: positively absent is a finding, unreadable is a separate
         # finding, and only a directory we could actually stat is
         # handed to git — asking git to work inside a directory we
         # could not stat is how the mislabel below happened.
-        if _worktree_root_is_gone(worktree):
+        if location.view_state(worktree, location.PRIMARY, None, None) == "gone":
             skipped.append(
                 {
                     "repo": repo,
@@ -3135,6 +3226,43 @@ def _compute_cross_repo_drift(
     )
 
 
+def _cross_repo_group(
+    repo: str,
+    worktree: str,
+    candidates: list[MemoryStats],
+    *,
+    anchor_paths_by_id: dict[str, tuple[str, ...]],
+    claims_by_id: dict[str, tuple[str, ...]] | None,
+    verified_head_by_id: dict[str, str | None] | None,
+) -> CrossRepoDriftGroup | None:
+    """One group of the estate check judged at `worktree`, a live view the
+    membership model read as the checkout itself (design 3.6), by the same
+    claim-anchored legs `_compute_cross_repo_drift` runs. None when git
+    cannot answer there."""
+    root = Path(worktree)
+    timestamps = commit_author_timestamps(root)
+    if timestamps is None:
+        return None
+    located = repo_toplevel_and_head(root)
+    rows = _drift_rows_for_candidates(
+        candidates,
+        root=root,
+        timestamps=timestamps,
+        toplevel=located[0] if located is not None else None,
+        anchor_paths_by_id=anchor_paths_by_id,
+        claims_by_id=claims_by_id,
+        verified_head_by_id=verified_head_by_id,
+        head=located[1] if located is not None else None,
+    )
+    return CrossRepoDriftGroup(
+        repo=repo,
+        worktree_root=worktree,
+        rows=rows[:_COMMIT_DRIFT_DEBT_CAP],
+        total_drifted=len(rows),
+        candidates=len(candidates),
+    )
+
+
 def _compute_commit_drift_debt(
     *,
     by_id: dict[str, MemoryStats],
@@ -3143,6 +3271,7 @@ def _compute_commit_drift_debt(
     claims_by_id: dict[str, tuple[str, ...]] | None = None,
     verified_head_by_id: dict[str, str | None] | None = None,
     caller_origin: Origin | None,
+    anchoring: Anchoring | None = None,
 ) -> CommitDriftDebt | None:
     """Build the optional commit-drift rollup, or None when not applicable.
 
@@ -3163,6 +3292,11 @@ def _compute_commit_drift_debt(
 
     Counted via one `git log --format=%aI` call + bisect — independent
     of memory count.
+
+    With `anchoring`, a homed candidate is counted where design 3.6
+    resolves its cited commit (`_drift_rows_by_root`): in its home
+    checkout's live view, else in the caller's checkout when it holds the
+    commit; with neither it is `unconfirmed`, not counted.
     """
     if caller_origin is None:
         return None
@@ -3205,15 +3339,16 @@ def _compute_commit_drift_debt(
     if not candidates:
         return None
 
-    rows = _drift_rows_for_candidates(
+    rows, unconfirmed = _drift_rows_by_root(
         candidates,
-        root=cwd_path,
+        cwd_path=cwd_path,
         timestamps=timestamps,
         toplevel=toplevel,
+        head=head,
         anchor_paths_by_id=anchor_paths_by_id,
         claims_by_id=claims_by_id,
         verified_head_by_id=verified_head_by_id,
-        head=head,
+        anchoring=anchoring,
     )
 
     if not rows:
@@ -3225,6 +3360,7 @@ def _compute_commit_drift_debt(
             current_cwd=caller_origin.cwd,
             rows=[],
             total_drifted=0,
+            unconfirmed=unconfirmed,
         )
 
     return CommitDriftDebt(
@@ -3232,7 +3368,98 @@ def _compute_commit_drift_debt(
         current_cwd=caller_origin.cwd,
         rows=rows[:_COMMIT_DRIFT_DEBT_CAP],
         total_drifted=len(rows),
+        unconfirmed=unconfirmed,
     )
+
+
+def _root_history(
+    root: Path,
+) -> tuple[Path, list[datetime], Path | None, str | None] | None:
+    """The author timestamps, work tree and HEAD of the checkout at `root`,
+    the commit leg's inputs there; None when git cannot answer."""
+    times = commit_author_timestamps(root)
+    if times is None:
+        return None
+    located = repo_toplevel_and_head(root)
+    return (
+        root,
+        times,
+        located[0] if located is not None else None,
+        located[1] if located is not None else None,
+    )
+
+
+def _drift_rows_by_root(
+    candidates: list[MemoryStats],
+    *,
+    cwd_path: Path,
+    timestamps: list[datetime],
+    toplevel: Path | None,
+    head: str | None,
+    anchor_paths_by_id: dict[str, tuple[str, ...]],
+    claims_by_id: dict[str, tuple[str, ...]] | None,
+    verified_head_by_id: dict[str, str | None] | None,
+    anchoring: Anchoring | None,
+) -> tuple[list[CommitDriftRow], int]:
+    """`_drift_rows_for_candidates` with each candidate counted at the root
+    its cited commit resolves at (design 3.6, `verify.ClaimAnchor.
+    commit_root`), and the count of candidates no live store here could
+    resolve. A candidate with no home row, and every candidate without
+    `anchoring`, is counted at the caller's directory as before; so is a
+    homed one whose root is the caller's own work tree, with the history
+    already read for it."""
+    at_caller: list[MemoryStats] = []
+    elsewhere: dict[str, list[MemoryStats]] = {}
+    unconfirmed = 0
+    caller_top = toplevel.resolve() if toplevel is not None else None
+    for stats in candidates:
+        anchor = anchoring.for_record(stats.id) if anchoring is not None else None
+        if anchor is None:
+            at_caller.append(stats)
+            continue
+        cited = verified_head_by_id.get(stats.id) if verified_head_by_id else None
+        commit_root, _rule = anchor.commit_root(cited)
+        if commit_root is None:
+            unconfirmed += 1
+        elif caller_top is not None and Path(commit_root).resolve() == caller_top:
+            at_caller.append(stats)
+        else:
+            elsewhere.setdefault(commit_root, []).append(stats)
+    rows: list[CommitDriftRow] = []
+    if at_caller:
+        rows.extend(
+            _drift_rows_for_candidates(
+                at_caller,
+                root=cwd_path,
+                timestamps=timestamps,
+                toplevel=toplevel,
+                anchor_paths_by_id=anchor_paths_by_id,
+                claims_by_id=claims_by_id,
+                verified_head_by_id=verified_head_by_id,
+                head=head,
+            )
+        )
+    for root_text, members in elsewhere.items():
+        root = Path(root_text)
+        root_timestamps = commit_author_timestamps(root)
+        if root_timestamps is None:
+            unconfirmed += len(members)
+            continue
+        located = repo_toplevel_and_head(root)
+        rows.extend(
+            _drift_rows_for_candidates(
+                members,
+                root=root,
+                timestamps=root_timestamps,
+                toplevel=located[0] if located is not None else None,
+                anchor_paths_by_id=anchor_paths_by_id,
+                claims_by_id=claims_by_id,
+                verified_head_by_id=verified_head_by_id,
+                head=located[1] if located is not None else None,
+            )
+        )
+    rows.sort(key=lambda r: r.commits_since_verify, reverse=True)
+    return rows, unconfirmed
 
 
 # ---------------------------------------------------------------------------
@@ -3829,6 +4056,7 @@ def curation_counts(
     tombstoned_ids: set[str] | None = None,
     hook_telemetry_events: int | None = None,
     store: Any | None = None,
+    anchoring: Anchoring | None = None,
 ) -> dict[str, int]:
     """The counts half of `curation_counts_with_coverage`, for callers
     that read the rollup as pressure and treat an unmeasured leg's 0 as
@@ -3848,6 +4076,7 @@ def curation_counts(
         tombstoned_ids=tombstoned_ids,
         hook_telemetry_events=hook_telemetry_events,
         store=store,
+        anchoring=anchoring,
     )[0]
 
 
@@ -3865,8 +4094,12 @@ def curation_counts_with_coverage(
     tombstoned_ids: set[str] | None = None,
     hook_telemetry_events: int | None = None,
     store: Any | None = None,
+    anchoring: Anchoring | None = None,
 ) -> tuple[dict[str, int], list[str]]:
     """Cheap summary of curation pressure, and the legs it could not measure.
+
+    `anchoring` counts a homed record's commits where design 3.6 resolves
+    its cited commit, as `compute_health`'s `commit_drift_debt` does.
 
     Returns ``(counts, unmeasured)``. `counts` is
     ``{"stale", "never_verified", "drifted", "cold", "dead",
@@ -4256,6 +4489,14 @@ def curation_counts_with_coverage(
             # The walks of this pass no memo keeps, so a store verified at
             # one dead anchor forks one walk for it.
             walked: dict[tuple[str, str, str], ReachableWalk | bool] = {}
+            # The histories of the other roots homed records' cited
+            # commits resolve at (design 3.6), read once each.
+            histories: dict[
+                str, tuple[Path, list[datetime], Path | None, str | None] | None
+            ] = {}
+            caller_top = toplevel.resolve() if toplevel is not None else None
+            if anchoring is not None:
+                anchoring.prime([m.id for m in mem_list])
             for m in mem_list:
                 if m.last_verified_at is None:
                     continue
@@ -4282,33 +4523,56 @@ def curation_counts_with_coverage(
                 parsed_claims = load_claims(m.claims) if m.claims else []
                 if not anchors and not parsed_claims:
                     continue
+                # Where the commits are counted: the caller's directory,
+                # or for a homed record the root its cited commit
+                # resolves at (`verify.ClaimAnchor.commit_root`); a homed
+                # record no live store here resolves for is unconfirmed
+                # and not counted, as `commit_drift_debt` leaves it.
+                root, root_times, root_top, root_head = (
+                    cwd_path,
+                    timestamps,
+                    toplevel,
+                    head,
+                )
+                anchor = anchoring.for_record(m.id) if anchoring is not None else None
+                if anchor is not None:
+                    commit_root, _rule = anchor.commit_root(m.verified_head)
+                    if commit_root is None:
+                        continue
+                    if caller_top is None or Path(commit_root).resolve() != caller_top:
+                        if commit_root not in histories:
+                            histories[commit_root] = _root_history(Path(commit_root))
+                        read = histories[commit_root]
+                        if read is None:
+                            continue
+                        root, root_times, root_top, root_head = read
                 # The basis rule every other surface applies
                 # (`verify.compute_commit_drift`): the reachable walk
                 # from the stamp's anchor when the record carries one
                 # HEAD still descends from, the author-date bisect
                 # otherwise. The count is an integer either way.
                 walk = None
-                if m.verified_head is not None and head is not None:
+                if m.verified_head is not None and root_head is not None:
                     walk = commits_since_anchor(
-                        cwd_path,
+                        root,
                         m.verified_head,
-                        toplevel=toplevel,
-                        head=head,
+                        toplevel=root_top,
+                        head=root_head,
                         walked=walked,
                     )
                 if walk is not None:
                     count = len(walk.commits)
                 else:
-                    idx = bisect.bisect_right(timestamps, verified_at)
-                    count = len(timestamps) - idx
+                    idx = bisect.bisect_right(root_times, verified_at)
+                    count = len(root_times) - idx
                 if count > 0:
                     resolved = resolve_commit_drift_count(
-                        cwd=cwd_path,
+                        cwd=root,
                         since=verified_at,
                         unfiltered=count,
                         anchors=anchors,
                         claims=parsed_claims,
-                        toplevel=toplevel,
+                        toplevel=root_top,
                         walk=walk,
                     )
                     if resolved is None:

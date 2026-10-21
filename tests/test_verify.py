@@ -28,6 +28,7 @@ import pytest
 from bettermemory.origin import Origin
 from bettermemory.verify import (
     DEFAULT_VERIFICATION_STALE_DAYS,
+    ClaimAnchor,
     CommitDriftStatus,
     PathDriftReport,
     VerificationStatus,
@@ -1636,6 +1637,12 @@ def test_compute_staleness_verdict_delegates_to_primitive() -> None:
 _REMOTE = "git@github.com:example/foo.git"
 
 
+def _home_checkout(path: Path) -> ClaimAnchor:
+    """The anchor of a record homed in the checkout at `path`, its live
+    view here (design 3.6): the commits counted are that checkout's."""
+    return ClaimAnchor(root=str(path), rule="home_checkout")
+
+
 def test_commit_drift_returns_none_when_never_verified(tmp_path: Path) -> None:
     """No anchor to count from — the verification.status="never" branch
     already maxes the alarm; emitting commit_drift here would be noise."""
@@ -1643,13 +1650,14 @@ def test_commit_drift_returns_none_when_never_verified(tmp_path: Path) -> None:
         last_verified_at=None,
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        anchor=_home_checkout(tmp_path),
     )
     assert result is None
 
 
 def test_commit_drift_returns_none_when_memory_has_no_origin_repo() -> None:
-    """A memory written outside any repo has no project identity to anchor
-    against — silence rather than guess."""
+    """A memory with no anchor (no home row, so no checkout speaks for it)
+    reads not applicable, whatever its origin says (decision B23)."""
     result = compute_commit_drift(
         last_verified_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         memory_origin_repo=None,
@@ -1679,18 +1687,41 @@ def test_commit_drift_returns_none_when_caller_not_in_a_repo() -> None:
     assert result is None
 
 
-def test_commit_drift_returns_none_when_repos_dont_match(tmp_path: Path) -> None:
-    """Memory written from repo A, caller in repo B — the auto-scope
-    filter already keeps that memory out of search results, but
-    memory_show is unrestricted by id and could still surface it.
-    Stay silent rather than count commits in the wrong repo."""
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_drift_compares_no_remotes(tmp_path: Path) -> None:
+    """Decision B23: without an anchor no commit is counted, even where the
+    caller's remote is the record's; with one, the anchor's checkout is
+    counted whatever remote the caller or the record names, so a record
+    whose anchor is elsewhere is never counted in the caller's
+    repository."""
+    _init_repo_with_remote(tmp_path, remote=_REMOTE)
+    _commit_at(tmp_path, "anchor", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    _commit_touching(tmp_path, "after", when=datetime(2026, 2, 1, tzinfo=timezone.utc))
     other_remote = "git@github.com:example/other.git"
-    result = compute_commit_drift(
-        last_verified_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    same = Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main")
+    unanchored = compute_commit_drift(
+        last_verified_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
         memory_origin_repo=_REMOTE,
-        caller_origin=Origin(cwd=str(tmp_path), repo=other_remote, branch="main"),
+        caller_origin=same,
+        body="claims about notes.md hold",
     )
-    assert result is None
+    assert unanchored is None
+    anchored = compute_commit_drift(
+        last_verified_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
+        memory_origin_repo=other_remote,
+        caller_origin=Origin(cwd=str(tmp_path), repo=other_remote, branch="main"),
+        body="claims about notes.md hold",
+        anchor=_home_checkout(tmp_path),
+    )
+    assert anchored is not None and anchored.commits_since_verify == 1
+    elsewhere = compute_commit_drift(
+        last_verified_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
+        memory_origin_repo=_REMOTE,
+        caller_origin=same,
+        body="claims about notes.md hold",
+        anchor=ClaimAnchor(root=None, rule="no_live_checkout"),
+    )
+    assert elsewhere is None
 
 
 def test_commit_drift_returns_none_when_git_unreachable(tmp_path: Path) -> None:
@@ -1700,6 +1731,7 @@ def test_commit_drift_returns_none_when_git_unreachable(tmp_path: Path) -> None:
         last_verified_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        anchor=_home_checkout(tmp_path),
     )
     assert result is None
 
@@ -1722,6 +1754,7 @@ def test_commit_drift_status_clean_when_no_commits_after_verify(
         last_verified_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        anchor=_home_checkout(tmp_path),
         body="claims about notes.md hold",
     )
     assert result is not None
@@ -1754,6 +1787,7 @@ def test_commit_drift_status_drift_when_commits_after_verify(
         last_verified_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        anchor=_home_checkout(tmp_path),
         body="claims about notes.md hold",
     )
     assert result is not None
@@ -1779,6 +1813,7 @@ def test_commit_drift_recommendation_singular_for_one_commit(
         last_verified_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        anchor=_home_checkout(tmp_path),
         body="claims about notes.md hold",
     )
     assert result is not None
@@ -1800,6 +1835,7 @@ def test_commit_drift_to_dict_shape_clean(tmp_path: Path) -> None:
         last_verified_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        anchor=_home_checkout(tmp_path),
         body="claims about notes.md hold",
     )
     assert result is not None
@@ -1816,8 +1852,8 @@ def test_commit_drift_to_dict_shape_clean(tmp_path: Path) -> None:
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
 def test_commit_drift_normalised_repo_url_still_matches(tmp_path: Path) -> None:
     """Memory's origin.repo is the SSH form; caller's is HTTPS. They
-    describe the same project — repos_match should normalise away the
-    surface form and commit_drift should fire."""
+    describe the same project, and the anchor says so (design 3.6): the
+    spellings decide nothing and commit_drift fires."""
     _init_repo_with_remote(tmp_path, remote="https://github.com/example/foo.git")
     _commit_at(tmp_path, "anchor", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
     _commit_touching(tmp_path, "after", when=datetime(2026, 2, 1, tzinfo=timezone.utc))
@@ -1830,6 +1866,7 @@ def test_commit_drift_normalised_repo_url_still_matches(tmp_path: Path) -> None:
             branch="main",
         ),
         body="claims about notes.md hold",
+        anchor=_home_checkout(tmp_path),
     )
     assert result is not None
     assert result.status == "drift"
@@ -1952,6 +1989,7 @@ def test_commit_drift_none_for_untethered_memory_despite_commits(
         last_verified_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        anchor=_home_checkout(tmp_path),
         body="a workflow preference that merely originated in this repo",
     )
     assert result is None
@@ -2042,6 +2080,7 @@ def test_commit_drift_none_when_anchors_all_escape_repo(tmp_path: Path) -> None:
         last_verified_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        anchor=_home_checkout(tmp_path),
         body="the router config lives at /data/compose/.env on the board",
         verified_paths=["~/.claude.json"],
     )
@@ -2071,6 +2110,7 @@ def test_commit_drift_clean_when_cited_path_untouched(tmp_path: Path) -> None:
         last_verified_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        anchor=_home_checkout(tmp_path),
         body="claims about notes.md hold",
     )
     assert result is not None
@@ -2097,6 +2137,7 @@ def test_commit_drift_none_when_anchors_escape_and_repo_quiescent(
         last_verified_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        anchor=_home_checkout(tmp_path),
         body="the router config lives at /data/compose/.env on the board",
         verified_paths=["~/.claude.json"],
     )
@@ -2118,6 +2159,7 @@ def test_commit_drift_none_for_phantom_citation_when_repo_quiescent(
         last_verified_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        anchor=_home_checkout(tmp_path),
         body="claims about notes.md hold",
     )
     assert result is None
@@ -2138,6 +2180,7 @@ def test_commit_drift_clean_when_quiescent_and_governed_claim_real(
         last_verified_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        anchor=_home_checkout(tmp_path),
         body="a workflow note that cites nothing path-shaped",
         claims=["notes.md"],
     )
@@ -2173,6 +2216,7 @@ def test_commit_drift_quiescent_deleted_but_real_anchor_stays_clean(
         last_verified_at=datetime(2026, 2, 1, tzinfo=timezone.utc),
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        anchor=_home_checkout(tmp_path),
         body="gone.py was removed on purpose; see its final revision",
     )
     assert result is not None
@@ -2265,6 +2309,7 @@ def test_commit_drift_root_citation_does_not_drag_in_unrelated_churn(
         last_verified_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        anchor=_home_checkout(tmp_path),
         body=f"the project lives at {tmp_path} and claims about notes.md hold",
     )
     assert result is not None
@@ -2414,6 +2459,7 @@ def test_commit_drift_none_for_phantom_subroot_citation(tmp_path: Path) -> None:
         last_verified_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        anchor=_home_checkout(tmp_path),
         body="the handler logic in pkg/search.py is the hot path",
     )
     assert result is None
@@ -2446,6 +2492,7 @@ def test_commit_drift_none_for_phantom_spaced_filename_citation(
         last_verified_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        anchor=_home_checkout(tmp_path),
         body="see docs/My Notes.md for the rationale",
     )
     assert result is None
@@ -2528,6 +2575,7 @@ def test_commit_drift_resolves_repo_toplevel_exactly_once(
         last_verified_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        anchor=_home_checkout(tmp_path),
         body="claims about notes.md hold",
     )
     # The narrowing path must have actually run (drift on the cited file),

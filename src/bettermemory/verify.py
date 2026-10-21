@@ -96,11 +96,11 @@ import os
 import re
 import threading
 from collections import OrderedDict
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from . import _caches
 from .claims import (
@@ -122,9 +122,14 @@ from .origin import (
     commits_since_anchor,
     repo_toplevel,
     repo_toplevel_and_head,
-    repos_match,
     resolve_repo_pathspecs,
 )
+from .githead import GitDir, find_gitdir, gitdir_at
+from .githead import head_sha as _files_head_sha
+from .gitobjects import ObjectReader
+
+if TYPE_CHECKING:
+    from .membership import Home, Membership, Resolution
 
 
 # ---------------------------------------------------------------------------
@@ -504,6 +509,18 @@ class PathDriftReport:
     `expected_absent` before the route rule is consulted — and which a
     caller must reach for without being shown that the suppression
     happened.
+
+    Read through a `ClaimAnchor` (design 3.6), the report carries three
+    more fields. `anchor` is the anchor's rule. `unconfirmed` holds the
+    claims that could not be read where they would count, each with its
+    reason at the same index of `unconfirmed_reasons`: a path absent from
+    a stand-in checkout (the rule of the stand-in), an attested claim of a
+    project with no live view here (``no_live_checkout``, or the
+    translation's ``unanchored``), a path a sparse checkout leaves out of
+    its working tree (``sparse_checkout``). An unconfirmed path is never in
+    `missing` and never in `claim_anchored_missing`, so it moves no
+    verdict. `present_but_attested_absent` holds the paths attested absent
+    that are present in the checkout they were attested in.
     """
 
     checked: tuple[str, ...]
@@ -512,6 +529,10 @@ class PathDriftReport:
     expected_absent: tuple[str, ...] = ()
     dropped_as_route: tuple[str, ...] = ()
     claim_anchored_missing: tuple[str, ...] = ()
+    unconfirmed: tuple[str, ...] = ()
+    unconfirmed_reasons: tuple[str, ...] = ()
+    present_but_attested_absent: tuple[str, ...] = ()
+    anchor: str | None = None
 
     @property
     def has_drift(self) -> bool:
@@ -555,8 +576,8 @@ class PathDriftReport:
         """
         return bool(self.claim_anchored_missing)
 
-    def to_dict(self) -> dict[str, list[str]]:
-        return {
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
             "checked": list(self.checked),
             "missing": list(self.missing),
             "verified": list(self.verified),
@@ -570,6 +591,313 @@ class PathDriftReport:
             # readable statement "we saw these, none of them escalated".
             "claim_anchored_missing": list(self.claim_anchored_missing),
         }
+        if self.anchor is not None:
+            # Only a report read through a `ClaimAnchor` carries these, so
+            # a report read at a recorded root serialises as it did.
+            out["anchor"] = self.anchor
+            out["unconfirmed"] = [
+                {"path": path, "reason": reason}
+                for path, reason in zip(
+                    self.unconfirmed, self.unconfirmed_reasons, strict=True
+                )
+            ]
+            out["present_but_attested_absent"] = list(self.present_but_attested_absent)
+        return out
+
+
+# ---------------------------------------------------------------------------
+# Anchoring (design 3.6; design 4, failure 6)
+# ---------------------------------------------------------------------------
+#
+# A claim (an attested or cited path, a path::symbol binding, a cited
+# commit) is read at its record's home checkout's live view: the path that
+# checkout is at now, wherever it was written. An absolute path recorded
+# under a checkout's view translates to that checkout's live view. Where
+# the home checkout has no live view here, another live checkout of the
+# same project stands in: a path present there confirms the claim, a path
+# absent there leaves it unconfirmed, never missing and never drift. Where
+# the project has no live view on this machine, every path claim reads
+# unconfirmed with the reason and no verdict moves. `Membership.anchor` and
+# `Membership.translate` decide where a claim is read; this module reads it
+# there. A record with no home row is read where its origin recorded it
+# (`worktree_root`), as before the migration homes it (design 8.6).
+
+#: The anchor rules under which an absence is evidence about the claim:
+#: the home checkout's live view, the live view of the checkout an absolute
+#: path was recorded under, and an absolute path under no recorded view (an
+#: observation of this machine, read as it always was).
+CONVICTING_ANCHORS = frozenset({"home_checkout", "checkout", "absolute"})
+
+#: `Membership.translate`'s rule for an absolute path under a view whose
+#: checkout has no live view here, nor any checkout of its project.
+UNANCHORED = "unanchored"
+
+#: The reason an absent path reads unconfirmed in a sparse checkout whose
+#: HEAD tracks it outside the cone (E18 c).
+SPARSE_CHECKOUT = "sparse_checkout"
+
+#: The rule of a cited commit no live store here holds (design 3.6).
+UNCONFIRMED_COMMIT = "unconfirmed"
+
+
+@dataclass(frozen=True)
+class ClaimAnchor:
+    """Where one record's claims are read (design 3.6).
+
+    `root` is the live view relative claims resolve at, None when the
+    record's project has no live view on this machine (or the record is
+    homed outside any project); `rule` is `Membership.anchor`'s rule for
+    it: ``home_checkout`` convicts, ``caller_checkout_same_project`` and
+    ``project_checkout`` are stand-ins, ``no_live_checkout`` and
+    ``global_record`` read nothing. `translate` maps an absolute path to
+    the live view of the checkout it was recorded under and names the
+    rule (`Membership.translate`). `caller_root` is the live view of the
+    caller's checkout, where a cited commit is resolved when the home
+    checkout has no live view here (`commit_root`)."""
+
+    root: str | None
+    rule: str
+    translate: Callable[[str], tuple[str, str]] | None = None
+    caller_root: str | None = None
+
+    @property
+    def convicting(self) -> bool:
+        """Whether an absence at `root` is evidence: the home checkout's
+        live view."""
+        return self.root is not None and self.rule in CONVICTING_ANCHORS
+
+    @property
+    def declared_root(self) -> str | None:
+        """The root a fresh declaration (declared claims, a fresh
+        attestation list) is checked at: the home checkout's live view, or
+        the caller's own checkout of the project, the tree the caller
+        stands in. None for a stand-in the caller is not in, and where no
+        live view is here."""
+        if self.convicting or self.rule == "caller_checkout_same_project":
+            return self.root
+        return None
+
+    def absolute(self, path: str) -> tuple[str | None, str]:
+        """An absolute claim read through the recorded views: the path to
+        stat and the rule it is read under, or None with the rule when no
+        live view here holds the checkout it was recorded under."""
+        if self.translate is None:
+            return path, "absolute"
+        target, rule = self.translate(path)
+        if rule == UNANCHORED:
+            return None, rule
+        return target, rule
+
+    def commit_root(self, commit: str | None) -> tuple[str | None, str]:
+        """Where a cited commit is resolved (design 3.6): the home
+        checkout's object store when its live view is here; else the
+        caller's, when it holds the commit; else nowhere, and the commit
+        reads unconfirmed."""
+        if self.root is not None and self.rule == "home_checkout":
+            return self.root, "home_checkout"
+        if (
+            commit
+            and self.caller_root is not None
+            and holds_commit(self.caller_root, commit)
+        ):
+            return self.caller_root, "caller_checkout"
+        return None, UNCONFIRMED_COMMIT
+
+
+class Anchoring:
+    """The claim anchors of one request: the membership model and the
+    caller's resolution (`location.resolve_caller`), from which each
+    record's `ClaimAnchor` is read once. Not shared across threads, as the
+    model is not.
+
+    `for_record` is None for a record with no home row, which the callers
+    read at its recorded root as before. Records sharing a home checkout
+    share an anchor, and an absolute path is translated once per request;
+    a path under no recorded view never reaches the model."""
+
+    def __init__(self, model: Membership, caller: Resolution | None) -> None:
+        self.model = model
+        self.caller = caller
+        self._homes: dict[str, Home | None] = {}
+        self._anchors: dict[tuple[str, str | None], ClaimAnchor] = {}
+        self._translated: dict[str, tuple[str, str]] = {}
+        self._views: tuple[str, ...] | None = None
+        self._caller_root: str | None = None
+        self._caller_root_read = False
+
+    def prime(self, record_ids: Sequence[str]) -> None:
+        """Read the homes of `record_ids` in one query."""
+        wanted = [rid for rid in record_ids if rid not in self._homes]
+        if not wanted:
+            return
+        found = self.model.homes(wanted)
+        for rid in wanted:
+            self._homes[rid] = found.get(rid)
+
+    def home(self, record_id: str) -> Home | None:
+        if record_id not in self._homes:
+            self._homes[record_id] = self.model.home(record_id)
+        return self._homes[record_id]
+
+    @property
+    def caller_root(self) -> str | None:
+        """The live view of the caller's checkout, or None."""
+        if not self._caller_root_read:
+            self._caller_root_read = True
+            checkout = self.caller.checkout if self.caller is not None else None
+            if checkout is not None:
+                try:
+                    self._caller_root = self.model.live_view(
+                        self.model.checkout(checkout)
+                    )
+                except KeyError:
+                    self._caller_root = None
+        return self._caller_root
+
+    def for_record(self, record_id: str) -> ClaimAnchor | None:
+        """The record's anchor, or None when it has no home row."""
+        home = self.home(record_id)
+        if home is None:
+            return None
+        key = (home.project, home.checkout)
+        found = self._anchors.get(key)
+        if found is None:
+            root, rule = self.model.anchor(record_id, self.caller)
+            found = ClaimAnchor(
+                root=root,
+                rule=rule,
+                translate=self.translate,
+                caller_root=self.caller_root,
+            )
+            self._anchors[key] = found
+        return found
+
+    def translate(self, path: str) -> tuple[str, str]:
+        """`Membership.translate` for `path`, with ``~`` expanded; a path
+        under no recorded view reads ``absolute`` as it is spelled."""
+        hit = self._translated.get(path)
+        if hit is None:
+            expanded = os.path.expanduser(path)
+            if any(_under(expanded, view) for view in self._view_paths()):
+                hit = self.model.translate(expanded, self.caller)
+            else:
+                hit = (path, "absolute")
+            self._translated[path] = hit
+        return hit
+
+    def _view_paths(self) -> tuple[str, ...]:
+        if self._views is None:
+            self._views = tuple(
+                view.path for k in self.model.checkouts() for view in k.views
+            )
+        return self._views
+
+
+def _under(path: str, root: str) -> bool:
+    """`path` is `root` or below it, as `Membership.translate` reads it."""
+    path, root = path.rstrip("/\\") or path, root.rstrip("/\\") or root
+    return path == root or any(path.startswith(root + sep) for sep in ("/", os.sep))
+
+
+def holds_commit(root: str | Path, sha: str) -> bool:
+    """Whether the object store of the checkout at `root` holds the commit
+    `sha`, read from its files (`gitobjects.ObjectReader`, design 3.1): no
+    git process. False when the store cannot say (an object format or a
+    pack the reader does not know, an evicted file), so an unread commit
+    reads unconfirmed rather than held."""
+    found = gitdir_at(Path(root))
+    if found is None:
+        return False
+    reader = ObjectReader(found.commondir)
+    try:
+        return reader.has(sha)
+    except (OSError, ValueError):
+        return False
+
+
+def _config_switch(text: str, section: str, key: str) -> bool | None:
+    """A boolean of a git configuration file's plain `section` (no
+    subsection), the last assignment winning, or None when unset."""
+    current = ""
+    value: bool | None = None
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].split(";", 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("["):
+            current = line.strip("[]").strip().lower()
+            continue
+        if current != section:
+            continue
+        name, eq, setting = line.partition("=")
+        if name.strip().lower() != key:
+            continue
+        word = setting.strip().strip('"').lower() if eq else "true"
+        value = word in ("true", "yes", "on", "1")
+    return value
+
+
+def _sparse_enabled(found: GitDir) -> bool:
+    """Whether `core.sparseCheckout` is on for the working tree: the
+    repository's config, then the worktree's own (`config.worktree`)."""
+    enabled = False
+    for config in (found.commondir / "config", found.gitdir / "config.worktree"):
+        try:
+            text = config.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        value = _config_switch(text, "core", "sparsecheckout")
+        if value is not None:
+            enabled = value
+    return enabled
+
+
+def _absent_by_sparsity(path: str) -> bool:
+    """True when `path`, absent from the disk, sits in a sparse checkout
+    whose HEAD tracks it: the cone leaves it out of the working tree, it was
+    not deleted (E18 c). Read from the repository's files: the
+    ``core.sparseCheckout`` switch, then HEAD's tree (no git process)."""
+    expanded = os.path.expanduser(path)
+    tail: list[str] = []
+    start = expanded
+    while not os.path.isdir(start):
+        parent, name = os.path.split(start)
+        if not name or parent == start:
+            return False
+        tail.append(name)
+        start = parent
+    found = find_gitdir(Path(start))
+    if found is None or not _sparse_enabled(found):
+        return False
+    try:
+        base = Path(os.path.realpath(start)).relative_to(found.worktree_root)
+    except ValueError:
+        return False
+    parts = [*base.parts, *reversed(tail)]
+    head = _files_head_sha(found)
+    if head is None or not parts:
+        return False
+    reader = ObjectReader(found.commondir)
+    try:
+        commit = reader.commit(head)
+        if commit is None:
+            return False
+        tree = commit.tree
+        for index, part in enumerate(parts):
+            entries = reader.tree(tree)
+            if entries is None:
+                return False
+            match = next((e for e in entries if e.name == os.fsencode(part)), None)
+            if match is None:
+                return False
+            if index == len(parts) - 1:
+                return True
+            if match.mode != 0o40000:
+                return False
+            tree = match.sha
+    except (OSError, ValueError):
+        return False
+    return False
 
 
 def detect_path_drift(
@@ -578,6 +906,7 @@ def detect_path_drift(
     verified_paths: tuple[str, ...] | list[str] = (),
     absent_paths: tuple[str, ...] | list[str] = (),
     worktree_root: str | Path | None = None,
+    anchor: ClaimAnchor | None = None,
 ) -> PathDriftReport:
     """Extract path-shaped tokens from `body` and check them on disk.
 
@@ -640,7 +969,19 @@ def detect_path_drift(
     beyond this return value: each MCP surface's `path_drift` block
     carries a non-empty suppressed set once the block fires, but a
     route-ONLY report still fires no block anywhere.
+
+    `anchor` reads the claims where design 3.6 says they are read, in
+    place of `worktree_root`: relative claims at the anchor's root (the
+    home checkout's live view, else a stand-in), absolute ones at the live
+    view of the checkout they were recorded under (`ClaimAnchor.absolute`).
+    Only a read that convicts reports a miss; a stand-in's absence, an
+    anchorless claim and a path a sparse checkout leaves out of its tree
+    land in `unconfirmed` with their reasons, and a path attested absent
+    that is present where it convicts lands in
+    `present_but_attested_absent` (see `PathDriftReport`).
     """
+    if anchor is not None:
+        return _detect_anchored(body, verified_paths, absent_paths, anchor)
     candidates = _extract_candidates(body)
     # Resolve the anchor ONCE, for both relative passes. A recorded
     # worktree that is not a live directory here disables them entirely —
@@ -836,6 +1177,231 @@ def detect_path_drift(
         dropped_as_route=tuple(dropped_as_route),
         claim_anchored_missing=tuple(claim_anchored),
     )
+
+
+class _AnchoredRead:
+    """The buckets of one anchored read (`_detect_anchored`), with the
+    seen set every pass dedupes against, so a claim the body cites and
+    attests lands once whichever pass reads it first."""
+
+    def __init__(self) -> None:
+        self.checked: list[str] = []
+        self.missing: list[str] = []
+        self.claim_anchored: list[str] = []
+        self.verified: list[str] = []
+        self.expected_absent: list[str] = []
+        self.dropped_as_route: list[str] = []
+        self.unconfirmed: list[str] = []
+        self.reasons: list[str] = []
+        self.present_absent: list[str] = []
+        self.seen: set[str] = set()
+
+    def first(self, path: str) -> bool:
+        """Mark `path` read; False when a pass already read it."""
+        norm = _normalize_for_compare(path)
+        if norm in self.seen:
+            return False
+        self.seen.add(norm)
+        return True
+
+    def unconfirm(self, path: str, reason: str) -> None:
+        self.unconfirmed.append(path)
+        self.reasons.append(reason)
+
+    def miss(self, path: str, *, convicting: bool, reason: str, claim: bool) -> None:
+        """An absent path: a miss where the read convicts and the path is
+        not left out by a sparse checkout, unconfirmed otherwise. `claim`
+        says whether the miss is claim-anchored."""
+        if not convicting:
+            self.unconfirm(path, reason)
+        elif _absent_by_sparsity(path):
+            self.unconfirm(path, SPARSE_CHECKOUT)
+        else:
+            self.checked.append(path)
+            self.missing.append(path)
+            if claim:
+                self.claim_anchored.append(path)
+
+    def report(self, rule: str) -> PathDriftReport:
+        return PathDriftReport(
+            checked=tuple(self.checked),
+            missing=tuple(self.missing),
+            verified=tuple(self.verified),
+            expected_absent=tuple(self.expected_absent),
+            dropped_as_route=tuple(self.dropped_as_route),
+            claim_anchored_missing=tuple(self.claim_anchored),
+            unconfirmed=tuple(self.unconfirmed),
+            unconfirmed_reasons=tuple(self.reasons),
+            present_but_attested_absent=tuple(self.present_absent),
+            anchor=rule,
+        )
+
+
+def _detect_anchored(
+    body: str,
+    verified_paths: tuple[str, ...] | list[str],
+    absent_paths: tuple[str, ...] | list[str],
+    anchor: ClaimAnchor,
+) -> PathDriftReport:
+    """`detect_path_drift` read through `anchor` (design 3.6).
+
+    Three passes, in `detect_path_drift`'s order, over the same buckets:
+    the body's absolute candidates, each read at the live view of the
+    checkout it was recorded under; the attestations; the body's relative
+    citations at the anchor's root. A candidate the extractor cannot trust
+    is dropped by the same three rules as there (the spaced bare prefix,
+    the ambiguous truncation, the route), whose reasons are written down
+    in that loop. What changes is only where a claim is read and whether
+    the read convicts."""
+    out = _AnchoredRead()
+    verified_set = _normalize_attestations(verified_paths)
+    absent_set = _normalize_attestations(absent_paths)
+
+    for path, drop_if_missing, bare_spaced in _extract_candidates(body):
+        norm = _normalize_for_compare(path)
+        attested = norm in verified_set or norm in absent_set
+        target, rule = anchor.absolute(path)
+        if target is None:
+            # Recorded under a checkout of a project with no live view here.
+            # An attestation is a claim and reads unconfirmed; a path the
+            # extractor lifted from prose has nothing to say and is passed
+            # over, as the read would have passed over a dead root.
+            if attested and out.first(path):
+                out.unconfirm(path, rule)
+            continue
+        convicting = rule in CONVICTING_ANCHORS
+        exists = _path_exists(target)
+        if not exists and not attested:
+            if bare_spaced:
+                prefix = target.split(" ", 1)[0]
+                if _path_exists(prefix) and out.first(prefix):
+                    out.checked.append(prefix)
+                    if _normalize_for_compare(path.split(" ", 1)[0]) in verified_set:
+                        out.verified.append(prefix)
+                continue
+            if drop_if_missing:
+                continue
+            if _is_multi_segment_routelike(target):
+                out.dropped_as_route.append(path)
+                continue
+        if not out.first(target):
+            continue
+        if not exists:
+            if norm in absent_set:
+                out.checked.append(target)
+                out.expected_absent.append(target)
+            else:
+                out.miss(
+                    target,
+                    convicting=convicting,
+                    reason=rule,
+                    claim=norm in verified_set,
+                )
+            continue
+        if norm in absent_set:
+            if convicting:
+                out.checked.append(target)
+                out.present_absent.append(target)
+            else:
+                out.unconfirm(target, rule)
+            continue
+        out.checked.append(target)
+        if norm in verified_set:
+            out.verified.append(target)
+
+    _read_attestations(anchor, verified_paths, absent_paths, out)
+    if anchor.root is not None:
+        _read_citations(anchor, body, out)
+    return out.report(anchor.rule)
+
+
+def _read_attestations(
+    anchor: ClaimAnchor,
+    verified_paths: tuple[str, ...] | list[str],
+    absent_paths: tuple[str, ...] | list[str],
+    out: _AnchoredRead,
+) -> None:
+    """The attestations read through `anchor`: relative ones at its root,
+    absolute ones at the live view of the checkout they were recorded under
+    (`_check_anchored_attestations` is the same pass at a recorded root).
+
+    An absolute attestation under no recorded view keeps its old reading:
+    checked here only when it resolves inside the root, else by the body
+    pass when the body cites it. With no root, every relative attestation
+    reads unconfirmed with the anchor's rule."""
+    root = Path(anchor.root) if anchor.root is not None else None
+    absent_raw = {raw.strip() for raw in absent_paths if raw and raw.strip()}
+    for raw in (*verified_paths, *absent_paths):
+        spelled = raw.strip() if raw else ""
+        if not spelled:
+            continue
+        is_absent = spelled in absent_raw
+        if _is_absolute_attestation(spelled):
+            normalized = _normalize_candidate(spelled)
+            if normalized is None:
+                continue
+            target, rule = anchor.absolute(normalized)
+            if target is None:
+                if out.first(normalized):
+                    out.unconfirm(normalized, rule)
+                continue
+            if rule == "absolute" and (
+                root is None or not _resolves_under(target, root)
+            ):
+                continue
+            convicting = rule in CONVICTING_ANCHORS
+        else:
+            if root is None:
+                if out.first(spelled):
+                    out.unconfirm(spelled, anchor.rule)
+                continue
+            joined = _normalize_candidate(str(root / spelled))
+            if joined is None:
+                continue
+            target, rule, convicting = joined, anchor.rule, anchor.convicting
+        if not out.first(target):
+            continue
+        if _path_exists(target):
+            if not is_absent:
+                out.checked.append(target)
+                out.verified.append(target)
+            elif convicting:
+                out.checked.append(target)
+                out.present_absent.append(target)
+            else:
+                out.unconfirm(target, rule)
+        elif is_absent:
+            out.checked.append(target)
+            out.expected_absent.append(target)
+        else:
+            out.miss(target, convicting=convicting, reason=rule, claim=True)
+
+
+def _read_citations(anchor: ClaimAnchor, body: str, out: _AnchoredRead) -> None:
+    """The body's relative citations at the anchor's root, behind the
+    filter and the live-parent rule `_check_anchored_citations` applies at
+    a recorded root, with its budget. A miss convicts only at the home
+    checkout's live view; a stand-in leaves it unconfirmed."""
+    assert anchor.root is not None
+    root = Path(anchor.root)
+    stats = 0
+    for match in _RELATIVE_CITATION_RE.finditer(_bounded_scan_text(body)):
+        if stats >= _MAX_ANCHORED_CITATION_STATS:
+            break
+        cited = match.group(1)
+        if not _is_checkable_citation(cited):
+            continue
+        resolved = _normalize_candidate(str(root / cited))
+        if resolved is None or not out.first(resolved):
+            continue
+        stats += 1
+        if _path_exists(resolved):
+            out.checked.append(resolved)
+            continue
+        parent = os.path.expanduser(os.path.dirname(resolved))
+        if not os.path.isdir(parent):
+            continue
+        out.miss(resolved, convicting=anchor.convicting, reason=anchor.rule, claim=True)
 
 
 def _check_anchored_attestations(
@@ -1197,6 +1763,8 @@ def unverifiable_attestations(
     verified_paths: tuple[str, ...] | list[str],
     *,
     worktree_root: str | Path | None = None,
+    anchor: ClaimAnchor | None = None,
+    stored: bool = False,
 ) -> list[str]:
     """Which `verified_paths` the ATTESTING machine cannot see right now.
 
@@ -1226,7 +1794,16 @@ def unverifiable_attestations(
     standing rule is that could-not-ask never manufactures a negative
     verdict (the same distinction `compute_commit_drift` draws by
     returning None).
+
+    `anchor` reads the attestations where design 3.6 reads them, in place
+    of `worktree_root` (`_unverifiable_at`): relative ones at the anchor's
+    root. `stored` says the list is the record's own (a preserving
+    re-verify, a restore) rather than one the caller just passed: an
+    absolute entry is then read at the live view of the checkout it was
+    recorded under, and only a read that convicts can refuse it.
     """
+    if anchor is not None:
+        return _unverifiable_at(verified_paths, anchor, stored=stored)
     root = Path(worktree_root) if worktree_root is not None else None
     bad: list[str] = []
     for raw in verified_paths:
@@ -1265,6 +1842,59 @@ def unverifiable_attestations(
             continue
         if not _path_exists(_normalize_for_compare(resolved)):
             bad.append(resolved)
+    return bad
+
+
+def _unverifiable_at(
+    verified_paths: tuple[str, ...] | list[str],
+    anchor: ClaimAnchor,
+    *,
+    stored: bool,
+) -> list[str]:
+    """`unverifiable_attestations` read through `anchor`.
+
+    A fresh list is what the caller says it looked at here: an absolute
+    entry is read as spelled, a relative one at the anchor's root, and a
+    miss refuses where the read convicts or the root is the caller's own
+    checkout (the tree the caller stands in). A stored list was attested
+    in the home checkout: an absolute entry is read at the live view of the
+    checkout it was recorded under, and only a read that convicts refuses
+    it, since a stand-in's absence is no evidence about the home's file.
+    Never a refusal: an entry with no live view to read it at, and a path
+    a sparse checkout leaves out of its working tree."""
+    bad: list[str] = []
+    for raw in verified_paths:
+        spelled = raw.strip() if raw else ""
+        if not spelled:
+            continue
+        if _is_placeholder_path(spelled):
+            bad.append(spelled)
+            continue
+        if _is_absolute_attestation(spelled):
+            normalized = _normalize_candidate(spelled)
+            if normalized is None:
+                continue
+            if stored:
+                target, rule = anchor.absolute(normalized)
+                if target is None:
+                    continue
+                refuses = rule in CONVICTING_ANCHORS
+            else:
+                target, refuses = normalized, True
+        else:
+            if anchor.root is None:
+                continue
+            joined = _normalize_candidate(str(Path(anchor.root) / spelled))
+            if joined is None:
+                continue
+            target = joined
+            refuses = anchor.convicting or (
+                not stored and anchor.declared_root is not None
+            )
+        if _path_exists(_normalize_for_compare(target)):
+            continue
+        if refuses and not _absent_by_sparsity(target):
+            bad.append(target)
     return bad
 
 
@@ -2965,8 +3595,18 @@ def compute_commit_drift(
     body: str = "",
     claims: list[str] | tuple[str, ...] = (),
     verified_head: str | None = None,
+    anchor: ClaimAnchor | None = None,
 ) -> CommitDriftStatus | None:
     """Return a commit-drift verdict, or None when the signal isn't useful.
+
+    The commits are counted where the record's cited commit resolves
+    under its `anchor` (design 3.6, `ClaimAnchor.commit_root`): in the
+    home checkout's live view, else in the caller's checkout when it
+    holds `verified_head`, else nowhere, and the leg reads None
+    (unconfirmed). Without an anchor (a record with no home row) the leg
+    reads None too: no remote is compared to find a checkout that speaks
+    for it (decision B23). `memory_origin_repo` and `caller_origin` are
+    kept in the signature and decide nothing.
 
     `verified_head` is the commit the stamp recorded (`Memory.verified_
     head`). When it is set and still an ancestor of the caller's HEAD,
@@ -2984,12 +3624,7 @@ def compute_commit_drift(
     - the memory has been verified at some point (`last_verified_at` is
       not None — without an anchor we have nothing to count from, and
       `verification.status == "never"` already maxes the alarm);
-    - the memory carries an `origin.repo` (no remote, no project
-      identity);
-    - the caller is currently inside a repo (`caller_origin.cwd` and
-      `caller_origin.repo` both set);
-    - the caller's repo matches the memory's `origin.repo` via
-      `repos_match` (host/owner/name normalisation, not raw URL);
+    - the record has an anchor whose commit root resolves (above);
     - `commit_author_timestamps` returned a list (git was reachable);
     - the memory makes CLAIMS this repo's commits could invalidate —
       it has at least one claim anchor (`commit_drift_anchor_paths`:
@@ -3037,13 +3672,14 @@ def compute_commit_drift(
     """
     if last_verified_at is None:
         return None
-    if memory_origin_repo is None or caller_origin is None:
+    if anchor is None:
+        # A record with no anchor has no checkout whose commits speak for
+        # it; no remote is compared to find one (decision B23).
         return None
-    if caller_origin.cwd is None or caller_origin.repo is None:
+    commit_root, _rule = anchor.commit_root(verified_head)
+    if commit_root is None:
         return None
-    if not repos_match(memory_origin_repo, caller_origin.repo):
-        return None
-    cwd_path = Path(caller_origin.cwd)
+    cwd_path = Path(commit_root)
     # Claim-anchored gate first, since it is pure CPU (a bounded regex
     # over the body; a lenient parse of the stored claims, so a
     # hand-edited bad entry contributes nothing rather than crashing the
@@ -3527,7 +4163,13 @@ def compute_staleness_verdict(
 __all__ = [
     "BASIS_AUTHOR_DATE",
     "BASIS_REACHABILITY",
+    "CONVICTING_ANCHORS",
     "DEFAULT_VERIFICATION_STALE_DAYS",
+    "SPARSE_CHECKOUT",
+    "UNANCHORED",
+    "UNCONFIRMED_COMMIT",
+    "Anchoring",
+    "ClaimAnchor",
     "CommitDriftStatus",
     "PathDriftReport",
     "ResolvedCommitDrift",
@@ -3538,6 +4180,7 @@ __all__ = [
     "compute_staleness_verdict",
     "compute_verification_status",
     "detect_path_drift",
+    "holds_commit",
     "resolve_commit_drift",
     "resolve_commit_drift_count",
     "verdict_from_signals",

@@ -20,7 +20,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from . import _caches, githead
 from .credentials import CredentialMatch
@@ -43,8 +43,6 @@ from .origin import (
     failed_git_calls,
     gitattributes_signature,
     repo_toplevel_and_head,
-    repos_match,
-    should_include_for_caller,
     toplevel_and_head_from_files,
     walk_files_signature,
 )
@@ -52,6 +50,9 @@ from .time_utils import isoformat_utc as _isoformat_utc
 from .time_utils import isoformat_utc_optional as _isoformat_utc_optional
 from .time_utils import parse_event_ts
 from .claims import Claim, governed_claim_paths, load_claims
+
+if TYPE_CHECKING:
+    from .admission import Admission, DriftScope
 from .verify import (
     BASIS_AUTHOR_DATE,
     BASIS_REACHABILITY,
@@ -232,7 +233,11 @@ class _DriftPass:
     one memo through one key. The cost and the key's coverage are the
     search's, set out on `attach_commit_drift_counts`.
 
-    `caller_repo` is the caller's `origin.repo`; `cwd` its directory. The
+    `caller_repo` is the caller's `origin.repo`; `cwd` its directory;
+    `admission` what the pass reads under (`admission.DriftScope`: the
+    request's admission, or the records one decided), which decides whose
+    records' commits are counted here (`lookup`); a pass is never opened
+    without one, so no caller counts drift for a record it did not admit. The
     repo root and the head are read from the repository's files as the
     pass opens (no process). The head's whole history (`timestamps`) and
     the root and head from git where the files decline (`located`) are
@@ -248,9 +253,10 @@ class _DriftPass:
     worker thread's, can run at once.
     """
 
-    def __init__(self, cwd: Path, caller_repo: str) -> None:
+    def __init__(self, cwd: Path, caller_repo: str, admission: DriftScope) -> None:
         self.cwd = cwd
         self.caller_repo = caller_repo
+        self.admission = admission
         self.settled = toplevel_and_head_from_files(cwd)
         self._timestamps: list[datetime] | None = None
         self._located: tuple[Path, str] | None = None
@@ -310,8 +316,10 @@ class _DriftPass:
         resolution (None where the count is omitted).
 
         Answered without git where the signal does not apply (never
-        verified, no `origin.repo`, another repository than the caller's,
-        no anchor and no declared claim), and where the memo, or this
+        verified, written in no repository with a remote, a record the
+        pass's admission does not count here (`drift_counts`: a home the
+        surface does not admit, or global), no anchor and no declared
+        claim), and where the memo, or this
         pass, holds the row's key. Otherwise the row is resolved, with
         whatever git that takes, and kept for `store`; with `resolve`
         False it is left unanswered, ``(False, None)``, and no process
@@ -323,7 +331,7 @@ class _DriftPass:
         origin_repo = record.origin.repo if record.origin else None
         if origin_repo is None:
             return True, None
-        if not repos_match(origin_repo, self.caller_repo):
+        if not self.admission.drift_counts(record.id):
             return True, None
         # Claim-anchored gate: a memory with no cited/attested path
         # anchors AND no declared claims is exempt — a bare repo-wide
@@ -1078,10 +1086,15 @@ class ResponseBuilder:
         memories,
         *,
         caller_origin: Origin,
+        admission: DriftScope | None = None,
     ) -> None:
         """Mutate `out` in-place, adding `commit_drift_count` to each hit
         whose memory is anchored to the caller's current repo and has been
-        verified at some point.
+        verified at some point. `admission` is what the counts are read
+        under (`admission.DriftScope`; the request's LINKS admission on
+        `memory_search`): a hit whose home it does not count in the
+        caller's repository (`drift_counts`) carries no count, and with no
+        admission no hit does.
 
         The signal mirrors `path_drift_checked` / `path_drift_missing` in
         KIND — a cheap integer the model self-triages on, picking which hit
@@ -1246,7 +1259,8 @@ class ResponseBuilder:
         - caller is not currently in any repo (`caller_origin.repo` is None),
         - git was unreachable in the caller's cwd,
         - the hit's memory has no `origin.repo` (legacy / global memory),
-        - the hit's memory's repo doesn't match the caller's,
+        - the hit's memory is not of the caller's project (its home, by
+          `admission`),
         - the hit's memory has never been verified (no anchor to count from),
         - the hit's memory makes no claims this repo's commits could
           invalidate — no cited/attested path anchors AND no declared
@@ -1273,11 +1287,16 @@ class ResponseBuilder:
         """
         if caller_origin.repo is None or caller_origin.cwd is None:
             return
+        if admission is None:
+            # No admission, no pass: no record's drift is counted for a
+            # caller that admitted none.
+            return
         # The repo root and the head, from the repository's files (the
         # pass reads them as it opens). They key the whole-history log and
         # the per-hit memo; where the files do not settle them, both run
         # uncached, from git.
-        drift = _DriftPass(Path(caller_origin.cwd), caller_origin.repo)
+        admission.prime(h.id for h in hits)
+        drift = _DriftPass(Path(caller_origin.cwd), caller_origin.repo, admission)
         if drift.timestamps() is None:
             return
         # Resolve the repo root ONCE for the whole search (the per-hit
@@ -1365,7 +1384,7 @@ class ResponseBuilder:
         *,
         max_per_hit: int = 3,
         max_total: int = 10,
-        caller_origin: Origin | None = None,
+        admission: Admission | None = None,
         excluded_scopes: set[str] | None = None,
         store: Any = None,
     ) -> None:
@@ -1403,18 +1422,16 @@ class ResponseBuilder:
         no `depends_on` links or all the targets are tombstoned —
         same absence-as-signal contract as the other attach_* helpers.
 
-        `caller_origin` and `excluded_scopes` re-apply the caller-side
-        scope filter the search layer ran against the hit list. The
-        side-map below is built from the pre-filter loader output (so
-        cross-repo and session-disabled targets are still resolvable
-        by id), but the deliberate scope/origin filter on the hit
-        list must extend to depended-on summaries too — otherwise a
-        memory in a session-disabled scope (or in a different
-        project under `auto_scope=True`) leaks back in via the
-        dependency edge. Default both to None for back-compat: an
-        omitted `caller_origin` means "no auto-scope check" (mirroring
-        `auto_scope=False` at the caller), and an omitted
-        `excluded_scopes` means "no session disables".
+        `admission` (the request's LINKS admission, design 3.5) and
+        `excluded_scopes` re-apply the caller-side filters to the targets.
+        The side-map below is built from the pre-filter loader output (so
+        other projects' and session-disabled targets are still resolvable
+        by id), but a target the LINKS surface does not admit for the
+        caller (another project's, another tenant's, one with no home) or
+        one in a session-disabled scope must not leak back in via the
+        dependency edge. An omitted `admission` admits every target
+        (offline callers); an omitted `excluded_scopes` means "no session
+        disables".
 
         `store` enables the targeted-load fallback: a `depends_on`
         target unrelated to the query is not in the FTS prefilter
@@ -1429,7 +1446,7 @@ class ResponseBuilder:
         per call so the targeted path can't dominate the response
         budget. Tombstoned or missing targets are absorbed silently
         (same as the pre-existing prefilter-miss branch). The same
-        `caller_origin` + `excluded_scopes` filter is re-applied to
+        `admission` + `excluded_scopes` filter is re-applied to
         the loaded targets at the same place as side-map hits, so
         the targeted-load path cannot reintroduce the scope-leak
         that the per-target filter closed for the prefilter path.
@@ -1478,6 +1495,8 @@ class ResponseBuilder:
                         break
                 if len(missing_target_ids) >= max_total:
                     break
+            if admission is not None:
+                admission.prime(missing_target_ids)
             for tid in missing_target_ids:
                 try:
                     target = store.load_one(tid)
@@ -1509,14 +1528,18 @@ class ResponseBuilder:
                 # closed for the prefilter path.
                 if excluded and (set(target.scopes) & excluded):
                     continue
-                if caller_origin is not None and not should_include_for_caller(
-                    target.origin,
-                    caller_origin.repo,
-                    caller_worktree_root=caller_origin.worktree_root,
-                ):
+                if admission is not None and not admission.admits_id(target.id):
                     continue
                 memory_by_id[tid] = target
 
+        if admission is not None:
+            admission.prime(
+                link.target_id
+                for hit in hits
+                if (source := memory_by_id.get(hit.id)) is not None
+                for link in source.links
+                if link.type.value == "depends_on"
+            )
         total = 0
         for hit_dict, hit in zip(out, hits):
             if total >= max_total:
@@ -1553,11 +1576,7 @@ class ResponseBuilder:
                 # leak in via the dependency edge.
                 if excluded and (set(target.scopes) & excluded):
                     continue
-                if caller_origin is not None and not should_include_for_caller(
-                    target.origin,
-                    caller_origin.repo,
-                    caller_worktree_root=caller_origin.worktree_root,
-                ):
+                if admission is not None and not admission.admits_id(target.id):
                     continue
                 resolved.append(
                     {
@@ -1579,7 +1598,7 @@ class ResponseBuilder:
         memories,
         *,
         store: Any,
-        caller_origin: Origin | None = None,
+        admission: Admission | None = None,
         excluded_scopes: set[str] | None = None,
         max_per_hit: int = 3,
         max_total: int = 10,
@@ -1620,8 +1639,10 @@ class ResponseBuilder:
         treats a zero count / set flag as no-usable-index. Resolution reuses
         the `depends_on` discipline: a side-map over the loaded candidates, a
         targeted `store.load_one` for targets outside the FTS prefilter,
-        tombstoned / missing skipped silently, and the caller's scope/origin
-        filter re-applied so a link can't leak a hidden-scope memory.
+        tombstoned / missing skipped silently, and the caller's scope filter
+        and LINKS admission (`admission`, design 3.5) re-applied so a link
+        can't leak a hidden-scope memory or one the caller is not admitted
+        to; an omitted `admission` admits every target.
         """
         from .models import first_summary_line
         from .store import MemoryNotFoundError, TombstonedError
@@ -1639,11 +1660,7 @@ class ResponseBuilder:
                 memory_by_id[other_id] = target
             if excluded and (set(target.scopes) & excluded):
                 return None
-            if caller_origin is not None and not should_include_for_caller(
-                target.origin,
-                caller_origin.repo,
-                caller_worktree_root=caller_origin.worktree_root,
-            ):
+            if admission is not None and not admission.admits_id(target.id):
                 return None
             return {
                 "id": target.id,
@@ -1660,6 +1677,12 @@ class ResponseBuilder:
             links_map = store.links_for_many(hit_ids)
         except Exception:  # noqa: BLE001 - the annotation is best-effort
             links_map = {}
+        if admission is not None:
+            admission.prime(
+                oid
+                for outbound, inbound in links_map.values()
+                for _t, oid, _note in [*outbound, *inbound]
+            )
 
         total = 0
         for hit_dict, hit in zip(out, hits):

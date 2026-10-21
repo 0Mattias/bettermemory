@@ -97,10 +97,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Collection, Iterable, Literal, Mapping, Sequence, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Collection,
+    Iterable,
+    Literal,
+    Mapping,
+    Sequence,
+    cast,
+)
 
+from .events import _event_id_items
 from .models import Memory, MemoryHit, generate_ulid
-from .origin import Origin, repos_match
 from .search import (
     CorpusStats,
     SearchMode,
@@ -111,6 +121,9 @@ from .search import (
     tokenize,
 )
 from .time_utils import ensure_utc, isoformat_utc, parse_event_ts
+
+if TYPE_CHECKING:
+    from .admission import Admission
 
 
 # Events that count as "the model retrieved memory in this turn."
@@ -376,9 +389,9 @@ class MissReport:
     `recent_retrieval_count` is the number of retrieval events (see
     `_RETRIEVAL_EVENT_KINDS`) found within
     `lookback_seconds` — matched on the session ids (the retrieval
-    anchor and the caller's own), plus (when the caller has a worktree)
-    any event stamped with the caller's `worktree_root` regardless of
-    session (see `_count_recent_retrievals`). Zero means no retrieval
+    anchor and the caller's own), plus (when the caller has a project)
+    any event that retrieved a record of the caller's project regardless
+    of session (see `_count_recent_retrievals`). Zero means no retrieval
     happened within the window; non-zero is the "model did retrieve"
     branch.
 
@@ -403,10 +416,11 @@ class MissReport:
     ``"retrieval"`` (a retrieval event already fired in the lookback
     window), ``"project_cohort"`` (the caller works inside the same
     git project the top hit was written from — see
-    `_caller_in_top_hit_project`) or ``"origin_indeterminate"`` (git
-    could not be asked where the caller stands, so the cohort shield
-    could not be evaluated and no miss may be declared). ``None`` on
-    every other branch,
+    `_caller_in_top_hit_project`). A row may also carry
+    ``"origin_indeterminate"``, which no branch writes: a caller nothing
+    could be read for is admitted nothing by the pool prefilter (design
+    3.5), so its probe ranks no hit and reports ``no_signal``, declaring
+    no miss. ``None`` on every other branch,
     including genuine misses and below-threshold oks. The field exists
     so verdict CONSUMERS can differ where their questions differ: the
     silent-miss audit keeps treating the project cohort as
@@ -809,7 +823,8 @@ def probe_for_miss(
     now: datetime | None = None,
     lookback_seconds: int = DEFAULT_LOOKBACK_SECONDS,
     creation_shield_seconds: int = DEFAULT_CREATION_SHIELD_SECONDS,
-    caller_origin: Origin | None = None,
+    admission: Admission | None = None,
+    worktree_root: str | None = None,
     excluded_scopes: set[str] | None = None,
     mode: str = "hybrid",
     half_life_days: float = 30.0,
@@ -831,11 +846,16 @@ def probe_for_miss(
     consumes the iterable defensively in a single pass; it does not
     materialise unbounded history.
 
-    `caller_origin` mirrors the auto-scoping behaviour of `memory_search`
-    so the probe matches the *model's* view of the store. Probing with a
+    `admission` is the hooks' POOL_PREFILTER admission
+    (`admission.Admission`, design 3.5) for the caller's resolution: it
+    ranks only what the model's auto-scoped search could have reached, so
+    the probe matches the *model's* view of the store. Probing with a
     wider lens than the model uses would generate ghost misses for
-    memories the model couldn't have retrieved in the first place. Pass
-    None on intentionally cross-project audits.
+    memories the model couldn't have retrieved in the first place. It
+    also decides the two "same project" tests below on the records'
+    homes (`Admission.same_project`: the home on the caller's chain or a
+    sub-project of it, design D13). Pass None on intentionally
+    cross-project audits.
 
     `mode` is forwarded to `search`. Production callers pass
     `config.behavior.search_mode` so the probe sees the same ranker
@@ -922,11 +942,11 @@ def probe_for_miss(
     exactly that event — re-flagging a delivered turn as a silent miss
     and defeating the anti-spam bound. In-process callers omit it; their
     `session_id` already is the server session. The shield additionally
-    counts retrieval events stamped with the caller's
-    `caller_origin.worktree_root` under ANY session id, so a concurrent
-    same-worktree session (or a mid-conversation server restart that
-    re-anchored the bridge) can't orphan an in-window retrieval and
-    re-fire a false miss.
+    counts retrieval events under ANY session id that retrieved a record
+    of the caller's project, or that carry the caller's `worktree_root`
+    stamp, so a concurrent session in the project or the checkout (or a
+    mid-conversation server restart that re-anchored the bridge) can't
+    orphan an in-window retrieval and re-fire a false miss.
 
     Returns a `MissReport`. The handler is responsible for emitting a
     `search_miss` event when `report.is_miss` — this function is
@@ -1023,9 +1043,6 @@ def probe_for_miss(
         m for m in memories if (ensure_utc(m.created) or now) <= creation_cutoff
     ]
 
-    repo_filter = caller_origin.repo if caller_origin else None
-    worktree_filter = caller_origin.worktree_root if caller_origin else None
-
     # `run_search` returns up to `max_results` hits already sorted by
     # relevance; we ask for `_TOP_HITS_RETAINED` so the report carries
     # enough context to triage without a second call. `mode` is cast to
@@ -1041,8 +1058,7 @@ def probe_for_miss(
         memories,
         user_message,
         excluded_scopes=excluded_scopes,
-        repo_filter=repo_filter,
-        worktree_filter=worktree_filter,
+        admission=admission,
         max_results=_TOP_HITS_RETAINED,
         now=now,
         half_life_days=half_life_days,
@@ -1091,19 +1107,20 @@ def probe_for_miss(
         # Match the *server* session that emitted the retrieval events
         # AND the caller's own id (see `retrieval_session_id` in the
         # docstring): a `prompt_recall` delivery records under the
-        # caller's transcript id, and with no worktree stamp (hooks
-        # outside a checkout) the caller-id match is the only thing
-        # keeping "a delivered pointer is not a silent miss" true.
+        # caller's transcript id, and the caller-id match is what keeps
+        # "a delivered pointer is not a silent miss" true whatever the
+        # pointer's home.
         # In-process callers pass no anchor; the set is just their own
         # server session.
         session_ids={sid for sid in (retrieval_session_id, session_id) if sid},
         now=now,
         lookback_seconds=lookback_seconds,
-        # The caller's worktree widens the shield to ANY session's
-        # stamped retrievals in the same checkout — the shield's real
-        # question is "did the model retrieve in THIS worktree within
-        # the window", not "under this one anchored session id".
-        worktree_root=worktree_filter,
+        # The caller's project widens the shield to ANY session's
+        # retrievals of its records: the shield's real question is "did
+        # the model retrieve this project's memory within the window",
+        # not "under this one anchored session id".
+        admission=admission,
+        worktree_root=worktree_root,
     )
 
     # `suppressed_by` names the shield that downgraded a
@@ -1114,17 +1131,7 @@ def probe_for_miss(
     elif recent_retrieval_count > 0:
         verdict = "ok"
         suppressed_by = "retrieval"
-    elif caller_origin is not None and caller_origin.git_indeterminate:
-        # Git could not be asked where the caller stands, so the
-        # project-cohort shield below cannot be evaluated: its "the
-        # model has this project's source open" argument needs a
-        # project, and a null `repo` here means "unknown", not "none".
-        # A miss is a verdict against the model; could-not-ask never
-        # manufactures one. Named so the delivery lane and the audit
-        # telemetry can see it was this, not a cohort match.
-        verdict = "ok"
-        suppressed_by = "origin_indeterminate"
-    elif _caller_in_top_hit_project(top_hits[:1], memories, caller_origin):
+    elif _caller_in_top_hit_project(top_hits[:1], admission):
         # Caller is working inside the same git project the
         # threshold-deciding top hit was written from. The model already
         # has that project's source tree open, so the absence of a
@@ -1158,8 +1165,7 @@ def probe_for_miss(
 
 def _caller_in_top_hit_project(
     top_hits: tuple[MissHit, ...],
-    memories: list[Memory],
-    caller_origin: Origin | None,
+    admission: Admission | None,
 ) -> bool:
     """True when the caller is in the same git project as the
     threshold-deciding top hit.
@@ -1176,30 +1182,26 @@ def _caller_in_top_hit_project(
       would swallow real misses on cross-cutting notes (auth tokens,
       home-dir scripts, etc.) that legitimately should have prompted
       a search even from inside a project repo.
-    * ``repos_match`` between the caller's current repo and the
-      memory's ``origin.repo`` — the memory was written from this
-      same project, so the model is plausibly editing files it
-      describes. A project-tagged memory written from a different
-      repo (rare misconfiguration) doesn't qualify.
+    * the memory's home is of the caller's project
+      (`Admission.same_project`: on the caller's chain or a sub-project
+      of it, design 3.5 and D13): the memory was written in this
+      project, so the model is plausibly editing files it describes. A
+      project-tagged memory homed elsewhere doesn't qualify.
 
-    The auto-scope filter on ``run_search`` already filters cross-repo
-    memories out of the top hits when ``caller_origin.repo`` is set, so
-    in practice the ``repos_match`` arm usually matches. Checking it
+    The pool prefilter already keeps other projects' memories out of the
+    top hits, so in practice the home test usually holds. Checking it
     explicitly keeps the suppression self-contained — the rule reads
     correctly without relying on transitive search behavior, and a
-    future caller that bypasses auto-scope (offline curation, eval
-    replays) doesn't accidentally suppress real cross-project misses.
+    future caller that bypasses the admission (offline curation, eval
+    replays, which pass none) doesn't accidentally suppress real
+    cross-project misses.
     """
-    if caller_origin is None or caller_origin.repo is None:
+    if admission is None:
         return False
-    memories_by_id = {m.id: m for m in memories}
     for hit in top_hits:
         if not any(s.startswith("projects:") for s in hit.scopes):
             continue
-        mem = memories_by_id.get(hit.id)
-        if mem is None or mem.origin is None or mem.origin.repo is None:
-            continue
-        if repos_match(mem.origin.repo, caller_origin.repo):
+        if admission.same_project(hit.id):
             return True
     return False
 
@@ -1210,10 +1212,11 @@ def _count_recent_retrievals(
     session_ids: Collection[str],
     now: datetime,
     lookback_seconds: int,
+    admission: Admission | None = None,
     worktree_root: str | None = None,
 ) -> int:
-    """Count retrieval events for the caller's worktree or any of
-    `session_ids` within the window.
+    """Count retrieval events for the caller's project, its checkout or
+    any of `session_ids` within the window.
 
     Retrieval = `kind in _RETRIEVAL_EVENT_KINDS` (`{"search", "show",
     "list"}`). All three shield the audit from flagging a miss: a
@@ -1223,26 +1226,30 @@ def _count_recent_retrievals(
     search-then-show round-trip, where the search happens early in the
     turn and the show happens later.
 
-    An in-window retrieval counts when EITHER:
+    An in-window retrieval counts when ANY of:
 
-    * its `worktree_root` stamp matches the caller's `worktree_root` —
-      under ANY session id. The shield's question is "did the model
-      retrieve in THIS worktree within the window", and a single
-      anchored session id can't answer it: a concurrent session in the
-      same worktree, or a mid-conversation server restart that flipped
+    * it retrieved a record of the caller's project, under ANY session
+      id: a record it names (``returned``, ``memory_ids``, ``hit_ids``,
+      ``shown_ids``, ``ids``, ``id``) whose home `admission` reads as
+      the caller's project (`Admission.same_project`, design 3.5 and
+      D13; the homes read in one read). The shield's question is "did
+      the model retrieve this project's memory within the window", and a
+      single anchored session id can't answer it: a concurrent session in
+      the project, or a mid-conversation server restart that flipped
       `_latest_in_process_session`'s anchor, used to orphan every
       in-window retrieval the previous session made and re-fire a
       false miss (round 85's 60→600s widening scaled that collision
-      window ~10x in the over-flag direction); or
+      window ~10x in the over-flag direction);
+    * its `worktree_root` stamp is the caller's `worktree_root`, under
+      ANY session id: a retrieval the caller's own checkout performed,
+      whatever it returned (a search that returned nothing included); or
     * its session matches one of `session_ids` — the anchored server
       session plus the hook caller's own transcript id. The caller id
       is load-bearing for exactly one producer: a `prompt_recall`
-      delivery records under the transcript id, and when the hooks run
-      outside a git checkout it carries no worktree stamp either, so
-      an anchored-server-only match orphaned the delivery and
-      re-flagged a served turn as a silent miss. Unstamped legacy
-      events and callers with no worktree keep their pre-round-88
-      single-session behavior through the same membership. The union
+      delivery records under the transcript id, so an anchored-server-
+      only match orphaned the delivery and re-flagged a served turn as a
+      silent miss. A caller with no admission keeps the single-session
+      behavior. The union
       is strictly additive on the shield side (everything that
       shielded before still does), so the bias is conservative —
       over-suppress, the project's stance on miss-signal noise. The
@@ -1255,25 +1262,43 @@ def _count_recent_retrievals(
     events. A single bad row never raises.
     """
     cutoff = now - timedelta(seconds=lookback_seconds)
-    count = 0
+    window: list[dict[str, Any]] = []
     for ev in events:
         if ev.get("kind") not in _RETRIEVAL_EVENT_KINDS:
             continue
         ts = parse_event_ts(ev.get("ts"))
         if ts is None or ts < cutoff:
             continue
-        # Worktree-stamped match first: a retrieval the caller's own
-        # checkout provably performed shields regardless of which
-        # server session emitted it.
+        window.append(ev)
+    if admission is not None:
+        admission.prime(rid for ev in window for rid in _retrieved_ids(ev))
+    count = 0
+    for ev in window:
+        # Canonical-first session read with the legacy fallback the
+        # other event consumers use — see 70e41a4.
+        if (ev.get("session") or ev.get("session_id")) in session_ids:
+            count += 1
+            continue
+        # A retrieval the caller's own checkout performed shields
+        # regardless of which server session emitted it.
         if worktree_root is not None and ev.get("worktree_root") == worktree_root:
             count += 1
             continue
-        # Canonical-first session read with the legacy fallback the
-        # other event consumers use — see 70e41a4.
-        if (ev.get("session") or ev.get("session_id")) not in session_ids:
-            continue
-        count += 1
+        # A retrieval of the caller's project's memory shields regardless
+        # of which session emitted it.
+        if admission is not None and any(
+            admission.same_project(rid) for rid in _retrieved_ids(ev)
+        ):
+            count += 1
     return count
+
+
+def _retrieved_ids(event: Mapping[str, Any]) -> list[str]:
+    """The record ids a retrieval event names, whatever field holds them."""
+    out: list[str] = []
+    for key in ("returned", "memory_ids", "hit_ids", "shown_ids", "ids", "id"):
+        out.extend(rid for _, rid in _event_id_items(event.get(key)))
+    return out
 
 
 __all__ = [

@@ -309,6 +309,28 @@ def test_head_on_a_tag_declines(tmp_path: Path) -> None:
 
 
 @posix_only
+def test_head_commit_peels_a_tag_through_the_object_reader(tmp_path: Path) -> None:
+    """`head_commit` (design 3.1): where `head_sha` declines because HEAD
+    ends at an annotated tag (loose or packed), the tag object is read
+    through the object reader and peeled, nested tags too, to the commit
+    git prints; on a branch it is `head_sha`; unborn it is None."""
+    repo = _init_repo(tmp_path / "repo")
+    gd = githead.find_gitdir(repo)
+    assert gd is not None
+    assert githead.head_commit(gd) is None
+    sha = _commit(repo, "one")
+    assert githead.head_commit(gd) == githead.head_sha(gd) == sha
+    _run(repo, "tag", "--annotate", "v1", "--message", "release")
+    _run(repo, "tag", "--annotate", "v1-signed-off", "v1", "--message", "nested")
+    for ref in ("refs/tags/v1", "refs/tags/v1-signed-off"):
+        _run(repo, "symbolic-ref", "HEAD", ref)
+        assert githead.head_sha(gd) is None
+        assert githead.head_commit(gd) == _git_head(repo) == sha
+    _run(repo, "pack-refs", "--all")
+    assert githead.head_commit(gd) == sha
+
+
+@posix_only
 @pytest.mark.parametrize(
     ("content", "agrees"),
     [

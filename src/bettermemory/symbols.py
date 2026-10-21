@@ -88,6 +88,10 @@ import ast
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .verify import ClaimAnchor
 
 __all__ = [
     "SymbolCitation",
@@ -192,6 +196,11 @@ class SymbolCitation:
     * `unresolved` — the module was never opened, so nothing was asked.
       Carried on the citations in the report's own `unresolved` bucket,
       never in `checked`.
+    * `unconfirmed` - the module was read in a stand-in checkout (design
+      3.6: another checkout of the record's project, its home checkout
+      having no live view here) and binds the name nowhere. A stand-in
+      confirms by presence and never convicts, so this is no miss.
+      Carried in the report's own `unconfirmed` bucket.
     """
 
     symbol: str
@@ -224,20 +233,24 @@ class SymbolDriftReport:
 
     checked: tuple[SymbolCitation, ...] = ()
     unresolved: tuple[SymbolCitation, ...] = ()
+    unconfirmed: tuple[SymbolCitation, ...] = ()
 
     @property
     def missing(self) -> tuple[SymbolCitation, ...]:
         return tuple(c for c in self.checked if c.binding == "absent")
 
     def __bool__(self) -> bool:
-        return bool(self.checked or self.unresolved)
+        return bool(self.checked or self.unresolved or self.unconfirmed)
 
     def to_dict(self) -> dict[str, list[str]]:
-        return {
+        out = {
             "checked": [str(c) for c in self.checked],
             "missing": [str(c) for c in self.missing],
             "unresolved": [str(c) for c in self.unresolved],
         }
+        if self.unconfirmed:
+            out["unconfirmed"] = [str(c) for c in self.unconfirmed]
+        return out
 
 
 def extract_symbol_citations(body: str) -> tuple[tuple[str, str], ...]:
@@ -277,6 +290,7 @@ def check_symbol_citations(
     body: str,
     *,
     worktree_root: str | Path | None = None,
+    anchor: ClaimAnchor | None = None,
 ) -> SymbolDriftReport:
     """AST-check a body's symbol citations against the recorded worktree.
 
@@ -297,22 +311,28 @@ def check_symbol_citations(
     seen the checkout has no evidence either way, and "no evidence" is
     an empty report.
 
-    The residual that fail-open does NOT close: a synced memory whose
-    recorded root happens to name a live directory on this machine
-    holding a different tree. Citations then resolve against the wrong
-    files. It is the same exposure the anchored-attestation check
-    carries, it is bounded here by being advisory, and closing it needs
-    a machine identity on the origin rather than a heuristic.
+    `anchor` reads the citations where design 3.6 reads a record's claims,
+    in place of `worktree_root`: at the home checkout's live view, which
+    the membership model recognised by its object, so a recorded root that
+    names a different tree on this machine is never read; or in a
+    stand-in, where a name bound nowhere reads `unconfirmed`, never
+    `absent`; with no live view, the empty report.
     """
     citations = extract_symbol_citations(body)
     if not citations:
         return SymbolDriftReport()
-    root = _live_root(worktree_root)
+    if anchor is not None:
+        root = _live_root(anchor.root)
+        convicting = anchor.convicting
+    else:
+        root = _live_root(worktree_root)
+        convicting = True
     if root is None:
         return SymbolDriftReport()
 
     checked: list[SymbolCitation] = []
     unresolved: list[SymbolCitation] = []
+    unconfirmed: list[SymbolCitation] = []
     # One parse per FILE, not per citation: a body naming four symbols in
     # one module must not read and parse it four times.
     cache: dict[str, tuple[frozenset[str], frozenset[str]] | None] = {}
@@ -324,8 +344,15 @@ def check_symbol_citations(
             unresolved.append(SymbolCitation(symbol, module, "unresolved"))
             continue
         tier = _tier(symbol, index[0], index[1])
+        if tier == "absent" and not convicting:
+            unconfirmed.append(SymbolCitation(symbol, module, "unconfirmed"))
+            continue
         checked.append(SymbolCitation(symbol, module, tier))
-    return SymbolDriftReport(checked=tuple(checked), unresolved=tuple(unresolved))
+    return SymbolDriftReport(
+        checked=tuple(checked),
+        unresolved=tuple(unresolved),
+        unconfirmed=tuple(unconfirmed),
+    )
 
 
 def _tier(symbol: str, top_level: frozenset[str], anywhere: frozenset[str]) -> str:

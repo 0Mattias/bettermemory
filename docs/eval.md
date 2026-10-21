@@ -108,6 +108,12 @@ have surfaced a high-relevance hit and the model made no
   turn's prompt for 58 of the 60 in the 2026-10-19 replay of 122 rc3
   Stops, the turn's own SDK submission for 2) and was counted in the
   denominator.
+- A Stop whose caller nothing could be read for (a folder that cannot
+  be read, design 3.5) probes a pool membership admits nothing from, so
+  its verdict is `no_signal`, counted in `turns_no_signal` and never a
+  miss; the caller's resolution writes its `resolution_indeterminate`
+  row, and the session's first output says nothing from any project is
+  shown there.
 
 The threshold rule is versioned (`THRESHOLD_RULE_V1 = "v1_top1_high"`)
 and recorded on every event.
@@ -131,6 +137,17 @@ written in the caller's project only, so a would-be miss on another
 project's memory is flagged again where the old lane delivered it. A delivered recall still shields the
 Stop's audit of its turn. Do not compare the rate across the switch; the
 surfaces section says so whenever it is printed.
+
+The switch keeps its meaning under membership (decision B21):
+`[behavior] prompt_recall = "project"` (the default) delivers under the
+prompt recall's own admission, the caller's project and nothing outside
+a project; `"everywhere"` delivers under the unscoped search's admission,
+every project's records and the global ones, inside a project or outside
+one, never across a tenant boundary and never a record homed where
+nothing could be read, with the candidate pool drawn under the same
+admission; `"off"` delivers nothing. Each `prompt_recall` row names the
+admission it was decided under in `admission` (`prompt_recall` or
+`search_unscoped`).
 
 **Read this rate as a floor, not a health score.** The v1 verdict fires
 on a *coverage* label (the top hit matched ≥75% of the query's
@@ -298,7 +315,8 @@ the chains); and `grades`, per stratum of `bettermemory recall review`,
 the ids graded and how many were relevant, the latest grade of an id in
 a sample counting. `--scope` does not filter the section.
 `recall_counters.py` holds the computation. The `--report` markdown
-carries the four rates per surface and the counts, never an id.
+carries the four rates per surface and the counts, never an id, and the
+split on the rule below.
 
 A clear opens a segment. A compact opens one only on the compaction
 marker its transcript holds: a `compact_boundary` row newer than the one
@@ -393,6 +411,55 @@ All honor `--since`; all but `--report` honor `--json` (the report is
 markdown by construction). Rules live in `eval.THRESHOLD_RULES` /
 `eval.WIDENING_RULES`; adding one is a checker function plus a registry
 entry.
+
+### Rule `rs-v5`: delivery by membership
+
+From rule `rs-v5` (RS-F6) the brief and the prompt recall deliver a
+record when membership admits its home for the caller (design 3.5): the
+caller's project, decided by its checkout's evidence, where `rs-v4` and
+the rules before it compared the record's origin columns with the
+caller's repository and worktree. `rs-v4` (RS-F5) ships in the same
+candidate and was never live, so a live log goes from `rs-v3` rows to
+`rs-v5` rows. Each `session_brief` and `prompt_recall` row from `rs-v5`
+carries three keys beside `rule`:
+
+- `checkout`: the caller's checkout id, `null` where its resolution names
+  none.
+- `membership_rule`: the rule the caller's resolution named (how its
+  checkout and project were decided), or, for a caller admitted nothing,
+  the outcome: `indeterminate` (nothing could be read), `deferred` (an
+  evicted file is being fetched) or `no_resolution` (the resolution
+  raised).
+- `rc3_admitted`: the ids rc3's rule would have delivered, computed from
+  the origin columns, which are still written. For the brief, the
+  printed ids rc3's project test admits; for the recall, of the hits
+  every other gate passed (relevance, provenance, an open contradiction,
+  the segment), those rc3's project test admits under `prompt_recall =
+  "project"` and rc3's auto-scope admits under `"everywhere"`, less any
+  pointer the render or the cooldown dropped from the delivery. rc3
+  delivered nothing to a caller git could not read. The row of a caller
+  admitted nothing carries an empty list.
+
+Rows written before `rs-v5` carry none of the three; every reader takes
+a row without them as it is.
+
+Every read splits on the row's rule, never on a clock. The surfaces
+section carries `by_rule`: for `rs-v5`, and for the earlier rules
+together (`earlier`, with the rules its rows named; a show with no rule
+is earlier), each surface's counts and its four rates. What the
+conversation did after a show is joined over every row whatever its
+rule, and an id's follow-ups end at its next show under either rule, so
+the two groups add up to the section. Beside it, `membership_delta`
+compares each `rs-v5` show row's delivered pointers with its
+`rc3_admitted`: `rows` compared, `rows_differing`, `delivered_not_rc3`
+(pointers membership delivered that rc3 would not have, a record written
+in another checkout of the project, say) and `rc3_not_delivered`
+(pointers rc3 would have delivered that membership held back). RS-F5's
+predictions read on the `rs-v5` rows where the two agree, RS-F6's on the
+rows where they differ. `bettermemory eval` prints the split and the
+delta at the end of the section; `--report` carries the split's rates
+for both groups, the window beside all time, and the delta's counts,
+under group names only.
 
 ## Integrity benchmark
 

@@ -25,6 +25,7 @@ from typing import Any
 
 import pytest
 
+from bettermemory.admission import CountedRecords
 from bettermemory.config import Config, StorageConfig
 from bettermemory.events import Recorder
 from bettermemory.health import curation_counts
@@ -50,6 +51,13 @@ _PER_SEARCH_FORKS = 1 if _FILES_ANSWER_HEAD else 2
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+
+def _counted(memories: Any) -> CountedRecords:
+    """The records a test reads drift for, named: what the drift pass
+    reads under (`admission.DriftScope`; a pass counts no record nothing
+    admitted)."""
+    return CountedRecords(frozenset(m.id for m in memories))
 
 
 def _init_repo(path: Path, *, remote: str = _REMOTE) -> None:
@@ -249,6 +257,17 @@ async def _call(server: Any, name: str, **kwargs: Any) -> Any:
     the mcp 2.x port edits one function rather than forty-four.
     """
     return await _mcp_call(server, name, kwargs)
+
+
+def _stamp_without_head(memory_dir: Path, memory_id: str) -> None:
+    """Drop the HEAD a verify stamped, as on a record stamped before heads
+    were recorded: its commit leg then counts on the author-date basis
+    (`verify.compute_commit_drift`). A verify at a homed record's live home
+    checkout stamps that checkout's HEAD whatever the caller's origin
+    names, since the record's tree comes from its anchor (decision B23)."""
+    store = Store(memory_dir)
+    memory = store.load_one(memory_id)
+    store.update(memory.model_copy(update={"verified_head": None}))
 
 
 def _unwrap(res: Any) -> Any:
@@ -865,7 +884,11 @@ def test_commit_drift_count_git_cost_shape(
             monkeypatch.setattr(origin_module, "_git", spy)
             try:
                 builder.attach_commit_drift_counts(
-                    out, hits, memories, caller_origin=origin
+                    out,
+                    hits,
+                    memories,
+                    caller_origin=origin,
+                    admission=_counted(memories),
                 )
             finally:
                 monkeypatch.setattr(origin_module, "_git", real_git)
@@ -949,7 +972,9 @@ def test_commit_drift_count_omitted_when_anchors_escape_and_repo_quiescent(
     builder = ResponseBuilder(stale_after_days=30)
     now = datetime.now(timezone.utc)
     out = [builder.hit_to_dict(h, now=now) for h in hits]
-    builder.attach_commit_drift_counts(out, hits, memories, caller_origin=origin)
+    builder.attach_commit_drift_counts(
+        out, hits, memories, caller_origin=origin, admission=_counted(memories)
+    )
     by_id = {hit["id"]: hit for hit in out}
     assert {escaping.id, anchored.id} <= set(by_id), "fixture must surface both"
     assert "commit_drift_count" not in by_id[escaping.id], (
@@ -1009,7 +1034,7 @@ def test_commit_drift_count_quiescent_anchored_hits_pay_one_classification_log(
         monkeypatch.setattr(origin_module, "_git", spy)
         try:
             builder.attach_commit_drift_counts(
-                out, hits, memories, caller_origin=origin
+                out, hits, memories, caller_origin=origin, admission=_counted(memories)
             )
         finally:
             monkeypatch.setattr(origin_module, "_git", real_git)
@@ -1422,7 +1447,8 @@ async def test_memory_search_verified_paths_does_not_resurrect_same_second_commi
     7.0.0), which DID count exactly this commit:
     pre-guard this hit read commit_drift_count=1. With the guard — and the
     author-date unification beneath it — it reads 0 / fresh, in lockstep
-    with memory_show.
+    with memory_show. The record's stamp carries no HEAD
+    (`_stamp_without_head`), so the count is on the author-date basis.
     """
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -1441,6 +1467,7 @@ async def test_memory_search_verified_paths_does_not_resurrect_same_second_commi
         server, "memory_write", content="durable thing about widgets", scopes=["tools"]
     )
     await _call(server, "memory_verify", id=written["id"], verified_paths=[str(stable)])
+    _stamp_without_head(memory_dir, written["id"])
 
     # A commit that TOUCHES the verified path, placed at the whole-second
     # FLOOR of last_verified_at (<= the verify instant). The author-date
@@ -2171,7 +2198,11 @@ def test_commit_drift_count_git_cost_shape_for_reachability_hits(
             monkeypatch.setattr(origin_module, "_git", spy)
             try:
                 builder.attach_commit_drift_counts(
-                    out, hits, memories, caller_origin=origin
+                    out,
+                    hits,
+                    memories,
+                    caller_origin=origin,
+                    admission=_counted(memories),
                 )
             finally:
                 monkeypatch.setattr(origin_module, "_git", real_git)

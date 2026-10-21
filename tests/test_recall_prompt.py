@@ -10,6 +10,7 @@ three `prompt_recall` modes, and the telemetry gate.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -17,8 +18,11 @@ from typing import Any
 import pytest
 
 from bettermemory.config import BehaviorConfig, Config, StorageConfig, TelemetryConfig
+from bettermemory.location import Caller, resolve_caller
+from bettermemory.membership import PROMPT_RECALL, SEARCH_UNSCOPED, RecordHome
 from bettermemory.models import Memory
 from bettermemory.origin import Origin
+from bettermemory.project_file import PROJECT_FILE_NAME
 from bettermemory.recall import (
     PROMPT_CUT_CHARS,
     RECALL_CAP_CHARS,
@@ -31,6 +35,8 @@ from bettermemory.recall import (
     summarize,
 )
 from bettermemory.store import Store
+
+from .test_membership_security import checkout, project_file
 
 REPO = "git@github.com:owner/foo.git"
 OTHER_REPO = "git@github.com:owner/bar.git"
@@ -47,20 +53,73 @@ def config(store_dir: Path, *, mode: str = "project", telemetry: bool = True) ->
 
 
 class PromptWorld:
-    """A store, a worktree in `REPO` the caller stands in, and helpers to
-    seed memories the probe can rank (backdated past its creation
-    shield) and to run the recall."""
+    """A store, a checkout (`worktree`) the caller stands in, and helpers
+    to seed memories the probe can rank (backdated past its creation
+    shield) and to run the recall.
+
+    A memory is delivered by its home (design 3.5), which `write` gives it
+    from the origin it is written with: the checkout's project for the
+    caller's own origin, ``global`` for none or for a directory outside
+    any repository, and the project of another checkout (made on first
+    use, one per directory) for any other origin. The origin stays on the
+    record as data."""
 
     def __init__(self, tmp_path: Path) -> None:
         self.tmp_path = tmp_path
         self.store_dir = tmp_path / "store"
         self.store = Store(self.store_dir)
-        self.worktree = tmp_path / "foo"
-        self.worktree.mkdir()
+        self.worktree = checkout(tmp_path / "foo")
         self.caller = Origin(
             cwd=str(self.worktree), repo=REPO, worktree_root=str(self.worktree)
         )
         self.config = config(self.store_dir)
+        # A checkout seen before: its first sight's line is not what these
+        # tests read.
+        self.home = self.resolve(self.worktree).home()
+        self._homes: dict[str, RecordHome] = {}
+
+    def resolve(self, where: Path | None) -> Caller:
+        """The caller standing at `where` (None: nothing readable)."""
+        return resolve_caller(
+            self.store, self.config, None if where is None else str(where)
+        )
+
+    def global_home(self) -> RecordHome:
+        """The home of a record written outside any project."""
+        plain = self.tmp_path / "plain"
+        plain.mkdir(exist_ok=True)
+        return self.resolve(plain).home()
+
+    def other_home(self, name: str = "bar") -> RecordHome:
+        """The home of a record written in another checkout, `name`, its
+        own project."""
+        if name not in self._homes:
+            other = checkout(self.tmp_path / "others" / name)
+            self._homes[name] = self.resolve(other).home()
+        return self._homes[name]
+
+    def tenant_home(self, name: str = "client") -> RecordHome:
+        """The home of a record written in a checkout whose project file
+        declares a boundary: a tenant of its own (design E34, B9)."""
+        key = f"tenant:{name}"
+        if key not in self._homes:
+            other = checkout(
+                self.tmp_path / "others" / name,
+                files={PROJECT_FILE_NAME: project_file(name, boundary=True)},
+            )
+            self._homes[key] = self.resolve(other).home()
+        return self._homes[key]
+
+    def home_of(self, origin: Origin | None) -> RecordHome:
+        """The home a record written with `origin` has (see the class)."""
+        if origin is None:
+            return self.global_home()
+        if str(self.worktree) in (origin.worktree_root, origin.cwd):
+            return self.home
+        if origin.repo is None and origin.worktree_root is None:
+            return self.global_home()
+        where = origin.worktree_root or origin.cwd or "bar"
+        return self.other_home(Path(where).name or "bar")
 
     def write(
         self,
@@ -69,11 +128,15 @@ class PromptWorld:
         origin: Origin | None | str = "here",
         provenance: str | None = None,
         scopes: list[str] | None = None,
+        home: RecordHome | None = None,
     ) -> Memory:
         where = self.caller if origin == "here" else origin
         assert not isinstance(where, str)
         written = self.store.write(
-            content=body, scopes=scopes or ["projects:foo"], origin=where
+            content=body,
+            scopes=scopes or ["projects:foo"],
+            origin=where,
+            home=home if home is not None else self.home_of(where),
         )
         stamp = datetime.now(timezone.utc) - timedelta(hours=1)
         return self.store.put_memory(
@@ -234,7 +297,7 @@ def test_a_delivery_block_and_event(world: PromptWorld) -> None:
     assert result.surface == "prompt_recall"
     assert result.ids == (memory.id,)
     assert result.chars == len(result.stdout)
-    assert result.rule == "rs-v4"
+    assert result.rule == "rs-v5"
     # The old block's promise that recording `ignored` tunes recall down
     # is gone: no ranking reads outcomes.
     assert "ignored" not in result.stdout
@@ -243,7 +306,9 @@ def test_a_delivery_block_and_event(world: PromptWorld) -> None:
     assert event["event_id"] == result.event_id
     assert event["shown_ids"] == [memory.id]
     assert event["suppressed_ids"] == []
-    assert event["rule"] == "rs-v4"
+    assert event["rule"] == "rs-v5"
+    assert event["checkout"] == world.home.checkout
+    assert event["rc3_admitted"] == [memory.id]
     assert event["chars"] == event["injected_chars"] == len(result.stdout)
     assert event["segment"] == 0
     assert event["delivered_reason"] == "project"
@@ -527,22 +592,51 @@ def test_annotations_for_non_local_provenance() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_everywhere_also_delivers_global_memories(world: PromptWorld) -> None:
-    """ "everywhere" adds global memories (no repository of their own);
-    another repository's memory stays out, as the probe's auto-scope
-    keeps it."""
+def test_everywhere_also_delivers_global_and_other_projects_memories(
+    world: PromptWorld,
+) -> None:
+    """Decision B21: "everywhere" delivers under the unscoped search's
+    admission: the caller's project's memories, global ones and another
+    project's. "project" delivers under PROMPT_RECALL, the caller's own,
+    holding the global one its pool reached. A memory across a boundary (a
+    tenant, E34) is in neither mode's pool. Each row names its
+    admission."""
     mine = world.write()
     stray = world.write(f"{BODY} globally", origin=None, scopes=["tools"])
-    world.write(
+    elsewhere = world.write(
         f"{BODY} elsewhere",
         origin=Origin(cwd="/bar", repo=OTHER_REPO, worktree_root="/bar"),
     )
-    result = world.recall(config=config(world.store_dir, mode="everywhere"))
-    assert set(result.ids) == {mine.id, stray.id}
-    assert world.recalls()[0]["delivered_reason"] == "everywhere"
+    tenant = world.write(
+        f"{BODY} behind a boundary",
+        origin=Origin(cwd="/client", worktree_root="/client"),
+        home=world.tenant_home(),
+    )
+    wide = world.recall(config=config(world.store_dir, mode="everywhere"))
+    assert set(wide.ids) == {mine.id, stray.id, elsewhere.id}
+    (event,) = world.recalls()
+    assert event["delivered_reason"] == "everywhere"
+    assert event["admission"] == SEARCH_UNSCOPED
+    assert tenant.id not in {entry["id"] for entry in event["suppressed_ids"]}
+
+    narrow = world.recall(
+        session_id="another-session", config=config(world.store_dir, mode="project")
+    )
+    assert narrow.ids == (mine.id,)
+    event = world.recalls()[1]
+    assert event["delivered_reason"] == "project"
+    assert event["admission"] == PROMPT_RECALL
+    held = {entry["id"]: entry for entry in event["suppressed_ids"]}
+    assert held[stray.id]["reason"] == "other_project"
+    assert held[stray.id]["relation"] == "global"
+    assert elsewhere.id not in held and tenant.id not in held
 
 
 def test_outside_a_repository_only_everywhere_delivers(world: PromptWorld) -> None:
+    """Outside any project "project" delivers nothing (PROMPT_RECALL
+    admits nothing there, design 3.5) and "everywhere" delivers what an
+    unscoped search reaches there (decision B21), a memory written where
+    the caller stands included."""
     memory = world.write(origin=Origin(cwd=str(world.tmp_path)))
     nowhere = Origin(cwd=str(world.tmp_path))
     assert world.recall(origin=nowhere).stdout == ""
@@ -550,6 +644,25 @@ def test_outside_a_repository_only_everywhere_delivers(world: PromptWorld) -> No
         origin=nowhere, config=config(world.store_dir, mode="everywhere")
     )
     assert wide.ids == (memory.id,)
+
+
+def test_a_turn_whose_relevant_hits_were_all_held_says_so(
+    world: PromptWorld,
+) -> None:
+    """Design 4 failure 8: a prompt recall whose relevant hits the
+    admission withheld, every one, writes one `recall_suppressed` row
+    naming the surface and the admission."""
+    world.write(f"{BODY} globally", origin=None, scopes=["tools"])
+    assert world.recall().stdout == ""
+    rows = [
+        json.loads(row.payload)
+        for row in world.store.log_rows()
+        if row.kind == "recall_suppressed"
+    ]
+    assert len(rows) == 1
+    assert rows[0]["surface"] == PROMPT_RECALL
+    assert rows[0]["admission"] == PROMPT_RECALL
+    assert [entry["reason"] for entry in rows[0]["suppressed"]] == ["global"]
 
 
 def test_off_delivers_nothing(world: PromptWorld) -> None:
@@ -566,12 +679,17 @@ def test_telemetry_off_delivers_nothing(world: PromptWorld) -> None:
 
 
 def test_git_indeterminate_delivers_nothing(world: PromptWorld) -> None:
+    """A caller nothing could be read for (INDETERMINATE) is shown nothing
+    from any project in either mode: the result carries its resolution's
+    line and no pointer, and no `prompt_recall` row is written."""
     world.write()
-    unknown = Origin(cwd=str(world.worktree))
-    unknown._git_indeterminate = True
+    unknown = world.resolve(None).resolution
     for mode in ("project", "everywhere"):
-        result = world.recall(origin=unknown, config=config(world.store_dir, mode=mode))
-        assert result.stdout == ""
+        result = world.recall(
+            resolution=unknown, config=config(world.store_dir, mode=mode)
+        )
+        assert result.ids == ()
+        assert "nothing from any project is shown here" in result.stdout
     assert world.recalls() == []
 
 

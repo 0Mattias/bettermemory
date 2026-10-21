@@ -1,8 +1,9 @@
 """Regression tests for the FTS prefilter cap-starvation guard (round 85).
 
 `_handlers.load_search_candidates` threads only `scopes` into the FTS5
-top-50 prefilter; the repo/worktree auto-scope filter and session-disabled
-scopes apply post-cap in `search._filter_candidates`. Without the guard in
+top-50 prefilter; the membership admission (design 3.5: the caller's
+project, read from each record's home) and session-disabled scopes apply
+post-cap in `search._filter_candidates`. Without the guard in
 `handlers/search.py`, a store with >50 memories where the caller's
 in-filter matches all rank #51+ globally returns ZERO hits on the
 prefilter path even though matching memories exist — the cap-starvation
@@ -29,18 +30,22 @@ from typing import Any
 
 import pytest
 
+from bettermemory.admission import Admission
 from bettermemory.audit import probe_for_miss
 from bettermemory.config import BehaviorConfig, Config, StorageConfig
 from bettermemory.handlers.search import resolve_search_pool
 from bettermemory.hook import run_audit
+from bettermemory.location import Caller, resolve_caller
+from bettermemory.membership import GLOBAL, POOL_PREFILTER, RecordHome
 from bettermemory.models import utcnow
-from bettermemory.origin import Origin
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
 
-REPO_A = "git@github.com:example/repo-a.git"
-REPO_B = "git@github.com:example/repo-b.git"
+from .test_membership_security import checkout, stand_in_checkout
+
+#: The home of a record written outside any project (design 2.1).
+GLOBAL_HOME = RecordHome(GLOBAL, None, "outside_repository")
 
 
 def _build_server(memory_dir: Path) -> Any:
@@ -65,31 +70,44 @@ def _unwrap(res: Any) -> Any:
     return res.get("result", res) if isinstance(res, dict) and "result" in res else res
 
 
-def _pin_caller_origin(monkeypatch: pytest.MonkeyPatch, origin: Origin) -> None:
-    """Pin what `capture_origin` reports for the searching session.
+class _Projects:
+    """The caller's checkout (``a``, the process cwd) and another
+    repository's (``b``), each its own project, resolved over the test's
+    store: a record is delivered by its home (design 3.5)."""
 
-    The handler resolves it through `_handlers` at call time
-    (`from .. import _handlers as _h; _h.capture_origin()`), so patching
-    the module binding is enough — same pattern as
-    tests/test_server_origin.py, but monkeypatch-scoped so it can't leak
-    across tests."""
-    import bettermemory._handlers as handlers_module
+    def __init__(
+        self,
+        store: Store,
+        base: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        config = Config(storage=StorageConfig(directory=str(store.path)))
+        repo_a = stand_in_checkout(base, monkeypatch)
+        self.a: Caller = resolve_caller(store, config, str(repo_a))
+        repo_b = checkout(base / "b")
+        self.b: Caller = resolve_caller(store, config, str(repo_b))
 
-    def fake_capture(cwd: Path | None = None) -> Origin:
-        return origin
 
-    monkeypatch.setattr(handlers_module, "capture_origin", fake_capture)
+@pytest.fixture
+def projects(
+    store: Store,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> _Projects:
+    return _Projects(store, tmp_path_factory.mktemp("projects"), monkeypatch)
 
 
-def _write_dense(store: Store, n: int, *, scopes: list[str], origin: Origin | None):
+def _write_dense(store: Store, n: int, *, scopes: list[str], home: RecordHome) -> None:
     """`n` short, term-dense "alpha" memories — high BM25, they
     monopolize the FTS top-50 candidate slice."""
     dense = "alpha " * 6
     for i in range(n):
-        store.write(content=f"{dense}filler-{i}", scopes=scopes, origin=origin)
+        store.write(content=f"{dense}filler-{i}", scopes=scopes, home=home)
 
 
-def _write_weak(store: Store, n: int, *, scopes: list[str], origin: Origin | None):
+def _write_weak(
+    store: Store, n: int, *, scopes: list[str], home: RecordHome
+) -> list[str]:
     """`n` long memories mentioning "alpha" exactly once — low BM25,
     ranked past the dense block. Returns their ids."""
     padding = " ".join(f"pad{j}" for j in range(40))
@@ -98,7 +116,7 @@ def _write_weak(store: Store, n: int, *, scopes: list[str], origin: Origin | Non
         m = store.write(
             content=f"alpha appears once here {padding} doc-{i}",
             scopes=scopes,
-            origin=origin,
+            home=home,
         )
         ids.append(m.id)
     return ids
@@ -115,27 +133,30 @@ def _assert_starved_precondition(store: Store, weak_ids: list[str]) -> None:
     )
 
 
-async def test_repo_filter_starvation_reloads_full_corpus(
-    memory_dir: Path, store: Store, monkeypatch: pytest.MonkeyPatch
+async def test_auto_scope_starvation_reloads_full_corpus(
+    memory_dir: Path,
+    store: Store,
+    projects: _Projects,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The round-85 repro: 60 term-dense repo-B matches monopolize the
-    FTS top-50; the caller's 3 repo-A matches rank #51+. The prefilter
-    slice is 50 repo-B candidates, all of which the post-cap auto-scope
-    filter strips — pre-guard, the search returned zero hits while
-    matching in-repo memories existed. The guard detects the starved
-    cap-saturated slice and reloads via load_all."""
+    """The round-85 repro: 60 term-dense matches homed in another
+    project monopolize the FTS top-50; the caller's 3 matches, homed in
+    its own project, rank #51+. The prefilter slice is 50 candidates of
+    the other project, all of which the post-cap auto-scope admission
+    strips: pre-guard, the search returned zero hits while matching
+    memories of the caller's project existed. The guard detects the
+    starved cap-saturated slice and reloads via load_all."""
     monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
-    _write_dense(store, 60, scopes=["tools"], origin=Origin(repo=REPO_B))
-    a_ids = _write_weak(store, 3, scopes=["tools"], origin=Origin(repo=REPO_A))
+    _write_dense(store, 60, scopes=["tools"], home=projects.b.home())
+    a_ids = _write_weak(store, 3, scopes=["tools"], home=projects.a.home())
     _assert_starved_precondition(store, a_ids)
 
     server = _build_server(memory_dir)
-    _pin_caller_origin(monkeypatch, Origin(cwd="/projects/a", repo=REPO_A))
 
     hits = _unwrap(await _call(server, "memory_search", query="alpha"))
     assert {h["id"] for h in hits} == set(a_ids), (
-        "auto-scoped search starved by the FTS top-50 cap: the in-repo "
-        "matches ranked past the cap must still surface via the reload"
+        "auto-scoped search starved by the FTS top-50 cap: the caller's "
+        "project's matches ranked past the cap must still surface via the reload"
     )
 
 
@@ -143,17 +164,17 @@ async def test_disabled_scope_starvation_reloads_full_corpus(
     memory_dir: Path, store: Store, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Session-disabled-scope variant: the post-cap filter here is
-    `state.disabled_scopes` (no repo/worktree filter in play — the
-    caller origin carries no repo). 60 dense matches in the disabled
-    scope saturate the prefilter slice; the 3 in-scope matches rank
-    past the cap and must still surface."""
+    `state.disabled_scopes` (the caller stands outside any project, the
+    test's workspace, and every record is homed ``global``, so the
+    admission strips nothing). 60 dense matches in the disabled scope
+    saturate the prefilter slice; the 3 in-scope matches rank past the
+    cap and must still surface."""
     monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
-    _write_dense(store, 60, scopes=["noise"], origin=None)
-    tool_ids = _write_weak(store, 3, scopes=["tools"], origin=None)
+    _write_dense(store, 60, scopes=["noise"], home=GLOBAL_HOME)
+    tool_ids = _write_weak(store, 3, scopes=["tools"], home=GLOBAL_HOME)
     _assert_starved_precondition(store, tool_ids)
 
     server = _build_server(memory_dir)
-    _pin_caller_origin(monkeypatch, Origin(cwd="/tmp/elsewhere"))
     await _call(server, "memory_admin", action="disable_scope", scope="noise")
 
     hits = _unwrap(await _call(server, "memory_search", query="alpha"))
@@ -161,17 +182,19 @@ async def test_disabled_scope_starvation_reloads_full_corpus(
 
 
 async def test_prefilter_path_still_serves_when_filters_leave_survivors(
-    memory_dir: Path, store: Store, monkeypatch: pytest.MonkeyPatch
+    memory_dir: Path,
+    store: Store,
+    projects: _Projects,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Control pinning the guard's cost profile: when the post-cap
     filters leave at least `max_results` survivors in the cap-saturated
     slice, the search keeps serving from the prefilter candidates — no
     load_all reload. Spied via a counting wrapper on Store.load_all."""
     monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
-    _write_dense(store, 60, scopes=["tools"], origin=Origin(repo=REPO_A))
+    _write_dense(store, 60, scopes=["tools"], home=projects.a.home())
 
     server = _build_server(memory_dir)
-    _pin_caller_origin(monkeypatch, Origin(cwd="/projects/a", repo=REPO_A))
 
     calls = {"n": 0}
     real_load_all = Store.load_all
@@ -191,19 +214,22 @@ async def test_prefilter_path_still_serves_when_filters_leave_survivors(
 
 
 async def test_masked_saturation_still_triggers_reload(
-    memory_dir: Path, store: Store, monkeypatch: pytest.MonkeyPatch
+    memory_dir: Path,
+    store: Store,
+    projects: _Projects,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A cap-saturated FTS slice can arrive at the guard with fewer
     than 50 loaded candidates: `load_many` skips an id it cannot serve
     (a row tombstoned by another process between the candidate query
     and the load), so the loaded list shrinks below the cap. The old
     `len(memories) == 50` check never fired on such a slice, so the
-    post-cap repo filter starved the search to zero hits while in-repo
-    matches existed past the cap. The guard must key on the loader's
+    post-cap admission starved the search to zero hits while matches of
+    the caller's project existed past the cap. The guard must key on the loader's
     candidate-level saturation signal, not the post-drop list length."""
     monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
-    _write_dense(store, 60, scopes=["tools"], origin=Origin(repo=REPO_B))
-    a_ids = _write_weak(store, 3, scopes=["tools"], origin=Origin(repo=REPO_A))
+    _write_dense(store, 60, scopes=["tools"], home=projects.b.home())
+    a_ids = _write_weak(store, 3, scopes=["tools"], home=projects.a.home())
     _assert_starved_precondition(store, a_ids)
 
     # Drop one in-slice candidate at the load: the candidate query still
@@ -217,12 +243,12 @@ async def test_masked_saturation_still_triggers_reload(
     monkeypatch.setattr(Store, "load_many", dropping_load_many)
 
     server = _build_server(memory_dir)
-    _pin_caller_origin(monkeypatch, Origin(cwd="/projects/a", repo=REPO_A))
 
     hits = _unwrap(await _call(server, "memory_search", query="alpha"))
     assert {h["id"] for h in hits} == set(a_ids), (
-        "index-saturated slice masked by a loader drop: the in-repo matches "
-        "ranked past the cap must still surface via the load_all reload"
+        "index-saturated slice masked by a loader drop: the caller's "
+        "project's matches ranked past the cap must still surface via the "
+        "load_all reload"
     )
 
 
@@ -255,10 +281,14 @@ async def test_prefiltered_search_prices_a_rare_term_off_the_whole_corpus(
     """
     monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
     store = Store(tmp_path)
+    # Homed outside any project, where the test's caller stands: its
+    # auto-scoped search admits them all (design 3.5).
     for i in range(60):
-        store.write(content=f"alpha common filler-{i}", scopes=["tools"])
+        store.write(
+            content=f"alpha common filler-{i}", scopes=["tools"], home=GLOBAL_HOME
+        )
     for i in range(3):
-        store.write(content=f"alpha flock rare-{i}", scopes=["tools"])
+        store.write(content=f"alpha flock rare-{i}", scopes=["tools"], home=GLOBAL_HOME)
 
     seen: list[dict[str, float]] = []
     import bettermemory.search as search_module
@@ -306,10 +336,14 @@ async def test_prefiltered_search_prices_kebab_parts_off_the_whole_corpus(
     monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
     store = Store(tmp_path)
     for i in range(60):
-        store.write(content=f"alpha common filler-{i}", scopes=["tools"])
+        store.write(
+            content=f"alpha common filler-{i}", scopes=["tools"], home=GLOBAL_HOME
+        )
     for i in range(3):
-        store.write(content=f"zephyr quartz spaced-{i}", scopes=["tools"])
-    store.write(content="zephyr-quartz hyphenated", scopes=["tools"])
+        store.write(
+            content=f"zephyr quartz spaced-{i}", scopes=["tools"], home=GLOBAL_HOME
+        )
+    store.write(content="zephyr-quartz hyphenated", scopes=["tools"], home=GLOBAL_HOME)
 
     seen: list[dict[str, float]] = []
     import bettermemory.search as search_module
@@ -350,7 +384,7 @@ async def test_corpus_stats_are_not_consulted_below_the_prefilter_threshold(
     monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "100000")
     store = Store(tmp_path)
     for i in range(5):
-        store.write(content=f"alpha filler-{i}", scopes=["tools"])
+        store.write(content=f"alpha filler-{i}", scopes=["tools"], home=GLOBAL_HOME)
 
     calls: list[list[str]] = []
     real = Store.document_frequencies
@@ -372,43 +406,47 @@ async def test_corpus_stats_are_not_consulted_below_the_prefilter_threshold(
 # ---------------------------------------------------------------------------
 
 
-def _build_width_divergence_store(root: Path) -> tuple[Store, list[str], list[str]]:
+def _build_width_divergence_store(
+    root: Path, *, other: RecordHome
+) -> tuple[Store, list[str], list[str]]:
     """A store engineered so the in-filter survivors of the cap-saturated
     FTS slice land strictly between the two `min_survivors` widths.
 
     Three cohorts against the query "alpha beta":
 
-    * 40 short repo-B decoys dense in BOTH terms — best BM25, they take
-      the head of the top-50 slice, and the caller's repo filter strips
-      every one of them post-cap.
-    * 12 short origin-less memories mentioning only "alpha" — good enough
-      BM25 to fill the rest of the slice, but coverage 1/2 = "medium"
-      under `_relevance_label`, which is BELOW the miss threshold.
-    * 8 origin-less memories that match both terms once each under ~400
-      words of padding — coverage 2/2 = "high", sunk past the cap by BM25
-      length normalisation.
+    * 40 short decoys homed in another project (`other`), dense in BOTH
+      terms: best BM25, they take the head of the top-50 slice, and the
+      caller's admission strips every one of them post-cap.
+    * 12 short memories homed ``global`` mentioning only "alpha": good
+      enough BM25 to fill the rest of the slice, but coverage 1/2 =
+      "medium" under `_relevance_label`, which is BELOW the miss
+      threshold.
+    * 8 memories homed ``global`` that match both terms once each under
+      ~400 words of padding: coverage 2/2 = "high", sunk past the cap by
+      BM25 length normalisation.
 
-    Origin-less memories pass the repo filter as global (so they survive
-    post-cap) while carrying no `projects:` scope and no origin repo, which
-    keeps `audit._caller_in_top_hit_project` out of the verdict.
+    The global memories pass the caller's admission (design 3.5: the pool
+    prefilter admits ``global``) so they survive post-cap, while carrying
+    no `projects:` scope and no home in the caller's project, which keeps
+    `audit._caller_in_top_hit_project` out of the verdict.
     """
     store = Store(root)
     for i in range(40):
         store.write(
             content="alpha beta " * 6 + f"decoy-{i}",
             scopes=["tools"],
-            origin=Origin(repo=REPO_B),
+            home=other,
         )
     partial_ids = [
         store.write(
-            content="alpha " * 6 + f"partial-{i}", scopes=["tools"], origin=None
+            content="alpha " * 6 + f"partial-{i}", scopes=["tools"], home=GLOBAL_HOME
         ).id
         for i in range(12)
     ]
     pad = " ".join(f"pad{j}" for j in range(400))
     full_ids = [
         store.write(
-            content=f"alpha beta {pad} full-{i}", scopes=["tools"], origin=None
+            content=f"alpha beta {pad} full-{i}", scopes=["tools"], home=GLOBAL_HOME
         ).id
         for i in range(8)
     ]
@@ -416,7 +454,9 @@ def _build_width_divergence_store(root: Path) -> tuple[Store, list[str], list[st
 
 
 def test_min_survivors_width_can_flip_the_probe_verdict(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The starvation width is not cosmetic: the same store, the same
     query and the same probe reach OPPOSITE verdicts at the two widths
@@ -431,8 +471,17 @@ def test_min_survivors_width_can_flip_the_probe_verdict(
     unified, this test is the thing that has to be re-argued.
     """
     monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
-    store, partial_ids, full_ids = _build_width_divergence_store(tmp_path)
-    caller = Origin(cwd="/projects/a", repo=REPO_A, worktree_root="/projects/a")
+    base = tmp_path_factory.mktemp("projects")
+    config = Config(storage=StorageConfig(directory=str(tmp_path)))
+    # The caller's checkout and another repository's, resolved before the
+    # records are written so the store's first rows are the resolutions'.
+    probe_store = Store(tmp_path)
+    caller = resolve_caller(probe_store, config, str(checkout(base / "a")))
+    other = resolve_caller(probe_store, config, str(checkout(base / "b")))
+    store, partial_ids, full_ids = _build_width_divergence_store(
+        tmp_path, other=other.home()
+    )
+    admission = Admission.of(POOL_PREFILTER, caller)
 
     top50 = [cid for cid, _ in store.query_candidates("alpha beta", max_results=50)]
     assert len(top50) == 50, "precondition: the FTS slice must be cap-saturated"
@@ -452,8 +501,7 @@ def test_min_survivors_width_can_flip_the_probe_verdict(
             store,
             "alpha beta",
             excluded_scopes=set(),
-            repo_filter=caller.repo,
-            worktree_filter=caller.worktree_root,
+            admission=admission,
             min_survivors=width,
         )
         for width in (5, 25)
@@ -474,7 +522,7 @@ def test_min_survivors_width_can_flip_the_probe_verdict(
             recent_events=[],
             session_id="sess-width",
             now=now,
-            caller_origin=caller,
+            admission=admission,
             excluded_scopes=set(),
             mode="hybrid",
             corpus_stats_provider=pool.corpus_stats_provider,

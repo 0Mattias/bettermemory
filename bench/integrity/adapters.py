@@ -692,6 +692,12 @@ class BetterMemoryAdapter:
         pointer names a row of the right kind that names the right id and
         the MAC check is what refuses it. That is the recon's open item 7
         (tamper evidence), measured rather than assumed.
+
+        The planted row is given the home a write by the adapter's caller
+        would have (`Caller.home`, design 2.1), through the store's own
+        membership path and before any forged row, so the search admits it
+        as it admits the adapter's written records (design 3.5) and only
+        the trust fields are forged.
         """
         import secrets
 
@@ -723,6 +729,23 @@ class BetterMemoryAdapter:
             origin=capture_origin(_ROOT),
         )
         store = self._deps.store
+        from bettermemory.handlers._shared import caller_anchoring
+        from bettermemory.time_utils import isoformat_utc
+
+        _anchoring, caller = caller_anchoring(store, self._deps.config)
+        project, checkout, rule = caller.home()
+        store.put_membership(
+            "home",
+            {
+                "record_id": mid,
+                "kind": "memory",
+                "project": project,
+                "checkout": checkout,
+                "rule": rule,
+                "decided": isoformat_utc(now),
+            },
+            session=self._session_id,
+        )
         log_mac: str | None = None
         if forge_provenance:
             previous = last_row(store.conn)

@@ -108,6 +108,7 @@ def run(
 
 def _cli_review(args: argparse.Namespace, *, parser: argparse.ArgumentParser) -> None:
     from ..eval import parse_window_bound, resolve_window
+    from ..recall import membership_model
     from ..recall_counters import STRATUM_BRIEF, STRATUM_DELIVERY, STRATUM_SILENT
     from ..recall_review import (
         Transcripts,
@@ -141,7 +142,13 @@ def _cli_review(args: argparse.Namespace, *, parser: argparse.ArgumentParser) ->
     ctx = cli_context()
     events = list(ctx.store.iter_events())
     memories = {m.id: m for m in ctx.store.load_all()}
-    population = candidates(events, start=start, end=end, memories=memories)
+    population = candidates(
+        events,
+        start=start,
+        end=end,
+        memories=memories,
+        model=membership_model(ctx.store),
+    )
     graded = graded_samples(events)
     root = (
         Path(args.transcripts).expanduser()
@@ -177,7 +184,7 @@ def _cli_review(args: argparse.Namespace, *, parser: argparse.ArgumentParser) ->
 
 
 def _cli_grade(args: argparse.Namespace, *, parser: argparse.ArgumentParser) -> None:
-    from ..recall import RULE
+    from ..recall import RULE, membership_model
     from ..recall_review import find_candidate
     from ..time_utils import isoformat_utc
     from ._common import cli_context, cli_recorder
@@ -196,7 +203,10 @@ def _cli_grade(args: argparse.Namespace, *, parser: argparse.ArgumentParser) -> 
         )
     memories = {m.id: m for m in ctx.store.load_all()}
     candidate = find_candidate(
-        ctx.store.iter_events(), args.sample_id, memories=memories
+        ctx.store.iter_events(),
+        args.sample_id,
+        memories=memories,
+        model=membership_model(ctx.store),
     )
     if candidate is None:
         sys.stderr.write(

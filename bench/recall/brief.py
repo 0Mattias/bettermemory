@@ -171,27 +171,65 @@ def count_git() -> Iterator[Callable[[], int]]:
         subprocess.run = real  # type: ignore[assignment]
 
 
-def full_scan(store: Any, caller: Any, *, stale_after_days: int) -> list[str]:
+def brief_admission(store: Any, config: Any, checkout: dict[str, Any]) -> Any:
+    """The SESSION_BRIEF admission (design 3.5) the brief of `checkout`
+    reads under: its caller resolved as `session_brief` resolves it from
+    what `_call` passes (`recall._resolve_caller`), so the full scan and
+    the memo count read the rows the brief itself may show."""
+    from bettermemory.membership import SESSION_BRIEF, Resolution
+    from bettermemory.recall import _resolve_caller, admission_for
+
+    local = checkout["local"]
+    resolution = _resolve_caller(
+        store=store,
+        cfg=config,
+        cwd=Path(local) if local else None,
+        origin=None if local else checkout["origin"],
+        posted=None,
+        session_id=None,
+    )
+    return admission_for(
+        SESSION_BRIEF,
+        store,
+        resolution if isinstance(resolution, Resolution) else None,
+    )
+
+
+def _admitted_window(store: Any, admission: Any) -> list[str]:
+    """`_select_brief`'s window: the newest admitted rows of the delivered
+    provenance, not ambient; none for a caller admitted nothing or outside
+    any project."""
+    from bettermemory.models import Category
+    from bettermemory.recall import _DELIVERED_PROVENANCE, BRIEF_WINDOW
+
+    if admission.nothing is not None or not admission.in_project:
+        return []
+    ids: list[str] = store.brief_rows(
+        admit=admission.admits_project,
+        provenance=_DELIVERED_PROVENANCE,
+        exclude_category=Category.AMBIENT.value,
+    )
+    return ids[:BRIEF_WINDOW]
+
+
+def full_scan(
+    store: Any, caller: Any, *, admission: Any, stale_after_days: int
+) -> list[str]:
     """The ids a brief shows when every eligible row of the window is
-    resolved: `_select_brief`'s eligibility, every verdict resolved, the
-    first `BRIEF_MAX_POINTERS` that read fresh."""
+    resolved: `_select_brief`'s eligibility under `admission`
+    (`brief_admission`), every verdict resolved, the first
+    `BRIEF_MAX_POINTERS` that read fresh."""
     from bettermemory._response import ResponseBuilder
-    from bettermemory.models import Category, utcnow
+    from bettermemory.models import utcnow
     from bettermemory.recall import (
         _DELIVERED_PROVENANCE,
         BRIEF_MAX_POINTERS,
-        BRIEF_WINDOW,
         _contradiction_open,
         _fresh,
-        in_project,
     )
     from bettermemory.verdict import resolve_verdicts
 
-    ids = store.brief_rows(
-        admit=lambda memory_origin: in_project(memory_origin, caller),
-        provenance=_DELIVERED_PROVENANCE,
-        exclude_category=Category.AMBIENT.value,
-    )[:BRIEF_WINDOW]
+    ids = _admitted_window(store, admission)
     trust = store.trust_rows(ids) or {}
     ids = [
         i for i in ids if i in trust and trust[i].provenance in _DELIVERED_PROVENANCE
@@ -200,7 +238,11 @@ def full_scan(store: Any, caller: Any, *, stale_after_days: int) -> list[str]:
     rows = [m for m in store.load_many(ids) if not _contradiction_open(m, contradicted)]
     responses = ResponseBuilder(stale_after_days=stale_after_days)
     verdicts = resolve_verdicts(
-        rows, caller_origin=caller, now=utcnow(), stale_after_days=stale_after_days
+        rows,
+        caller_origin=caller,
+        now=utcnow(),
+        stale_after_days=stale_after_days,
+        admission=admission,
     )
     fresh = [
         m.id for m, v in zip(rows, verdicts) if _fresh(m, v, trust[m.id], responses)
@@ -296,7 +338,10 @@ def in_process(scratch: Path, rows: list[dict[str, Any]]) -> list[dict[str, Any]
             else checkout["origin"]
         )
         scan = full_scan(
-            store, caller, stale_after_days=config.behavior.verification_stale_days
+            store,
+            caller,
+            admission=brief_admission(store, config, checkout),
+            stale_after_days=config.behavior.verification_stale_days,
         )
         out.append(
             {
@@ -322,27 +367,20 @@ def _unresolved_now(store: Any, checkout: dict[str, Any], config: Any) -> int:
     """How many of the window's eligible rows the drift memo cannot answer
     now (`memoised_verdicts`): zero once a fill has kept everything it
     resolved."""
-    from bettermemory.models import Category, utcnow
-    from bettermemory.recall import (
-        _DELIVERED_PROVENANCE,
-        BRIEF_WINDOW,
-        _origin_for,
-        in_project,
-    )
+    from bettermemory.models import utcnow
+    from bettermemory.recall import _origin_for
     from bettermemory.verdict import UnresolvedVerdict, memoised_verdicts
 
     local = checkout["local"]
     caller = _origin_for(Path(local)) if local else checkout["origin"]
-    ids = store.brief_rows(
-        admit=lambda memory_origin: in_project(memory_origin, caller),
-        provenance=_DELIVERED_PROVENANCE,
-        exclude_category=Category.AMBIENT.value,
-    )[:BRIEF_WINDOW]
+    admission = brief_admission(store, config, checkout)
+    ids = _admitted_window(store, admission)
     verdicts = memoised_verdicts(
         store.load_many(ids),
         caller_origin=caller,
         now=utcnow(),
         stale_after_days=config.behavior.verification_stale_days,
+        admission=admission,
     )
     return sum(1 for v in verdicts if isinstance(v, UnresolvedVerdict))
 

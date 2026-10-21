@@ -1538,3 +1538,73 @@ def test_capture_is_no_longer_a_removed_section() -> None:
     from bettermemory.config import _REMOVED_SECTIONS
 
     assert "capture" not in _REMOVED_SECTIONS
+
+
+# ---------------------------------------------------------------------------
+# [membership]: the checkout token's policy switch and the A3 switch
+# ---------------------------------------------------------------------------
+
+
+def test_membership_defaults_write_the_token_and_join_silently(tmp_path: Path) -> None:
+    """No `[membership]` section: the token is written (decision D11) and
+    two agreeing witnesses join silently (decision D8), as the dataclass
+    says."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[behavior]\ndefault_max_results = 5\n", encoding="utf-8")
+    loaded = load_config(config_path).membership
+    assert (loaded.write_token, loaded.strict) == (True, False)
+    assert loaded == Config().membership
+
+
+def test_the_shipped_config_documents_membership(tmp_path: Path) -> None:
+    """The first-run file carries `[membership]` with both keys at their
+    defaults, and its prose names what the token is and where it lives."""
+    section = tomllib.loads(DEFAULT_CONFIG)["membership"]
+    assert section == {"write_token": True, "strict": False}
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(DEFAULT_CONFIG, encoding="utf-8")
+    assert load_config(config_path).membership == Config().membership
+    prose = DEFAULT_CONFIG.split("[membership]")[1]
+    assert "info/bettermemory" in prose
+    assert "never in the working tree" in prose
+    assert "bare repository" in prose
+
+
+def test_membership_keys_load_as_written(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[membership]\nwrite_token = false\nstrict = true\n", encoding="utf-8"
+    )
+    membership = load_config(config_path).membership
+    assert membership.write_token is False
+    assert membership.strict is True
+
+
+@pytest.mark.parametrize(
+    ("written", "write_token", "strict"),
+    [
+        ('write_token = "false"\nstrict = "yes"\n', False, True),
+        ('write_token = "off"\nstrict = "1"\n', False, True),
+        ('write_token = "maybe"\nstrict = "perhaps"\n', True, False),
+        ("write_token = 0\nstrict = 1\n", True, False),
+    ],
+    ids=["quoted-words", "quoted-switches", "unrecognised-strings", "integers"],
+)
+def test_membership_keys_go_through_the_bool_coercion(
+    tmp_path: Path, written: str, write_token: bool, strict: bool
+) -> None:
+    """A quoted "false" keeps the token switched off (the str trap
+    `_coerce_bool` exists for); an unrecognised value falls back to the
+    default."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(f"[membership]\n{written}", encoding="utf-8")
+    membership = load_config(config_path).membership
+    assert (membership.write_token, membership.strict) == (write_token, strict)
+
+
+def test_a_membership_value_that_is_not_a_table_loads_the_defaults(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("membership = 3\n", encoding="utf-8")
+    assert load_config(config_path).membership == Config().membership

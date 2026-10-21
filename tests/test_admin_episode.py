@@ -18,6 +18,7 @@ from bettermemory.session import SessionState
 from bettermemory.store import Store
 
 from ._mcp import call_tool as _mcp_call
+from .test_membership_security import stand_in_checkout
 
 
 @pytest.fixture
@@ -37,7 +38,14 @@ async def _call(server: Any, name: str, **kwargs: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 
-async def test_episode_write_then_handoff(served: Any) -> None:
+async def test_episode_write_then_handoff(
+    served: Any,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Both sessions stand in one checkout: the handoff keys run-state on
+    # the caller's checkout (design 3.6).
+    stand_in_checkout(tmp_path_factory.mktemp("checkout"), monkeypatch)
     server, state, _ = served
     written = await _call(
         server,

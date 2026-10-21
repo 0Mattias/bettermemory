@@ -1,14 +1,17 @@
 """Integration tests: origin capture on write, auto-scope filter on search.
 
 We monkeypatch `bettermemory.origin.capture` so tests can choose what the
-"current" origin looks like at write and search time, without setting up
-a fake git repo for every case.
+"current" origin looks like at write and search time. The origin a write
+records is data; the caller's membership is resolved where the origin's
+``cwd`` stands (`handlers._shared.request_cwd`, design 3.1), and a record
+reaches a search by its home (design 3.5). The search cases therefore
+stand the caller in real repositories built under the test's temporary
+directory; the origin-on-write cases need none.
 
-The "checkout-path lifecycle" section at the bottom is the deliberate
-exception: those cases are ABOUT what real `git rev-parse
---show-toplevel` output does over a checkout's life (a directory move,
-a second live clone), so they feed the fixture a real `capture()` of a
-real on-disk checkout rather than a hand-built `Origin`.
+The "checkout-path lifecycle" section at the bottom is ABOUT what a
+checkout's life does to delivery (a directory move, another machine's
+checkout of the project, a second clone), so it feeds the fixture a real
+`capture()` of a real on-disk checkout.
 """
 
 from __future__ import annotations
@@ -21,12 +24,25 @@ from typing import Any
 
 import pytest
 
+from bettermemory import location
 from bettermemory.config import Config, StorageConfig
 from bettermemory.events import Recorder
+from bettermemory.membership import (
+    GLOBAL,
+    SEARCH_AUTO_SCOPE,
+    SEARCH_UNSCOPED,
+    Membership,
+    RecordHome,
+)
 from bettermemory.origin import Origin
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
+
+from .test_membership_security import checkout
+
+REPO_A = "git@github.com:example/repo-a.git"
+REPO_B = "git@github.com:example/repo-b.git"
 
 
 @pytest.fixture
@@ -68,6 +84,25 @@ def server_factory(memory_dir: Path, monkeypatch: pytest.MonkeyPatch):
         return server, captured
 
     return make
+
+
+@pytest.fixture
+def places(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
+    """Two repositories, each its own project (``a``, ``b``), and a folder
+    outside any repository (``scratch``)."""
+    base = tmp_path_factory.mktemp("places")
+    scratch = base / "scratch"
+    scratch.mkdir()
+    return {
+        "a": checkout(base / "repo-a", remote=REPO_A),
+        "b": checkout(base / "repo-b", remote=REPO_B),
+        "scratch": scratch,
+    }
+
+
+def _at(path: Path, repo: str | None = None) -> Origin:
+    """The origin of a caller standing at `path`."""
+    return Origin(cwd=str(path), repo=repo)
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
@@ -166,13 +201,13 @@ async def test_origin_survives_memory_update(
 
 
 async def test_search_auto_scope_filters_other_repos(
-    server_factory,
+    server_factory, places: dict[str, Path]
 ) -> None:
-    """A memory written from repo A should not surface during a search
-    from repo B when auto_scope=True (the default)."""
-    server, captured = server_factory(Origin(repo="git@github.com:example/repo-a.git"))
+    """A memory written in repo A's project does not surface during a
+    search from repo B's when auto_scope=True (the default)."""
+    server, captured = server_factory(_at(places["a"], REPO_A))
 
-    # Write while "in" repo A.
+    # Write while in repo A.
     await _call(
         server,
         "memory_write",
@@ -180,16 +215,16 @@ async def test_search_auto_scope_filters_other_repos(
         scopes=["infrastructure"],
     )
 
-    # Switch to "repo B" and search.
-    captured["value"] = Origin(repo="git@github.com:example/repo-b.git")
+    # Switch to repo B and search.
+    captured["value"] = _at(places["b"], REPO_B)
     hits = _unwrap(await _call(server, "memory_search", query="kubernetes networking"))
     assert hits == []
 
 
 async def test_search_auto_scope_includes_same_repo(
-    server_factory,
+    server_factory, places: dict[str, Path]
 ) -> None:
-    server, _ = server_factory(Origin(repo="git@github.com:example/foo.git"))
+    server, _ = server_factory(_at(places["a"], REPO_A))
     written = await _call(
         server,
         "memory_write",
@@ -201,11 +236,11 @@ async def test_search_auto_scope_includes_same_repo(
 
 
 async def test_search_auto_scope_includes_global_memories(
-    server_factory,
+    server_factory, places: dict[str, Path]
 ) -> None:
-    """Memories written outside any git repo (origin.repo = None) are
-    global and should surface from any project."""
-    server, captured = server_factory(Origin(cwd="/projects/scratch"))
+    """Memories written outside any repository are homed ``global`` and
+    surface from any project (design 3.5)."""
+    server, captured = server_factory(_at(places["scratch"]))
 
     written = await _call(
         server,
@@ -214,15 +249,15 @@ async def test_search_auto_scope_includes_global_memories(
         scopes=["learning-style"],
     )
 
-    captured["value"] = Origin(repo="git@github.com:example/anything.git")
+    captured["value"] = _at(places["a"], REPO_A)
     hits = _unwrap(await _call(server, "memory_search", query="tabs over spaces"))
     assert any(h["id"] == written["id"] for h in hits)
 
 
 async def test_search_auto_scope_false_returns_cross_project(
-    server_factory,
+    server_factory, places: dict[str, Path]
 ) -> None:
-    server, captured = server_factory(Origin(repo="git@github.com:example/repo-a.git"))
+    server, captured = server_factory(_at(places["a"], REPO_A))
     written = await _call(
         server,
         "memory_write",
@@ -230,7 +265,7 @@ async def test_search_auto_scope_false_returns_cross_project(
         scopes=["infrastructure"],
     )
 
-    captured["value"] = Origin(repo="git@github.com:example/repo-b.git")
+    captured["value"] = _at(places["b"], REPO_B)
     hits = _unwrap(
         await _call(
             server,
@@ -242,12 +277,15 @@ async def test_search_auto_scope_false_returns_cross_project(
     assert any(h["id"] == written["id"] for h in hits)
 
 
-async def test_search_caller_outside_repo_does_not_filter(
-    server_factory,
+async def test_search_caller_outside_any_project_reaches_projects_unscoped(
+    server_factory, places: dict[str, Path]
 ) -> None:
-    """When the caller is not in a repo (origin.repo = None), there's no
-    project boundary to enforce — everything passes the auto-scope filter."""
-    server, captured = server_factory(Origin(repo="git@github.com:example/foo.git"))
+    """A caller outside any project has no project of its own: its
+    auto-scoped search admits the records written outside any project,
+    and its unscoped search every project's as well (design 3.5, the
+    table's outside column). A project's record is a request away, never
+    pushed."""
+    server, captured = server_factory(_at(places["a"], REPO_A))
     written = await _call(
         server,
         "memory_write",
@@ -255,29 +293,48 @@ async def test_search_caller_outside_repo_does_not_filter(
         scopes=["infrastructure"],
     )
 
-    # Caller is not in a repo.
-    captured["value"] = Origin(cwd="/projects/scratch")
-    hits = _unwrap(await _call(server, "memory_search", query="kubernetes networking"))
-    assert any(h["id"] == written["id"] for h in hits)
+    # The caller is not in a repository.
+    captured["value"] = _at(places["scratch"])
+    scoped = _unwrap(
+        await _call(server, "memory_search", query="kubernetes networking")
+    )
+    assert all(h["id"] != written["id"] for h in scoped)
+    unscoped = _unwrap(
+        await _call(
+            server, "memory_search", query="kubernetes networking", auto_scope=False
+        )
+    )
+    assert any(h["id"] == written["id"] for h in unscoped)
 
 
 async def test_legacy_memory_without_origin_passes_filter(
-    server_factory, memory_dir: Path
+    server_factory, memory_dir: Path, places: dict[str, Path]
 ) -> None:
     """A memory that carries no `origin` at all (the shape every record
-    had before the auto-scope feature shipped) is global by definition."""
-    server, _ = server_factory(Origin(repo="git@github.com:example/foo.git"))
+    had before the auto-scope feature shipped) is homed ``global`` by the
+    migration (rule ``global:no_origin``, design 2.1) and surfaces from
+    any project. A record with no home row is admitted nowhere."""
+    server, _ = server_factory(_at(places["a"], REPO_A))
 
     # Seed straight through the store with no origin block, the way a
-    # record from before this phase reads.
-    legacy = Store.open(memory_dir).write(
+    # record from before this phase reads, with the home the migration
+    # gives it.
+    seeded = Store.open(memory_dir)
+    legacy = seeded.write(
         content="kubernetes networking notes from before the feature shipped",
+        scopes=["tools"],
+        origin=None,
+        home=RecordHome(GLOBAL, None, "global:no_origin"),
+    )
+    homeless = seeded.write(
+        content="kubernetes networking notes with no home row",
         scopes=["tools"],
         origin=None,
     )
 
     hits = _unwrap(await _call(server, "memory_search", query="kubernetes networking"))
     assert any(h["id"] == legacy.id for h in hits)
+    assert all(h["id"] != homeless.id for h in hits)
 
 
 # ---------------------------------------------------------------------------
@@ -285,10 +342,13 @@ async def test_legacy_memory_without_origin_passes_filter(
 # ---------------------------------------------------------------------------
 
 
-async def test_search_records_auto_scope_and_repo_filter(
-    server_factory, memory_dir: Path
+async def test_search_records_auto_scope_and_its_surface(
+    server_factory, memory_dir: Path, places: dict[str, Path]
 ) -> None:
-    server, _ = server_factory(Origin(repo="git@github.com:example/foo.git"))
+    """The search row names the membership surface it delivered through
+    (design 3.5); the origin columns decide nothing, so no repository
+    filter is recorded."""
+    server, _ = server_factory(_at(places["a"], REPO_A))
     await _call(server, "memory_search", query="anything")
 
     events = Store.open(memory_dir).iter_events()
@@ -296,46 +356,38 @@ async def test_search_records_auto_scope_and_repo_filter(
     assert search_events
     e = search_events[-1]
     assert e["auto_scope"] is True
-    assert e["repo_filter"] == "git@github.com:example/foo.git"
+    assert e["membership_surface"] == SEARCH_AUTO_SCOPE
+    assert "repo_filter" not in e
+    assert "membership" not in e
 
 
-async def test_search_with_auto_scope_false_records_null_filter(
-    server_factory, memory_dir: Path
+async def test_search_with_auto_scope_false_records_the_unscoped_surface(
+    server_factory, memory_dir: Path, places: dict[str, Path]
 ) -> None:
-    server, _ = server_factory(Origin(repo="git@github.com:example/foo.git"))
+    server, _ = server_factory(_at(places["a"], REPO_A))
     await _call(server, "memory_search", query="anything", auto_scope=False)
     events = Store.open(memory_dir).iter_events()
     search_events = [e for e in events if e["kind"] == "search"]
     e = search_events[-1]
     assert e["auto_scope"] is False
-    assert e["repo_filter"] is None
+    assert e["membership_surface"] == SEARCH_UNSCOPED
+    assert "repo_filter" not in e
 
 
 # ---------------------------------------------------------------------------
-# Checkout-path lifecycle — `origin.worktree_root` is an absolute path
+# Checkout-path lifecycle: `origin.worktree_root` is an absolute path
 # frozen at write time, and the retrieval surface must not go dark when
-# that path stops describing where the project lives.
+# that path stops describing where the project lives. Delivery reads the
+# record's home, a project, never the recorded path (design 3.5; design 4,
+# failures 1 and 3).
 #
-# `tests/test_origin.py` pins the same rule at the `worktrees_match` unit
-# level. These are the surface-level twins: the assertion is about what
-# `memory_search` actually returns, because the failure this guards is a
-# SILENT one: an empty result set carries no signal that a filter dropped
-# everything.
+# The assertions are about what `memory_search` actually returns, because
+# the failure this guards is a SILENT one: an empty result set carries no
+# signal that a filter dropped everything.
 # ---------------------------------------------------------------------------
 
 _GIT_AVAILABLE = shutil.which("git") is not None
 _REMOTE = "git@github.com:example/myapp.git"
-
-
-def _init_checkout(path: Path, *, remote: str = _REMOTE) -> None:
-    """A real primary checkout with `remote` as `origin` — enough for
-    `capture()` to report a repo URL and a worktree root."""
-    path.mkdir(parents=True)
-    for args in (
-        ["init", "--initial-branch=main"],
-        ["remote", "add", "origin", remote],
-    ):
-        subprocess.run(["git", *args], cwd=path, check=True, capture_output=True)
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
@@ -345,12 +397,11 @@ async def test_project_memories_survive_a_checkout_move(
     """Rename the project directory and the project's memories still
     surface under auto_scope.
 
-    The recorded `worktree_root` is the pre-move absolute path, so the
-    strict-equality core of `worktrees_match` says "different worktree".
-    The dead-worktree degrade is what saves it: the recorded root no
-    longer exists, so there is no live workspace to isolate from and the
-    filter falls back to repo-level matching. Without that leg every
-    memory written before an ordinary `mv` would drop out of every
+    The recorded `worktree_root` is the pre-move absolute path. The
+    record's home is the project, and the moved folder is the same
+    checkout (the same git directory, witness O), so the caller at the
+    new path stands in the project the record is homed in. Without that
+    every memory written before an ordinary `mv` would drop out of every
     auto-scoped search for the project, with an empty result set as the
     only symptom.
     """
@@ -358,7 +409,7 @@ async def test_project_memories_survive_a_checkout_move(
 
     old = tmp_path / "projects" / "myapp"
     new = tmp_path / "Documents" / "projects" / "myapp"
-    _init_checkout(old)
+    checkout(old, remote=_REMOTE)
 
     _primary_root_of.cache_clear()
     server, captured = server_factory(capture(cwd=old))
@@ -378,8 +429,8 @@ async def test_project_memories_survive_a_checkout_move(
     assert not old.exists()
     _primary_root_of.cache_clear()
     captured["value"] = capture(cwd=new)
-    # Same project by repo URL, different absolute root — the exact
-    # shape the strict check would have excluded.
+    # Same repository, different absolute root: the exact shape a
+    # path-keyed check would have excluded.
     assert captured["value"].repo == _REMOTE
     assert captured["value"].worktree_root == str(new.resolve())
 
@@ -389,66 +440,95 @@ async def test_project_memories_survive_a_checkout_move(
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
 async def test_synced_memory_from_another_machine_surfaces_locally(
-    server_factory, tmp_path: Path
+    server_factory, memory_dir: Path, tmp_path: Path
 ) -> None:
-    """A memory that arrived over `sync` from another machine carries
-    that machine's absolute `worktree_root`, which cannot exist locally
-    — it still surfaces for the same repo.
+    """A memory written on another machine carries that machine's
+    absolute `worktree_root`, which cannot exist locally, and is homed in
+    that machine's checkout of the project: it still surfaces in a local
+    clone of the repository, which is the same project (D1: other
+    machines of one project share its memories).
 
-    Distinct from the move case only in that the path was never local to
-    begin with; both land on the dead-worktree degrade. Pinned
-    separately because a "resolve the recorded path relative to the
-    current machine" style fix would pass the move test and fail this
-    one.
+    Distinct from the move case in that the path was never local to
+    begin with, and the home names a checkout of another machine.
     """
     from bettermemory.origin import _primary_root_of, capture
 
     foreign = "/home/ci-user/projects/myapp"
-    server, captured = server_factory(
-        Origin(cwd=foreign, repo=_REMOTE, branch="main", worktree_root=foreign)
+    laptop = checkout(tmp_path / "laptop" / "myapp", remote=_REMOTE)
+    config = Config(storage=StorageConfig(directory=str(memory_dir)))
+    store = Store.open(memory_dir)
+    there = Membership(store, "machine-laptop").resolve(
+        location.capture_location(
+            str(laptop), machine="machine-laptop", session=None, config=config
+        )
     )
-    written = await _call(
-        server,
-        "memory_write",
+    assert there.home is not None
+    written = store.write(
         content="myapp hashes passwords with bcrypt at cost factor 12",
         scopes=["projects:myapp"],
+        origin=Origin(cwd=foreign, repo=_REMOTE, branch="main", worktree_root=foreign),
+        home=there.home,
     )
 
     local = tmp_path / "Documents" / "projects" / "myapp"
-    _init_checkout(local)
+    local.parent.mkdir(parents=True)
+    subprocess.run(
+        ["git", "clone", "-q", str(laptop), str(local)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "remote", "set-url", "origin", _REMOTE],
+        cwd=local,
+        check=True,
+        capture_output=True,
+    )
     _primary_root_of.cache_clear()
-    captured["value"] = capture(cwd=local)
+    server, captured = server_factory(capture(cwd=local))
     assert captured["value"].worktree_root == str(local.resolve())
 
     hits = _unwrap(await _call(server, "memory_search", query="bcrypt"))
-    assert [h["id"] for h in hits] == [written["id"]]
+    assert [h["id"] for h in hits] == [written.id]
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
-async def test_second_live_checkout_of_one_repo_stays_isolated(
+async def test_second_live_checkout_of_one_repo_shares_and_a_stranger_does_not(
     server_factory, tmp_path: Path
 ) -> None:
     """The negative control for the two tests above, and the boundary of
-    what the degrade covers.
+    what sharing covers.
 
-    When the recorded root is still a live checkout on disk, the
-    worktree filter keeps doing its job: a memory written in one
-    checkout of a repo does not surface in a second, concurrently
-    existing checkout of the same repo. So the degrade is keyed on the
-    recorded workspace being GONE, not on "paths differ" — a fix that
-    simply dropped the worktree clause would pass the move test and
-    fail this one.
+    A second live clone of the repository is the same project (D1:
+    clones of one project share its memories), so a memory written in
+    the first surfaces in the second while both exist. A repository
+    that only names the same remote URL, with none of the project's
+    commits, is not taken for it on that one witness: the caller is
+    asked, and until it answers nothing from another project is shown
+    there (design 3.2). So sharing is keyed on the checkout being the
+    project's, never on "the remote URL matches".
     """
     from bettermemory.origin import _primary_root_of, capture
 
     first = tmp_path / "clones" / "myapp"
     second = tmp_path / "clones" / "myapp-review"
-    _init_checkout(first)
-    _init_checkout(second)
+    stranger = tmp_path / "clones" / "myapp-stranger"
+    checkout(first, remote=_REMOTE)
+    subprocess.run(
+        ["git", "clone", "-q", str(first), str(second)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "remote", "set-url", "origin", _REMOTE],
+        cwd=second,
+        check=True,
+        capture_output=True,
+    )
+    checkout(stranger, remote=_REMOTE)
 
     _primary_root_of.cache_clear()
     server, captured = server_factory(capture(cwd=first))
-    await _call(
+    written = await _call(
         server,
         "memory_write",
         content="myapp hashes passwords with bcrypt at cost factor 12",
@@ -459,5 +539,10 @@ async def test_second_live_checkout_of_one_repo_stays_isolated(
     captured["value"] = capture(cwd=second)
     assert captured["value"].repo == _REMOTE
     assert first.exists()
+    shared = _unwrap(await _call(server, "memory_search", query="bcrypt"))
+    assert [h["id"] for h in shared] == [written["id"]]
 
+    _primary_root_of.cache_clear()
+    captured["value"] = capture(cwd=stranger)
+    assert captured["value"].repo == _REMOTE
     assert _unwrap(await _call(server, "memory_search", query="bcrypt")) == []

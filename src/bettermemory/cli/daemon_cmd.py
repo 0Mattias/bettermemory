@@ -100,7 +100,9 @@ def _run_foreground(port: int | None) -> None:
         stream=sys.stderr,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-    ctx = cli_context()
+    # The daemon runs the migration under the store's lock
+    # (`daemon._migrate_at_start`), not here before the lock is taken.
+    ctx = cli_context(migrate=False)
     code = serve(
         config=ctx.config,
         store=ctx.store,

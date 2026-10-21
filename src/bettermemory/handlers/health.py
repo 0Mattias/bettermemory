@@ -10,6 +10,7 @@ Description-edit history:
 
 from __future__ import annotations
 
+import sqlite3
 from typing import TYPE_CHECKING, Any
 
 from ..health import report_for_store
@@ -17,6 +18,7 @@ from ._shared import Context, _advance_turn
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
+    from ..store import Store
 
 
 DESC_MEMORY_HEALTH = (
@@ -126,7 +128,15 @@ DESC_MEMORY_HEALTH = (
     "aggregate only. `prunable_sessions` is the actionable one: episode "
     "GC runs on `episode_write` and `bettermemory episodes prune` and "
     "nowhere else, so a read-only loop never collects. Non-zero means "
-    "that many session directories are already collectable."
+    "that many session directories are already collectable.\n\n"
+    # Documented after `CLI equivalent:` too: membership is not a bucket of
+    # memory rows but the questions and states of design 8.10.
+    "`membership` is the state of which project each record belongs to: "
+    "`open_proposals` (each with the line naming its two commands, which "
+    "the user runs in a terminal; never an agent), `provisional_projects`, "
+    "`unresolved_projects` (writes made where the folder could not be read), "
+    "`suppressed_recall_turns` per checkout, `indeterminate_captures`, "
+    "`deferred_captures` and `checkouts_without_live_view`."
 )
 
 
@@ -165,7 +175,20 @@ async def memory_health(
         # whose memories live in this store.
         caller_origin=_h.capture_origin(),
     )
-    return report.to_dict()
+    out = report.to_dict()
+    out["membership"] = _membership(deps.store)
+    return out
+
+
+def _membership(store: Store) -> dict[str, Any] | None:
+    """The membership section of design 8.10 (`Membership.health`), None
+    for a store an earlier build left without membership tables."""
+    from ..cli.membership_cmd import health_dict, health_model
+
+    try:
+        return health_dict(health_model(store))
+    except (sqlite3.Error, RuntimeError):
+        return None
 
 
 __all__ = ["DESC_MEMORY_HEALTH", "memory_health"]

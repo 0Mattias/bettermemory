@@ -11,6 +11,7 @@ minutes between two calls without waiting.
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -20,16 +21,20 @@ import pytest
 from bettermemory import _handlers, identity, review
 from bettermemory import log as bm_log
 from bettermemory import models
+from bettermemory.admission import Admission
 from bettermemory.builder import build_server
 from bettermemory.config import BehaviorConfig, Config, StorageConfig
 from bettermemory.events import Recorder
 from bettermemory.handlers import write as write_handler
+from bettermemory.location import resolve_caller
+from bettermemory.membership import REVIEW_STRATA
 from bettermemory.origin import Origin
 from bettermemory.session import SessionState
 from bettermemory.store import Store
 from bettermemory.time_utils import isoformat_utc
 
 from ._mcp import call_tool
+from .test_membership_security import stand_in_checkout
 
 TAU = 0.5
 
@@ -116,12 +121,22 @@ def install_clock(monkeypatch: pytest.MonkeyPatch, *, offset: timedelta) -> Cloc
     return clock
 
 
-def fix_origin_and_identity(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Every write captures one origin, and no declared client or model
-    leaks in from the environment the suite runs in."""
-    monkeypatch.setattr(_handlers, "capture_origin", lambda *a, **k: ORIGIN)
+def fix_origin_and_identity(monkeypatch: pytest.MonkeyPatch, base: Path) -> Path:
+    """Stand the process in a fresh checkout under `base` (a directory of
+    its own) and make every write capture one origin there, and let no
+    declared client or model leak in from the environment the suite runs
+    in. The write is resolved at its origin's cwd (design 8.1) and its
+    related set is the review strata of that checkout's project (design
+    3.5), which a caller outside any project is admitted nothing of.
+    Returns the checkout."""
+    repo = stand_in_checkout(base, monkeypatch)
+    here = Origin(
+        cwd=str(repo), repo=ORIGIN.repo, branch=ORIGIN.branch, worktree_root=str(repo)
+    )
+    monkeypatch.setattr(_handlers, "capture_origin", lambda *a, **k: here)
     monkeypatch.delenv(identity.ENV_CLIENT, raising=False)
     monkeypatch.delenv(identity.ENV_MODEL, raising=False)
+    return repo
 
 
 def set_tau(monkeypatch: pytest.MonkeyPatch, value: float = TAU) -> float:
@@ -131,7 +146,11 @@ def set_tau(monkeypatch: pytest.MonkeyPatch, value: float = TAU) -> float:
 
 
 class Harness:
-    """One in-process server over one scratch store, recorder on."""
+    """One in-process server over one scratch store, recorder on.
+
+    The caller is the checkout the process stands in
+    (`fix_origin_and_identity`), resolved once here so its first sight is
+    behind the writes; a seeded record is homed in its project."""
 
     def __init__(self, root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         self.root = root
@@ -141,6 +160,7 @@ class Harness:
             behavior=BehaviorConfig(),
         )
         self.store = Store(root)
+        self.home = resolve_caller(self.store, self.config, os.getcwd()).home()
         self.state = SessionState()
         self.server = build_server(
             config=self.config,
@@ -158,7 +178,9 @@ class Harness:
                 self.monkeypatch.setenv(env, value)
 
     def seed(self, content: str) -> str:
-        return self.store.write(content=content, scopes=["tools"], origin=ORIGIN).id
+        return self.store.write(
+            content=content, scopes=["tools"], origin=ORIGIN, home=self.home
+        ).id
 
     async def write(self, content: str, **kwargs: Any) -> dict[str, Any]:
         args: dict[str, Any] = {"content": content, "scopes": ["tools"], **kwargs}
@@ -192,13 +214,15 @@ class Harness:
         )
 
     def related_ids(self, content: str) -> list[str]:
-        """The related set the daemon computes for `content` now."""
+        """The related set the daemon computes for `content` now: the
+        REVIEW_STRATA admission of a caller resolved where the process
+        stands."""
+        caller = resolve_caller(self.store, self.config, os.getcwd())
         return review.related_for(
             self.store,
             content,
             behavior=self.config.behavior,
-            repo_filter=ORIGIN.repo,
-            worktree_filter=ORIGIN.worktree_root,
+            admission=Admission.of(REVIEW_STRATA, caller),
         ).ids
 
     async def pre_answer(

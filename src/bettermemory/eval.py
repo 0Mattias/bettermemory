@@ -68,6 +68,7 @@ import math
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from collections.abc import Callable, Mapping
 from typing import Any, Iterable
 
 from .health import _HOOKLESS_REASON  # one sentence, shared — see its comment
@@ -392,10 +393,11 @@ class EvalReport:
     applied_model: int = 0
     applied_hook: int = 0
     # The recall surface's section over the same window (D11):
-    # `recall_counters.compute_surface_report`. None when the window holds
-    # none of the surface's rows, and then the key is left out of
-    # `to_dict` and no line of it is rendered, so a log written before
-    # the surface reports byte for byte as it did.
+    # `recall_counters.compute_surface_report`, with its split on the show
+    # rows' rule and the membership delta (`surface_rule_split`, design
+    # 8.11). None when the window holds none of the surface's rows, and
+    # then the key is left out of `to_dict` and no line of it is rendered,
+    # so a log written before the surface reports byte for byte as it did.
     surfaces: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -1043,7 +1045,12 @@ def compute_eval(
         review=compute_review_report(
             review_rows, start=cutoff, end=window_end, now=now
         ).to_dict(),
-        surfaces=compute_surface_report(surface_rows, start=cutoff, end=window_end),
+        surfaces=_with_rule_split(
+            compute_surface_report(surface_rows, start=cutoff, end=window_end),
+            surface_rows,
+            start=cutoff,
+            end=window_end,
+        ),
         scope_filter=scope,
         threshold_rule=threshold_rule,
         total_events_scanned=total_events_scanned,
@@ -1071,6 +1078,128 @@ def compute_eval(
     report.endorsement_rate = RateCI.from_counts(applied_explicit, applied_total)
     report.silent_miss_rate = RateCI.from_counts(silent_misses, turns_audited)
     return report
+
+
+#: The group the split reports every show under whose rule is not the
+#: current one: the rules from before membership decided delivery (rs-v1
+#: to rs-v4), read together (design 8.11).
+EARLIER_RULES = "earlier"
+
+
+def _with_rule_split(
+    surfaces: dict[str, Any] | None,
+    rows: list[dict[str, Any]],
+    *,
+    start: datetime | None,
+    end: datetime | None,
+) -> dict[str, Any] | None:
+    """The surfaces section with its split on each show's rule (design
+    8.11) added as ``by_rule`` and ``membership_delta``; None stays None,
+    so a log without the surface's rows reports as it did."""
+    if surfaces is None:
+        return None
+    by_rule, delta = surface_rule_split(rows, start=start, end=end)
+    return {**surfaces, "by_rule": by_rule, "membership_delta": delta}
+
+
+def _show_in_window(
+    show: Mapping[str, Any], start: datetime | None, end: datetime | None
+) -> bool:
+    """Whether a show row falls in [start, end), as the surfaces section
+    counts it: a row without a readable stamp only in an unbounded
+    window."""
+    stamp = parse_event_ts(show.get("ts"))
+    if stamp is None:
+        return start is None and end is None
+    return (start is None or stamp >= start) and (end is None or stamp < end)
+
+
+def surface_rule_split(
+    rows: Iterable[dict[str, Any]],
+    *,
+    start: datetime | None,
+    end: datetime | None,
+) -> tuple[dict[str, Any], dict[str, int]]:
+    """The recall surfaces' tallies over [start, end), split on the rule
+    each show row carries, never on a clock (design 8.11): the current
+    rule (`recall.RULE`, rs-v5: delivery decided by membership) and the
+    earlier rules together (`EARLIER_RULES`; a show with no rule is
+    earlier). Each group carries the rules its shows named and, per
+    surface (None for a window holding none of the surface's rows), the
+    counts and the four rates of the section, computed by
+    `recall_counters.compute_surface_report` over the group's shows: what
+    the conversation did after a show is joined over every row, whatever
+    its rule, and a show's follow-ups end at the id's next show by either
+    rule, so the two groups add up to the section.
+
+    `membership_delta` reads the show rows under the current rule that
+    carry ``rc3_admitted`` (rows written before rs-v5 carry none and are
+    not read): ``rows`` compared, ``rows_differing`` (the delivered ids
+    and the rc3-admitted ids are not the same set), ``delivered_not_rc3``
+    (ids delivered that rc3's rule would not have delivered) and
+    ``rc3_not_delivered`` (ids rc3's rule would have delivered that were
+    not)."""
+    from .recall import RULE
+    from .recall_counters import (
+        SURFACES,
+        compute_surface_report,
+        is_surface_show,
+        shown_ids,
+    )
+
+    def group_of(show: Mapping[str, Any]) -> str:
+        return RULE if show.get("rule") == RULE else EARLIER_RULES
+
+    def in_group(group: str) -> Callable[[Mapping[str, Any]], bool]:
+        return lambda show: group_of(show) == group
+
+    surface_rows: list[Mapping[str, Any]] = [
+        row for row in rows if isinstance(row, Mapping)
+    ]
+    shows = [
+        row
+        for row in surface_rows
+        if is_surface_show(row) and _show_in_window(row, start, end)
+    ]
+    by_rule: dict[str, Any] = {}
+    for group in (RULE, EARLIER_RULES):
+        report = compute_surface_report(
+            surface_rows,
+            start=start,
+            end=end,
+            pick=in_group(group),
+        )
+        named = {
+            rule
+            for show in shows
+            if group_of(show) == group
+            and isinstance(rule := show.get("rule"), str)
+            and rule
+        }
+        by_rule[group] = {
+            "rules": sorted(named),
+            **{
+                surface: report[surface] if report is not None else None
+                for surface in SURFACES
+            },
+        }
+    delta = {
+        "rows": 0,
+        "rows_differing": 0,
+        "delivered_not_rc3": 0,
+        "rc3_not_delivered": 0,
+    }
+    for show in shows:
+        admitted = show.get("rc3_admitted")
+        if group_of(show) != RULE or not isinstance(admitted, list):
+            continue
+        rc3 = {item for item in admitted if isinstance(item, str)}
+        delivered = set(shown_ids(show))
+        delta["rows"] += 1
+        delta["rows_differing"] += int(delivered != rc3)
+        delta["delivered_not_rc3"] += len(delivered - rc3)
+        delta["rc3_not_delivered"] += len(rc3 - delivered)
+    return by_rule, delta
 
 
 # ---------------------------------------------------------------------------
@@ -1285,7 +1414,45 @@ def _surface_text_lines(surfaces: dict[str, Any] | None) -> list[str]:
                     f"graded {stratum}", _rate_from_dict(grade["relevant_rate"])
                 )
             )
+    lines.extend(_rule_split_text_lines(surfaces))
     lines.append(f"  {surfaces['note']}")
+    return lines
+
+
+def _rule_split_text_lines(surfaces: dict[str, Any]) -> list[str]:
+    """The text form of the split on the show rows' rule (design 8.11):
+    per rule group and surface the counts, with the four rates where the
+    group delivered on that surface, then the membership delta. Nothing
+    for a section without the split."""
+    by_rule = surfaces.get("by_rule")
+    if not isinstance(by_rule, dict):
+        return []
+    lines = ["  By rule:"]
+    for group, split in by_rule.items():
+        label = group
+        if group == EARLIER_RULES:
+            label = f"{group} ({', '.join(split['rules']) or 'none'})"
+        for surface in ("brief", "recall"):
+            tally = split[surface]
+            lines.append(
+                f"    {label} {surface}: deliveries={tally['deliveries']} "
+                f"shown={tally['shown']} opened={tally['opened']} "
+                f"used={tally['used']} ignored={tally['ignored']} "
+                f"helped={tally['deliveries_helped']}"
+            )
+            if tally["deliveries"]:
+                for name in _SURFACE_RATES:
+                    lines.append(
+                        "      " + _format_rate(name, _rate_from_dict(tally[name]))
+                    )
+    delta = surfaces.get("membership_delta")
+    if isinstance(delta, dict):
+        lines.append(
+            f"  membership_delta rows={delta['rows']} "
+            f"differing={delta['rows_differing']} "
+            f"delivered_not_rc3={delta['delivered_not_rc3']} "
+            f"rc3_not_delivered={delta['rc3_not_delivered']}"
+        )
     return lines
 
 
@@ -3490,6 +3657,99 @@ def _surface_markdown_lines(
         "applied `use` of it. " + alltime["note"]
     )
     lines.append("")
+    lines.extend(
+        _rule_split_markdown_lines(
+            window,
+            alltime,
+            window_label=window_label,
+            single_window=single_window,
+        )
+    )
+    return lines
+
+
+def _rule_split_markdown_lines(
+    window: dict[str, Any] | None,
+    alltime: dict[str, Any],
+    *,
+    window_label: str,
+    single_window: bool,
+) -> list[str]:
+    """The report's split of the recall surfaces on the show rows' rule
+    (design 8.11): each surface's four rates under the current rule and
+    under the earlier rules together, the window beside all time, and the
+    membership delta. Group names only (the current rule's name and
+    `EARLIER_RULES`), never a rule string a row carried."""
+    from .recall import RULE
+
+    whole = alltime.get("by_rule")
+    if not isinstance(whole, dict):
+        return []
+    part = window.get("by_rule") if window is not None else None
+    empty = RateCI(0, 0, None, None, None)
+    lines = ["### By rule", ""]
+    if single_window:
+        lines.append("| rule | surface | rate | all time |")
+        lines.append("|---|---|---|---|")
+    else:
+        lines.append(f"| rule | surface | rate | {window_label} | all time |")
+        lines.append("|---|---|---|---|---|")
+    for group in whole:
+        for surface in ("brief", "recall"):
+            for name in _SURFACE_RATES:
+                total = _rate_from_dict(whole[group][surface][name])
+                if single_window:
+                    lines.append(
+                        f"| {group} | {surface} | `{name}` | "
+                        f"{_md_rate_cell(total, bold=True)} |"
+                    )
+                    continue
+                windowed = (
+                    _rate_from_dict(part[group][surface][name])
+                    if isinstance(part, dict) and group in part
+                    else empty
+                )
+                lines.append(
+                    f"| {group} | {surface} | `{name}` | "
+                    f"{_md_rate_cell(windowed, bold=True)} | {_md_rate_cell(total)} |"
+                )
+    lines.append("")
+    for label, surfaces in ([] if single_window else [(window_label, window)]) + [
+        ("all time", alltime)
+    ]:
+        delta = surfaces.get("membership_delta") if surfaces is not None else None
+        if not isinstance(delta, dict):
+            continue
+        lines.append(
+            f"- membership_delta, {label}: "
+            + " · ".join(
+                [
+                    _count_phrase(delta["rows"], "row compared", "rows compared"),
+                    _count_phrase(
+                        delta["rows_differing"], "row differing", "rows differing"
+                    ),
+                    _count_phrase(
+                        delta["delivered_not_rc3"],
+                        "pointer delivered and not rc3-admitted",
+                        "pointers delivered and not rc3-admitted",
+                    ),
+                    _count_phrase(
+                        delta["rc3_not_delivered"],
+                        "pointer rc3-admitted and not delivered",
+                        "pointers rc3-admitted and not delivered",
+                    ),
+                ]
+            )
+            + "."
+        )
+    lines.append("")
+    lines.append(
+        f"Split on each show row's rule, never on a clock: `{RULE}` "
+        "delivers by membership, the earlier rules by the origin columns. "
+        "The delta compares a row's delivered pointers with the ones rc3's "
+        "rule would have delivered (`rc3_admitted`)."
+    )
+    lines.append("")
     return lines
 
 
@@ -3753,6 +4013,7 @@ __all__ = [
     "DEFAULT_SINCE_SPEC",
     "DEFAULT_ENDORSEMENT_MIN_RETRIEVALS",
     "DEFAULT_SILENT_MISS_LIMIT",
+    "EARLIER_RULES",
     "compute_eval",
     "compute_report",
     "compute_tool_usage",
@@ -3766,4 +4027,5 @@ __all__ = [
     "render_threshold_sweep_text",
     "render_widening_detail_text",
     "render_widening_preview_text",
+    "surface_rule_split",
 ]

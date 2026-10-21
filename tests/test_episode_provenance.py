@@ -17,6 +17,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from bettermemory.config import Config, StorageConfig
 from bettermemory.models import generate_ulid
 from bettermemory.server import build_server
@@ -24,6 +26,19 @@ from bettermemory.session import SessionState
 from bettermemory.store import Store
 
 from ._mcp import call_tool as _mcp_call
+from .test_membership_security import stand_in_checkout
+
+
+@pytest.fixture(autouse=True)
+def in_checkout(
+    workspace: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    """Every handoff here runs in a checkout: run-state keys on the
+    caller's checkout (design 3.6), and a caller outside any has no prior
+    session."""
+    return stand_in_checkout(tmp_path_factory.mktemp("checkout"), monkeypatch)
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
@@ -52,8 +67,9 @@ def _session_with_body(memory_dir: Path, marker: str) -> str:
 
 def _plant(memory_dir: Path, session_id: str, marker: str) -> str:
     """A row inserted into `session_id` with no log row behind it, under
-    the origin the session's own episodes carry (none for a new session),
-    so the handoff's worktree filter treats it as the session's."""
+    the origin and the home the session's own episodes carry (none for a
+    new session), so the handoff, which keys on the checkout of each
+    episode's home (design 3.6), treats it as the session's."""
     store = Store.open(memory_dir)
     planted_id = generate_ulid()
     row = store.conn.execute(
@@ -62,7 +78,24 @@ def _plant(memory_dir: Path, session_id: str, marker: str) -> str:
         (session_id,),
     ).fetchone()
     origin_json = row[0] if row is not None else None
+    home = store.conn.execute(
+        "SELECT h.project, h.checkout, h.rule FROM homes h "
+        "JOIN episodes e ON e.id = h.record_id WHERE e.session_id = ? LIMIT 1",
+        (session_id,),
+    ).fetchone()
     with store.conn:
+        if home is not None:
+            store.conn.execute(
+                "INSERT INTO homes(record_id, kind, project, checkout, rule, "
+                "decided) VALUES (?, 'episode', ?, ?, ?, ?)",
+                (
+                    planted_id,
+                    home[0],
+                    home[1],
+                    home[2],
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
         store.conn.execute(
             "INSERT INTO episodes(id, session_id, created, body, scopes_json, "
             "takeaway, origin_json, is_floor, swarm_id, log_mac) "

@@ -461,9 +461,9 @@ def run_arm_prefiltered(
     THE FILTERS STAY NONE, AND THAT IS LOAD-BEARING. `resolve_search_pool`
     runs a cap-starvation guard that reloads the full corpus and clears
     the prefiltered flag when a post-cap filter leaves too few survivors.
-    That guard is gated on at least one of `repo_filter`, `worktree_filter`
-    or `excluded_scopes` being set — so passing any of them "to look more
-    like production" would let a saturated slice silently turn this arm
+    That guard is gated on an admission (`admission.Admission`) or
+    `excluded_scopes` being set, so passing either "to look more like
+    production" would let a saturated slice silently turn this arm
     back into `run_arm`, and the report would print prefilter numbers
     that are not. `min_survivors` is required by the signature and
     unreachable for the same reason.
@@ -479,8 +479,6 @@ def run_arm_prefiltered(
             query,
             scopes=None,
             excluded_scopes=None,
-            repo_filter=None,
-            worktree_filter=None,
             min_survivors=max(K_VALUES),
         )
         # An exact IFF, not a heuristic: `resolve_search_pool` attaches a

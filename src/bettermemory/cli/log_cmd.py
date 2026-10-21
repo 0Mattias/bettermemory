@@ -101,6 +101,21 @@ def render_report(report: dict[str, Any]) -> str:
                 lines.append(f"      unaccounted {key}")
             for key in counts["missing"]:
                 lines.append(f"      missing {key}")
+    # The membership tables of design 8.5, folded by the same replay
+    # (`Store.refold` reports them under ``membership``).
+    membership = fold.get("membership") or {}
+    rows = sum(int(counts["rows"]) for counts in membership.values())
+    lines.append(f"  membership {rows} rows in {len(membership)} tables")
+    for table, counts in membership.items():
+        if counts["unaccounted"] or counts["missing"]:
+            lines.append(
+                f"    {table}: {len(counts['unaccounted'])} unaccounted, "
+                f"{len(counts['missing'])} missing"
+            )
+            for key in counts["unaccounted"]:
+                lines.append(f"      unaccounted {key}")
+            for key in counts["missing"]:
+                lines.append(f"      missing {key}")
     if report["problems"]:
         lines.append("  problems")
         for problem in report["problems"]:

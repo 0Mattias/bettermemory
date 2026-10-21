@@ -87,6 +87,7 @@ from ._shared import (
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
+    from ..location import Caller
     from .._response import ResponseBuilder
     from ..config import Config
     from ..store import Store
@@ -1027,9 +1028,10 @@ async def memory_write(
         payload["capture"] = captured
 
     # Origin is captured before the gate chain: it is part of the payload
-    # the commit writes, and its repo and worktree filter the review's
-    # related set. A refusal or a review writes nothing, so the origin of
-    # a call that does not commit never reaches the disk.
+    # the commit writes, and its cwd is where the writing caller is
+    # resolved (`_payload_caller`), whose admission filters the review's
+    # related set. A refusal or a review writes no record, so the origin
+    # of a call that does not commit never reaches the disk.
     payload["origin"] = _h.capture_origin()
     # The actor rides beside the origin: who is writing, resolved at the
     # handler entry (`identity.bind` inside `sessions.for_request`) from
@@ -1314,17 +1316,21 @@ def _reviewed_write(
     one the commit uses. A teaching error raises `ValueError` and writes
     nothing.
     """
+    from ..admission import Admission
+    from ..membership import REVIEW_STRATA
+
     answers = _review.parse_answers(review)
     active = active_snapshot if active_snapshot is not None else deps.store.load_all()
-    origin = payload.get("origin")
     declared_ids = [str(link["target_id"]) for link in payload.get("links") or []]
+    # The related set is the writing caller's REVIEW_STRATA admission
+    # (design 3.5), resolved once here and kept in the payload for the
+    # commit, which homes the record by the same resolution.
     related = _review.related_for(
         deps.store,
         payload["content"],
         behavior=deps.config.behavior,
         excluded_scopes=frozenset(state.disabled_scopes),
-        repo_filter=origin.repo if origin is not None else None,
-        worktree_filter=origin.worktree_root if origin is not None else None,
+        admission=Admission.of(REVIEW_STRATA, _payload_caller(deps, payload)),
         active=active,
         exclude_ids=declared_ids,
     )
@@ -1658,6 +1664,7 @@ def _persist(
     """
     payload = dict(payload)
     captured: _CaptureWrite | None = payload.pop("capture", None)
+    caller: Caller | None = payload.pop("caller", None)
     declared_links = list(payload.pop("links", None) or [])
     declared_ids = [str(link["target_id"]) for link in declared_links]
     detected: list[SupersessionMatch] = []
@@ -1695,14 +1702,28 @@ def _persist(
             for target in reviewed
         ]
     )
+
+    def put() -> Memory:
+        # The record, its home and HEAD as a witness of its project commit
+        # together (design 8.1): a home is written once, with the record.
+        if caller is None:
+            return deps.store.write(**payload, links=links)
+        written = deps.store.write(**payload, links=links, home=caller.home())
+        caller.add_head_witness("write")
+        return written
+
     if captured is None:
-        memory = deps.store.write(**payload, links=links)
+        if caller is None:
+            memory = put()
+        else:
+            with deps.store.batch():
+                memory = put()
     else:
         # A capture write and its member row commit in one transaction, so
         # a batch interrupted at any point still names every memory it
         # wrote and an undo can find them all.
         with deps.store.batch():
-            memory = deps.store.write(**payload, links=links)
+            memory = put()
             _capture.record_member(
                 deps.store,
                 captured.batch,
@@ -1830,6 +1851,32 @@ def _file_review_pairs(
     return filed
 
 
+def _payload_caller(deps: GateDeps, payload: dict[str, Any]) -> Caller:
+    """The writing caller, resolved once per request (design 3.1) and kept in
+    the payload, which the commit reads it from."""
+    caller: Caller | None = payload.get("caller")
+    if caller is None:
+        caller = _caller_at(deps, payload.get("origin"))
+        payload["caller"] = caller
+    return caller
+
+
+def _caller_at(deps: GateDeps, origin: Any) -> Caller:
+    """The writing caller resolved at its origin's cwd (design 8.1), the
+    harness session it carries (decision B6). An origin with no cwd (a
+    process whose working directory is gone) is a caller nothing could be
+    read for: its write is homed by decision B6, never at another path."""
+    from ..location import resolve_caller
+
+    cwd = getattr(origin, "cwd", None) if origin is not None else None
+    return resolve_caller(
+        deps.store,
+        deps.config,
+        cwd if isinstance(cwd, str) and cwd else None,
+        session=identity.current_harness_session(),
+    )
+
+
 def _commit_write(
     deps: ToolHandlers,
     *,
@@ -1849,6 +1896,11 @@ def _commit_write(
     for the closing call, shown as the review shows them."""
     category_enum: Category = payload["category"]
     captured: _CaptureWrite | None = payload.get("capture")
+    # The caller's membership (design 3.2) at the write's own location,
+    # its origin's cwd: resolved before the record's transaction, which
+    # then writes the home (`Caller.home`) and the HEAD witness.
+    payload = dict(payload)
+    _payload_caller(deps, payload)
     try:
         memory, supersession = _persist(
             deps,
