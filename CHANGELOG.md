@@ -25,6 +25,68 @@ bettermemory` and the plugin's `uvx bettermemory` keep resolving 8.0.0
 until the stable `9.0.0` is tagged. Ask for a candidate by version
 (`uvx bettermemory==9.0.0rc1`) to run it.
 
+### 9.0.0rc5
+
+The fifth candidate closes what the fourth's CI matrix and the prompt
+bench found: the hook's import cost, four reads on Windows, linked
+worktrees and token writers on filesystems without birth time or with a
+slow view of a new file, and the test legs that put the store on a
+network mount. The store's schema does not move.
+
+#### Fixed
+
+- **The hook path imports no capture module.** Every hook posted where
+  its caller stands through `location.probe`, and importing `location`
+  pulled the capture's readers (`checkout_token`, `gitobjects`,
+  `githead`, `project_file`) into every hook process, about 25 ms a
+  post. The probe now lives in `_location_probe`, on the standard library
+  alone, and `location` is imported only when the daemon's reply asks for
+  the witness exchange. `tests/test_hook_client.py` pins the modules a
+  hook loads.
+- **File URL remotes on Windows.** `remote_key` read `file:///D:/a/repo`
+  as the path `/D:/a/repo`, so a clone or submodule whose origin is a
+  file URL lost its lineage there. A file URL now keys as the path it
+  names on the platform, read as git reads it.
+- **Recorded paths keep their spelling.** The model joined and rebased
+  paths with the platform's separator, so a path recorded on a macOS
+  machine came back with backslashes at a Windows checkout, and the
+  reverse. A path is now extended in the spelling of the view it lands
+  in, whatever platform the daemon runs on.
+- **Verify's reads on Windows.** The files-only git discovery declines
+  off POSIX by design (git's ownership check reads security descriptors
+  there), and through it every path outside a sparse cone read as missing
+  and every cited commit the home could not resolve read unconfirmed on
+  Windows. Reading objects runs nothing a repository configures, so those
+  two reads now find the repository through `githead.locate`, which
+  answers on every platform and compares resolved paths in the platform's
+  case.
+- **Linked worktrees without birth time.** On a filesystem that reports
+  no birth time (NFSv3), a new linked worktree did not join its primary's
+  project: the object store's number was unproven and the worktree
+  carried no token of the checkout's. Git's own pointers prove the link
+  (`common_object+pointer`): the worktree's git directory sits in the
+  common directory's `worktrees/`, and the common directory matches a
+  live checkout's. A racing writer's location now also counts the token
+  it wrote, so eight concurrent first sightings of one checkout register
+  one.
+- **Token writers on SMB.** Of concurrent writers of one fresh token, the
+  losers read the winner's file before its bytes were visible on a cifs
+  mount and reported an I/O failure. A loser now reads again, in growing
+  pauses for a bounded time, while it finds nothing or an unfinished
+  file.
+
+#### Changed
+
+- **The membership test legs keep the store on local disk.**
+  `BETTERMEMORY_TEST_LOCAL_TMP` names a local directory for the test
+  stores, keys and machine state while repositories, tokens and project
+  files stay on the mount under `--basetemp`: SQLite's write-ahead log
+  needs shared memory a network filesystem does not give, and the legs
+  test the repositories. `BETTERMEMORY_TEST_NO_BIRTH` runs the same files
+  as a filesystem without birth time reads them, on any disk. The SMB
+  leg's remount now renumbers the objects (`noserverino`), the case the
+  design's E11 c names.
+
 ### 9.0.0rc4
 
 The fourth candidate carries the recall fixes and membership by checkout

@@ -20,6 +20,7 @@ import shutil
 import stat
 import struct
 import subprocess
+import sys
 import zlib
 from pathlib import Path
 
@@ -229,19 +230,20 @@ def _only_index(repo: Path) -> Path:
     return idx
 
 
-def _writable(path: Path) -> None:
-    os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+def _overwrite(path: Path, data: bytes) -> None:
+    """A new file holding `data` at `path`, in place of the read-only one
+    git wrote. The old file is removed, never opened for writing: an SMB
+    mount keeps the DOS read-only attribute whatever chmod asks, and
+    refuses the open, while it removes the file. Windows removes a
+    read-only file only once it is writable again."""
+    if sys.platform == "win32":
+        os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+    path.unlink()
+    path.write_bytes(data)
 
 
 def _truncate(path: Path, size: int) -> None:
-    _writable(path)
-    with path.open("r+b") as fh:
-        fh.truncate(size)
-
-
-def _overwrite(path: Path, data: bytes) -> None:
-    _writable(path)
-    path.write_bytes(data)
+    _overwrite(path, path.read_bytes()[:size])
 
 
 def _write_alternates(repo: Path, entries: list[bytes]) -> None:
@@ -329,8 +331,7 @@ def test_large_offset_table_is_read(tmp_path: Path) -> None:
     (count,) = struct.unpack_from(">I", data, 8 + 255 * 4)
     offsets = struct.unpack_from(f">{count}I", data, 8 + 1024 + count * 24)
     assert sum(1 for value in offsets if value & 0x80000000) > 0
-    _writable(idx)
-    os.replace(forced, idx)
+    _overwrite(idx, data)
     _assert_agrees_with_git(repo)
 
 
@@ -838,8 +839,10 @@ def test_damaged_loose_object_reads_as_absent(
 
 
 @pytest.mark.skipif(_MKFIFO is None, reason="FIFOs are POSIX")
-def test_fifo_in_place_of_an_object_is_not_waited_on(tmp_path: Path) -> None:
-    repo = _init(tmp_path / "repo")
+def test_fifo_in_place_of_an_object_is_not_waited_on(local_tmp_path: Path) -> None:
+    """The repository on local disk: the reader's answer to a FIFO is the
+    point, and an SMB mount makes none (EOPNOTSUPP)."""
+    repo = _init(local_tmp_path / "repo")
     sha = _blob(repo, b"abc")
     path = repo / ".git" / "objects" / sha[:2] / sha[2:]
     path.unlink()
@@ -949,7 +952,18 @@ def test_has_many_answers_a_mixed_set(tmp_path: Path) -> None:
         path = sources / f"{i}.txt"
         path.write_bytes(f"loose {i}\n".encode())
         paths.append(str(path))
-    loose = _git(repo, "hash-object", "-w", *paths).decode().split()
+    # The paths on stdin: 300 of them overrun a Windows command line.
+    loose = (
+        _git(
+            repo,
+            "hash-object",
+            "-w",
+            "--stdin-paths",
+            stdin="\n".join(paths).encode() + b"\n",
+        )
+        .decode()
+        .split()
+    )
     missing = [hashlib.sha1(f"missing {i}".encode()).hexdigest() for i in range(300)]
     malformed = ["", "xyz", loose[0][:-1], loose[0] + "0", "g" * 40]
     upper = [name.upper() for name in loose[:5] + packed[:5]]

@@ -18,7 +18,9 @@ The ladder (design 3.2), the first rung that answers deciding:
 1. a declaration (an answered proposal, ``project init``, ``memory
    move``): already in the tables the rungs below read.
 2. O, the same checkout; a new path adds a view.
-3. S, another checkout of the same object store (a linked worktree).
+3. S, another checkout of the same object store (a linked worktree);
+   where no birth time proves the store, git's own pointers can
+   (``common_object+pointer``).
 4. two independent witnesses agreeing, nothing contradicting: joined
    (B re-keys the recorded checkout; ``git init`` in a folder project
    re-keys the folder checkout). Several projects qualifying: the stronger
@@ -56,7 +58,10 @@ import contextlib
 import dataclasses
 import hashlib
 import json
+import ntpath
 import os
+import posixpath
+import re
 from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -1091,9 +1096,55 @@ def _same_path(a: str, b: str) -> bool:
 
 
 def _inside(path: str, root: str) -> bool:
-    """`path` is `root` or below it."""
+    """`path` is `root` or below it, whichever separator the two are
+    spelled with: recorded paths cross machines (`_flavour`)."""
     path, root = _norm(path), _norm(root)
-    return path == root or any(path.startswith(root + sep) for sep in ("/", os.sep))
+    return path == root or any(path.startswith(root + sep) for sep in ("/", "\\"))
+
+
+_DRIVE_PATH = re.compile(r"^[A-Za-z]:")
+
+
+class _PathModule(Protocol):
+    """What `_flavour` needs of ``posixpath`` and ``ntpath``."""
+
+    @property
+    def sep(self) -> str: ...
+
+    def join(self, a: str, /, *paths: str) -> str: ...
+
+    def relpath(self, path: str, start: str) -> str: ...
+
+    def normpath(self, path: str) -> str: ...
+
+
+def _flavour(path: str) -> _PathModule:
+    """The path functions a recorded path is joined, split and normalised
+    with: ``ntpath`` when it is spelled with backslashes or a drive,
+    ``posixpath`` otherwise. Recorded paths cross machines (a record
+    written on Windows is read on macOS and the reverse, and a view on
+    one machine is extended by a path recorded on another), so the
+    spelling of the path decides, never the platform this runs on: a
+    POSIX path extended on Windows stays a POSIX path."""
+    if "\\" in path or _DRIVE_PATH.match(path):
+        return ntpath
+    return posixpath
+
+
+def _path_under(base: str, *parts: str) -> str:
+    """`parts` under `base`, in `base`'s spelling (`_flavour`)."""
+    return _flavour(base).join(base, *parts)
+
+
+def _rebase(path: str, root: str, target: str) -> str:
+    """`path`, which lies under the view `root`, at the same place under
+    `target`: the part below `root` read in `root`'s spelling, written in
+    `target`'s, and the result normalised in `target`'s."""
+    source, dest = _flavour(root), _flavour(target)
+    relative = source.relpath(path, root)
+    if source is not dest:
+        relative = relative.replace(source.sep, dest.sep)
+    return dest.normpath(dest.join(target, relative))
 
 
 def _basename(path: str) -> str:
@@ -1106,6 +1157,25 @@ def _same_number(a: ObjectKey | None, b: ObjectKey | None) -> bool:
     return (
         a is not None and b is not None and (a.device, a.inode) == (b.device, b.inode)
     )
+
+
+def _common_by_pointer(kind: str | None, git_dir: str | None) -> str | None:
+    """The common directory a git directory names by where it sits, read
+    off the path alone: a linked worktree's is the directory above its
+    ``worktrees/<name>`` (git makes the worktree's git directory there and
+    points its ``.git`` file and ``commondir`` at it); a primary's or a
+    bare repository's git directory is its own common directory. None for
+    anything else (design 8.7)."""
+    if not git_dir:
+        return None
+    if kind == LINKED:
+        admin = os.path.dirname(_norm(git_dir))
+        if os.path.basename(admin) != "worktrees":
+            return None
+        return os.path.dirname(admin)
+    if kind in (PRIMARY, BARE):
+        return _norm(git_dir)
+    return None
 
 
 def _dir_key(path: str) -> str:
@@ -1308,7 +1378,7 @@ def _unwritten(loc: Location) -> str | None:
     write the token (read-only, another owner, the policy switch)."""
     if not loc.token_status.startswith(("failed", "skipped")):
         return None
-    where = os.path.join(loc.git_dir or "", "info", _TOKEN_NAME)
+    where = _path_under(loc.git_dir or "", "info", _TOKEN_NAME)
     return f"{where}: {loc.token_status}"
 
 
@@ -1978,12 +2048,16 @@ class Membership:
         and token-less, the init stamps by equality (A2); where none of
         those can be read, another witness of the same object (B20,
         `_confirms`). The one rule the liveness of a view applies too
-        (`location.continuity`, B18)."""
+        (`location.continuity`, B18). The token here is the one found or,
+        where none was, the one this sighting's capture wrote: of writers
+        racing to a fresh git directory the winner's location carries its
+        token as written, and another writer's resolution, serialized ahead
+        of it, may have registered the checkout with that token (I34)."""
         return continuity(
             k.token,
             k.last_head,
             k.stamps,
-            token_here=loc.token,
+            token_here=loc.token or loc.token_written,
             head_here=loc.head,
             stamps_here=loc.stamps,
             holds=lambda commits: self._holds(loc, commits),
@@ -2034,12 +2108,18 @@ class Membership:
                     return k, how
         return None, ""
 
-    def _by_common(self, loc: Location) -> Checkout | None:
+    def _by_common(self, loc: Location) -> tuple[Checkout | None, str]:
         """Rung 3, S: a checkout of this object store (a linked
-        worktree's common directory, or the primary's git directory)."""
+        worktree's common directory, or the primary's git directory), and
+        the rule that says how it was proven. ``common_object``: by the
+        store's object, its birth time or, with none on one side,
+        `_continuity`. ``common_object+pointer``: neither can say (a new
+        worktree carries no token of the checkout's, and its HEAD may name
+        a commit the checkout never saw), and git's own pointers prove the
+        link (`_by_pointer`, design 8.7)."""
         key = loc.common_object_key
         if key is None or loc.kind == FOLDER:
-            return None
+            return None, ""
         found = {
             k.id: k
             for column in ("common", "object")
@@ -2053,15 +2133,50 @@ class Membership:
         }
         for kid in sorted(found):
             k = found[kid]
-            for theirs in (k.common_object_key, k.object_key):
-                if theirs is None:
-                    continue
-                verdict = theirs.compare(key)
-                if verdict == SAME or (
-                    verdict == UNPROVEN and self._continuity(k, loc)[0]
-                ):
-                    return k
-        return None
+            verdicts = {
+                theirs.compare(key)
+                for theirs in (k.common_object_key, k.object_key)
+                if theirs is not None
+            }
+            if SAME in verdicts:
+                return k, "common_object"
+            if UNPROVEN in verdicts:
+                if self._continuity(k, loc)[0]:
+                    return k, "common_object"
+                if self._by_pointer(k, loc):
+                    return k, "common_object+pointer"
+        return None, ""
+
+    def _by_pointer(self, k: Checkout, loc: Location) -> bool:
+        """S without birth time, from git's own pointers, which need none
+        (design 8.7, E15): one of the two is a linked worktree, whose git
+        directory git keeps at ``<common>/worktrees/<name>`` (its ``.git``
+        file and ``commondir`` point there, the ``gitdir`` file there back
+        at the worktree), and both name one common directory
+        (`_common_by_pointer`): this location's, and the one recorded for
+        `k` or read off its live view. The store's object has the recorded
+        device and inode number, and `k` holds a live view here: liveness
+        reads witness O at its path (its token, last HEAD or init stamps),
+        so a new repository given a deleted one's path and inode number is
+        replaced there, and its worktrees are never taken for the old
+        one's. Nothing is read but the location, the checkout and the
+        views the liveness check reads."""
+        if LINKED not in (loc.kind, k.kind):
+            return False
+        mine = _common_by_pointer(loc.kind, loc.git_dir)
+        if mine is None or not _same_number(
+            loc.common_object_key, k.common_object_key or k.object_key
+        ):
+            return False
+        live = self.live_view(k)
+        if live is None:
+            return False
+        recorded = [_common_by_pointer(k.kind, k.git_dir)]
+        if k.kind == PRIMARY:
+            recorded.append(_path_under(live, ".git"))
+        elif k.kind == BARE:
+            recorded.append(live)
+        return any(r is not None and _same_path(r, mine) for r in recorded)
 
     # -- history --------------------------------------------------------------------
 
@@ -2506,16 +2621,16 @@ class Membership:
         if k is not None:
             k, lines = self._observe(k, loc, tenant, strict=strict)
             return self._caller(k, loc, "rekeyed:F+O", SILENT, enclosing, tenant, lines)
-        base = self._by_common(loc)
+        base, rule = self._by_common(loc)
         if base is not None:
             pid = self._canon(base.project)
-            k = self._register(loc, pid, "common_object")
+            k = self._register(loc, pid, rule)
             k, lines = self._observe(k, loc, tenant, strict=strict)
             self._event("resolution_joined", checkout=k.id, project=pid, witnesses=[S])
             return self._caller(
                 k,
                 loc,
-                "common_object",
+                rule,
                 SILENT,
                 enclosing,
                 tenant,
@@ -4548,8 +4663,7 @@ class Membership:
                             break
         if target is None:
             return path, "unanchored"
-        relative = os.path.relpath(path, v.path)
-        return os.path.normpath(os.path.join(target, relative)), how
+        return _rebase(path, v.path, target), how
 
     # -- export and import (design 8.7, E27) ----------------------------------------------
 

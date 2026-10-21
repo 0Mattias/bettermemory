@@ -160,33 +160,43 @@ def test_hook_exits_0_when_no_daemon_can_be_reached_or_started(tmp_path: Path) -
     assert result.stdout == ""
 
 
+#: Every bettermemory module a hook process loads when the daemon's reply
+#: asks nothing: the package, the entry, the client, the version file and
+#: the namespace probe (design 8.1). A module joins this list only by a
+#: decision to make every hook pay for it.
+_HOOK_MODULES = frozenset(
+    {
+        "bettermemory",
+        "bettermemory._daemon_client",
+        "bettermemory._entry",
+        "bettermemory._location_probe",
+        "bettermemory._version",
+    }
+)
+
+#: The capture and the readers it imports, which a hook loads only for the
+#: witness exchange its reply asks for (design 8.7), and the standard
+#: library's TOML reader, which only they use.
+_CAPTURE_MODULES = (
+    "bettermemory.location",
+    "bettermemory.gitobjects",
+    "bettermemory.checkout_token",
+    "bettermemory.project_file",
+    "bettermemory.githead",
+    "tomllib",
+)
+
+
+def _ours(imported: set[str]) -> set[str]:
+    return {m for m in imported if m == "bettermemory" or m.startswith("bettermemory.")}
+
+
 def test_the_hook_path_imports_neither_the_sdk_nor_pydantic(tmp_path: Path) -> None:
     env = _env(tmp_path)
     blocker = tmp_path / "blocker"
     blocker.write_text("not a directory")
     env["BETTERMEMORY_STATE_DIR"] = str(blocker / "state")
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-X",
-            "importtime",
-            "-m",
-            "bettermemory",
-            "hook",
-            "session-start",
-        ],
-        env=env,
-        input="{}",
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    assert result.returncode == 0
-    imported = {
-        line.rsplit("|", 1)[-1].strip()
-        for line in result.stderr.splitlines()
-        if line.startswith("import time:")
-    }
+    imported = _imported_by_a_hook(env)
     for heavy in (
         "mcp",
         "pydantic",
@@ -194,13 +204,19 @@ def test_the_hook_path_imports_neither_the_sdk_nor_pydantic(tmp_path: Path) -> N
         "httpx2",
         "bettermemory.builder",
         "bettermemory.store",
+        *_CAPTURE_MODULES,
     ):
         assert heavy not in imported, f"{heavy} reached the hook path"
+    assert _ours(imported) == _HOOK_MODULES, sorted(_ours(imported))
 
 
-def _imported_by_a_hook(env: dict[str, str]) -> set[str]:
-    """Every module a `bettermemory hook session-start` process imports,
-    by `-X importtime`."""
+def _imported_by_a_hook(
+    env: dict[str, str],
+    event: str = "session-start",
+    payload: dict[str, Any] | None = None,
+) -> set[str]:
+    """Every module a `bettermemory hook <event>` process imports, by
+    `-X importtime`; the payload is ``{}`` unless one is given."""
     result = subprocess.run(
         [
             sys.executable,
@@ -209,10 +225,10 @@ def _imported_by_a_hook(env: dict[str, str]) -> set[str]:
             "-m",
             "bettermemory",
             "hook",
-            "session-start",
+            event,
         ],
         env=env,
-        input="{}",
+        input="{}" if payload is None else json.dumps(payload),
         capture_output=True,
         text=True,
         timeout=60,
@@ -545,6 +561,36 @@ def test_the_hook_keeps_a_daemon_of_the_same_or_a_newer_version(
         after = _daemon_client.read_state(tmp_path / "state", store)
         if after is not None and after["port"] != running.port:
             _cli(["down"], env, timeout=30)
+
+
+@pytest.mark.parametrize("event", ["session-start", "prompt"])
+def test_a_hook_whose_reply_asks_nothing_loads_no_capture_module(
+    tmp_path: Path, event: str
+) -> None:
+    """Design 8.1: a hook posts its namespace probe, which `_location_probe`
+    reads on the standard library alone, and `location` with the readers it
+    imports loads only when the daemon's reply asks for the witness
+    exchange (design 8.7). A kept daemon answers the post here with
+    nothing to ask: the process loads exactly `_HOOK_MODULES` of
+    bettermemory's modules and none of the capture's."""
+    env = _env(tmp_path)
+    store = tmp_path / "store" / "memory.sqlite"
+    running = _StaleDaemon(_pyproject_version())
+    payload: dict[str, Any] = {"cwd": str(tmp_path), "session_id": "sess_light"}
+    if event == "prompt":
+        payload["prompt"] = "what did we decide about the release notes"
+    try:
+        write_state(tmp_path / "state", running.state(store))
+        imported = _imported_by_a_hook(env, event, payload)
+        assert running.hook_calls == 1, "premise: the hook posted to the daemon"
+    finally:
+        running.stop()
+        after = _daemon_client.read_state(tmp_path / "state", store)
+        if after is not None and after["port"] != running.port:
+            _cli(["down"], env, timeout=30)
+    for module in _CAPTURE_MODULES:
+        assert module not in imported, f"{module} reached the hook path"
+    assert _ours(imported) == _HOOK_MODULES, sorted(_ours(imported))
 
 
 def _malformed_config(tmp_path: Path, env: dict[str, str]) -> dict[str, str]:

@@ -1,14 +1,26 @@
 """Shared pytest fixtures.
 
 Each test gets a fresh temp memory directory so the tests stay hermetic.
+
+Two variables serve the membership legs of CI (design 8.7), which point
+``--basetemp`` at a network mount so every ``tmp_path`` sits there.
+``BETTERMEMORY_TEST_LOCAL_TMP`` names a directory on local disk for what a
+test keeps beside the filesystem it exercises: its stores, keys and machine
+state (`local_tmp_path`). SQLite's WAL needs shared memory a network
+filesystem does not give, and the legs test the repositories, tokens and
+project files on the mount, not the store. ``BETTERMEMORY_TEST_NO_BIRTH=1``
+reads every object as a filesystem without birth time does (E15), on any
+disk. With neither set, every file stays where it always was.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import sys
+import tempfile
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Sequence
 
 # Make `src/` importable without depending on the editable install. This is
 # belt-and-suspenders: if the venv's editable .pth file is unreadable for any
@@ -32,6 +44,13 @@ from bettermemory import review as _review
 from bettermemory.store import Store
 
 from ._event_helpers import EventLog
+
+#: A directory on local disk for each test's stores, keys and machine state
+#: (`local_tmp_path`); unset, they stay under the test's `tmp_path`.
+LOCAL_TMP_ENV = "BETTERMEMORY_TEST_LOCAL_TMP"
+#: "1": the whole session reads no birth time (`location.REPORT_BIRTH`), as
+#: on NFSv3, whatever the disk under it reports.
+NO_BIRTH_ENV = "BETTERMEMORY_TEST_NO_BIRTH"
 
 
 def set_git_discovery_ceiling(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -130,6 +149,34 @@ def memory_dir(tmp_path: Path) -> Path:
     return d
 
 
+@pytest.fixture(scope="session")
+def local_tmp_root() -> Path | None:
+    """This session's own directory under ``BETTERMEMORY_TEST_LOCAL_TMP``,
+    made fresh, or None when the variable is unset."""
+    named = os.environ.get(LOCAL_TMP_ENV)
+    if not named:
+        return None
+    parent = Path(named)
+    parent.mkdir(parents=True, exist_ok=True)
+    return Path(os.path.realpath(tempfile.mkdtemp(prefix="pytest-", dir=parent)))
+
+
+@pytest.fixture
+def local_tmp_path(
+    request: pytest.FixtureRequest, tmp_path: Path, local_tmp_root: Path | None
+) -> Path:
+    """A fresh directory on local disk for the test's stores, keys and
+    machine state, apart from the filesystem the test exercises: under
+    ``BETTERMEMORY_TEST_LOCAL_TMP`` when it is set (the membership legs of
+    CI, whose ``tmp_path`` is on a network mount), else the test's own
+    `tmp_path`, so a run without the variable lays its files out as it
+    always did."""
+    if local_tmp_root is None:
+        return tmp_path
+    name = re.sub(r"\W", "_", request.node.name)[:30]
+    return Path(tempfile.mkdtemp(prefix=f"{name}-", dir=local_tmp_root))
+
+
 @pytest.fixture(autouse=True)
 def no_harness_session(monkeypatch: pytest.MonkeyPatch) -> None:
     """No test inherits the harness session of the Claude Code process
@@ -142,10 +189,11 @@ def no_harness_session(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def keys_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def keys_dir(local_tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Every store a test opens keeps its key under the test's own
-    directory, never under the user's config directory."""
-    keys = tmp_path / "keys"
+    directory (on local disk, `local_tmp_path`), never under the user's
+    config directory."""
+    keys = local_tmp_path / "keys"
     monkeypatch.setattr(_log, "default_keys_dir", lambda: keys)
     # A server or CLI the test spawns resolves the same directory through
     # the environment, so a subprocess leaves no key under the user's
@@ -163,7 +211,9 @@ _DEVELOPER_GLOBAL_DIR = (Path.home() / _config.GLOBAL_DIR_NAME).resolve()
 
 @pytest.fixture(autouse=True)
 def storage_dir(
-    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+    tmp_path_factory: pytest.TempPathFactory,
+    local_tmp_root: Path | None,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[Path]:
     """No test resolves the developer's own store or config.
 
@@ -184,10 +234,17 @@ def storage_dir(
 
     In-process only. A child process the test spawns resolves on its
     own; the spawn helpers in the suite set ``BETTERMEMORY_DIR`` for it.
+    Under ``BETTERMEMORY_TEST_LOCAL_TMP`` the directory is on local disk
+    with the test's other stores.
     """
     # A sibling of the test's `tmp_path`, not a child: tests of the
     # atomic-write helpers count the entries under `tmp_path`.
-    guard_dir = tmp_path_factory.mktemp("bettermemory-guard")
+    if local_tmp_root is None:
+        guard_dir = tmp_path_factory.mktemp("bettermemory-guard")
+    else:
+        guard_dir = Path(
+            tempfile.mkdtemp(prefix="bettermemory-guard-", dir=local_tmp_root)
+        )
     fallback = (guard_dir / "store").resolve()
     original = _config.Config.resolved_directory
 
@@ -248,22 +305,26 @@ def clear_caches() -> None:
     _caches.clear_all()
 
 
-def _outside(base: str, path: object, *, existing_only: bool = False) -> str | None:
-    """The real path of `path` when it lies outside `base`, else None. A
-    value that is not a path is not checked; with `existing_only`, neither
-    is a path that does not exist."""
+def _outside(
+    bases: Sequence[str], path: object, *, existing_only: bool = False
+) -> str | None:
+    """The real path of `path` when it lies outside every one of `bases`,
+    else None. A value that is not a path is not checked; with
+    `existing_only`, neither is a path that does not exist."""
     if not isinstance(path, (str, os.PathLike)):
         return None
     here = os.path.realpath(os.fspath(path))
     if existing_only and not os.path.lexists(here):
         return None
-    if here == base or here.startswith(base + os.sep):
+    if any(here == base or here.startswith(base + os.sep) for base in bases):
         return None
     return here
 
 
 @pytest.fixture(scope="session", autouse=True)
-def scratch_session(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
+def scratch_session(
+    tmp_path_factory: pytest.TempPathFactory, local_tmp_root: Path | None
+) -> Iterator[Path]:
     """The whole session runs inside pytest's base temporary directory: the
     environment names scratch directories before any fixture runs, and
     every call that would reach a directory of the developer's fails the
@@ -286,10 +347,17 @@ def scratch_session(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
     points reads them back through the default, not through a variable
     the shell set.
 
+    Under ``BETTERMEMORY_TEST_LOCAL_TMP`` the state and config directories
+    are on local disk, in the session's directory there; the workspace
+    stays beside every `tmp_path`. Under ``BETTERMEMORY_TEST_NO_BIRTH=1``
+    `location.REPORT_BIRTH` is off for the whole session, the switch the
+    `no_birth` fixture of the membership tests turns for one test.
+
     The guards, each checked against the session's base temporary
-    directory, which holds every `tmp_path`, and each failing through
-    `pytest.fail`, which no `except Exception` in the code under test
-    absorbs:
+    directory, which holds every `tmp_path` (and the session's directory
+    under ``BETTERMEMORY_TEST_LOCAL_TMP``, which holds every
+    `local_tmp_path`), and each failing through `pytest.fail`, which no
+    `except Exception` in the code under test absorbs:
 
     - a location capture (`location.capture` and the uncached read under
       it) of a path that exists outside it. A capture of a path that does
@@ -311,16 +379,23 @@ def scratch_session(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
     from bettermemory.identity import ENV_WORKSPACE
 
     base = os.path.realpath(tmp_path_factory.getbasetemp())
+    bases = [base] if local_tmp_root is None else [base, str(local_tmp_root)]
     root = tmp_path_factory.mktemp("session")
     workspace = root / "workspace"
     workspace.mkdir()
+    kept = (
+        root
+        if local_tmp_root is None
+        else Path(tempfile.mkdtemp(prefix="session-", dir=local_tmp_root))
+    )
 
     def check(what: str, path: object, *, existing_only: bool = False) -> None:
-        here = _outside(base, path, existing_only=existing_only)
+        here = _outside(bases, path, existing_only=existing_only)
         if here is not None:
             pytest.fail(
                 f"a test reached {what} at {here}, outside its scratch "
-                f"directory {base}: give it a directory under tmp_path",
+                f"directory {' or '.join(bases)}: give it a directory under "
+                "tmp_path or local_tmp_path",
                 pytrace=False,
             )
 
@@ -384,14 +459,16 @@ def scratch_session(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
 
     def user_dir(kind: str) -> Any:
         def resolved(appname: str | None = None, *args: Any, **kw: Any) -> str:
-            return str(root / kind / (appname or ""))
+            return str(kept / kind / (appname or ""))
 
         return resolved
 
     with pytest.MonkeyPatch.context() as mp:
+        if os.environ.get(NO_BIRTH_ENV) == "1":
+            mp.setattr(location, "REPORT_BIRTH", False)
         mp.setattr(platformdirs, "user_state_dir", user_dir("user-state"))
         mp.setattr(platformdirs, "user_config_dir", user_dir("user-config"))
-        mp.setenv(_daemon_client.STATE_DIR_ENV, str(root / "state"))
+        mp.setenv(_daemon_client.STATE_DIR_ENV, str(kept / "state"))
         mp.chdir(workspace)
         mp.delenv(ENV_WORKSPACE, raising=False)
         mp.delenv(_config.KEYS_DIR_ENV, raising=False)

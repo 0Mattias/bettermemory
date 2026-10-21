@@ -29,6 +29,16 @@ user's configuration), a FIFO or a device where git opens a file, and
 every platform but POSIX, where git's ownership check reads security
 descriptors.
 
+`locate` answers a different question, for a caller that reads a
+repository's objects and refs and runs nothing it configures (verify's
+sparse-checkout and cited-commit reads, design 3.6): where the files of
+the repository whose working tree holds a directory are. It reads the
+``.git`` entry as discovery does and stops where the walk stops, but it
+answers on every platform and for a repository another user owns, since
+git's ownership refusal guards against running what a foreign
+repository's configuration names, which reading files never does
+(`gitobjects`, design 3.1, E20 f).
+
 Resolution (`head_sha`, `head_ref`) follows ``refs_resolve_ref_unsafe``
 over the files backend. A symbolic ``ref: <name>`` is read from the loose
 ref file first, under the git directory for the per-worktree prefixes and
@@ -70,6 +80,7 @@ __all__ = [
     "head_commit",
     "head_ref",
     "head_sha",
+    "locate",
     "signature",
     "stamp",
 ]
@@ -342,9 +353,10 @@ def _check_owner(*paths: str) -> None:
             raise _Unsettled
 
 
-def _probe(directory: str) -> GitDir | None:
+def _probe(directory: str, *, owner: bool = True) -> GitDir | None:
     """The repository whose ``.git`` entry sits in `directory`; None when
-    there is no entry and `directory` is not itself a git directory."""
+    there is no entry and `directory` is not itself a git directory. With
+    `owner` False git's ownership check is not made (`locate`)."""
     entry = os.path.join(directory, ".git")
     try:
         mode = os.stat(entry).st_mode
@@ -356,14 +368,16 @@ def _probe(directory: str) -> GitDir | None:
         return None
     if stat.S_ISREG(mode):
         gitdir, common = _read_gitfile(entry, directory)
-        _check_owner(entry, directory, gitdir)
+        if owner:
+            _check_owner(entry, directory, gitdir)
         return GitDir(Path(gitdir), Path(common), Path(directory))
     found = _git_directory(entry)
     if found is None:
         # Git skips a .git that is not a git directory and goes on to
         # judge what lies above it, which is not settled here.
         raise _Unsettled
-    _check_owner(directory, entry)
+    if owner:
+        _check_owner(directory, entry)
     return GitDir(Path(entry), Path(found), Path(directory))
 
 
@@ -442,6 +456,85 @@ def gitdir_at(root: Path) -> GitDir | None:
         if not stat.S_ISDIR(os.stat(directory).st_mode):
             return None
         return _probe(directory)
+    except (_Unsettled, OSError, ValueError):
+        return None
+
+
+def _below(path: str, root: str) -> bool:
+    """`path` lies strictly under `root`, both resolved paths, compared
+    component by component as this platform compares names
+    (``os.path.normcase``: case and either slash on Windows, unchanged
+    elsewhere)."""
+    inner = [os.path.normcase(part) for part in Path(path).parts]
+    outer = [os.path.normcase(part) for part in Path(root).parts]
+    return len(inner) > len(outer) and inner[: len(outer)] == outer
+
+
+def _ceilings(here: str) -> list[str]:
+    """The ``GIT_CEILING_DIRECTORIES`` entries that are strict ancestors of
+    `here`, read as git's ``canonicalize_ceiling_entry`` reads them: a
+    relative entry and one that does not resolve are dropped, and an empty
+    entry leaves the entries after it as written. Separated by
+    ``os.pathsep``, as git separates them on each platform."""
+    raw = os.environ.get("GIT_CEILING_DIRECTORIES")
+    if not raw:
+        return []
+    out: list[str] = []
+    verbatim = False
+    for entry in raw.split(os.pathsep):
+        if not entry:
+            verbatim = True
+            continue
+        if not os.path.isabs(entry):
+            continue
+        if verbatim:
+            ceiling = entry
+        else:
+            try:
+                ceiling = os.path.realpath(entry, strict=True)
+            except OSError:
+                continue
+        if _below(here, ceiling):
+            out.append(ceiling)
+    return out
+
+
+def locate(start: Path, *, walk: bool = True) -> GitDir | None:
+    """The files of the repository whose working tree holds `start`: the
+    ``.git`` entry in `start` or, with `walk`, in the nearest directory
+    above it that has one, read as `find_gitdir` reads it, for a caller
+    that reads the repository's objects and refs and runs nothing it
+    configures (design 3.6; the module docstring says why).
+
+    Unlike `find_gitdir` it answers off POSIX and for a repository another
+    user owns, and the environment variables that move git's discovery
+    name no other files here. The walk starts at ``realpath(start)`` and
+    stops where git's does: at the filesystem's root, at a filesystem
+    boundary, and below a ``GIT_CEILING_DIRECTORIES`` entry that is a
+    strict ancestor of `start`, every comparison made between resolved
+    paths in this platform's case (`_below`). So `worktree_root` is an
+    ancestor of ``realpath(start)`` spelled as that resolution spells it:
+    through every symbolic link, and on Windows in the long form and the
+    case the filesystem stores, whatever short 8.3 name or case `start`
+    came in. None outside any repository, at a bare repository or the
+    inside of a git directory, at a ``.git`` entry git would skip or die
+    on, and wherever a file cannot be read."""
+    try:
+        here = _real(os.fspath(start))
+        status = os.stat(here)
+        if not stat.S_ISDIR(status.st_mode):
+            return None
+        ceilings = _ceilings(here)
+        while True:
+            found = _probe(here, owner=False)
+            if found is not None or not walk:
+                return found
+            parent = os.path.dirname(here)
+            if parent == here or any(not _below(parent, c) for c in ceilings):
+                return None
+            if os.stat(parent).st_dev != status.st_dev:
+                return None
+            here = parent
     except (_Unsettled, OSError, ValueError):
         return None
 

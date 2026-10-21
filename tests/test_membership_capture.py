@@ -324,6 +324,8 @@ def test_birth_time_is_read_on_this_platform(known: Path) -> None:
     the platform reports one: st_birthtime on macOS and BSD, the creation
     time on Windows, statx (STATX_BTIME) on Linux where the filesystem
     keeps it."""
+    if not location.REPORT_BIRTH:
+        pytest.skip("reads the platform's birth time: BETTERMEMORY_TEST_NO_BIRTH is on")
     cap = _fresh(known)
     assert cap.object_key is not None
     if sys.platform.startswith("linux"):
@@ -494,14 +496,24 @@ def counted(
 
 
 @pytest.fixture
-def steady(tmp_path: Path) -> Iterator[tuple[Store, Config, Any, Path, list[Path]]]:
+def steady(
+    tmp_path: Path, local_tmp_path: Path
+) -> Iterator[tuple[Store, Config, Any, Path, list[Path]]]:
+    """A checkout seen twice: the repository under `tmp_path`, the store
+    and the machine's state directory on local disk (`local_tmp_path`)."""
     repo = make_repo(tmp_path / "Developer" / "game", commits=2)
-    store = Store(tmp_path / "store")
-    identity = open_machine(tmp_path / "state")
+    store = Store(local_tmp_path / "store")
+    identity = open_machine(local_tmp_path / "state")
     config = Config()
     for _ in range(2):
         resolve_here(store, config, str(repo), identity=identity)
-    yield store, config, identity, repo, [repo, tmp_path / "store", tmp_path / "state"]
+    yield (
+        store,
+        config,
+        identity,
+        repo,
+        [repo, local_tmp_path / "store", local_tmp_path / "state"],
+    )
     store.close()
 
 
@@ -561,7 +573,7 @@ _HEAVY = (
 
 
 def test_the_hook_client_path_imports_only_the_standard_library_and_its_readers(
-    tmp_path: Path,
+    tmp_path: Path, local_tmp_path: Path
 ) -> None:
     """Design 8.1: the hook client, with everything its membership rounds
     use (the probe, the capture and its token, the answers to the daemon's
@@ -581,13 +593,14 @@ location.identity_to_json(machine.open_machine())
 print(json.dumps(sorted(sys.modules)))
 """
     env = shielded_child_env()
+    env["HOME"] = str(tmp_path / "home")
+    # The child's store, machine state and keys on local disk.
     for name, sub in (
-        ("HOME", "home"),
         ("BETTERMEMORY_DIR", "dir"),
         ("BETTERMEMORY_STATE_DIR", "state"),
         ("BETTERMEMORY_KEYS_DIR", "keys"),
     ):
-        env[name] = str(tmp_path / sub)
+        env[name] = str(local_tmp_path / sub)
     done = subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True,
@@ -605,6 +618,7 @@ print(json.dumps(sorted(sys.modules)))
         "bettermemory._caches",
         "bettermemory._daemon_client",
         "bettermemory._fsutil",
+        "bettermemory._location_probe",
         "bettermemory.checkout_token",
         "bettermemory.githead",
         "bettermemory.gitobjects",

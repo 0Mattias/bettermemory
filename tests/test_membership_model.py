@@ -717,6 +717,26 @@ def test_i14_commitless_move_without_birth_confirmed_by_token_or_stamps(
     assert world.see(denied).checkout == seen.checkout
 
 
+def test_i34_without_birth_the_writer_of_the_token_seen_after_its_reader_is_one_checkout(
+    world: World,
+) -> None:
+    """I34 without birth time: sightings of a fresh git directory race to
+    write its token, and the one whose capture wrote it can be resolved
+    after one that read it registered the checkout with it. The token as
+    written confirms the object (witness O): the same checkout, silent."""
+    repo = world.repo("/w/fresh", commits=1, birth=False, with_token=True)
+    reader = world.see(repo)
+    assert reader.outcome == NEW
+    writer = world.model.resolve(
+        repo.location(token=None, token_written=repo.token, token_status="written")
+    )
+    assert (writer.outcome, writer.rule, writer.checkout) == (
+        SILENT,
+        "object+token",
+        reader.checkout,
+    )
+
+
 def test_i15_a_plain_folder_at_the_old_path_is_outside_any_project(
     world: World,
 ) -> None:
@@ -749,6 +769,35 @@ def test_i16_linked_worktrees_join_by_the_object_store(world: World) -> None:
     assert readded.checkout not in (res.checkout, first.checkout)
     handoff = world.model.handoff(readded, [EpisodeRef(episode, "s1", _NOW)])
     assert handoff.session_id is None
+
+
+def test_i16_without_birth_a_linked_worktree_joins_by_its_pointers(
+    world: World,
+) -> None:
+    """Without birth time the object store's number cannot prove itself
+    and a new worktree has no token of the primary's: its git directory
+    under the primary's ``.git/worktrees/`` proves the link
+    (``common_object+pointer``). One whose git directory sits under
+    another directory's ``worktrees/`` is not linked by the number alone."""
+    primary = world.repo("/w/app", birth=False)
+    first = world.see(primary)
+    linked = world.repo(
+        "/w/app-wt", commits=0, kind="linked", common_key=primary.key, birth=False
+    )
+    linked.history, linked.head = primary.history, primary.head
+    res = world.see(linked, git_dir="/w/app/.git/worktrees/app-wt")
+    assert (res.outcome, res.rule, res.project) == (
+        SILENT,
+        "common_object+pointer",
+        first.project,
+    )
+    assert res.checkout != first.checkout
+    stray = world.repo(
+        "/w/stray-wt", commits=0, kind="linked", common_key=primary.key, birth=False
+    )
+    stray.history, stray.head = primary.history, primary.head
+    apart = world.see(stray, git_dir="/w/other/.git/worktrees/stray-wt")
+    assert apart.rule == "ask:one_witness"
 
 
 def test_i17_old_path_unreachable_joins_by_token_and_history(world: World) -> None:
@@ -2077,6 +2126,74 @@ def test_claims_anchor_at_the_home_checkout_and_translate_across_views(
         world.model.resolve(Location(machine=world.machine, cwd="/tmp", state=OUTSIDE))
     )
     assert world.model.anchor(loose, None) == (None, "global_record")
+
+
+def test_translate_writes_the_spelling_of_the_view_it_lands_in(world: World) -> None:
+    """A recorded path is rebased in the spelling of the view it lands in,
+    never in the platform's: a Windows-spelled view is joined with
+    backslashes on any host and a POSIX view with slashes, and a path
+    recorded on a machine of one kind translates at a checkout of the
+    other kind in that checkout's spelling (the model's paths cross
+    machines, so the platform this runs on says nothing about them)."""
+    repo = world.repo("C:\\w\\app", remote="example.invalid/acme/app")
+    first = world.see(repo, git_dir="C:\\w\\app\\.git")
+    rid = world.write(first)
+    world.move(repo, "C:\\w\\moved")
+    world.see(repo, git_dir="C:\\w\\moved\\.git")
+    assert world.model.anchor(rid, None) == ("C:\\w\\moved", "home_checkout")
+    assert world.model.translate("C:\\w\\app\\src\\x.py") == (
+        "C:\\w\\moved\\src\\x.py",
+        "checkout",
+    )
+    # A POSIX machine's record read at this project's Windows-spelled
+    # stand-in on another machine, and the reverse.
+    posix = world.repo("/w/tool", remote="example.invalid/acme/tool")
+    recorded = world.write(world.see(posix))
+    other = world.model_for("M2")
+    twin = world.see(
+        world.clone(posix, "D:\\src\\tool", machine="M2"),
+        model=other,
+        git_dir="D:\\src\\tool\\.git",
+    )
+    assert other.anchor(recorded, twin) == (
+        "D:\\src\\tool",
+        "caller_checkout_same_project",
+    )
+    assert other.translate("/w/tool/src/y.py", twin) == (
+        "D:\\src\\tool\\src\\y.py",
+        "caller_checkout_same_project",
+    )
+    back = world.see(world.clone(repo, "/home/kim/app"))
+    assert world.model.translate("C:\\w\\app\\src\\x.py", back) == (
+        "C:\\w\\moved\\src\\x.py",
+        "checkout",
+    )
+    world.delete(repo)
+    assert world.model.translate("C:\\w\\app\\src\\x.py", back) == (
+        "/home/kim/app/src/x.py",
+        "caller_checkout_same_project",
+    )
+
+
+def test_an_ask_line_spells_the_token_file_as_the_git_directory_is_spelled(
+    world: World,
+) -> None:
+    """The token file an ask line names sits under the git directory in
+    that directory's own spelling: a Windows-spelled git directory gives
+    a Windows-spelled file on any host (I07, R1.1)."""
+    files = Manifest("u", (("plan.md", 12), ("notes/a.md", 40)))
+    repo = world.repo(
+        "C:\\w\\u", commits=0, manifest=files, token_policy="skipped:policy"
+    )
+    first = world.see(repo, git_dir="C:\\w\\u\\.git")
+    world.move(repo, "D:\\vol\\u", same_fs=False)
+    res = world.see(repo, git_dir="D:\\vol\\u\\.git")
+    assert res.outcome == ASK and res.rule == "ask:content_only"
+    assert res.candidates == (first.project,)
+    assert (
+        "could not write D:\\vol\\u\\.git\\info\\bettermemory: skipped:policy"
+        in res.lines[-1]
+    )
 
 
 def test_the_handoff_never_takes_a_live_siblings_run_state(world: World) -> None:

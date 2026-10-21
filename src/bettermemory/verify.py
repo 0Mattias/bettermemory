@@ -124,7 +124,7 @@ from .origin import (
     repo_toplevel_and_head,
     resolve_repo_pathspecs,
 )
-from .githead import GitDir, find_gitdir, gitdir_at
+from .githead import GitDir, locate
 from .githead import head_sha as _files_head_sha
 from .gitobjects import ObjectReader
 
@@ -804,8 +804,16 @@ def holds_commit(root: str | Path, sha: str) -> bool:
     `sha`, read from its files (`gitobjects.ObjectReader`, design 3.1): no
     git process. False when the store cannot say (an object format or a
     pack the reader does not know, an evicted file), so an unread commit
-    reads unconfirmed rather than held."""
-    found = gitdir_at(Path(root))
+    reads unconfirmed rather than held.
+
+    The store is found by `githead.locate` at `root` itself, which reads
+    the ``.git`` entry on every platform. `githead.gitdir_at` declines off
+    POSIX, where git's ownership check reads security descriptors, and
+    through it no caller's store would be read on Windows: every cited
+    commit the home cannot resolve would read unconfirmed there. Reading
+    objects runs nothing the repository configures, so that check guards
+    nothing here."""
+    found = locate(Path(root), walk=False)
     if found is None:
         return False
     reader = ObjectReader(found.commondir)
@@ -852,11 +860,36 @@ def _sparse_enabled(found: GitDir) -> bool:
     return enabled
 
 
+def _parts_below(path: str, root: str | Path) -> list[str] | None:
+    """The components of `path` below the directory `root`, or None when
+    `path` is neither `root` nor under it. Both sides are resolved
+    (``realpath``) and compared component by component as this platform
+    compares names (``os.path.normcase``: case and either slash on
+    Windows), so two spellings of one directory agree: a symbolic link
+    (macOS's ``/var`` for ``/private/var``), and on Windows a short 8.3
+    name or another case. The components keep `path`'s resolved spelling,
+    which a tree lookup matches byte for byte."""
+    inner = Path(os.path.realpath(path)).parts
+    outer = Path(os.path.realpath(root)).parts
+    if len(inner) < len(outer):
+        return None
+    folded = [os.path.normcase(part) for part in inner[: len(outer)]]
+    if folded != [os.path.normcase(part) for part in outer]:
+        return None
+    return list(inner[len(outer) :])
+
+
 def _absent_by_sparsity(path: str) -> bool:
     """True when `path`, absent from the disk, sits in a sparse checkout
     whose HEAD tracks it: the cone leaves it out of the working tree, it was
     not deleted (E18 c). Read from the repository's files: the
-    ``core.sparseCheckout`` switch, then HEAD's tree (no git process)."""
+    ``core.sparseCheckout`` switch, then HEAD's tree (no git process).
+
+    The repository is found by `githead.locate`, which answers on every
+    platform; `githead.find_gitdir` declines off POSIX, and through it a
+    path a cone leaves out would read missing on Windows. The path's place
+    in the working tree is read by `_parts_below`, on resolved paths in
+    this platform's case."""
     expanded = os.path.expanduser(path)
     tail: list[str] = []
     start = expanded
@@ -866,14 +899,13 @@ def _absent_by_sparsity(path: str) -> bool:
             return False
         tail.append(name)
         start = parent
-    found = find_gitdir(Path(start))
+    found = locate(Path(start))
     if found is None or not _sparse_enabled(found):
         return False
-    try:
-        base = Path(os.path.realpath(start)).relative_to(found.worktree_root)
-    except ValueError:
+    base = _parts_below(start, found.worktree_root)
+    if base is None:
         return False
-    parts = [*base.parts, *reversed(tail)]
+    parts = [*base, *reversed(tail)]
     head = _files_head_sha(found)
     if head is None or not parts:
         return False

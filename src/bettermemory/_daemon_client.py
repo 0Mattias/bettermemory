@@ -7,13 +7,16 @@ top of the interpreter: `import json, urllib.request, socket` measures
 about 26 ms on the author's machine against 316 ms for `import mcp`.
 `_entry.main` dispatches the hook words to `hook_main` before anything
 heavier is imported, and `tests/test_hook_client.py` checks the path with
-`-X importtime`. Each hook posts where its caller stands (`location.probe`,
-design 8.1); where the daemon cannot read that path, the client captures
-its location in its own namespace, writes the checkout token there, and
-answers the daemon's questions about its repository from its own files
-(`_membership_rounds`, design 8.7). `location` and the modules it imports
-(`checkout_token`, `project_file`, `gitobjects`, `githead`) are standard
-library only; `machine` is imported only in that exchange.
+`-X importtime`. Each hook posts where its caller stands (the probe of
+`_location_probe`, design 8.1), a module on ``errno``, ``os`` and
+``socket`` alone; where the daemon cannot read that path, its reply asks,
+and the client captures its location in its own namespace, writes the
+checkout token there, and answers the daemon's questions about its
+repository from its own files (`_membership_rounds`, design 8.7).
+`location` and the modules it imports (`checkout_token`, `project_file`,
+`gitobjects`, `githead`) are standard library only, and they and
+`machine` are imported only in that exchange: a hook whose reply asks
+nothing loads none of them.
 
 One daemon per store. The state file is named after the store it serves
 (`daemon-<sha256(store path)[:16]>.json` under the state directory), so a
@@ -746,13 +749,15 @@ def _parse_hook_argv(argv: list[str]) -> tuple[str | None, dict[str, Any], bool]
 
 def _location_probe(payload: dict[str, Any]) -> None:
     """Put the caller's namespace probe in the payload (design 8.1,
-    `location.probe`): the cwd resolved, its object and the host's name,
-    which the daemon compares with its own reading of that path."""
-    from . import location
+    `_location_probe.probe`, which `location` re-exports): the cwd
+    resolved, its object and the host's name, which the daemon compares
+    with its own reading of that path. The probe's module imports only the
+    standard library, so a hook pays for no capture module here."""
+    from ._location_probe import probe
 
     cwd = payload.get("cwd")
     if isinstance(cwd, str) and cwd:
-        payload["location"] = location.probe(cwd)
+        payload["location"] = probe(cwd)
 
 
 def _membership_rounds(
@@ -767,7 +772,15 @@ def _membership_rounds(
     and posts again; at most `location.EXCHANGE_ROUNDS` rounds. A final
     reply asking for a re-mint (``membership.remint``) re-mints the token
     of the checkout captured here (design 3.3). The daemon never reads
-    the client's paths."""
+    the client's paths.
+
+    A first reply that asks nothing returns at once, before `location` is
+    imported: no round runs and nothing is captured, so no re-mint can
+    follow either, and the common hook (the daemon read the cwd itself)
+    loads none of the capture modules."""
+    said = reply.get("membership")
+    if not isinstance(said, dict) or not isinstance(said.get("ask"), dict):
+        return reply
     from . import checkout_token, location
 
     capture: location.Capture | None = None

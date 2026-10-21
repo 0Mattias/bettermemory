@@ -42,20 +42,23 @@ paths (design 8.7). A posted request with no probe (an rc3 client) is
 captured at its cwd as before; where that path cannot be read the
 resolution is INDETERMINATE with line L8 (I42).
 
-Beyond the standard library this module imports only `_caches`,
-`checkout_token`, `githead`, `gitobjects` and `project_file`, so the hook
-client imports it; the membership model, the store and the config are
-imported where a function needs them.
+The probe, the path state and host name it reads, `INDETERMINATE` and
+`TOKEN_VERSION` live in `_location_probe`, which imports nothing beyond
+the standard library, and are imported here unchanged: a hook posts the
+probe on every turn without importing this module, and imports it only
+for the witness exchange. Beyond the standard library this module imports
+only `_caches`, `_location_probe`, `checkout_token`, `githead`,
+`gitobjects` and `project_file`, so that exchange stays light; the
+membership model, the store and the config are imported where a function
+needs them.
 """
 
 from __future__ import annotations
 
 import contextlib
 import dataclasses
-import errno
 import os
 import re
-import socket
 import stat
 import subprocess
 import sys
@@ -67,6 +70,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import _caches, checkout_token, githead, gitobjects, project_file
+from ._location_probe import INDETERMINATE, TOKEN_VERSION, _hostname, _path_state, probe
 
 if TYPE_CHECKING:
     from .config import Config
@@ -121,7 +125,8 @@ __all__ = [
 
 REPO = "repo"
 OUTSIDE = "outside"
-INDETERMINATE = "indeterminate"
+# INDETERMINATE is `_location_probe`'s, imported above: the probe a hook
+# posts without this module says it too.
 PRIMARY = "primary"
 LINKED = "linked"
 BARE = "bare"
@@ -148,8 +153,7 @@ BLOBS_PER_WITNESS = 8
 BLOB_MIN_SIZE = 64
 #: Tree entries looked at for the blob sample (the root and its first level).
 BLOB_LOOK = 64
-#: The location token's format version.
-TOKEN_VERSION = 1
+# TOKEN_VERSION, the location token's format version, is `_location_probe`'s.
 #: The cwd of a caller that has none (its working directory was removed
 #: under it): the path its indeterminate location and the unresolved home
 #: of its writes are keyed on (decision B6).
@@ -163,7 +167,6 @@ NO_MACHINE = "<no machine>"
 #: Rounds of the witness exchange a client answers before it stops.
 EXCHANGE_ROUNDS = 8
 
-_GONE_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ELOOP, errno.ENAMETOOLONG})
 _FULL_HASH = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 _HEAD_LIMIT = 1 << 16
 _CONFIG_LIMIT = 1 << 20
@@ -313,20 +316,29 @@ _SCHEME_URL = re.compile(
     r"^[a-z][a-z0-9+.-]*://(?:[^@/]+@)?([^/:]+)(?::\d+)?/(.+)$", re.IGNORECASE
 )
 _SCP_URL = re.compile(r"^(?:[^@/]+@)?([^:/]+):(.+)$")
+_DRIVE = re.compile(r"[A-Za-z]:")
+
+#: The path functions a local remote is keyed with: the platform's own. A
+#: module constant, so a test can key a Windows remote on any host by
+#: swapping it and `_url_path` (``tests/test_location_remote_key.py``).
+_PATH = os.path
 
 
 def remote_key(url: str | None, base: str | None = None) -> str | None:
     """``host/owner/name``, lower case, without a ``.git`` suffix: the
     spelling two URLs of one hosted repository share. A ``file://`` URL or
     a path is ``local:<absolute path>``, a relative path taken from `base`
-    (the repository's top level), as the prototype keys them."""
+    (the repository's top level), as the prototype keys them. A file URL
+    names the path `_file_url_path` reads from it, so it keys the same as
+    that path written plainly: ``file:///D:/a/repo`` and ``D:\\a\\repo`` on
+    Windows, ``file:///home/a/repo`` and ``/home/a/repo`` elsewhere."""
     if not url:
         return None
     text = url.strip()
     if not text:
         return None
     if text.lower().startswith("file://"):
-        return "local:" + _local(text[len("file://") :], base)
+        return "local:" + _local(_file_url_path(text), base)
     m = _SCHEME_URL.match(text)
     if m:
         host, rest = m.group(1), m.group(2)
@@ -343,9 +355,53 @@ def remote_key(url: str | None, base: str | None = None) -> str | None:
 
 
 def _local(path: str, base: str | None) -> str:
-    joined = path if os.path.isabs(path) or base is None else os.path.join(base, path)
-    resolved = os.path.realpath(joined)
+    joined = path if _PATH.isabs(path) or base is None else _PATH.join(base, path)
+    resolved = _PATH.realpath(joined)
     return resolved.rstrip("/\\") or resolved
+
+
+def _url_path(path: str) -> str:
+    """`urllib.request.url2pathname`, imported at the call: only a file URL
+    needs it. A test of Windows keys swaps in that platform's."""
+    from urllib.request import url2pathname
+
+    return url2pathname(path)
+
+
+def _file_url_path(url: str) -> str:
+    """The path a ``file://`` URL names here, read the way git reads one
+    (``parse_connect_url`` in git's ``connect.c``): percent-decoded, and the
+    path everything after the authority, a ``?`` or ``#`` in it included.
+
+    Off Windows git drops the authority, so ``file:///x``,
+    ``file://localhost/x`` and ``file://host/x`` are all ``/x``, and the
+    path is only decoded: `url2pathname` there is this `unquote`, except
+    that Python 3.14's splits off a ``?`` or ``#`` part git keeps. On
+    Windows a drive in the URL path (``file:///D:/x``) or as its authority
+    (git's ``file://D:/x``) is that drive and ``localhost`` is this
+    machine, read through `_url_path` (`urllib.request.url2pathname`);
+    any other host names a UNC share, ``file://host/share/x`` being
+    ``\\\\host\\share\\x``, spelled here because 3.14's `url2pathname` reads
+    this machine's own name as no host at all. Stripping the scheme alone
+    leaves ``/D:/x``, which no Windows path function reads as the drive,
+    and a clone of a file URL would lose its lineage there."""
+    from urllib.parse import unquote
+
+    host, slash, rest = url[len("file://") :].partition("/")
+    path = slash + rest
+    if _PATH.sep != "\\":
+        return unquote(path)
+    if _DRIVE.fullmatch(host):
+        path, host = "/" + host + path, ""
+    if host and host.lower() != "localhost":
+        return "\\\\" + host + unquote(path).replace("/", "\\")
+    # Quoted, a query or fragment reaches `url2pathname` as part of the
+    # path and comes back decoded, as git reads it.
+    shaped = path.replace("?", "%3F").replace("#", "%23")
+    try:
+        return _url_path(shaped)
+    except (OSError, ValueError):
+        return unquote(path).replace("/", "\\")
 
 
 def _unquote(value: str) -> str:
@@ -846,29 +902,6 @@ def _manifest_from(value: Any) -> tuple[str, tuple[tuple[str, int], ...]] | None
         _text(value.get("name")),
         tuple((_text(e[0]), int(e[1])) for e in entries),
     )
-
-
-def _path_state(path: str) -> tuple[str, os.stat_result | None, str]:
-    """('present', stat, '') or ('gone' | 'unreachable', None, detail):
-    'gone' when the OS answered that nothing is there, 'unreachable' when
-    it could not say (permission, a dropped mount)."""
-    try:
-        st = os.stat(path)
-    except ValueError as exc:
-        return "gone", None, str(exc)
-    except OSError as exc:
-        reason = os.strerror(exc.errno) if exc.errno else str(exc)
-        if exc.errno in _GONE_ERRNOS:
-            return "gone", None, reason
-        return "unreachable", None, reason
-    return "present", st, ""
-
-
-def _hostname() -> str | None:
-    try:
-        return socket.gethostname() or None
-    except OSError:
-        return None
 
 
 def _resolve_head(git: _Git) -> tuple[str | None, str | None]:
@@ -1414,30 +1447,6 @@ def capture_token(
     return capture(
         cwd, write_token=write_token, budget=budget, manifest=manifest
     ).to_token()
-
-
-def probe(cwd: str) -> dict[str, Any]:
-    """The hook client's first word on where it stands (design 8.1): the
-    cwd resolved, its device and inode, and the host's name, which the
-    daemon compares with its own reading of the same path. A stat and a
-    ``realpath``; nothing else is read."""
-    out: dict[str, Any] = {"v": TOKEN_VERSION, "probe": True, "cwd": cwd}
-    state, st, why = _path_state(cwd)
-    if state != "present" or st is None:
-        out["state"] = INDETERMINATE
-        out["detail"] = f"cwd {state}: {why}" if why else f"cwd {state}"
-        return out
-    try:
-        real = os.path.realpath(cwd)
-    except (OSError, ValueError):
-        real = cwd
-    out["cwd"] = real
-    # Device and inode: the daemon reads the path at the same moment, so a
-    # reused inode number cannot stand between the two readings, and no
-    # birth time is read (statx would load ctypes into every hook).
-    out["cwd_object"] = [str(st.st_dev), str(st.st_ino), None]
-    out["hostname"] = _hostname()
-    return out
 
 
 # ---------------------------------------------------------------------------

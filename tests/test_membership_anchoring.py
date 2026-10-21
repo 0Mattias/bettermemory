@@ -10,7 +10,10 @@ home and witness `memory_verify` records with its stamp.
 
 Every repository is built with git under ``tmp_path`` with a neutral
 configuration (the shape of experiments/lab.py), and every location is the
-real capture of that directory (`location.capture_location`).
+real capture of that directory (`location.capture_location`). The E18 (c)
+and cited-commit tests run twice, the second time with githead's discovery
+declining as it does on Windows (`discovery`), so the reads Windows takes
+run on every platform.
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ from typing import Any
 
 import pytest
 
-from bettermemory import location
+from bettermemory import githead, location
 from bettermemory.config import Config, StorageConfig
 from bettermemory.events import Recorder
 from bettermemory.machine import MachineIdentity, open_machine
@@ -91,6 +94,31 @@ def _git(cwd: Path, *args: str) -> str:
     done = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
     return done.stdout.strip()
+
+
+def _remove(path: Path) -> None:
+    """`shutil.rmtree` after making every entry writable: git writes its
+    objects read-only, and Windows refuses to unlink a read-only file
+    (WinError 5). A pass before the removal, not an error handler, whose
+    keyword differs across the supported Pythons (``onexc`` from 3.12,
+    ``onerror`` before)."""
+    for p in [path, *path.rglob("*")]:
+        if not p.is_symlink():
+            try:
+                p.chmod(0o755 if p.is_dir() else 0o644)
+            except OSError:
+                pass
+    shutil.rmtree(path)
+
+
+@pytest.fixture(params=["platform", "declined"])
+def discovery(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """githead's discovery as this platform has it, and declining as it does
+    off POSIX (`githead._POSIX`): `find_gitdir` and `gitdir_at` then answer
+    None for every path, as on Windows, and verify's sparse-checkout and
+    cited-commit reads go on through `githead.locate`."""
+    if request.param == "declined":
+        monkeypatch.setattr(githead, "_POSIX", False)
 
 
 def _repo(path: Path, *files: str) -> Path:
@@ -483,7 +511,7 @@ def _synced(bench: Bench) -> Synced:
     laptop.parent.mkdir(parents=True)
     shutil.copytree(host, laptop, symlinks=True)
     rid = bench.write(laptop, machine=LAPTOP)
-    shutil.rmtree(bench.fx / "laptop")
+    _remove(bench.fx / "laptop")
     bench.see(host)
     return Synced(
         host,
@@ -546,6 +574,7 @@ def test_e18c_rc3_reads_a_path_outside_the_sparse_cone_as_a_miss(
     assert len(rc3.claim_anchored_missing) == 1
 
 
+@pytest.mark.usefixtures("discovery")
 def test_e18c_a_path_outside_the_sparse_cone_reads_unconfirmed_not_missing(
     bench: Bench,
 ) -> None:
@@ -559,6 +588,7 @@ def test_e18c_a_path_outside_the_sparse_cone_reads_unconfirmed_not_missing(
     assert unverifiable_attestations(["web/main.py"], anchor=anchor, stored=True) == []
 
 
+@pytest.mark.usefixtures("discovery")
 def test_e18c_a_path_the_sparse_head_does_not_track_is_still_missing(
     bench: Bench,
 ) -> None:
@@ -604,6 +634,7 @@ def _commit_leg(anchor: ClaimAnchor, head: str) -> Any:
     )
 
 
+@pytest.mark.usefixtures("discovery")
 def test_cited_commit_resolves_in_the_home_checkouts_store(bench: Bench) -> None:
     home, head, rid = _cited(bench)
     anchor = bench.anchor(rid)
@@ -619,6 +650,7 @@ def test_cited_commit_resolves_in_the_home_checkouts_store(bench: Bench) -> None
     )
 
 
+@pytest.mark.usefixtures("discovery")
 def test_cited_commit_resolves_in_the_callers_store_when_the_home_is_not_live(
     bench: Bench,
 ) -> None:
@@ -632,6 +664,7 @@ def test_cited_commit_resolves_in_the_callers_store_when_the_home_is_not_live(
     assert _commit_leg(anchor, head) is not None
 
 
+@pytest.mark.usefixtures("discovery")
 def test_cited_commit_no_live_store_holding_it_reads_unconfirmed(
     bench: Bench,
 ) -> None:

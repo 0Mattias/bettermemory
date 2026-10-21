@@ -9,9 +9,12 @@
 #            repository), shares a directory under /srv as "bmci" to that
 #            user alone and mounts it over SMB 3.0, every file shown as
 #            owned by UID and GID.
-#   remount: unmounts the share and mounts it again with the same options,
-#            printing the device and inode of one file before and after,
-#            so the log shows whether the remount renumbered it.
+#   remount: unmounts the share and mounts it again with noserverino added,
+#            so the client numbers every inode itself instead of taking the
+#            server's numbers as the first mount (serverino) did: the remount
+#            renumbers the objects, the case E11 c needs. It prints the
+#            device and inode of one file before and after, so the log shows
+#            whether the remount renumbered it.
 #
 # Usage: sudo bash tools/ci/smb_share.sh setup|remount UID GID USER PASSWORD
 set -euo pipefail
@@ -26,9 +29,11 @@ share_dir=/srv/bm-smb
 mount_point=/mnt/smb
 share=bmci
 
+# Mounts the share; an argument adds to the options (",noserverino").
 mount_share() {
+  local extra=${1:-}
   mount -t cifs \
-    -o "vers=3.0,username=$smb_user,password=$smb_password,uid=$owner_uid,gid=$owner_gid" \
+    -o "vers=3.0,username=$smb_user,password=$smb_password,uid=$owner_uid,gid=$owner_gid$extra" \
     "//localhost/$share" "$mount_point"
 }
 
@@ -79,7 +84,7 @@ remount)
     fuser -vm "$mount_point" >&2 || true
     umount -l "$mount_point"
   fi
-  mount_share
+  mount_share ",noserverino"
   after=$(object_of "$probe")
   echo "remount-probe before the remount: $before"
   echo "remount-probe after the remount:  $after"

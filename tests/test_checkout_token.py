@@ -304,11 +304,16 @@ def _race(git_dir: Path) -> list[TokenWrite]:
     return [result for result in results if result is not None]
 
 
-def _assert_one_token(git_dir: Path, results: list[tuple[str, str | None]]) -> None:
-    statuses = [status for status, _ in results]
-    tokens = {token for _, token in results}
-    assert statuses.count("written") == 1, statuses
-    assert statuses.count("exists") == len(results) - 1, statuses
+def _assert_one_token(
+    git_dir: Path, results: list[tuple[str, str | None, str]]
+) -> None:
+    """One writer wrote, every other found its token; a failure names each
+    writer's status and detail."""
+    statuses = [status for status, _, _ in results]
+    tokens = {token for _, token, _ in results}
+    said = [(status, detail) for status, _, detail in results]
+    assert statuses.count("written") == 1, said
+    assert statuses.count("exists") == len(results) - 1, said
     assert len(tokens) == 1 and None not in tokens
     assert read(git_dir).token in tokens
     assert _info_listing(git_dir) == ["bettermemory", "exclude"]
@@ -317,13 +322,13 @@ def _assert_one_token(git_dir: Path, results: list[tuple[str, str | None]]) -> N
 def test_i34_concurrent_writers_in_threads_leave_one_token(tmp_path: Path) -> None:
     git_dir = _repo(tmp_path / "proj")
     results = _race(git_dir)
-    _assert_one_token(git_dir, [(r.status, r.token) for r in results])
+    _assert_one_token(git_dir, [(r.status, r.token, r.detail) for r in results])
 
 
 def _write_in_child(git_dir: str, start: Any, out: Any) -> None:
     start.wait()
     result = write(git_dir, policy=True, bare=False)
-    out.put((result.status, result.token))
+    out.put((result.status, result.token, result.detail))
 
 
 @pytest.mark.skipif(
@@ -370,7 +375,7 @@ def test_x9_concurrent_writers_without_links_leave_one_token(
     git_dir = _repo(tmp_path / "proj")
     _refuse_links(monkeypatch)
     results = _race(git_dir)
-    _assert_one_token(git_dir, [(r.status, r.token) for r in results])
+    _assert_one_token(git_dir, [(r.status, r.token, r.detail) for r in results])
 
 
 def test_x9_exclusive_create_losing_the_race_reports_the_winner(
@@ -418,7 +423,101 @@ def test_a_winner_that_vanishes_is_a_failure_not_an_exception(
     monkeypatch.setattr(os, "link", exists_then_gone)
     result = write(git_dir, policy=True, bare=False)
     assert result.status == "failed:io" and not result.ok
+    assert result.detail == "the token another writer placed was removed"
     assert not token_path(git_dir).exists()
+
+
+class _Clock:
+    """`time.monotonic` and `time.sleep` for one writer: a pause moves the
+    clock on by its length and is kept, so a test reads every pause the
+    writer took without waiting for it."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+        self.pauses: list[float] = []
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.pauses.append(seconds)
+        self.now += seconds
+
+
+def _losing(monkeypatch: pytest.MonkeyPatch, seen: list[TokenWrite | None]) -> _Clock:
+    """A writer that loses the race: its link finds the name taken, its
+    first look (before it writes) finds nothing, and each read after the
+    race finds the next of `seen`, the last one from then on. Returns the
+    writer's clock."""
+    clock = _Clock()
+    monkeypatch.setattr(time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(time, "sleep", clock.sleep)
+    looks = iter([None, *seen])
+    last = seen[-1]
+
+    def existing(path: Path) -> TokenWrite | None:
+        return next(looks, last)
+
+    def taken(src: Any, dst: Any) -> None:
+        raise FileExistsError(errno.EEXIST, "File exists")
+
+    monkeypatch.setattr(checkout_token, "_existing", existing)
+    monkeypatch.setattr(os, "link", taken)
+    return clock
+
+
+@pytest.mark.parametrize(
+    "unfinished",
+    [
+        None,
+        TokenWrite("malformed", detail="empty"),
+        TokenWrite("malformed", detail="cut short"),
+    ],
+    ids=["no-file-yet", "empty", "cut-short"],
+)
+def test_i34_a_loser_reads_the_winners_token_once_it_shows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unfinished: TokenWrite | None
+) -> None:
+    """I34 on an SMB mount (cache=strict, actimeo=1): the loser's link is
+    refused because the winner's name exists, and its reads still find no
+    file there, or one empty or cut short. It reads again in short pauses
+    until the winner's token shows, and reports it."""
+    git_dir = _repo(tmp_path / "proj")
+    winner = mint()
+    clock = _losing(
+        monkeypatch, [unfinished, unfinished, unfinished, TokenWrite("exists", winner)]
+    )
+    assert write(git_dir, policy=True, bare=False) == TokenWrite("exists", winner)
+    assert clock.pauses == [0.01, 0.02, 0.04]
+    assert _info_listing(git_dir) == ["exclude"]
+
+
+def test_i34_a_loser_gives_up_once_the_bound_is_spent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing shows within the bound: the loser reports the winner's token
+    removed, having paused no longer than the bound in all, the pauses
+    growing to their longest."""
+    git_dir = _repo(tmp_path / "proj")
+    clock = _losing(monkeypatch, [None])
+    result = write(git_dir, policy=True, bare=False)
+    assert result == TokenWrite(
+        "failed:io", detail="the token another writer placed was removed"
+    )
+    assert sum(clock.pauses) == pytest.approx(checkout_token._RACE_READ_SECONDS)
+    assert max(clock.pauses) == checkout_token._RACE_PAUSE_MAX_SECONDS
+
+
+def test_i34_a_loser_finding_another_file_reports_it_at_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file at the token's name that is no token, and none a writer is
+    making: reported as it is, without a pause."""
+    git_dir = _repo(tmp_path / "proj")
+    other = TokenWrite("malformed", detail=f"not a {TOKEN_HEADER} file")
+    clock = _losing(monkeypatch, [other])
+    assert write(git_dir, policy=True, bare=False) == other
+    assert clock.pauses == []
 
 
 def test_an_exclusive_create_cut_short_is_removed(
@@ -545,16 +644,22 @@ def test_a_directory_at_the_token_name_is_not_a_token(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="no FIFOs here")
-def test_a_fifo_at_the_token_name_does_not_block_the_reader(tmp_path: Path) -> None:
-    git_dir = _repo(tmp_path / "proj")
+def test_a_fifo_at_the_token_name_does_not_block_the_reader(
+    local_tmp_path: Path,
+) -> None:
+    """The repository on local disk: the reader's answer to a FIFO is the
+    point, and an SMB mount makes none (EOPNOTSUPP)."""
+    git_dir = _repo(local_tmp_path / "proj")
     make_fifo = getattr(os, "mkfifo")
     make_fifo(token_path(git_dir))
     assert read(git_dir) == TokenRead("malformed", detail="not a regular file")
 
 
 @_POSIX_PERMISSIONS
-def test_an_unreadable_token_is_reported(tmp_path: Path) -> None:
-    git_dir = _repo(tmp_path / "proj")
+def test_an_unreadable_token_is_reported(local_tmp_path: Path) -> None:
+    """The repository on local disk: the reader's answer to a refused read
+    is the point, and an SMB mount without the unix extensions ignores chmod."""
+    git_dir = _repo(local_tmp_path / "proj")
     path = _plant(git_dir, render(mint()))
     path.chmod(0)
     try:

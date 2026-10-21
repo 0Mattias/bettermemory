@@ -244,8 +244,16 @@ def test_parse_an_oversized_file_is_not_read_further(base: Path) -> None:
     assert isinstance(result, ProjectFileError) and result.reason == "too_large"
 
 
+@pytest.fixture
+def local_base(local_tmp_path: Path) -> Path:
+    """`base` on local disk, for a file an SMB mount cannot host: a FIFO
+    (EOPNOTSUPP) or a mode chmod sets (ignored without the unix extensions)."""
+    return local_tmp_path.resolve()
+
+
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="no FIFOs here")
-def test_parse_a_fifo_does_not_block(base: Path) -> None:
+def test_parse_a_fifo_does_not_block(local_base: Path) -> None:
+    base = local_base
     make_fifo = getattr(os, "mkfifo")
     make_fifo(base / PROJECT_FILE_NAME)
     walk = find(base, None)
@@ -258,7 +266,8 @@ def test_parse_a_fifo_does_not_block(base: Path) -> None:
     sys.platform == "win32" or getattr(os, "geteuid", lambda: -1)() == 0,
     reason="POSIX permission bits, not enforced for root",
 )
-def test_an_unreadable_file_is_reported_on_the_walk(base: Path) -> None:
+def test_an_unreadable_file_is_reported_on_the_walk(local_base: Path) -> None:
+    base = local_base
     path = _file(base / "proj", _ID, "proj")
     path.chmod(0)
     try:

@@ -327,11 +327,34 @@ jobs:
       - name: Show the mount
         run: bash tools/ci/show_mount.sh /mnt/nfs
 
-      # --basetemp puts every tmp_path fixture on the mount: E11, E15, E19,
-      # E20 and E33 with the repositories, tokens and stores on NFS.
+      # --basetemp puts every tmp_path on the mount: E11, E15, E19, E20 and
+      # E33 with the repositories, checkout tokens and project files on NFS.
+      # The stores, their keys and the machines' state directories are on
+      # the runner's own disk (BETTERMEMORY_TEST_LOCAL_TMP, the conftest's
+      # local_tmp_path): SQLite's WAL needs shared memory a network
+      # filesystem does not give, and the leg tests the repositories, not
+      # the store.
       - name: Membership tests on NFS
+        env:
+          BETTERMEMORY_TEST_LOCAL_TMP: ${{ runner.temp }}/bettermemory-local
         run: >-
           uv run pytest -p no:cacheprovider --basetemp=/mnt/nfs/pytest -q -rfEs
+          tests/test_checkout_token.py tests/test_project_file.py
+          tests/test_gitobjects.py tests/test_membership_capture.py
+          tests/test_membership_resolution.py
+
+      # The same files read as a filesystem without birth time reads them
+      # (BETTERMEMORY_TEST_NO_BIRTH), everything on the runner's ext4,
+      # which hands a freed inode number straight back to the next file:
+      # E15 where the number does come back. Run whatever the step above
+      # gave, so the two read side by side.
+      - name: Membership tests without birth time on the runner's disk
+        if: ${{ !cancelled() }}
+        env:
+          BETTERMEMORY_TEST_NO_BIRTH: "1"
+        run: >-
+          uv run pytest -p no:cacheprovider
+          --basetemp=${{ runner.temp }}/pytest-no-birth -q -rfEs
           tests/test_checkout_token.py tests/test_project_file.py
           tests/test_gitobjects.py tests/test_membership_capture.py
           tests/test_membership_resolution.py
@@ -372,17 +395,30 @@ jobs:
       - name: Show the mount
         run: bash tools/ci/show_mount.sh /mnt/smb
 
+      # --basetemp puts every tmp_path on the mount: the repositories,
+      # checkout tokens and project files on SMB. The stores, their keys
+      # and the machines' state directories are on the runner's own disk
+      # (BETTERMEMORY_TEST_LOCAL_TMP), as are the few fixtures the share
+      # cannot host and that test the reader, not the mount: a FIFO
+      # (EOPNOTSUPP) and a file chmod makes unreadable (chmod 000 does not
+      # take on the share).
       - name: Membership tests on SMB
+        env:
+          BETTERMEMORY_TEST_LOCAL_TMP: ${{ runner.temp }}/bettermemory-local
         run: >-
           uv run pytest -p no:cacheprovider --basetemp=/mnt/smb/pytest -q -rfEs
           tests/test_checkout_token.py tests/test_project_file.py
           tests/test_gitobjects.py tests/test_membership_capture.py
           tests/test_membership_resolution.py
 
-      # E11 c: a remount can renumber objects. The step prints one file's
-      # device and inode before and after; the token tests then run again
-      # on the remounted share. Both run whenever the share was mounted,
-      # so a failure above still leaves the remount in the log.
+      # E11 c: a remount can renumber objects. The first mount takes the
+      # server's inode numbers (serverino), so a remount with the same
+      # options keeps every object; the remount adds noserverino, so the
+      # client numbers the inodes itself and the second mount renumbers
+      # them. The step prints one file's device and inode before and after;
+      # the token tests then run again on the remounted share. Both run
+      # whenever the share was mounted, so a failure above still leaves the
+      # remount in the log.
       - name: Unmount and mount the share again
         if: ${{ !cancelled() && steps.share.outcome == 'success' }}
         run: >-
@@ -395,6 +431,8 @@ jobs:
 
       - name: Checkout token tests on the remounted share
         if: ${{ !cancelled() && steps.share.outcome == 'success' }}
+        env:
+          BETTERMEMORY_TEST_LOCAL_TMP: ${{ runner.temp }}/bettermemory-local
         run: >-
           uv run pytest -p no:cacheprovider --basetemp=/mnt/smb/pytest-remounted
           -q -rfEs tests/test_checkout_token.py

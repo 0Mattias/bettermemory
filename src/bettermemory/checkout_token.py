@@ -15,11 +15,13 @@ token, which makes it a witness of moves and copies (design 2.2, witness T).
 temporary file in the same `info/` folder, are flushed to disk, and the
 file is hard-linked to the token's name (CreateHardLinkW on Windows); a
 link never replaces an existing name, so of two concurrent writers exactly
-one succeeds and both read the same token afterwards (E28 c). Where the
-filesystem refuses hard links (some SMB servers, FAT) the token is made by
-an exclusive create instead, and `read` reads a file it finds empty or cut
-short once more, since such a writer may be between its create and its
-write (design 8.7). `remint` replaces the token, for a checkout that leaves
+one succeeds and both read the same token afterwards (E28 c). The loser
+reads the winner's file again for a bounded time while it finds it missing
+or unfinished, as an SMB client can show it just after the race (I34).
+Where the filesystem refuses hard links (some SMB servers, FAT) the token is
+made by an exclusive create instead, and `read` reads a file it finds empty
+or cut short once more, since such a writer may be between its create and
+its write (design 8.7). `remint` replaces the token, for a checkout that leaves
 the line it was copied from (`bettermemory project new`, or history
 superseding the token, E21 g). Before either makes its temporary file it
 removes the temporary files older than an hour that a writer killed
@@ -66,6 +68,16 @@ _MAX_BYTES = 4096
 # The pause before a file found empty or cut short is read again: the
 # prototype's interval (proto/capture.py `read_token`).
 _REREAD_DELAY_SECONDS = 0.01
+# How long a writer that lost the race reads the winner's token again while
+# it finds no file there, or one empty or cut short (design 8.7, I34): past
+# the second for which a Linux SMB client answers a lookup that found
+# nothing from its cache (cifs keeps a negative dentry that long), and the
+# longest pause between two reads.
+_RACE_READ_SECONDS = 1.5
+_RACE_PAUSE_MAX_SECONDS = 0.2
+# What `_malformed_detail` says of a file a writer has not finished.
+_EMPTY = "empty"
+_CUT_SHORT = "cut short"
 # Characters of randomness in a temporary file's name.
 _TEMP_SUFFIX_LENGTH = 12
 # Every temporary file starts with this name in `info/`.
@@ -339,9 +351,9 @@ def _cut_short(text: str) -> bool:
 
 def _malformed_detail(text: str) -> str:
     if not text:
-        return "empty"
+        return _EMPTY
     if _cut_short(text):
-        return "cut short"
+        return _CUT_SHORT
     return f"not a {TOKEN_HEADER} file"
 
 
@@ -432,7 +444,26 @@ def _place(temp: Path, path: Path, value: str, body: bytes) -> TokenWrite:
 
 
 def _after_race(path: Path) -> TokenWrite:
-    found = _existing(path)
+    """What a writer that lost the race to `path` reports: the winner's
+    token. The loser's link or exclusive create was refused because the
+    name exists, yet its read can still find no file there (an SMB client
+    answers from the lookup it made just before) or one empty or cut short
+    (the winner's bytes not yet in). Either is read again, in pauses
+    growing from `_REREAD_DELAY_SECONDS`, for up to `_RACE_READ_SECONDS`
+    (design 8.7, I34); then what was last found is reported, the token
+    removed when nothing is there."""
+    deadline = time.monotonic() + _RACE_READ_SECONDS
+    pause = _REREAD_DELAY_SECONDS
+    while True:
+        found = _existing(path)
+        unfinished = found is None or (
+            found.status == "malformed" and found.detail in (_EMPTY, _CUT_SHORT)
+        )
+        left = deadline - time.monotonic()
+        if not unfinished or left <= 0:
+            break
+        time.sleep(min(pause, left))
+        pause = min(2 * pause, _RACE_PAUSE_MAX_SECONDS)
     if found is None:
         return TokenWrite(
             "failed:io", detail="the token another writer placed was removed"

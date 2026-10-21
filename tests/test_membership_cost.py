@@ -74,17 +74,22 @@ def neutral_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def git(cwd: str | Path, *args: str, stdin: str | None = None) -> str:
+    """git's stdout, stripped. `stdin` goes in as UTF-8 bytes and the output
+    is decoded here, with no text layer between: on Windows one turns each
+    newline of a fast-import stream into CRLF, and git then reads the
+    branch as ``refs/heads/main`` and a carriage return, which it refuses."""
     done = subprocess.run(
         ["git", *args],
         cwd=cwd,
         capture_output=True,
-        text=True,
-        input=stdin,
+        input=None if stdin is None else stdin.encode("utf-8"),
         check=False,
     )
+    out = done.stdout.decode("utf-8", errors="replace").replace("\r\n", "\n")
+    err = done.stderr.decode("utf-8", errors="replace").replace("\r\n", "\n")
     if done.returncode != 0:
-        raise AssertionError(f"git {args} failed: {done.stderr.strip()}")
-    return done.stdout.strip()
+        raise AssertionError(f"git {args} failed: {err.strip()}")
+    return out.strip()
 
 
 def make_repo(path: Path, *, commits: int = 2, remote: str | None = None) -> Path:
@@ -384,7 +389,9 @@ def test_e29_301_sightings_keep_the_witness_bound(
     ref = repo / ".git" / "refs" / "heads" / "main"
     resolved = []
     for sha in commits:
-        ref.write_text(sha + "\n")
+        # Bytes, so the ref file holds the newline git writes on every
+        # platform, not a text layer's CRLF.
+        ref.write_bytes(f"{sha}\n".encode("ascii"))
         location.forget()
         resolved.append(resolve_here(store, config, str(repo), identity=identity))
     model = Membership(store, identity.id)

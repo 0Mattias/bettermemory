@@ -106,17 +106,22 @@ def neutral_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def git(cwd: str | Path, *args: str, input_text: str | None = None) -> str:
+    """git's stdout, stripped. `input_text` goes in as UTF-8 bytes and the
+    output is decoded here, with no text layer between: on Windows one
+    turns each newline into CRLF, so a blob `hash-object --stdin` names
+    would not be the bytes the test hashed."""
     done = subprocess.run(
         ["git", *args],
         cwd=cwd,
-        input=input_text,
+        input=None if input_text is None else input_text.encode("utf-8"),
         capture_output=True,
-        text=True,
         check=False,
     )
+    out = done.stdout.decode("utf-8", errors="replace").replace("\r\n", "\n")
+    err = done.stderr.decode("utf-8", errors="replace").replace("\r\n", "\n")
     if done.returncode != 0:
-        raise AssertionError(f"git {args} failed: {done.stderr.strip()}")
-    return done.stdout.strip()
+        raise AssertionError(f"git {args} failed: {err.strip()}")
+    return out.strip()
 
 
 _SEQ = [0]
