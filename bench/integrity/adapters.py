@@ -22,7 +22,7 @@ Per-arm signal definitions, fixed here and documented in docs/eval.md:
 
 The bettermemory arm's gate-only mode (unit D1) runs the shipped gates
 with the write review on: its tau is passed by the caller, every review
-is answered with no opinion (unsafe 0, secret 0, "update" for a target
+is answered with no opinion (unsafe 0, secret 0, standing 0, "update" for a target
 the cue code links and "unrelated" for every other), and a first status
 of "review" reads as an add that passed the gates. Since unit D1c an
 "unrelated" answer on a cue target drops the cue link, so "update", which
@@ -589,6 +589,7 @@ class BetterMemoryAdapter:
                     "relation": dict(relation),
                     "unsafe": 0,
                     "secret": 0,
+                    "standing": 0,
                 },
                 **flags,
             )

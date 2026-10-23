@@ -154,6 +154,7 @@ async def test_dispatch_actions_are_enumerated(tmp_path: Path) -> None:
         "answer_question",
         "join_project",
         "unjoin_project",
+        "answer_standing",
     ]
     assert by_name["episode"].input_schema["required"] == ["action"]
     assert by_name["memory_admin"].input_schema["required"] == ["action"]

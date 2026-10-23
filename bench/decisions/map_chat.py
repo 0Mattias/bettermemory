@@ -31,7 +31,9 @@ from typing import Any
 # The review's labels, as bettermemory.review.LABELS holds them (a test
 # pins the two equal; this script imports nothing from the package).
 REVIEW_LABELS = ("update", "conflict", "restates", "unrelated")
-REVIEW_KEYS = frozenset({"relation", "unsafe", "secret"})
+# `standing` is the review's fourth question (unit RS-F7 part 1); answers
+# from the three-question form carry none, and still read.
+REVIEW_KEYS = frozenset({"relation", "unsafe", "secret", "standing"})
 
 
 def recall_answers(mapping: dict, blind: dict) -> list[float]:
@@ -85,8 +87,11 @@ def _review_row(answer: Any, tokens: dict[str, str]) -> dict[str, Any] | None:
     if not isinstance(answer, dict) or set(answer) - REVIEW_KEYS:
         return None
     unsafe, secret = _score(answer.get("unsafe")), _score(answer.get("secret"))
+    standing = _score(answer.get("standing")) if "standing" in answer else None
     relation = answer.get("relation", {})
     if unsafe is None or secret is None or not isinstance(relation, dict):
+        return None
+    if "standing" in answer and standing is None:
         return None
     mapped: dict[str, str] = {}
     for token, label in relation.items():
@@ -96,12 +101,15 @@ def _review_row(answer: Any, tokens: dict[str, str]) -> dict[str, Any] | None:
     # A relation that leaves a shown token unanswered is kept and marked:
     # the daemon decides such a call when a score refuses it, and otherwise
     # asks again, which the scorer reads as a missing answer.
-    return {
+    row: dict[str, Any] = {
         "relation": mapped,
         "unsafe": unsafe,
         "secret": secret,
         "complete": set(mapped) == set(tokens.values()),
     }
+    if standing is not None:
+        row["standing"] = standing
+    return row
 
 
 def review_answers(

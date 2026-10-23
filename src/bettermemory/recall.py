@@ -77,6 +77,7 @@ from pathlib import Path
 from typing import Any
 
 from . import identity
+from . import standing as _standing
 from ._response import ResponseBuilder, isoformat_optional
 from .audit import REAUDIT_DEDUP_WINDOW_SECONDS, MissHit, prompt_recall_fields
 from .config import Config, load_config
@@ -99,6 +100,7 @@ from .location import Exchange
 from .membership import (
     POOL_PREFILTER,
     PROMPT_RECALL,
+    SEARCH_AUTO_SCOPE,
     SEARCH_UNSCOPED,
     SESSION_BRIEF,
     UNRESOLVED,
@@ -635,6 +637,17 @@ def membership_lines(store: Store, caller: Resolution | None) -> list[str]:
     if caller is None:
         return []
     return membership_model(store).first_output(caller)
+
+
+def standing_line(store: Store, caller: Resolution | None) -> str:
+    """The first-output line naming how many records the caller's
+    auto-scoped search reads wait for a standing answer, and the call that
+    shows them (`standing.backlog_line`, unit RS-F7 part 1); "" for
+    none, and while the question is not asked (`standing.asking`)."""
+    if caller is None or not _standing.asking():
+        return ""
+    waiting = _standing.backlog(store, admission_for(SEARCH_AUTO_SCOPE, store, caller))
+    return _standing.backlog_line(waiting.count)
 
 
 def _open_store(cfg: Config) -> Store | None:
@@ -1623,9 +1636,10 @@ def session_brief(
     The caller's membership is resolved first (`location.resolve_hook`
     over what the hook `posted`, or `resolution` when the caller already
     holds it), and the lines of its first output (`membership_lines`:
-    L1 to L10 and every open proposal of the checkout, design 5.4) come
-    right after that notice and before the brief, with the brief's
-    switches off as well. Where the daemon cannot read the caller's
+    L1 to L10 and every open proposal of the checkout, design 5.4), then
+    the line naming the records that wait for a standing answer
+    (`standing_line`), come right after that notice and before the brief,
+    with the brief's switches off as well. Where the daemon cannot read the caller's
     namespace the result carries the exchange's next question in
     ``membership`` and nothing else runs."""
     empty = HookResult.empty("session_brief")
@@ -1653,6 +1667,9 @@ def session_brief(
             membership={"ask": caller_resolution.to_reply()},
         )
     lines = membership_lines(store, caller_resolution)
+    waiting = standing_line(store, caller_resolution)
+    if waiting:
+        lines.append(waiting)
     state = state if state is not None else RecallState(background=False)
     now = now or utcnow()
     key = (harness or DEFAULT_HARNESS, str(session_id))

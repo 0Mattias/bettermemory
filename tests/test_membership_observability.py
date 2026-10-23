@@ -34,7 +34,7 @@ from bettermemory.membership import (
 from bettermemory.models import utcnow
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
-from bettermemory.store import RecordHome
+from bettermemory.store import MEMBERSHIP_TABLES, RecordHome
 
 from ._mcp import call_tool
 from .test_membership_cli import Repo, Scene, bm, scene, typed
@@ -310,5 +310,5 @@ def test_log_verify_folds_the_membership_tables(
         bm(monkeypatch, "log", "verify")
     out = capsys.readouterr().out
     assert exc.value.code == 0, out
-    assert f"  membership {rows} rows in 11 tables" in out
+    assert f"  membership {rows} rows in {len(MEMBERSHIP_TABLES)} tables" in out
     assert "  fold ok" in out

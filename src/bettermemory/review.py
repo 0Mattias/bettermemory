@@ -2,7 +2,7 @@
 what the daemon does with them.
 
 Before a write commits, `memory_write` shows the writing model the stored
-statements the write is most likely to touch and asks three fixed
+statements the write is most likely to touch and asks four fixed
 questions. The model answers by re-sending the same call with a `review`
 object; the answers decide link, file, refuse or commit. No model runs
 inside the product: the questions are asked of the caller.
@@ -11,7 +11,9 @@ This module holds the parts a second reader needs byte for byte, so the
 integrity bench imports them rather than copying them:
 
 - `QUESTIONS`: the question text, frozen in the review commit and pinned
-  by sha256 (`questions_sha256`) in the review seals.
+  by sha256 (`questions_sha256`) in the review seals. The fourth question,
+  standing (unit RS-F7 part 1), is answered as the others are and decides
+  nothing here: the commit stores it beside the record (`standing.py`).
 - `related_for`: the related set, from the engine's top `RELATED_TOP` for
   the write's content plus every memory the cue code (`supersession`)
   would link or file, at most `RELATED_CAP` in all, each body shown whole
@@ -157,6 +159,14 @@ SECRET_STATEMENT = (
     "The new statement contains a credential, key, token or password value, "
     "or part of one, in any spelling or encoding."
 )
+#: The standing question (unit RS-F7 part 1, in the words of the draft the
+#: owner approved), asked of a new statement by the review and of a stored
+#: one by memory_show and memory_admin answer_standing, in the same words,
+#: so one threshold reads every answer (`standing.TAU_STANDING`).
+STANDING_STATEMENT = (
+    "The statement directs future work in its scope until it is replaced: "
+    "a ruling, rule or standing preference the user gave."
+)
 
 
 def _frozen(value: Any) -> Any:
@@ -171,9 +181,9 @@ def _thawed(value: Any) -> Any:
     return value
 
 
-#: The three questions. `relation` is asked per related id with the
-#: proof's labels and criteria; `unsafe` and `secret` are each answered
-#: with a probability from 0 to 1 that the statement holds.
+#: The four questions. `relation` is asked per related id with the
+#: proof's labels and criteria; `unsafe`, `secret` and `standing` are each
+#: answered with a probability from 0 to 1 that the statement holds.
 QUESTIONS: Mapping[str, Any] = _frozen(
     {
         "relation": {
@@ -200,6 +210,10 @@ QUESTIONS: Mapping[str, Any] = _frozen(
         "secret": {
             "type": "probability",
             "instructions": SECRET_STATEMENT,
+        },
+        "standing": {
+            "type": "probability",
+            "instructions": STANDING_STATEMENT,
         },
     }
 )
@@ -436,29 +450,35 @@ class ReviewAnswerError(ValueError):
 ANSWER_FORMAT = (
     'review={"review_id": <id>, "relation": {<related id>: "update" | '
     '"conflict" | "restates" | "unrelated"}, "unsafe": <0 to 1>, '
-    '"secret": <0 to 1>}'
+    '"secret": <0 to 1>, "standing": <0 to 1>}'
 )
 
-_ANSWER_KEYS = frozenset({"review_id", "relation", "unsafe", "secret"})
+_ANSWER_KEYS = frozenset({"review_id", "relation", "unsafe", "secret", "standing"})
 
 
 @dataclass(frozen=True)
 class ReviewAnswers:
-    """One call's answers, as read by `parse_answers`."""
+    """One call's answers, as read by `parse_answers`. `standing` is None
+    only for answers read elsewhere (the integrity bench's recorded
+    three-question answers); `parse_answers` requires it."""
 
     relation: Mapping[str, str]
     unsafe: float
     secret: float
     review_id: str | None = None
+    standing: float | None = None
 
     def to_event(self) -> dict[str, Any]:
         """The answers as an event field: ids, labels and scores, never a
         body."""
-        return {
+        out: dict[str, Any] = {
             "relation": dict(self.relation),
             "unsafe": self.unsafe,
             "secret": self.secret,
         }
+        if self.standing is not None:
+            out["standing"] = self.standing
+        return out
 
     def is_zero_attestation(self) -> bool:
         """Both scores 0 and no update, conflict or restates answer: the
@@ -494,7 +514,8 @@ def parse_answers(raw: Mapping[str, Any] | None) -> ReviewAnswers | None:
     """Read a call's `review` argument. None when it is absent or empty,
     which is a first call. Raises `ReviewAnswerError`, a teaching error,
     for an unknown key, a malformed review_id, an unknown label, and a
-    score that is missing, not a number, or outside 0 to 1. A missing
+    score (unsafe, secret or standing) that is missing, not a number, or
+    outside 0 to 1. A missing
     review_id is not an error. Ids are checked against the related set by
     `check_answered_ids`."""
     if raw is None:
@@ -540,6 +561,7 @@ def parse_answers(raw: Mapping[str, Any] | None) -> ReviewAnswers | None:
         unsafe=_score(raw, "unsafe"),
         secret=_score(raw, "secret"),
         review_id=review_id,
+        standing=_score(raw, "standing"),
     )
 
 
@@ -816,6 +838,7 @@ __all__ = [
     "ReviewAnswers",
     "ReviewDecision",
     "SECRET_STATEMENT",
+    "STANDING_STATEMENT",
     "TAU_SECRET",
     "TAU_UNSAFE",
     "Tau",

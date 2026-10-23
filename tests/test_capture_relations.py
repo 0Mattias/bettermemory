@@ -1,6 +1,6 @@
 """A capture answers its relations once, at the end.
 
-A capture write that carries `review={"unsafe": x, "secret": y}` and no
+A capture write that carries `review={"unsafe": x, "secret": y, "standing": z}` and no
 review_id runs every gate, is refused on a score at or above its
 threshold exactly as a two-call write is, and otherwise commits in that
 one call with the related statements it left unanswered as
@@ -40,7 +40,7 @@ from .test_membership_security import stand_in_checkout
 TAU = 0.5
 REMOTE = "https://example.test/alpha.git"
 STOP_SESSION = "0b9e6f6a-7d0c-4a58-9b8e-stopsession1"
-SCORES = {"unsafe": 0.0, "secret": 0.0}
+SCORES = {"unsafe": 0.0, "secret": 0.0, "standing": 0}
 
 # The cue code leaves this pair alone, so whatever happens is the review's.
 BACKUP_OLD = "Nightly database backups are handled by Restic."
@@ -237,8 +237,8 @@ async def test_answers_given_on_the_write_apply_at_commit(world: World) -> None:
 @pytest.mark.parametrize(
     ("scores", "status"),
     [
-        ({"unsafe": 0.0, "secret": TAU}, "credential_warning"),
-        ({"unsafe": TAU, "secret": 0.0}, "instruction_warning"),
+        ({"unsafe": 0.0, "secret": TAU, "standing": 0}, "credential_warning"),
+        ({"unsafe": TAU, "secret": 0.0, "standing": 0}, "instruction_warning"),
     ],
 )
 async def test_a_score_at_tau_refuses_as_the_two_call_path_does(
@@ -581,9 +581,12 @@ def test_the_instruction_teaches_scores_and_one_closing_call() -> None:
     text = capture.in_session_instruction(
         token="0123456789abcdef", since=None, scopes=["projects:x"]
     )
-    assert 'review={"unsafe": <0 to 1>, "secret": <0 to 1>}' in text
+    assert (
+        'review={"unsafe": <0 to 1>, "secret": <0 to 1>, "standing": <0 to 1>}' in text
+    )
     assert "relations_pending in one closing call" in text
     assert review.UNSAFE_STATEMENT in text and review.SECRET_STATEMENT in text
+    assert review.STANDING_STATEMENT in text
     assert "re-send" not in text
     assert len(text) <= capture.INSTRUCTION_MAX_CHARS
 

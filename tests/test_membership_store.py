@@ -43,6 +43,7 @@ from bettermemory.store import (
     SCHEMA,
     SCHEMA_VERSION,
     RecordHome,
+    StandingAnswer,
     Store,
 )
 
@@ -210,6 +211,14 @@ _ROWS: dict[str, dict[str, Any]] = {
         "signature_json": ["c" * 40, [], None, "TOKEN", False],
         "opened": "t0",
     },
+    "standing": {
+        "record_id": "01M5K000000000000000000000",
+        "probability": 0.5,
+        "body_sha256": "d" * 64,
+        "source": "asked",
+        "answered_by": "test/test",
+        "answered": "t0",
+    },
 }
 
 
@@ -236,6 +245,7 @@ def test_the_membership_tables_and_kinds() -> None:
         "checkout_views",
         "homes",
         "proposals",
+        "standing",
     }
     assert MEMBERSHIP_MUTATION_KINDS <= MUTATION_KINDS
     assert MUTATION_KINDS - MEMBERSHIP_MUTATION_KINDS == _RC3_MUTATION_KINDS
@@ -278,6 +288,13 @@ def test_a_malformed_row_is_refused_before_it_is_logged(store: Store) -> None:
         )
     with pytest.raises(TypeError):
         store.put_membership("home", {**_ROWS["home"], "decided": 1.5})
+    # A float is taken only where a table declares one (standing.probability).
+    with pytest.raises(TypeError):
+        store.put_membership("standing", {**_ROWS["standing"], "answered": 1.5})
+    with pytest.raises(TypeError):
+        store.put_membership(
+            "standing", {**_ROWS["standing"], "probability": float("nan")}
+        )
     with pytest.raises(ValueError):
         store.put_membership("elsewhere", {})
     with pytest.raises(ValueError):
@@ -469,7 +486,8 @@ def _populated(store: Store) -> Membership:
     )
     res = model.resolve(loc)
     assert res.home is not None
-    store.put_memory(_memory(), home=res.home)
+    memory = store.put_memory(_memory(), home=res.home)
+    store.put_standing(memory.id, StandingAnswer(0.5, "asked", "test/test"))
     store.put_membership("machine", _ROWS["machine"])
     store.put_membership(
         "project_file", {**_ROWS["project_file"], "project": res.project}

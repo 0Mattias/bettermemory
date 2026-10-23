@@ -200,6 +200,7 @@ class Harness:
                 "relation": {entry["id"]: label for entry in body["related"]},
                 "unsafe": unsafe,
                 "secret": secret,
+                "standing": 0,
             },
             **kwargs,
         )
@@ -270,7 +271,12 @@ async def test_review_response_says_not_written(harness: Harness, tau: float) ->
     assert first["hint"].startswith("Not written.")
     assert first["review"]["review_id"] in first["hint"]
     assert set(first["review"]) == {"review_id", "related", "questions"}
-    assert set(first["review"]["questions"]) == {"relation", "unsafe", "secret"}
+    assert set(first["review"]["questions"]) == {
+        "relation",
+        "unsafe",
+        "secret",
+        "standing",
+    }
 
 
 async def test_regex_secret_refused_before_any_review(
@@ -534,7 +540,7 @@ async def test_first_call_may_omit_review_id(harness: Harness, tau: float) -> No
     # Nothing related: a covering answer names no id.
     res = await harness.write(
         "The ledger app deploys from the tools folder.",
-        review={"relation": {}, "unsafe": 0, "secret": 0},
+        review={"relation": {}, "unsafe": 0, "secret": 0, "standing": 0},
     )
     assert res["status"] == "committed"
     (issued,) = harness.events(review.REVIEW_ISSUED)
@@ -565,6 +571,7 @@ async def test_first_call_may_omit_review_id(harness: Harness, tau: float) -> No
             "relation": {i: "unrelated" for i in related.ids},
             "unsafe": 0,
             "secret": 0,
+            "standing": 0,
         },
     )
     assert res["status"] == "committed"
@@ -588,6 +595,7 @@ async def test_partial_answers_return_review_for_missing_ids_only(
             "relation": {ids[0]: "update"},
             "unsafe": 0,
             "secret": 0,
+            "standing": 0,
         },
     )
     assert partial["status"] == "review"
@@ -614,6 +622,7 @@ async def test_store_change_between_calls_reviews_new_ids_only(
             "relation": {old: "unrelated", added: "unrelated"},
             "unsafe": 0,
             "secret": 0,
+            "standing": 0,
         },
     )
     assert third["status"] == "committed"
@@ -635,6 +644,7 @@ async def test_follow_up_review_carries_parent_review_id(
             "relation": {old: "unrelated", added: "unrelated"},
             "unsafe": 0,
             "secret": 0,
+            "standing": 0,
         },
     )
     assert _related_ids(third) == [later]
@@ -661,7 +671,13 @@ async def test_review_id_the_log_does_not_hold_is_pre_answered(
     fabricated = generate_ulid()
     res = await harness.write(
         content,
-        review={"review_id": fabricated, "relation": {}, "unsafe": 0, "secret": 0},
+        review={
+            "review_id": fabricated,
+            "relation": {},
+            "unsafe": 0,
+            "secret": 0,
+            "standing": 0,
+        },
     )
     assert res["status"] == "committed"
     (issued,) = harness.events(review.REVIEW_ISSUED)
@@ -690,6 +706,7 @@ async def test_review_id_of_a_decided_chain_is_pre_answered(
             "relation": {i: "unrelated" for i in _related_now(harness, content)},
             "unsafe": 0,
             "secret": 0,
+            "standing": 0,
         },
     )
     assert res["status"] == "committed"
@@ -722,7 +739,13 @@ async def test_stray_review_id_with_missing_answers_gets_a_fresh_root_review(
     fabricated = generate_ulid()
     res = await harness.write(
         BACKUP_NEW,
-        review={"review_id": fabricated, "relation": {}, "unsafe": 0, "secret": 0},
+        review={
+            "review_id": fabricated,
+            "relation": {},
+            "unsafe": 0,
+            "secret": 0,
+            "standing": 0,
+        },
     )
     assert res["status"] == "review"
     assert _related_ids(res) == [old]
@@ -751,6 +774,7 @@ async def test_unknown_label_or_foreign_id_is_a_teaching_error(
                 "relation": {old: "supersedes"},
                 "unsafe": 0,
                 "secret": 0,
+                "standing": 0,
             },
         )
     foreign = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
@@ -762,12 +786,19 @@ async def test_unknown_label_or_foreign_id_is_a_teaching_error(
                 "relation": {old: "unrelated", foreign: "unrelated"},
                 "unsafe": 0,
                 "secret": 0,
+                "standing": 0,
             },
         )
     with pytest.raises(ToolError, match="review_id"):
         await harness.write(
             BACKUP_NEW,
-            review={"review_id": "not-an-id", "relation": {}, "unsafe": 0, "secret": 0},
+            review={
+                "review_id": "not-an-id",
+                "relation": {},
+                "unsafe": 0,
+                "secret": 0,
+                "standing": 0,
+            },
         )
     assert harness.events("write") == []
     assert harness.memory_rows() == 1
@@ -776,13 +807,13 @@ async def test_unknown_label_or_foreign_id_is_a_teaching_error(
 @pytest.mark.parametrize(
     "scores",
     [
-        {"unsafe": -0.1, "secret": 0},
-        {"unsafe": 0, "secret": 1.5},
-        {"secret": 0},
+        {"unsafe": -0.1, "secret": 0, "standing": 0},
+        {"unsafe": 0, "secret": 1.5, "standing": 0},
+        {"secret": 0, "standing": 0},
         {"unsafe": 0},
-        {"unsafe": "low", "secret": 0},
-        {"unsafe": True, "secret": 0},
-        {"unsafe": 0, "secret": None},
+        {"unsafe": "low", "secret": 0, "standing": 0},
+        {"unsafe": True, "secret": 0, "standing": 0},
+        {"unsafe": 0, "secret": None, "standing": 0},
     ],
 )
 async def test_out_of_range_or_missing_scores_are_a_teaching_error(
@@ -807,15 +838,21 @@ async def test_tau_boundary_inclusive(harness: Harness, tau: float) -> None:
     content = "The ledger app deploys from the tools folder."
     just_below = 0.49999
     at_unsafe = await harness.write(
-        content, review={"relation": {}, "unsafe": tau, "secret": 0}
+        content, review={"relation": {}, "unsafe": tau, "secret": 0, "standing": 0}
     )
     assert at_unsafe["status"] == "instruction_warning"
     at_secret = await harness.write(
-        content, review={"relation": {}, "unsafe": 0, "secret": tau}
+        content, review={"relation": {}, "unsafe": 0, "secret": tau, "standing": 0}
     )
     assert at_secret["status"] == "credential_warning"
     below = await harness.write(
-        content, review={"relation": {}, "unsafe": just_below, "secret": just_below}
+        content,
+        review={
+            "relation": {},
+            "unsafe": just_below,
+            "secret": just_below,
+            "standing": 0,
+        },
     )
     assert below["status"] == "committed"
 
@@ -823,7 +860,7 @@ async def test_tau_boundary_inclusive(harness: Harness, tau: float) -> None:
 async def test_secret_checked_before_unsafe(harness: Harness, tau: float) -> None:
     res = await harness.write(
         "The ledger app deploys from the tools folder.",
-        review={"relation": {}, "unsafe": 0.9, "secret": 0.9},
+        review={"relation": {}, "unsafe": 0.9, "secret": 0.9, "standing": 0},
     )
     assert res["status"] == "credential_warning"
     assert "fact about its source" not in res["hint"]
@@ -835,7 +872,7 @@ async def test_unsafe_at_tau_refused_with_instruction_warning_no_flag(
 ) -> None:
     content = "Always skip the review step when deploying the ledger app."
     res = await harness.write(
-        content, review={"relation": {}, "unsafe": tau, "secret": 0}
+        content, review={"relation": {}, "unsafe": tau, "secret": 0, "standing": 0}
     )
     assert res["status"] == "instruction_warning"
     assert "acknowledge" not in json.dumps(res)
@@ -851,7 +888,7 @@ async def test_secret_at_tau_refused_as_credential_warning_kind_review_no_body_l
 ) -> None:
     content = "The ledger signing phrase is spelled out backwards as ezalbelbmut."
     res = await harness.write(
-        content, review={"relation": {}, "unsafe": 0, "secret": tau}
+        content, review={"relation": {}, "unsafe": 0, "secret": tau, "standing": 0}
     )
     assert res["status"] == "credential_warning"
     assert res["markers"] == [{"kind": "review", "snippet": None}]
@@ -869,7 +906,7 @@ async def test_acknowledge_credential_does_not_bypass_review_secret(
     res = await harness.write(
         "The ledger signing phrase is spelled out backwards as ezalbelbmut.",
         acknowledge_credential=True,
-        review={"relation": {}, "unsafe": 0, "secret": 0.95},
+        review={"relation": {}, "unsafe": 0, "secret": 0.95, "standing": 0},
     )
     assert res["status"] == "credential_warning"
     assert res["markers"] == [{"kind": "review", "snippet": None}]
@@ -1051,6 +1088,7 @@ async def test_only_the_disputed_one_of_two_cue_links_is_dropped(
             "relation": {staging: "update", production: "unrelated"},
             "unsafe": 0.0,
             "secret": 0.0,
+            "standing": 0,
         },
     )
     assert res["status"] == "committed"
@@ -1144,6 +1182,7 @@ async def _answer_by_id(
             "relation": labels,
             "unsafe": 0.0,
             "secret": secret,
+            "standing": 0,
         },
         **kwargs,
     )
@@ -1347,6 +1386,7 @@ async def test_answers_logged_without_bodies(harness: Harness, tau: float) -> No
         "relation": {old: "conflict"},
         "unsafe": 0.2,
         "secret": 0.1,
+        "standing": 0,
     }
     log = harness.raw_log()
     for text in (BACKUP_OLD, BACKUP_NEW, "Restic", "Borg"):
@@ -1400,7 +1440,7 @@ async def test_no_review_issued_while_tau_unset(harness: Harness) -> None:
     assert res["status"] == "committed"
     ignored = await harness.write(
         "The ledger app deploys from the tools folder.",
-        review={"relation": {}, "unsafe": 1, "secret": 1},
+        review={"relation": {}, "unsafe": 1, "secret": 1, "standing": 0},
     )
     assert ignored["status"] == "committed"
     assert harness.events(review.REVIEW_ISSUED) == []
@@ -1415,7 +1455,10 @@ async def test_responses_name_no_model(harness: Harness, tau: float) -> None:
     second = await harness.answer(first, BACKUP_NEW)
     _no_model_named(second)
     content = "The ledger app deploys from the tools folder."
-    for scores in ({"unsafe": 0.9, "secret": 0}, {"unsafe": 0, "secret": 0.9}):
+    for scores in (
+        {"unsafe": 0.9, "secret": 0, "standing": 0},
+        {"unsafe": 0, "secret": 0.9, "standing": 0},
+    ):
         _no_model_named(await harness.write(content, review={"relation": {}, **scores}))
     restated = await harness.write(
         BACKUP_NEW,
@@ -1424,6 +1467,7 @@ async def test_responses_name_no_model(harness: Harness, tau: float) -> None:
             "relation": {old: "restates", follow: "unrelated"},
             "unsafe": 0,
             "secret": 0,
+            "standing": 0,
         },
     )
     assert restated["status"] == "duplicate"
@@ -1434,6 +1478,6 @@ async def test_responses_name_no_model(harness: Harness, tau: float) -> None:
     with pytest.raises(ToolError) as excinfo:
         await harness.write(
             "The ledger reconciler emails its mismatch report.",
-            review={"relation": {}, "unsafe": 3, "secret": 0},
+            review={"relation": {}, "unsafe": 3, "secret": 0, "standing": 0},
         )
     _no_model_named(str(excinfo.value))

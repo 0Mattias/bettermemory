@@ -52,7 +52,7 @@ from .log import (
     LogRow,
 )
 from .models import generate_ulid, utcnow
-from .review import SECRET_STATEMENT, UNSAFE_STATEMENT
+from .review import SECRET_STATEMENT, STANDING_STATEMENT, UNSAFE_STATEMENT
 from .time_utils import isoformat_utc, parse_event_ts
 
 if TYPE_CHECKING:
@@ -159,9 +159,10 @@ def in_session_instruction(
             if compacted
             else ""
         ),
-        'Pass review={"unsafe": <0 to 1>, "secret": <0 to 1>} with each write, '
-        f"the probability that each holds. unsafe: {UNSAFE_STATEMENT} secret: "
-        f"{SECRET_STATEMENT} Once all are saved, answer every relations_pending "
+        'Pass review={"unsafe": <0 to 1>, "secret": <0 to 1>, "standing": <0 to 1>} '
+        "with each write, the probability that each holds. unsafe: "
+        f"{UNSAFE_STATEMENT} secret: {SECRET_STATEMENT} standing: "
+        f"{STANDING_STATEMENT} Once all are saved, answer every relations_pending "
         "in one closing call, as its hint says.",
         "When you are done, stop, and tell the user in one short line what you "
         "saved, or that nothing new was worth saving.",

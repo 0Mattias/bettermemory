@@ -2,7 +2,7 @@
 
 The review puts a judge into memory_write: before a write commits, the
 daemon shows the writing model the related stored statements and asks
-three fixed questions (bettermemory.review.QUESTIONS). This driver
+four fixed questions (bettermemory.review.QUESTIONS). This driver
 measures those answers on the integrity corpora with the chat model as the
 judge, under the instrument name chat-review, and runs the deterministic
 gate-only arm beside it. Every command prints counts and ids only.
@@ -28,7 +28,7 @@ acknowledge_credential, so a regex secret stays refused. An add the gates
 pass gets a review, built by review.related_for inside memory_write, and
 that review's related set is the add's state. The store is then fed only
 from deterministic outcomes: the review is answered with no opinion
-(bench/integrity/adapters.py, the gate-only mode: unsafe 0, secret 0,
+(bench/integrity/adapters.py, the gate-only mode: unsafe 0, secret 0, standing 0,
 "update" for a cue target and "unrelated" for every other), so each add
 commits unless the credential regex or a dedup gate refused it, and the
 cue code's links are applied. No judge
@@ -2051,7 +2051,7 @@ def gate_only(
 ) -> dict[str, Any]:
     """The deterministic arm: the product arm's collect, with default flags
     and the review on at tau 0.95 passed explicitly, every review answered
-    with no opinion (unsafe 0, secret 0, "update" for a cue target and
+    with no opinion (unsafe 0, secret 0, standing 0, "update" for a cue target and
     "unrelated" for every other). Never on the v1 test split."""
     corpus = json.loads(Path(corpus_path).read_bytes().decode("utf-8"))
     if guard.is_test_version(corpus.get("version")):
@@ -2151,8 +2151,12 @@ def compare_statuses(
 # ---------------------------------------------------------------------------
 
 
-def dev_results(results_dir: Path, dev_sha: str) -> list[Path]:
-    """The v1 dev chat-review results on `dev_sha` in `results_dir`."""
+def dev_results(
+    results_dir: Path, dev_sha: str, *, seals: Mapping[str, str] | None = None
+) -> list[Path]:
+    """The v1 dev chat-review results on `dev_sha` in `results_dir`; with
+    `seals`, only those recording exactly those question, prompt and
+    constants shas (one form of the review)."""
     found = []
     for path in sorted(Path(results_dir).glob("*.json")):
         try:
@@ -2164,6 +2168,7 @@ def dev_results(results_dir: Path, dev_sha: str) -> list[Path]:
             and doc.get("instrument") == INSTRUMENT
             and doc.get("kind") != guard.EXPORT_STAMP_KIND
             and doc.get("corpus_sha256") == dev_sha
+            and (seals is None or doc.get("seals") == dict(seals))
         ):
             found.append(path)
     return found
@@ -2194,10 +2199,14 @@ def seal(
             f"{_rel(dev_result)} records question, prompt or constants shas that are "
             "not the committed sources'"
         )
-    runs = dev_results(results_dir, dev_sha)
+    # At most two dev runs fit one form of the review: a new question,
+    # prompt or constants sha (RS-F7's fourth question) is a new fit, and
+    # the earlier form's results stay committed beside it.
+    runs = dev_results(results_dir, dev_sha, seals=current)
     if len(runs) > 2:
         raise Refused(
-            f"{len(runs)} dev chat-review results on the dev sha; at most two"
+            f"{len(runs)} dev chat-review results on the dev sha under these "
+            "shas; at most two"
         )
     for path in runs:
         run = _read(path).get("run") or {}

@@ -129,6 +129,7 @@ async def _round_trip(session: ClientSession) -> tuple[dict[str, Any], dict[str,
         "relation": {e["id"]: "unrelated" for e in first["review"]["related"]},
         "unsafe": 0,
         "secret": 0,
+        "standing": 0,
     }
     second = _payload(
         await session.call_tool("memory_write", {**args, "review": answers})
@@ -289,6 +290,7 @@ async def test_two_shim_sessions_share_no_review_state(
                             "relation": {i: "unrelated" for i in related_b},
                             "unsafe": 0,
                             "secret": 0,
+                            "standing": 0,
                         },
                     },
                 )

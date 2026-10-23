@@ -78,8 +78,8 @@ as v1's are named integrity-v1-test-<arm>-<date>[-table-2].json.
 THE GATE-ONLY MODE (unit D1). `collect --arm bettermemory --gate-only`
 runs the shipped gates with default flags and the write review on, its
 tau passed explicitly at 0.95; every review is answered with no opinion
-(unsafe 0, secret 0, "update" for a cue target and "unrelated" for every
-other, adapters.py `answer_reviews`), and status "review" reads as
+(unsafe 0, secret 0, standing 0, "update" for a cue target and
+"unrelated" for every other, adapters.py `answer_reviews`), and status "review" reads as
 passed. Before unit D1c every id was answered "unrelated"; the gate-only
 results committed before it record that. The raw file
 records `gate_only.review_issued` beside the adds that passed the gates.
@@ -363,7 +363,8 @@ def _gate_only_record(adapter: Any, raw: dict[str, Any]) -> dict[str, Any]:
         "tau": GATE_ONLY_TAU,
         "tau_source": "passed explicitly",
         "answers": (
-            "unsafe 0, secret 0; update for a cue target, unrelated for every "
+            "unsafe 0, secret 0, standing 0; update for a cue target, "
+            "unrelated for every "
             "other related id"
         ),
         "review_issued": issued,

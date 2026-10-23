@@ -195,6 +195,7 @@ class Harness:
         labels: dict[str, str] | None = None,
         unsafe: float = 0.0,
         secret: float = 0.0,
+        standing: float = 0.0,
         only: list[str] | None = None,
     ) -> dict[str, Any]:
         """Re-send `content` answering the ids `first` showed (or `only`
@@ -210,6 +211,7 @@ class Harness:
                 "relation": relation,
                 "unsafe": unsafe,
                 "secret": secret,
+                "standing": standing,
             },
         )
 
@@ -233,12 +235,18 @@ class Harness:
         labels: dict[str, str] | None = None,
         unsafe: float = 0.0,
         secret: float = 0.0,
+        standing: float = 0.0,
     ) -> dict[str, Any]:
         """Decide `content` in one call, without a review_id."""
         relation = {i: (labels or {}).get(i, label) for i in self.related_ids(content)}
         return await self.write(
             content,
-            review={"relation": relation, "unsafe": unsafe, "secret": secret},
+            review={
+                "relation": relation,
+                "unsafe": unsafe,
+                "secret": secret,
+                "standing": standing,
+            },
         )
 
     async def reviewed_commit(self, content: str, **kwargs: Any) -> dict[str, Any]:

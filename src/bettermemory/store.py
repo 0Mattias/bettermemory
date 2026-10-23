@@ -35,10 +35,12 @@ from __future__ import annotations
 
 import contextlib
 import glob
+import hashlib
 import re
 import hmac
 import json
 import logging
+import math
 import os
 import secrets
 import sqlite3
@@ -160,6 +162,7 @@ MEMBERSHIP_TABLES = (
     "checkout_views",
     "homes",
     "proposals",
+    "standing",
 )
 _MEMBERSHIP_MUTATION_TABLES = (
     "machine",
@@ -173,6 +176,7 @@ _MEMBERSHIP_MUTATION_TABLES = (
     "checkout_view",
     "home",
     "proposal",
+    "standing",
 )
 
 _MUTATION_TABLES = (
@@ -256,6 +260,7 @@ _TABLE_KEYS: dict[str, tuple[str, ...]] = {
     "checkout_views": ("checkout", "machine", "path"),
     "homes": ("record_id",),
     "proposals": ("id",),
+    "standing": ("record_id",),
 }
 
 
@@ -266,13 +271,15 @@ class _MembershipTable:
     column whose name ends in ``_json`` holds a JSON value in the payload
     and its canonical text in the table. ``optional`` columns came after
     the table: a row written before one reads it as null, and the
-    additive step adds it to a table that lacks it."""
+    additive step adds it to a table that lacks it. ``floats`` are the
+    columns that hold a finite float; no other column takes one."""
 
     table: str
     kind: str
     key: tuple[str, ...]
     columns: tuple[str, ...]
     optional: tuple[str, ...] = ()
+    floats: tuple[str, ...] = ()
 
 
 _MEMBERSHIP_SPECS: dict[str, _MembershipTable] = {
@@ -391,6 +398,23 @@ _MEMBERSHIP_SPECS: dict[str, _MembershipTable] = {
                 "opened",
             ),
         ),
+        # A record's standing answer (unit RS-F7 part 1, `standing.py`):
+        # additive beside the record like its home, and folded the same
+        # way. Not a membership decision; it shares the machinery.
+        _MembershipTable(
+            "standing",
+            "standing",
+            ("record_id",),
+            (
+                "record_id",
+                "probability",
+                "body_sha256",
+                "source",
+                "answered_by",
+                "answered",
+            ),
+            floats=("probability",),
+        ),
     )
 }
 _MEMBERSHIP_BY_TABLE: dict[str, _MembershipTable] = {
@@ -402,6 +426,22 @@ _MEMBERSHIP_BY_TABLE: dict[str, _MembershipTable] = {
 # was copied whole and both copies wrote (`store_forked`). It is not the
 # `store_id` the key files are named by, which a fork leaves as it is.
 MEMBERSHIP_STORE_ID = "membership_store_id"
+
+
+class StandingAnswer(NamedTuple):
+    """A standing answer a put writes beside its record (unit RS-F7 part
+    1): the probability from 0 to 1 that the record directs future work,
+    where it came from (``standing.SOURCES``) and who gave it."""
+
+    probability: float
+    source: str
+    answered_by: str
+
+
+def body_sha256(body: str) -> str:
+    """The sha256 of a record's body as stored, which a standing row
+    names: an answer holds for that body and no other."""
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
 class RecordHome(NamedTuple):
@@ -873,6 +913,15 @@ CREATE TABLE IF NOT EXISTS proposals (
 );
 
 CREATE INDEX IF NOT EXISTS proposals_by_checkout ON proposals(checkout, state);
+
+CREATE TABLE IF NOT EXISTS standing (
+    record_id TEXT PRIMARY KEY,
+    probability REAL NOT NULL,
+    body_sha256 TEXT NOT NULL,
+    source TEXT NOT NULL,
+    answered_by TEXT NOT NULL,
+    answered TEXT NOT NULL
+);
 """
 
 
@@ -1469,8 +1518,9 @@ def _apply_mutation(
 def _membership_values(spec: _MembershipTable, row: Any) -> tuple[Any, ...]:
     """The column values of a membership row, in the table's column order:
     every column present and no other, the key columns non-empty text,
-    the rest text, integers or null, a ``_json`` column's value as its
-    canonical JSON text (null stays null). Raises KeyError, TypeError or
+    the rest text, integers or null (a finite float in a ``floats``
+    column), a ``_json`` column's value as its canonical JSON text (null
+    stays null). Raises KeyError, TypeError or
     ValueError on a row that does not fit, which the fold reports as
     ``payload_invalid``."""
     if not isinstance(row, Mapping):
@@ -1486,6 +1536,10 @@ def _membership_values(spec: _MembershipTable, row: Any) -> tuple[Any, ...]:
         elif isinstance(value, bool):
             values.append(int(value))
         elif value is None or isinstance(value, (str, int)):
+            values.append(value)
+        elif (
+            isinstance(value, float) and column in spec.floats and math.isfinite(value)
+        ):
             values.append(value)
         else:
             raise TypeError(f"{spec.kind}.{column} must be text, an integer or null")
@@ -2344,13 +2398,17 @@ class Store:
         filename: str | None = None,
         session: str | None = None,
         home: RecordHome | None = None,
+        standing: StandingAnswer | None = None,
     ) -> Memory:
         """Insert or replace the record. ``provenance`` None keeps the row's
         label (``local`` for a new row); ``filename`` None keeps the row's
         name. Both are resolved before the row is logged, so the log
         carries what the table holds. ``home`` (design 8.5) writes the
         record's ``homes`` row in the same transaction; None leaves the
-        homes table as it is."""
+        homes table as it is. ``standing`` (unit RS-F7 part 1) writes the
+        record's ``standing`` row for this body in the same transaction;
+        None leaves the row as it is, and a row naming another body is
+        read as no answer (`standing.py`)."""
         if provenance is not None and provenance not in _WRITABLE_PROVENANCE:
             raise ValueError(
                 f"provenance must be one of {sorted(_WRITABLE_PROVENANCE)}, got {provenance!r}"
@@ -2366,12 +2424,126 @@ class Store:
             "provenance": provenance or LOCAL,
             "filename": filename,
         }
+        standing_row = (
+            None if standing is None else self._standing_row(memory, standing)
+        )
         with self._transaction() as tx:
             home_row = self._home_row(memory.id, "memory", home)
             self._mutate(tx, "memory_put", payload, session=session)
             if home_row is not None:
                 self._mutate(tx, "home_put", {"home": home_row}, session=session)
+            if standing_row is not None:
+                self._mutate(
+                    tx, "standing_put", {"standing": standing_row}, session=session
+                )
         return memory
+
+    @staticmethod
+    def _standing_row(memory: Memory, answer: StandingAnswer) -> dict[str, Any]:
+        """The ``standing`` row an answer for `memory`'s body is written
+        as, checked before anything is written."""
+        probability = answer.probability
+        if (
+            isinstance(probability, bool)
+            or not isinstance(probability, (int, float))
+            or not math.isfinite(float(probability))
+            or not 0.0 <= float(probability) <= 1.0
+        ):
+            raise ValueError("a standing answer is a probability from 0 to 1")
+        if not answer.source or not answer.answered_by:
+            raise ValueError("a standing answer names its source and who gave it")
+        return {
+            "record_id": memory.id,
+            "probability": float(probability),
+            "body_sha256": body_sha256(memory.body),
+            "source": answer.source,
+            "answered_by": answer.answered_by,
+            "answered": isoformat_utc(datetime.now(timezone.utc)),
+        }
+
+    def put_standing(
+        self,
+        record_id: str,
+        answer: StandingAnswer,
+        *,
+        session: str | None = None,
+    ) -> dict[str, Any]:
+        """Write the standing answer for the active record's current body
+        and return the row. Raises NotFoundError for a record that is not
+        active."""
+        row = self._standing_row(self.get_memory(record_id), answer)
+        with self._transaction() as tx:
+            self._mutate(tx, "standing_put", {"standing": row}, session=session)
+        return row
+
+    def standing_rows(self, ids: Collection[str] | None = None) -> list[dict[str, Any]]:
+        """Every active record (or those of `ids`) with what its standing
+        is read from: id, category, ``updated``, scopes, the project its
+        ``homes`` row names (None for none), its row's ``log_mac`` (None
+        for a row written without one) and its ``standing`` row's
+        probability and body sha (None for no row), newest ``updated``
+        first. Bodies are not read: `standing.py` hashes one only when its
+        row changed. A store whose file could not take the membership
+        tables reads as having no home and no answer."""
+        present = {
+            str(r[0])
+            for r in self._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' "
+                "AND name IN ('homes', 'standing')"
+            )
+        }
+        home = "h.project" if "homes" in present else "NULL"
+        answer = (
+            "s.probability, s.body_sha256" if "standing" in present else "NULL, NULL"
+        )
+        joins = ""
+        if "homes" in present:
+            joins += " LEFT JOIN homes h ON h.record_id = m.id"
+        if "standing" in present:
+            joins += " LEFT JOIN standing s ON s.record_id = m.id"
+        select = (
+            f"SELECT m.id, m.category, m.updated, m.scopes_json, {home}, "
+            f"m.log_mac, {answer} FROM memories m{joins}"
+        )
+        order = " ORDER BY m.updated DESC, m.id DESC"
+        if ids is None:
+            batches: list[tuple[str, list[str]]] = [(select + order, [])]
+        else:
+            wanted = list(dict.fromkeys(ids))
+            batches = [
+                (
+                    f"{select} WHERE m.id IN ({','.join('?' * len(chunk))}){order}",
+                    chunk,
+                )
+                for chunk in (
+                    wanted[start : start + _PROVENANCE_BATCH]
+                    for start in range(0, len(wanted), _PROVENANCE_BATCH)
+                )
+            ]
+        out: list[dict[str, Any]] = [
+            {
+                "id": str(raw[0]),
+                "category": None if raw[1] is None else str(raw[1]),
+                "updated": str(raw[2]),
+                "scopes": tuple(_load_json(raw[3], [])),
+                "recorded": None if raw[4] is None else str(raw[4]),
+                "log_mac": None if raw[5] is None else str(raw[5]),
+                "probability": None if raw[6] is None else float(raw[6]),
+                "body_sha256": None if raw[7] is None else str(raw[7]),
+            }
+            for sql, params in batches
+            for raw in self._conn.execute(sql, params)
+        ]
+        if len(batches) > 1:
+            out.sort(key=lambda row: (row["updated"], row["id"]), reverse=True)
+        return out
+
+    def body_of(self, record_id: str) -> str | None:
+        """The active record's body, or None."""
+        row = self._conn.execute(
+            "SELECT body FROM memories WHERE id = ?", (record_id,)
+        ).fetchone()
+        return None if row is None else str(row[0])
 
     def get_memory(self, memory_id: str) -> Memory:
         row = self._conn.execute(
@@ -3503,12 +3675,13 @@ class Store:
         actor: Actor | dict[str, Any] | None = None,
         session: str | None = None,
         home: RecordHome | None = None,
+        standing: StandingAnswer | None = None,
     ) -> Memory:
         """Create a new memory: mints the id, stamps created and updated,
         stores the body stripped with one trailing newline. `claims` are
         stored verbatim; parsing and the declare-time check are the write
-        handler's job, since they need the origin worktree. `home` is
-        written with the record (`put_memory`)."""
+        handler's job, since they need the origin worktree. `home` and
+        `standing` are written with the record (`put_memory`)."""
         now = utcnow()
         memory = Memory(
             id=generate_ulid(),
@@ -3529,7 +3702,9 @@ class Store:
                 for entry in (links or [])
             ],
         )
-        return self.put_memory(memory, provenance=LOCAL, session=session, home=home)
+        return self.put_memory(
+            memory, provenance=LOCAL, session=session, home=home, standing=standing
+        )
 
     def update(
         self,
@@ -3538,6 +3713,7 @@ class Store:
         force: bool = False,
         preserve_verification: bool = False,
         session: str | None = None,
+        standing: StandingAnswer | None = None,
     ) -> Memory:
         """Replace an active record with the caller's edit. The caller's
         `memory.updated` is the snapshot it read; unless `force`, a stored
@@ -3546,7 +3722,8 @@ class Store:
         verification fields over the snapshot's (a metadata edit must not
         undo a verify that landed in between); a content edit leaves it
         False and resets them on purpose. The corroboration rollup is
-        store-owned and always carried over."""
+        store-owned and always carried over. ``standing`` writes the
+        edited body's standing answer in the same transaction."""
         current = self._active_or_raise(memory.id)
         if not force and current.updated != memory.updated:
             raise ConcurrentUpdateError(memory.id, current.updated)
@@ -3569,7 +3746,7 @@ class Store:
             )
         new_memory = memory.model_copy(update=carried)
         Memory.model_validate(new_memory.model_dump())
-        return self.put_memory(new_memory, session=session)
+        return self.put_memory(new_memory, session=session, standing=standing)
 
     def mark_verified(
         self,
@@ -4823,6 +5000,7 @@ __all__ = [
     "MEMBERSHIP_TABLES",
     "MUTATION_KINDS",
     "RecordHome",
+    "StandingAnswer",
     "PROVENANCE_LABELS",
     "SCHEMA",
     "SCHEMA_VERSION",

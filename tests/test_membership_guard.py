@@ -212,7 +212,8 @@ def test_a_global_records_named_projects_are_read_in_one_place() -> None:
 def test_what_is_in_force_is_decided_in_one_place() -> None:
     """RS-F7 part 3: the walk over inbound ``supersedes`` and ``extends``
     links is `in_force`'s, and the surfaces that deliver (the brief and
-    the prompt recall, in recall.py) call it."""
+    the prompt recall, in recall.py) and the standing set (standing.py,
+    part 1: a superseded record stands no more) call it."""
     assert _callers("inbound_links") == {"in_force.py"}
-    assert _callers("in_force") == {"recall.py"}
+    assert _callers("in_force") == {"recall.py", "standing.py"}
     assert ("in_force", "in_force") in _imports("recall.py")

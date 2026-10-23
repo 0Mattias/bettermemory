@@ -302,6 +302,7 @@ class ToolHandlers:
         acknowledge_transient: bool = False,
         acknowledge_user_claim: bool = False,
         acknowledge_truncation: bool = False,
+        standing: float | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         deps = self.for_request(ctx)
@@ -317,6 +318,7 @@ class ToolHandlers:
             acknowledge_transient=acknowledge_transient,
             acknowledge_user_claim=acknowledge_user_claim,
             acknowledge_truncation=acknowledge_truncation,
+            standing=standing,
             ctx=ctx,
         )
 
@@ -414,11 +416,15 @@ class ToolHandlers:
         answer: str | None = None,
         target: str | None = None,
         said: str | None = None,
+        # answer_standing: record id -> probability. Served as `relations` is.
+        standing: dict[str, Any] = Field(default_factory=dict),
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         deps = self.for_request(ctx)
         if isinstance(relations, FieldInfo):
             relations = {}
+        if isinstance(standing, FieldInfo):
+            standing = {}
         return await _handlers_pkg.memory_admin(
             deps,
             action,
@@ -436,6 +442,7 @@ class ToolHandlers:
             answer=answer,
             target=target,
             said=said,
+            standing=standing,
             ctx=ctx,
         )
 

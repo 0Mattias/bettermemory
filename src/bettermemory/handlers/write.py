@@ -73,9 +73,10 @@ from ..search import (
 from .. import capture as _capture
 from .. import identity
 from .. import review as _review
+from .. import standing as _standing
 from .. import supersession as _supersession
 from ..session import SessionState
-from ..store import MemoryNotFoundError, TombstonedError
+from ..store import MemoryNotFoundError, StandingAnswer, TombstonedError
 from ..supersession import SupersessionMatch, SupersessionReport
 from ._shared import (
     Context,
@@ -1221,8 +1222,9 @@ def _review_hint(review_id: str, *, follow_up: bool) -> str:
         "arguments and acknowledge flags: "
         f'review={{"review_id": "{review_id}", "relation": {{<id>: "update" | '
         '"conflict" | "restates" | "unrelated"} for every related id ({} when '
-        'none), "unsafe": <0 to 1>, "secret": <0 to 1>}. unsafe and secret are '
-        "the probability that each question's statement holds."
+        'none), "unsafe": <0 to 1>, "secret": <0 to 1>, "standing": <0 to 1>}. '
+        "unsafe, secret and standing are the probability that each question's "
+        "statement holds."
     )
 
 
@@ -1407,6 +1409,13 @@ def _reviewed_write(
         "review_answers": answers.to_event(),
         "review_action": decision.action,
     }
+    if answers.standing is not None and decision.action == _review.ACTION_COMMIT:
+        # The fourth answer is stored beside the record, in its own
+        # transaction (unit RS-F7 part 1): the record is never written
+        # without the answer its review gave.
+        payload["standing"] = _standing.answer_of(
+            answers.standing, _standing.SOURCE_REVIEW
+        )
     if decision.action == _review.ACTION_COMMIT and decision.restated:
         # A commit that also restates (unit D1b): the ids only, kept on the
         # log so these commits can be counted. They get no corroboration.
@@ -1665,6 +1674,7 @@ def _persist(
     payload = dict(payload)
     captured: _CaptureWrite | None = payload.pop("capture", None)
     caller: Caller | None = payload.pop("caller", None)
+    standing_answer: StandingAnswer | None = payload.pop("standing", None)
     declared_links = list(payload.pop("links", None) or [])
     declared_ids = [str(link["target_id"]) for link in declared_links]
     detected: list[SupersessionMatch] = []
@@ -1707,8 +1717,10 @@ def _persist(
         # The record, its home and HEAD as a witness of its project commit
         # together (design 8.1): a home is written once, with the record.
         if caller is None:
-            return deps.store.write(**payload, links=links)
-        written = deps.store.write(**payload, links=links, home=caller.home())
+            return deps.store.write(**payload, links=links, standing=standing_answer)
+        written = deps.store.write(
+            **payload, links=links, home=caller.home(), standing=standing_answer
+        )
         caller.add_head_witness("write")
         return written
 

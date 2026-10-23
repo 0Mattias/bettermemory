@@ -168,6 +168,7 @@ async def test_review_counters_by_model_header(tmp_path: Path) -> None:
                 "relation": {e["id"]: "unrelated" for e in first["review"]["related"]},
                 "unsafe": 0,
                 "secret": 0,
+                "standing": 0,
             }
             done = payload(
                 await session.call_tool("memory_write", call(FACTS[0], answers))
@@ -311,6 +312,7 @@ async def test_fabricated_or_reused_review_id_counted_as_pre_answered(
             "relation": {},
             "unsafe": 0,
             "secret": 0,
+            "standing": 0,
         },
     )
     assert res["status"] == "committed"
@@ -327,6 +329,7 @@ async def test_fabricated_or_reused_review_id_counted_as_pre_answered(
             "relation": {i: "unrelated" for i in h.related_ids(FACTS[2])},
             "unsafe": 0,
             "secret": 0,
+            "standing": 0,
         },
     )
     assert res["status"] == "committed"

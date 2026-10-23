@@ -27,6 +27,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from .. import review as _review
+from .. import standing as _standing
 from .._response import isoformat
 from ..credentials import find_credential_markers
 from ..durability import find_transient_markers
@@ -50,6 +52,12 @@ if TYPE_CHECKING:
     from .._handlers import ToolHandlers
 
 
+_STANDING_HINT = (
+    "Not updated. Re-send this same call, with the same arguments and "
+    "acknowledge flags, adding standing=<0 to 1>: the probability that the "
+    "statement holds of the new content."
+)
+
 DESC_MEMORY_UPDATE = (
     "Change a memory in place; id and created stay. Pass only what changes; "
     "new `content` resets verification. `links` replaces the typed edges "
@@ -69,21 +77,32 @@ async def memory_update(
     acknowledge_transient: bool = False,
     acknowledge_user_claim: bool = False,
     acknowledge_truncation: bool = False,
+    standing: float | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     state = deps.sessions.for_request(ctx)
     _advance_turn(state, deps.recorder)
-    if (
+    metadata_only = (
         content is None
         and scopes is None
         and confidence is None
         and category is None
         and links is None
-    ):
+    )
+    if metadata_only and standing is None:
         raise ValueError(
             "memory_update needs at least one of content, scopes, "
-            "confidence, category, or links"
+            "confidence, category, links, or standing"
         )
+    # The standing answer (unit RS-F7 part 1): for the body this call
+    # leaves, read before anything else so a malformed one writes nothing.
+    standing_answer = (
+        None
+        if standing is None
+        else _standing.answer_of(
+            _standing.check_probability(standing), _standing.SOURCE_UPDATE
+        )
+    )
     if content is not None and not content.strip():
         raise ValueError("content must be non-empty if provided")
     if content is not None:
@@ -95,6 +114,14 @@ async def memory_update(
         raise ValueError(str(exc)) from exc
     except MemoryNotFoundError as exc:
         raise ValueError(str(exc)) from exc
+
+    if metadata_only and standing_answer is not None:
+        # Only the answer: its row, for the current body, and no edit.
+        deps.store.put_standing(id, standing_answer)
+        deps.recorder.record(
+            "update", id=id, fields=["standing"], standing=standing_answer.probability
+        )
+        return deps.responses.committed(existing)
 
     new_scopes = existing.scopes
     if scopes is not None:
@@ -465,6 +492,23 @@ async def memory_update(
             )
         new_links = parsed_links
 
+    # An edit of the body is answered for the new body in this call while
+    # the question is asked (`standing.asking`, the review's switch), so
+    # no edited record waits for its standing answer.
+    if standing_answer is None and new_body != existing.body and _standing.asking():
+        deps.recorder.record("update", id=id, status="standing_question")
+        return {
+            "status": "review",
+            "written": False,
+            "questions": {
+                "standing": {
+                    "type": "probability",
+                    "instructions": _review.STANDING_STATEMENT,
+                }
+            },
+            "hint": _STANDING_HINT,
+        }
+
     # When `content` changes, the prior verification was for prose
     # that no longer exists — reset `last_verified_at` to None so the
     # caller has to re-confirm against the new body. The structured
@@ -510,7 +554,11 @@ async def memory_update(
         # Store.update's `updated` CAS would pass and the stale snapshot would
         # win. preserve_verification keeps the freshest on-disk verification.
         # Content edits already reset those fields above, so they don't.
-        updated = deps.store.update(merged, preserve_verification=content is None)
+        updated = deps.store.update(
+            merged,
+            preserve_verification=content is None,
+            standing=standing_answer,
+        )
     except ConcurrentUpdateError as exc:
         # W2: another agent landed an update between this handler's
         # `load_one` snapshot above and the under-lock CAS in
@@ -556,6 +604,7 @@ async def memory_update(
             ("confidence", confidence),
             ("category", category),
             ("links", links),
+            ("standing", standing),
         )
         if value is not None
     ]
@@ -570,6 +619,11 @@ async def memory_update(
         user_claims_acknowledged=user_claims_acknowledged,
         truncation_acknowledged=truncation_acknowledged,
         markers_acknowledged=markers_acknowledged,
+        **(
+            {"standing": standing_answer.probability}
+            if standing_answer is not None
+            else {}
+        ),
     )
     return deps.responses.committed(updated)
 

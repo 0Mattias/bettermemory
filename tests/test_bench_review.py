@@ -458,6 +458,7 @@ def _daemon_round(
                 "relation": {e["id"]: label_of[e["id"]] for e in related},
                 "unsafe": unsafe,
                 "secret": secret,
+                "standing": 0.0,
             }
             bench = ri.outcome_of(state, answer, TAU)
             response = arm.write(
@@ -1655,6 +1656,18 @@ def test_sealing_refused_with_more_than_two_dev_results_or_an_unreasoned_second_
     _dev_result(results / "run3.json", run=3, reason="again")
     with pytest.raises(ri.Refused, match="at most two"):
         _seal(tmp_path, first, results)
+
+
+def test_the_two_run_limit_counts_one_form_of_the_review(tmp_path: Path) -> None:
+    """Results under other question, prompt or constants shas are an
+    earlier form's fit: they stay in the directory and do not count."""
+    results = tmp_path / "results"
+    earlier = {**ri.seal_shas(), "questions_sha256": "0" * 64}
+    _dev_result(results / "old-run1.json", seals=earlier)
+    _dev_result(results / "old-run2.json", run=2, reason="token stop", seals=earlier)
+    current = _dev_result(results / "run1.json")
+    assert _seal(tmp_path, current, results)["dev_results"] == 1
+    assert len(ri.dev_results(results, guard.file_sha256(DEV))) == 3
 
 
 def test_review_points_record_the_dev_result_path_and_sha(tmp_path: Path) -> None:

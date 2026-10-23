@@ -854,8 +854,8 @@ def check_workload(store: Any, config: Any, bodies: list[str]) -> dict[str, Any]
 
 def review_answer(response: dict[str, Any]) -> dict[str, Any]:
     """The arm's answer to a review response: every related id
-    "unrelated", unsafe 0, secret 0, and the review_id when one was
-    given."""
+    "unrelated", unsafe 0, secret 0, standing 0, and the review_id when
+    one was given."""
     review = response.get("review") or {}
     related = review.get("related") or []
     ids = [entry["id"] if isinstance(entry, dict) else entry for entry in related]
@@ -863,6 +863,7 @@ def review_answer(response: dict[str, Any]) -> dict[str, Any]:
         "relation": {str(i): REVIEW_LABEL for i in ids},
         "unsafe": 0,
         "secret": 0,
+        "standing": 0,
     }
     if review.get("review_id"):
         answer["review_id"] = review["review_id"]
@@ -1155,7 +1156,8 @@ def run_write_arm(
             "reviewed_write": (
                 "the same for a write answered with status review: the same "
                 "call re-sent with review {review_id, relation: every related "
-                f"id {REVIEW_LABEL!r}, unsafe 0, secret 0}}, both calls timed "
+                f"id {REVIEW_LABEL!r}, unsafe 0, secret 0, standing 0}}, both "
+                "calls timed "
                 "together; absent when no review was issued"
             ),
             "warm_ups": (

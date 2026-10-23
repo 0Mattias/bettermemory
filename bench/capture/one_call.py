@@ -63,7 +63,7 @@ import _common  # noqa: E402
 
 FIXTURE = _common.ROOT / "tests" / "fixtures" / "v8" / "store"
 SCOPES = ["projects:acme"]
-SCORES = {"unsafe": 0.0, "secret": 0.0}
+SCORES = {"unsafe": 0.0, "secret": 0.0, "standing": 0.0}
 SIZES = (1, 3, 5)
 SURFACE_BOUND = 400
 

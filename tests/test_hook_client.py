@@ -28,7 +28,7 @@ from bettermemory import _daemon_client, config
 from bettermemory._daemon_client import write_state
 from bettermemory.location import resolve_here
 from bettermemory.machine import open_machine
-from bettermemory.store import Store
+from bettermemory.store import StandingAnswer, Store
 
 from .conftest import shielded_child_env
 from .test_daemon_lifecycle import _cli, _env, _wait_running
@@ -76,6 +76,8 @@ def _briefable_repo(tmp_path: Path) -> Path:
             origin=capture(repo),
         )
         store.mark_verified(written.id)
+        # Answered, so no standing backlog line comes ahead of the brief.
+        store.put_standing(written.id, StandingAnswer(0.0, "asked", "test/test"))
         # A checkout the daemon's machine has seen before: its first
         # sight's line is not what these tests read.
         resolve_here(

@@ -5,7 +5,9 @@ surface stays at nine tools without losing the work: restore, tombstones,
 health, rename_scope, conflicts, acknowledge_miss, disable_scope and
 enable_scope; relations is the capture's closing call; answer_question,
 join_project and unjoin_project are the agent's membership declarations
-(`questions.py`, design 8.8). The bodies keep their modules; this module
+(`questions.py`, design 8.8); answer_standing answers the standing
+question for the records that wait for it (`standing.py`, unit RS-F7
+part 1). The bodies keep their modules; this module
 is the dispatch the served tool is built from, and every action returns
 the keys its former tool returned (`tombstones` wraps its list under one
 key, since a dict is the tool's shape).
@@ -24,6 +26,7 @@ from .questions import answer_question, join_project, unjoin_project
 from .rename_scope import memory_rename_scope
 from .restore import memory_restore
 from .scope_toggle import memory_scope_disable, memory_scope_enable
+from .standing import answer_standing
 from .tombstones import memory_list_tombstones
 
 if TYPE_CHECKING:
@@ -43,6 +46,7 @@ AdminAction = Literal[
     "answer_question",
     "join_project",
     "unjoin_project",
+    "answer_standing",
 ]
 
 DESC_MEMORY_ADMIN = (
@@ -86,8 +90,11 @@ async def memory_admin(
     answer: str | None = None,
     target: str | None = None,
     said: str | None = None,
+    standing: dict[str, Any] | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
+    if action == "answer_standing":
+        return await answer_standing(deps, standing, ctx=ctx)
     if action == "answer_question":
         return await answer_question(
             deps, id=id, answer=answer, target=target, said=said, ctx=ctx

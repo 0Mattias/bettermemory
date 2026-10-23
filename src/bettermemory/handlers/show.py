@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from .. import standing as _standing
 from .._response import isoformat, isoformat_optional
 from ..models import utcnow
 from ..store import MemoryNotFoundError, TombstonedError
@@ -186,6 +187,15 @@ async def memory_show(
             provenance=response["provenance"],
             verified_locally_at=verified_locally_at,
         )
+    # The standing question (unit RS-F7 part 1) rides the response of a
+    # record with no answer for its current body while the question is
+    # asked: the agent has it in hand, and memory_admin answer_standing
+    # takes the answer.
+    if (
+        _standing.asking()
+        and _standing.answers(deps.store, [memory.id]).get(memory.id) is None
+    ):
+        response["standing_question"] = _standing.question(memory.id)
     deps.recorder.record(
         "show",
         id=memory.id,

@@ -274,6 +274,7 @@ async def test_write_arm_second_call_answers_unrelated_0_0(tmp_path: Path) -> No
             "relation": {"01RELATEDA": "unrelated", "01RELATEDB": "unrelated"},
             "unsafe": 0,
             "secret": 0,
+            "standing": 0,
         },
     }
     assert "review" not in third
@@ -319,6 +320,7 @@ def test_write_arm_file_carries_reviewed_write_in_the_review_era(
                 "relation": {},
                 "unsafe": 0,
                 "secret": 0,
+                "standing": 0,
             }
             return await inner(
                 name, {k: v for k, v in arguments.items() if k != "review"}
