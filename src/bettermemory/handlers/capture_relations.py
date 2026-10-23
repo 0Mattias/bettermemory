@@ -168,6 +168,9 @@ def _apply(
         declared_ids=record.get("declared") or [],
         standing_ids=record.get("standing") or [],
         said=bool(record.get("said")),
+        write_standing=bool(record.get("write_standing")),
+        said_unverified=bool(record.get("said_unverified")),
+        replaceable_ids=record.get("replaceable"),
     )
     out: dict[str, Any] = {"action": decision.action}
     try:

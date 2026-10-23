@@ -32,6 +32,7 @@ from bettermemory.location import resolve_caller
 from bettermemory.models import LinkType
 from bettermemory.log import CAPTURE_CLOSE, CAPTURE_RELATIONS
 from bettermemory.origin import Origin
+from bettermemory.recall import WORDS
 from bettermemory.session import SessionState
 from bettermemory.store import StandingAnswer, Store
 
@@ -468,19 +469,103 @@ async def test_a_cue_link_to_a_standing_record_rests_on_the_users_words(
 ) -> None:
     """The cue code's link stands while its target is pending, so a
     capture write that would replace a standing record is refused at
-    commit unless the user's words carry it (no hook saw a prompt here,
-    so the quote is taken as given)."""
+    commit unless the user's words carry it: a quote a hook saw in this
+    checkout, holding the new value."""
     old = world.seed(PORT_OLD)
     world.store.put_standing(old, StandingAnswer(0.9, "asked", "test/test"))
     batch = world.open()
     refused = await world.scored(batch, PORT_NEW)
     assert refused["status"] == review.ACTION_STANDING
     assert [row["id"] for row in refused["standing"]] == [old]
+    checkout = resolve_caller(
+        world.store, world.config, world.origin.cwd
+    ).resolution.checkout
+    assert checkout is not None
+    WORDS.clear()
+    try:
+        WORDS.remember(world.store.path, checkout, "the staging API moved to 9443")
+        res = await world.scored(batch, PORT_NEW, said="the staging API moved to 9443")
+        assert res["status"] == "committed", res
+        assert [r["id"] for r in res["supersedes"]] == [old]
+        done = await world.relations({res["id"]: {old: "update"}})
+        assert done["applied"][res["id"]]["action"] == review.ACTION_COMMIT
+    finally:
+        WORDS.clear()
+
+
+async def test_an_unverified_said_on_a_capture_write_files_the_replacement(
+    world: World,
+) -> None:
+    """No hook saw a prompt in this checkout: the capture write commits
+    replacing nothing, its cue link to the standing record dropped and
+    the pair filed with detector said-unverified, at commit and again
+    (once) at the closing call."""
+    old = world.seed(PORT_OLD)
+    world.store.put_standing(old, StandingAnswer(0.9, "asked", "test/test"))
+    batch = world.open()
     res = await world.scored(batch, PORT_NEW, said="the staging API moved to 9443")
     assert res["status"] == "committed", res
-    assert [r["id"] for r in res["supersedes"]] == [old]
+    assert "supersedes" not in res
+    assert [(r["id"], r.get("detector")) for r in res["conflicts_filed"]] == [
+        (old, review.DETECTOR_SAID_UNVERIFIED)
+    ]
+    (member,) = capture.members(world.store, batch.batch)
+    assert member.review is not None and member.review["said_unverified"] is True
     done = await world.relations({res["id"]: {old: "update"}})
     assert done["applied"][res["id"]]["action"] == review.ACTION_COMMIT
+    assert world.store.load_one(res["id"]).links == []
+    assert len(ConflictQueue(world.store).load()) == 1
+
+
+def _hear(world: World, words: str) -> None:
+    """The prompt hook saw `words` in the world's checkout."""
+    checkout = resolve_caller(
+        world.store, world.config, world.origin.cwd
+    ).resolution.checkout
+    assert checkout is not None
+    WORDS.remember(world.store.path, checkout, words)
+
+
+async def test_said_on_a_capture_write_carries_an_update_given_at_the_close(
+    world: World,
+) -> None:
+    """No cue link: the standing record is only pending when the member
+    commits, and the closing call answers update. The said given on the
+    write is read then for the pending ids, so the close replaces it."""
+    old = world.seed(BACKUP_OLD)
+    world.store.put_standing(old, StandingAnswer(0.9, "asked", "test/test"))
+    batch = world.open()
+    WORDS.clear()
+    try:
+        _hear(world, "move the archive backups to Borg")
+        res = await world.scored(batch, BACKUP_NEW, said="backups to Borg")
+        assert res["status"] == "committed", res
+        assert old in _pending_ids(res)
+        (member,) = capture.members(world.store, batch.batch)
+        assert member.review is not None and member.review["said"] is True
+        done = await world.relations({res["id"]: {old: "update"}})
+    finally:
+        WORDS.clear()
+    assert done["applied"][res["id"]]["action"] == review.ACTION_COMMIT
+    assert [
+        (link.type, link.target_id) for link in world.store.load_one(res["id"]).links
+    ] == [(LinkType.SUPERSEDES, old)]
+
+
+async def test_an_unchecked_said_files_an_update_given_at_the_close(
+    world: World,
+) -> None:
+    old = world.seed(BACKUP_OLD)
+    world.store.put_standing(old, StandingAnswer(0.9, "asked", "test/test"))
+    batch = world.open()
+    res = await world.scored(batch, BACKUP_NEW, said="backups to Borg")
+    assert res["status"] == "committed", res
+    (member,) = capture.members(world.store, batch.batch)
+    assert member.review is not None and member.review["said_unverified"] is True
+    done = await world.relations({res["id"]: {old: "update"}})
+    assert done["applied"][res["id"]]["action"] == review.ACTION_COMMIT
+    assert world.store.load_one(res["id"]).links == []
+    assert len(ConflictQueue(world.store).load()) == 1
 
 
 # ---------------------------------------------------------------------------

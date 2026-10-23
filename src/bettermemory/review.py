@@ -49,7 +49,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 from . import supersession as _supersession
 from .models import Memory, is_valid_ulid, snippet_window
-from .search import raw_content_tokens
+from .search import _kebab_parts, raw_content_tokens
 from .time_utils import parse_event_ts
 
 if TYPE_CHECKING:
@@ -612,6 +612,10 @@ ACTION_COMMIT = "committed"
 
 DETECTOR_REVIEW = "review"
 DETECTOR_REVIEW_DISAGREES = "review-disagrees"
+#: A replacement the user's words would carry, where no prompt hook saw
+#: the caller's checkout to check them (unit RS-F7 part 5): filed for the
+#: user to settle, never committed as a replacement.
+DETECTOR_SAID_UNVERIFIED = "said-unverified"
 
 #: The note on a supersedes link the review sets.
 REVIEW_LINK_NOTE = "set by the write review"
@@ -628,7 +632,9 @@ class ReviewDecision:
     that do not link, `filings` the `(id, detector)` pairs to file, and
     `cue_dropped` the cue code's targets the review disputed, whose links
     the commit does not set. The cue code's other links are not here: the
-    commit sets them."""
+    commit sets them. `withheld` holds the records the write would
+    replace on an unverified said: the commit links none of them, the
+    writer's declared links to them included, and files each pair."""
 
     action: str
     restated: tuple[str, ...] = ()
@@ -638,6 +644,7 @@ class ReviewDecision:
     cue_dropped: tuple[str, ...] = ()
     extends: tuple[str, ...] = ()
     standing: tuple[str, ...] = ()
+    withheld: tuple[str, ...] = ()
 
     def to_event(self) -> dict[str, Any]:
         out: dict[str, Any] = {"action": self.action}
@@ -658,7 +665,62 @@ class ReviewDecision:
             ]
         if self.cue_dropped:
             out["cue_dropped"] = list(self.cue_dropped)
+        if self.withheld:
+            out["withheld"] = list(self.withheld)
         return out
+
+
+#: The labels that dispute a cue link.
+_DISPUTED = (LABEL_CONFLICT, LABEL_UNRELATED, LABEL_EXTENDS)
+
+
+def replaced_ids(
+    answers: ReviewAnswers, related: RelatedSet, declared_ids: Iterable[str] = ()
+) -> list[str]:
+    """The records a write replaces, in order: the related ids it answers
+    update, the ids it declares in `supersedes=`, and the cue targets
+    whose link the review does not dispute (conflict, unrelated or
+    extends)."""
+    out = [i for i in related.ids if answers.relation.get(i) == LABEL_UPDATE]
+    out += [i for i in dict.fromkeys(declared_ids) if i not in out]
+    out += [
+        i
+        for i in related.cue_supersedes
+        if i not in out and answers.relation.get(i) not in _DISPUTED
+    ]
+    return out
+
+
+def _with_parts(tokens: Iterable[str]) -> set[str]:
+    """`tokens` and the components of each joined one (`billing-db-green`
+    gives billing, db and green), so a compound and its spelled-out form
+    meet."""
+    out = set(tokens)
+    for token in list(out):
+        out.update(_kebab_parts(token))
+    return out
+
+
+def introduced_tokens(body: str, replaced: Iterable[str]) -> frozenset[str]:
+    """The words a write of `body` brings that the bodies it replaces do
+    not hold (unit RS-F7 part 5): its value tokens
+    (`supersession.value_tokens`) absent from every replaced body, or,
+    when it brings no new value, its content tokens absent from them; with
+    the components of a joined one that no replaced body holds. Empty when
+    the write adds no word to them (it narrows or restates them)."""
+    raw = raw_content_tokens(body)
+    old: set[str] = set()
+    for text in replaced:
+        old |= raw_content_tokens(text)
+    old = _with_parts(old)
+    new = (_supersession.value_tokens(body, raw) - old) or (raw - old)
+    return frozenset(_with_parts(new) - old)
+
+
+def quote_carries(quote: str, introduced: AbstractSet[str]) -> bool:
+    """Whether `quote` holds a word of `introduced`, a compound meeting
+    its spelled-out form either way round."""
+    return bool(_with_parts(raw_content_tokens(quote)) & introduced)
 
 
 def apply_review(
@@ -671,6 +733,9 @@ def apply_review(
     declared_ids: Iterable[str] = (),
     standing_ids: Iterable[str] = (),
     said: bool = False,
+    write_standing: bool = False,
+    said_unverified: bool = False,
+    replaceable_ids: Iterable[str] | None = None,
 ) -> ReviewDecision:
     """Turn answers into the action, in this order:
 
@@ -680,10 +745,17 @@ def apply_review(
        (refused_standing).
     4. any related id answered restates, no related id answered update or
        extends, and no `declared_ids`: not written (duplicate).
-    5. a standing record the write would replace, without the user's
-       words (`said`): refused (refused_standing). The write replaces a
-       record it answers update, a record in `declared_ids`, and a cue
-       target whose link stands.
+    5. a standing record the write would replace, or any record when the
+       write is itself standing (`write_standing`, rule S), without the
+       user's words (`said`): refused (refused_standing, naming them). The
+       write replaces the records `replaced_ids` names; rule S names only
+       those in `replaceable_ids` (the caller's admitted ids; None, every
+       one), so a refusal never quotes a record the caller may not see.
+       Where the words
+       were given but no prompt hook could check them
+       (`said_unverified`), it is not refused: it commits replacing none
+       of them (`withheld`), and each pair is filed with detector
+       "said-unverified".
     6. otherwise committed, with the restated ids carried on the decision
        and given nothing, and per related id:
        - update between two claim-sized statements, flag on: a supersedes
@@ -707,7 +779,9 @@ def apply_review(
 
     A standing record directs work until it is replaced (unit RS-F7 part
     5): a conflict with one never commits, and replacing one takes the
-    user's words, which the caller checks before it passes `said`.
+    user's words, which the caller checks before it passes `said`. A write
+    that is itself standing directs work once stored, so its replacing
+    anything takes the user's words too (rule S).
 
     A dropped cue link (unit D1c): on legitimate writes in D1's runs the
     review disputed a cue link only where the link missed the statement
@@ -742,28 +816,26 @@ def apply_review(
     if restated and not updates and not declared:
         return ReviewDecision(action=ACTION_RESTATES, restated=restated)
     cue_linked = set(related.cue_supersedes)
-    disputed = (LABEL_CONFLICT, LABEL_UNRELATED, LABEL_EXTENDS)
-    if standing and not said:
-        replaced = [
-            memory_id
-            for memory_id in related.ids
-            if answers.relation.get(memory_id) == LABEL_UPDATE
-        ]
-        replaced += [i for i in declared_list if i not in replaced]
-        replaced += [
-            i
-            for i in related.cue_supersedes
-            if i not in replaced and answers.relation.get(i) not in disputed
-        ]
-        unsaid = tuple(i for i in replaced if i in standing)
-        if unsaid:
+    withheld: tuple[str, ...] = ()
+    if (standing or write_standing) and not said:
+        replaced = replaced_ids(answers, related, declared_list)
+        if write_standing:
+            seen = None if replaceable_ids is None else set(replaceable_ids)
+            unsaid = tuple(i for i in replaced if seen is None or i in seen)
+        else:
+            unsaid = tuple(i for i in replaced if i in standing)
+        if unsaid and not said_unverified:
             return ReviewDecision(action=ACTION_STANDING, standing=unsaid)
+        withheld = unsaid
+    held = set(withheld)
     links: list[str] = []
     extends: list[str] = []
     suggested: list[str] = []
     filings: list[tuple[str, str]] = []
     dropped: list[str] = []
     for entry in related.entries:
+        if entry.id in held:
+            continue
         label = answers.relation.get(entry.id)
         if label == LABEL_UPDATE:
             if entry.id in cue_linked or entry.id in declared:
@@ -773,13 +845,17 @@ def apply_review(
             else:
                 suggested.append(entry.id)
             continue
-        if label in disputed and entry.id in cue_linked:
+        if label in _DISPUTED and entry.id in cue_linked:
             filings.append((entry.id, DETECTOR_REVIEW_DISAGREES))
             dropped.append(entry.id)
         elif label == LABEL_CONFLICT:
             filings.append((entry.id, DETECTOR_REVIEW))
         if label == LABEL_EXTENDS and entry.id not in declared:
             extends.append(entry.id)
+    for memory_id in withheld:
+        filings.append((memory_id, DETECTOR_SAID_UNVERIFIED))
+        if memory_id in cue_linked:
+            dropped.append(memory_id)
     return ReviewDecision(
         action=ACTION_COMMIT,
         restated=restated,
@@ -788,6 +864,7 @@ def apply_review(
         filings=tuple(filings),
         cue_dropped=tuple(dropped),
         extends=tuple(extends),
+        withheld=withheld,
     )
 
 
@@ -899,6 +976,7 @@ __all__ = [
     "Chain",
     "DETECTOR_REVIEW",
     "DETECTOR_REVIEW_DISAGREES",
+    "DETECTOR_SAID_UNVERIFIED",
     "LABELS",
     "QUESTIONS",
     "RELATED_CAP",
@@ -925,11 +1003,14 @@ __all__ = [
     "constants_sha256",
     "current_tau",
     "find_chain",
+    "introduced_tokens",
     "parse_answers",
     "questions_payload",
+    "quote_carries",
     "questions_sha256",
     "related_for",
     "related_text",
+    "replaced_ids",
     "seal_shas",
     "tau_override",
     "tau_unset",

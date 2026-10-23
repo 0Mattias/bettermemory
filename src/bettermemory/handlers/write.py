@@ -1210,6 +1210,15 @@ _REVIEW_STANDING_HINT = (
     "words as they typed them."
 )
 
+_REVIEW_STANDING_WRITE_HINT = (
+    "Not written. Your standing answer says this write directs future work, "
+    "and it replaces each memory under `standing`. A write that directs "
+    "work replaces a memory only on the user's words: if the user changed "
+    "it in this conversation, add review.said, the user's words as they "
+    "typed them, holding the new value; otherwise rewrite the body so it "
+    "replaces none of them."
+)
+
 _REVIEW_RESTATES_HINT = (
     "Not written. The review answered that a stored memory already says "
     "this; the recurrence is recorded on it. Use memory_update on the "
@@ -1409,12 +1418,31 @@ def _reviewed_write(
 
     # The standing records the write could conflict with or replace
     # (unit RS-F7 part 5), and whether the user's words carry it.
-    standing_ids = _standing.standing_ids(
-        deps.store,
-        admission,
-        list(dict.fromkeys([*related.ids, *declared_ids, *related.cue_supersedes])),
+    candidates = list(
+        dict.fromkeys([*related.ids, *declared_ids, *related.cue_supersedes])
     )
-    said = _said_holds(deps, caller, answers.said)
+    standing_ids = _standing.standing_ids(deps.store, admission, candidates)
+    # The records whose replacement rests on the user's words: of those
+    # the caller is admitted to, every one the write replaces when it is
+    # itself standing (rule S, its category or its answer), else the
+    # standing ones. A capture write's pending ids may be answered update
+    # at its closing call, so they are read now too. A conflict with a
+    # standing record refuses whatever said holds, so said is not read.
+    replaceable = admission.admitted_ids(candidates)
+    write_standing = _standing.is_standing(payload["category"].value, answers.standing)
+    conflicted = any(
+        answers.relation.get(i) == _review.LABEL_CONFLICT for i in standing_ids
+    )
+    potential = _review.replaced_ids(answers, related, declared_ids)
+    potential += [i for i in missing if i not in potential]
+    rests = [
+        i
+        for i in potential
+        if i in replaceable and (write_standing or i in standing_ids)
+    ]
+    said, said_unverified = _said_holds(
+        deps, caller, None if conflicted else answers.said, payload["content"], rests
+    )
     decision = _review.apply_review(
         answers,
         related,
@@ -1424,6 +1452,9 @@ def _reviewed_write(
         declared_ids=declared_ids,
         standing_ids=standing_ids,
         said=said,
+        write_standing=write_standing,
+        said_unverified=said_unverified,
+        replaceable_ids=replaceable,
     )
     review_fields: dict[str, Any] = {
         "review_id": review_id,
@@ -1460,6 +1491,9 @@ def _reviewed_write(
                 pending=missing,
                 standing=standing_ids,
                 said=said,
+                write_standing=write_standing,
+                said_unverified=said_unverified,
+                replaceable=replaceable,
             ),
         )
 
@@ -1497,10 +1531,13 @@ def _reviewed_write(
             standing=list(decision.standing),
             **review_fields,
         )
+        # Rule S: the refusal rests on the write's own standing when it
+        # names a record that is not itself standing.
+        own = any(i not in standing_ids for i in decision.standing)
         return {
             "status": _review.ACTION_STANDING,
             "standing": _standing_rows(deps, related, decision.standing),
-            "hint": _REVIEW_STANDING_HINT,
+            "hint": _REVIEW_STANDING_WRITE_HINT if own else _REVIEW_STANDING_HINT,
         }
 
     if decision.action == _review.ACTION_RESTATES:
@@ -1547,21 +1584,51 @@ def _reviewed_write(
     )
 
 
-def _said_holds(deps: ToolHandlers, caller: Caller, said: str | None) -> bool:
-    """Whether `review.said` carries the write (unit RS-F7 part 5), by the
-    rule a join's words follow (`handlers.questions`): the quote must be in
-    a prompt the hook saw in the caller's checkout, and where the hook saw
-    none there (no hook installed) it is taken as given. None: False. A
-    quote the hook's prompts do not hold is a teaching error."""
+def _said_holds(
+    deps: ToolHandlers,
+    caller: Caller,
+    said: str | None,
+    content: str,
+    replaced: list[str],
+) -> tuple[bool, bool]:
+    """Whether `review.said` carries the write's replacement of `replaced`,
+    the records whose replacement rests on the user's words (unit RS-F7
+    part 5), as (said, unverified):
+
+    - no said, or no such record: (False, False); said is not read;
+    - a said that holds none of the words the write introduces against
+      the bodies it replaces (`review.introduced_tokens`): a teaching
+      error, since a quote that does not give the new value does not
+      carry it. A write that introduces no word (it narrows or restates
+      them) has no value to quote, and only the prompt check below holds;
+    - no checkout, or none of its prompts seen (no hook installed):
+      (False, True), unverified, and the write replaces nothing it would
+      have replaced on the user's words: the pairs are filed;
+    - in a prompt the hook saw in the caller's checkout, by the rule a
+      join's words follow (`handlers.questions`): (True, False); a quote
+      no prompt holds is a teaching error."""
     from ..recall import WORDS
 
-    if said is None:
-        return False
+    if said is None or not replaced:
+        return False, False
+    bodies: list[str] = []
+    for memory_id in replaced:
+        body = deps.store.body_of(memory_id)
+        if body is not None:
+            bodies.append(body)
+    introduced = _review.introduced_tokens(content, bodies)
+    if introduced and not _review.quote_carries(said, introduced):
+        raise _review.ReviewAnswerError(
+            "review.said must carry the value this write introduces: the quote "
+            f"holds none of the {len(introduced)} words this write adds to the "
+            "memories it replaces. Quote the user's words that give the new "
+            "value, or rewrite the body to comply with the standing memory."
+        )
     checkout = caller.resolution.checkout
     if checkout is None or not WORDS.seen(deps.store.path, checkout):
-        return True
+        return False, True
     if WORDS.holds(deps.store.path, checkout, said):
-        return True
+        return True, False
     raise _review.ReviewAnswerError(
         "review.said is not in any prompt the hook saw in this checkout (the "
         "last twenty, whitespace and case folded, eight characters or more): "
@@ -1619,6 +1686,13 @@ _CONFLICTS_FILED_HINT = (
     "Each pair under `conflicts_filed` disagrees with this write on a value "
     "and nothing in the body says which side is current. "
     'memory_admin(action="conflicts") lists them; confirm or dismiss there.'
+)
+
+
+_SAID_UNVERIFIED_HINT = (
+    "A pair with detector said-unverified is a replacement your review.said "
+    "would carry, but no prompt hook saw this checkout to check the user's "
+    "words: the write replaced nothing, and the user settles each pair."
 )
 
 
@@ -1694,6 +1768,11 @@ class SupersessionOutcome:
         if filed:
             out["conflicts_filed"] = filed
             out["hint"] = _CONFLICTS_FILED_HINT
+            if any(
+                detector == _review.DETECTOR_SAID_UNVERIFIED
+                for _, _, detector in self.review_filed
+            ):
+                out["hint"] += " " + _SAID_UNVERIFIED_HINT
         if self.update_suggested:
             out["update_suggested"] = list(self.update_suggested)
         return out
@@ -1780,6 +1859,13 @@ def _persist(
     caller: Caller | None = payload.pop("caller", None)
     standing_answer: StandingAnswer | None = payload.pop("standing", None)
     declared_links = list(payload.pop("links", None) or [])
+    if decision is not None and decision.withheld:
+        # On an unverified said the write replaces none of the records it
+        # would have, its declared targets included: their pairs are filed.
+        held = set(decision.withheld)
+        declared_links = [
+            link for link in declared_links if str(link["target_id"]) not in held
+        ]
     declared_ids = [str(link["target_id"]) for link in declared_links]
     detected: list[SupersessionMatch] = []
     disagreements: list[SupersessionMatch] = []
