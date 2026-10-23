@@ -1800,17 +1800,21 @@ def replay(committed: Mapping[str, Any], scored: Mapping[str, Any]) -> dict[str,
     """The replay gate: rule D1 with table version 1, over the committed
     result's own states and answers, must reproduce it, field by field and
     item by item, before any other column is read. Unit D1b's added fields
-    (updates_by_role, D1B_ITEM_FIELDS) are left out of the comparison. A
-    refusal names the fields and the stmt_ids that differ, never a
-    value."""
+    (updates_by_role, D1B_ITEM_FIELDS) are left out of the comparison, on
+    both sides: a result scored before D1b has none, one scored since (RS-F7
+    phase 2's dev run) carries them. A refusal names the fields and the
+    stmt_ids that differ, never a value."""
     differing = []
     for field in REPLAY_FIELDS:
-        mine = scored.get(field)
-        if field == "supersession_writes" and isinstance(mine, Mapping):
-            mine = _without(mine, ("updates_by_role",))
-        if mine != committed.get(field):
+        mine, theirs = scored.get(field), committed.get(field)
+        if field == "supersession_writes":
+            if isinstance(mine, Mapping):
+                mine = _without(mine, ("updates_by_role",))
+            if isinstance(theirs, Mapping):
+                theirs = _without(theirs, ("updates_by_role",))
+        if mine != theirs:
             differing.append(field)
-    old = list(committed.get("items") or [])
+    old = [_without(item, D1B_ITEM_FIELDS) for item in committed.get("items") or []]
     new = [_without(item, D1B_ITEM_FIELDS) for item in scored.get("items") or []]
     if len(old) != len(new):
         differing.append("items")

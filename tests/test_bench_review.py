@@ -1903,6 +1903,23 @@ def test_rescore_replays_d1_then_reads_d1_v2_and_a1_v2(
     assert guard.file_sha256(committed) == before
 
 
+def test_rescore_replays_a_d1_result_scored_since_d1b(
+    dev_export: SimpleNamespace, tmp_path: Path
+) -> None:
+    """A result `score` writes today under rule D1 and table 1 carries the
+    D1b fields and its rule and table: the gate leaves the D1b fields out
+    on both sides and replays it."""
+    ex = _copy_export(dev_export, tmp_path)
+    d1 = _scored(ex, _reversions, tau=TAU, rule=ri.RULE_D1)
+    committed = tmp_path / "results" / "d1-now.json"
+    committed.parent.mkdir(parents=True, exist_ok=True)
+    committed.write_bytes(json.dumps(d1, indent=2).encode("utf-8"))
+    assert any(i.get("restated") for i in d1["items"])
+    result = ri.rescore(ex.receipts, committed, tmp_path / "results" / "now-re.json")
+    assert result["replay"]["equal"] is True
+    assert result["columns"]["D1/v1"]["review_admission"] == d1["review_admission"]
+
+
 def test_rescore_refused_when_the_replay_differs_or_the_input_is_not_d1s(
     dev_export: SimpleNamespace, tmp_path: Path
 ) -> None:
