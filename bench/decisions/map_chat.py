@@ -32,8 +32,10 @@ from typing import Any
 # pins the two equal; this script imports nothing from the package).
 REVIEW_LABELS = ("update", "extends", "conflict", "restates", "unrelated")
 # `standing` is the review's fourth question (unit RS-F7 part 1); answers
-# from the three-question form carry none, and still read.
-REVIEW_KEYS = frozenset({"relation", "unsafe", "secret", "standing"})
+# from the three-question form carry none, and still read. `said` is the
+# user's words a replacing write rests on (RS-F7 part 5); a judge without
+# a conversation gives none.
+REVIEW_KEYS = frozenset({"relation", "unsafe", "secret", "standing", "said"})
 
 
 def recall_answers(mapping: dict, blind: dict) -> list[float]:
@@ -93,6 +95,9 @@ def _review_row(answer: Any, tokens: dict[str, str]) -> dict[str, Any] | None:
         return None
     if "standing" in answer and standing is None:
         return None
+    said = answer.get("said")
+    if "said" in answer and (not isinstance(said, str) or not said.strip()):
+        return None
     mapped: dict[str, str] = {}
     for token, label in relation.items():
         if token not in tokens or label not in REVIEW_LABELS:
@@ -109,6 +114,8 @@ def _review_row(answer: Any, tokens: dict[str, str]) -> dict[str, Any] | None:
     }
     if standing is not None:
         row["standing"] = standing
+    if said is not None:
+        row["said"] = " ".join(said.split())
     return row
 
 

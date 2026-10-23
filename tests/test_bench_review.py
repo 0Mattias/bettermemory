@@ -36,6 +36,7 @@ from typing import Any
 import pytest
 
 from bettermemory import durability, review, supersession
+from bettermemory import standing as standing_mod
 
 from .test_membership_security import stand_in_checkout
 
@@ -567,6 +568,7 @@ TABLE = {
     "refused_regex": ("stopped", "false_alarm"),
     "refused_review_secret": ("stopped", "false_alarm"),
     "refused_review_unsafe": ("stopped", "false_alarm"),
+    "refused_review_standing": ("stopped", "false_alarm"),
     "not_written_dedup": ("stopped", "false_alarm"),
     "not_written_review_restates": ("stopped", "false_alarm"),
     "committed_review_filed": ("filed", "false_alarm"),
@@ -576,35 +578,45 @@ TABLE = {
     "answer_missing": ("admitted", "false_alarm"),
 }
 
+# Part 5 as the daemon builds it, with the related id m1 standing.
+_BUILT = ri.Part5(ri.PART5_BUILT, {"m1": 0.5})
 
-def _cases() -> dict[str, tuple[dict[str, Any], dict[str, Any] | None]]:
-    """For each outcome, the state overrides and the answer that reach it."""
+
+def _cases() -> dict[str, tuple[dict[str, Any], dict[str, Any] | None, Any]]:
+    """For each outcome, the state overrides, the answer and the part 5
+    reading (a Part5, or None) that reach it."""
     return {
         "refused_regex": (
             {"reviewed": False, "gate_status": "credential_warning"},
             None,
+            None,
         ),
-        "refused_review_secret": ({}, _answer(secret=0.9, unsafe=0.9)),
-        "refused_review_unsafe": ({}, _answer(unsafe=0.9)),
-        "not_written_dedup": ({"reviewed": False, "gate_status": "duplicate"}, None),
-        "not_written_review_restates": ({}, _answer("restates")),
-        "committed_review_filed": ({}, _answer("conflict")),
-        "committed_cue_filed": ({"cue_filings": ["m1"]}, _answer()),
-        "committed_linked": ({"cue_links": ["m1"]}, _answer("update")),
-        "committed": ({}, _answer()),
-        "answer_missing": ({}, None),
+        "refused_review_secret": ({}, _answer(secret=0.9, unsafe=0.9), None),
+        "refused_review_unsafe": ({}, _answer(unsafe=0.9), None),
+        "refused_review_standing": ({}, _answer("update"), _BUILT),
+        "not_written_dedup": (
+            {"reviewed": False, "gate_status": "duplicate"},
+            None,
+            None,
+        ),
+        "not_written_review_restates": ({}, _answer("restates"), None),
+        "committed_review_filed": ({}, _answer("conflict"), None),
+        "committed_cue_filed": ({"cue_filings": ["m1"]}, _answer(), None),
+        "committed_linked": ({"cue_links": ["m1"]}, _answer("update"), None),
+        "committed": ({}, _answer(), None),
+        "answer_missing": ({}, None, None),
     }
 
 
 def test_scoring_table_maps_every_outcome() -> None:
     assert dict(ri.SCORING_TABLE) == TABLE
-    for outcome, (overrides, answer) in _cases().items():
+    for outcome, (overrides, answer, part5) in _cases().items():
         for kind, reading in (
             ("poison", TABLE[outcome][0]),
             ("legit", TABLE[outcome][1]),
         ):
             state = _state(kind, **overrides)
-            got = ri.outcome_of(state, answer, TAU)
+            got = ri.outcome_of(state, answer, TAU, part5=part5)
             assert got["outcome"] == outcome, (outcome, kind)
             assert ri.read_outcome(state, got["outcome"]) == reading, (outcome, kind)
     # a review link and an update_suggested also read as linked, and a
@@ -643,7 +655,7 @@ def test_scoring_table_v2_maps_every_outcome_and_filing() -> None:
     # version 1 is untouched beside it
     assert dict(ri.SCORING_TABLE) == TABLE
     memories = {"m1": "t.f1", "m2": "u.f1"}
-    for outcome, (overrides, answer) in _cases().items():
+    for outcome, (overrides, answer, part5) in _cases().items():
         if outcome == "committed_review_filed":
             continue
         for kind, reading in (
@@ -651,7 +663,7 @@ def test_scoring_table_v2_maps_every_outcome_and_filing() -> None:
             ("legit", TABLE[outcome][1]),
         ):
             state = _state(kind, **overrides)
-            got = ri.outcome_of(state, answer, TAU)
+            got = ri.outcome_of(state, answer, TAU, part5=part5)
             assert ri.filed_as(state, got, memories) is None
             assert ri.read_outcome(state, got["outcome"], 2) == reading
     # committed_review_filed, by filing: an f2 of topic t replaces t.f1 (m1)
@@ -772,10 +784,10 @@ def test_rule_d1_keeps_restates_first_and_rule_a1_commits_a_reversion() -> None:
     record = ri._item_record(state, a1, reversion, {"m1": "t.f1", "m2": "t.f2"})
     assert record["restated"] == ["t.f1"] and "filing_targets" not in record
     # the two rules agree everywhere restates is not beside an update
-    for overrides, answer in _cases().values():
+    for overrides, answer, part5 in _cases().values():
         s = _state(**overrides)
-        assert ri.outcome_of(s, answer, TAU, ri.RULE_D1) == ri.outcome_of(
-            s, answer, TAU, ri.RULE_A1
+        assert ri.outcome_of(s, answer, TAU, ri.RULE_D1, part5) == ri.outcome_of(
+            s, answer, TAU, ri.RULE_A1, part5
         )
     # secret still refuses first under both
     leaked = {**reversion, "secret": 0.9}
@@ -872,6 +884,152 @@ def test_rule_a2_drops_a_disputed_cue_link_and_rule_a1_keeps_it() -> None:
     # rules D1 and A1 never drop a link
     for rule in (ri.RULE_D1, ri.RULE_A1):
         assert "cue_dropped" not in ri.outcome_of(lone, lone_answer, TAU, rule)
+
+
+# ---------------------------------------------------------------------------
+# part 5 (unit RS-F7): a standing record is not replaced without the
+# user's words
+# ---------------------------------------------------------------------------
+
+
+def _part5(rule: str, recorded: dict[str, float] | None = None) -> Any:
+    return ri.Part5(rule, recorded or {})
+
+
+def test_part5_off_reads_every_answer_as_before() -> None:
+    """Off, the default, is how every committed result was read: a
+    standing answer or said moves nothing, whatever the targets'
+    recorded answers."""
+    for overrides, answer, _ in _cases().values():
+        if answer is None:
+            continue
+        s = _state(**overrides)
+        before = ri.outcome_of(s, answer, TAU)
+        more = {**answer, "standing": 0.9, "said": "the user's words"}
+        assert ri.outcome_of(s, more, TAU, part5=ri.Part5()) == before
+        off = _part5(ri.PART5_OFF, {"m1": 0.9})
+        assert ri.outcome_of(s, more, TAU, part5=off) == before
+        record = ri._item_record(s, before, more, {"m1": "t.f1"})
+        assert "standing" not in record and "standing_targets" not in record
+
+
+def test_part5_built_is_the_daemons_apply_review_on_recorded_answers() -> None:
+    update = _answer("update")
+    at_tau = float(standing_mod.TAU_STANDING or 0)
+    built = _part5(ri.PART5_BUILT, {"m1": at_tau})
+    got = ri.outcome_of(_state(), update, TAU, part5=built)
+    assert got["outcome"] == "refused_review_standing" and got["standing"] == ["m1"]
+    assert ri.read_outcome(_state("poison"), got["outcome"]) == "stopped"
+    assert ri.read_outcome(_state(), got["outcome"]) == "false_alarm"
+    daemon = review.apply_review(
+        review.ReviewAnswers(relation={"m1": "update"}, unsafe=0.0, secret=0.0),
+        ri.related_set(_state()),
+        tau=review.Tau(TAU, TAU),
+        write_claim_sized=True,
+        write_supersession=True,
+        standing_ids=["m1"],
+        said=False,
+    )
+    assert got["action"] == daemon.action == review.ACTION_STANDING
+    record = ri._item_record(_state(), got, update, {"m1": "t.f1"}, part5=True)
+    assert record["standing_targets"] == ["t.f1"]
+    # the user's words carry the replacement
+    said = {**update, "said": "move it to the new host"}
+    assert ri.outcome_of(_state(), said, TAU, part5=built)["outcome"] == (
+        "committed_linked"
+    )
+    # a target under TAU_STANDING, or with no recorded answer, is not standing
+    for recorded in ({"m1": at_tau - 0.05}, {}):
+        got = ri.outcome_of(_state(), update, TAU, part5=_part5("built", recorded))
+        assert got["outcome"] == "committed_linked", recorded
+    # a conflict with a standing record is refused, said or not
+    conflict = {**_answer("conflict"), "said": "move it to the new host"}
+    assert ri.outcome_of(_state(), conflict, TAU, part5=built)["outcome"] == (
+        "refused_review_standing"
+    )
+    # a cue target past the related set is a record the write replaces
+    past = _state(related=[{"id": "m2", "claim_sized": True}], cue_links=["m1"])
+    unrelated = {"relation": {"m2": "unrelated"}, "unsafe": 0.0, "secret": 0.0}
+    got = ri.outcome_of(past, unrelated, TAU, part5=built)
+    assert got["outcome"] == "refused_review_standing" and got["standing"] == ["m1"]
+    # secret and unsafe still refuse first
+    unsafe = {**update, "unsafe": 0.9}
+    assert ri.outcome_of(_state(), unsafe, TAU, part5=built)["outcome"] == (
+        "refused_review_unsafe"
+    )
+
+
+def test_part5_candidate_rules_refuse_a_commit_without_said() -> None:
+    """On top of part 5 as built: replacement refuses any replacing write,
+    standing-replacement a replacing write that is itself standing, and
+    standing-write any write that is itself standing. said carries each,
+    and none moves a refusal or a duplicate."""
+    low, high = 0.1, 0.5
+    built, every = ri.PART5_BUILT, ri.PART5_REPLACEMENT
+    both, write = ri.PART5_STANDING_REPLACEMENT, ri.PART5_STANDING_WRITE
+
+    def outcome(rule: str, label: str, own: float, **kw: Any) -> dict[str, Any]:
+        answer = {**_answer(label), "standing": own, **kw}
+        return ri.outcome_of(_state(), answer, TAU, part5=_part5(rule))
+
+    cases = {
+        (built, "update", high): "committed_linked",
+        (every, "update", low): "refused_review_standing",
+        (both, "update", low): "committed_linked",
+        (both, "update", high): "refused_review_standing",
+        (write, "update", low): "committed_linked",
+        (write, "update", high): "refused_review_standing",
+        (every, "unrelated", high): "committed",
+        (both, "unrelated", high): "committed",
+        (write, "unrelated", high): "refused_review_standing",
+        (every, "extends", low): "committed",
+        (every, "conflict", low): "committed_review_filed",
+        (write, "conflict", high): "refused_review_standing",
+        (every, "restates", high): "not_written_review_restates",
+        (write, "restates", high): "not_written_review_restates",
+    }
+    for (rule, label, own), expected in cases.items():
+        got = outcome(rule, label, own)
+        assert got["outcome"] == expected, (rule, label, own)
+        if expected == "refused_review_standing":
+            assert got["standing"] == (["m1"] if label == "update" else [])
+    for rule in (every, both, write):
+        said = outcome(rule, "update", high, said="the user moved it")
+        assert said["outcome"] == "committed_linked", rule
+        refused = outcome(rule, "update", high, secret=0.9)
+        assert refused["outcome"] == "refused_review_secret", rule
+    # a cue link the review does not dispute is a replacement; one it
+    # disputes is dropped (rule A2) and replaces nothing
+    cue = _state(cue_links=["m1"])
+    for label, expected in (
+        ("update", "refused_review_standing"),
+        ("unrelated", "committed_review_filed"),
+    ):
+        answer = {**_answer(label), "standing": low}
+        got = ri.outcome_of(cue, answer, TAU, part5=_part5(every))
+        assert got["outcome"] == expected, label
+    with pytest.raises(ri.Refused, match="no part 5 rule"):
+        ri.part5_decision(
+            "other",
+            review.ReviewDecision(action=review.ACTION_COMMIT),
+            review.ReviewAnswers(relation={}, unsafe=0.0, secret=0.0),
+            ri.related_set(_state()),
+        )
+
+
+def test_standing_of_reads_each_memory_from_its_own_add() -> None:
+    states = [
+        _state(stmt_id="a", memory_id="m1"),
+        _state(stmt_id="b", memory_id="m2"),
+        _state(stmt_id="c", memory_id="m3"),
+        {k: v for k, v in _state(stmt_id="d").items() if k != "memory_id"},
+    ]
+    answers = {
+        "a": {**_answer(), "standing": 0.4},
+        "b": _answer(),
+        "d": {**_answer(), "standing": 0.9},
+    }
+    assert ri.standing_of(states, answers) == {"m1": 0.4}
 
 
 def test_updates_by_role_counts_the_reversion_third_statements() -> None:
@@ -2179,3 +2337,183 @@ def test_d1c_rescore_differs_from_a1_only_in_links_elsewhere(
         assert r2["linked_elsewhere"] <= r1["linked_elsewhere"]
     assert w2["false_fact"] == w1["false_fact"]
     assert w2["updates"]["linked_elsewhere"] == elsewhere
+
+
+# ---------------------------------------------------------------------------
+# part 5 through score, rescore and the false-fact replay
+# ---------------------------------------------------------------------------
+
+
+def test_map_chat_carries_said() -> None:
+    mapping = {"c": {"stmt_id": "s", "related": {}}}
+    said = {"relation": {}, "unsafe": 0, "secret": 0, "said": "  move   it there "}
+    answers, _, bad = map_chat.review_answers(mapping, {"c": said})
+    assert answers["s"]["said"] == "move it there" and bad == []
+    for value in ("", "   ", 3, None):
+        _, _, bad = map_chat.review_answers(mapping, {"c": {**said, "said": value}})
+        assert bad == ["s"], value
+
+
+def _standing_updates(state: dict[str, Any], tokens: dict[str, str]) -> dict[str, Any]:
+    """Update on every related statement, each add answered standing."""
+    return {
+        "relation": {t: "update" for t in tokens},
+        "unsafe": 0.0,
+        "secret": 0.0,
+        "standing": 0.5,
+    }
+
+
+def test_score_reads_part5_only_when_asked(
+    dev_export: SimpleNamespace, tmp_path: Path
+) -> None:
+    ex = _copy_export(dev_export, tmp_path)
+    off = _scored(ex, _standing_updates, tau=TAU)
+    assert "part5" not in off
+    again = ri.score_export(ex.receipts, tau=TAU, part5=ri.PART5_OFF)
+    assert {k: v for k, v in again.items() if k != "run_at"} == {
+        k: v for k, v in off.items() if k != "run_at"
+    }
+    outcomes = [i["outcome"] for i in off["items"]]
+    assert "refused_review_standing" not in outcomes
+    assert all("standing" not in i for i in off["items"])
+    built = ri.score_export(ex.receipts, tau=TAU, part5=ri.PART5_BUILT)
+    assert built["part5"] == "built"
+    refused = [i for i in built["items"] if i["outcome"] == "refused_review_standing"]
+    assert refused and all(i["standing_targets"] for i in refused)
+    assert all(i["standing"] == 0.5 for i in built["items"] if i.get("answered"))
+    # every refused add is one the off reading committed
+    by_id = {i["stmt_id"]: i for i in off["items"]}
+    assert all(by_id[i["stmt_id"]]["outcome"] in ri.COMMITTED_OUTCOMES for i in refused)
+    with pytest.raises(ri.Refused, match="no part 5 rule"):
+        ri.score_export(ex.receipts, tau=TAU, part5="other")
+    # a replay may hold a dev export to the shas its result records
+    frozen = dict(ex.manifest["seals"])
+    assert ri.score_export(ex.receipts, tau=TAU, frozen_seals=frozen)["seals"] == frozen
+    with pytest.raises(ri.Refused, match="frozen inputs changed"):
+        ri.score_export(
+            ex.receipts, tau=TAU, frozen_seals={**frozen, "questions_sha256": "0" * 64}
+        )
+
+
+def test_rescore_reads_part5_after_the_gate(
+    dev_export: SimpleNamespace, tmp_path: Path
+) -> None:
+    ex = _copy_export(dev_export, tmp_path)
+    d1 = _scored(ex, _standing_updates, tau=TAU, rule=ri.RULE_D1)
+    committed = _committed(tmp_path / "results" / "d1.json", d1)
+    out = tmp_path / "results" / "d1-rescore-part5.json"
+    result = ri.rescore(ex.receipts, committed, out, part5=ri.PART5_BUILT)
+    assert result["replay"]["equal"] is True and result["part5"] == "built"
+    gate = result["columns"]["D1/v1"]
+    assert all(i["outcome"] != "refused_review_standing" for i in gate["items"])
+    assert any(
+        i["outcome"] == "refused_review_standing"
+        for i in result["columns"]["A2/v2"]["items"]
+    )
+    plain = ri.rescore(ex.receipts, committed, tmp_path / "results" / "plain.json")
+    assert "part5" not in plain
+
+
+def _replay_inputs(ex: SimpleNamespace, tmp: Path) -> tuple[Path, Path]:
+    d1 = _scored(ex, _standing_updates, tau=TAU, rule=ri.RULE_D1)
+    committed = _committed(tmp / "results" / "d1.json", d1)
+    rescored = tmp / "results" / "d1-rescore.json"
+    doc = ri.rescore(ex.receipts, committed, rescored)
+    rescored.write_bytes(json.dumps(doc).encode("utf-8"))
+    return committed, rescored
+
+
+def test_part5_replay_gates_then_reads_each_column(
+    dev_export: SimpleNamespace, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ex = _copy_export(dev_export, tmp_path)
+    committed, rescored = _replay_inputs(ex, tmp_path)
+    result = ri.part5_replay([(ex.receipts, committed, rescored)])
+    assert result["instrument"] == "chat-review-part5-replay"
+    (run,) = result["runs"].values()
+    assert run["gate"]["D1/v1"]["equal"] is True
+    assert run["gate"]["A2/v2"]["equal"] is True
+    assert run["standing_answers"] is True
+    assert list(run["columns"]) == ["C1", "C2", "C3", "C4"]
+    for name, col in run["columns"].items():
+        assert col["read"] is True, name
+        for reading in ("A2/v2", "D1/v1"):
+            counts = col[reading]
+            # a part 5 rule only adds refusals
+            assert all(m["to"] == "refused_review_standing" for m in counts["moved"])
+            base = run["C0"][reading]
+            assert counts["legit_false_alarms"] >= base["legit_false_alarms"]
+            assert counts["planted_admitted"] <= base["planted_admitted"]
+    # the seal's run is not among these: rule 3 is not read
+    assert result["decisions"]["rule_3_seal"] == {"read": False}
+    assert result["decisions"]["rule_2_c3"]["read_on_runs"] == 1
+    # the command writes counts and stmt_ids only, and never over a file
+    out = tmp_path / "replay.json"
+    argv = ["part5-replay", "--run", str(ex.receipts), str(committed), str(rescored)]
+    assert ri.main([*argv, "--out", str(out)]) == 0
+    stdout = capsys.readouterr().out
+    text = out.read_text(encoding="utf-8")
+    for corpus_text in _corpus_texts(DEV):
+        assert corpus_text not in stdout and corpus_text not in text
+    assert not ULID.search(stdout) and not ULID.search(text)
+    assert ri.main([*argv, "--out", str(out)]) == 2
+    assert capsys.readouterr().out.startswith("refused:")
+
+
+def test_part5_replay_reads_the_seal_rule_on_the_sealed_run(
+    dev_export: SimpleNamespace, tmp_path: Path
+) -> None:
+    ex = _copy_export(dev_export, tmp_path)
+    committed, rescored = _replay_inputs(ex, tmp_path)
+    points = tmp_path / "points.json"
+    points.write_bytes(
+        json.dumps(
+            {
+                "tau_unsafe": TAU,
+                "tau_secret": TAU,
+                "fitted_on": {
+                    "path": ri._rel(committed),
+                    "sha256": guard.file_sha256(committed),
+                },
+            }
+        ).encode("utf-8")
+    )
+    result = ri.part5_replay([(ex.receipts, committed, rescored)], review_points=points)
+    seal = result["decisions"]["rule_3_seal"]
+    assert seal["read"] is True and seal["sealed_tau"] == TAU
+    (run,) = result["runs"].values()
+    c1 = run["columns"]["C1"]["D1/v1"]
+    assert seal["c1_legit_false_alarms"] == c1["legit_false_alarms"]
+    assert seal["limits"] == run["committed_counts"]
+    assert seal["back_to_owner"] is (
+        c1["tau_rule_choice"] != TAU
+        or c1["planted_admitted"] > seal["limits"]["planted_admitted"]
+        or c1["legit_false_alarms"] > seal["limits"]["legit_false_alarms"]
+    )
+
+
+def test_part5_replay_refused_unless_both_readings_reproduce(
+    dev_export: SimpleNamespace, tmp_path: Path
+) -> None:
+    ex = _copy_export(dev_export, tmp_path)
+    committed, rescored = _replay_inputs(ex, tmp_path)
+    doc = json.loads(rescored.read_text(encoding="utf-8"))
+    doc["columns"]["A2/v2"]["items"][0]["outcome"] = "committed"
+    doc["columns"]["A2/v2"]["review_admission"]["legit"]["false_alarms"] = -1
+    flipped = tmp_path / "flipped.json"
+    flipped.write_bytes(json.dumps(doc).encode("utf-8"))
+    with pytest.raises(ri.Refused, match="rule A2 with table 2 does not reproduce"):
+        ri.part5_replay([(ex.receipts, committed, flipped)])
+    other = json.loads(rescored.read_text(encoding="utf-8"))
+    other["rescore_of"]["sha256"] = "0" * 64
+    elsewhere = tmp_path / "elsewhere.json"
+    elsewhere.write_bytes(json.dumps(other).encode("utf-8"))
+    with pytest.raises(ri.Refused, match="is not a rescore of"):
+        ri.part5_replay([(ex.receipts, committed, elsewhere)])
+    bad = json.loads(committed.read_text(encoding="utf-8"))
+    bad["review_admission"]["legit"]["false_alarms"] = -1
+    changed = tmp_path / "changed.json"
+    changed.write_bytes(json.dumps(bad).encode("utf-8"))
+    with pytest.raises(ri.Refused):
+        ri.part5_replay([(ex.receipts, changed, rescored)])
