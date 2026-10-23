@@ -1666,8 +1666,19 @@ def test_the_two_run_limit_counts_one_form_of_the_review(tmp_path: Path) -> None
     _dev_result(results / "old-run1.json", seals=earlier)
     _dev_result(results / "old-run2.json", run=2, reason="token stop", seals=earlier)
     current = _dev_result(results / "run1.json")
-    assert _seal(tmp_path, current, results)["dev_results"] == 1
+    summary = _seal(tmp_path, current, results)
+    assert (summary["dev_results"], summary["dev_runs"]) == (1, 3)
     assert len(ri.dev_results(results, guard.file_sha256(DEV))) == 3
+    seals = json.loads(
+        (tmp_path / "out" / "SEALS-review.json").read_text(encoding="utf-8")
+    )
+    listed = {Path(r["path"]).name: r for r in seals["dev_runs"]}
+    assert set(listed) == {"old-run1.json", "old-run2.json", "run1.json"}
+    assert listed["old-run2.json"]["seals"] == earlier
+    assert listed["old-run2.json"]["index"] == 2
+    assert listed["old-run2.json"]["reason"] == "token stop"
+    assert listed["run1.json"]["seals"] == ri.seal_shas()
+    assert listed["run1.json"]["sha256"] == guard.file_sha256(current)
 
 
 def test_review_points_record_the_dev_result_path_and_sha(tmp_path: Path) -> None:
@@ -1765,6 +1776,19 @@ def test_review_seals_pin_questions_prompt_and_related_constants(
         committed = guard.read_review_seals(ri.SEALS_REVIEW)
         for field in guard.REVIEW_SHA_FIELDS:
             assert committed[field] == seals[field]
+
+
+def test_committed_review_seal_lists_every_dev_run() -> None:
+    """A dev run committed without a new seal fails here: the seal lists
+    every v1 dev chat-review result, of every form, byte for byte."""
+    doc = json.loads(ri.SEALS_REVIEW.read_text(encoding="utf-8"))
+    dev_sha = guard.read_seals(guard.SEALS, fields=("dev_sha256",))["dev_sha256"]
+    committed = ri.dev_results(ri.RESULTS_V1, dev_sha)
+    assert [r["path"] for r in doc["dev_runs"]] == [
+        p.resolve().relative_to(_ROOT).as_posix() for p in committed
+    ]
+    for listed, path in zip(doc["dev_runs"], committed, strict=True):
+        assert listed["sha256"] == guard.file_sha256(path)
 
 
 # ---------------------------------------------------------------------------

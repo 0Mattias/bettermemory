@@ -1,11 +1,46 @@
 {
- "operating_points_sha256": "0e4a0b71689dfe82eae1e6e2f5321c3954b2df2e111d843bde4ab4b6145145a7",
- "questions_sha256": "79fa9c21b1309f9c94a4e3ca892bfa54664b3421f6cf1b5e70f32e4f3d97ab92",
- "prompt_sha256": "265a1bf5d571d677b95892efe4229ee162586871cf98e45c6bfb9b1cb61e7d5c",
+ "operating_points_sha256": "b57659f5fb611cacf8ff82b07c5c6ad46aa39ece53fa5d9a7a3c461429eb4500",
+ "questions_sha256": "d4f1a2c96ab9b51decc0fe8801ed053b70d7faad94ec12feaf31eb93b915dac0",
+ "prompt_sha256": "67eb7c56ef84b93cd4596fdd65d320b17de994d11eba4cd26303da3ed222bbd2",
  "constants_sha256": "b7db125da5d87aa40699042774e929d2914eabde768a907beb900dc84b745f1f",
  "operating_points": "bench/integrity/v1/operating-points-review.json",
  "fitted_on": {
-  "path": "bench/decisions/results/v1/integrity-v1-dev-chat-review-2026-10-11-run2.json",
-  "sha256": "7c8a665fda24c117339d8bc3e74f18c68154b8282566f8dcdf7c35d6ccbc47f2"
- }
+  "path": "bench/decisions/results/v1/integrity-v1-dev-chat-review-2026-10-23-run1.json",
+  "sha256": "e9a47ccc46bd4a9a6fdfeefeb532a56d8c7c5d7c4f698d699af37e5ccbf858e9"
+ },
+ "dev_runs": [
+  {
+   "path": "bench/decisions/results/v1/integrity-v1-dev-chat-review-2026-10-11-run1.json",
+   "sha256": "636cbaf0a382ca9f4e2fca1f83af8a14489ba872634df2f5619bbe86cb6af8c2",
+   "index": 1,
+   "reason": null,
+   "seals": {
+    "questions_sha256": "79fa9c21b1309f9c94a4e3ca892bfa54664b3421f6cf1b5e70f32e4f3d97ab92",
+    "prompt_sha256": "265a1bf5d571d677b95892efe4229ee162586871cf98e45c6bfb9b1cb61e7d5c",
+    "constants_sha256": "b7db125da5d87aa40699042774e929d2914eabde768a907beb900dc84b745f1f"
+   }
+  },
+  {
+   "path": "bench/decisions/results/v1/integrity-v1-dev-chat-review-2026-10-11-run2.json",
+   "sha256": "7c8a665fda24c117339d8bc3e74f18c68154b8282566f8dcdf7c35d6ccbc47f2",
+   "index": 2,
+   "reason": "token stop: run 1 stopped at its 195k stop after 2 of 4 chunks; run 2 uses run 1's measured rate (70,030 tokens a chunk) under the owner's 420k stop (2026-10-11)",
+   "seals": {
+    "questions_sha256": "79fa9c21b1309f9c94a4e3ca892bfa54664b3421f6cf1b5e70f32e4f3d97ab92",
+    "prompt_sha256": "265a1bf5d571d677b95892efe4229ee162586871cf98e45c6bfb9b1cb61e7d5c",
+    "constants_sha256": "b7db125da5d87aa40699042774e929d2914eabde768a907beb900dc84b745f1f"
+   }
+  },
+  {
+   "path": "bench/decisions/results/v1/integrity-v1-dev-chat-review-2026-10-23-run1.json",
+   "sha256": "e9a47ccc46bd4a9a6fdfeefeb532a56d8c7c5d7c4f698d699af37e5ccbf858e9",
+   "index": 1,
+   "reason": null,
+   "seals": {
+    "questions_sha256": "d4f1a2c96ab9b51decc0fe8801ed053b70d7faad94ec12feaf31eb93b915dac0",
+    "prompt_sha256": "67eb7c56ef84b93cd4596fdd65d320b17de994d11eba4cd26303da3ed222bbd2",
+    "constants_sha256": "b7db125da5d87aa40699042774e929d2914eabde768a907beb900dc84b745f1f"
+   }
+  }
+ ]
 }

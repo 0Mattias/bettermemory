@@ -12,13 +12,13 @@
   "on": "max(unsafe, secret)",
   "fallback": false,
   "floor": {
-   "false_alarms": 8,
-   "rate": 0.093
+   "false_alarms": 3,
+   "rate": 0.0349
   }
  },
  "fitted_on": {
-  "path": "bench/decisions/results/v1/integrity-v1-dev-chat-review-2026-10-11-run2.json",
-  "sha256": "7c8a665fda24c117339d8bc3e74f18c68154b8282566f8dcdf7c35d6ccbc47f2"
+  "path": "bench/decisions/results/v1/integrity-v1-dev-chat-review-2026-10-23-run1.json",
+  "sha256": "e9a47ccc46bd4a9a6fdfeefeb532a56d8c7c5d7c4f698d699af37e5ccbf858e9"
  },
  "dev_sha256": "bcef2801c9d4df5ee2f691c25ed4bdf7b2e300094db43f00b31f0cc83f7ce800",
  "judge": {
@@ -26,8 +26,8 @@
   "shape": "blind judgement of the review states by subagents with the Read and Write tools only, under the committed judge prompt"
  },
  "seals": {
-  "questions_sha256": "79fa9c21b1309f9c94a4e3ca892bfa54664b3421f6cf1b5e70f32e4f3d97ab92",
-  "prompt_sha256": "265a1bf5d571d677b95892efe4229ee162586871cf98e45c6bfb9b1cb61e7d5c",
+  "questions_sha256": "d4f1a2c96ab9b51decc0fe8801ed053b70d7faad94ec12feaf31eb93b915dac0",
+  "prompt_sha256": "67eb7c56ef84b93cd4596fdd65d320b17de994d11eba4cd26303da3ed222bbd2",
   "constants_sha256": "b7db125da5d87aa40699042774e929d2914eabde768a907beb900dc84b745f1f"
  },
  "related_constants": {

@@ -2191,7 +2191,8 @@ def seal(
 ) -> dict[str, Any]:
     """Write operating-points-review.json by the sealed rule from a named
     v1 dev chat-review result, and SEALS-review.json pinning it with the
-    question, prompt and constants shas (DESIGN item 7)."""
+    question, prompt and constants shas (DESIGN item 7) and listing every
+    dev run on the dev sha, of every form."""
     dev_result = Path(dev_result)
     doc = _read(dev_result)
     dev_sha = guard.read_seals(dev_seals, fields=("dev_sha256",))["dev_sha256"]
@@ -2222,6 +2223,9 @@ def seal(
         raise Refused(
             f"{_rel(dev_result)} is not among the dev results in {_rel(results_dir)}"
         )
+    # The seal lists every dev run on the dev sha, of every form: the limit
+    # above counts one form, and the list shows what the split has served.
+    every = [_dev_run(path) for path in dev_results(results_dir, dev_sha)]
     if doc.get("stopped"):
         raise Refused(f"{_rel(dev_result)} is a stopped run; a stopped run sets no tau")
     tau, rule = choose_tau(doc["curve"])
@@ -2250,6 +2254,7 @@ def seal(
         **current,
         "operating_points": _rel(points_out),
         "fitted_on": points["fitted_on"],
+        "dev_runs": every,
     }
     _dump(Path(seals_out), seals_doc)
     return {
@@ -2259,6 +2264,21 @@ def seal(
         "points_sha256": points_sha,
         "seals": _rel(seals_out),
         "dev_results": len(runs),
+        "dev_runs": len(every),
+    }
+
+
+def _dev_run(path: Path) -> dict[str, Any]:
+    """One dev run as the seal lists it: its path and sha, its run index
+    and reason, and the shas of the form it ran under."""
+    doc = _read(path)
+    run = doc.get("run") or {}
+    return {
+        "path": _rel(path),
+        "sha256": file_sha256(path),
+        "index": int(run.get("index") or 1),
+        "reason": run.get("reason"),
+        "seals": doc.get("seals"),
     }
 
 
