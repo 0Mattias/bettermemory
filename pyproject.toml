@@ -276,13 +276,6 @@ filterwarnings = [
     "error:.*deprecated and will be removed in bettermemory:DeprecationWarning",
 ]
 
-[tool.ruff]
-# Generated bench artifacts are committed with the exact bytes their run
-# JSONs and gate artifacts pin by sha256 — the format gate is for
-# hand-written code, and reformatting a generated table would break the
-# sha chain that makes its reads auditable. The emitters own their style.
-extend-exclude = ["bench/w/artifacts/w3c_table_*.py"]
-
 [tool.ruff.lint]
 # Pinned to ruff 0.15's default set. 0.17 dropped F403 and the E7xx rules
 # from its defaults, which would silently remove the star-import backstop

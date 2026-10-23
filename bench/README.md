@@ -1,11 +1,10 @@
 # bench
 
-What each program here measures, and whether it still runs. A program's
-`results/` holds the receipts for the numbers the docs and the CHANGELOG
-cite, kept as written. A program marked closed is not maintained: its
-receipts stand, and its harness runs at the commit that produced them.
+What each program here measures. A program's `results/` holds the
+receipts for the numbers the docs and the CHANGELOG cite, kept as
+written.
 
-## Live in 9.0
+## Programs
 
 | Program | Measures |
 |---|---|
@@ -18,23 +17,33 @@ receipts stand, and its harness runs at the commit that produced them.
 | `retrieval/` | recall@k on a committed, blind-authored gold set. |
 | `rot/` | Memory rot: claims checked against real repositories at pinned commits, pooled. |
 | `toolcost/` | The tool-schema context cost an MCP server charges on every turn. |
-| `judge/` | The judge prompts and parse rules the QA harnesses grade with, verbatim from their sources. |
 | `llm.py`, `storage.py`, `swarm.py`, `interval.py`, `claims.py` | Shared: the model client, the storage latency bench, the fleet-concurrency bench, confidence intervals, claim parsing. |
 
-## Receipts only
+## Closed programs
 
-Closed or frozen on 2026-10-14. Nothing new is built on these.
+The programs closed on 2026-10-14 left the tree on 2026-10-23. Each
+one stands, with its receipts and its tests, at commit `8426799e`,
+which the tag `archive/bench-closed-2026-10-23` marks; its harness
+runs there as it did, and a number cited from one of them is read
+there:
 
-| Program | What it was |
-|---|---|
-| `longmemeval/` | LongMemEval-S under the official protocol, bettermemory and rival arms. Frozen: no further S runs. |
-| `l/` | The L1 receipts: LongMemEval-S, all 500 questions. |
-| `aml/` | BEAM, CLBench, PersonaMem and LoCoMo through one harness. |
-| `w/` | The encoder program (lanes W and F): the trainers, their instruments and the F1 receipts. Closed. |
-| `instruments/` | BEIR datasets pinned by sha256 for the encoder reads. Closed with the encoder program. |
-| `heldout/` | The held-out retrieval instrument and its scoring harness, which the retrieval receipts cite. |
-| `dedup/` | One study of what a lower `related` floor in `find_similar` buys. |
-| `*_census.py`, `embed_*.py`, `leg_*.py` | The August 2026 retrieval census scripts a test or a source comment still cites. |
+- `longmemeval/`: LongMemEval-S under the official protocol,
+  bettermemory and rival arms. Frozen: no further S runs.
+- `l/`: the L1 receipts, LongMemEval-S, all 500 questions.
+- `aml/`: BEAM, CLBench, PersonaMem and LoCoMo through one harness,
+  and `parity/aml_search.py`, the search-parity check of the 9.0 port
+  on its stores.
+- `w/` and `instruments/`: the encoder program (lanes W and F), its
+  trainers, the BEIR datasets pinned for its reads, and the F1
+  receipts.
+- `heldout/`: the held-out retrieval instrument and its scoring
+  harness, which the retrieval receipts cite.
+- `dedup/`: one study of what a lower `related` floor in
+  `find_similar` buys.
+- `judge/`: the judge prompts and parse rules those harnesses graded
+  with, verbatim from their sources.
+- `*_census.py`, `embed_*.py`, `leg_*.py`: the August 2026 retrieval
+  census scripts.
 
 Datasets and built stores live under each program's `data/` and
 `.stores/`, gitignored, and are fetched by the program's own script.

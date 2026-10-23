@@ -835,10 +835,15 @@ are all homed is not written.
 - The comparative harness under `tests/eval/` (`python -m
   tests.eval.comparative`, its `--live` lane and `run_live.sh`), the
   MSC loader under `bench/msc/` and the seven retrieval census scripts
-  under `bench/` that nothing pinned. The receipts under each program's
-  `results/` stay, and `bench/README.md` indexes what is live and what
-  is closed. Releases before 8.0.0 moved from this file to
-  `docs/changelog-history.md`, unchanged.
+  under `bench/` that nothing pinned. Releases before 8.0.0 moved from
+  this file to `docs/changelog-history.md`, unchanged.
+- The programs closed on 2026-10-14 (`bench/longmemeval/`, `bench/l/`,
+  `bench/aml/`, `bench/w/`, `bench/instruments/`, `bench/heldout/`,
+  `bench/dedup/`, `bench/judge/`, the retrieval census scripts and
+  `bench/parity/aml_search.py`), with their receipts and their tests.
+  Each stands at the tag `archive/bench-closed-2026-10-23`, where its
+  harness runs as it did and a number cited from it is read;
+  `bench/README.md` names them.
 
 ### Migration
 
