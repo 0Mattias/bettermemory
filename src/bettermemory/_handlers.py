@@ -303,6 +303,7 @@ class ToolHandlers:
         acknowledge_user_claim: bool = False,
         acknowledge_truncation: bool = False,
         standing: float | None = None,
+        said: str | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         deps = self.for_request(ctx)
@@ -319,14 +320,19 @@ class ToolHandlers:
             acknowledge_user_claim=acknowledge_user_claim,
             acknowledge_truncation=acknowledge_truncation,
             standing=standing,
+            said=said,
             ctx=ctx,
         )
 
     async def memory_remove(
-        self, id: str, reason: str, ctx: Context | None = None
+        self,
+        id: str,
+        reason: str,
+        said: str | None = None,
+        ctx: Context | None = None,
     ) -> dict[str, Any]:
         deps = self.for_request(ctx)
-        return await _handlers_pkg.memory_remove(deps, id, reason, ctx=ctx)
+        return await _handlers_pkg.memory_remove(deps, id, reason, said=said, ctx=ctx)
 
     async def memory_verify(
         self,

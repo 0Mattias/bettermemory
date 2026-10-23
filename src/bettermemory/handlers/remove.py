@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ..store import MemoryNotFoundError, TombstonedError
+from . import _guard
 from ._shared import Context, _advance_turn
 
 if TYPE_CHECKING:
@@ -15,12 +16,22 @@ DESC_MEMORY_REMOVE = "Tombstone a memory with a reason; memory_admin restore und
 
 
 async def memory_remove(
-    deps: ToolHandlers, id: str, reason: str, ctx: Context | None = None
+    deps: ToolHandlers,
+    id: str,
+    reason: str,
+    said: str | None = None,
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
     state = deps.sessions.for_request(ctx)
     _advance_turn(state, deps.recorder)
     if not reason or not reason.strip():
         raise ValueError("reason must be a non-empty string")
+    # A standing memory is removed only on the user's words (unit RS-F7
+    # part 5): the guard reads which of the ids are standing.
+    refusal = _guard.guard(deps, "memory_remove", [id], said)
+    if refusal is not None:
+        deps.recorder.record("remove", id=id, status="refused_standing")
+        return refusal
     try:
         deps.store.tombstone(id, reason, session=state.session_id)
     except TombstonedError as exc:

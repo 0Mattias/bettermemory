@@ -4,12 +4,10 @@ a write that conflicts with or replaces a standing record.
 extends sets an extends link, and the record it extends stays in force. A
 conflict answer on a standing record refuses the write (refused_standing),
 naming the record and quoting it. A write that replaces one (an update
-answer, a declared supersedes, or a cue link left standing), or that is
-itself standing and replaces any record (rule S), passes only on the
-user's own words in review.said. The quote must hold a word the write
-introduces against what it replaces, and be in a prompt the hook saw in
-the caller's checkout; where the hook saw none there, the write commits
-replacing nothing and each pair is filed with detector said-unverified.
+answer, a declared supersedes, or a cue link left standing) passes only on
+the user's own words in review.said, checked as a join's are: the quote is
+in a prompt the hook saw in the caller's checkout; where the hook saw none
+there, the words are taken as given and the reply says so.
 """
 
 from __future__ import annotations
@@ -28,7 +26,6 @@ from bettermemory.location import resolve_caller
 from bettermemory.membership import REVIEW_STRATA
 from bettermemory.models import Category, LinkType
 from bettermemory.recall import WORDS
-from bettermemory.search import raw_content_tokens
 from bettermemory.store import StandingAnswer
 from bettermemory.supersession import SupersessionMatch, SupersessionReport
 
@@ -223,7 +220,7 @@ async def test_an_update_of_a_standing_record_rests_on_the_users_words(
     refused = await _decide(h, UPDATING, {old: "update"})
     assert refused["status"] == review.ACTION_STANDING
     _heard(h, f"Please {QUOTE}.")
-    done = await _decide(h, UPDATING, {old: "update"}, said=f"  {QUOTE}  ")
+    done = await _decide(h, UPDATING, {old: "update"}, said=f"  {QUOTE}  ", own=0.9)
     assert done["status"] == "committed", done
     (event,) = [e for e in h.events("write") if e.get("status") == "committed"]
     assert event["review_answers"]["said"] == QUOTE
@@ -238,42 +235,41 @@ async def test_said_the_hook_did_not_see_is_a_teaching_error(h: Harness) -> None
     assert [m.id for m in h.store.load_all()] == [old]
 
 
-async def test_said_where_the_hook_saw_no_prompt_files_the_replacement(
+async def test_said_where_the_hook_saw_no_prompt_is_taken_as_given(
     h: Harness,
 ) -> None:
     """No hook saw a prompt in this checkout, so the quote cannot be
-    checked: the write commits, replaces nothing, and the pair waits for
-    the user with detector said-unverified. The record stays standing."""
+    checked: the write commits on the words as given, replaces the
+    record, and the reply and the row say the words were not checked."""
     old = h.seed(RULE)
     _standing(h, old)
     res = await _decide(h, UPDATING, {old: "update"}, said=QUOTE)
     assert res["status"] == "committed", res
-    assert "supersedes" not in res and "update_suggested" not in res
-    assert [(row["id"], row.get("detector")) for row in res["conflicts_filed"]] == [
-        (old, review.DETECTOR_SAID_UNVERIFIED)
-    ]
-    assert "said-unverified" in res["hint"]
-    assert h.store.load_one(res["id"]).links == []
-    assert old in standing.standing_ids(h.store, _admission(h))
-    (event,) = [e for e in h.events("write") if e.get("status") == "committed"]
-    assert event["review_filings"][0]["detector"] == review.DETECTOR_SAID_UNVERIFIED
+    assert [row["id"] for row in res["supersedes"]] == [old]
+    assert res["said_checked"] is False
+    assert "conflicts_filed" not in res
+    assert old not in standing.standing_ids(h.store, _admission(h))
+    (row,) = h.events("standing_guard")
+    assert (row["door"], row["standing"]) == ("memory_write", [old])
+    assert (row["said"], row["said_checked"]) == (QUOTE, False)
 
 
-async def test_a_said_without_the_value_the_write_introduces_is_refused(
-    h: Harness,
-) -> None:
-    """A hostile said: the user's real words, which do not give the new
-    value, carry nothing, whether or not a hook saw them."""
+async def test_the_words_are_checked_for_presence_only(h: Harness) -> None:
+    """The guard checks that the user typed the quote, not what it meant:
+    words the hook saw carry the replacement whatever they say, and the
+    quote is on the log for the user to read."""
     old = h.seed(RULE)
     _standing(h, old)
-    hostile = "yes, go ahead and update the memory about the ledger app"
-    assert not review.introduced_tokens(UPDATING, [RULE]) & raw_content_tokens(hostile)
-    for heard in (False, True):
-        if heard:
-            _heard(h, hostile)
-        with pytest.raises(ToolError, match=r"must carry the value this write"):
-            await _decide(h, UPDATING, {old: "update"}, said=hostile)
-    assert [m.id for m in h.store.load_all()] == [old]
+    words = "yes, go ahead and update the memory about the ledger app"
+    _heard(h, "Something else entirely was asked in this checkout.")
+    with pytest.raises(ToolError, match=r"review\.said is not in any prompt"):
+        await _decide(h, UPDATING, {old: "update"}, said=words)
+    _heard(h, words)
+    done = await _decide(h, UPDATING, {old: "update"}, said=words)
+    assert done["status"] == "committed", done
+    assert "said_checked" not in done
+    (row,) = h.events("standing_guard")
+    assert (row["said"], row["said_checked"]) == (words, True)
 
 
 async def test_said_is_not_read_where_no_replacement_rests_on_it(h: Harness) -> None:
@@ -286,62 +282,40 @@ async def test_said_is_not_read_where_no_replacement_rests_on_it(h: Harness) -> 
     assert "conflicts_filed" not in res
 
 
-async def test_a_standing_write_that_replaces_any_record_rests_on_said(
+async def test_a_standing_write_that_replaces_a_plain_record_needs_no_words(
     h: Harness,
 ) -> None:
-    """Rule S: the record it updates is not standing, but the write is."""
+    """The record it updates is not standing: the write's own standing
+    answer, or an ambient category, asks nothing of the user's words."""
     old = h.seed(RULE)
     _standing(h, old, 0.1)
-    refused = await _decide(h, UPDATING, {old: "update"}, own=0.9)
-    assert refused["status"] == review.ACTION_STANDING
-    assert [row["id"] for row in refused["standing"]] == [old]
-    assert (
-        "Your standing answer says this write directs future work" in (refused["hint"])
-    )
-    _heard(h, f"Please {QUOTE}.")
-    done = await _decide(h, UPDATING, {old: "update"}, said=QUOTE, own=0.9)
+    done = await _decide(h, UPDATING, {old: "update"}, own=0.9)
     assert done["status"] == "committed", done
-
-
-async def test_an_ambient_write_that_replaces_a_record_rests_on_said(
-    h: Harness,
-) -> None:
-    """Rule S reads the write's category: an ambient write is standing
-    whatever its standing answer."""
-    old = h.seed(RULE)
-    refused = await _decide(h, UPDATING, {old: "update"}, category="ambient")
-    assert refused["status"] == review.ACTION_STANDING
-    assert [row["id"] for row in refused["standing"]] == [old]
+    other = h.seed(FACTS[1])
+    changed = "Grafana dashboards for the queue moved to the platform repo."
+    assert other in h.related_ids(changed)
+    ambient = await _decide(h, changed, {other: "update"}, category="ambient")
+    assert ambient["status"] == "committed", ambient
+    assert h.events("standing_guard") == []
 
 
 NARROWED = "Ledger deploys from tools."
+NARROWING = "shorten the ledger deploy note, the app folder part is noise"
 
 
-async def test_a_write_that_introduces_no_word_rests_on_the_prompt_alone(
+async def test_a_write_that_narrows_a_record_rests_on_the_prompt_alone(
     h: Harness,
 ) -> None:
-    """A write that narrows the record it replaces gives no new value to
-    quote, so a said a hook saw carries it."""
-    assert review.introduced_tokens(NARROWED, [RULE]) == frozenset()
+    """A write that narrows the record it replaces brings no new value:
+    the quote carries it as any other does, by having been typed."""
     old = h.seed(RULE)
     _standing(h, old)
-    _heard(h, "keep it short, just say tools")
+    _heard(h, NARROWING)
     with pytest.raises(ToolError, match=r"review\.said is not in any prompt"):
-        await _decide(h, NARROWED, {old: "update"}, said="say it plainly")
-    done = await _decide(h, NARROWED, {old: "update"}, said="just say tools")
+        await _decide(h, NARROWED, {old: "update"}, said=NARROWING + " please")
+    done = await _decide(h, NARROWED, {old: "update"}, said=NARROWING)
     assert done["status"] == "committed", done
     assert [row["id"] for row in done["supersedes"]] == [old]
-
-
-async def test_a_write_that_introduces_no_word_files_an_unchecked_said(
-    h: Harness,
-) -> None:
-    old = h.seed(RULE)
-    _standing(h, old)
-    held = await _decide(h, NARROWED, {old: "update"}, said="just say tools")
-    assert held["status"] == "committed", held
-    assert [row["id"] for row in held["conflicts_filed"]] == [old]
-    assert "supersedes" not in held
 
 
 async def test_an_empty_said_is_a_teaching_error(h: Harness) -> None:
@@ -360,23 +334,25 @@ async def test_a_declared_supersedes_of_a_standing_record_rests_on_said(
     assert [row["id"] for row in refused["standing"]] == [old]
     assert refused["standing"][0]["text"] == RULE
     _heard(h, QUOTE)
-    done = await _decide(h, CONFLICTING, {}, supersedes=[old], said=QUOTE)
+    done = await _decide(h, CONFLICTING, {}, supersedes=[old], said=QUOTE, own=0.9)
     assert done["status"] == "committed", done
     assert [(row["id"], row["evidence"]) for row in done["supersedes"]] == [
         (old, "declared")
     ]
 
 
-async def test_a_declared_supersedes_on_an_unverified_said_is_withheld(
+async def test_a_declared_supersedes_on_unchecked_words_is_set(
     h: Harness,
 ) -> None:
     old = h.seed(RULE)
     _standing(h, old)
-    held = await _decide(h, CONFLICTING, {}, supersedes=[old], said=QUOTE)
-    assert held["status"] == "committed", held
-    assert "supersedes" not in held
-    assert [row["id"] for row in held["conflicts_filed"]] == [old]
-    assert h.store.load_one(held["id"]).links == []
+    done = await _decide(h, CONFLICTING, {}, supersedes=[old], said=QUOTE)
+    assert done["status"] == "committed", done
+    assert [(row["id"], row["evidence"]) for row in done["supersedes"]] == [
+        (old, "declared")
+    ]
+    assert done["said_checked"] is False
+    assert [x.target_id for x in h.store.load_one(done["id"]).links] == [old]
 
 
 async def test_an_update_of_a_record_that_is_not_standing_needs_no_words(
@@ -490,72 +466,27 @@ def test_replaced_ids_reads_updates_declared_and_undisputed_cue_links() -> None:
     assert review.replaced_ids(answers, related, ["x", "a"]) == ["a", "x", "d", "e"]
 
 
-def test_introduced_tokens_prefer_the_new_values() -> None:
-    old = "The staging API listens on port 8443."
-    new = "The staging API listens on port 9443 since the move."
-    assert review.introduced_tokens(new, [old]) == frozenset({"9443"})
-    # no new value: the new content words
-    assert review.introduced_tokens(UPDATING, [RULE]) >= {"infra"}
-    assert review.introduced_tokens(RULE, [RULE]) == frozenset()
-
-
-def test_introduced_tokens_and_quotes_read_compound_parts() -> None:
-    old = "The billing service reads from the billing-db-blue cluster."
-    new = "The billing service reads from the billing-db-green cluster."
-    introduced = review.introduced_tokens(new, [old])
-    assert introduced == frozenset({"billing-db-green", "green"})
-    assert review.quote_carries("point billing at billing db green", introduced)
-    assert review.quote_carries("use billing-db-green", introduced)
-    assert not review.quote_carries("point billing at the new cluster", introduced)
-
-
-def test_rule_s_quotes_only_the_records_the_caller_is_admitted_to() -> None:
-    related = _related(["a"], cue=["c"])
-    decision = _apply(
-        {"a": "update"}, related, write_standing=True, replaceable_ids=["a"]
-    )
-    assert decision.action == review.ACTION_STANDING
-    assert decision.standing == ("a",)
-
-
-def test_rule_s_refuses_a_standing_write_that_replaces_without_said() -> None:
-    related = _related(["a"], cue=["c"])
-    s_rule = _apply({"a": "update"}, related, write_standing=True)
-    assert s_rule.action == review.ACTION_STANDING
-    assert s_rule.standing == ("a", "c")
-    assert _apply({"a": "update"}, related).action == review.ACTION_COMMIT
-    assert (
-        _apply({"a": "update"}, related, write_standing=True, said=True).action
-        == review.ACTION_COMMIT
-    )
-    # a standing write that replaces nothing needs no words
-    plain = _apply({"a": "unrelated"}, _related(["a"]), write_standing=True)
-    assert plain.action == review.ACTION_COMMIT
-
-
-def test_an_unverified_said_withholds_the_replacement_and_files_it() -> None:
+def test_a_declared_supersedes_of_a_standing_record_rests_on_said_alone() -> None:
     related = _related(["a", "b"], cue=["a"])
     decision = _apply(
         {"a": "restates", "b": "update"},
         related,
         standing_ids=["a", "b", "d"],
         declared_ids=["d"],
-        said_unverified=True,
     )
-    assert decision.action == review.ACTION_COMMIT
-    assert decision.withheld == ("b", "d", "a")
-    assert decision.links == () and decision.update_suggested == ()
-    assert decision.cue_dropped == ("a",)
-    assert decision.filings == (
-        ("b", review.DETECTOR_SAID_UNVERIFIED),
-        ("d", review.DETECTOR_SAID_UNVERIFIED),
-        ("a", review.DETECTOR_SAID_UNVERIFIED),
+    assert decision.action == review.ACTION_STANDING
+    assert decision.standing == ("b", "d", "a")
+    carried = _apply(
+        {"a": "restates", "b": "update"},
+        related,
+        standing_ids=["a", "b", "d"],
+        declared_ids=["d"],
+        said=True,
     )
-    assert decision.to_event()["withheld"] == ["b", "d", "a"]
-    # a conflict with a standing record still refuses
-    conflict = _apply(
-        {"a": "conflict"}, _related(["a"]), standing_ids=["a"], said_unverified=True
-    )
+    assert carried.action == review.ACTION_COMMIT
+    assert carried.links == ("b",)
+    # a conflict with a standing record refuses whatever said holds
+    conflict = _apply({"a": "conflict"}, _related(["a"]), standing_ids=["a"], said=True)
     assert conflict.action == review.ACTION_STANDING
 
 

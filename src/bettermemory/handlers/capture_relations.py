@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 from .. import capture as _capture
 from .. import identity
 from .. import review as _review
+from .. import standing as _standing
 from ..models import LinkType, MemoryLink
 from ..store import NotFoundError, TombstonedError
 from ..supersession import SupersessionMatch, SupersessionReport
@@ -155,6 +156,13 @@ def _apply(
     record = member.review or {}
     tau = record.get("tau") or [1.0, 1.0]
     relation = {**(record.get("relation") or {}), **answered}
+    # What is standing is read again now, beside what the commit recorded:
+    # a record can have become standing since.
+    related_ids = [str(i) for i, _ in record.get("related") or []]
+    related_ids += [str(i) for i in record.get("cue_linked") or []]
+    guarded = set(record.get("standing") or []) | set(
+        _standing.guarded_ids(store, related_ids)
+    )
     decision = _review.apply_review(
         _review.ReviewAnswers(
             relation=relation,
@@ -166,11 +174,8 @@ def _apply(
         write_claim_sized=bool(record.get("claim_sized")),
         write_supersession=deps.config.behavior.write_supersession,
         declared_ids=record.get("declared") or [],
-        standing_ids=record.get("standing") or [],
+        standing_ids=sorted(guarded),
         said=bool(record.get("said")),
-        write_standing=bool(record.get("write_standing")),
-        said_unverified=bool(record.get("said_unverified")),
-        replaceable_ids=record.get("replaceable"),
     )
     out: dict[str, Any] = {"action": decision.action}
     try:

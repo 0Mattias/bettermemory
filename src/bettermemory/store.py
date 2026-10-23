@@ -2698,6 +2698,19 @@ class Store:
             raise NotFoundError(memory_id)
         return _row_to_tombstone(row)
 
+    def tombstone_links(self, memory_id: str) -> list[MemoryLink]:
+        """The links a tombstone keeps beside its record, which `restore`
+        brings back with it."""
+        row = self._conn.execute(
+            "SELECT links_json FROM tombstones WHERE id = ?", (memory_id,)
+        ).fetchone()
+        if row is None:
+            raise NotFoundError(memory_id)
+        return [
+            MemoryLink.model_validate(entry)
+            for entry in _load_json(row["links_json"], [])
+        ]
+
     def iter_tombstones(self) -> Iterator[TombstonedMemory]:
         for row in self._conn.execute(
             "SELECT * FROM tombstones ORDER BY removed, rowid"

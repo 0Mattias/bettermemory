@@ -49,6 +49,9 @@ __all__ = [
     "Admission",
     "CountedRecords",
     "DriftScope",
+    "EVERY_RECORD",
+    "EveryRecord",
+    "RecordView",
     "admitted_nothing",
     "recorded_caller",
 ]
@@ -84,6 +87,38 @@ class CountedRecords:
 
     def drift_counts(self, record_id: str) -> bool:
         return record_id in self.ids
+
+
+class RecordView(Protocol):
+    """What a reader that walks records under an admission asks of it
+    (`in_force.in_force`, `standing.standing_ids`): an `Admission`, or
+    `EVERY_RECORD`."""
+
+    def prime(self, record_ids: Iterable[str]) -> None: ...
+
+    def admits_id(self, record_id: str) -> bool: ...
+
+    def admits_row(self, scopes: Sequence[str], recorded: str | None) -> bool: ...
+
+
+class EveryRecord:
+    """Every record admitted: the view the guard on standing records reads
+    under (unit RS-F7 part 5, `standing.guarded_ids`). Admission decides
+    what a surface delivers, not who may change a record (SECURITY.md:
+    identity is evidence, never a permission), so a record outside the
+    caller's admission is guarded as any other."""
+
+    def prime(self, record_ids: Iterable[str]) -> None:
+        """Nothing to read: every record is admitted."""
+
+    def admits_id(self, record_id: str) -> bool:
+        return True
+
+    def admits_row(self, scopes: Sequence[str], recorded: str | None) -> bool:
+        return True
+
+
+EVERY_RECORD = EveryRecord()
 
 
 def admitted_nothing(outcome: str) -> str:

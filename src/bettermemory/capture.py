@@ -599,15 +599,10 @@ def deferred_review(
     pending: Sequence[str],
     standing: Sequence[str] = (),
     said: bool = False,
-    write_standing: bool = False,
-    said_unverified: bool = False,
-    replaceable: Sequence[str] = (),
 ) -> dict[str, Any]:
     """The deferred review a member row carries: with the standing records
-    among its related, declared and cue ids at commit, whether the user's
-    words carried it, whether the write is itself standing, and whether
-    its words were given where no hook could check them, with the ids the
-    caller was admitted to among them (unit RS-F7 part 5)."""
+    among its related, declared and cue ids at commit, and whether the
+    user's words carried it (unit RS-F7 part 5)."""
     return {
         "review_id": review_id,
         "unsafe": unsafe,
@@ -621,9 +616,6 @@ def deferred_review(
         "pending": list(pending),
         "standing": list(standing),
         "said": bool(said),
-        "write_standing": bool(write_standing),
-        "said_unverified": bool(said_unverified),
-        "replaceable": list(replaceable),
     }
 
 

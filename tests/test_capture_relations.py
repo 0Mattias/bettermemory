@@ -447,6 +447,19 @@ async def test_extends_links_the_member_to_its_target(world: World) -> None:
     assert [(link.type, link.target_id) for link in links] == [(LinkType.EXTENDS, old)]
 
 
+async def test_the_close_reads_what_is_standing_again(world: World) -> None:
+    """A record that became standing after the member committed is read as
+    standing at the close: a conflict with it removes the member."""
+    old = world.seed(BACKUP_OLD)
+    batch = world.open()
+    res = await world.scored(batch, BACKUP_NEW)
+    world.store.put_standing(old, StandingAnswer(0.9, "asked", "test/test"))
+    done = await world.relations({res["id"]: {old: "conflict"}})
+    applied = done["applied"][res["id"]]
+    assert applied["action"] == review.ACTION_STANDING, applied
+    assert [m.id for m in world.store.load_all()] == [old]
+
+
 async def test_a_conflict_with_a_standing_record_removes_the_member(
     world: World,
 ) -> None:
@@ -484,7 +497,9 @@ async def test_a_cue_link_to_a_standing_record_rests_on_the_users_words(
     WORDS.clear()
     try:
         WORDS.remember(world.store.path, checkout, "the staging API moved to 9443")
-        res = await world.scored(batch, PORT_NEW, said="the staging API moved to 9443")
+        res = await world.scored(
+            batch, PORT_NEW, said="the staging API moved to 9443", standing=0.9
+        )
         assert res["status"] == "committed", res
         assert [r["id"] for r in res["supersedes"]] == [old]
         done = await world.relations({res["id"]: {old: "update"}})
@@ -493,28 +508,25 @@ async def test_a_cue_link_to_a_standing_record_rests_on_the_users_words(
         WORDS.clear()
 
 
-async def test_an_unverified_said_on_a_capture_write_files_the_replacement(
+async def test_words_no_hook_could_check_carry_a_capture_write_as_given(
     world: World,
 ) -> None:
-    """No hook saw a prompt in this checkout: the capture write commits
-    replacing nothing, its cue link to the standing record dropped and
-    the pair filed with detector said-unverified, at commit and again
-    (once) at the closing call."""
+    """No hook saw a prompt in this checkout: the capture write commits on
+    the words as given, its cue link to the standing record set, and the
+    reply says the words were not checked."""
     old = world.seed(PORT_OLD)
     world.store.put_standing(old, StandingAnswer(0.9, "asked", "test/test"))
     batch = world.open()
     res = await world.scored(batch, PORT_NEW, said="the staging API moved to 9443")
     assert res["status"] == "committed", res
-    assert "supersedes" not in res
-    assert [(r["id"], r.get("detector")) for r in res["conflicts_filed"]] == [
-        (old, review.DETECTOR_SAID_UNVERIFIED)
-    ]
+    assert [r["id"] for r in res["supersedes"]] == [old]
+    assert res["said_checked"] is False
+    assert "conflicts_filed" not in res
     (member,) = capture.members(world.store, batch.batch)
-    assert member.review is not None and member.review["said_unverified"] is True
+    assert member.review is not None and member.review["said"] is True
     done = await world.relations({res["id"]: {old: "update"}})
     assert done["applied"][res["id"]]["action"] == review.ACTION_COMMIT
-    assert world.store.load_one(res["id"]).links == []
-    assert len(ConflictQueue(world.store).load()) == 1
+    assert ConflictQueue(world.store).load() == []
 
 
 def _hear(world: World, words: str) -> None:
@@ -537,8 +549,10 @@ async def test_said_on_a_capture_write_carries_an_update_given_at_the_close(
     batch = world.open()
     WORDS.clear()
     try:
-        _hear(world, "move the archive backups to Borg")
-        res = await world.scored(batch, BACKUP_NEW, said="backups to Borg")
+        _hear(world, "move the nightly archive backups to Borg")
+        res = await world.scored(
+            batch, BACKUP_NEW, said="nightly archive backups to Borg", standing=0.9
+        )
         assert res["status"] == "committed", res
         assert old in _pending_ids(res)
         (member,) = capture.members(world.store, batch.batch)
@@ -552,20 +566,26 @@ async def test_said_on_a_capture_write_carries_an_update_given_at_the_close(
     ] == [(LinkType.SUPERSEDES, old)]
 
 
-async def test_an_unchecked_said_files_an_update_given_at_the_close(
+async def test_unchecked_words_carry_an_update_given_at_the_close(
     world: World,
 ) -> None:
+    """No hook saw this checkout: the words on the write are taken as
+    given, and the close's update rests on them as a checked quote's
+    would."""
     old = world.seed(BACKUP_OLD)
     world.store.put_standing(old, StandingAnswer(0.9, "asked", "test/test"))
     batch = world.open()
-    res = await world.scored(batch, BACKUP_NEW, said="backups to Borg")
+    res = await world.scored(batch, BACKUP_NEW, said="nightly archive backups to Borg")
     assert res["status"] == "committed", res
+    assert res["said_checked"] is False
     (member,) = capture.members(world.store, batch.batch)
-    assert member.review is not None and member.review["said_unverified"] is True
+    assert member.review is not None and member.review["said"] is True
     done = await world.relations({res["id"]: {old: "update"}})
     assert done["applied"][res["id"]]["action"] == review.ACTION_COMMIT
-    assert world.store.load_one(res["id"]).links == []
-    assert len(ConflictQueue(world.store).load()) == 1
+    assert [
+        (link.type, link.target_id) for link in world.store.load_one(res["id"]).links
+    ] == [(LinkType.SUPERSEDES, old)]
+    assert ConflictQueue(world.store).load() == []
 
 
 # ---------------------------------------------------------------------------

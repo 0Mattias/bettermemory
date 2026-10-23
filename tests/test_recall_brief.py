@@ -61,7 +61,7 @@ from bettermemory.recall import (
 )
 from bettermemory.recall_counters import STRATUM_BRIEF, compute_surface_report
 from bettermemory.recall_review import candidates
-from bettermemory.store import Store
+from bettermemory.store import StandingAnswer, Store
 from bettermemory.verdict import (
     FillReport,
     UnresolvedVerdict,
@@ -352,6 +352,18 @@ def test_an_open_contradiction_is_held_until_a_verify(world: _World) -> None:
     assert world.brief().ids == (kept.id,)
     world.store.mark_verified(held.id)
     assert set(world.brief(session_id="transcript-brief-2").ids) == {held.id, kept.id}
+
+
+def test_a_contradiction_does_not_hold_a_standing_record(world: _World) -> None:
+    """A ``contradicted`` use is the agent's word: it does not take the
+    user's rule out of the brief (unit RS-F7 part 5)."""
+    ruling = world.fresh("prefer short release notes in this project")
+    kept = world.fresh("the deploy window is tuesday mornings here")
+    world.store.put_standing(ruling.id, StandingAnswer(0.9, "asked", "test/test"))
+    world.store.record_event(
+        "use", session="sess_model", ids=[ruling.id], outcome="contradicted"
+    )
+    assert set(world.brief().ids) == {ruling.id, kept.id}
 
 
 def test_strictly_fresh(world: _World) -> None:

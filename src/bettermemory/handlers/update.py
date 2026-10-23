@@ -35,17 +35,26 @@ from ..durability import find_transient_markers
 from ..models import (
     Category,
     Confidence,
+    LinkType,
+    Memory,
+    MemoryLink,
     _PROPOSABLE_CATEGORIES,
     looks_truncated,
     validate_scope,
 )
-from ..store import ConcurrentUpdateError, MemoryNotFoundError, TombstonedError
+from ..store import (
+    ConcurrentUpdateError,
+    MemoryNotFoundError,
+    StandingAnswer,
+    TombstonedError,
+)
 from ._shared import (
     Context,
     _advance_turn,
     _validate_content_size,
     _validate_scope_count,
 )
+from . import _guard
 from .write import _find_user_claims
 
 if TYPE_CHECKING:
@@ -65,6 +74,51 @@ DESC_MEMORY_UPDATE = (
 )
 
 
+def _guarded_change(
+    deps: ToolHandlers,
+    existing: Memory,
+    *,
+    new_body: str,
+    new_scopes: list[str],
+    new_category: Category | None,
+    new_links: list[MemoryLink],
+    standing_answer: StandingAnswer | None,
+) -> list[str]:
+    """The standing memories this edit changes (`standing.guarded_ids`),
+    on which it rests on the user's words (unit RS-F7 part 5): the record
+    itself when its body is edited, a scope is dropped from it (a global
+    record's scopes name the projects it is delivered in) or it is left
+    not standing (a lower answer, or a category that is not standing);
+    and every standing memory a ``supersedes`` link added here takes out
+    of force. Adding a scope, raising an answer and any change to a
+    memory that is not standing need no words."""
+    supersedes = LinkType.SUPERSEDES
+    kept = {link.target_id for link in existing.links if link.type == supersedes}
+    added = sorted(
+        {link.target_id for link in new_links if link.type == supersedes} - kept
+    )
+    guarded = set(_standing.guarded_ids(deps.store, [existing.id, *added]))
+    out: list[str] = []
+    if existing.id in guarded:
+        edited = new_body != existing.body
+        lost = set(existing.scopes) - set(new_scopes)
+        demoted = False
+        # An edit with no answer yet is asked the standing question first
+        # and read again with its answer: whether it stands is known then.
+        if standing_answer is not None or not edited:
+            answer = (
+                standing_answer.probability
+                if standing_answer is not None
+                else _standing.answers(deps.store, [existing.id]).get(existing.id)
+            )
+            category = new_category.value if new_category is not None else None
+            demoted = not _standing.is_standing(category, answer)
+        if edited or lost or demoted:
+            out.append(existing.id)
+    out += [target for target in added if target in guarded]
+    return out
+
+
 async def memory_update(
     deps: ToolHandlers,
     id: str,
@@ -78,6 +132,7 @@ async def memory_update(
     acknowledge_user_claim: bool = False,
     acknowledge_truncation: bool = False,
     standing: float | None = None,
+    said: str | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     state = deps.sessions.for_request(ctx)
@@ -116,7 +171,21 @@ async def memory_update(
         raise ValueError(str(exc)) from exc
 
     if metadata_only and standing_answer is not None:
-        # Only the answer: its row, for the current body, and no edit.
+        # Only the answer: its row, for the current body, and no edit. A
+        # lower answer for a guarded record rests on the user's words.
+        records = _guarded_change(
+            deps,
+            existing,
+            new_body=existing.body,
+            new_scopes=list(existing.scopes),
+            new_category=existing.category,
+            new_links=list(existing.links),
+            standing_answer=standing_answer,
+        )
+        refusal = _guard.guard(deps, "memory_update", records, said)
+        if refusal is not None:
+            deps.recorder.record("update", id=id, status="refused_standing")
+            return refusal
         deps.store.put_standing(id, standing_answer)
         deps.recorder.record(
             "update", id=id, fields=["standing"], standing=standing_answer.probability
@@ -491,6 +560,22 @@ async def memory_update(
                 f"links list capped at 64 entries (got {len(parsed_links)})"
             )
         new_links = parsed_links
+
+    # A change that takes a guarded record out of force or out of standing,
+    # or edits it, rests on the user's words (unit RS-F7 part 5).
+    records = _guarded_change(
+        deps,
+        existing,
+        new_body=new_body,
+        new_scopes=list(new_scopes),
+        new_category=new_category,
+        new_links=list(new_links),
+        standing_answer=standing_answer,
+    )
+    refusal = _guard.guard(deps, "memory_update", records, said)
+    if refusal is not None:
+        deps.recorder.record("update", id=id, status="refused_standing")
+        return refusal
 
     # An edit of the body is answered for the new body in this call while
     # the question is asked (`standing.asking`, the review's switch), so

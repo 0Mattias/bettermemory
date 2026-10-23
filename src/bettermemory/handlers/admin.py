@@ -94,7 +94,7 @@ async def memory_admin(
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     if action == "answer_standing":
-        return await answer_standing(deps, standing, ctx=ctx)
+        return await answer_standing(deps, standing, said=said, ctx=ctx)
     if action == "answer_question":
         return await answer_question(
             deps, id=id, answer=answer, target=target, said=said, ctx=ctx
@@ -104,7 +104,7 @@ async def memory_admin(
     if action == "unjoin_project":
         return await unjoin_project(deps, id=id, ctx=ctx)
     if action == "restore":
-        return await memory_restore(deps, _need(id, "id", action), ctx=ctx)
+        return await memory_restore(deps, _need(id, "id", action), said=said, ctx=ctx)
     if action == "tombstones":
         rows = await memory_list_tombstones(deps, scopes=scopes, ctx=ctx)
         return {"tombstones": rows}

@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING
 from .models import LinkType
 
 if TYPE_CHECKING:
-    from .admission import Admission
+    from .admission import RecordView
     from .store import Store
 
 __all__ = ["InForce", "in_force"]
@@ -56,7 +56,7 @@ class InForce:
 
 
 def in_force(
-    store: Store, ids: Sequence[str], admission: Admission
+    store: Store, ids: Sequence[str], admission: RecordView
 ) -> dict[str, InForce]:
     """`InForce` for each of `ids`, keyed by the asked id.
 

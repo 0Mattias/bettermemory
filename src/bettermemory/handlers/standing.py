@@ -22,6 +22,7 @@ from datetime import timezone
 from typing import TYPE_CHECKING, Any
 
 from .. import standing as _standing
+from . import _guard
 from ._shared import Context, _advance_turn, caller_anchoring
 
 if TYPE_CHECKING:
@@ -50,13 +51,23 @@ def _read(deps: ToolHandlers, standing: Any) -> dict[str, float]:
     return checked
 
 
+def _category_of(deps: ToolHandlers, record_id: str) -> str | None:
+    """The record's category value (None for none)."""
+    category = deps.store.load_one(record_id).category
+    return category.value if category is not None else None
+
+
 async def answer_standing(
     deps: ToolHandlers,
     standing: Mapping[str, Any] | None,
     *,
+    said: str | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Body of memory_admin(action="answer_standing")."""
+    """Body of memory_admin(action="answer_standing"). An answer that
+    takes a standing record out of standing rests on the user's words in
+    `said` (unit RS-F7 part 5, `_guard`); without them none of the call's
+    answers is written."""
     from ..admission import Admission
     from ..membership import SEARCH_AUTO_SCOPE
 
@@ -65,6 +76,19 @@ async def answer_standing(
     answered: list[str] = []
     if standing:
         checked = _read(deps, standing)
+        demoted = [
+            record_id
+            for record_id in _standing.guarded_ids(deps.store, list(checked))
+            if not _standing.is_standing(
+                _category_of(deps, record_id), checked[record_id]
+            )
+        ]
+        refusal = _guard.guard(deps, "answer_standing", demoted, said)
+        if refusal is not None:
+            deps.recorder.record(
+                "answer_standing", status="refused_standing", standing=demoted
+            )
+            return refusal
         with deps.store.batch():
             for record_id, probability in checked.items():
                 deps.store.put_standing(
@@ -96,4 +120,7 @@ async def answer_standing(
         }
         out["records"] = records
     out["hint"] = _standing.batch_hint(waiting.count)
+    deps.recorder.record(
+        "answer_standing", status=out["status"], answered=len(answered)
+    )
     return out

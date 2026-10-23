@@ -2476,6 +2476,23 @@ class TestComputeReport:
         assert usage.total_tool_calls == 0
         assert usage.unmapped_event_kinds == {}
 
+    def test_a_standing_guard_counts_its_session_and_no_tool(self) -> None:
+        """`standing_guard` is recorded handler-side INSIDE the tool call
+        whose change it let through, under that call's session: an
+        in-session kind, never a tool call of its own or an unmapped kind."""
+        assert "standing_guard" in _IN_SESSION_SIDE_EFFECT_KINDS
+        assert "standing_guard" in _KNOWN_SIDE_EFFECT_KINDS
+        assert "standing_guard" not in ADMIN_RECORDED_EVENT_KINDS
+        events = [
+            _ev("update", session="s-real", id="m1"),
+            _ev("standing_guard", session="s-real", door="memory_update"),
+        ]
+        doc = compute_report([], events, version="0-test")
+        assert doc.distinct_session_count == 1
+        usage = compute_tool_usage(events)
+        assert usage.total_tool_calls == 1
+        assert usage.unmapped_event_kinds == {}
+
     def test_in_session_side_effects_still_count_as_sessions(self) -> None:
         """The complement of the exclusion above: side-effect kinds the
         recorder writes INSIDE a live client session carry that client's

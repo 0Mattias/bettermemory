@@ -7,15 +7,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..claims import check_claim, claim_reason_is_indeterminate, load_claims
-from ..models import Memory, TombstonedMemory
+from ..models import LinkType, Memory, TombstonedMemory
 from ..origin import commit_reachable
-from ..store import MemoryNotFoundError, NotTombstonedError, Store
+from ..store import MemoryNotFoundError, NotFoundError, NotTombstonedError, Store
 from ..verify import (
     Anchoring,
     ClaimAnchor,
     _worktree_root_is_live,
     unverifiable_attestations,
 )
+from . import _guard
 from ._shared import Context, _advance_turn, caller_anchoring, has_home
 
 if TYPE_CHECKING:
@@ -227,10 +228,24 @@ _TRUST_STRIPPED_HINT = (
 
 
 async def memory_restore(
-    deps: ToolHandlers, id: str, ctx: Context | None = None
+    deps: ToolHandlers, id: str, said: str | None = None, ctx: Context | None = None
 ) -> dict[str, Any]:
     state = deps.sessions.for_request(ctx)
     _advance_turn(state, deps.recorder)
+    # A record whose ``supersedes`` links name a standing record takes it
+    # out of force again when it comes back: that rests on the user's
+    # words, as the link did (unit RS-F7 part 5).
+    try:
+        tombstone = deps.store.get_tombstone(id)
+        links = deps.store.tombstone_links(id)
+    except (NotFoundError, MemoryNotFoundError, NotTombstonedError):
+        tombstone, links = None, []
+    if tombstone is not None:
+        targets = [link.target_id for link in links if link.type == LinkType.SUPERSEDES]
+        refusal = _guard.guard(deps, "restore", targets, said)
+        if refusal is not None:
+            deps.recorder.record("restore", id=id, status="refused_standing")
+            return refusal
     # A record with no home row is read at its recorded tree as before
     # (design 8.6) and needs no caller; a homed one is read at its anchor.
     anchoring = (

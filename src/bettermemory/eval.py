@@ -2957,6 +2957,7 @@ _TOOL_EVENT_KIND_TO_TOOL: dict[str, str] = {
     "miss_ack": "memory_admin",
     "conflict_scan": "memory_admin",
     "conflict_verdict": "memory_admin",
+    "answer_standing": "memory_admin",
 }
 
 # Tools that don't emit a dedicated event of their own; the rollup
@@ -3046,6 +3047,7 @@ _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
         "capture_grade",
         "review_unanswered",
         "segment_opened",
+        "standing_guard",
     }
 )
 
@@ -3062,7 +3064,10 @@ _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
 # UserPromptSubmit or Stop hook's recorder under it as well, and
 # ``use_token_expired`` is drained handler-side through the
 # live session's recorder (handlers/_shared.py), at the entry of the
-# very tool call that noticed the eviction. ``silent_miss_cutoff`` stays
+# very tool call that noticed the eviction, and ``standing_guard`` is
+# recorded handler-side too (handlers/_guard.py), inside the tool call
+# whose change to a standing record the user's words carried.
+# ``silent_miss_cutoff`` stays
 # admin by kind, the classification its v8 CLI writer had: a cutoff on
 # its own must never publish a session, and the session that issued
 # one through ``memory_admin`` is counted through its other rows.
@@ -3088,6 +3093,7 @@ _IN_SESSION_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
         "session_brief",
         "review_unanswered",
         "segment_opened",
+        "standing_guard",
     }
 )
 

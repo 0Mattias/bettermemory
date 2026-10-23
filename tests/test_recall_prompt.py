@@ -34,7 +34,7 @@ from bettermemory.recall import (
     render_recall_block,
     summarize,
 )
-from bettermemory.store import Store
+from bettermemory.store import StandingAnswer, Store
 
 from .test_membership_security import checkout, project_file
 
@@ -459,6 +459,19 @@ def test_an_open_contradiction_is_held_until_an_update_or_verify(
     assert _suppressed(world) == {held.id: "contradicted"}
     world.store.mark_verified(held.id)
     assert held.id in world.recall(session_id="another-session").ids
+
+
+def test_a_contradiction_does_not_hold_a_standing_record(
+    world: PromptWorld,
+) -> None:
+    """A ``contradicted`` use is the agent's word: it does not take the
+    user's rule out of the prompt recall (unit RS-F7 part 5)."""
+    ruling = world.write()
+    world.store.put_standing(ruling.id, StandingAnswer(0.9, "asked", "test/test"))
+    world.store.record_event(
+        "use", session="sess_model", ids=[ruling.id], outcome="contradicted"
+    )
+    assert ruling.id in world.recall().ids
 
 
 def test_retrieved_in_the_segment_is_held(world: PromptWorld) -> None:

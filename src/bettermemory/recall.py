@@ -278,14 +278,15 @@ class WordsSeen:
 
     def holds(self, store_path: object, checkout: str, quote: str) -> bool:
         """Whether `quote` is in a prompt the hook saw in `checkout`:
-        whitespace folded, case folded, the quote at least
-        `MIN_QUOTE_CHARS` characters."""
+        whitespace folded, case folded, on word boundaries (a quote that
+        starts or ends inside a word of the prompt is not the user's
+        words), the quote at least `MIN_QUOTE_CHARS` characters."""
         wanted = _fold(quote)
         if len(wanted) < MIN_QUOTE_CHARS:
             return False
         with self._lock:
             held = list(self._words.get((str(store_path), checkout), ()))
-        return any(wanted in _fold(text) for text in held)
+        return any(_bounded(wanted, _fold(text)) for text in held)
 
     def clear(self) -> None:
         with self._lock:
@@ -297,6 +298,20 @@ MIN_QUOTE_CHARS = 8
 
 def _fold(text: str) -> str:
     return " ".join(text.split()).casefold()
+
+
+def _bounded(wanted: str, text: str) -> bool:
+    """Whether `wanted` occurs in `text` neither starting nor ending inside
+    a word (``9443`` is not in ``19443``)."""
+    start = text.find(wanted)
+    while start >= 0:
+        end = start + len(wanted)
+        before = start == 0 or not (text[start - 1].isalnum() and wanted[0].isalnum())
+        after = end == len(text) or not (text[end].isalnum() and wanted[-1].isalnum())
+        if before and after:
+            return True
+        start = text.find(wanted, start + 1)
+    return False
 
 
 #: The process's one table of words (the daemon's for its lifetime).
@@ -517,6 +532,18 @@ def disputed_marks(pairs: Iterable[tuple[str, str, str]]) -> dict[str, str]:
         suffix = f" +{min(more, 99)}" if more else ""
         out[member] = f"[disputed: {pair_ids[0][:15]}{suffix}]"
     return out
+
+
+def _unless_standing(
+    store: Store, admission: Admission, contradicted: dict[str, datetime]
+) -> dict[str, datetime]:
+    """`contradicted` less the standing records': a ``contradicted`` use
+    is the agent's word, and it does not take the user's rule out of
+    delivery (unit RS-F7 part 5). Health still counts the mark."""
+    if not contradicted:
+        return contradicted
+    standing = set(_standing.standing_ids(store, admission, list(contradicted)))
+    return {k: v for k, v in contradicted.items() if k not in standing}
 
 
 def _contradiction_open(memory: Memory, contradicted: Mapping[str, datetime]) -> bool:
@@ -1378,7 +1405,7 @@ def _select_brief(
         and row.provenance in _DELIVERED_PROVENANCE
     ]
     ids, notes = _brief_in_force(store, ids, admission)
-    contradicted = store.contradicted_at(ids)
+    contradicted = _unless_standing(store, admission, store.contradicted_at(ids))
     responses = ResponseBuilder(stale_after_days=stale_after_days)
 
     def eligible(chunk: Sequence[str]) -> list[Memory]:
@@ -2396,7 +2423,7 @@ def prompt_recall(
     wanted = list(dict.fromkeys([*hit_ids, *(entry.id for entry in forced.values())]))
     memories = {memory.id: memory for memory in store.load_many(wanted)}
     trust = store.trust_rows(wanted)
-    contradicted = store.contradicted_at(wanted)
+    contradicted = _unless_standing(store, admission, store.contradicted_at(wanted))
     chosen: list[tuple[MissHit, Memory, TrustRow, InForce | None]] = []
     suppressed: list[dict[str, str]] = []
     # The hits every gate but the admission passes, in rank order: the

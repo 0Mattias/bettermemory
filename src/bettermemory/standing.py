@@ -5,8 +5,10 @@ which they are.
 A record is standing when it is ambient (its category says it shapes
 every reply) or its standing answer is at or above `TAU_STANDING`, and it
 is in force (`in_force.in_force`: no admitted active record supersedes
-it). The answer is the probability that `review.STANDING_STATEMENT` holds
-of the record's body, asked of the agent, never of a human:
+it). `guarded_ids` reads the same under every record, for the guard on a
+change to a standing record (`handlers._guard`). The answer is the
+probability that `review.STANDING_STATEMENT` holds of the record's body,
+asked of the agent, never of a human:
 
 - by the write review's fourth question, on every reviewed write;
 - by memory_update, on an edit of the body (its `standing` argument);
@@ -40,6 +42,7 @@ import threading
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import timezone
 from typing import TYPE_CHECKING, Any
 
 from . import _caches, identity
@@ -49,7 +52,7 @@ from .review import RELATED_CAP, RELATED_TEXT_CHARS, STANDING_STATEMENT, current
 from .store import StandingAnswer, body_sha256
 
 if TYPE_CHECKING:
-    from .admission import Admission
+    from .admission import Admission, RecordView
     from .store import Store
 
 __all__ = [
@@ -69,9 +72,11 @@ __all__ = [
     "backlog_line",
     "batch_hint",
     "check_probability",
+    "guarded_ids",
     "is_standing",
     "question",
     "record_text",
+    "refusal_rows",
     "standing_ids",
 ]
 
@@ -216,8 +221,21 @@ def backlog(store: Store, admission: Admission) -> Backlog:
     return Backlog(tuple(waiting))
 
 
+def guarded_ids(store: Store, ids: Sequence[str]) -> list[str]:
+    """The records of `ids` a change to which rests on the user's words
+    (`handlers._guard`): `standing_ids` under every record
+    (`admission.EVERY_RECORD`), whatever the caller is admitted to, since
+    admission decides what a surface delivers, not who may change a
+    record."""
+    from .admission import EVERY_RECORD
+
+    if not ids:
+        return []
+    return standing_ids(store, EVERY_RECORD, ids)
+
+
 def standing_ids(
-    store: Store, admission: Admission, ids: Sequence[str] | None = None
+    store: Store, admission: RecordView, ids: Sequence[str] | None = None
 ) -> list[str]:
     """The admitted records (of `ids`, when given) that are standing and
     in force, newest ``updated`` first."""
@@ -248,6 +266,30 @@ def record_text(body: str) -> str:
     if len(text) <= RELATED_TEXT_CHARS:
         return text
     return snippet_window(text, 0, RELATED_TEXT_CHARS - 3)
+
+
+def refusal_rows(
+    store: Store, ids: Sequence[str], admission: RecordView
+) -> list[dict[str, Any]]:
+    """Each guarded record a refusal names, as a standing batch shows it
+    (`record_text`), in the order asked. A record the caller is not
+    admitted to is guarded all the same, but its text is not quoted
+    (``text`` None, ``admitted`` false), as no surface quotes a record it
+    would not deliver."""
+    admission.prime(ids)
+    rows: list[dict[str, Any]] = []
+    for memory in store.get_many(list(dict.fromkeys(ids))):
+        admitted = admission.admits_id(memory.id)
+        row: dict[str, Any] = {
+            "id": memory.id,
+            "scopes": list(memory.scopes),
+            "updated": memory.updated.astimezone(timezone.utc).date().isoformat(),
+            "text": record_text(memory.body) if admitted else None,
+        }
+        if not admitted:
+            row["admitted"] = False
+        rows.append(row)
+    return rows
 
 
 def backlog_line(count: int) -> str:
