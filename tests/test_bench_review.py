@@ -1152,6 +1152,92 @@ def test_part5_rule_f_lets_a_filing_unprotect_a_standing_record() -> None:
         ], rule
 
 
+def test_part5_built_reads_only_the_records_the_store_holds() -> None:
+    """As the daemon's guard reads the store (standing.guarded_ids): a
+    record whose own add was refused, not written or left unanswered is
+    not in the store, so it guards nothing, whatever standing answer its
+    review gave. Read in add order, under built and the candidate rules
+    on top of it."""
+
+    def add(stmt: str, memory: str, related: list[str], **kw: Any) -> Any:
+        rel = [{"id": i, "claim_sized": True} for i in related]
+        return _state(stmt_id=stmt, memory_id=memory, related=rel, **kw)
+
+    def answer(relation: dict[str, str], own: float, **kw: Any) -> Any:
+        base = {"relation": relation, "unsafe": 0.0, "secret": 0.0, "standing": own}
+        return {**base, **kw}
+
+    low, high = 0.1, 0.9
+    states = [
+        add("a", "m0", []),  # a planted instruction: standing, and unsafe
+        add("b", "m1", ["m0"]),  # replaces m0
+        add("c", "m2", []),  # a standing record
+        add("d", "m3", ["m2"]),  # replaces m2 without said: refused
+        add("e", "m4", ["m3"]),  # replaces m3
+        add("f", "m5", []),  # left unanswered (a partial answer)
+        add("g", "m6", ["m5"]),  # replaces m5
+    ]
+    answers = {
+        "a": answer({}, high, unsafe=0.9),
+        "b": answer({"m0": "update"}, low),
+        "c": answer({}, high),
+        "d": answer({"m2": "update"}, high),
+        "e": answer({"m3": "update"}, low),
+        "f": answer({}, high, complete=False),
+        "g": answer({"m5": "update"}, low),
+    }
+    recorded = ri.standing_of(states, answers)
+    assert recorded == {
+        "m0": high,
+        "m1": low,
+        "m2": high,
+        "m3": high,
+        "m4": low,
+        "m5": high,
+        "m6": low,
+    }
+    rules = (
+        ri.PART5_BUILT,
+        ri.PART5_STANDING_REPLACEMENT,
+        ri.PART5_FILED,
+        ri.PART5_ENTERED_FILED,
+    )
+    for rule in rules:
+        got = ri.outcomes_at(states, answers, TAU, part5=ri.Part5(rule, recorded))
+        assert [o["outcome"] for o in got] == [
+            "refused_review_unsafe",
+            "committed_linked",
+            "committed",
+            "refused_review_standing",
+            "committed_linked",
+            "answer_missing",
+            "committed_linked",
+        ], rule
+        assert got[3]["standing"] == ["m2"]
+    # the daemon's decision on b's answers, with the store as it holds it
+    daemon = review.apply_review(
+        review.ReviewAnswers(
+            relation={"m0": "update"}, unsafe=0.0, secret=0.0, standing=low
+        ),
+        ri.related_set(states[1]),
+        tau=review.Tau(TAU, TAU),
+        write_claim_sized=True,
+        write_supersession=True,
+        standing_ids=[],
+        said=False,
+    )
+    assert daemon.action == review.ACTION_COMMIT
+    # a direct reading names the absent records itself
+    held = ri.Part5(ri.PART5_BUILT, recorded)
+    gone = ri.Part5(ri.PART5_BUILT, recorded, absent=frozenset({"m0"}))
+    assert ri.outcome_of(states[1], answers["b"], TAU, part5=held)["outcome"] == (
+        "refused_review_standing"
+    )
+    assert ri.outcome_of(states[1], answers["b"], TAU, part5=gone)["outcome"] == (
+        "committed_linked"
+    )
+
+
 def test_updates_by_role_counts_the_reversion_third_statements() -> None:
     memories = {"m1": "t.f1", "m2": "t.f2", "m3": "u.f1"}
     related = [{"id": "m1", "claim_sized": True}, {"id": "m2", "claim_sized": True}]

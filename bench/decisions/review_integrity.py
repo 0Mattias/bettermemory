@@ -94,18 +94,24 @@ scored under A2 and table 2 directly, without a D1 result to rescore.
 Part 5 (unit RS-F7). Until the false-fact replay, `score` read the
 answers without standing or said, so no result scored part 5: a standing
 record is not replaced without the user's words. `--part5` reads it:
-"built" gives the daemon's apply_review the standing records among each
-add's related ids and cue targets, each standing when its own add's
-recorded standing answer is at or above TAU_STANDING, and said when the
-answer carries one; a refusal is refused_review_standing, read stopped and
-false alarm. "replacement", "standing-replacement" and "standing-write" are
-the replay's candidate rules on top of it (PART5_RULES), and
-"standing-replacement-filed" is standing-replacement under rule F: a
-record an earlier add filed in a conflict pair is not standing. Off, the
-default, reads every result as it was written. `part5-replay` reads
-committed dev runs through the gate (D1/v1 against the result, A2/v2
-against its rescore) and then each part 5 column, under the decision
-rules its docstring records.
+"built" is the daemon's own decision (review.apply_review, as
+handlers/write.py calls it) given the standing records among each add's
+related ids and cue targets: each one the store holds, which under a
+reading is a record whose own add committed, read in add order, and whose
+recorded standing answer is at or above TAU_STANDING; and said when the
+answer carries one, taken as given as the daemon takes a quote where no
+prompt hook saw the caller's checkout, which is every bench add. A refusal
+is refused_review_standing, read stopped and false alarm. "replacement",
+"standing-replacement" and "standing-write" are the replay's candidate
+rules on top of it (PART5_RULES); "standing-replacement-filed" is
+standing-replacement under rule F (a record an earlier add filed in a
+conflict pair is not standing) and "standing-replacement-entered-filed"
+under rule F'. The candidate rules are measurements; none is in the
+product, whose guard is the one rule "built" reads. Off, the default,
+reads every result as it was written. `part5-replay` reads committed dev
+runs through the gate (D1/v1 against the result, A2/v2 against its
+rescore) and then each part 5 column, under the decision rules its
+docstring records.
 
 The two test splits (guard.TEST_SEALS). Everything said above of the
 test split holds for v1's (v1-test) and v1b's (v1b-test), each against
@@ -324,22 +330,28 @@ D1B_ITEM_FIELDS = ("filed_as", "filing_targets", "restated")
 # Part 5 of unit RS-F7 (a standing record is not replaced without the
 # user's words), read beside the decision rule. "off" is how every result
 # scored before it was read: no standing record and no said. "built" is
-# the daemon's own apply_review given standing_ids and said: a target is
-# standing when its own add's recorded standing answer is at or above
-# standing.TAU_STANDING (the bench holds no ambient record), and said holds
-# when the answer carries one, as _said_holds takes a quote as given where
-# no prompt hook ran, which is every bench add. The other three are the
-# false-fact replay's candidate rules on top of "built", each refusing a
-# commit that carries no said: "replacement" any write that replaces a
-# record, "standing-replacement" a replacing write whose own standing
-# answer is standing, and "standing-write" any write whose own answer is.
-# "standing-replacement-filed" is standing-replacement with rule F (owner's
-# decision of 2026-10-23): a filed record, one side of a conflict pair an
-# earlier add filed, is not standing, since no bench pair is resolved and
-# no bench add carries said. It removes protection and adds no refusal.
-# "standing-replacement-entered-filed" is rule F' (C6, declared before it
-# ran): only the record whose own add filed a pair is not standing, and the
-# pair's targets keep theirs, so a filing cannot unprotect a standing record.
+# the daemon's own apply_review given standing_ids and said as
+# handlers/write.py gives them: a target is standing when the store holds
+# it (its own add committed under this reading; outcomes_at keeps the
+# absent ones, in add order) and its own add's recorded standing answer is
+# at or above standing.TAU_STANDING (the bench holds no ambient record),
+# and said holds when the answer carries one, as the daemon takes a quote
+# as given where no prompt hook saw the caller's checkout, which is every
+# bench add. No bench add carries said, so no standing record is replaced
+# within a run and in-force leaves every committed one. The other rules
+# are the false-fact replay's candidate rules on top of "built", each
+# refusing a commit that carries no said: "replacement" any write that
+# replaces a record, "standing-replacement" a replacing write whose own
+# standing answer is standing, and "standing-write" any write whose own
+# answer is. "standing-replacement-filed" is standing-replacement with rule
+# F (owner's decision of 2026-10-23): a filed record, one side of a
+# conflict pair an earlier add filed, is not standing, since no bench pair
+# is resolved and no bench add carries said. It removes protection and
+# adds no refusal. "standing-replacement-entered-filed" is rule F' (C6,
+# declared before it ran): only the record whose own add filed a pair is
+# not standing, and the pair's targets keep theirs, so a filing cannot
+# unprotect a standing record. Neither F nor F' is in the product (the
+# design reset of 2026-10-23); both stand as measurements.
 PART5_OFF = "off"
 PART5_BUILT = "built"
 PART5_REPLACEMENT = "replacement"
@@ -356,18 +368,21 @@ PART5_RULES = (
     PART5_FILED,
     PART5_ENTERED_FILED,
 )
-# The labels that dispute a cue link, as apply_review reads them.
-DISPUTED = (review.LABEL_CONFLICT, review.LABEL_UNRELATED, review.LABEL_EXTENDS)
 
 
 @dataclasses.dataclass(frozen=True)
 class Part5:
     """How outcome_of reads part 5: the rule, each store memory's
-    recorded standing answer (`standing_of`), and under rule F the records
-    filed before this add (`filed`, kept by outcomes_at)."""
+    recorded standing answer (`standing_of`), the records the store never
+    held under this reading (`absent`: those whose own add was refused,
+    not written or left unanswered, kept by outcomes_at in add order, as
+    the daemon's guard reads only the records the store holds), and under
+    rule F the records filed before this add (`filed`, kept the same
+    way)."""
 
     rule: str = PART5_OFF
     standing: Mapping[str, float] = dataclasses.field(default_factory=dict)
+    absent: frozenset[str] = frozenset()
     filed: frozenset[str] = frozenset()
 
     @property
@@ -991,21 +1006,6 @@ def standing_of(
     return out
 
 
-def replaced_ids(
-    answers: review.ReviewAnswers, related: review.RelatedSet
-) -> list[str]:
-    """The records a write replaces, as apply_review's step 5 reads them: a
-    related id answered update, and a cue target whose link the review did
-    not dispute. No bench add declares supersedes."""
-    out = [i for i in related.ids if answers.relation.get(i) == review.LABEL_UPDATE]
-    out += [
-        i
-        for i in related.cue_supersedes
-        if i not in out and answers.relation.get(i) not in DISPUTED
-    ]
-    return out
-
-
 def part5_decision(
     rule: str,
     decision: review.ReviewDecision,
@@ -1013,7 +1013,8 @@ def part5_decision(
     related: review.RelatedSet,
 ) -> review.ReviewDecision:
     """A candidate rule on top of the daemon's decision: a commit that
-    carries no said is refused (refused_standing, naming what it replaces)
+    carries no said is refused (refused_standing, naming what it replaces,
+    as review.replaced_ids reads it; no bench add declares supersedes)
     when it replaces a record (replacement), replaces one and is itself
     standing (standing-replacement, and both rule F forms), or is itself
     standing (standing-write). Off and built return the decision
@@ -1024,7 +1025,7 @@ def part5_decision(
         or answers.said is not None
     ):
         return decision
-    replaced = tuple(replaced_ids(answers, related))
+    replaced = tuple(review.replaced_ids(answers, related))
     own = standing.is_standing(None, answers.standing)
     if rule == PART5_REPLACEMENT:
         refused = bool(replaced)
@@ -1053,7 +1054,8 @@ def outcome_of(
     (apply_rule). Under A2, `cue_dropped` names the cue targets whose links
     the review's disagreement dropped. With a part 5 rule on, the answers
     carry their standing and said, apply_review is given the standing
-    records among the related ids and cue targets, and a candidate rule is
+    records among the related ids and cue targets that the store holds
+    (`Part5.absent` names the ones it does not), and a candidate rule is
     applied on top (part5_decision); a refusal is refused_review_standing,
     with `standing` naming the records it rests on."""
     if not state["reviewed"]:
@@ -1090,14 +1092,19 @@ def outcome_of(
     related = related_set(state)
     kw: dict[str, Any] = {}
     if p5 is not None:
-        # As _reviewed_write asks: the standing records among the related
-        # ids and the cue targets (no bench add declares supersedes); under
-        # rule F, none that an earlier add filed.
+        # As _reviewed_write asks (standing.guarded_ids): the standing
+        # records among the related ids and the cue targets (no bench add
+        # declares supersedes) that the store holds, so none whose own add
+        # did not commit (p5.absent); under rule F, none that an earlier
+        # add filed. said as the daemon reads it where no hook saw the
+        # checkout: present is taken as given.
         targets = dict.fromkeys([*related.ids, *related.cue_supersedes])
         kw["standing_ids"] = [
             i
             for i in targets
-            if standing.is_standing(None, p5.standing.get(i)) and i not in p5.filed
+            if i not in p5.absent
+            and i not in p5.filed
+            and standing.is_standing(None, p5.standing.get(i))
         ]
         kw["said"] = answers.said is not None
     decision = apply_rule(
@@ -1390,23 +1397,34 @@ def outcomes_at(
     rule: str = RULE_A2,
     part5: Part5 | None = None,
 ) -> list[dict[str, Any]]:
-    """Each add's outcome, in the order the run added them. Under rule F
-    an add is read with the records filed before it: a committed add that
-    files a pair (a review filing or the cue code's) files itself and each
-    target, or under rule F' (standing-replacement-entered-filed) itself
-    alone. An add whose record is filed when the run ends carries
-    record_filed, so it is not counted stored as standing."""
-    if part5 is None or not part5.rule_f:
+    """Each add's outcome, in the order the run added them. With part 5
+    on, an add is read with the store as the daemon would hold it: the
+    records of the adds before it that committed under this reading, so a
+    refused, not written or unanswered add's record guards nothing
+    (`Part5.absent`). Under rule F an add is also read with the records
+    filed before it: a committed add that files a pair (a review filing or
+    the cue code's) files itself and each target, or under rule F'
+    (standing-replacement-entered-filed) itself alone. An add whose record
+    is filed when the run ends carries record_filed, so it is not counted
+    stored as standing."""
+    if part5 is None or not part5.on:
         return [
             outcome_of(s, answers.get(s["stmt_id"]), tau, rule, part5) for s in states
         ]
+    absent: set[str] = set()
     filed: set[str] = set()
     out: list[dict[str, Any]] = []
     for s in states:
-        here = dataclasses.replace(part5, filed=frozenset(filed))
+        here = dataclasses.replace(
+            part5, absent=frozenset(absent), filed=frozenset(filed)
+        )
         o = outcome_of(s, answers.get(s["stmt_id"]), tau, rule, here)
         out.append(o)
         if o["outcome"] not in COMMITTED_OUTCOMES:
+            if s.get("memory_id"):
+                absent.add(str(s["memory_id"]))
+            continue
+        if not part5.rule_f:
             continue
         pairs = [t for t, _ in o.get("filings") or []]
         pairs += list(s.get("cue_filings") or [])
@@ -2404,6 +2422,10 @@ def part5_replay(
        standing), declared the same day before it ran, holds by rule 7's
        test; it decides nothing alone and goes to the owner as a proposed
        amendment to rule F.
+    Rules 7 and 8 were read on 2026-10-23 and both held; the owner's
+    design reset of that day took neither rule into the product, whose
+    guard is one rule (handlers/_guard.py), so C5 and C6 stand as
+    measurements.
     Counts and stmt_ids only; the result is returned, not written."""
     points = _read(review_points)
     sealed_tau = float(points["tau_unsafe"])
