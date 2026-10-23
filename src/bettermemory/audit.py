@@ -711,8 +711,9 @@ def prompt_recall_fields(
       of the old one-hit rule; eval slices on the field either way.
     - ``shown_ids`` (the delivered ids, in block order),
       ``suppressed`` (``{"id", "reason"}`` per candidate held back:
-      ``seen_in_segment``, ``other_project``, ``low_relevance``,
-      ``provenance``, ``contradicted`` or ``segment_cap``), ``rule``
+      ``seen_in_segment``, ``other_project``, ``provenance``,
+      ``contradicted`` or ``superseded``; rows of rs-v5 and earlier also
+      ``low_relevance`` and ``segment_cap``), ``rule``
       (the delivery rule's name), ``segment`` (the session segment the
       cooldown counted it in), ``prompt_id`` (the harness's turn id
       when its payload carries one), ``transcript_path`` and

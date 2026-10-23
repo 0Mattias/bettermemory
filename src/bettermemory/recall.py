@@ -94,6 +94,7 @@ from .store import IMPORTED, LOCAL, STORE_FILENAME, Store, TrustRow
 from .time_utils import ensure_utc, isoformat_utc, parse_event_ts
 from .transcript import CompactMarker, compact_marker
 from .admission import NO_RESOLUTION, Admission, CountedRecords, admitted_nothing
+from .in_force import InForce, in_force
 from .location import Exchange
 from .membership import (
     POOL_PREFILTER,
@@ -129,7 +130,6 @@ __all__ = [
     "RULE",
     "RecallPointer",
     "RecallState",
-    "SEGMENT_DELIVERY_CAP",
     "SURFACE_BRIEF",
     "SURFACE_RECALL",
     "admission_for",
@@ -216,17 +216,26 @@ COMPACT_MARKER_WINDOW_SECONDS = 60
 
 # -- the prompt recall --------------------------------------------------------
 
+# The probe's top three, each delivered unless a hold names it (RS-F7 part
+# 0). Stage B (2026-10-22, 60 prompts, replies judged blind) measured the
+# paired reply score against no block: the top 3 +0.39 [+0.17, +0.62],
+# above the top 5 by +0.27 [+0.07, +0.47] and the top 1 by +0.25 [+0.05,
+# +0.45] on prompts with a relevant record; the top 2 was not separable
+# from it, and Stage A's replay reaches 69 of 100 prompts with three
+# against 61 with two. No hold reads the coverage label since rs-v6: in
+# Stage A the labels did not separate relevant from irrelevant records
+# (high 0.34, medium 0.30, low 0.28), and no segment cap counts
+# deliveries (the live log's 202 segments reached twelve once).
 RECALL_MAX_POINTERS = 3
+# The block's format as Stage B tested it; alternatives are unmeasured.
 RECALL_CAP_CHARS = 900
 SNIPPET_CHARS = 100
 # A snippet cut shorter than this to fit the cap is dropped instead: a
 # dozen characters of matched text tells the model nothing.
 _MIN_SNIPPET_CHARS = 12
-_RELEVANT: frozenset[str] = frozenset({"medium", "high"})
 
 # -- the session cooldown -----------------------------------------------------
 
-SEGMENT_DELIVERY_CAP = 12
 STATE_IDLE_SECONDS = 24 * 3600
 STATE_MAX_SESSIONS = 1_000
 
@@ -1076,15 +1085,12 @@ class RecallState:
     ) -> tuple[list[str], int]:
         """Check and note one prompt recall's delivery under one lock: the
         ids not yet shown in the session's segment, in order, and the
-        segment they were counted in; no ids when the segment has had its
-        `SEGMENT_DELIVERY_CAP`. What the caller read before (`segment`)
-        may be stale by the time it delivers when two prompts of one
-        session run at once; this is the step that decides, so no id is
-        shown twice in a segment and no segment passes its cap."""
+        segment they were counted in. What the caller read before
+        (`segment`) may be stale by the time it delivers when two prompts
+        of one session run at once; this is the step that decides, so no
+        id is shown twice in a segment."""
         with self._lock:
             entry = self._held(key, now)
-            if entry.deliveries >= SEGMENT_DELIVERY_CAP:
-                return [], entry.segment
             kept = [memory_id for memory_id in ids if memory_id not in entry.shown]
             if not kept:
                 return [], entry.segment
@@ -1256,6 +1262,8 @@ class _BriefSelection:
     unresolved: int
     suppressed: tuple[dict[str, str], ...] = ()
     candidates: int = 0
+    #: The in-force notes of the window's lines (`in_force`), by id.
+    notes: Mapping[str, str] = field(default_factory=dict)
 
 
 def _suppressed_reason(admission: Admission, memory_id: str) -> str:
@@ -1268,6 +1276,30 @@ def _suppressed_reason(admission: Admission, memory_id: str) -> str:
     if home.unresolved:
         return UNRESOLVED
     return admission.relation(home)
+
+
+def _brief_in_force(
+    store: Store, ids: Sequence[str], admission: Admission
+) -> tuple[list[str], dict[str, str]]:
+    """The brief window's rows as `in_force` leaves them (RS-F7 part 3),
+    and each kept row's in-force note by id. A record an admitted one
+    supersedes is history, and its slot is its head's. The window is
+    newest first, so a head holds one place, the first its own row or one
+    of its history rows reaches; a head outside the window's rows (another
+    label or category) takes none."""
+    forced = in_force(store, ids, admission)
+    window = set(ids)
+    placed: dict[str, InForce] = {}
+    for memory_id in ids:
+        entry = forced[memory_id]
+        if entry.id in window and entry.id not in placed:
+            placed[entry.id] = entry
+    notes = {
+        memory_id: " ".join(_in_force_marks(entry.replaces, entry.extended_by))
+        for memory_id, entry in placed.items()
+        if entry.replaces or entry.extended_by
+    }
+    return list(placed), notes
 
 
 def _select_brief(
@@ -1301,13 +1333,13 @@ def _select_brief(
     the fill."""
     repo_key = brief_key(caller)
     ids = store.brief_rows(
-        admit=admission.admits_project,
+        admit=admission.admits_row,
         provenance=_DELIVERED_PROVENANCE,
         exclude_category=Category.AMBIENT.value,
     )[:BRIEF_WINDOW]
     if not ids:
         candidates = store.brief_rows(
-            admit=lambda _home: True,
+            admit=lambda _scopes, _home: True,
             provenance=_DELIVERED_PROVENANCE,
             exclude_category=Category.AMBIENT.value,
         )
@@ -1332,6 +1364,7 @@ def _select_brief(
         if (row := trust.get(memory_id)) is not None
         and row.provenance in _DELIVERED_PROVENANCE
     ]
+    ids, notes = _brief_in_force(store, ids, admission)
     contradicted = store.contradicted_at(ids)
     responses = ResponseBuilder(stale_after_days=stale_after_days)
 
@@ -1424,7 +1457,7 @@ def _select_brief(
             caller_origin=caller,
             admission=admission.counted([memory.id for memory in pending]),
         )
-    return _BriefSelection(picked, examined, len(pending))
+    return _BriefSelection(picked, examined, len(pending), notes=notes)
 
 
 def _brief_line(memory: Memory, marks: Mapping[str, str]) -> str:
@@ -1885,7 +1918,10 @@ def _brief_in_segment(
         return empty
     kept = [memory for memory in selection.memories if memory.id not in view.shown]
     omitted = [memory.id for memory in selection.memories if memory.id in view.shown]
-    text, ids = render_brief(kept, disputed_marks(store.pending_conflict_pairs()))
+    marks = disputed_marks(store.pending_conflict_pairs())
+    for memory_id, note in selection.notes.items():
+        marks[memory_id] = f"{marks[memory_id]} {note}" if memory_id in marks else note
+    text, ids = render_brief(kept, marks)
     if not ids and not omitted:
         return empty
     shown = set(ids)
@@ -1944,7 +1980,9 @@ class RecallPointer:
     this host never made; a store opened without its key): the rule's
     provenance gate admits local and imported records only, so neither is
     reached by a delivery today, and the renderer keeps them so a widened
-    gate cannot deliver such a record unannounced."""
+    gate cannot deliver such a record unannounced. `replaces` names the
+    superseded record whose slot this one took, `extended_by` the newest
+    in-force record extending it (`in_force`, RS-F7 part 3)."""
 
     id: str
     relevance: str
@@ -1954,6 +1992,8 @@ class RecallPointer:
     remote_stamp: bool = False
     trust_unavailable: bool = False
     disputed: str | None = None
+    replaces: str | None = None
+    extended_by: str | None = None
 
 
 def _annotation(pointer: RecallPointer) -> str:
@@ -1965,6 +2005,17 @@ def _annotation(pointer: RecallPointer) -> str:
     return ""
 
 
+def _in_force_marks(replaces: str | None, extended_by: str | None) -> list[str]:
+    """The line's in-force notes (`in_force`): the record whose slot this
+    one took, and the newest record extending it."""
+    marks: list[str] = []
+    if replaces:
+        marks.append(f"[replaces {replaces}]")
+    if extended_by:
+        marks.append(f"[extended by {extended_by}]")
+    return marks
+
+
 def _recall_line(pointer: RecallPointer, snippet: str | None) -> str:
     parts = [f"- {pointer.id} [{pointer.relevance}] {pointer.summary}"]
     annotation = _annotation(pointer)
@@ -1972,6 +2023,7 @@ def _recall_line(pointer: RecallPointer, snippet: str | None) -> str:
         parts.append(annotation)
     if pointer.disputed:
         parts.append(pointer.disputed)
+    parts.extend(_in_force_marks(pointer.replaces, pointer.extended_by))
     line = " ".join(parts)
     return f"{line} — {snippet}" if snippet else line
 
@@ -2122,16 +2174,22 @@ def prompt_recall(
     human typed (a task notification, a message from another session, a
     harness tag, a prompt that is only reminder blocks) is not probed and
     records nothing, so the segment keeps its ids for the prompt the
-    owner types next. A ``no_signal`` report delivers nothing. Each hit
-    is then a candidate,
-    held back with a reason when it is ``low_relevance`` (not medium or
-    high), ``other_project`` (the admission does not admit its home,
-    `Membership.admit_recall`, which names the relation on the
-    entry and writes `recall_suppressed` when it withholds every relevant
-    hit), ``provenance`` (not local or
-    imported, or unverifiable), ``contradicted`` (an open contradiction),
-    ``seen_in_segment`` (shown, retrieved, written or updated in this
-    session segment) or ``segment_cap`` (the segment has had its twelve). The
+    owner types next. A ``no_signal`` report delivers nothing. Each of
+    the top three hits is then a candidate, whatever its coverage label
+    (rs-v6, RS-F7 part 0), held back with a reason when it is
+    ``other_project`` (the admission does not admit its home,
+    `Membership.admit_recall`, which names the relation on the entry and
+    writes `recall_suppressed` when it withholds every hit),
+    ``provenance`` (not local or imported, or unverifiable),
+    ``contradicted`` (an open contradiction) or ``seen_in_segment``
+    (shown, retrieved, written or updated in this session segment). A hit
+    an admitted record supersedes is history (`in_force`, RS-F7 part 3):
+    its head takes the slot, named ``replaces <id>`` on the line and
+    decided by its own gates, and the slot is held as ``superseded`` when
+    the head is shown in its own slot, already taken, or seen in the
+    segment. A line names the newest in-force record extending it. Until
+    rs-v6 a hit was also held as ``low_relevance`` (not medium or high)
+    and as ``segment_cap`` (the segment had had twelve deliveries). The
     probe's verdict and its retrieval shield do not gate delivery; the
     segment does.
 
@@ -2285,7 +2343,7 @@ def prompt_recall(
     )
     if report.verdict == "no_signal" or not report.top_hits:
         return empty
-    # The relevant hits through the PROMPT_RECALL surface
+    # The hits through the PROMPT_RECALL surface
     # (`Membership.admit_recall`, which writes `recall_suppressed` when it
     # withholds every one of them, design 4 failure 8).
     model = admission.model
@@ -2293,7 +2351,7 @@ def prompt_recall(
         return empty
     turn = model.admit_recall(
         caller_resolution,
-        [(hit.id, hit.relevance in _RELEVANT) for hit in report.top_hits],
+        [hit.id for hit in report.top_hits],
         admission=surface,
     )
     admitted_here = set(turn.delivered)
@@ -2311,39 +2369,61 @@ def prompt_recall(
         harness_session=key[1],
     )
     hit_ids = [hit.id for hit in report.top_hits]
-    memories = {memory.id: memory for memory in store.load_many(hit_ids)}
-    trust = store.trust_rows(hit_ids)
-    contradicted = store.contradicted_at(hit_ids)
-    chosen: list[tuple[MissHit, Memory, TrustRow]] = []
+    # What is in force (RS-F7 part 3): an admitted hit some admitted
+    # record supersedes yields its slot to its head; a head shown in its
+    # own slot, or already in the segment, holds the slot (``superseded``).
+    forced = in_force(
+        store, [rid for rid in hit_ids if rid in admitted_here], admission
+    )
+    own = {entry.id for entry in forced.values() if not entry.history}
+    wanted = list(dict.fromkeys([*hit_ids, *(entry.id for entry in forced.values())]))
+    memories = {memory.id: memory for memory in store.load_many(wanted)}
+    trust = store.trust_rows(wanted)
+    contradicted = store.contradicted_at(wanted)
+    chosen: list[tuple[MissHit, Memory, TrustRow, InForce | None]] = []
     suppressed: list[dict[str, str]] = []
     # The hits every gate but the admission passes, in rank order: the
     # candidates rc3's rule is asked about for the rc3_admitted column
     # (design 8.11), so the column differs from the delivery by the
     # admission alone.
     rc3_candidates: list[Memory] = []
+
+    def gate(memory: Memory, row: TrustRow | None) -> str | None:
+        if row is None or row.provenance not in _DELIVERED_PROVENANCE:
+            return "provenance"
+        if _contradiction_open(memory, contradicted):
+            return "contradicted"
+        if memory.id in seen:
+            return "seen_in_segment"
+        return None
+
     for hit in report.top_hits:
         memory = memories.get(hit.id)
         if memory is None:
             continue
         row = trust.get(hit.id) if trust is not None else None
-        held: str | None = None
-        if hit.relevance not in _RELEVANT:
-            held = "low_relevance"
-        elif row is None or row.provenance not in _DELIVERED_PROVENANCE:
-            held = "provenance"
-        elif _contradiction_open(memory, contradicted):
-            held = "contradicted"
-        elif hit.id in seen:
-            held = "seen_in_segment"
-        elif view.deliveries >= SEGMENT_DELIVERY_CAP:
-            held = "segment_cap"
+        held = gate(memory, row)
         if held is None and len(rc3_candidates) < RECALL_MAX_POINTERS:
             rc3_candidates.append(memory)
+        forced_entry = forced.get(hit.id)
+        if forced_entry is not None and forced_entry.history:
+            # The hit is history: the slot is its head's, and the head's
+            # own gates decide it.
+            head_id = forced_entry.id
+            memory = memories.get(head_id)
+            row = trust.get(head_id) if trust is not None else None
+            if (
+                memory is None
+                or head_id in own
+                or head_id in seen
+                or any(taken.id == head_id for _hit, taken, _row, _f in chosen)
+            ):
+                held = "superseded"
+            else:
+                held = gate(memory, row)
         reason: str | None = None
         relation: str | None = None
-        if held == "low_relevance":
-            reason = held
-        elif hit.id not in admitted_here:
+        if hit.id not in admitted_here:
             reason = "other_project"
             relation = withheld.get(hit.id)
         elif held is not None:
@@ -2356,29 +2436,32 @@ def prompt_recall(
                 entry["relation"] = relation
             suppressed.append(entry)
             continue
-        assert row is not None
-        chosen.append((hit, memory, row))
+        assert row is not None and memory is not None
+        chosen.append((hit, memory, row, forced_entry))
     if not chosen:
         return empty
 
     marks = disputed_marks(store.pending_conflict_pairs())
     pointers = [
         RecallPointer(
-            id=hit.id,
+            id=memory.id,
             relevance=hit.relevance,
             summary=summarize(memory.body),
-            snippet=hit.snippet,
+            # The query's snippet is the hit's text; a head that took the
+            # slot is named by its summary alone.
+            snippet=hit.snippet if memory.id == hit.id else "",
             provenance=row.provenance,
-            disputed=marks.get(hit.id),
+            disputed=marks.get(memory.id),
+            replaces=forced_entry.replaces if forced_entry is not None else None,
+            extended_by=forced_entry.extended_by if forced_entry is not None else None,
         )
-        for hit, memory, row in chosen
+        for hit, memory, row, forced_entry in chosen
     ]
     block, shown_ids = render_recall_block(pointers)
     if not shown_ids:
         return empty
     # The cooldown decides atomically: a concurrent prompt of the same
-    # session may have shown some of these ids, or used the last of the
-    # segment's deliveries, since `view` was read.
+    # session may have shown some of these ids since `view` was read.
     event_id = generate_ulid()
     claimed, segment = state.claim_delivery(key, shown_ids, now=now, event_id=event_id)
     if not claimed:
@@ -2414,7 +2497,7 @@ def prompt_recall(
     fields.update(_delivery_membership(caller_resolution, admission))
     # A pointer the render or the cooldown dropped is dropped whatever the
     # admission, so the column leaves it out as well.
-    dropped = {hit.id for hit, _memory, _row in chosen} - set(shown_ids)
+    dropped = {hit.id for hit, _memory, _row, _forced in chosen} - set(shown_ids)
     fields["rc3_admitted"] = [
         memory_id
         for memory_id in _rc3_admitted(

@@ -113,6 +113,11 @@ _SEEN_EVENT_KINDS: frozenset[str] = frozenset(
 )
 # M4's block: a 100-character stand-in snippet on every line.
 _M4_SNIPPET = 100
+# Two gates every rule replayed here had and rs-v6 removed from the product
+# (RS-F7 part 0): the coverage labels a hit had to carry, and the
+# deliveries a session segment allowed.
+_RELEVANT: frozenset[str] = frozenset({"medium", "high"})
+SEGMENT_DELIVERY_CAP = 12
 
 
 # ---------------------------------------------------------------------------
@@ -402,10 +407,8 @@ def replay(fixture: Mapping[str, Any], rule: str) -> dict[str, Any]:
     """Counts and rates for `rule` over the fixture."""
     from bettermemory.recall import (
         _DELIVERED_PROVENANCE,
-        _RELEVANT,
         _SEEN_KINDS,
         RECALL_MAX_POINTERS,
-        SEGMENT_DELIVERY_CAP,
         STATE_IDLE_SECONDS,
         RecallPointer,
         _seen_in_log,

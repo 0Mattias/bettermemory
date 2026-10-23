@@ -3290,6 +3290,35 @@ class Store:
             )
         return out
 
+    def inbound_links(
+        self, target_ids: Iterable[str], types: Collection[str]
+    ) -> dict[str, list[tuple[str, str, str]]]:
+        """``{target: [(type, source_id, source updated)]}`` for the links of
+        `types` into each of `target_ids`, oldest source first (id breaking
+        a tie). A link's source is always an active memory: the cleanup
+        trigger drops a removed one's rows. What `in_force` walks."""
+        ids = list(dict.fromkeys(target_ids))
+        kinds = sorted(set(types))
+        out: dict[str, list[tuple[str, str, str]]] = {}
+        if not ids or not kinds:
+            return out
+        marks = ",".join("?" * len(kinds))
+        for start in range(0, len(ids), _PROVENANCE_BATCH):
+            batch = ids[start : start + _PROVENANCE_BATCH]
+            placeholders = ",".join("?" * len(batch))
+            for row in self._conn.execute(
+                "SELECT l.target_id AS target_id, l.type AS type, "
+                "l.source_id AS source_id, m.updated AS updated "
+                "FROM memory_links l JOIN memories m ON m.id = l.source_id "
+                f"WHERE l.type IN ({marks}) AND l.target_id IN ({placeholders}) "
+                "ORDER BY l.target_id, m.updated, l.source_id",
+                (*kinds, *batch),
+            ):
+                out.setdefault(str(row["target_id"]), []).append(
+                    (str(row["type"]), str(row["source_id"]), str(row["updated"]))
+                )
+        return out
+
     def provenance_for(self, memory_ids: Sequence[str]) -> dict[str, str]:
         """``{id: label}`` for the active records asked. The label is the
         row's, unless the row's pointer into the log fails: the ``log_mac``
@@ -4130,35 +4159,60 @@ class Store:
                 out.append(str(row["id"]))
         return out
 
+    def declared_scopes(self, record_ids: Sequence[str]) -> dict[str, list[str]]:
+        """``{id: scopes}`` for the memories and episodes asked, as written;
+        an id that is neither (a removed memory) is absent. What
+        `membership.Membership.homes` reads a global record's named
+        projects from."""
+        wanted = list(dict.fromkeys(record_ids))
+        out: dict[str, list[str]] = {}
+        for table in ("memories", "episodes"):
+            for start in range(0, len(wanted), _PROVENANCE_BATCH):
+                batch = wanted[start : start + _PROVENANCE_BATCH]
+                placeholders = ",".join("?" * len(batch))
+                for row in self._conn.execute(
+                    f"SELECT id, scopes_json FROM {table} WHERE id IN ({placeholders})",
+                    batch,
+                ):
+                    scopes = _load_json(row["scopes_json"], None)
+                    if isinstance(scopes, list):
+                        out[str(row["id"])] = [str(scope) for scope in scopes]
+        return out
+
     def brief_rows(
         self,
         *,
-        admit: Callable[[str | None], bool],
+        admit: Callable[[list[str], str | None], bool],
         provenance: Collection[str],
         exclude_category: str,
     ) -> list[str]:
         """The ids of admitted memories the session brief may consider,
         newest ``updated`` first (id breaking a tie): stored label in
         `provenance`, category other than `exclude_category`, home admitted
-        by `admit`, which reads the project the record's ``homes`` row
-        names (None for a record with none), joined in the one query.
-        Never reads a body. The stored label is a pre-filter only: the
-        caller re-reads the verified one (`trust_rows`), which a failed
-        pointer turns into ``unaccounted``."""
+        by `admit`, which reads the record's scopes and the project its
+        ``homes`` row names (None for a record with none) as `scope_counts`
+        does (a global record's admission reads the projects its scopes
+        name), joined in the one query. Never reads a body. The stored label is a pre-filter
+        only: the caller re-reads the verified one (`trust_rows`), which a
+        failed pointer turns into ``unaccounted``."""
         labels = sorted(set(provenance))
         if not labels:
             return []
         placeholders = ",".join("?" * len(labels))
         out: list[str] = []
         for row in self._conn.execute(
-            "SELECT m.id AS id, h.project AS home_project FROM memories m "
+            "SELECT m.id AS id, m.scopes_json AS scopes_json, "
+            "h.project AS home_project FROM memories m "
             "LEFT JOIN homes h ON h.record_id = m.id "
             f"WHERE m.provenance IN ({placeholders}) "
             "AND (m.category IS NULL OR m.category != ?) "
             "ORDER BY m.updated DESC, m.id DESC",
             (*labels, exclude_category),
         ):
-            if admit(row["home_project"]):
+            scopes = _load_json(row["scopes_json"], None)
+            if admit(
+                list(scopes) if isinstance(scopes, list) else [], row["home_project"]
+            ):
                 out.append(str(row["id"]))
         return out
 

@@ -10,7 +10,9 @@ tests (`should_include_for_caller`, `worktrees_match`, `repos_match`,
 not name (origin.py, health.py and the rc3_admitted helper, by name), with
 the reason per entry, and when a membership site of
 design 8.2 does not import `admitted` from membership or `Admission` from
-admission.
+admission. Unit RS-F7 adds two (P12): a global record's named projects
+are read in membership.py and admission.py alone, and the walk over a
+record's ``supersedes`` and ``extends`` links is `in_force`'s alone.
 """
 
 from __future__ import annotations
@@ -185,3 +187,32 @@ def test_the_store_readers_take_the_home() -> None:
             assert "origin_repo" not in text, node.name
             assert "origin_worktree" not in text, node.name
     assert seen == readers
+
+
+def _callers(name: str) -> set[str]:
+    """The modules that call `name` (a function or a method), anywhere."""
+    out: set[str] = set()
+    for path in _modules():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        if any(
+            isinstance(node, ast.Call) and _called(node) == name
+            for node in ast.walk(tree)
+        ):
+            out.add(_name(path))
+    return out
+
+
+def test_a_global_records_named_projects_are_read_in_one_place() -> None:
+    """RS-F7 part 2: which projects a global record's scopes name is
+    `Membership.named`'s answer, read by the homes reader and the
+    request's admission alone."""
+    assert _callers("named") == {"membership.py", "admission.py"}
+
+
+def test_what_is_in_force_is_decided_in_one_place() -> None:
+    """RS-F7 part 3: the walk over inbound ``supersedes`` and ``extends``
+    links is `in_force`'s, and the surfaces that deliver (the brief and
+    the prompt recall, in recall.py) call it."""
+    assert _callers("inbound_links") == {"in_force.py"}
+    assert _callers("in_force") == {"recall.py"}
+    assert ("in_force", "in_force") in _imports("recall.py")

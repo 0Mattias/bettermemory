@@ -1753,7 +1753,7 @@ def test_x14_health_counts_every_uncertain_call(world: World) -> None:
         Location(machine=world.machine, cwd="/x", state=UNREADABLE, detail="EACCES")
     )
     world.see(world.repo("/icloud/a", evicted=True))
-    world.model.admit_recall(asked, [(list(world.records)[0], True)])
+    world.model.admit_recall(asked, [list(world.records)[0]])
     health = world.model.health()
     assert [p.id for p in health.open_proposals] == [asked.proposal]
     assert [p.id for p in health.provisional] == [asked.project]
@@ -1875,32 +1875,39 @@ def test_strict_keeps_a_provisional_project_from_merging_by_evidence(
 # ---------------------------------------------------------------------------
 
 #: The table of design 3.5, written out: (caller in a project, caller
-#: outside any project).
+#: outside any project). ``global_named`` (RS-F7 part 2) joins
+#: ``same_project`` on the three automatic surfaces.
 _TABLE: dict[str, tuple[frozenset[str], frozenset[str]]] = {
-    mb.SESSION_BRIEF: (frozenset({SAME_PROJECT}), frozenset()),
-    mb.PROMPT_RECALL: (frozenset({SAME_PROJECT}), frozenset()),
-    mb.REVIEW_STRATA: (frozenset({SAME_PROJECT}), frozenset()),
+    mb.SESSION_BRIEF: (frozenset({SAME_PROJECT, mb.GLOBAL_NAMED}), frozenset()),
+    mb.PROMPT_RECALL: (frozenset({SAME_PROJECT, mb.GLOBAL_NAMED}), frozenset()),
+    mb.REVIEW_STRATA: (frozenset({SAME_PROJECT, mb.GLOBAL_NAMED}), frozenset()),
     mb.SEARCH_AUTO_SCOPE: (
-        frozenset({SAME_PROJECT, SUB_PROJECT, GLOBAL_RELATION}),
+        frozenset({SAME_PROJECT, SUB_PROJECT, GLOBAL_RELATION, mb.GLOBAL_NAMED}),
         frozenset({GLOBAL_RELATION}),
     ),
     mb.POOL_PREFILTER: (
-        frozenset({SAME_PROJECT, SUB_PROJECT, GLOBAL_RELATION}),
+        frozenset({SAME_PROJECT, SUB_PROJECT, GLOBAL_RELATION, mb.GLOBAL_NAMED}),
         frozenset({GLOBAL_RELATION}),
     ),
     mb.LINKS: (
-        frozenset({SAME_PROJECT, SUB_PROJECT, GLOBAL_RELATION}),
+        frozenset({SAME_PROJECT, SUB_PROJECT, GLOBAL_RELATION, mb.GLOBAL_NAMED}),
         frozenset({GLOBAL_RELATION}),
     ),
     mb.SEARCH_UNSCOPED: (
-        frozenset({SAME_PROJECT, SUB_PROJECT, GLOBAL_RELATION, OTHER_PROJECT}),
+        frozenset(
+            {SAME_PROJECT, SUB_PROJECT, GLOBAL_RELATION, mb.GLOBAL_NAMED, OTHER_PROJECT}
+        ),
         frozenset({GLOBAL_RELATION, OTHER_PROJECT}),
     ),
 }
 
 
 def _home(
-    project: str, *, chain: tuple[str, ...] = (), tenant: str | None = None
+    project: str,
+    *,
+    chain: tuple[str, ...] = (),
+    tenant: str | None = None,
+    named: frozenset[str] = frozenset(),
 ) -> Home:
     return Home(
         record_id="r",
@@ -1912,6 +1919,7 @@ def _home(
         recorded_project=project,
         chain=chain or ((project,) if project != GLOBAL else ()),
         tenant=tenant,
+        named=named,
     )
 
 
@@ -1928,7 +1936,11 @@ def test_every_relation_on_every_surface_follows_the_table(surface: str) -> None
     homes = {
         SAME_PROJECT: [_home("P1"), _home("W1")],
         SUB_PROJECT: [_home("S1", chain=("S1", "P1"))],
-        GLOBAL_RELATION: [_home(GLOBAL)],
+        GLOBAL_RELATION: [_home(GLOBAL), _home(GLOBAL, named=frozenset({"P2"}))],
+        mb.GLOBAL_NAMED: [
+            _home(GLOBAL, named=frozenset({"P1"})),
+            _home(GLOBAL, named=frozenset({"W1", "P2"})),
+        ],
         OTHER_PROJECT: [_home("P2"), _home("S2", chain=("S2", "P2"))],
         OTHER_TENANT: [_home("P3", tenant="T1")],
     }
@@ -1939,6 +1951,7 @@ def test_every_relation_on_every_surface_follows_the_table(surface: str) -> None
     out = Resolution(GLOBAL_OUTCOME, GLOBAL, None, "outside_repository")
     for rel, home in (
         (GLOBAL_RELATION, _home(GLOBAL)),
+        (GLOBAL_RELATION, _home(GLOBAL, named=frozenset({"P1"}))),
         (OTHER_PROJECT, _home("P2")),
         (OTHER_TENANT, _home("P3", tenant="T1")),
     ):
@@ -1952,6 +1965,30 @@ def test_every_relation_on_every_surface_follows_the_table(surface: str) -> None
             for home in those:
                 assert relation(home, nothing) == UNKNOWN
                 assert not admitted(surface, home, nothing)
+
+
+def test_a_global_record_names_projects_by_its_scopes(world: World) -> None:
+    """RS-F7 part 2: a global record's ``projects:<name>`` scopes name the
+    projects of that name, the name compared case-folded (scopes are
+    lowercase), merges followed; the homes reader fills them in."""
+    mine = world.see(world.repo("/w/WidgetDB"))
+    other = world.see(world.repo("/w/other"))
+    assert world.model.project(mine.project).name == "WidgetDB"  # type: ignore[arg-type]
+    assert world.model.named(["projects:widgetdb", "tools"]) == {mine.project}
+    assert world.model.named(["projects:", "tools", "projects:absent"]) == frozenset()
+    outside = world.model.resolve(
+        Location(machine=world.machine, cwd="/tmp", state=OUTSIDE)
+    )
+    rid = world.put(outside.home)  # type: ignore[arg-type]
+    world.store.put_memory(
+        world.store.load_one(rid).model_copy(update={"scopes": ["projects:widgetdb"]})
+    )
+    home = world.model.home(rid)
+    assert home is not None and home.named == {mine.project}
+    assert relation(home, mine) == mb.GLOBAL_NAMED
+    assert relation(home, other) == relation(home, outside) == GLOBAL_RELATION
+    assert world.model.admit_recall(mine, [rid]).delivered == (rid,)
+    assert world.model.admit_recall(other, [rid]).delivered == ()
 
 
 def test_a_tenants_caller_meets_its_own_tenant_only(world: World) -> None:
@@ -2068,20 +2105,18 @@ def test_answering_new_keeps_the_checkout_its_own_and_unasked(world: World) -> N
 # ---------------------------------------------------------------------------
 
 
-def test_a_recall_suppressing_every_relevant_hit_writes_a_row(world: World) -> None:
+def test_a_recall_suppressing_every_hit_writes_a_row(world: World) -> None:
     a = world.see(world.repo("/w/a"))
     b = world.see(world.repo("/w/b"))
     mine, theirs = world.write(a), world.write(b)
     loose = world.write(
         world.model.resolve(Location(machine=world.machine, cwd="/tmp", state=OUTSIDE))
     )
-    got = world.model.admit_recall(a, [(theirs, True), (mine, True), (loose, False)])
+    got = world.model.admit_recall(a, [theirs, mine])
     assert got.delivered == (mine,)
     assert got.suppressed == ((theirs, OTHER_PROJECT),)
     assert not any(r.kind == "recall_suppressed" for r in world.store.log_rows())
-    none = world.model.admit_recall(
-        a, [(theirs, True), (loose, True), (generate_ulid(), True)]
-    )
+    none = world.model.admit_recall(a, [theirs, loose, generate_ulid()])
     assert none.delivered == ()
     assert [why for _rid, why in none.suppressed] == [
         OTHER_PROJECT,

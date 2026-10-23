@@ -73,7 +73,7 @@ def test_e13_x14_every_suppression_leaves_a_row_and_health_counts_it(
     p1, p2 = scene.write(game), scene.write(game)
     other = scene.see(scene.repo("other"))
     model = scene.model
-    turn = model.admit_recall(other, [(p1, True), (p2, True)])
+    turn = model.admit_recall(other, [p1, p2])
     assert turn.delivered == ()
     rows = _rows(scene, "recall_suppressed")
     assert [{s["id"] for s in r["suppressed"]} for r in rows] == [{p1, p2}]
@@ -93,14 +93,14 @@ def test_e13_x14_every_suppression_leaves_a_row_and_health_counts_it(
         f"bettermemory: cannot tell what {scene.root / 'locked'} is (EACCES); nothing "
         "from any project is shown here",
     )
-    model.admit_recall(blind, [(p1, True)])
+    model.admit_recall(blind, [p1])
     assert [r["suppressed"][0]["reason"] for r in _rows(scene, "recall_suppressed")][
         -1
     ] == "unknown"
     assert len(_rows(scene, "resolution_indeterminate")) == 1
     # Delivered in its own project: nothing suppressed, no row.
     model.admit_recall(scene.see(scene.repo("game2")), [])
-    assert scene.model.admit_recall(game, [(p1, True)]).delivered == (p1,)
+    assert scene.model.admit_recall(game, [p1]).delivered == (p1,)
     assert len(_rows(scene, "recall_suppressed")) == 2
     text, section = _health(monkeypatch, capsys)
     assert section["suppressed_recall_turns"] == {str(other.checkout): 1, "none": 1}

@@ -3,7 +3,8 @@
 Per (harness, session id): the segment, the ids shown in it and its
 delivery count. A SessionStart with source ``clear`` opens a new segment,
 and one with source ``compact`` on its compaction marker; no id is shown
-twice in one; twelve deliveries at most; the state is rebuilt from the
+twice in one, and no count of deliveries caps one (rs-v6, RS-F7 part 0);
+the state is rebuilt from the
 session's rows in the log after a restart (and computed from them on the
 in-process path), evicted after a day idle and rebuilt as it was,
 bounded at a thousand sessions, and safe to drive from many threads.
@@ -19,7 +20,6 @@ from pathlib import Path
 import pytest
 
 from bettermemory.recall import (
-    SEGMENT_DELIVERY_CAP,
     STATE_MAX_SESSIONS,
     RecallState,
     rebuild_session,
@@ -136,27 +136,22 @@ def test_a_brief_pointer_is_not_recalled_in_its_segment(world: PromptWorld) -> N
     assert world.recall(state=state).stdout == ""
 
 
-def test_twelve_deliveries_per_segment(world: PromptWorld) -> None:
-    memory = world.write()
-    state = RecallState(background=False)
-    for i in range(SEGMENT_DELIVERY_CAP):
-        state.note_shown(KEY, [f"other-{i}"], delivery=True, now=_now())
-    assert world.recall(state=state).stdout == ""
-    assert world.recalls() == []
-    state.open_segment(world.store, KEY, source="clear", now=_now())
-    assert world.recall(state=state).ids == (memory.id,)
-
-
-def test_the_cap_reason_is_recorded_beside_a_delivery(world: PromptWorld) -> None:
-    """At the cap every candidate is held; a delivery that already sits at
-    eleven goes out once more and the next is held."""
+def test_no_count_of_deliveries_holds_a_segment_back(world: PromptWorld) -> None:
+    """rs-v6 (RS-F7 part 0): a segment that has had any number of
+    deliveries still gets an unseen pointer, and no hold is named for the
+    count; until rs-v6 twelve held every later one (``segment_cap``)."""
     first = world.write()
     state = RecallState(background=False)
-    for i in range(SEGMENT_DELIVERY_CAP - 1):
+    for i in range(40):
         state.note_shown(KEY, [f"other-{i}"], delivery=True, now=_now())
     assert world.recall(state=state).ids == (first.id,)
-    world.write(f"{BODY} again")
-    assert world.recall(state=state).stdout == ""
+    second = world.write(f"{BODY} again")
+    assert world.recall(state=state).ids == (second.id,)
+    reasons = {
+        e["reason"] for row in world.recalls() for e in row.get("suppressed_ids", [])
+    }
+    # The second recall holds the first record as seen, and nothing more.
+    assert reasons == {"seen_in_segment"}
 
 
 # ---------------------------------------------------------------------------
@@ -428,16 +423,18 @@ def test_no_segment_row_with_telemetry_off_or_on_startup(world: PromptWorld) -> 
 # ---------------------------------------------------------------------------
 
 
-def test_a_claim_keeps_unshown_ids_and_honours_the_cap(world: PromptWorld) -> None:
+def test_a_claim_keeps_unshown_ids_and_counts_without_a_cap(
+    world: PromptWorld,
+) -> None:
     state = RecallState(background=False)
     now = _now()
     assert state.claim_delivery(KEY, ["a", "b"], now=now) == (["a", "b"], 0)
     assert state.claim_delivery(KEY, ["a", "c"], now=now) == (["c"], 0)
     assert state.claim_delivery(KEY, ["a"], now=now) == ([], 0)
-    for i in range(SEGMENT_DELIVERY_CAP - 2):
+    for i in range(30):
         state.claim_delivery(KEY, [f"x{i}"], now=now)
-    assert state.segment(world.store, KEY, now=now).deliveries == SEGMENT_DELIVERY_CAP
-    assert state.claim_delivery(KEY, ["fresh"], now=now) == ([], 0)
+    assert state.segment(world.store, KEY, now=now).deliveries == 32
+    assert state.claim_delivery(KEY, ["fresh"], now=now) == (["fresh"], 0)
 
 
 def test_concurrent_prompts_deliver_an_id_once(world: PromptWorld) -> None:

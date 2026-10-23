@@ -2855,7 +2855,8 @@ def candidate_admitted(
     for a record with none) and `admission` the request's
     (`admission.Admission`, built once per request from the caller's
     resolution): `membership.admitted` on the search's surface decides
-    (design 3.5), and a record with no home is admitted nowhere. None
+    (design 3.5; a global record with the projects `memory_scopes` name,
+    `Admission.admits_row`), and a record with no home is admitted nowhere. None
     admits every record: offline callers (the benches, an eval replay)
     that rank a store as a whole, never a caller's request.
 
@@ -2881,7 +2882,7 @@ def candidate_admitted(
         return False
     if scope_filter is not None and not (memory_scope_set & scope_filter):
         return False
-    if admission is not None and not admission.admits_project(memory_home):
+    if admission is not None and not admission.admits_row(memory_scopes, memory_home):
         return False
     if not actor_matches(memory_actor, client=client_filter, model=model_filter):
         return False

@@ -205,11 +205,24 @@ def _admitted_window(store: Any, admission: Any) -> list[str]:
     if admission.nothing is not None or not admission.in_project:
         return []
     ids: list[str] = store.brief_rows(
-        admit=admission.admits_project,
+        admit=admission.admits_row,
         provenance=_DELIVERED_PROVENANCE,
         exclude_category=Category.AMBIENT.value,
     )
     return ids[:BRIEF_WINDOW]
+
+
+def _window_in_force(store: Any, admission: Any) -> tuple[list[str], dict[str, str]]:
+    """`_select_brief`'s window after the label re-read and `in_force`
+    (RS-F7 part 3): the rows it walks, and each one's in-force note."""
+    from bettermemory.recall import _DELIVERED_PROVENANCE, _brief_in_force
+
+    ids = _admitted_window(store, admission)
+    trust = store.trust_rows(ids) or {}
+    ids = [
+        i for i in ids if i in trust and trust[i].provenance in _DELIVERED_PROVENANCE
+    ]
+    return _brief_in_force(store, ids, admission)
 
 
 def full_scan(
@@ -222,18 +235,14 @@ def full_scan(
     from bettermemory._response import ResponseBuilder
     from bettermemory.models import utcnow
     from bettermemory.recall import (
-        _DELIVERED_PROVENANCE,
         BRIEF_MAX_POINTERS,
         _contradiction_open,
         _fresh,
     )
     from bettermemory.verdict import resolve_verdicts
 
-    ids = _admitted_window(store, admission)
+    ids, _notes = _window_in_force(store, admission)
     trust = store.trust_rows(ids) or {}
-    ids = [
-        i for i in ids if i in trust and trust[i].provenance in _DELIVERED_PROVENANCE
-    ]
     contradicted = store.contradicted_at(ids)
     rows = [m for m in store.load_many(ids) if not _contradiction_open(m, contradicted)]
     responses = ResponseBuilder(stale_after_days=stale_after_days)
@@ -250,15 +259,18 @@ def full_scan(
     return fresh[:BRIEF_MAX_POINTERS]
 
 
-def _line_faults(store: Any, result: Any) -> int:
-    """Lines of the brief that are not exactly ``- <id> <summary>`` and the
-    disputed mark: the header plus one line per shown id, nothing else."""
+def _line_faults(store: Any, result: Any, notes: dict[str, str]) -> int:
+    """Lines of the brief that are not exactly ``- <id> <summary>``, the
+    disputed mark and the in-force note (`notes`, `_window_in_force`): the
+    header plus one line per shown id, nothing else."""
     from bettermemory.recall import _brief_line, disputed_marks
 
     if not result.stdout:
         return 0
     lines = result.stdout.split("\n")[1:]
     marks = disputed_marks(store.pending_conflict_pairs())
+    for memory_id, note in notes.items():
+        marks[memory_id] = f"{marks[memory_id]} {note}" if memory_id in marks else note
     memories = {m.id: m for m in store.load_many(list(result.ids))}
     expected = [_brief_line(memories[i], marks) for i in result.ids if i in memories]
     return sum(1 for a, b in zip(lines, expected) if a != b) + abs(
@@ -269,6 +281,8 @@ def _line_faults(store: Any, result: Any) -> int:
 def _call(
     store: Any, config: Any, state: Any, checkout: dict[str, Any], session: str
 ) -> dict[str, Any]:
+    """One brief, timed; its line check waits for the window's in-force
+    notes, read once the caller is resolved (`_check_lines`)."""
     from bettermemory.recall import session_brief
 
     local = checkout["local"]
@@ -290,10 +304,16 @@ def _call(
         "chars": result.chars,
         "ms": round(seconds * 1000.0, 1),
         "git_processes": spawned,
-        "line_faults": _line_faults(store, result),
         **_recorded(store, session),
         "ids": list(result.ids),
+        "result": result,
     }
+
+
+def _check_lines(store: Any, call: dict[str, Any], notes: dict[str, str]) -> None:
+    """Replace the call's brief by the count of its lines that are not as
+    rendered (`_line_faults`)."""
+    call["line_faults"] = _line_faults(store, call.pop("result"), notes)
 
 
 def _recorded(store: Any, session: str) -> dict[str, Any]:
@@ -332,6 +352,10 @@ def in_process(scratch: Path, rows: list[dict[str, Any]]) -> list[dict[str, Any]
         held = signature == _signature(checkout["local"])
         left = _unresolved_now(store, checkout, config)
         warm = _call(store, config, state, checkout, f"{tag}-warm")
+        admission = brief_admission(store, config, checkout)
+        _ids, notes = _window_in_force(store, admission)
+        _check_lines(store, first, notes)
+        _check_lines(store, warm, notes)
         caller = (
             _origin_for(Path(checkout["local"]))
             if checkout["local"]
@@ -340,7 +364,7 @@ def in_process(scratch: Path, rows: list[dict[str, Any]]) -> list[dict[str, Any]
         scan = full_scan(
             store,
             caller,
-            admission=brief_admission(store, config, checkout),
+            admission=admission,
             stale_after_days=config.behavior.verification_stale_days,
         )
         out.append(

@@ -271,7 +271,7 @@ class Lab:
             return set()
         return self.names(
             self.store.brief_rows(
-                admit=admission.admits_project,
+                admit=admission.admits_row,
                 provenance=("local", "imported"),
                 exclude_category=Category.AMBIENT.value,
             )
@@ -286,7 +286,7 @@ class Lab:
         if caller is None or admission.model is None:
             return pool
         ids = [self.records[name] for name in sorted(pool)]
-        turn = admission.model.admit_recall(caller, [(rid, True) for rid in ids])
+        turn = admission.model.admit_recall(caller, list(ids))
         return self.names(turn.delivered)
 
     def ranked(self, surface: str, who: str | Resolution | None) -> set[str]:
@@ -640,3 +640,34 @@ def test_the_idf_denominator_is_the_ranked_set(
         assert size == len(ranked), (surface, who, memoised)
         if stats is not None:
             assert stats[1].get(WORD, 0) == len(ranked)
+
+
+# ---------------------------------------------------------------------------
+# RS-F7 part 2: a global record admitted by the project its scopes name
+# ---------------------------------------------------------------------------
+
+
+def test_rs_f7_a_global_record_naming_a_project_reaches_it(lab: Lab) -> None:
+    """A record written outside any project whose scopes name a project
+    reaches that project's callers on the brief, the prompt recall and the
+    review's strata, as it does on the scoped surfaces; the plain record,
+    naming none, reaches none of those three; a project the scopes do not
+    name meets neither on them."""
+    plain = lab.resolve(lab.places["plain"])
+    named = lab.store.write(
+        content=f"{WORD} note naming other",
+        scopes=["projects:other"],
+        home=plain.home(),
+    )
+    lab.store.mark_verified(named.id)
+    lab.records["named"] = named.id
+    automatic = (SESSION_BRIEF, PROMPT_RECALL, REVIEW_STRATA)
+    seen = lab.every_surface("other")
+    for surface in automatic:
+        assert "named" in seen[surface], surface
+        assert "plain" not in seen[surface], surface
+    for surface in (SEARCH_AUTO_SCOPE, LINKS):
+        assert {"named", "plain"} <= seen[surface], surface
+    elsewhere = lab.every_surface("root")
+    for surface in automatic:
+        assert not {"named", "plain"} & elsewhere[surface], surface

@@ -206,6 +206,12 @@ EXPORT_FORMAT_VERSION = 1
 SAME_PROJECT = "same_project"
 SUB_PROJECT = "sub_project"
 GLOBAL_RELATION = "global"
+#: A global record whose scopes name the caller's project (``projects:<name>``,
+#: the name compared case-folded), unit RS-F7 part 2. In Stage A's grades
+#: (2026-10-22, 100 prompts, top 10) such records were relevant 0.44 of the
+#: time (0.62 in the top 3) against 0.31 for the caller's own project's
+#: records, and global records naming only other projects or none 0.12.
+GLOBAL_NAMED = "global_named"
 OTHER_PROJECT = "other_project"
 OTHER_TENANT = "other_tenant"
 UNKNOWN = "unknown"
@@ -213,6 +219,7 @@ RELATIONS = (
     SAME_PROJECT,
     SUB_PROJECT,
     GLOBAL_RELATION,
+    GLOBAL_NAMED,
     OTHER_PROJECT,
     OTHER_TENANT,
     UNKNOWN,
@@ -236,8 +243,11 @@ SURFACES = (
     SEARCH_UNSCOPED,
 )
 
-_AUTOMATIC = frozenset({SAME_PROJECT})
-_SCOPED = frozenset({SAME_PROJECT, SUB_PROJECT, GLOBAL_RELATION})
+#: The scope prefix a record names a project with (`Membership.named`).
+PROJECT_SCOPE = "projects:"
+
+_AUTOMATIC = frozenset({SAME_PROJECT, GLOBAL_NAMED})
+_SCOPED = frozenset({SAME_PROJECT, SUB_PROJECT, GLOBAL_RELATION, GLOBAL_NAMED})
 #: What each surface admits for a caller in a project.
 IN_PROJECT_POLICY: Mapping[str, frozenset[str]] = {
     SESSION_BRIEF: _AUTOMATIC,
@@ -247,7 +257,7 @@ IN_PROJECT_POLICY: Mapping[str, frozenset[str]] = {
     POOL_PREFILTER: _SCOPED,
     LINKS: _SCOPED,
     SEARCH_UNSCOPED: frozenset(
-        {SAME_PROJECT, SUB_PROJECT, GLOBAL_RELATION, OTHER_PROJECT}
+        {SAME_PROJECT, SUB_PROJECT, GLOBAL_RELATION, GLOBAL_NAMED, OTHER_PROJECT}
     ),
 }
 #: What each surface admits for a caller outside any project (D3).
@@ -563,7 +573,9 @@ class Home:
     that decided it and when. ``recorded_project`` is the project the
     row names. ``unresolved`` is set while that project is the
     provisional project of writes made where nothing could be read
-    (decision B6)."""
+    (decision B6). ``named`` is, for a global record, the projects (merges
+    followed) its ``projects:<name>`` scopes name (`Membership.named`);
+    empty for every other record."""
 
     record_id: str
     kind: str
@@ -575,6 +587,7 @@ class Home:
     chain: tuple[str, ...] = ()
     tenant: str | None = None
     unresolved: bool = False
+    named: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -888,7 +901,9 @@ TokenWriter = Callable[[Checkout], tuple[str | None, str]]
 
 def relation(home: Home, caller: Resolution) -> str:
     """How a record's home stands to the caller: ``unknown`` when nothing
-    could be read where the caller is; ``global`` for a record written
+    could be read where the caller is; ``global_named`` for a record
+    written outside any project whose scopes name a project on the
+    caller's chain (`Home.named`), ``global`` for any other record written
     outside any project; ``other_tenant`` when the two sit on different
     sides of a boundary; ``same_project`` when the home's project is on
     the caller's chain (its project, a sub-project's parents, the
@@ -898,6 +913,10 @@ def relation(home: Home, caller: Resolution) -> str:
     if caller.project is None:
         return UNKNOWN
     if home.project == GLOBAL:
+        if caller.project != GLOBAL and not home.named.isdisjoint(
+            caller.chain or (caller.project,)
+        ):
+            return GLOBAL_NAMED
         return GLOBAL_RELATION
     if (home.tenant or None) != (caller.tenant or None):
         return OTHER_TENANT
@@ -1660,6 +1679,25 @@ class Membership:
     def _canon(self, project_id: str) -> str:
         found = self.canonical(project_id)
         return project_id if found is None else found
+
+    def named(self, scopes: Iterable[str]) -> frozenset[str]:
+        """The projects (merges followed) a record's ``projects:<name>``
+        scopes name: every project whose name is ``<name>``, compared
+        case-folded (RS-F7 part 2; Stage A's replay of the rule reads the
+        same counts with the names compared exactly or folded). Empty when
+        no scope names a project."""
+        wanted = {
+            scope[len(PROJECT_SCOPE) :].casefold()
+            for scope in scopes
+            if scope.startswith(PROJECT_SCOPE) and len(scope) > len(PROJECT_SCOPE)
+        }
+        if not wanted:
+            return frozenset()
+        return frozenset(
+            self._canon(p.id)
+            for p in self._all_projects().values()
+            if p.name.casefold() in wanted
+        )
 
     def chain_of(self, project_id: str | None) -> list[str]:
         """The project and its parents, nearest first."""
@@ -4586,13 +4624,15 @@ class Membership:
 
     # -- homes, why --------------------------------------------------------------------------
 
-    def _home_from(self, row: Mapping[str, Any]) -> Home:
+    def _home_from(self, row: Mapping[str, Any], scopes: Iterable[str] = ()) -> Home:
         recorded = str(row["project"])
         chain: tuple[str, ...] = ()
         tenant: str | None = None
         unresolved = False
+        named: frozenset[str] = frozenset()
         if recorded == GLOBAL:
             project = GLOBAL
+            named = self.named(scopes)
         else:
             project = self._canon(recorded)
             chain = tuple(self.chain_of(project))
@@ -4611,23 +4651,25 @@ class Membership:
             chain=chain,
             tenant=tenant,
             unresolved=unresolved,
+            named=named,
         )
 
     def home(self, record_id: str) -> Home | None:
         """The record's home as `relation` reads it, or None when it has
         none."""
-        self._projects = None
-        rows = self._store.membership_rows("homes", where={"record_id": record_id})
-        return self._home_from(rows[0]) if rows else None
+        return self.homes([record_id]).get(record_id)
 
     def homes(self, record_ids: Sequence[str]) -> dict[str, Home]:
-        """The homes of many records, one read."""
+        """The homes of many records, one read, a global record's with the
+        projects its scopes name (`named`) read in one more."""
         self._projects = None
+        rows = self._store.membership_rows("homes", column_in=("record_id", record_ids))
+        scopes = self._store.declared_scopes(
+            [str(r["record_id"]) for r in rows if str(r["project"]) == GLOBAL]
+        )
         return {
-            str(r["record_id"]): self._home_from(r)
-            for r in self._store.membership_rows(
-                "homes", column_in=("record_id", record_ids)
-            )
+            str(r["record_id"]): self._home_from(r, scopes.get(str(r["record_id"]), ()))
+            for r in rows
         }
 
     def why(self, record_id: str) -> Why:
@@ -4699,23 +4741,23 @@ class Membership:
     def admit_recall(
         self,
         caller: Resolution,
-        hits: Sequence[tuple[str, bool]],
+        hits: Sequence[str],
         *,
         admission: str = PROMPT_RECALL,
     ) -> RecallAdmission:
-        """A prompt recall's admission over its ranked hits (record id,
-        relevant), under the surface `admission` names: PROMPT_RECALL, or
+        """A prompt recall's admission over its ranked hits (record ids),
+        under the surface `admission` names: PROMPT_RECALL, or
         SEARCH_UNSCOPED where the recall is set to reach every project
         (``prompt_recall = "everywhere"``, decision B21). A turn whose
-        relevant hits were all suppressed writes ``recall_suppressed``
-        (design 4, failure 8), naming the surface and the admission: no
-        silent suppression."""
+        hits were all suppressed writes ``recall_suppressed`` (design 4,
+        failure 8), naming the surface and the admission: no silent
+        suppression. Every hit is a candidate since rs-v6 (RS-F7 part 0);
+        until then only the medium and high ones were."""
         with self._call():
-            relevant = [rid for rid, ok in hits if ok]
-            homes = self.homes(relevant)
+            homes = self.homes(hits)
             delivered: list[str] = []
             suppressed: list[tuple[str, str]] = []
-            for rid in relevant:
+            for rid in hits:
                 home = homes.get(rid)
                 if home is None:
                     suppressed.append((rid, "no_home"))
@@ -5362,6 +5404,7 @@ __all__ = [
     "FILE_CONTRADICTION",
     "FOLDER",
     "GLOBAL",
+    "GLOBAL_NAMED",
     "GLOBAL_OUTCOME",
     "GLOBAL_RELATION",
     "H",
@@ -5382,6 +5425,7 @@ __all__ = [
     "OUTSIDE_POLICY",
     "POOL_PREFILTER",
     "PRIMARY",
+    "PROJECT_SCOPE",
     "PROMPT_RECALL",
     "R",
     "REMOTE_DIVERGED",

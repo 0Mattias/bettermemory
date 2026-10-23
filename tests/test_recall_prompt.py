@@ -129,6 +129,7 @@ class PromptWorld:
         provenance: str | None = None,
         scopes: list[str] | None = None,
         home: RecordHome | None = None,
+        links: list[dict[str, str]] | None = None,
     ) -> Memory:
         where = self.caller if origin == "here" else origin
         assert not isinstance(where, str)
@@ -137,6 +138,7 @@ class PromptWorld:
             scopes=scopes or ["projects:foo"],
             origin=where,
             home=home if home is not None else self.home_of(where),
+            links=links,
         )
         stamp = datetime.now(timezone.utc) - timedelta(hours=1)
         return self.store.put_memory(
@@ -378,21 +380,54 @@ def _suppressed(world: PromptWorld) -> dict[str, str]:
     return {entry["id"]: entry["reason"] for entry in event["suppressed_ids"]}
 
 
-def test_low_relevance_is_held(world: PromptWorld) -> None:
+def test_a_low_label_is_delivered(world: PromptWorld) -> None:
+    """rs-v6 (RS-F7 part 0): the coverage label holds nothing back; it
+    stays on the line. In Stage A the labels did not separate relevant
+    from irrelevant records (high 0.34, medium 0.30, low 0.28); until
+    rs-v6 a low hit was held as ``low_relevance``."""
     strong = world.write("backup strategy zebra quokka uses restic")
     weak = world.write("a backup elsewhere entirely")
     result = world.recall("backup strategy zebra quokka")
-    assert result.ids == (strong.id,)
-    assert _suppressed(world) == {weak.id: "low_relevance"}
+    assert result.ids == (strong.id, weak.id)
+    assert result.stdout.splitlines()[2].startswith(f"- {weak.id} [low] ")
+    (event,) = world.recalls()
+    assert event["suppressed_ids"] == []
 
 
 def test_another_project_and_a_global_are_held(world: PromptWorld) -> None:
     mine = world.write()
-    # A global: the probe's auto-scope admits it, the project rule does not.
+    # A global naming no project: the probe's pool admits it, the
+    # recall does not.
     stray = world.write(f"{BODY} globally", origin=None, scopes=["tools"])
     result = world.recall()
     assert result.ids == (mine.id,)
     assert _suppressed(world) == {stray.id: "other_project"}
+
+
+def test_a_global_naming_this_project_is_delivered(world: PromptWorld) -> None:
+    """RS-F7 part 2: a record written outside any project whose scopes
+    name the caller's project is delivered (Stage A: 0.62 relevant in the
+    top 3, against 0.40 for the project's own)."""
+    named = world.write(f"{BODY} globally", origin=None, scopes=["projects:foo"])
+    assert world.recall().ids == (named.id,)
+    (event,) = world.recalls()
+    assert event["suppressed_ids"] == []
+
+
+def test_a_global_naming_another_project_or_none_is_held(world: PromptWorld) -> None:
+    """A global record naming only another project, or none, stays held
+    (Stage A: relevant 0.12 either way)."""
+    world.other_home("bar")
+    theirs = world.write(f"{BODY} for bar", origin=None, scopes=["projects:bar"])
+    loose = world.write(f"{BODY} anywhere", origin=None, scopes=["tools"])
+    mine = world.write()
+    assert world.recall().ids == (mine.id,)
+    (event,) = world.recalls()
+    held = {e["id"]: (e["reason"], e.get("relation")) for e in event["suppressed_ids"]}
+    assert held == {
+        theirs.id: ("other_project", "global"),
+        loose.id: ("other_project", "global"),
+    }
 
 
 def test_provenance_other_than_local_or_imported_is_held(world: PromptWorld) -> None:

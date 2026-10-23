@@ -30,7 +30,7 @@ from typing import Any
 import pytest
 
 from bettermemory.origin import Origin
-from bettermemory.recall import RECALL_CAP_CHARS, SEGMENT_DELIVERY_CAP, HookResult
+from bettermemory.recall import RECALL_CAP_CHARS, HookResult
 
 _ROOT = Path(__file__).resolve().parents[1]
 
@@ -271,10 +271,10 @@ def test_cooldown_shows_no_id_twice_and_stops_at_twelve() -> None:
     turns.append(_turn(30, [ids[0]]))
     for rule in replay.RULES:
         read = replay.replay(_fixture(turns, memories), rule)
-        assert read["counts"]["deliveries"] == SEGMENT_DELIVERY_CAP
+        assert read["counts"]["deliveries"] == replay.SEGMENT_DELIVERY_CAP
         assert read["counts"]["segment_cap"] == 2
         assert read["ids_shown_twice_in_a_segment"] == 0
-        assert read["deliveries_per_session_max"] == SEGMENT_DELIVERY_CAP
+        assert read["deliveries_per_session_max"] == replay.SEGMENT_DELIVERY_CAP
 
 
 def test_block_is_the_built_renderer_with_marks_under_its_cap() -> None:
@@ -417,13 +417,19 @@ def test_line_faults_flags_a_line_beyond_id_summary_and_mark() -> None:
 
     text, ids = render_brief([memory])  # type: ignore[list-item]
     good = HookResult(stdout=text, surface="session_brief", ids=tuple(ids))
-    assert brief._line_faults(store, good) == 0
+    assert brief._line_faults(store, good, {}) == 0
     bad = HookResult(stdout=text + " extra", surface="session_brief", ids=tuple(ids))
-    assert brief._line_faults(store, bad) == 1
+    assert brief._line_faults(store, bad, {}) == 1
     longer = HookResult(
         stdout=text + "\n- more", surface="session_brief", ids=tuple(ids)
     )
-    assert brief._line_faults(store, longer) == 1
+    assert brief._line_faults(store, longer, {}) == 1
+    # The window's in-force note is part of the line (RS-F7 part 3).
+    note = f"[extended by {B}]"
+    text, ids = render_brief([memory], {A: note})  # type: ignore[list-item]
+    noted = HookResult(stdout=text, surface="session_brief", ids=tuple(ids))
+    assert brief._line_faults(store, noted, {A: note}) == 0
+    assert brief._line_faults(store, noted, {}) == 1
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")

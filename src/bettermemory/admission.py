@@ -4,12 +4,15 @@ records' homes.
 
 `membership.admitted` decides every home; an `Admission` only caches its
 answers for the request, keyed on what `membership.relation` reads (the
-home's project, chain and tenant, and whether it is unresolved), so the
-readers that walk every record (`Store.brief_rows`, `scope_counts`,
-`category_rows`, `document_frequencies`) and the ranked set decide by one
-predicate. They decide on the project a record's ``homes`` row names
-(`admits_project`), which the model reads into a `membership.Home` once
-per project. A record with no home row is admitted nowhere. A caller
+home's project, chain and tenant, whether it is unresolved, and for a
+global record the projects its scopes name), so the readers that walk
+every record (`Store.brief_rows`, `scope_counts`, `category_rows`,
+`document_frequencies`) and the ranked set decide by one predicate
+(`admits_row`). They decide on the project a record's ``homes`` row names,
+which the model reads into a `membership.Home` once per project, and for a
+record written outside any project on the projects its scopes name
+(`membership.Membership.named`, RS-F7 part 2). A record with no home row
+is admitted nowhere. A caller
 whose resolution raised, or whose location nothing could be read for
 (INDETERMINATE) or is still being read (DEFERRED), is admitted nothing on
 every surface, and `nothing` names the outcome for the row that says so.
@@ -17,6 +20,7 @@ every surface, and `nothing` names the outcome for the row that says so.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -52,7 +56,7 @@ __all__ = [
 #: The outcome an admission names when the caller's resolution raised.
 NO_RESOLUTION = "no_resolution"
 
-_Key = tuple[str, tuple[str, ...], str | None, bool]
+_Key = tuple[str, tuple[str, ...], str | None, bool, frozenset[str]]
 
 
 class DriftScope(Protocol):
@@ -143,6 +147,7 @@ class Admission:
         self._project_homes: dict[str, Home] = {}
         self._by_project: dict[str, bool] = {}
         self._record_homes: dict[str, Home | None] = {}
+        self._named: dict[tuple[str, ...], frozenset[str]] = {}
 
     @classmethod
     def of(cls, surface: str, caller: Caller) -> Admission:
@@ -156,6 +161,7 @@ class Admission:
         other = Admission(surface, self.caller, self.model)
         other._project_homes = self._project_homes
         other._record_homes = self._record_homes
+        other._named = self._named
         return other
 
     # -- the caller -----------------------------------------------------------
@@ -245,7 +251,7 @@ class Admission:
         record with no home and for a caller admitted nothing."""
         if home is None or self.caller is None or self.model is None:
             return False
-        key: _Key = (home.project, home.chain, home.tenant, home.unresolved)
+        key: _Key = (home.project, home.chain, home.tenant, home.unresolved, home.named)
         found = self._by_home.get(key)
         if found is None:
             found = admitted(self.surface, home, self.caller)
@@ -263,9 +269,28 @@ class Admission:
             self._by_project[recorded] = found
         return found
 
+    def admits_row(self, scopes: Sequence[str], recorded: str | None) -> bool:
+        """Whether a record with `scopes` whose ``homes`` row names
+        `recorded` is admitted: `admits_project`, except that a record
+        written outside any project is decided with the projects its
+        scopes name (`membership.relation`'s ``global_named``)."""
+        if recorded != GLOBAL or self.model is None:
+            return self.admits_project(recorded)
+        key = tuple(scopes)
+        named = self._named.get(key)
+        if named is None:
+            named = self.model.named(scopes)
+            self._named[key] = named
+        if not named:
+            return self.admits_project(recorded)
+        return self.admits(dataclasses.replace(self.project_home(GLOBAL), named=named))
+
     def admits_id(self, record_id: str) -> bool:
-        """Whether the record is admitted, read from its home row."""
+        """Whether the record is admitted, read from its home row (a global
+        record's with the projects its scopes name)."""
         home = self.home(record_id)
+        if home is not None and home.named:
+            return self.admits(home)
         return self.admits_project(home.recorded_project if home is not None else None)
 
     def admitted_ids(self, record_ids: Sequence[str]) -> list[str]:
