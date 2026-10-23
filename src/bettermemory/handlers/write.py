@@ -40,6 +40,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field, replace
+from datetime import timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ..conflicts import ConflictCandidate, ConflictQueue, _pair_id
@@ -1198,7 +1199,15 @@ _REVIEW_UNSAFE_HINT = (
 _RELATIONS_PENDING_HINT = (
     "Written. Once the capture is saved, answer relations_pending for every "
     'write in one call: memory_admin(action="relations", relations={<this '
-    'id>: {<related id>: "update" | "conflict" | "restates" | "unrelated"}}).'
+    "id>: {<related id>: " + _review.LABEL_CHOICES + "}})."
+)
+
+_REVIEW_STANDING_HINT = (
+    "Not written. Each memory under `standing` directs work in its scope "
+    "until it is replaced, and your answers conflict with it or replace it. "
+    "Rewrite the body to comply with it; or, if the user changed it in this "
+    "conversation, answer update for it and add review.said, the user's "
+    "words as they typed them."
 )
 
 _REVIEW_RESTATES_HINT = (
@@ -1220,8 +1229,8 @@ def _review_hint(review_id: str, *, follow_up: bool) -> str:
     return (
         lead + "Answer in `review` and re-send this same call, with the same "
         "arguments and acknowledge flags: "
-        f'review={{"review_id": "{review_id}", "relation": {{<id>: "update" | '
-        '"conflict" | "restates" | "unrelated"} for every related id ({} when '
+        f'review={{"review_id": "{review_id}", "relation": {{<id>: '
+        f"{_review.LABEL_CHOICES}}} for every related id ({{}} when "
         'none), "unsafe": <0 to 1>, "secret": <0 to 1>, "standing": <0 to 1>}. '
         "unsafe, secret and standing are the probability that each question's "
         "statement holds."
@@ -1327,12 +1336,14 @@ def _reviewed_write(
     # The related set is the writing caller's REVIEW_STRATA admission
     # (design 3.5), resolved once here and kept in the payload for the
     # commit, which homes the record by the same resolution.
+    caller = _payload_caller(deps, payload)
+    admission = Admission.of(REVIEW_STRATA, caller)
     related = _review.related_for(
         deps.store,
         payload["content"],
         behavior=deps.config.behavior,
         excluded_scopes=frozenset(state.disabled_scopes),
-        admission=Admission.of(REVIEW_STRATA, _payload_caller(deps, payload)),
+        admission=admission,
         active=active,
         exclude_ids=declared_ids,
     )
@@ -1396,6 +1407,14 @@ def _reviewed_write(
             deferred=deferred,
         )
 
+    # The standing records the write could conflict with or replace
+    # (unit RS-F7 part 5), and whether the user's words carry it.
+    standing_ids = _standing.standing_ids(
+        deps.store,
+        admission,
+        list(dict.fromkeys([*related.ids, *declared_ids, *related.cue_supersedes])),
+    )
+    said = _said_holds(deps, caller, answers.said)
     decision = _review.apply_review(
         answers,
         related,
@@ -1403,6 +1422,8 @@ def _reviewed_write(
         write_claim_sized=_supersession.claim_sized(payload["content"]),
         write_supersession=deps.config.behavior.write_supersession,
         declared_ids=declared_ids,
+        standing_ids=standing_ids,
+        said=said,
     )
     review_fields: dict[str, Any] = {
         "review_id": review_id,
@@ -1437,6 +1458,8 @@ def _reviewed_write(
                 claim_sized=_supersession.claim_sized(payload["content"]),
                 declared=declared_ids,
                 pending=missing,
+                standing=standing_ids,
+                said=said,
             ),
         )
 
@@ -1464,6 +1487,21 @@ def _reviewed_write(
             **review_fields,
         )
         return {"status": "instruction_warning", "hint": _REVIEW_UNSAFE_HINT}
+
+    if decision.action == _review.ACTION_STANDING:
+        deps.recorder.record(
+            "write",
+            status=_review.ACTION_STANDING,
+            scopes=payload["scopes"],
+            forced=False,
+            standing=list(decision.standing),
+            **review_fields,
+        )
+        return {
+            "status": _review.ACTION_STANDING,
+            "standing": _standing_rows(deps, related, decision.standing),
+            "hint": _REVIEW_STANDING_HINT,
+        }
 
     if decision.action == _review.ACTION_RESTATES:
         by_id = {entry.id: entry for entry in related.entries}
@@ -1509,6 +1547,64 @@ def _reviewed_write(
     )
 
 
+def _said_holds(deps: ToolHandlers, caller: Caller, said: str | None) -> bool:
+    """Whether `review.said` carries the write (unit RS-F7 part 5), by the
+    rule a join's words follow (`handlers.questions`): the quote must be in
+    a prompt the hook saw in the caller's checkout, and where the hook saw
+    none there (no hook installed) it is taken as given. None: False. A
+    quote the hook's prompts do not hold is a teaching error."""
+    from ..recall import WORDS
+
+    if said is None:
+        return False
+    checkout = caller.resolution.checkout
+    if checkout is None or not WORDS.seen(deps.store.path, checkout):
+        return True
+    if WORDS.holds(deps.store.path, checkout, said):
+        return True
+    raise _review.ReviewAnswerError(
+        "review.said is not in any prompt the hook saw in this checkout (the "
+        "last twenty, whitespace and case folded, eight characters or more): "
+        "quote the user's words as they typed them, or rewrite the body to "
+        "comply with the standing memory."
+    )
+
+
+def _standing_rows(
+    deps: ToolHandlers, related: _review.RelatedSet, ids: tuple[str, ...]
+) -> list[dict[str, Any]]:
+    """Each standing record a refusal names, quoted: as the review showed
+    it, or, for one it did not show (declared, or a cue target past the
+    cap), its head as a standing batch shows it."""
+    by_id = {entry.id: entry for entry in related.entries}
+    rows: list[dict[str, Any]] = []
+    for memory_id in ids:
+        entry = by_id.get(memory_id)
+        if entry is not None:
+            rows.append(
+                {
+                    "id": entry.id,
+                    "scopes": list(entry.scopes),
+                    "updated": entry.updated,
+                    "text": entry.text,
+                }
+            )
+            continue
+        try:
+            memory = deps.store.load_one(memory_id)
+        except (MemoryNotFoundError, TombstonedError):
+            continue
+        rows.append(
+            {
+                "id": memory.id,
+                "scopes": list(memory.scopes),
+                "updated": memory.updated.astimezone(timezone.utc).date().isoformat(),
+                "text": _standing.record_text(memory.body),
+            }
+        )
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Write-time supersession
 # ---------------------------------------------------------------------------
@@ -1533,16 +1629,18 @@ class SupersessionOutcome:
     `supersedes=`; `detected` the matches `supersession.detect_supersession`
     linked on its own; `conflicts` the `(pair id, match)` rows filed for
     `memory_conflicts`. The review's share: `reviewed` the targets a
-    review `update` answer linked, `update_suggested` the update answers
-    that did not link, `review_filed` the `(pair id, target, detector)`
-    rows its conflict and disagreement answers filed, and `cue_dropped`
-    the cue code's targets whose links the review's disagreement dropped
-    (unit D1c)."""
+    review `update` answer linked, `extended` the targets its `extends`
+    answers linked (unit RS-F7 part 5), `update_suggested` the update
+    answers that did not link, `review_filed` the `(pair id, target,
+    detector)` rows its conflict and disagreement answers filed, and
+    `cue_dropped` the cue code's targets whose links the review's
+    disagreement dropped (unit D1c)."""
 
     declared: list[str] = field(default_factory=list)
     detected: list[SupersessionMatch] = field(default_factory=list)
     conflicts: list[tuple[str, SupersessionMatch]] = field(default_factory=list)
     reviewed: list[str] = field(default_factory=list)
+    extended: list[str] = field(default_factory=list)
     update_suggested: list[str] = field(default_factory=list)
     review_filed: list[tuple[str, str, str]] = field(default_factory=list)
     cue_dropped: list[str] = field(default_factory=list)
@@ -1562,6 +1660,8 @@ class SupersessionOutcome:
             out["supersedes_detected"] = [m.memory_id for m in self.detected]
         if self.reviewed:
             out["supersedes_reviewed"] = list(self.reviewed)
+        if self.extended:
+            out["extends_reviewed"] = list(self.extended)
         if self.update_suggested:
             out["update_suggested"] = list(self.update_suggested)
         if self.conflicts:
@@ -1582,6 +1682,10 @@ class SupersessionOutcome:
         out: dict[str, Any] = {}
         if rows:
             out["supersedes"] = rows
+        if self.extended:
+            out["extends"] = [
+                {"id": target, "evidence": "review"} for target in self.extended
+            ]
         filed = [{"pair_id": pair_id, **_match_row(m)} for pair_id, m in self.conflicts]
         filed += [
             {"pair_id": pair_id, "id": target, "detector": detector}
@@ -1697,6 +1801,11 @@ def _persist(
         for target in (decision.links if decision is not None else ())
         if target not in linked
     ]
+    extended = [
+        target
+        for target in (decision.extends if decision is not None else ())
+        if target not in linked
+    ]
     links = (
         declared_links
         + [
@@ -1710,6 +1819,14 @@ def _persist(
                 "note": _review.REVIEW_LINK_NOTE,
             }
             for target in reviewed
+        ]
+        + [
+            {
+                "type": "extends",
+                "target_id": target,
+                "note": _review.REVIEW_LINK_NOTE,
+            }
+            for target in extended
         ]
     )
 
@@ -1765,6 +1882,7 @@ def _persist(
         detected=detected,
         conflicts=conflicts,
         reviewed=reviewed,
+        extended=extended,
         update_suggested=list(decision.update_suggested) if decision else [],
         review_filed=review_filed,
         cue_dropped=cue_dropped,

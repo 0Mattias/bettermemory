@@ -30,7 +30,7 @@ from typing import Any
 
 # The review's labels, as bettermemory.review.LABELS holds them (a test
 # pins the two equal; this script imports nothing from the package).
-REVIEW_LABELS = ("update", "conflict", "restates", "unrelated")
+REVIEW_LABELS = ("update", "extends", "conflict", "restates", "unrelated")
 # `standing` is the review's fourth question (unit RS-F7 part 1); answers
 # from the three-question form carry none, and still read.
 REVIEW_KEYS = frozenset({"relation", "unsafe", "secret", "standing"})

@@ -137,15 +137,19 @@ def tau_unset() -> Iterator[None]:
 # ---------------------------------------------------------------------------
 
 LABEL_UPDATE = "update"
+LABEL_EXTENDS = "extends"
 LABEL_CONFLICT = "conflict"
 LABEL_RESTATES = "restates"
 LABEL_UNRELATED = "unrelated"
 LABELS: tuple[str, ...] = (
     LABEL_UPDATE,
+    LABEL_EXTENDS,
     LABEL_CONFLICT,
     LABEL_RESTATES,
     LABEL_UNRELATED,
 )
+#: The labels as a call writes them, for every hint that teaches the format.
+LABEL_CHOICES = " | ".join(f'"{label}"' for label in LABELS)
 
 #: The unsafe question asks about effect, not form (owner decision O4).
 UNSAFE_STATEMENT = (
@@ -182,7 +186,8 @@ def _thawed(value: Any) -> Any:
 
 
 #: The four questions. `relation` is asked per related id with the
-#: proof's labels and criteria; `unsafe`, `secret` and `standing` are each
+#: proof's labels and criteria, and extends (unit RS-F7 part 5, in the
+#: approved draft's words); `unsafe`, `secret` and `standing` are each
 #: answered with a probability from 0 to 1 that the statement holds.
 QUESTIONS: Mapping[str, Any] = _frozen(
     {
@@ -194,6 +199,9 @@ QUESTIONS: Mapping[str, Any] = _frozen(
             ),
             "criteria": {
                 LABEL_UPDATE: "It says a value changed and gives the new value.",
+                LABEL_EXTENDS: (
+                    "It adds to that stored statement, which stays in force."
+                ),
                 LABEL_CONFLICT: (
                     "It gives a different value with no sign that anything changed."
                 ),
@@ -448,25 +456,30 @@ class ReviewAnswerError(ValueError):
 
 
 ANSWER_FORMAT = (
-    'review={"review_id": <id>, "relation": {<related id>: "update" | '
-    '"conflict" | "restates" | "unrelated"}, "unsafe": <0 to 1>, '
-    '"secret": <0 to 1>, "standing": <0 to 1>}'
+    'review={"review_id": <id>, "relation": {<related id>: '
+    + LABEL_CHOICES
+    + '}, "unsafe": <0 to 1>, "secret": <0 to 1>, "standing": <0 to 1>}'
 )
 
-_ANSWER_KEYS = frozenset({"review_id", "relation", "unsafe", "secret", "standing"})
+_ANSWER_KEYS = frozenset(
+    {"review_id", "relation", "unsafe", "secret", "standing", "said"}
+)
 
 
 @dataclass(frozen=True)
 class ReviewAnswers:
     """One call's answers, as read by `parse_answers`. `standing` is None
     only for answers read elsewhere (the integrity bench's recorded
-    three-question answers); `parse_answers` requires it."""
+    three-question answers); `parse_answers` requires it. `said` is the
+    user's own words a write that replaces a standing record rests on
+    (unit RS-F7 part 5), whitespace folded; None when not given."""
 
     relation: Mapping[str, str]
     unsafe: float
     secret: float
     review_id: str | None = None
     standing: float | None = None
+    said: str | None = None
 
     def to_event(self) -> dict[str, Any]:
         """The answers as an event field: ids, labels and scores, never a
@@ -478,6 +491,8 @@ class ReviewAnswers:
         }
         if self.standing is not None:
             out["standing"] = self.standing
+        if self.said is not None:
+            out["said"] = self.said
         return out
 
     def is_zero_attestation(self) -> bool:
@@ -556,12 +571,19 @@ def parse_answers(raw: Mapping[str, Any] | None) -> ReviewAnswers | None:
                 f"use one of {', '.join(LABELS)}."
             )
         relation[memory_id] = label
+    said = raw.get("said")
+    if said is not None and (not isinstance(said, str) or not said.strip()):
+        raise ReviewAnswerError(
+            "review.said quotes the user's words as they typed them, as a "
+            "string; omit it when the user said nothing about this."
+        )
     return ReviewAnswers(
         relation=MappingProxyType(relation),
         unsafe=_score(raw, "unsafe"),
         secret=_score(raw, "secret"),
         review_id=review_id,
         standing=_score(raw, "standing"),
+        said=" ".join(said.split()) if said is not None else None,
     )
 
 
@@ -584,6 +606,7 @@ def check_answered_ids(answers: ReviewAnswers, allowed: Iterable[str]) -> None:
 
 ACTION_SECRET = "refused_secret"
 ACTION_UNSAFE = "refused_unsafe"
+ACTION_STANDING = "refused_standing"
 ACTION_RESTATES = "restates"
 ACTION_COMMIT = "committed"
 
@@ -597,13 +620,15 @@ REVIEW_LINK_NOTE = "set by the write review"
 @dataclass(frozen=True)
 class ReviewDecision:
     """What the answers decide, in DESIGN item 6's order as amended by
-    units D1b and D1c. `restated` holds the ids answered restates, on a
-    refusal and on a commit alike. For a commit, `links` are the review's
-    supersedes targets (between claim-sized statements, flag on),
-    `update_suggested` the update answers that do not link, `filings` the
-    `(id, detector)` pairs to file, and `cue_dropped` the cue code's
-    targets the review disputed, whose links the commit does not set. The
-    cue code's other links are not here: the commit sets them."""
+    units D1b, D1c and RS-F7 part 5. `restated` holds the ids answered
+    restates, on a refusal and on a commit alike; `standing` the standing
+    records a refused_standing names. For a commit, `links` are the
+    review's supersedes targets (between claim-sized statements, flag on),
+    `extends` its extends targets, `update_suggested` the update answers
+    that do not link, `filings` the `(id, detector)` pairs to file, and
+    `cue_dropped` the cue code's targets the review disputed, whose links
+    the commit does not set. The cue code's other links are not here: the
+    commit sets them."""
 
     action: str
     restated: tuple[str, ...] = ()
@@ -611,13 +636,19 @@ class ReviewDecision:
     update_suggested: tuple[str, ...] = ()
     filings: tuple[tuple[str, str], ...] = field(default_factory=tuple)
     cue_dropped: tuple[str, ...] = ()
+    extends: tuple[str, ...] = ()
+    standing: tuple[str, ...] = ()
 
     def to_event(self) -> dict[str, Any]:
         out: dict[str, Any] = {"action": self.action}
         if self.restated:
             out["restated"] = list(self.restated)
+        if self.standing:
+            out["standing"] = list(self.standing)
         if self.links:
             out["links"] = list(self.links)
+        if self.extends:
+            out["extends"] = list(self.extends)
         if self.update_suggested:
             out["update_suggested"] = list(self.update_suggested)
         if self.filings:
@@ -638,32 +669,45 @@ def apply_review(
     write_claim_sized: bool,
     write_supersession: bool,
     declared_ids: Iterable[str] = (),
+    standing_ids: Iterable[str] = (),
+    said: bool = False,
 ) -> ReviewDecision:
     """Turn answers into the action, in this order:
 
     1. secret at or above `tau.secret`: refused (credential_warning).
     2. unsafe at or above `tau.unsafe`: refused (instruction_warning).
-    3. any related id answered restates, no related id answered update
-       and no `declared_ids`: not written (duplicate).
-    4. otherwise committed, with the restated ids carried on the decision
+    3. any standing record (`standing_ids`) answered conflict: refused
+       (refused_standing).
+    4. any related id answered restates, no related id answered update or
+       extends, and no `declared_ids`: not written (duplicate).
+    5. a standing record the write would replace, without the user's
+       words (`said`): refused (refused_standing). The write replaces a
+       record it answers update, a record in `declared_ids`, and a cue
+       target whose link stands.
+    6. otherwise committed, with the restated ids carried on the decision
        and given nothing, and per related id:
        - update between two claim-sized statements, flag on: a supersedes
          link, unless the cue code or the writer already links it;
        - update otherwise: named in update_suggested;
+       - extends: an extends link, unless the writer declared it;
        - conflict: the pair filed with detector "review";
-       - conflict or unrelated on a target the cue code linked: the cue
-         link is dropped (cue_dropped) and the pair is filed with
+       - conflict, unrelated or extends on a target the cue code linked:
+         the cue link is dropped (cue_dropped) and the pair is filed with
          "review-disagrees";
        - unrelated: nothing.
 
     Only a target in `related` is answered, so a cue target past the
     related set's cap keeps its link.
 
-    Restates means the write adds nothing. A write that also updates a
-    related statement adds something, and so does one whose writer named
-    the statements it replaces in `supersedes=`, so either commits: a
-    reversion restates the first value and updates the second, and
-    keeping it out would leave the second value served as current.
+    Restates means the write adds nothing. A write that also updates or
+    extends a related statement adds something, and so does one whose
+    writer named the statements it replaces in `supersedes=`, so either
+    commits: a reversion restates the first value and updates the second,
+    and keeping it out would leave the second value served as current.
+
+    A standing record directs work until it is replaced (unit RS-F7 part
+    5): a conflict with one never commits, and replacing one takes the
+    user's words, which the caller checks before it passes `said`.
 
     A dropped cue link (unit D1c): on legitimate writes in D1's runs the
     review disputed a cue link only where the link missed the statement
@@ -676,19 +720,46 @@ def apply_review(
         return ReviewDecision(action=ACTION_SECRET)
     if answers.unsafe >= tau.unsafe:
         return ReviewDecision(action=ACTION_UNSAFE)
+    standing = set(standing_ids)
+    declared_list = list(dict.fromkeys(declared_ids))
+    declared = set(declared_list)
+    conflicted = tuple(
+        memory_id
+        for memory_id in related.ids
+        if memory_id in standing and answers.relation.get(memory_id) == LABEL_CONFLICT
+    )
+    if conflicted:
+        return ReviewDecision(action=ACTION_STANDING, standing=conflicted)
     restated = tuple(
         memory_id
         for memory_id in related.ids
         if answers.relation.get(memory_id) == LABEL_RESTATES
     )
-    declared = set(declared_ids)
     updates = any(
-        answers.relation.get(memory_id) == LABEL_UPDATE for memory_id in related.ids
+        answers.relation.get(memory_id) in (LABEL_UPDATE, LABEL_EXTENDS)
+        for memory_id in related.ids
     )
     if restated and not updates and not declared:
         return ReviewDecision(action=ACTION_RESTATES, restated=restated)
     cue_linked = set(related.cue_supersedes)
+    disputed = (LABEL_CONFLICT, LABEL_UNRELATED, LABEL_EXTENDS)
+    if standing and not said:
+        replaced = [
+            memory_id
+            for memory_id in related.ids
+            if answers.relation.get(memory_id) == LABEL_UPDATE
+        ]
+        replaced += [i for i in declared_list if i not in replaced]
+        replaced += [
+            i
+            for i in related.cue_supersedes
+            if i not in replaced and answers.relation.get(i) not in disputed
+        ]
+        unsaid = tuple(i for i in replaced if i in standing)
+        if unsaid:
+            return ReviewDecision(action=ACTION_STANDING, standing=unsaid)
     links: list[str] = []
+    extends: list[str] = []
     suggested: list[str] = []
     filings: list[tuple[str, str]] = []
     dropped: list[str] = []
@@ -701,11 +772,14 @@ def apply_review(
                 links.append(entry.id)
             else:
                 suggested.append(entry.id)
-        elif label in (LABEL_CONFLICT, LABEL_UNRELATED) and entry.id in cue_linked:
+            continue
+        if label in disputed and entry.id in cue_linked:
             filings.append((entry.id, DETECTOR_REVIEW_DISAGREES))
             dropped.append(entry.id)
         elif label == LABEL_CONFLICT:
             filings.append((entry.id, DETECTOR_REVIEW))
+        if label == LABEL_EXTENDS and entry.id not in declared:
+            extends.append(entry.id)
     return ReviewDecision(
         action=ACTION_COMMIT,
         restated=restated,
@@ -713,6 +787,7 @@ def apply_review(
         update_suggested=tuple(suggested),
         filings=tuple(filings),
         cue_dropped=tuple(dropped),
+        extends=tuple(extends),
     )
 
 

@@ -597,8 +597,12 @@ def deferred_review(
     claim_sized: bool,
     declared: Sequence[str],
     pending: Sequence[str],
+    standing: Sequence[str] = (),
+    said: bool = False,
 ) -> dict[str, Any]:
-    """The deferred review a member row carries."""
+    """The deferred review a member row carries: with the standing records
+    among its related, declared and cue ids at commit, and whether the
+    user's words carried it (unit RS-F7 part 5)."""
     return {
         "review_id": review_id,
         "unsafe": unsafe,
@@ -610,6 +614,8 @@ def deferred_review(
         "claim_sized": bool(claim_sized),
         "declared": list(declared),
         "pending": list(pending),
+        "standing": list(standing),
+        "said": bool(said),
     }
 
 

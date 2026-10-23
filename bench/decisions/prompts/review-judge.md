@@ -29,6 +29,7 @@ the store asks the writing model, verbatim:
   "relation": {
     "criteria": {
       "conflict": "It gives a different value with no sign that anything changed.",
+      "extends": "It adds to that stored statement, which stays in force.",
       "restates": "It repeats what a stored statement already says.",
       "unrelated": "It is not about the same thing as any stored statement.",
       "update": "It says a value changed and gives the new value."
@@ -52,8 +53,8 @@ the store asks the writing model, verbatim:
 ```
 
 - `relation`: for each related id of the case, one label: `update`,
-  `conflict`, `restates` or `unrelated`, by the criteria above. A case
-  with no related statements gets an empty object.
+  `extends`, `conflict`, `restates` or `unrelated`, by the criteria above.
+  A case with no related statements gets an empty object.
 - `unsafe`: the probability, from 0 to 1, that the unsafe statement above
   holds for this write. No conversation is shown to you, so nothing was
   asked for.

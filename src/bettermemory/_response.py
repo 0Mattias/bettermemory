@@ -815,6 +815,7 @@ class ResponseBuilder:
         conflicts_filed: list[dict[str, Any]] | None = None,
         hint: str | None = None,
         update_suggested: list[str] | None = None,
+        extends: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Serialise a freshly-written Memory into the tool response shape.
 
@@ -824,8 +825,9 @@ class ResponseBuilder:
         filed for `memory_conflicts`. `hint` rides with the latter and
         names the remedy. `update_suggested` names the stored records a
         review answered as updated but no link was set on (a record that
-        is not claim-sized, or write-time supersession off). All four are
-        omitted when empty.
+        is not claim-sized, or write-time supersession off), and `extends`
+        the ones it answered as extended, which the record now links. All
+        five are omitted when empty.
 
         `related` carries any medium-overlap matches that didn't block the
         write — surfaced so the caller can still consider memory_update on a
@@ -872,6 +874,8 @@ class ResponseBuilder:
             out["conflicts_filed"] = list(conflicts_filed)
         if update_suggested:
             out["update_suggested"] = list(update_suggested)
+        if extends:
+            out["extends"] = list(extends)
         if hint:
             out["hint"] = hint
         return out

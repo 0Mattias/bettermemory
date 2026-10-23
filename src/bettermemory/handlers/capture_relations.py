@@ -7,11 +7,14 @@ answers them all in one call, keyed member id -> {related id: label}.
 
 The answers act as the write review's do (`review.apply_review`, on the
 write's own scores and the related set its member row recorded at commit
-time), applied after the commit: restates with nothing updated or declared
-tombstones the member, update links it (claim-sized pair, write-time
-supersession on) or names the target in update_suggested, conflict files
-the pair as "review", and conflict or unrelated on a cue-linked target
-drops the cue link and files "review-disagrees". A member's answers apply
+time), applied after the commit: a conflict with a standing record, or a
+standing record replaced without the user's words, tombstones the member
+(refused_standing, unit RS-F7 part 5), and so does restates with nothing
+updated, extended or declared; update links it (claim-sized pair,
+write-time supersession on) or names the target in update_suggested,
+extends sets an extends link, conflict files the pair as "review", and
+conflict, unrelated or extends on a cue-linked target drops the cue link
+and files "review-disagrees". A member's answers apply
 once all its pending ids are answered; answers to part of them are kept
 until the rest arrive. Repeat calls are allowed until the batch settles.
 An answer for an id that is not pending for that member is a teaching error,
@@ -40,9 +43,15 @@ from .write import _file_review_pairs
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
 
-_FORMAT = 'relations={<member id>: {<related id>: "update" | "conflict" | "restates" | "unrelated"}}'
+_FORMAT = "relations={<member id>: {<related id>: " + _review.LABEL_CHOICES + "}}"
 
 _DONE_HINT = "Every relation of this capture is answered."
+_STANDING_HINT = (
+    " A write under applied with refused_standing was removed: its answers "
+    "conflict with or replace a standing memory. Write it again with "
+    "memory_write, rewritten to comply, or answered update with review.said, "
+    "the user's words, if the user changed it in this conversation."
+)
 _LEFT_HINT = (
     "Answer the ids under relations_pending in the same way, then stop. "
     f"Format: {_FORMAT}"
@@ -157,6 +166,8 @@ def _apply(
         write_claim_sized=bool(record.get("claim_sized")),
         write_supersession=deps.config.behavior.write_supersession,
         declared_ids=record.get("declared") or [],
+        standing_ids=record.get("standing") or [],
+        said=bool(record.get("said")),
     )
     out: dict[str, Any] = {"action": decision.action}
     try:
@@ -164,10 +175,14 @@ def _apply(
     except (NotFoundError, TombstonedError):
         out["action"] = "gone"
         return out
-    if decision.action == _review.ACTION_RESTATES:
-        # The write adds nothing: it goes, as the two-call review would
-        # never have written it, and so do the pairs its own commit filed.
-        out["restated"] = list(decision.restated)
+    if decision.action in (_review.ACTION_RESTATES, _review.ACTION_STANDING):
+        # The write adds nothing, or may not stand: it goes, as the
+        # two-call review would never have written it, and so do the pairs
+        # its own commit filed.
+        if decision.restated:
+            out["restated"] = list(decision.restated)
+        if decision.standing:
+            out["standing"] = list(decision.standing)
         dropped = [
             str(c["id"])
             for c in store.list_conflicts()
@@ -175,10 +190,12 @@ def _apply(
         ]
         for conflict_id in dropped:
             store.delete_conflict(conflict_id)
-        store.tombstone(
-            memory.id,
-            reason="capture relations: restates " + ", ".join(decision.restated),
+        why = (
+            "restates " + ", ".join(decision.restated)
+            if decision.action == _review.ACTION_RESTATES
+            else "refused_standing " + ", ".join(decision.standing)
         )
+        store.tombstone(memory.id, reason="capture relations: " + why)
         out["tombstoned"] = True
         if dropped:
             out["conflicts_deleted"] = dropped
@@ -186,27 +203,32 @@ def _apply(
     if decision.action != _review.ACTION_COMMIT:
         return out
     links = [t for t in decision.links if t in answered]
+    extends = [t for t in decision.extends if t in answered]
     cue_dropped = [t for t in decision.cue_dropped if t in answered]
     suggested = [t for t in decision.update_suggested if t in answered]
     filings = tuple((t, d) for t, d in decision.filings if t in answered)
     active = {m.id: m for m in store.load_all()}
     links = [t for t in links if t in active]
-    if links or cue_dropped:
+    extends = [t for t in extends if t in active]
+    if links or extends or cue_dropped:
         kept = [
             link
             for link in memory.links
             if not (link.type == LinkType.SUPERSEDES and link.target_id in cue_dropped)
         ]
         have = {link.target_id for link in kept}
-        kept += [
-            MemoryLink(
-                type=LinkType.SUPERSEDES,
-                target_id=target,
-                note=_review.REVIEW_LINK_NOTE,
-            )
-            for target in links
-            if target not in have
-        ]
+        added = [(LinkType.SUPERSEDES, t) for t in links]
+        added += [(LinkType.EXTENDS, t) for t in extends]
+        for link_type, target in added:
+            if target not in have:
+                kept.append(
+                    MemoryLink(
+                        type=link_type,
+                        target_id=target,
+                        note=_review.REVIEW_LINK_NOTE,
+                    )
+                )
+                have.add(target)
         memory = store.put_memory(memory.model_copy(update={"links": kept}))
     filed = _file_review_pairs(
         deps,
@@ -218,6 +240,7 @@ def _apply(
     )
     for key, value in (
         ("supersedes", links),
+        ("extends", extends),
         ("supersedes_cue_dropped", cue_dropped),
         ("update_suggested", suggested),
         (
@@ -264,6 +287,8 @@ async def capture_relations(
     if left:
         response["relations_pending"] = left
     response["hint"] = _LEFT_HINT if left else _DONE_HINT
+    if any(r.get("action") == _review.ACTION_STANDING for r in applied.values()):
+        response["hint"] += _STANDING_HINT
     return response
 
 

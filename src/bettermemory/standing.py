@@ -216,11 +216,15 @@ def backlog(store: Store, admission: Admission) -> Backlog:
     return Backlog(tuple(waiting))
 
 
-def standing_ids(store: Store, admission: Admission) -> list[str]:
-    """The admitted records that are standing and in force, newest
-    ``updated`` first."""
+def standing_ids(
+    store: Store, admission: Admission, ids: Sequence[str] | None = None
+) -> list[str]:
+    """The admitted records (of `ids`, when given) that are standing and
+    in force, newest ``updated`` first."""
+    if ids is not None and not ids:
+        return []
     candidates: list[str] = []
-    for row in store.standing_rows():
+    for row in store.standing_rows(ids):
         if row["category"] != Category.AMBIENT.value and (
             TAU_STANDING is None or row["probability"] is None
         ):

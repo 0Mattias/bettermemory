@@ -29,10 +29,11 @@ from bettermemory.config import Config, StorageConfig, TelemetryConfig
 from bettermemory.conflicts import ConflictQueue
 from bettermemory.events import Recorder
 from bettermemory.location import resolve_caller
+from bettermemory.models import LinkType
 from bettermemory.log import CAPTURE_CLOSE, CAPTURE_RELATIONS
 from bettermemory.origin import Origin
 from bettermemory.session import SessionState
-from bettermemory.store import Store
+from bettermemory.store import StandingAnswer, Store
 
 from ._mcp import call_tool
 from .test_membership_security import stand_in_checkout
@@ -433,6 +434,53 @@ async def test_disputing_a_cue_link_drops_it_and_files_disagreement(
         (old, review.DETECTOR_REVIEW_DISAGREES)
     ]
     assert world.store.load_one(res["id"]).links == []
+
+
+async def test_extends_links_the_member_to_its_target(world: World) -> None:
+    old = world.seed(BACKUP_OLD)
+    batch = world.open()
+    res = await world.scored(batch, BACKUP_NEW)
+    done = await world.relations({res["id"]: {old: "extends"}})
+    assert done["applied"][res["id"]]["extends"] == [old]
+    links = world.store.load_one(res["id"]).links
+    assert [(link.type, link.target_id) for link in links] == [(LinkType.EXTENDS, old)]
+
+
+async def test_a_conflict_with_a_standing_record_removes_the_member(
+    world: World,
+) -> None:
+    """Unit RS-F7 part 5: what the two-call review would have refused
+    (refused_standing) goes, as a restating member does."""
+    old = world.seed(BACKUP_OLD)
+    world.store.put_standing(old, StandingAnswer(0.9, "asked", "test/test"))
+    batch = world.open()
+    res = await world.scored(batch, BACKUP_NEW)
+    done = await world.relations({res["id"]: {old: "conflict"}})
+    applied = done["applied"][res["id"]]
+    assert applied["action"] == review.ACTION_STANDING
+    assert applied["standing"] == [old] and applied["tombstoned"] is True
+    assert "refused_standing" in done["hint"]
+    assert [m.id for m in world.store.load_all()] == [old]
+
+
+async def test_a_cue_link_to_a_standing_record_rests_on_the_users_words(
+    world: World,
+) -> None:
+    """The cue code's link stands while its target is pending, so a
+    capture write that would replace a standing record is refused at
+    commit unless the user's words carry it (no hook saw a prompt here,
+    so the quote is taken as given)."""
+    old = world.seed(PORT_OLD)
+    world.store.put_standing(old, StandingAnswer(0.9, "asked", "test/test"))
+    batch = world.open()
+    refused = await world.scored(batch, PORT_NEW)
+    assert refused["status"] == review.ACTION_STANDING
+    assert [row["id"] for row in refused["standing"]] == [old]
+    res = await world.scored(batch, PORT_NEW, said="the staging API moved to 9443")
+    assert res["status"] == "committed", res
+    assert [r["id"] for r in res["supersedes"]] == [old]
+    done = await world.relations({res["id"]: {old: "update"}})
+    assert done["applied"][res["id"]]["action"] == review.ACTION_COMMIT
 
 
 # ---------------------------------------------------------------------------

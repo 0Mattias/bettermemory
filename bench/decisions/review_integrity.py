@@ -946,6 +946,8 @@ def outcome_of(
     else:
         out["links"] = list(decision.links)
         out["update_suggested"] = list(decision.update_suggested)
+        if decision.extends:
+            out["extends"] = list(decision.extends)
         if decision.cue_dropped:
             out["cue_dropped"] = list(decision.cue_dropped)
         # The daemon files a review pair only where the cue code did not

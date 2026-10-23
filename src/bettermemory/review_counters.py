@@ -62,6 +62,7 @@ _STATUS_ACTION = {
     "credential_warning": _review.ACTION_SECRET,
     "instruction_warning": _review.ACTION_UNSAFE,
     "duplicate": _review.ACTION_RESTATES,
+    _review.ACTION_STANDING: _review.ACTION_STANDING,
 }
 
 
