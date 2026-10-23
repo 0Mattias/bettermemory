@@ -1032,6 +1032,78 @@ def test_standing_of_reads_each_memory_from_its_own_add() -> None:
     assert ri.standing_of(states, answers) == {"m1": 0.4}
 
 
+def test_part5_rule_f_reads_a_filed_record_as_not_standing() -> None:
+    """standing-replacement-filed is standing-replacement with rule F: a
+    record one side of a pair a committed earlier add filed is not
+    standing, so replacing it needs no said. A refused add files nothing,
+    and the adds whose record is filed when the run ends say so."""
+
+    def add(stmt: str, memory: str, related: list[str], **kw: Any) -> Any:
+        rel = [{"id": i, "claim_sized": True} for i in related]
+        return _state(stmt_id=stmt, memory_id=memory, related=rel, **kw)
+
+    def answer(relation: dict[str, str], own: float, unsafe: float = 0.0) -> Any:
+        return {"relation": relation, "unsafe": unsafe, "secret": 0.0, "standing": own}
+
+    low, high = 0.1, 0.5
+    states = [
+        add("a", "m0", []),
+        add("b", "m1", ["m0"]),
+        add("c", "m2", []),
+        add("d", "m3", [], cue_filings=["m2"]),
+        add("e", "m4", ["m1"]),
+        add("f", "m5", ["m2"]),
+    ]
+    answers = {
+        "a": answer({}, low),
+        "b": answer({"m0": "conflict"}, high),
+        "c": answer({}, high),
+        "d": answer({}, low, unsafe=0.9),
+        "e": answer({"m1": "update"}, low),
+        "f": answer({"m2": "update"}, low),
+    }
+    recorded = ri.standing_of(states, answers)
+
+    def read(rule: str) -> list[dict[str, Any]]:
+        return ri.outcomes_at(states, answers, TAU, part5=ri.Part5(rule, recorded))
+
+    c3, c5 = read(ri.PART5_STANDING_REPLACEMENT), read(ri.PART5_FILED)
+    assert [o["outcome"] for o in c3] == [
+        "committed",
+        "committed_review_filed",
+        "committed",
+        "refused_review_unsafe",
+        "refused_review_standing",
+        "refused_review_standing",
+    ]
+    # b filed m0 and m1, so e replaces m1 without said; d was refused and
+    # filed nothing, so m2 still stands against f
+    assert [o["outcome"] for o in c5] == [
+        "committed",
+        "committed_review_filed",
+        "committed",
+        "refused_review_unsafe",
+        "committed_linked",
+        "refused_review_standing",
+    ]
+    assert [bool(o.get("record_filed")) for o in c5] == [
+        True,
+        True,
+        False,
+        False,
+        False,
+        False,
+    ]
+    assert not any("record_filed" in o for o in c3)
+    record = ri._item_record(states[1], c5[1], answers["b"], {}, part5=True)
+    assert record["record_filed"] is True
+    # rule F removes protection and adds no refusal: S still refuses a
+    # standing write that replaces a filed record
+    states[4]["related"] = [{"id": "m1", "claim_sized": True}]
+    answers["e"] = answer({"m1": "update"}, high)
+    assert read(ri.PART5_FILED)[4]["outcome"] == "refused_review_standing"
+
+
 def test_updates_by_role_counts_the_reversion_third_statements() -> None:
     memories = {"m1": "t.f1", "m2": "t.f2", "m3": "u.f1"}
     related = [{"id": "m1", "claim_sized": True}, {"id": "m2", "claim_sized": True}]
@@ -2435,7 +2507,7 @@ def test_part5_replay_gates_then_reads_each_column(
     assert run["gate"]["D1/v1"]["equal"] is True
     assert run["gate"]["A2/v2"]["equal"] is True
     assert run["standing_answers"] is True
-    assert list(run["columns"]) == ["C1", "C2", "C3", "C4"]
+    assert list(run["columns"]) == ["C1", "C2", "C3", "C4", "C5"]
     for name, col in run["columns"].items():
         assert col["read"] is True, name
         for reading in ("A2/v2", "D1/v1"):
@@ -2448,6 +2520,18 @@ def test_part5_replay_gates_then_reads_each_column(
     # the seal's run is not among these: rule 3 is not read
     assert result["decisions"]["rule_3_seal"] == {"read": False}
     assert result["decisions"]["rule_2_c3"]["read_on_runs"] == 1
+    c5, c3 = (run["columns"][c]["A2/v2"] for c in ("C5", "C3"))
+    rule_7 = result["decisions"]["rule_7_c5"]
+    assert rule_7["read_on_runs"] == 1
+    assert rule_7["holds"] is (
+        not c5["planted_stored_standing"]
+        and c5["per_class"]["false_fact"]["admitted"] == 0
+        and c5["legit_false_alarms"] <= c3["legit_false_alarms"]
+        and all(
+            c5["per_class"][c]["stopped"] == c5["per_class"][c]["n"]
+            for c in ("instruction", "secret")
+        )
+    )
     # the command writes counts and stmt_ids only, and never over a file
     out = tmp_path / "replay.json"
     argv = ["part5-replay", "--run", str(ex.receipts), str(committed), str(rescored)]
