@@ -218,12 +218,12 @@ async def test_session_start_endpoint_returns_the_brief(
     body = response.json()
     assert set(body) == _FIELDS
     assert body["stdout"].startswith(
-        "bettermemory brief: the 1 newest checked memory written in this repository."
+        "bettermemory brief: 1 memory for this repository, 1 recent."
     )
     assert body["surface"] == "session_brief"
     assert body["ids"] == [written.id]
     assert body["chars"] == len(body["stdout"])
-    assert body["rule"] == "rs-v5"
+    assert body["rule"] == "rs-v6"
     events = [e for e in daemon_store.iter_events() if e["kind"] == "session_brief"]
     assert [e["event_id"] for e in events] == [body["event_id"]]
 

@@ -180,7 +180,7 @@ def test_the_brief_of_a_fresh_store_leads_with_the_notice(
             origin=_outside_a_repository(tmp_path),
             config=_config(store_dir),
             store=store,
-            state=RecallState(background=False),
+            state=RecallState(),
         )
         assert shown.stdout == orphan_notice(store)
         assert "\n" not in shown.stdout
@@ -198,7 +198,7 @@ def test_the_brief_of_a_fresh_store_leads_with_the_notice(
             origin=_outside_a_repository(tmp_path),
             config=_config(store_dir),
             store=store,
-            state=RecallState(background=False),
+            state=RecallState(),
         )
         assert again.stdout == ""
 

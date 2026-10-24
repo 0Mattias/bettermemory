@@ -46,7 +46,7 @@ def _linked_worktree(primary: Path, path: Path) -> Path:
 
 
 def test_the_rule_is_rs_v5() -> None:
-    assert RULE == "rs-v5"
+    assert RULE == "rs-v6"
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +66,7 @@ def test_a_brief_row_carries_the_checkout_the_rule_and_rc3_admitted(
     assert result.ids == (second.id, first.id)
     (row,) = _rows(world, "session_brief")
     resolution = world.resolve(world.repo).resolution
-    assert row["rule"] == "rs-v5"
+    assert row["rule"] == "rs-v6"
     assert row["checkout"] == world.home.checkout == resolution.checkout
     assert row["membership_rule"] == resolution.rule
     # Written in the caller's own checkout: rc3 delivered them too.
@@ -105,7 +105,7 @@ def test_a_brief_row_of_a_resolution_that_raised(
         session_id="raised",
         config=world.config,
         store=world.store,
-        state=RecallState(background=False),
+        state=RecallState(),
         cwd=world.repo,
     )
     (row,) = _rows(world, "session_brief")
@@ -130,7 +130,7 @@ def test_a_recall_row_carries_the_checkout_the_rule_and_rc3_admitted(
     assert result.ids == (memory.id,)
     (row,) = _rows(world, "prompt_recall")
     resolution = world.resolve(world.worktree).resolution
-    assert row["rule"] == "rs-v5"
+    assert row["rule"] == "rs-v6"
     assert row["checkout"] == world.home.checkout == resolution.checkout
     assert row["membership_rule"] == resolution.rule
     assert row["rc3_admitted"] == [memory.id]
@@ -168,7 +168,7 @@ def test_a_cross_worktree_record_is_delivered_by_membership_not_by_rc3(
         "rc3_not_delivered": 0,
     }
     split = report.surfaces["by_rule"]
-    assert split["rs-v5"]["recall"]["deliveries"] == 1
+    assert split["rs-v6"]["recall"]["deliveries"] == 1
     assert split[EARLIER_RULES]["recall"]["deliveries"] == 0
 
 
@@ -208,10 +208,10 @@ def test_bettermemory_eval_prints_the_split_and_the_delta(
 
     _run_eval_cli(world.store_dir, "--since", "all")
     text = capsys.readouterr().out
-    assert "Recall surfaces (rule rs-v5):" in text
+    assert "Recall surfaces (rule rs-v6):" in text
     assert "  By rule:" in text
     assert (
-        "    rs-v5 recall: deliveries=1 shown=1 opened=0 used=0 ignored=0 helped=0"
+        "    rs-v6 recall: deliveries=1 shown=1 opened=0 used=0 ignored=0 helped=0"
         in text
     )
     assert (
@@ -226,4 +226,4 @@ def test_bettermemory_eval_prints_the_split_and_the_delta(
     _run_eval_cli(world.store_dir, "--json", "--since", "all")
     parsed = json.loads(capsys.readouterr().out)
     assert parsed["surfaces"]["membership_delta"]["delivered_not_rc3"] == 1
-    assert parsed["surfaces"]["by_rule"]["rs-v5"]["rules"] == ["rs-v5"]
+    assert parsed["surfaces"]["by_rule"]["rs-v6"]["rules"] == ["rs-v6"]

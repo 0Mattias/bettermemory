@@ -10,6 +10,10 @@ Two reads, both newest row first through one reader (`ReverseLines`):
 - `compact_marker`, the newest ``compact_boundary`` row stamped near a
   moment: the marker a compaction leaves, which the recall's segments
   open on.
+- `interrupted_turns`, the turns the owner interrupted since a moment,
+  which the next hook settles (RS-F7 part 6).
+- `owner_words`, the newest of the owner's words in the transcript, which
+  the session brief ranks by (RS-F7 part 4).
 
 Format reference (Claude Code transcripts as written on 2026-10-19): one
 JSON object per line. A user row carries ``promptId``, the harness turn
@@ -30,7 +34,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from .owner_prompt import is_submitted, owner_prompt, text_blocks
+from .owner_prompt import (
+    INTERRUPT_OPENING,
+    is_submitted,
+    owner_prompt,
+    submitted_text,
+    text_blocks,
+)
 from .time_utils import parse_event_ts
 
 #: The bytes one read takes: the tail first, then one chunk at a time
@@ -246,6 +256,145 @@ def stop_turn(
 
 
 @dataclass(frozen=True)
+class InterruptedTurn:
+    """A turn the owner interrupted, as the transcript holds it: the turn's
+    ``promptId``, the owner's prompt (None when no submitted row of the
+    turn is the owner's), the newest assistant text and model of the turn,
+    and when its newest submitted row was stamped."""
+
+    prompt_id: str | None
+    prompt: str | None
+    reply: str | None
+    model: str | None
+    at: datetime
+
+
+def interrupted_turns(
+    path: Path,
+    *,
+    since: datetime,
+    chunk_bytes: int = CHUNK_BYTES,
+    budget: int = WALK_BYTES,
+) -> list[InterruptedTurn]:
+    """The turns stamped after `since` that the owner interrupted, oldest
+    first: a turn holds the harness's interrupt line
+    (`owner_prompt.INTERRUPT_OPENING`) among its submitted rows, so it
+    ended with no Stop hook (RS-F3-M5), and the next hook settles it with
+    a `turn_audited` row (RS-F7 part 6).
+
+    Read newest row first, grouping user rows by ``promptId`` (a row
+    without one is its own turn, as in `stop_turn`); the walk ends at the
+    first user row stamped at or before `since`, the previous Stop's
+    moment, since every earlier turn has its row. A turn whose interrupt
+    line is its only submitted row (the owner interrupted before typing)
+    has no prompt and is not returned."""
+    lines = ReverseLines(path, chunk_bytes=chunk_bytes, budget=budget)
+    out: list[InterruptedTurn] = []
+    current: str | None = None
+    in_turn = False
+    interrupted = False
+    prompt: str | None = None
+    newest: datetime | None = None
+    pending = _Pending()
+    reply: str | None = None
+    model: str | None = None
+
+    def close() -> None:
+        if interrupted and in_turn and newest is not None and prompt is not None:
+            out.append(
+                InterruptedTurn(
+                    prompt_id=current,
+                    prompt=prompt,
+                    reply=reply,
+                    model=model,
+                    at=newest,
+                )
+            )
+
+    for line in lines:
+        row = _row(line)
+        if row is None:
+            continue
+        kind = row.get("type")
+        if kind == "assistant":
+            pending.take(row)
+            continue
+        if kind != "user":
+            continue
+        stamp = parse_event_ts(row.get("timestamp"))
+        if stamp is not None and stamp <= since:
+            break
+        row_id = _prompt_id(row)
+        if not in_turn or row_id != current or row_id is None:
+            close()
+            current, in_turn, interrupted, prompt, newest = (
+                row_id,
+                True,
+                False,
+                None,
+                None,
+            )
+            reply, model = pending.text, pending.model
+        else:
+            if reply is None:
+                reply = pending.text
+            if model is None:
+                model = pending.model
+        pending = _Pending()
+        if not is_submitted(row):
+            continue
+        if newest is None:
+            newest = stamp
+        text = submitted_text(row)
+        if text is not None and text.lstrip().startswith(INTERRUPT_OPENING):
+            interrupted = True
+            continue
+        if prompt is None:
+            prompt = owner_prompt(row)
+    close()
+    out.reverse()
+    return out
+
+
+def owner_words(
+    path: Path,
+    *,
+    chars: int,
+    chunk_bytes: int = CHUNK_BYTES,
+    budget: int = WALK_BYTES,
+) -> str:
+    """The owner's words in the transcript at `path`, the newest `chars`
+    characters of them: the text of each user row the owner typed
+    (`owner_prompt.owner_prompt`, uncut: not a harness-composed row, a
+    compaction summary, a notification, an interrupt line or a tool
+    result), oldest first, joined by blank lines, cut from the front to
+    `chars`. The session brief ranks by it (RS-F7 part 4). Read newest
+    row first (`ReverseLines`) and stopped once `chars` are held, so a
+    long transcript is read back only as far as its last words reach; ""
+    for no file, no owner row, or `chars` at zero. A walk the budget ends
+    first returns what it held."""
+    if chars <= 0:
+        return ""
+    pieces: list[str] = []
+    held = 0
+    for line in ReverseLines(path, chunk_bytes=chunk_bytes, budget=budget):
+        if b'"user"' not in line:
+            continue
+        row = _row(line)
+        if row is None:
+            continue
+        text = owner_prompt(row, cut=False)
+        if not text:
+            continue
+        held += len(text) + (2 if pieces else 0)
+        pieces.append(text)
+        if held >= chars:
+            break
+    pieces.reverse()
+    return "\n\n".join(pieces)[-chars:]
+
+
+@dataclass(frozen=True)
 class CompactMarker:
     """A ``compact_boundary`` row: `key` is its ``uuid`` (its timestamp
     when it has none), `at` its timestamp."""
@@ -293,5 +442,7 @@ __all__ = [
     "ReverseLines",
     "StopTurn",
     "compact_marker",
+    "interrupted_turns",
+    "owner_words",
     "stop_turn",
 ]

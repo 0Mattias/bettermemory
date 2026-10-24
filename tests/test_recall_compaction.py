@@ -79,7 +79,7 @@ class Session:
         self.world = world
         self.clock = clock
         self.transcript = transcript
-        self.held = RecallState(background=False) if held else None
+        self.held = RecallState() if held else None
         self.config = Config(
             storage=StorageConfig(directory=str(world.store_dir)),
             telemetry=TelemetryConfig(enabled=True),
@@ -90,7 +90,7 @@ class Session:
             tr.write(transcript)
 
     def state(self) -> RecallState:
-        return self.held if self.held is not None else RecallState(background=False)
+        return self.held if self.held is not None else RecallState()
 
     def start(self, source: str, *, transcript: bool = True) -> HookResult:
         return session_brief(
@@ -137,9 +137,7 @@ class Session:
         return self.state().segment(self.world.store, KEY, now=self.clock.now)
 
     def rebuilt(self) -> SegmentView:
-        return RecallState(background=False).segment(
-            self.world.store, KEY, now=self.clock.now
-        )
+        return RecallState().segment(self.world.store, KEY, now=self.clock.now)
 
     def rows(self, kind: str) -> list[dict[str, Any]]:
         return [e for e in self.world.store.iter_events() if e["kind"] == kind]
@@ -253,7 +251,7 @@ def test_a_later_read_confirms_a_marker_written_after_the_hook(
     )
     assert confirmed["opened_at"] == isoformat_utc(signal)
     assert confirmed["triggered_from"] == triggered_from
-    assert confirmed["rule"] == "rs-v5"
+    assert confirmed["rule"] == "rs-v6"
     view = session.segment()
     assert (view.segment, view.marker, view.started_at) == (1, "boundary-1", signal)
     if confirming != "prompt":

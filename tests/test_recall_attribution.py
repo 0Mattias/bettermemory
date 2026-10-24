@@ -194,7 +194,7 @@ def test_last_assistant_message_is_preferred_over_the_transcript(
 
 def test_a_recall_pointer_settles_with_the_recall_surface(world: PromptWorld) -> None:
     memory = world.write()
-    state = RecallState(background=False)
+    state = RecallState()
     delivered = world.recall(state=state)
     assert delivered.ids == (memory.id,)
     _audit(world, f"Sure: {memory.body}, as noted before.", state=state)
@@ -207,7 +207,7 @@ def test_a_recall_pointer_settles_with_the_recall_surface(world: PromptWorld) ->
 def test_a_brief_pointer_noted_in_the_daemon_state_settles(world: PromptWorld) -> None:
     """The daemon's state names the show without a log read."""
     memory = _memory(world)
-    state = RecallState(background=False)
+    state = RecallState()
     now = datetime.now(timezone.utc)
     state.open_segment(world.store, ("claude-code", SESSION), source="startup", now=now)
     state.note_shown(
@@ -231,7 +231,7 @@ def test_a_brief_pointer_noted_in_the_daemon_state_settles(world: PromptWorld) -
 def test_an_id_settles_once_per_segment(world: PromptWorld) -> None:
     memory = _memory(world)
     _brief(world.store, [memory.id])
-    state = RecallState(background=False)
+    state = RecallState()
     _audit(world, f"Done. {SENTENCE}", state=state)
     _audit(world, f"Again: {SENTENCE}", state=state)
     assert len(_uses(world.store)) == 1
@@ -240,8 +240,8 @@ def test_an_id_settles_once_per_segment(world: PromptWorld) -> None:
 def test_a_restart_rebuilds_the_settlement_from_the_log(world: PromptWorld) -> None:
     memory = _memory(world)
     _brief(world.store, [memory.id])
-    _audit(world, f"Done. {SENTENCE}", state=RecallState(background=False))
-    restarted = RecallState(background=False)
+    _audit(world, f"Done. {SENTENCE}", state=RecallState())
+    restarted = RecallState()
     view = restarted.segment(
         world.store, ("claude-code", SESSION), now=datetime.now(timezone.utc)
     )
@@ -277,7 +277,7 @@ def test_an_unmatched_pointer_records_nothing(world: PromptWorld) -> None:
 def test_nothing_with_telemetry_off(world: PromptWorld) -> None:
     memory = _memory(world)
     _brief(world.store, [memory.id])
-    state = RecallState(background=False)
+    state = RecallState()
     off: Config = config(world.store_dir, telemetry=False)
     _audit(world, f"Done. {SENTENCE}", config=off, state=state)
     assert _uses(world.store) == []
@@ -336,7 +336,7 @@ def test_settle_shown_skips_the_ids_the_real_path_settled(world: PromptWorld) ->
     settled = settle_shown(
         store=world.store,
         recorder=recorder,
-        state=RecallState(background=False),
+        state=RecallState(),
         session_id=SESSION,
         assistant_response=f"Done. {SENTENCE}",
         sessions=set(),

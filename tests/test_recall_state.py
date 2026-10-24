@@ -64,7 +64,7 @@ def test_a_compact_on_its_marker_and_a_clear_open_a_segment(
     """RS-F5, changed deliberately: a compact opens a segment on a marker
     the segments have not opened on, and keeps the segment without one,
     as a resume does; a clear always opens one."""
-    state = RecallState(background=False)
+    state = RecallState()
     now = _now()
     marker = CompactMarker(key="boundary-1", at=now)
     startup, opened = state.open_segment(world.store, KEY, source="startup", now=now)
@@ -105,7 +105,7 @@ def test_no_id_twice_in_a_segment_and_again_after_a_compact(
     world: PromptWorld,
 ) -> None:
     memory = world.write()
-    state = RecallState(background=False)
+    state = RecallState()
     assert world.recall(state=state).ids == (memory.id,)
     assert world.recall(state=state).stdout == ""
     _compact(state, world.store)
@@ -120,7 +120,7 @@ def test_an_update_holds_the_pointer_back_in_its_segment_only(
     """An update the session made before a compact is the old segment's:
     the new segment may point at the memory again."""
     memory = world.write()
-    state = RecallState(background=False)
+    state = RecallState()
     state.open_segment(world.store, KEY, source="startup", now=_now())
     world.store.record_event("update", session="transcript-recall", id=memory.id)
     assert world.recall(state=state).stdout == ""
@@ -130,7 +130,7 @@ def test_an_update_holds_the_pointer_back_in_its_segment_only(
 
 def test_a_brief_pointer_is_not_recalled_in_its_segment(world: PromptWorld) -> None:
     memory = world.write()
-    state = RecallState(background=False)
+    state = RecallState()
     state.open_segment(world.store, KEY, source="startup", now=_now())
     state.note_shown(KEY, [memory.id], delivery=False, now=_now())
     assert world.recall(state=state).stdout == ""
@@ -141,7 +141,7 @@ def test_no_count_of_deliveries_holds_a_segment_back(world: PromptWorld) -> None
     deliveries still gets an unseen pointer, and no hold is named for the
     count; until rs-v6 twelve held every later one (``segment_cap``)."""
     first = world.write()
-    state = RecallState(background=False)
+    state = RecallState()
     for i in range(40):
         state.note_shown(KEY, [f"other-{i}"], delivery=True, now=_now())
     assert world.recall(state=state).ids == (first.id,)
@@ -161,10 +161,10 @@ def test_no_count_of_deliveries_holds_a_segment_back(world: PromptWorld) -> None
 
 def test_a_restart_rebuilds_the_segment_from_the_log(world: PromptWorld) -> None:
     memory = world.write()
-    before = RecallState(background=False)
+    before = RecallState()
     assert world.recall(state=before).ids == (memory.id,)
 
-    after = RecallState(background=False)  # a restarted daemon
+    after = RecallState()  # a restarted daemon
     view = after.segment(world.store, KEY, now=_now())
     assert (view.segment, set(view.shown), view.deliveries) == (0, {memory.id}, 1)
     assert world.recall(state=after).stdout == ""
@@ -175,7 +175,7 @@ def test_a_rebuild_keeps_only_the_newest_segment(world: PromptWorld) -> None:
     assert world.recall().ids == (memory.id,)
     # A compact, recorded through its brief (the brief here is empty, so
     # the segment rides on the next recall's event instead).
-    state = RecallState(background=False)
+    state = RecallState()
     _compact(state, world.store)
     assert world.recall(state=state).ids == (memory.id,)
     rebuilt = rebuild_session(world.store, KEY, now=_now())
@@ -273,7 +273,7 @@ def test_a_brief_row_without_ids_adds_nothing_and_keeps_its_segment(
 
 def test_a_session_idle_a_day_is_evicted(tmp_path: Path) -> None:
     store = Store(tmp_path / "store")
-    state = RecallState(background=False)
+    state = RecallState()
     start = _now()
     state.note_shown(KEY, ["a"], delivery=True, now=start)
     state.note_shown(("claude-code", "live"), [], delivery=False, now=start)
@@ -289,7 +289,7 @@ def test_a_session_idle_a_day_is_evicted(tmp_path: Path) -> None:
 
 def test_the_table_holds_at_most_a_thousand_sessions(tmp_path: Path) -> None:
     store = Store(tmp_path / "store")
-    state = RecallState(background=False)
+    state = RecallState()
     now = _now()
     for i in range(STATE_MAX_SESSIONS + 5):
         state.note_shown(("claude-code", f"s{i}"), [f"id{i}"], delivery=True, now=now)
@@ -302,7 +302,7 @@ def test_the_table_holds_at_most_a_thousand_sessions(tmp_path: Path) -> None:
 
 def test_the_state_is_thread_safe(tmp_path: Path) -> None:
     store = Store(tmp_path / "store")
-    state = RecallState(background=False)
+    state = RecallState()
     now = _now()
     workers, rounds = 8, 200
     barrier = threading.Barrier(workers)
@@ -381,7 +381,7 @@ def test_a_restarted_daemon_reads_the_empty_compact(world: PromptWorld) -> None:
     from bettermemory.recall import session_brief
 
     memory = world.write()
-    before = RecallState(background=False)
+    before = RecallState()
     assert world.recall(state=before).ids == (memory.id,)
     session_brief(
         session_id=KEY[1],
@@ -394,7 +394,7 @@ def test_a_restarted_daemon_reads_the_empty_compact(world: PromptWorld) -> None:
         store=world.store,
         state=before,
     )
-    after = RecallState(background=False)
+    after = RecallState()
     view = after.segment(world.store, KEY, now=_now())
     assert (view.segment, set(view.shown), view.deliveries) == (1, set(), 0)
 
@@ -426,7 +426,7 @@ def test_no_segment_row_with_telemetry_off_or_on_startup(world: PromptWorld) -> 
 def test_a_claim_keeps_unshown_ids_and_counts_without_a_cap(
     world: PromptWorld,
 ) -> None:
-    state = RecallState(background=False)
+    state = RecallState()
     now = _now()
     assert state.claim_delivery(KEY, ["a", "b"], now=now) == (["a", "b"], 0)
     assert state.claim_delivery(KEY, ["a", "c"], now=now) == (["c"], 0)
@@ -441,7 +441,7 @@ def test_concurrent_prompts_deliver_an_id_once(world: PromptWorld) -> None:
     """Two prompts of one session at once: both may read the segment
     before either delivers, and the claim still lets one through."""
     memory = world.write()
-    state = RecallState(background=False)
+    state = RecallState()
     barrier = threading.Barrier(6)
     results: list[tuple[str, ...]] = []
     original = state.claim_delivery

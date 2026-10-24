@@ -483,7 +483,10 @@ _VALID_NO_SIGNAL_REASON: frozenset[str] = frozenset({NO_OWNER_PROMPT})
 # `reply_source` on `turn_audited`: the Stop payload's
 # `last_assistant_message`, or the transcript's newest assistant text when
 # the payload carried none. None (no reply at all) writes no key.
-_VALID_REPLY_SOURCE: frozenset[str] = frozenset({"payload", "tail"})
+# "interrupted" (RS-F7 part 6): the turn ended with no Stop; a later hook
+# audited it from the transcript (`hook.settle_interrupted`), its reply the
+# partial one the transcript holds.
+_VALID_REPLY_SOURCE: frozenset[str] = frozenset({"payload", "tail", "interrupted"})
 
 
 def no_owner_prompt_report(
@@ -515,6 +518,7 @@ def turn_audited_fields(
     client_model: str | None = None,
     prompt_id: str | None = None,
     reply_source: str | None = None,
+    rule: str | None = None,
 ) -> dict[str, Any]:
     """Canonical field set for a ``turn_audited`` event.
 
@@ -615,6 +619,8 @@ def turn_audited_fields(
         fields["prompt_id"] = prompt_id
     if reply_source is not None:
         fields["reply_source"] = reply_source
+    if rule is not None:
+        fields["rule"] = rule
     return fields
 
 
@@ -625,6 +631,7 @@ def search_miss_fields(
     triggered_from: str,
     event_id: str | None = None,
     client_model: str | None = None,
+    rule: str | None = None,
 ) -> dict[str, Any]:
     """Canonical field set for a ``search_miss`` event. Pairs with
     :func:`turn_audited_fields` — see that docstring for the
@@ -661,6 +668,76 @@ def search_miss_fields(
     }
     if client_model is not None:
         fields["client_model"] = client_model
+    if rule is not None:
+        fields["rule"] = rule
+    return fields
+
+
+#: Why a probed owner prompt delivered nothing, on its `recall_held` row
+#: (RS-F7 part 6): the probe reported ``no_signal``; it ranked no hit; every
+#: hit it ranked was held by a gate (`held` names each with its reason);
+#: the render kept no pointer under the cap; or a concurrent prompt of the
+#: session claimed every pointer first.
+HELD_CAUSES: frozenset[str] = frozenset(
+    {"no_signal", "no_hits", "every_hit_held", "nothing_rendered", "segment_claimed"}
+)
+
+
+def recall_held_fields(
+    report: MissReport,
+    *,
+    session_id: str,
+    probe_mode: str,
+    cause: str,
+    held: Sequence[Mapping[str, str]],
+    rule: str,
+    segment: int | None = None,
+    prompt_id: str | None = None,
+    transcript_path: str | None = None,
+    harness: str | None = None,
+    triggered_from: str = "prompt_hook",
+) -> dict[str, Any]:
+    """Canonical field set for a ``recall_held`` event: the UserPromptSubmit
+    hook's record of a probed owner prompt it delivered nothing for, the
+    other half of `prompt_recall_fields` (RS-F7 part 6: every probed owner
+    prompt writes one row or the other). The probe's verdict and hits ride
+    along as on a `prompt_recall` row, so a reader counts the probe's
+    outcomes over every prompt and not only the delivered ones; `cause`
+    (one of `HELD_CAUSES`) says why nothing was shown and `held` names each
+    held hit with its reason, the entries `prompt_recall` records as
+    ``suppressed_ids`` when it delivers beside them."""
+    if triggered_from not in _VALID_TRIGGERED_FROM:
+        raise ValueError(
+            f"triggered_from must be one of "
+            f"{sorted(_VALID_TRIGGERED_FROM)!r}, got {triggered_from!r}"
+        )
+    if cause not in HELD_CAUSES:
+        raise ValueError(f"cause must be one of {sorted(HELD_CAUSES)!r}, got {cause!r}")
+    fields: dict[str, Any] = {
+        "event_id": generate_ulid(),
+        "session_id": session_id,
+        "verdict": report.verdict,
+        "threshold_rule": report.threshold_rule,
+        "lookback_seconds": report.lookback_seconds,
+        "recent_retrieval_count": report.recent_retrieval_count,
+        "top_hits": [h.to_dict() for h in report.top_hits],
+        "probe_query": report.probe_query,
+        "probe_mode": probe_mode,
+        "triggered_from": triggered_from,
+        "cause": cause,
+        "held": [dict(entry) for entry in held],
+        "rule": rule,
+    }
+    if report.no_signal_reason is not None:
+        fields["no_signal_reason"] = report.no_signal_reason
+    if segment is not None:
+        fields["segment"] = segment
+    if prompt_id is not None:
+        fields["prompt_id"] = prompt_id
+    if transcript_path is not None:
+        fields["transcript_path"] = transcript_path
+    if harness is not None:
+        fields["harness"] = harness
     return fields
 
 

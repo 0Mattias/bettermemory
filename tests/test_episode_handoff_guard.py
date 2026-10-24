@@ -613,7 +613,7 @@ def _brief_here(memory_dir: Path, cfg: Config, where: Path, session: str) -> Non
         cwd=where,
         config=cfg,
         store=store,
-        state=RecallState(background=False),
+        state=RecallState(),
     )
     assert memory.id in result.ids
     (row,) = [

@@ -86,9 +86,7 @@ def _briefable_repo(tmp_path: Path) -> Path:
     return repo
 
 
-_BRIEF_HEAD = (
-    "bettermemory brief: the 1 newest checked memory written in this repository."
-)
+_BRIEF_HEAD = "bettermemory brief: 1 memory for this repository, 1 recent."
 
 
 def test_session_start_prints_the_block_through_the_daemon(

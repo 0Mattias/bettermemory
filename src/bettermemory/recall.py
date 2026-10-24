@@ -2,13 +2,19 @@
 a tool call, on two hook moments.
 
 - The session brief (`session_brief`), on SessionStart inside a
-  project: at most eight pointers to the newest memories homed in the
-  caller's project (the SESSION_BRIEF surface of design 3.5) whose
-  staleness verdict is ``fresh`` exactly as `memory_show` computes it
-  (the trust rule included), each an id and an 80-character summary
-  under a header that says they are pointers, not instructions. No body,
-  no scope list, nothing outside a project, nothing for a caller nothing
-  could be read for (its row says so), nothing for an empty selection.
+  project: the caller's standing records and the records the
+  conversation bears on, eight of each at most (RS-F7 part 4, Stage C's
+  decision of 2026-10-24). STANDING is the project's records answered
+  standing or ambient and in force (the SESSION_BRIEF surface of design
+  3.5), WORK its other in-force records; each list is ranked by the
+  owner's words in the transcript before the start
+  (`transcript.owner_words`) with production's ranker, the newest
+  filling what the ranker leaves, and by recency alone at a startup with
+  no words yet. Each line is an id and an 80-character summary, a
+  standing line marked ``[in force]``, under a header that says they are
+  pointers, not instructions. No body, no scope list, nothing outside a
+  project, nothing for a caller nothing could be read for (its row says
+  so), nothing for an empty selection.
 - The prompt recall (`prompt_recall`), on UserPromptSubmit: the owner's
   words as the one definition reads them (`owner_prompt.owner_text`: the
   app's envelope blocks removed, cut at 2,000 characters, nothing for a
@@ -49,18 +55,14 @@ Telemetry is the gate for both: each show is recorded (`session_brief`,
 nothing is shown, since an unlogged injection could be neither measured
 nor seen by the audit.
 
-The brief's verdicts come from `verdict.py`. A warm call (the
-repository's HEAD unchanged since the last brief for that repository and
-directory in this process) reads `memoised_verdicts` and runs no git
-process while the memo answers; when rows it cannot answer would leave
-the brief short of eight, the first 24 of them are resolved on the
-request path and the rest handed to a background fill (one in-flight
-fill per repository and directory, `fill_verdicts` on a worker
-thread, which stores row by row so one disturbance in the repository
-loses one row and not the fill). A cold call resolves the 24 newest
-eligible rows synchronously and hands the rest to the fill. The
-in-process CLI path has no background: its process exits after
-printing, so it resolves its 24 and stops.
+The brief reads no verdict and runs no git process: a pointer's
+staleness is `memory_show`'s to report when the pointer is opened. The
+rc6 brief selected the newest rows `memory_show` would read fresh,
+through `verdict.memoised_verdicts` and a background fill; Stage C
+(2026-10-24, 41 session starts replayed on a copy of the live store,
+one reply each, judged blind) read that brief as not separable from no
+brief (-0.07 [-0.33, +0.16]) and the standing and work lists at +0.45
+[+0.11, +0.82], so the selection and its machinery left with rs-v6.
 """
 
 from __future__ import annotations
@@ -74,27 +76,32 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from . import identity
 from . import standing as _standing
-from ._response import ResponseBuilder, isoformat_optional
-from .audit import REAUDIT_DEDUP_WINDOW_SECONDS, MissHit, prompt_recall_fields
+from .audit import (
+    REAUDIT_DEDUP_WINDOW_SECONDS,
+    MissHit,
+    prompt_recall_fields,
+    recall_held_fields,
+)
 from .config import Config, load_config
-from .events import HARNESS_SESSION_FIELD, Recorder, _event_id_items
-from .models import Category, Memory, generate_ulid, utcnow
+from .events import HARNESS_SESSION_FIELD, Recorder, _event_id_items, redact_query
+from .models import Memory, generate_ulid, utcnow
 from .origin import (
     Origin,
     repos_match,
     should_include_for_caller,
-    toplevel_and_head_from_files,
     worktrees_match,
 )
 from .owner_prompt import PROMPT_CUT_CHARS, owner_text, probe_text
+from .search import SearchMode
+from .search import search as rank_search
 from .store import IMPORTED, LOCAL, STORE_FILENAME, Store, TrustRow
 from .time_utils import ensure_utc, isoformat_utc, parse_event_ts
-from .transcript import CompactMarker, compact_marker
-from .admission import NO_RESOLUTION, Admission, CountedRecords, admitted_nothing
+from .transcript import CompactMarker, compact_marker, owner_words
+from .admission import NO_RESOLUTION, Admission, admitted_nothing
 from .in_force import InForce, in_force
 from .location import Exchange
 from .membership import (
@@ -107,21 +114,16 @@ from .membership import (
     Membership,
     Resolution,
 )
-from .verdict import (
-    FillReport,
-    MemoryVerdict,
-    UnresolvedVerdict,
-    fill_verdicts,
-    memoised_verdicts,
-    resolve_verdicts,
-)
+
+if TYPE_CHECKING:
+    from .handlers.search import SearchPool
 
 log = logging.getLogger("bettermemory.recall")
 
 __all__ = [
-    "BRIEF_CAP_CHARS",
-    "BRIEF_MAX_POINTERS",
-    "BRIEF_SYNC_RESOLVE",
+    "BRIEF_PROBE_CHARS",
+    "BRIEF_STANDING",
+    "BRIEF_WORK",
     "COMPACT_MARKER_WINDOW_SECONDS",
     "DEFAULT_HARNESS",
     "HookResult",
@@ -136,7 +138,6 @@ __all__ = [
     "SURFACE_RECALL",
     "admission_for",
     "membership_model",
-    "brief_key",
     "caller_admission",
     "clean_prompt",
     "confirm_compaction",
@@ -163,7 +164,7 @@ __all__ = [
 # rs-v5: RS-F6's delivery decided by membership; the brief and recall rows carry the checkout, the membership rule and rc3_admitted
 # Every row written after a landing carries its rule, so a read of the
 # log splits on the row's rule and never on a clock.
-RULE = "rs-v5"
+RULE = "rs-v6"
 
 # The harness a hook payload names when it names none: the one whose
 # hook protocol the plugin implements.
@@ -181,17 +182,23 @@ SUMMARY_CHARS = 80
 
 # -- the brief ----------------------------------------------------------------
 
-BRIEF_MAX_POINTERS = 8
-# Rows a cold brief resolves on the request path; the rest go to the
-# background fill.
-BRIEF_SYNC_RESOLVE = 24
-BRIEF_CAP_CHARS = 1_200
-# The newest eligible rows a brief considers at all. A repository with
-# thousands of memories would otherwise hand the fill (and a warm call's
-# walk) the whole history; eight fresh pointers are found well inside
-# this window on any store that has them.
-BRIEF_WINDOW = 200
-_BRIEF_CHUNK = 24
+# Stage C (2026-10-24): 41 session starts since 2026-10-12 replayed on a
+# copy of the live store, one reply each under six briefs, the replies
+# judged blind; the paired score against no brief, 95% bootstrap by
+# session. The standing records alone at 3 (+0.19 [-0.14, +0.52]), 3
+# standing and 3 work (+0.16 [-0.17, +0.55]) and rc6's newest-fresh
+# eight (-0.07 [-0.33, +0.16]) did not clear zero; 8 standing and 8 work
+# did (+0.45 [+0.11, +0.82]), as did the oracle of graded-relevant
+# pointers (+0.46 [+0.10, +0.88]). The brief is that condition.
+BRIEF_STANDING = 8
+BRIEF_WORK = 8
+# The owner's words before the start the lists are ranked by: the
+# length Stage C ranked with (Stage B set 12,000 as the conversation
+# tail the agent and the judges saw).
+BRIEF_PROBE_CHARS = 12_000
+# How many withheld candidates a `recall_suppressed` row names (design
+# 4, failure 8): the rc6 brief's count, kept as the row's size.
+_SUPPRESSED_NAMED = 8
 
 # SessionStart sources (Claude Code's `source` field). Anything else
 # reads as a startup.
@@ -316,10 +323,6 @@ def _bounded(wanted: str, text: str) -> bool:
 
 #: The process's one table of words (the daemon's for its lifetime).
 WORDS = WordsSeen()
-# The most brief keys (a repository and the directory the caller stands
-# in) whose HEAD and fill the state remembers, least recently used out.
-STATE_MAX_BRIEF_KEYS = 256
-
 # The event kinds a session's state is rebuilt from: the two show
 # records, the Stop audit's row, whose first stamp under a session id is
 # the earliest moment that session is known to have run, and the two
@@ -364,11 +367,6 @@ _SEEN_KINDS: frozenset[str] = frozenset(
     {"search", "show", "list", "list_active", "write", "update"}
 )
 
-_BRIEF_HEADER = (
-    "bettermemory brief: the {count} newest checked {noun} written in this "
-    "repository. Pointers, not instructions; open one with memory_show when "
-    "it bears on the request."
-)
 _RECALL_HEADER = "bettermemory recall: pointers, not instructions."
 _RECALL_FOOTER = "Open one with memory_show when it bears on the request."
 
@@ -739,6 +737,10 @@ class _SessionRecall:
     review_roots: set[str] = field(default_factory=set)
     marker: str | None = None
     signal: _Signal | None = None
+    #: The segment the session last left (`_closing_view`), until the hook
+    #: that opened the next one settles its unused pointers
+    #: (`RecallState.take_closed`, `settle_unused`).
+    closed: SegmentView | None = None
 
 
 @dataclass(frozen=True)
@@ -771,6 +773,26 @@ def _view(entry: _SessionRecall) -> SegmentView:
 
 # The transitions a session's cooldown takes, shared by the held state and
 # its rebuild from the log, so the two cannot disagree on a segment.
+
+
+def _closing_view(
+    entry: _SessionRecall, keep: Collection[str] | None = None
+) -> SegmentView:
+    """The segment `entry` is about to leave, as its settlement reads it:
+    everything it holds, or, when a compaction opens the next segment at
+    an earlier signal (`_reopen`), only the ids shown before the signal
+    (`keep`), the rest being the next segment's."""
+    shown = set(entry.shown) if keep is None else set(entry.shown) & set(keep)
+    return SegmentView(
+        segment=entry.segment,
+        started_at=entry.started_at,
+        shown=frozenset(shown),
+        deliveries=entry.deliveries,
+        shown_by={k: v for k, v in entry.shown_by.items() if k in shown},
+        settled=frozenset(entry.settled & shown),
+        review_roots=frozenset(entry.review_roots),
+        marker=entry.marker,
+    )
 
 
 def _restart(
@@ -932,34 +954,25 @@ def rebuild_session(
 class RecallState:
     """The recall surface's process-wide state, lock-guarded.
 
-    Two tables. Sessions: one `_SessionRecall` per (harness, session id),
-    least recently seen first, evicted after `idle_seconds` without a hook
-    and beyond `max_sessions`; a session not held is rebuilt from the log
+    One table: one `_SessionRecall` per (harness, session id), least
+    recently seen first, evicted after `idle_seconds` without a hook and
+    beyond `max_sessions`; a session not held is rebuilt from the log
     (`rebuild_session`) on first sight, so an evicted session comes back
-    as it was. Briefs: per repository, the HEAD the last brief there read
-    (a brief is warm while it holds) and the one background fill in
-    flight, and what each repository's last finished fill kept
-    (`fill_report`).
+    as it was.
 
     The daemon holds one for its lifetime and calls it from worker
-    threads. The in-process CLI path builds a fresh one per call with
-    `background=False`: it holds nothing between calls and runs no fill.
-    The store each call passes is the caller's own connection; the state
-    holds none."""
+    threads. The in-process CLI path builds a fresh one per call and holds
+    nothing between calls. The store each call passes is the caller's own
+    connection; the state holds none."""
 
     def __init__(
         self,
         *,
-        background: bool = True,
         max_sessions: int = STATE_MAX_SESSIONS,
         idle_seconds: int = STATE_IDLE_SECONDS,
     ) -> None:
         self._lock = threading.Lock()
         self._sessions: OrderedDict[tuple[str, str], _SessionRecall] = OrderedDict()
-        self._heads: OrderedDict[str, str] = OrderedDict()
-        self._fills: OrderedDict[str, threading.Thread] = OrderedDict()
-        self._reports: OrderedDict[str, FillReport] = OrderedDict()
-        self._background = background
         self._max_sessions = max_sessions
         self._idle_seconds = idle_seconds
 
@@ -1031,11 +1044,13 @@ class RecallState:
         with self._lock:
             entry = self._held(key, now)
             if source == "clear":
+                entry.closed = _closing_view(entry)
                 _restart(entry, segment=entry.segment + 1, at=now, marker=entry.marker)
                 return _view(entry), True
             if source != "compact":
                 return _view(entry), False
             if marker is not None and marker.key != entry.marker:
+                entry.closed = _closing_view(entry)
                 _restart(entry, segment=entry.segment + 1, at=now, marker=marker.key)
                 return _view(entry), True
             _hold_signal(entry, at=now)
@@ -1070,6 +1085,7 @@ class RecallState:
                 return None
             if marker is None or marker.key == entry.marker:
                 return None
+            entry.closed = _closing_view(entry, keep=entry.signal.shown)
             _reopen(
                 entry,
                 signal=entry.signal,
@@ -1078,6 +1094,17 @@ class RecallState:
                 marker=marker.key,
             )
             return _view(entry)
+
+    def take_closed(self, key: tuple[str, str]) -> SegmentView | None:
+        """The segment the session last left, once: what `open_segment` or
+        `resolve_compaction` closed and no hook has settled yet
+        (`settle_unused`); None when nothing waits."""
+        with self._lock:
+            entry = self._sessions.get(key)
+            if entry is None or entry.closed is None:
+                return None
+            closed, entry.closed = entry.closed, None
+            return closed
 
     def _held(self, key: tuple[str, str], now: datetime) -> _SessionRecall:
         """The session's entry, created empty when it is not held (lock
@@ -1156,154 +1183,26 @@ class RecallState:
         with self._lock:
             self._held(key, now).review_roots.update(roots)
 
-    # -- briefs ---------------------------------------------------------------
-
-    def brief_is_warm(self, repo_key: str, head: str | None) -> bool:
-        """Whether a brief in `repo_key` may read the memo alone: the
-        files named the head, and it is the head the last brief there
-        read."""
-        if head is None:
-            return False
-        with self._lock:
-            return self._heads.get(repo_key) == head
-
-    def note_brief_head(self, repo_key: str, head: str | None) -> None:
-        with self._lock:
-            if head is None:
-                self._heads.pop(repo_key, None)
-                return
-            self._heads[repo_key] = head
-            self._heads.move_to_end(repo_key)
-            while len(self._heads) > STATE_MAX_BRIEF_KEYS:
-                self._heads.popitem(last=False)
-
-    def _prune_fills(self) -> None:
-        """Drop finished fills, then the oldest beyond the bound (lock
-        held). A running fill dropped from the table runs on; it is only
-        no longer the one a new fill for its key waits behind."""
-        for key in [k for k, thread in self._fills.items() if not thread.is_alive()]:
-            del self._fills[key]
-        while len(self._fills) > STATE_MAX_BRIEF_KEYS:
-            self._fills.popitem(last=False)
-
-    def schedule_fill(
-        self,
-        repo_key: str,
-        memories: Sequence[Memory],
-        *,
-        caller_origin: Origin,
-        admission: CountedRecords | None = None,
-    ) -> bool:
-        """Resolve `memories`' commit legs into the memo on a worker thread
-        (`fill_verdicts`), off the request path, so the next brief reads
-        them warm; what it kept is kept for `fill_report`. `admission` is
-        the records whose legs count, decided on the request's thread
-        (`Admission.counted`); with none, no leg is resolved. One fill per
-        repository at a time: while one runs, another is not started (the
-        rows it would have filled are still unresolved next call and are
-        scheduled then). Returns whether a fill started; never one without
-        `background`."""
-        if not self._background or not memories:
-            return False
-        rows = list(memories)
-        with self._lock:
-            running = self._fills.get(repo_key)
-            if running is not None and running.is_alive():
-                return False
-
-            def fill() -> None:
-                try:
-                    report = fill_verdicts(
-                        rows, caller_origin=caller_origin, admission=admission
-                    )
-                    with self._lock:
-                        self._reports[repo_key] = report
-                        self._reports.move_to_end(repo_key)
-                        while len(self._reports) > STATE_MAX_BRIEF_KEYS:
-                            self._reports.popitem(last=False)
-                except Exception as exc:  # noqa: BLE001 - a fill is best effort
-                    log.warning(
-                        "brief fill for %s failed: %s: %s",
-                        repo_key,
-                        exc.__class__.__name__,
-                        exc,
-                    )
-
-            thread = threading.Thread(
-                target=fill, name=f"bettermemory-brief-fill:{repo_key}", daemon=True
-            )
-            self._prune_fills()
-            self._fills[repo_key] = thread
-            thread.start()
-            return True
-
-    def fill_report(self, repo_key: str) -> FillReport | None:
-        """What the last finished fill for `repo_key` kept, or None when
-        none has finished (or it failed): diagnostics for a bench."""
-        with self._lock:
-            return self._reports.get(repo_key)
-
-    def wait_for_fills(self, timeout: float = 30.0) -> bool:
-        """Join every fill in flight; True when none is left running."""
-        with self._lock:
-            threads = list(self._fills.values())
-        for thread in threads:
-            thread.join(timeout)
-        return not any(thread.is_alive() for thread in threads)
-
 
 # ---------------------------------------------------------------------------
 # The session brief
 # ---------------------------------------------------------------------------
 
 
-def brief_key(caller: Origin) -> str:
-    """The key the brief's state is held under for `caller`: its repository
-    (the worktree root, else the remote) and the directory it stands in
-    (`RecallState.brief_is_warm`, `schedule_fill`, `fill_report`)."""
-    return f"{caller.worktree_root or caller.repo or ''}\0{caller.cwd or ''}"
-
-
-def _head_of(caller: Origin) -> str | None:
-    """The caller's HEAD from the repository's files, with no process;
-    None where the files do not settle it (the brief is then never warm)."""
-    where = caller.cwd or caller.worktree_root
-    if where is None:
-        return None
-    found = toplevel_and_head_from_files(Path(where))
-    return found[1] if found is not None else None
-
-
-def _fresh(
-    memory: Memory,
-    verdict: MemoryVerdict,
-    trust: TrustRow,
-    responses: ResponseBuilder,
-) -> bool:
-    """Whether `memory_show` would read the row ``fresh``: the verdict,
-    then the trust rule applied to it the way the show applies it to its
-    assembled response (`ResponseBuilder.apply_trust`)."""
-    row: dict[str, Any] = {
-        "id": memory.id,
-        "last_verified_at": isoformat_optional(memory.last_verified_at),
-        "verification": verdict.verification.to_dict(),
-        "staleness_verdict": verdict.staleness_verdict,
-    }
-    responses.apply_trust(
-        row, provenance=trust.provenance, verified_locally_at=trust.verified_locally_at
-    )
-    return bool(row["staleness_verdict"] == "fresh")
-
-
 @dataclass(frozen=True)
 class _BriefSelection:
-    memories: list[Memory]
-    examined: int
-    unresolved: int
+    """The brief's two lists in rank order, or why there is none."""
+
+    standing: list[Memory]
+    work: list[Memory]
+    #: "probe" when the owner's words ranked the lists, "recency" when
+    #: there were none.
+    ranked_by: str
+    #: Each shown record's in-force note by id (`_in_force_marks`: the
+    #: newest record extending it), for the records that have one.
+    notes: dict[str, str] = field(default_factory=dict)
     suppressed: tuple[dict[str, str], ...] = ()
     candidates: int = 0
-    #: The in-force notes of the window's lines (`in_force`), by id.
-    notes: Mapping[str, str] = field(default_factory=dict)
 
 
 def _suppressed_reason(admission: Admission, memory_id: str) -> str:
@@ -1318,186 +1217,195 @@ def _suppressed_reason(admission: Admission, memory_id: str) -> str:
     return admission.relation(home)
 
 
-def _brief_in_force(
-    store: Store, ids: Sequence[str], admission: Admission
-) -> tuple[list[str], dict[str, str]]:
-    """The brief window's rows as `in_force` leaves them (RS-F7 part 3),
-    and each kept row's in-force note by id. A record an admitted one
-    supersedes is history, and its slot is its head's. The window is
-    newest first, so a head holds one place, the first its own row or one
-    of its history rows reaches; a head outside the window's rows (another
-    label or category) takes none."""
-    forced = in_force(store, ids, admission)
-    window = set(ids)
-    placed: dict[str, InForce] = {}
-    for memory_id in ids:
-        entry = forced[memory_id]
-        if entry.id in window and entry.id not in placed:
-            placed[entry.id] = entry
-    notes = {
-        memory_id: " ".join(_in_force_marks(entry.replaces, entry.extended_by))
-        for memory_id, entry in placed.items()
-        if entry.replaces or entry.extended_by
-    }
-    return list(placed), notes
+def _ranked_by(probe: str) -> str:
+    return "probe" if probe.strip() else "recency"
+
+
+def _delivered(store: Store, memories: Sequence[Memory]) -> list[Memory] | None:
+    """`memories` whose verified label is local or imported, in order; None
+    when the store verifies no label (opened without its key), so the
+    brief shows nothing rather than vouch for rows it cannot read."""
+    if not memories:
+        return []
+    trust = store.trust_rows([memory.id for memory in memories])
+    if trust is None:
+        return None
+    return [
+        memory
+        for memory in memories
+        if (row := trust.get(memory.id)) is not None
+        and row.provenance in _DELIVERED_PROVENANCE
+    ]
+
+
+def _ranked(
+    memories: Sequence[Memory],
+    probe: str,
+    *,
+    limit: int,
+    admission: Admission,
+    pool: SearchPool,
+    cfg: Config,
+    now: datetime,
+) -> list[Memory]:
+    """The top `limit` of `memories` by `probe` under production's ranker
+    (`search.search`, the configured mode and half-life, the pool's
+    corpus statistics), the newest by ``updated`` filling the places the
+    ranker leaves (the ranker's browse order; every place when `probe` is
+    empty): Stage C's ranking."""
+    if not memories:
+        return []
+    rows = list(memories)
+    by_id = {memory.id: memory for memory in rows}
+    mode = cast(SearchMode, cfg.behavior.search_mode or "hybrid")
+    picked: list[str] = []
+    if probe.strip():
+        picked = [
+            hit.id
+            for hit in rank_search(
+                rows,
+                probe,
+                admission=admission,
+                max_results=limit,
+                now=now,
+                half_life_days=cfg.behavior.recency_boost_half_life_days,
+                mode=mode,
+                corpus_stats_provider=pool.corpus_stats_provider,
+                conversational=cfg.behavior.conversational,
+            )
+        ]
+    if len(picked) < limit:
+        for hit in rank_search(
+            rows,
+            "",
+            admission=admission,
+            max_results=len(rows),
+            now=now,
+            half_life_days=cfg.behavior.recency_boost_half_life_days,
+            mode=mode,
+            allow_empty_query=True,
+            conversational=cfg.behavior.conversational,
+        ):
+            if hit.id not in picked:
+                picked.append(hit.id)
+    return [by_id[memory_id] for memory_id in picked[:limit]]
 
 
 def _select_brief(
     store: Store,
-    caller: Origin,
     *,
     admission: Admission,
-    state: RecallState,
-    stale_after_days: int,
+    probe: str,
+    cfg: Config,
     now: datetime,
 ) -> _BriefSelection:
-    """The brief's rows, newest `updated` first.
+    """The brief's lists (RS-F7 part 4, Stage C's decision).
 
-    Eligible: admitted by the SESSION_BRIEF surface for the caller
-    (`admission`, design 3.5: a home on the caller's chain), stored and
-    verified label local or imported, category not ambient, no open
-    contradiction; within the newest `BRIEF_WINDOW`. When the store holds
-    candidates (the label and category pass) and the surface admits none
-    of them, the selection names the newest `BRIEF_MAX_POINTERS` of them
+    STANDING: the caller's standing records in force (`standing_ids`
+    under the SESSION_BRIEF `admission`: answered standing for the
+    current body, or category ambient; not history), label local or
+    imported. WORK: the admitted in-force records that are not standing,
+    from the production pool over `probe` (`resolve_search_pool` under
+    the admission on the pool prefilter surface, which admits more than
+    the brief does, so each row is re-admitted here), the same label
+    rule, history excluded (`in_force`), an open contradiction held
+    (`_contradiction_open`; a standing record is never held, part 5).
+    Each list is ranked by the probe (`_ranked`), `BRIEF_STANDING` and
+    `BRIEF_WORK` at most; a shown record another in-force record extends
+    carries that record's id as its note (part 3).
+
+    When both lists are empty and the store holds candidates of a
+    deliverable label, the selection names the newest `_SUPPRESSED_NAMED`
     with why each was withheld, and how many there were, for the
-    `recall_suppressed` row (design 4, failure 8). Shown: the first
-    `BRIEF_MAX_POINTERS` of those `memory_show` would read fresh. A store
-    opened without its key verifies no label, so it shows nothing.
+    `recall_suppressed` row (design 4, failure 8). A store opened without
+    its key verifies no label, so it shows nothing."""
+    # Imported here: the handlers import this module's word table
+    # (`handlers.questions`), so a module-level import would be a cycle.
+    from .handlers.search import default_search_width, resolve_search_pool
 
-    Warmth is keyed on the repository AND the directory the caller stands
-    in, since the drift memo keys on that directory too: a brief from a
-    subdirectory is cold until a brief from there has run. A warm call
-    whose memo cannot answer some rows, and would therefore show fewer
-    than `BRIEF_MAX_POINTERS`, resolves the first `BRIEF_SYNC_RESOLVE` of
-    them on the request path, as a cold call does, and hands the rest to
-    the fill."""
-    repo_key = brief_key(caller)
-    ids = store.brief_rows(
-        admit=admission.admits_row,
-        provenance=_DELIVERED_PROVENANCE,
-        exclude_category=Category.AMBIENT.value,
-    )[:BRIEF_WINDOW]
-    if not ids:
-        candidates = store.brief_rows(
-            admit=lambda _scopes, _home: True,
-            provenance=_DELIVERED_PROVENANCE,
-            exclude_category=Category.AMBIENT.value,
+    pool = resolve_search_pool(
+        store,
+        probe,
+        excluded_scopes=set(),
+        admission=admission.on(POOL_PREFILTER),
+        min_survivors=default_search_width(cfg.behavior),
+    )
+    standing_ids = _standing.standing_ids(store, admission)
+    standing = _delivered(store, store.load_many(standing_ids) if standing_ids else [])
+    excluded = set(standing_ids)
+    admission.prime([memory.id for memory in pool.memories])
+    work = _delivered(
+        store,
+        [
+            memory
+            for memory in pool.memories
+            if memory.id not in excluded and admission.admits_id(memory.id)
+        ],
+    )
+    if standing is None or work is None:
+        return _BriefSelection([], [], _ranked_by(probe))
+    forced: dict[str, InForce] = {}
+    if standing or work:
+        forced = in_force(
+            store, [memory.id for memory in [*standing, *work]], admission
         )
-        named = candidates[:BRIEF_MAX_POINTERS]
+    if work:
+        work = [memory for memory in work if not forced[memory.id].history]
+        contradicted = store.contradicted_at([memory.id for memory in work])
+        work = [
+            memory for memory in work if not _contradiction_open(memory, contradicted)
+        ]
+    if not standing and not work:
+        candidates = store.brief_rows(
+            admit=lambda _scopes, _home: True, provenance=_DELIVERED_PROVENANCE
+        )
+        named = candidates[:_SUPPRESSED_NAMED]
         admission.prime(named)
         return _BriefSelection(
             [],
-            0,
-            0,
+            [],
+            _ranked_by(probe),
             suppressed=tuple(
                 {"id": rid, "reason": _suppressed_reason(admission, rid)}
                 for rid in named
             ),
             candidates=len(candidates),
         )
-    trust = store.trust_rows(ids)
-    if trust is None:
-        return _BriefSelection([], 0, 0)
-    ids = [
-        memory_id
-        for memory_id in ids
-        if (row := trust.get(memory_id)) is not None
-        and row.provenance in _DELIVERED_PROVENANCE
-    ]
-    ids, notes = _brief_in_force(store, ids, admission)
-    contradicted = _unless_standing(store, admission, store.contradicted_at(ids))
-    responses = ResponseBuilder(stale_after_days=stale_after_days)
+    standing = _ranked(
+        standing,
+        probe,
+        limit=BRIEF_STANDING,
+        admission=admission,
+        pool=pool,
+        cfg=cfg,
+        now=now,
+    )
+    work = _ranked(
+        work, probe, limit=BRIEF_WORK, admission=admission, pool=pool, cfg=cfg, now=now
+    )
+    notes = {
+        memory.id: " ".join(_in_force_marks(entry.replaces, entry.extended_by))
+        for memory in [*standing, *work]
+        if (entry := forced[memory.id]).replaces or entry.extended_by
+    }
+    return _BriefSelection(standing, work, _ranked_by(probe), notes=notes)
 
-    def eligible(chunk: Sequence[str]) -> list[Memory]:
-        return [
-            memory
-            for memory in store.load_many(list(chunk))
-            if not _contradiction_open(memory, contradicted)
-        ]
 
-    head = _head_of(caller)
-    picked: list[Memory] = []
-    pending: list[Memory] = []
-    examined = 0
-    if state.brief_is_warm(repo_key, head):
-        # Each examined row in order, with whether it reads fresh (None
-        # while the memo cannot say).
-        ordered: list[tuple[Memory, bool | None]] = []
-        fresh_count = 0
-        for start in range(0, len(ids), _BRIEF_CHUNK):
-            chunk = eligible(ids[start : start + _BRIEF_CHUNK])
-            verdicts = memoised_verdicts(
-                chunk,
-                caller_origin=caller,
-                now=now,
-                stale_after_days=stale_after_days,
-                admission=admission,
-            )
-            for memory, verdict in zip(chunk, verdicts):
-                examined += 1
-                if isinstance(verdict, UnresolvedVerdict):
-                    pending.append(memory)
-                    ordered.append((memory, None))
-                    continue
-                fresh = _fresh(memory, verdict, trust[memory.id], responses)
-                ordered.append((memory, fresh))
-                if fresh:
-                    fresh_count += 1
-                    if fresh_count >= BRIEF_MAX_POINTERS:
-                        break
-            if fresh_count >= BRIEF_MAX_POINTERS:
-                break
-        if pending and fresh_count < BRIEF_MAX_POINTERS:
-            on_request = pending[:BRIEF_SYNC_RESOLVE]
-            pending = pending[BRIEF_SYNC_RESOLVE:]
-            settled = {
-                memory.id: _fresh(memory, full, trust[memory.id], responses)
-                for memory, full in zip(
-                    on_request,
-                    resolve_verdicts(
-                        on_request,
-                        caller_origin=caller,
-                        now=now,
-                        stale_after_days=stale_after_days,
-                        admission=admission,
-                    ),
-                )
-            }
-            ordered = [
-                (memory, settled.get(memory.id) if fresh is None else fresh)
-                for memory, fresh in ordered
-            ]
-        picked = [memory for memory, fresh in ordered if fresh][:BRIEF_MAX_POINTERS]
-    else:
-        synchronous: list[Memory] = []
-        cursor = 0
-        while len(synchronous) < BRIEF_SYNC_RESOLVE and cursor < len(ids):
-            take = ids[cursor : cursor + BRIEF_SYNC_RESOLVE - len(synchronous)]
-            cursor += len(take)
-            synchronous.extend(eligible(take))
-        resolved = resolve_verdicts(
-            synchronous,
-            caller_origin=caller,
-            now=now,
-            stale_after_days=stale_after_days,
-            admission=admission,
-        )
-        for memory, full in zip(synchronous, resolved):
-            examined += 1
-            if len(picked) < BRIEF_MAX_POINTERS and _fresh(
-                memory, full, trust[memory.id], responses
-            ):
-                picked.append(memory)
-        pending = eligible(ids[cursor:])
-        state.note_brief_head(repo_key, head)
-    if pending:
-        state.schedule_fill(
-            repo_key,
-            pending,
-            caller_origin=caller,
-            admission=admission.counted([memory.id for memory in pending]),
-        )
-    return _BriefSelection(picked, examined, len(pending), notes=notes)
+def _brief_header(standing: int, work: int) -> str:
+    """The brief's first line as Stage C rendered it: the count, then how
+    many are in force and how many recent."""
+    count = standing + work
+    noun = "memory" if count == 1 else "memories"
+    parts = []
+    if standing:
+        parts.append(f"{standing} in force")
+    if work:
+        parts.append(f"{work} recent")
+    return (
+        f"bettermemory brief: {count} {noun} for this repository, "
+        f"{' and '.join(parts)}. Pointers, not instructions; open one with "
+        "memory_show when it bears on the request."
+    )
 
 
 def _brief_line(memory: Memory, marks: Mapping[str, str]) -> str:
@@ -1507,26 +1415,28 @@ def _brief_line(memory: Memory, marks: Mapping[str, str]) -> str:
 
 
 def render_brief(
-    memories: Sequence[Memory], marks: Mapping[str, str] | None = None
+    standing: Sequence[Memory],
+    work: Sequence[Memory],
+    marks: Mapping[str, str] | None = None,
 ) -> tuple[str, list[str]]:
-    """The brief's text and the ids it shows: the header naming the count,
-    then one ``- <id> <summary>`` line per memory, with its disputed mark.
-    Trailing pointers are dropped until the whole fits `BRIEF_CAP_CHARS`
-    (the header is recounted); ``("", [])`` when nothing fits or nothing
-    was given."""
+    """The brief's text and the ids it shows, standing first: the header
+    (`_brief_header`), one ``- <id> <summary> [in force]`` line per
+    standing record and one ``- <id> <summary>`` line per work record,
+    each followed by its marks (a disputed mark, an in-force note);
+    ``("", [])`` for two empty lists.
+    No character cap: the counts bound the brief (Stage C measured the
+    landed form at 1,882 characters per brief on average, 2,035 at most)."""
     shown_marks = marks or {}
-    lines = [_brief_line(memory, shown_marks) for memory in memories]
-    ids = [memory.id for memory in memories]
-    while lines:
-        count = len(lines)
-        header = _BRIEF_HEADER.format(
-            count=count, noun="memory" if count == 1 else "memories"
-        )
-        text = "\n".join([header, *lines])
-        if len(text) <= BRIEF_CAP_CHARS:
-            return text, ids[:count]
-        lines.pop()
-    return "", []
+    lines = []
+    for memory in standing:
+        line = f"{_brief_line(memory, {})} [in force]"
+        mark = shown_marks.get(memory.id)
+        lines.append(f"{line} {mark}" if mark else line)
+    lines.extend(_brief_line(memory, shown_marks) for memory in work)
+    if not lines:
+        return "", []
+    text = "\n".join([_brief_header(len(standing), len(work)), *lines])
+    return text, [memory.id for memory in [*standing, *work]]
 
 
 def _marker_near(transcript_path: str | None, at: datetime) -> CompactMarker | None:
@@ -1584,6 +1494,14 @@ def confirm_compaction(
     if opened is None:
         return None
     caller = origin if origin is not None else _origin_for(cwd)
+    settle_unused(
+        store=store,
+        state=state,
+        key=key,
+        now=now,
+        worktree_root=caller.worktree_root,
+        triggered_from=triggered_from,
+    )
     Recorder(
         store=store,
         session_id=key[1],
@@ -1697,7 +1615,7 @@ def session_brief(
     waiting = standing_line(store, caller_resolution)
     if waiting:
         lines.append(waiting)
-    state = state if state is not None else RecallState(background=False)
+    state = state if state is not None else RecallState()
     now = now or utcnow()
     key = (harness or DEFAULT_HARNESS, str(session_id))
     opened_by = source if source in _SESSION_SOURCES else "startup"
@@ -1716,6 +1634,17 @@ def session_brief(
     view, opened = state.open_segment(
         store, key, source=opened_by, now=now, marker=marker
     )
+    if opened and cfg.telemetry.enabled:
+        settle_unused(
+            store=store,
+            state=state,
+            key=key,
+            now=now,
+            worktree_root=(
+                origin if origin is not None else _origin_for(cwd)
+            ).worktree_root,
+            triggered_from="session_hook",
+        )
     compaction: dict[str, Any] = {}
     if opened_by == "compact":
         compaction = {"marker": view.marker} if opened else {"marker_absent": True}
@@ -1868,7 +1797,7 @@ def _brief_in_segment(
     either surface, as `view.shown` has it) is not printed again. The
     selection is split after `_select_brief` and before `render_brief`,
     in selection order, into the ids kept and the ids omitted, and the
-    freed slots are not filled, so the selection stays a full scan's. The
+    freed slots are not filled, so the selection stays the ranker's. The
     rule reads the shown set on every source: on a ``clear``, and on a
     ``compact`` that opened a segment on its marker, the set is empty by
     construction, on a ``startup`` for a session the state has not seen
@@ -1882,7 +1811,14 @@ def _brief_in_segment(
     From rs-v5 every row carries the caller's ``checkout`` and
     ``membership_rule`` (`_delivery_membership`) and ``rc3_admitted``:
     the printed ids rc3's rule would have delivered (`_rc3_admitted`,
-    design 8.11), empty on the row of a caller admitted nothing."""
+    design 8.11), empty on the row of a caller admitted nothing.
+
+    From rs-v6 the brief is STANDING and WORK (`_select_brief`), ranked by
+    the owner's words in the transcript before this start
+    (`transcript.owner_words`, the newest `BRIEF_PROBE_CHARS`); the row
+    carries the two lists as printed (``standing``, ``work``), the probe
+    as `redact_query` renders it (``probe_query``) and ``ranked_by``
+    ("probe", or "recency" when there were no words)."""
     empty = HookResult.empty("session_brief")
     if not cfg.behavior.session_brief or not cfg.telemetry.enabled:
         return empty
@@ -1938,15 +1874,13 @@ def _brief_in_segment(
         )
     if not admission.in_project:
         return empty
-    selection = _select_brief(
-        store,
-        caller,
-        admission=admission,
-        state=state,
-        stale_after_days=cfg.behavior.verification_stale_days,
-        now=now,
+    probe = (
+        owner_words(Path(transcript_path).expanduser(), chars=BRIEF_PROBE_CHARS)
+        if transcript_path
+        else ""
     )
-    if not selection.memories:
+    selection = _select_brief(store, admission=admission, probe=probe, cfg=cfg, now=now)
+    if not selection.standing and not selection.work:
         if selection.suppressed and resolution is not None:
             store.record_membership(
                 "recall_suppressed",
@@ -1960,26 +1894,30 @@ def _brief_in_segment(
                 session=key[1],
             )
         return empty
-    kept = [memory for memory in selection.memories if memory.id not in view.shown]
-    omitted = [memory.id for memory in selection.memories if memory.id in view.shown]
+    standing = [memory for memory in selection.standing if memory.id not in view.shown]
+    work = [memory for memory in selection.work if memory.id not in view.shown]
+    omitted = [
+        memory.id
+        for memory in [*selection.standing, *selection.work]
+        if memory.id in view.shown
+    ]
     marks = disputed_marks(store.pending_conflict_pairs())
     for memory_id, note in selection.notes.items():
         marks[memory_id] = f"{marks[memory_id]} {note}" if memory_id in marks else note
-    text, ids = render_brief(kept, marks)
+    text, ids = render_brief(standing, work, marks)
     if not ids and not omitted:
         return empty
-    shown = set(ids)
     event_id = record(
         ids,
         chars=len(text),
         extra={
+            "standing": [memory.id for memory in standing],
+            "work": [memory.id for memory in work],
             "omitted": omitted,
-            "rows_examined": selection.examined,
-            "unresolved": selection.unresolved,
+            "probe_query": redact_query(probe),
+            "ranked_by": selection.ranked_by,
             "rc3_admitted": _rc3_admitted(
-                [memory for memory in kept if memory.id in shown],
-                caller,
-                project_only=True,
+                [*standing, *work], caller, project_only=True
             ),
         },
     )
@@ -2337,9 +2275,10 @@ def prompt_recall(
         _probe_message,
         bridged_session,
         joined_sessions,
+        settle_interrupted,
     )
 
-    state = state if state is not None else RecallState(background=False)
+    state = state if state is not None else RecallState()
     confirm_compaction(
         store=store,
         state=state,
@@ -2369,6 +2308,23 @@ def prompt_recall(
     excluded_scopes = _disabled_scopes_from_events(
         recent, worktree_root=caller.worktree_root, server_session=server_session
     )
+    settle_interrupted(
+        store=store,
+        cfg=cfg,
+        session_id=key[1],
+        transcript_path=transcript_path,
+        admission=admission.on(POOL_PREFILTER)
+        if surface == PROMPT_RECALL
+        else admission,
+        excluded_scopes=excluded_scopes,
+        recent=recent,
+        server_session=server_session,
+        worktree_root=caller.worktree_root,
+        now=now,
+        previous_audit=previous_audit_at(store, key[1], now=now),
+        triggered_from="prompt_hook",
+        exclude_prompt_id=None,
+    )
     report = _probe_message(
         cfg=cfg,
         store=store,
@@ -2385,8 +2341,36 @@ def prompt_recall(
         recent=recent,
         worktree_root=caller.worktree_root,
     )
-    if report.verdict == "no_signal" or not report.top_hits:
+
+    def recorded_hold(cause: str, entries: Sequence[Mapping[str, str]]) -> HookResult:
+        """Nothing delivered: the `recall_held` row says why (RS-F7 part 6)."""
+        if cfg.telemetry.enabled:
+            fields = recall_held_fields(
+                report,
+                session_id=key[1],
+                probe_mode=cfg.behavior.search_mode or "hybrid",
+                cause=cause,
+                held=entries,
+                rule=RULE,
+                segment=view.segment,
+                prompt_id=prompt_id,
+                transcript_path=transcript_path,
+                harness=key[0],
+            )
+            fields["admission"] = surface
+            fields.update(_delivery_membership(caller_resolution, admission))
+            Recorder(
+                store=store,
+                session_id=key[1],
+                enabled=True,
+                worktree_root=caller.worktree_root,
+            ).record("recall_held", **fields)
         return empty
+
+    if report.verdict == "no_signal":
+        return recorded_hold("no_signal", [])
+    if not report.top_hits:
+        return recorded_hold("no_hits", [])
     # The hits through the PROMPT_RECALL surface
     # (`Membership.admit_recall`, which writes `recall_suppressed` when it
     # withholds every one of them, design 4 failure 8).
@@ -2483,7 +2467,7 @@ def prompt_recall(
         assert row is not None and memory is not None
         chosen.append((hit, memory, row, forced_entry))
     if not chosen:
-        return empty
+        return recorded_hold("every_hit_held", suppressed)
 
     marks = disputed_marks(store.pending_conflict_pairs())
     pointers = [
@@ -2503,18 +2487,26 @@ def prompt_recall(
     ]
     block, shown_ids = render_recall_block(pointers)
     if not shown_ids:
-        return empty
+        return recorded_hold(
+            "nothing_rendered", [{"id": p.id, "reason": "cap"} for p in pointers]
+        )
     # The cooldown decides atomically: a concurrent prompt of the same
     # session may have shown some of these ids since `view` was read.
     event_id = generate_ulid()
     claimed, segment = state.claim_delivery(key, shown_ids, now=now, event_id=event_id)
     if not claimed:
-        return empty
+        return recorded_hold(
+            "segment_claimed",
+            [{"id": memory_id, "reason": "seen_in_segment"} for memory_id in shown_ids],
+        )
     if claimed != shown_ids:
         kept = set(claimed)
         block, shown_ids = render_recall_block([p for p in pointers if p.id in kept])
         if not shown_ids:
-            return empty
+            return recorded_hold(
+                "nothing_rendered",
+                [{"id": p.id, "reason": "cap"} for p in pointers if p.id in kept],
+            )
     recorder = Recorder(
         store=store,
         session_id=key[1],
@@ -2666,6 +2658,7 @@ def settle_shown(
             "segment": view.segment,
             "harness": key[0],
             "triggered_from": "stop_hook",
+            "rule": RULE,
         }
         if prompt_id:
             fields["prompt_id"] = prompt_id
@@ -2675,6 +2668,83 @@ def settle_shown(
         settled.append(match.memory_id)
     if settled and recorder.enabled:
         state.note_settled(key, settled, now=now)
+    return settled
+
+
+def settle_unused(
+    *,
+    store: Store,
+    state: RecallState,
+    key: tuple[str, str],
+    now: datetime,
+    worktree_root: str | None,
+    triggered_from: str,
+) -> list[str]:
+    """Settle the segment the session just left (`RecallState.take_closed`):
+    every pointer it showed that no Stop settled (`settle_shown`), no
+    `memory_show` of this conversation opened and no `use` row of it
+    attested records one `use` row with outcome ``unused`` (RS-F7 part
+    6), with the surface that showed it, that show's event id, the closed
+    segment, the harness and the hook that closed it (`triggered_from`);
+    the ids recorded. The caller writes these before the row that opens
+    the next segment, so a state rebuilt from the log reads them in the
+    segment they settle. Nothing when no segment waits."""
+    from .hook import event_joined, joined_sessions
+
+    closed = state.take_closed(key)
+    if closed is None:
+        return []
+    pending = [
+        memory_id for memory_id in closed.shown_by if memory_id not in closed.settled
+    ]
+    if not pending:
+        return []
+    recent = list(
+        store.events_since(now - timedelta(seconds=REAUDIT_DEDUP_WINDOW_SECONDS))
+    )
+    sessions = {key[1]} | joined_sessions(
+        recent, harness_session=key[1], worktree_root=worktree_root
+    )
+    events = list(store.events_of_kinds(("show", "use"), since=closed.started_at))
+    opened: set[str] = set()
+    for event in events:
+        if event.get("kind") != "show":
+            continue
+        stamp = parse_event_ts(event.get("ts"))
+        if stamp is None or stamp < closed.started_at:
+            continue
+        if event_joined(event, harness_session=key[1], sessions=sessions):
+            memory_id = event.get("id")
+            if isinstance(memory_id, str):
+                opened.add(memory_id)
+    attested = _used_in_segment(
+        events, since=closed.started_at, harness_session=key[1], sessions=sessions
+    )
+    recorder = Recorder(
+        store=store,
+        session_id=key[1],
+        enabled=True,
+        worktree_root=worktree_root,
+        triggered_from=triggered_from,
+    )
+    settled: list[str] = []
+    for memory_id in sorted(pending):
+        if memory_id in opened or memory_id in attested:
+            continue
+        surface, shown_event_id = closed.shown_by[memory_id]
+        recorder.record(
+            "use",
+            ids=[memory_id],
+            outcome="unused",
+            auto=False,
+            attribution="hook",
+            surface=surface,
+            shown_event_id=shown_event_id,
+            segment=closed.segment,
+            harness=key[0],
+            rule=RULE,
+        )
+        settled.append(memory_id)
     return settled
 
 

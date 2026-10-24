@@ -3041,6 +3041,7 @@ _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
         "silent_miss_cutoff",
         "use_token_expired",
         "prompt_recall",
+        "recall_held",
         "session_brief",
         "review_grade",
         "recall_grade",
@@ -3054,10 +3055,11 @@ _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
 # The subset of the roster above recorded INSIDE a live client session,
 # under that client's own session id. Verified at the call sites:
 # ``turn_audited`` and ``search_miss`` come off the Stop hook's
-# recorder (hook.py), ``prompt_recall`` comes off the UserPromptSubmit
-# hook's recorder (hook.py), stamped with the SAME Claude Code
-# transcript session id the Stop hook's rows for that conversation
-# carry, ``session_brief`` comes off the SessionStart hook's recorder
+# recorder (hook.py), ``prompt_recall`` and ``recall_held`` (RS-F7 part
+# 6: the probed prompt the recall delivered nothing for) come off the
+# UserPromptSubmit hook's recorder (recall.py), stamped with the SAME
+# Claude Code transcript session id the Stop hook's rows for that
+# conversation carry, ``session_brief`` comes off the SessionStart hook's recorder
 # (recall.py) under that same transcript session id,
 # ``review_unanswered`` comes off the Stop hook's recorder under that
 # same transcript session id too, ``segment_opened`` off the SessionStart,
@@ -3090,6 +3092,7 @@ _IN_SESSION_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
         "search_miss",
         "use_token_expired",
         "prompt_recall",
+        "recall_held",
         "session_brief",
         "review_unanswered",
         "segment_opened",

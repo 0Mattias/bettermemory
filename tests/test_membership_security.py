@@ -452,7 +452,7 @@ def test_e21_the_brief_row_says_the_caller_was_admitted_nothing(lab: Lab) -> Non
             session_id=f"nothing-{n}",
             config=lab.config,
             store=lab.store,
-            state=RecallState(background=False),
+            state=RecallState(),
             resolution=callers[outcome],
             cwd=lab.places["root"],
         )
@@ -481,7 +481,7 @@ def test_e21_a_brief_whose_resolution_raised_says_so(
         session_id="raised",
         config=lab.config,
         store=lab.store,
-        state=RecallState(background=False),
+        state=RecallState(),
         cwd=lab.places["root"],
     )
     assert result.stdout == "" and result.ids == ()

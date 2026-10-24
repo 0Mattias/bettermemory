@@ -229,8 +229,8 @@ class _DriftPass:
 
     `ResponseBuilder.attach_commit_drift_counts` runs one per search and
     `verdict.resolve_verdicts` / `verdict.memoised_verdicts` one per call,
-    so `memory_search`'s hits, `memory_show` and the session brief read
-    one memo through one key. The cost and the key's coverage are the
+    so `memory_search`'s hits and `memory_show` read one memo through one
+    key. The cost and the key's coverage are the
     search's, set out on `attach_commit_drift_counts`.
 
     `caller_repo` is the caller's `origin.repo`; `cwd` its directory;

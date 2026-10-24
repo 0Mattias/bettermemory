@@ -4374,11 +4374,11 @@ class Store:
         *,
         admit: Callable[[list[str], str | None], bool],
         provenance: Collection[str],
-        exclude_category: str,
+        exclude_category: str | None = None,
     ) -> list[str]:
-        """The ids of admitted memories the session brief may consider,
-        newest ``updated`` first (id breaking a tie): stored label in
-        `provenance`, category other than `exclude_category`, home admitted
+        """The ids of memories newest ``updated`` first (id breaking a tie):
+        stored label in `provenance`, category other than
+        `exclude_category` (any category when None), home admitted
         by `admit`, which reads the record's scopes and the project its
         ``homes`` row names (None for a record with none) as `scope_counts`
         does (a global record's admission reads the projects its scopes
@@ -4389,15 +4389,23 @@ class Store:
         if not labels:
             return []
         placeholders = ",".join("?" * len(labels))
+        category = (
+            ""
+            if exclude_category is None
+            else "AND (m.category IS NULL OR m.category != ?) "
+        )
+        params: tuple[str, ...] = (
+            tuple(labels) if exclude_category is None else (*labels, exclude_category)
+        )
         out: list[str] = []
         for row in self._conn.execute(
             "SELECT m.id AS id, m.scopes_json AS scopes_json, "
             "h.project AS home_project FROM memories m "
             "LEFT JOIN homes h ON h.record_id = m.id "
             f"WHERE m.provenance IN ({placeholders}) "
-            "AND (m.category IS NULL OR m.category != ?) "
+            f"{category}"
             "ORDER BY m.updated DESC, m.id DESC",
-            (*labels, exclude_category),
+            params,
         ):
             scopes = _load_json(row["scopes_json"], None)
             if admit(

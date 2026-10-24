@@ -31,6 +31,7 @@ from bettermemory.transcript import (
     CompactMarker,
     ReverseLines,
     compact_marker,
+    owner_words,
     stop_turn,
 )
 
@@ -746,3 +747,73 @@ def test_the_marker_is_read_as_far_back_as_the_budget(tmp_path: Path) -> None:
         )
         is None
     )
+
+
+# ---------------------------------------------------------------------------
+# The owner's words (RS-F7 part 4: the brief's probe)
+# ---------------------------------------------------------------------------
+
+
+def _wordy(tmp_path: Path) -> Path:
+    """Three owner turns with everything the definition passes over between
+    them: a reply, a tool result, a reminder the app composed, a
+    compaction summary, an interrupt line and a turn another process
+    drove."""
+    return tr.write(
+        tmp_path / "t.jsonl",
+        tr.user("first words", "p1"),
+        tr.assistant("a reply"),
+        tr.tool_result(50, "p1"),
+        tr.user("second words", "p2"),
+        tr.user("<system-reminder>a reminder</system-reminder>", "p3", isMeta=True),
+        {
+            "type": "user",
+            "isCompactSummary": True,
+            "message": {"role": "user", "content": "a summary of the conversation"},
+        },
+        tr.user("[Request interrupted by user]", "p4"),
+        tr.user("an sdk turn", "p5", turnOrigin="sdk"),
+        tr.user("third words", "p6"),
+    )
+
+
+def test_owner_words_are_the_owners_rows_oldest_first(tmp_path: Path) -> None:
+    path = _wordy(tmp_path)
+    assert (
+        owner_words(path, chars=12_000, chunk_bytes=CHUNK)
+        == "first words\n\nsecond words\n\nthird words"
+    )
+    # Uncut: a prompt longer than the probe's cut is kept whole.
+    long = "x" * (PROMPT_CUT_CHARS + 50)
+    tr.append(path, tr.user(long, "p7"))
+    assert owner_words(path, chars=12_000, chunk_bytes=CHUNK).endswith(
+        "words\n\n" + long
+    )
+
+
+def test_owner_words_keep_the_newest_chars(tmp_path: Path) -> None:
+    path = _wordy(tmp_path)
+    assert owner_words(path, chars=11, chunk_bytes=CHUNK) == "third words"
+    assert owner_words(path, chars=20, chunk_bytes=CHUNK) == "d words\n\nthird words"
+    assert owner_words(path, chars=0, chunk_bytes=CHUNK) == ""
+
+
+def test_owner_words_of_no_file_or_no_owner_row_are_empty(tmp_path: Path) -> None:
+    assert owner_words(tmp_path / "missing.jsonl", chars=100) == ""
+    path = tr.write(
+        tmp_path / "t.jsonl",
+        tr.assistant("a reply"),
+        tr.user("[Request interrupted by user]", "p1"),
+        tr.user("an sdk turn", "p2", turnOrigin="sdk"),
+    )
+    assert owner_words(path, chars=100, chunk_bytes=CHUNK) == ""
+
+
+def test_owner_words_read_as_far_back_as_the_budget(tmp_path: Path) -> None:
+    path = _wordy(tmp_path)
+    data = path.read_bytes()
+    last = data.rstrip(b"\n").rfind(b"\n") + 1
+    # A budget ending exactly at the newest row's first byte yields it alone.
+    assert owner_words(
+        path, chars=12_000, chunk_bytes=CHUNK, budget=len(data) - last
+    ) == ("third words")

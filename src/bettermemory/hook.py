@@ -488,7 +488,7 @@ def run_audit(
     ``no_signal``; a namespace the daemon cannot read is the same here,
     since the Stop has no round left to ask its client."""
     from .membership import POOL_PREFILTER
-    from .recall import RecallState as _RecallState
+    from .recall import RULE, RecallState as _RecallState
     from .recall import (
         caller_admission,
         confirm_compaction,
@@ -565,6 +565,20 @@ def run_audit(
     server_session = bridged_session(
         recent, harness_session=session_id, worktree_root=caller_origin.worktree_root
     )
+    admission, _resolution = caller_admission(
+        POOL_PREFILTER,
+        store=store,
+        cfg=cfg,
+        cwd=cwd,
+        origin=caller_origin,
+        posted=posted,
+        session_id=session_id,
+    )
+    excluded_scopes = _disabled_scopes_from_events(
+        recent,
+        worktree_root=caller_origin.worktree_root,
+        server_session=server_session,
+    )
     if user_message is None:
         report = no_owner_prompt_report(
             session_id=session_id,
@@ -572,15 +586,6 @@ def run_audit(
             lookback_seconds=_ATTRIBUTION_LOOKBACK_SECONDS,
         )
     else:
-        admission, _resolution = caller_admission(
-            POOL_PREFILTER,
-            store=store,
-            cfg=cfg,
-            cwd=cwd,
-            origin=caller_origin,
-            posted=posted,
-            session_id=session_id,
-        )
         report = _probe_message(
             cfg=cfg,
             store=store,
@@ -588,11 +593,7 @@ def run_audit(
             session_id=session_id,
             server_session=server_session,
             admission=admission,
-            excluded_scopes=_disabled_scopes_from_events(
-                recent,
-                worktree_root=caller_origin.worktree_root,
-                server_session=server_session,
-            ),
+            excluded_scopes=excluded_scopes,
             recent=recent,
             worktree_root=caller_origin.worktree_root,
         )
@@ -624,7 +625,7 @@ def run_audit(
     # `redact_query` so it compares equal to what the Recorder wrote.
     probe_mode = cfg.behavior.search_mode or "hybrid"
     now = utcnow()
-    recall_state = state if state is not None else _RecallState(background=False)
+    recall_state = state if state is not None else _RecallState()
     # A compaction the session signalled may have reached the transcript
     # since: the segment it opened is the one this Stop settles in.
     confirm_compaction(
@@ -659,6 +660,7 @@ def run_audit(
             client_model=client_model,
             prompt_id=prompt_id,
             reply_source=reply_source,
+            rule=RULE,
         ),
     )
     if report.is_miss and not repeat:
@@ -669,8 +671,24 @@ def run_audit(
                 session_id=session_id,
                 triggered_from="stop_hook",
                 client_model=client_model,
+                rule=RULE,
             ),
         )
+    settle_interrupted(
+        store=store,
+        cfg=cfg,
+        session_id=session_id,
+        transcript_path=transcript_path,
+        admission=admission,
+        excluded_scopes=excluded_scopes,
+        recent=recent,
+        server_session=server_session,
+        worktree_root=caller_origin.worktree_root,
+        now=now,
+        previous_audit=previous_audit,
+        triggered_from="stop_hook",
+        exclude_prompt_id=prompt_id,
+    )
 
     # Post-hoc use settlement — the turn's end is the semantically
     # correct place to decide what happened to this turn's retrievals.
@@ -755,6 +773,98 @@ def run_audit(
         )
 
     return report.to_dict()
+
+
+def settle_interrupted(
+    *,
+    store: Store,
+    cfg: Config,
+    session_id: str,
+    transcript_path: str | None,
+    admission: Admission,
+    excluded_scopes: set[str],
+    recent: list[dict[str, Any]],
+    server_session: str | None,
+    worktree_root: str | None,
+    now: datetime,
+    previous_audit: datetime | None,
+    triggered_from: str,
+    exclude_prompt_id: str | None,
+) -> list[str]:
+    """Settle the session's interrupted turns (RS-F7 part 6, RS-F3-M5): a
+    turn the owner interrupted ends with no Stop hook, so the next hook
+    that reads the transcript, the Stop of a later turn or the prompt
+    recall of the next prompt, writes its `turn_audited` row. For each
+    turn `transcript.interrupted_turns` finds since `previous_audit`, the
+    session's previous `turn_audited` as the caller read it before
+    recording its own (`recall.previous_audit_at`; the idle window back
+    when it has none), other than `exclude_prompt_id` (the turn this Stop
+    audits itself) and any turn a row already names: the probe's verdict over the prompt, as a Stop
+    probes it (`_probe_message`, the same admission, scopes and shield),
+    ``reply_source="interrupted"``, whether a partial reply exists and its
+    model, stamped `triggered_from` the hook that settled it. No
+    `search_miss`: the turn did not finish, so a miss is not the reply's;
+    the pointers it showed stay pending for the segment's later Stops or
+    its close. Nothing with telemetry off or without a transcript file.
+    The prompt ids settled."""
+    from .recall import RULE, STATE_IDLE_SECONDS
+    from .transcript import interrupted_turns
+
+    if not cfg.telemetry.enabled or not transcript_path:
+        return []
+    path = Path(transcript_path).expanduser()
+    if not path.is_file():
+        return []
+    since = previous_audit
+    if since is None:
+        since = now - timedelta(seconds=STATE_IDLE_SECONDS)
+    audited: set[str] = set()
+    for event in store.events_of_kinds(("turn_audited",), since=since):
+        if (event.get("session") or event.get("session_id")) != session_id:
+            continue
+        named = event.get("prompt_id")
+        if isinstance(named, str):
+            audited.add(named)
+    recorder = Recorder(
+        store=store, session_id=session_id, enabled=True, worktree_root=worktree_root
+    )
+    probe_mode = cfg.behavior.search_mode or "hybrid"
+    settled: list[str] = []
+    for turn in interrupted_turns(path, since=since):
+        if (
+            turn.prompt_id is None
+            or turn.prompt_id == exclude_prompt_id
+            or turn.prompt_id in audited
+            or turn.prompt is None
+        ):
+            continue
+        report = _probe_message(
+            cfg=cfg,
+            store=store,
+            user_message=turn.prompt,
+            session_id=session_id,
+            server_session=server_session,
+            admission=admission,
+            excluded_scopes=excluded_scopes,
+            recent=recent,
+            worktree_root=worktree_root,
+        )
+        recorder.record(
+            "turn_audited",
+            **turn_audited_fields(
+                report,
+                session_id=session_id,
+                probe_mode=probe_mode,
+                assistant_present=turn.reply is not None,
+                triggered_from=triggered_from,
+                client_model=turn.model,
+                prompt_id=turn.prompt_id,
+                reply_source="interrupted",
+                rule=RULE,
+            ),
+        )
+        settled.append(turn.prompt_id)
+    return settled
 
 
 def run_prompt_recall(

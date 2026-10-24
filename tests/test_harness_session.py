@@ -448,7 +448,7 @@ def test_a_stamped_retrieval_anywhere_holds_the_pointer_back(
     Recorder(
         store=world.store, session_id="sess_newer", worktree_root=str(world.worktree)
     ).record("scope_enable", scope="nothing")
-    assert world.recall(state=RecallState(background=False)).stdout == ""
+    assert world.recall(state=RecallState()).stdout == ""
 
 
 def test_another_conversations_stamped_retrieval_does_not(world: PromptWorld) -> None:
@@ -464,7 +464,7 @@ def test_another_conversations_stamped_retrieval_does_not(world: PromptWorld) ->
     Recorder(
         store=world.store, session_id="sess_theirs", worktree_root=str(world.worktree)
     ).record("show", id=memory.id, harness_session="another-conversation")
-    assert world.recall(state=RecallState(background=False)).ids == (memory.id,)
+    assert world.recall(state=RecallState()).ids == (memory.id,)
 
 
 def test_an_unstamped_retrieval_in_the_worktree_still_holds_it_back(
@@ -474,7 +474,7 @@ def test_an_unstamped_retrieval_in_the_worktree_still_holds_it_back(
     Recorder(
         store=world.store, session_id="sess_old", worktree_root=str(world.worktree)
     ).record("show", id=memory.id)
-    assert world.recall(state=RecallState(background=False)).stdout == ""
+    assert world.recall(state=RecallState()).stdout == ""
 
 
 def test_a_retrieval_stamped_before_a_clear_holds_the_pointer_back(
@@ -499,7 +499,7 @@ def test_a_retrieval_stamped_before_a_clear_holds_the_pointer_back(
     Recorder(
         store=world.store, session_id="sess_srv1", worktree_root=str(world.worktree)
     ).record("show", id=memory.id, harness_session="transcript-before")
-    assert world.recall(state=RecallState(background=False)).stdout == ""
+    assert world.recall(state=RecallState()).stdout == ""
 
 
 def test_a_stamped_update_anywhere_holds_the_pointer_back(world: PromptWorld) -> None:
@@ -512,7 +512,7 @@ def test_a_stamped_update_anywhere_holds_the_pointer_back(world: PromptWorld) ->
     Recorder(
         store=world.store, session_id="sess_newer", worktree_root=str(world.worktree)
     ).record("scope_enable", scope="nothing")
-    assert world.recall(state=RecallState(background=False)).stdout == ""
+    assert world.recall(state=RecallState()).stdout == ""
 
 
 def test_another_conversations_stamped_update_does_not(world: PromptWorld) -> None:
@@ -528,7 +528,7 @@ def test_another_conversations_stamped_update_does_not(world: PromptWorld) -> No
     Recorder(
         store=world.store, session_id="sess_theirs", worktree_root=str(world.worktree)
     ).record("update", id=memory.id, harness_session="another-conversation")
-    assert world.recall(state=RecallState(background=False)).ids == (memory.id,)
+    assert world.recall(state=RecallState()).ids == (memory.id,)
 
 
 def test_an_update_by_another_session_elsewhere_does_not(world: PromptWorld) -> None:
@@ -543,4 +543,4 @@ def test_an_update_by_another_session_elsewhere_does_not(world: PromptWorld) -> 
         session_id="sess_other",
         worktree_root=str(world.tmp_path / "elsewhere"),
     ).record("update", id=memory.id)
-    assert world.recall(state=RecallState(background=False)).ids == (memory.id,)
+    assert world.recall(state=RecallState()).ids == (memory.id,)

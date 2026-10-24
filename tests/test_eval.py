@@ -2476,6 +2476,21 @@ class TestComputeReport:
         assert usage.total_tool_calls == 0
         assert usage.unmapped_event_kinds == {}
 
+    def test_a_recall_held_counts_its_session_and_no_tool(self) -> None:
+        """`recall_held` is recorded by the UserPromptSubmit hook INSIDE the
+        client's session, under its transcript id, for a probed prompt the
+        recall delivered nothing for (RS-F7 part 6): an in-session kind,
+        never a tool call or an unmapped kind."""
+        assert "recall_held" in _IN_SESSION_SIDE_EFFECT_KINDS
+        assert "recall_held" in _KNOWN_SIDE_EFFECT_KINDS
+        assert "recall_held" not in ADMIN_RECORDED_EVENT_KINDS
+        events = [_ev("recall_held", session="s-real", cause="no_signal", held=[])]
+        doc = compute_report([], events, version="0-test")
+        assert doc.distinct_session_count == 1
+        usage = compute_tool_usage(events)
+        assert usage.total_tool_calls == 0
+        assert usage.unmapped_event_kinds == {}
+
     def test_a_standing_guard_counts_its_session_and_no_tool(self) -> None:
         """`standing_guard` is recorded handler-side INSIDE the tool call
         whose change it let through, under that call's session: an

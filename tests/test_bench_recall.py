@@ -1,5 +1,5 @@
-"""The recall surface's bench (unit RS, D20): bench/recall/replay.py,
-bench/recall/brief.py and the prompt arm of bench/daemon/latency.py.
+"""The recall surface's bench (unit RS, D20): bench/recall/replay.py and
+the prompt arm of bench/daemon/latency.py.
 
 The replay is graded on a private fixture frozen from the sealed copy
 (RS-P4); these tests pin what makes that count readable again and safe to
@@ -19,18 +19,15 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
-import shutil
 import sqlite3
-import subprocess
 import sys
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import ModuleType
 from typing import Any
 
 import pytest
 
-from bettermemory.origin import Origin
-from bettermemory.recall import RECALL_CAP_CHARS, HookResult
+from bettermemory.recall import RECALL_CAP_CHARS
 
 _ROOT = Path(__file__).resolve().parents[1]
 
@@ -45,7 +42,6 @@ def _load(name: str, path: Path) -> ModuleType:
 
 
 replay = _load("bench_recall_replay", _ROOT / "bench" / "recall" / "replay.py")
-brief = _load("bench_recall_brief", _ROOT / "bench" / "recall" / "brief.py")
 latency = _load("bench_daemon_latency", _ROOT / "bench" / "daemon" / "latency.py")
 
 REPO = "https://example.invalid/acme/widgets.git"
@@ -347,135 +343,6 @@ def test_run_writes_counts_rates_and_the_fixture_sha(tmp_path: Path) -> None:
         bad = tmp_path / "bad.json"
         bad.write_text(json.dumps({"kind": "other"}))
         replay.load_fixture(bad)
-
-
-# ---------------------------------------------------------------------------
-# brief.py
-# ---------------------------------------------------------------------------
-
-
-def test_count_git_counts_git_processes_only() -> None:
-    with brief.count_git() as spawned:
-        subprocess.run(["git", "--version"], capture_output=True, check=True)
-        subprocess.run([sys.executable, "-c", "pass"], check=True)
-        assert spawned() == 1
-    assert subprocess.run.__name__ == "run"
-
-
-@pytest.mark.skipif(sys.platform == "win32", reason="the git shim is a shell script")
-def test_git_shim_logs_each_call_and_runs_git(tmp_path: Path) -> None:
-    log = tmp_path / "calls.log"
-    shim = brief.git_shim(tmp_path / "shim", log)
-    proc = subprocess.run(
-        [str(shim / "git"), "--version"], capture_output=True, text=True, check=True
-    )
-    assert proc.stdout.startswith("git version")
-    subprocess.run([str(shim / "git"), "--version"], capture_output=True, check=True)
-    assert brief._lines(log) == 2
-
-
-def test_checkouts_rank_repositories_and_name_none() -> None:
-    def mem(repo: str | None, worktree: str | None) -> Any:
-        return SimpleNamespace(origin=Origin(repo=repo, worktree_root=worktree))
-
-    store = SimpleNamespace(
-        load_all=lambda: [
-            mem(REPO, WT),
-            mem(REPO, WT),
-            mem(REPO, "/nonexistent/other"),
-            mem(None, "/nonexistent/repoless"),
-            mem(None, "/nonexistent/repoless"),
-            mem(OTHER, None),
-            SimpleNamespace(origin=None),
-        ]
-    )
-    rows = brief.checkouts(store, count=2)
-    assert [(r["rank"], r["rows"], r["repoless"]) for r in rows] == [
-        (0, 3, False),
-        (1, 2, True),
-    ]
-    assert rows[0]["local"] is None and rows[0]["origin"].repo == REPO
-    public = brief._public(rows[1])
-    assert set(public) == {
-        "rank",
-        "rows",
-        "is_this_repository",
-        "repoless",
-        "local_worktree",
-    }
-    assert "/nonexistent" not in json.dumps(public)
-
-
-def test_line_faults_flags_a_line_beyond_id_summary_and_mark() -> None:
-    body = "A plain durable note about the widget build. " * 4
-    memory = SimpleNamespace(id=A, body=body)
-    store = SimpleNamespace(
-        pending_conflict_pairs=lambda: [],
-        load_many=lambda ids: [memory],
-    )
-    from bettermemory.recall import render_brief
-
-    text, ids = render_brief([memory])  # type: ignore[list-item]
-    good = HookResult(stdout=text, surface="session_brief", ids=tuple(ids))
-    assert brief._line_faults(store, good, {}) == 0
-    bad = HookResult(stdout=text + " extra", surface="session_brief", ids=tuple(ids))
-    assert brief._line_faults(store, bad, {}) == 1
-    longer = HookResult(
-        stdout=text + "\n- more", surface="session_brief", ids=tuple(ids)
-    )
-    assert brief._line_faults(store, longer, {}) == 1
-    # The window's in-force note is part of the line (RS-F7 part 3).
-    note = f"[extended by {B}]"
-    text, ids = render_brief([memory], {A: note})  # type: ignore[list-item]
-    noted = HookResult(stdout=text, surface="session_brief", ids=tuple(ids))
-    assert brief._line_faults(store, noted, {A: note}) == 0
-    assert brief._line_faults(store, noted, {}) == 1
-
-
-@pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
-@pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="the signature reads the POSIX stamps of the repository files",
-)
-def test_signature_sees_a_root_file_created_and_removed(tmp_path: Path) -> None:
-    """The held stamps are part of the signature: a file created and
-    removed in the root leaves the head's signature and the walk files as
-    they were, and moves the signature all the same, so a fill that lost
-    its memo to it is visible in the results."""
-    from .test_verdict import _repo
-
-    repo = _repo(tmp_path)
-    before = brief._signature(str(repo))
-    assert before is not None and before[1] is not None and before[2]
-    assert brief._signature(str(repo)) == before
-    scratch = repo / ".notes.md.swp"
-    scratch.write_text("x")
-    scratch.unlink()
-    after = brief._signature(str(repo))
-    assert after[:2] == before[:2]
-    assert after != before
-    assert brief._signature(None) is None
-
-
-def test_fill_counts_read_the_checkouts_last_fill() -> None:
-    from bettermemory.recall import brief_key
-    from bettermemory.verdict import FillReport
-
-    origin = Origin(repo=REPO, worktree_root=WT, cwd=None)
-    report = FillReport(rows=5, resolved=4, kept=3, retried=1, lost=1)
-    state = SimpleNamespace(
-        fill_report=lambda key: report if key == brief_key(origin) else None
-    )
-    checkout = {"local": None, "origin": origin}
-    assert brief._fill_counts(state, checkout) == {
-        "fill_rows": 5,
-        "fill_resolved": 4,
-        "fill_kept": 3,
-        "fill_retried": 1,
-        "fill_lost": 1,
-    }
-    nothing = SimpleNamespace(fill_report=lambda key: None)
-    assert set(brief._fill_counts(nothing, checkout).values()) == {None}
 
 
 # ---------------------------------------------------------------------------

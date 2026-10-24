@@ -299,7 +299,7 @@ def test_a_delivery_block_and_event(world: PromptWorld) -> None:
     assert result.surface == "prompt_recall"
     assert result.ids == (memory.id,)
     assert result.chars == len(result.stdout)
-    assert result.rule == "rs-v5"
+    assert result.rule == "rs-v6"
     # The old block's promise that recording `ignored` tunes recall down
     # is gone: no ranking reads outcomes.
     assert "ignored" not in result.stdout
@@ -308,7 +308,7 @@ def test_a_delivery_block_and_event(world: PromptWorld) -> None:
     assert event["event_id"] == result.event_id
     assert event["shown_ids"] == [memory.id]
     assert event["suppressed_ids"] == []
-    assert event["rule"] == "rs-v5"
+    assert event["rule"] == "rs-v6"
     assert event["checkout"] == world.home.checkout
     assert event["rc3_admitted"] == [memory.id]
     assert event["chars"] == event["injected_chars"] == len(result.stdout)
@@ -745,7 +745,7 @@ def test_the_state_is_shared_across_calls(world: PromptWorld) -> None:
     """With a daemon's state the second prompt is held from memory, not
     from the log: the same answer either way."""
     world.write()
-    state = RecallState(background=False)
+    state = RecallState()
     assert world.recall(state=state).ids
     assert world.recall(state=state).stdout == ""
     assert world.recall().stdout == ""  # the log says the same

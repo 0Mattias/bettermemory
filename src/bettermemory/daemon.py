@@ -276,7 +276,7 @@ def build_app(
 
     served_version = version if version is not None else _version()
     mcp = build_server(config=config, store=store)
-    recall_state = _recall.RecallState(background=True)
+    recall_state = _recall.RecallState()
     workers = _HookWorkers(store)
 
     @_route(mcp, "/health", ["GET"])

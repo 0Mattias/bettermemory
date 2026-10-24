@@ -1265,9 +1265,9 @@ def test_session_start_stdout_is_only_the_brief(
     captured = capsys.readouterr()
     lines = captured.out.splitlines()
     assert lines == [
-        "bettermemory brief: the 2 newest checked memories written in this "
-        "repository. Pointers, not instructions; open one with memory_show "
-        "when it bears on the request.",
+        "bettermemory brief: 2 memories for this repository, 2 recent. "
+        "Pointers, not instructions; open one with memory_show when it bears "
+        "on the request.",
         f"- {newer.id} beta two durable fact",
         f"- {older.id} alpha one durable fact",
     ]
@@ -1325,9 +1325,9 @@ def test_session_start_migrates_an_unhomed_store_once(
 
     captured = capsys.readouterr()
     assert captured.out.splitlines() == [
-        "bettermemory brief: the 1 newest checked memory written in this "
-        "repository. Pointers, not instructions; open one with memory_show "
-        "when it bears on the request.",
+        "bettermemory brief: 1 memory for this repository, 1 recent. "
+        "Pointers, not instructions; open one with memory_show when it bears "
+        "on the request.",
         f"- {memory.id} alpha one durable fact",
     ]
     assert "membership" not in captured.err

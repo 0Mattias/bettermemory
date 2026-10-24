@@ -303,7 +303,7 @@ def _first_output(h: Harness, session_id: str) -> str:
         cwd=Path.cwd(),
         config=h.config,
         store=h.store,
-        state=RecallState(background=False),
+        state=RecallState(),
     )
     return result.stdout
 

@@ -2383,6 +2383,7 @@ _TURN_AUDITED_KEYS = {
     "probe_mode",
     "probe_query",
     "recent_retrieval_count",
+    "rule",
     "session",
     "session_id",
     "threshold_rule",
@@ -2399,6 +2400,7 @@ _SEARCH_MISS_KEYS = {
     "lookback_seconds",
     "probe_query",
     "recent_retrieval_count",
+    "rule",
     "session",
     "session_id",
     "threshold_rule",
@@ -2495,7 +2497,7 @@ def test_a_root_is_counted_once_per_session(review_world: Any) -> None:
     from bettermemory.recall import RecallState
 
     root = _review_row(review_world.store)
-    state = RecallState(background=False)
+    state = RecallState()
     _stop(review_world, state=state)
     # The next turn re-sends and meets a follow-up review of the same
     # chain: same root, not counted again, with the daemon's state or
