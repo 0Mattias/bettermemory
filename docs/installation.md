@@ -93,7 +93,85 @@ verification policy:
   [system_prompt.md](system_prompt.md) into your `CLAUDE.md` or
   equivalent, or print it with `bettermemory init --with-addendum`.
 
-## 5. Coming from 8.x
+## 5. Optional: managed deployment
+
+The standing guard holds an agent that works through the tools: a
+standing memory changes only with the user's words, checked against the
+prompts the prompt hook posted (SECURITY.md, "An agent that changes the
+user's rules"). An agent that runs as the user with a shell is outside
+that: it can open the store file, read the key, and post a prompt of its
+own to the daemon's hook endpoint with the token every hook and shim
+holds. The line between the user's words and the agent's shell is the
+harness's to draw, and Claude Code's sandbox draws it: command hooks and
+local MCP servers run outside the sandbox with the user's full access,
+while the commands the agent runs are confined. bettermemory offers no
+daemon under a separate OS account. That would keep the file, the key
+and the log out of the agent's reach, but the agent's account would
+still hold the token the hook and the shim need, and with it the words
+channel.
+
+The settings under which the promise holds, delivered as managed
+settings on macOS and Linux (the sandbox does not run on native
+Windows):
+
+```json
+{
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "filesystem": {
+      "denyRead": [
+        "~/.claude-memory",
+        "~/.config/bettermemory",
+        "~/.local/state/bettermemory"
+      ]
+    }
+  },
+  "permissions": {
+    "deny": [
+      "Read(~/.claude-memory/**)",
+      "Edit(~/.claude-memory/**)",
+      "Read(~/.config/bettermemory/**)",
+      "Edit(~/.config/bettermemory/**)",
+      "Read(~/.local/state/bettermemory/**)",
+      "Edit(~/.local/state/bettermemory/**)"
+    ]
+  }
+}
+```
+
+The three directories are the store directory (`bettermemory status`
+prints it; `~/.claude-memory` unless `BETTERMEMORY_DIR` or `[storage]
+directory` names another), the user config directory that holds the
+keys (or `BETTERMEMORY_KEYS_DIR`), and the user state directory that
+holds the daemon's state file with its token (or
+`BETTERMEMORY_STATE_DIR`). On Linux the last two are
+`~/.config/bettermemory` and `~/.local/state/bettermemory`, as above;
+on macOS both are `~/Library/Application Support/bettermemory`. The
+store directory is in the list so that memories reach the agent only
+through the tools, under the caller's admission. The `denyRead` entries
+hold for every process a sandboxed command starts; the
+`permissions.deny` rules cover Claude Code's own Read, Edit and Write
+tools, which run outside the sandbox. Beside them: no `localhost`,
+`*.localhost` or `127.0.0.1` entry without a port in
+`sandbox.network.allowedDomains`, since an entry with no port opens
+every port on that host and the daemon's with it;
+`sandbox.network.allowLocalBinding` left off; and no
+`sandbox.excludedCommands`, since an excluded command runs as the user.
+
+Under these settings a `bettermemory` command the agent runs fails: it
+can read neither the state file nor the store. The hooks and the shim
+run outside the sandbox and are unaffected. Every change the agent makes
+goes through the tools, and the only prompts the daemon holds as the
+user's words are the ones the prompt hook posted.
+
+What the sandbox does not cover: native Windows; a command the user
+types at the `!` shell-mode prompt, which runs as the user; and MCP
+clients other than Claude Code, which have no hooks, so there the words
+are taken as given and the log row says so.
+
+## 6. Coming from 8.x
 
 The 9.0 store is one SQLite file, `memory.sqlite`, in the store
 directory, and it is not created from an 8.x directory automatically.
@@ -126,7 +204,7 @@ the migrated store on their own.
 - **The server refuses to start, naming `bettermemory migrate v8`**: the
   store directory holds an 8.x store (memory files, event shards or a
   tombstone directory) and no `memory.sqlite`. Run the migration once
-  (section 5); nothing in the directory is written.
+  (section 6); nothing in the directory is written.
 - **The daemon's log says the store was opened without its key**: this
   machine did not hold the store's key, which lives under the user
   config directory (`keys/<store_id>.key`, or under
