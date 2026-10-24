@@ -1,0 +1,135 @@
+{
+  "commit": "d73b3f8811f6f0290fb7cc0a7e41b9dcb16a41b4",
+  "kind": "daemon-latency-brief",
+  "machine": {
+    "cpu_count": 12,
+    "machine": "arm64",
+    "platform": "macOS-27.0.1-arm64-arm-64bit",
+    "python": "3.11.15"
+  },
+  "method": {
+    "brief_hook_wall_probed": "subprocess.run of `python -m bettermemory hook session-start`, the probed payload on stdin, wall time from spawn to exit",
+    "brief_service_empty": "_daemon_client.post to /api/v1/hook/session-start from a warm client, the transcript path of a session not yet written, a fresh session per call",
+    "brief_service_probed": "the same with a synthetic transcript of transcript_prompts prompts of the prompt workload as user rows",
+    "brief_standing": 8,
+    "brief_work": 8,
+    "cwd": "the repository root",
+    "n": 50,
+    "passes": "as_migrated on the store as migrated (ambient records standing by category, no answers); standing_answered after standing was answered, the daemon down, on the first brief_standing WORK ids the first probed brief of as_migrated showed",
+    "probe_chars": 12000,
+    "source": "startup",
+    "standing_answered": 8,
+    "standing_probability": 0.9,
+    "transcript_prompts": 6,
+    "warm_ups": 3
+  },
+  "passes": {
+    "as_migrated": {
+      "briefs": {
+        "empty": {
+          "briefs": 50,
+          "chars_p50": 1334.0,
+          "empty": 0,
+          "first_in_force": 1,
+          "first_recent": 8,
+          "pointers_p50": 9.0
+        },
+        "probed": {
+          "briefs": 50,
+          "chars_p50": 1373.0,
+          "empty": 0,
+          "first_in_force": 1,
+          "first_recent": 8,
+          "pointers_p50": 9.0
+        }
+      },
+      "results": {
+        "brief_hook_wall_probed": {
+          "max_ms": 170.31,
+          "min_ms": 105.78,
+          "n": 50,
+          "p50_ms": 129.0,
+          "p95_ms": 144.83
+        },
+        "brief_service_empty": {
+          "max_ms": 184.24,
+          "min_ms": 114.44,
+          "n": 50,
+          "p50_ms": 117.39,
+          "p95_ms": 132.42
+        },
+        "brief_service_probed": {
+          "max_ms": 104.06,
+          "min_ms": 65.22,
+          "n": 50,
+          "p50_ms": 87.07,
+          "p95_ms": 99.64
+        }
+      }
+    },
+    "standing_answered": {
+      "briefs": {
+        "empty": {
+          "briefs": 50,
+          "chars_p50": 2262.0,
+          "empty": 0,
+          "first_in_force": 8,
+          "first_recent": 8,
+          "pointers_p50": 16.0
+        },
+        "probed": {
+          "briefs": 50,
+          "chars_p50": 2301.0,
+          "empty": 0,
+          "first_in_force": 8,
+          "first_recent": 8,
+          "pointers_p50": 16.0
+        }
+      },
+      "results": {
+        "brief_hook_wall_probed": {
+          "max_ms": 152.74,
+          "min_ms": 113.41,
+          "n": 50,
+          "p50_ms": 134.47,
+          "p95_ms": 147.96
+        },
+        "brief_service_empty": {
+          "max_ms": 142.36,
+          "min_ms": 118.29,
+          "n": 50,
+          "p50_ms": 120.02,
+          "p95_ms": 136.38
+        },
+        "brief_service_probed": {
+          "max_ms": 139.11,
+          "min_ms": 74.64,
+          "n": 50,
+          "p50_ms": 95.83,
+          "p95_ms": 114.25
+        }
+      }
+    }
+  },
+  "run_at": "2026-10-24T22:58:01.862275Z",
+  "scratch_removed": true,
+  "store": {
+    "events_imported": {
+      "found": 15871,
+      "imported": 15871,
+      "malformed": 0,
+      "present": 0,
+      "redacted": 123,
+      "unstamped": 0
+    },
+    "memories_imported": {
+      "found": 662,
+      "imported": 662,
+      "present": 0,
+      "unparseable": 0
+    },
+    "migration_seconds": 2.77,
+    "source": "/Users/mattias/.cache/bettermemory-v9/live-copy"
+  },
+  "version": "9.0.0rc6"
+}

@@ -109,6 +109,40 @@ forbids).
         --v8 ~/.cache/bettermemory-v9/live-copy \\
         --out bench/daemon/results/latency-9.0.0-2026-10-11-prompt.json
 
+The brief arm (`--arm brief`, RS-F7 part 8) times the session brief as
+rs-v6 builds it, every call from a fresh session (a session's second
+brief omits what its first showed), on two daemon starts:
+
+  brief_service_empty      `/api/v1/hook/session-start` from a warm client
+                           with the transcript path of a session not yet
+                           written, as a first start sends it: the probe is
+                           empty and both lists rank by recency; N.
+  brief_service_probed     the same with a synthetic transcript holding
+                           BRIEF_TRANSCRIPT_PROMPTS prompts of the prompt
+                           workload as user rows, so the probe reads a
+                           session's worth of owner words and ranks the
+                           lists; N.
+  brief_hook_wall_probed   `bettermemory hook session-start` as the harness
+                           runs it: one process per call, the probed
+                           payload on stdin, wall time from spawn to exit;
+                           N.
+
+The first start (as_migrated) runs on the store as migrated, where only
+a record of category ambient is standing (`standing.is_standing`), so the
+brief is its WORK list and the ambient records. Then, with the daemon
+down, standing is answered in the scratch store on the first
+`recall.BRIEF_STANDING` WORK ids the first probed brief showed, the ids
+after its in-force lines (probability BRIEF_STANDING_PROBABILITY, source
+asked, `Store.put_standing`), and the second start (standing_answered)
+times the brief with both lists filled. The
+artifact records each pass's timings and the shape of its briefs (pointers
+and characters per brief, the header's in-force and recent counts), never
+an id or a line.
+
+    python bench/daemon/latency.py --arm brief \
+        --v8 ~/.cache/bettermemory-v9/live-copy \
+        --out bench/daemon/results/latency-9.0.0rc7-2026-10-24-brief.json
+
 The stop arm (`--arm stop`, unit CAPS's CAPS-P4) times the Stop endpoint
 and the capture open decision (`run_stop_arm`):
 
@@ -140,6 +174,7 @@ import json
 import os
 import platform
 import random
+import re
 import shutil
 import statistics
 import subprocess
@@ -625,6 +660,337 @@ def run_prompt_arm(*, v8: Path, scratch: Path, n: int) -> dict[str, Any]:
         },
         "results": results,
         "deliveries": prompt_deliveries(prompts, service_replies, "service"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# The brief arm (RS-F7 part 8)
+# ---------------------------------------------------------------------------
+
+#: The SessionStart source the brief arm posts: a session's first start.
+BRIEF_SOURCE = "startup"
+#: Untimed briefs sent first, from sessions of their own, as the other
+#: arms warm up with three calls.
+BRIEF_WARM_UPS = 3
+#: User rows per synthetic transcript: a session's worth of the prompt
+#: workload (PROMPT_SESSION_LEN), about 6,600 characters, inside the
+#: probe's `recall.BRIEF_PROBE_CHARS` so the probe reads every row.
+BRIEF_TRANSCRIPT_PROMPTS = PROMPT_SESSION_LEN
+#: The probability standing is answered with between the passes: the one
+#: the brief's tests answer (tests/test_recall_brief.py), above
+#: `standing.TAU_STANDING`.
+BRIEF_STANDING_PROBABILITY = 0.9
+BRIEF_TRANSCRIPT_VERSION = "2.1.295"
+
+
+def brief_transcripts(tdir: Path, prompts: list[str], n: int) -> list[Path]:
+    """`n` synthetic transcripts in Claude Code's row shape, the i-th
+    holding prompts i to i + BRIEF_TRANSCRIPT_PROMPTS - 1 of `prompts` as
+    user rows, an assistant row after each, so `transcript.owner_words`
+    reads a session's worth of owner words from each."""
+    paths: list[Path] = []
+    for index in range(n):
+        session = f"bench-brief-transcript-{index:03d}"
+        path = tdir / f"{session}.jsonl"
+        parent: str | None = None
+        with path.open("w", encoding="utf-8") as fh:
+            window = prompts[index : index + BRIEF_TRANSCRIPT_PROMPTS]
+            for offset, prompt in enumerate(window):
+                stamp = f"2026-10-24T00:{(offset * 2) % 60:02d}:00.000Z"
+                rows: list[tuple[str, dict[str, Any]]] = [
+                    ("user", {"role": "user", "content": prompt}),
+                    (
+                        "assistant",
+                        {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": "noted"}],
+                        },
+                    ),
+                ]
+                for turn, (kind, message) in enumerate(rows):
+                    uuid = f"{index:08x}-{offset:04x}-4000-8000-{turn:012d}"
+                    row: dict[str, Any] = {
+                        "parentUuid": parent,
+                        "isSidechain": False,
+                        "userType": "external",
+                        "cwd": str(ROOT),
+                        "sessionId": session,
+                        "version": BRIEF_TRANSCRIPT_VERSION,
+                        "type": kind,
+                        "message": message,
+                        "uuid": uuid,
+                        "timestamp": stamp,
+                    }
+                    if kind == "user":
+                        row["promptId"] = f"p{offset}"
+                    fh.write(json.dumps(row) + "\n")
+                    parent = uuid
+        paths.append(path)
+    return paths
+
+
+def brief_payload(session: str, transcript: Path, cwd: Path) -> dict[str, Any]:
+    """The SessionStart payload as the harness posts it for a first start."""
+    return {
+        "session_id": session,
+        "transcript_path": str(transcript),
+        "cwd": str(cwd),
+        "source": BRIEF_SOURCE,
+        "harness": "claude-code",
+        "hook_event_name": "SessionStart",
+    }
+
+
+def brief_service(
+    scratch: Path, payloads: list[dict[str, Any]], warm_ups: list[dict[str, Any]]
+) -> tuple[list[float], list[dict[str, Any]]]:
+    """Each payload posted to /api/v1/hook/session-start from a warm client,
+    after the warm-ups. Returns the times and the replies."""
+    from bettermemory._daemon_client import post, read_state
+
+    state = read_state(scratch / "state", scratch / "store" / "memory.sqlite")
+    if state is None:
+        raise SystemExit("no daemon state for the brief arm")
+    for payload in warm_ups:
+        post(
+            state["port"],
+            state["token"],
+            "/api/v1/hook/session-start",
+            payload,
+            timeout=30,
+        )
+    times: list[float] = []
+    replies: list[dict[str, Any]] = []
+    for payload in payloads:
+        started = time.perf_counter()
+        reply = post(
+            state["port"],
+            state["token"],
+            "/api/v1/hook/session-start",
+            payload,
+            timeout=30,
+        )
+        times.append(time.perf_counter() - started)
+        replies.append(reply)
+    return times, replies
+
+
+def brief_hook_wall(
+    env: dict[str, str], payloads: list[dict[str, Any]], warm_ups: list[dict[str, Any]]
+) -> list[float]:
+    """`bettermemory hook session-start` once per payload, the payload on
+    stdin, after the warm-ups; wall time from spawn to exit."""
+    for payload in warm_ups:
+        _cli(["hook", "session-start"], env, stdin=json.dumps(payload))
+    times: list[float] = []
+    for payload in payloads:
+        started = time.perf_counter()
+        proc = _cli(["hook", "session-start"], env, stdin=json.dumps(payload))
+        times.append(time.perf_counter() - started)
+        if proc.returncode != 0:
+            raise SystemExit(f"hook exited {proc.returncode}: {proc.stderr[-500:]}")
+    return times
+
+
+def brief_shape(replies: list[dict[str, Any]]) -> dict[str, Any]:
+    """What the briefs showed, as counts: briefs, briefs with no pointer,
+    pointers and characters per brief at the median, and the in-force and
+    recent counts the first brief's header names (0 where the header
+    names none)."""
+    pointers = [len(reply.get("ids") or []) for reply in replies]
+    chars = [int(reply.get("chars") or 0) for reply in replies]
+    # The brief's header follows the membership lines in the hook's stdout.
+    header = re.search(
+        r"^bettermemory brief: .*$",
+        str(replies[0].get("stdout") or "") if replies else "",
+        re.MULTILINE,
+    )
+    head = header.group(0) if header else ""
+    in_force = re.search(r"(\d+) in force", head)
+    recent = re.search(r"(\d+) recent", head)
+    return {
+        "briefs": len(replies),
+        "empty": sum(1 for count in pointers if count == 0),
+        "pointers_p50": statistics.median(pointers) if pointers else 0,
+        "chars_p50": statistics.median(chars) if chars else 0,
+        "first_in_force": int(in_force.group(1)) if in_force else 0,
+        "first_recent": int(recent.group(1)) if recent else 0,
+    }
+
+
+def answer_standing(scratch: Path, ids: list[str]) -> int:
+    """Standing answered on `ids` in the scratch store, in this process
+    while the daemon is down: BRIEF_STANDING_PROBABILITY, source asked,
+    answered by this bench. Returns how many were answered."""
+    from bettermemory.standing import SOURCE_ASKED
+    from bettermemory.store import StandingAnswer, Store
+
+    store = Store(scratch / "store", keys_dir=scratch / "keys")
+    answer = StandingAnswer(
+        BRIEF_STANDING_PROBABILITY, SOURCE_ASKED, "bench/daemon/latency.py"
+    )
+    try:
+        for record_id in ids:
+            store.put_standing(record_id, answer)
+    finally:
+        close = getattr(store, "close", None)
+        if callable(close):
+            close()
+    return len(ids)
+
+
+def _brief_pass(
+    env: dict[str, str],
+    scratch: Path,
+    *,
+    label: str,
+    transcripts: list[Path],
+    missing: list[Path],
+    n: int,
+) -> dict[str, Any]:
+    """One daemon start: the service time of a brief whose transcript is not
+    yet written (`missing`), then of one with a transcript, then the hook
+    wall with a transcript; every call from a fresh session named for the
+    pass and the measure. Returns the summaries, the briefs' shape and the
+    ids the first probed brief showed, its in-force lines first."""
+
+    def payloads(
+        measure: str, paths: list[Path]
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        rows = [
+            brief_payload(f"bench-brief-{label}-{measure}-{index:03d}", path, ROOT)
+            for index, path in enumerate(paths[: n + BRIEF_WARM_UPS])
+        ]
+        return rows[:BRIEF_WARM_UPS], rows[BRIEF_WARM_UPS:]
+
+    up = _cli(["up", "--port", "0"], env)
+    if up.returncode != 0:
+        raise SystemExit(f"daemon did not start: {up.stderr[-500:]}")
+    results: dict[str, Any] = {}
+    shape: dict[str, Any] = {}
+    first_ids: list[str] = []
+    try:
+        warm, timed = payloads("empty", missing)
+        times, replies = brief_service(scratch, timed, warm)
+        results["brief_service_empty"] = _summary(times)
+        shape["empty"] = brief_shape(replies)
+        print(
+            f"{label} brief service, empty {results['brief_service_empty']}",
+            file=sys.stderr,
+        )
+        warm, timed = payloads("probed", transcripts)
+        times, replies = brief_service(scratch, timed, warm)
+        results["brief_service_probed"] = _summary(times)
+        shape["probed"] = brief_shape(replies)
+        first_ids = [str(i) for i in (replies[0].get("ids") or [])] if replies else []
+        print(
+            f"{label} brief service, probed {results['brief_service_probed']}",
+            file=sys.stderr,
+        )
+        warm, timed = payloads("wall", transcripts)
+        results["brief_hook_wall_probed"] = _summary(brief_hook_wall(env, timed, warm))
+        print(
+            f"{label} brief hook wall, probed {results['brief_hook_wall_probed']}",
+            file=sys.stderr,
+        )
+    finally:
+        _cli(["down"], env)
+    return {"results": results, "briefs": shape, "first_ids": first_ids}
+
+
+def run_brief_arm(*, v8: Path, scratch: Path, n: int) -> dict[str, Any]:
+    from bettermemory import __version__
+    from bettermemory.recall import BRIEF_PROBE_CHARS, BRIEF_STANDING, BRIEF_WORK
+
+    refuse_live_store(scratch)
+    scratch.mkdir(parents=True, exist_ok=True)
+    # Resolved: the daemon keys its state file by the resolved store path.
+    scratch = scratch.resolve()
+    env = _env(scratch)
+    report = migrate(v8, scratch, env)
+    print(f"migrated in {report['seconds']} s", file=sys.stderr)
+    calls = n + BRIEF_WARM_UPS
+    prompts = prompt_workload(calls + BRIEF_TRANSCRIPT_PROMPTS - 1)
+    tdir = scratch / "transcripts"
+    tdir.mkdir()
+    transcripts = brief_transcripts(tdir, prompts, calls)
+    missing = [
+        tdir / f"bench-brief-unwritten-{index:03d}.jsonl" for index in range(calls)
+    ]
+
+    passes: dict[str, Any] = {}
+    first = _brief_pass(
+        env,
+        scratch,
+        label="as_migrated",
+        transcripts=transcripts,
+        missing=missing,
+        n=n,
+    )
+    passes["as_migrated"] = {"results": first["results"], "briefs": first["briefs"]}
+    # The first probed brief's WORK ids follow its in-force lines.
+    in_force = int(first["briefs"]["probed"]["first_in_force"])
+    answered = answer_standing(
+        scratch, first["first_ids"][in_force : in_force + BRIEF_STANDING]
+    )
+    print(f"standing answered on {answered} records", file=sys.stderr)
+    second = _brief_pass(
+        env,
+        scratch,
+        label="standing_answered",
+        transcripts=transcripts,
+        missing=missing,
+        n=n,
+    )
+    passes["standing_answered"] = {
+        "results": second["results"],
+        "briefs": second["briefs"],
+    }
+
+    return {
+        "kind": "daemon-latency-brief",
+        "version": __version__,
+        "commit": _git("rev-parse", "HEAD"),
+        "run_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "machine": _machine(),
+        "store": {
+            "source": str(v8),
+            "memories_imported": report.get("memories", {}),
+            "events_imported": report.get("events", {}),
+            "migration_seconds": report["seconds"],
+        },
+        "method": {
+            "n": n,
+            "warm_ups": BRIEF_WARM_UPS,
+            "source": BRIEF_SOURCE,
+            "cwd": "the repository root",
+            "transcript_prompts": BRIEF_TRANSCRIPT_PROMPTS,
+            "probe_chars": BRIEF_PROBE_CHARS,
+            "brief_standing": BRIEF_STANDING,
+            "brief_work": BRIEF_WORK,
+            "standing_answered": answered,
+            "standing_probability": BRIEF_STANDING_PROBABILITY,
+            "brief_service_empty": (
+                "_daemon_client.post to /api/v1/hook/session-start from a warm "
+                "client, the transcript path of a session not yet written, a "
+                "fresh session per call"
+            ),
+            "brief_service_probed": (
+                "the same with a synthetic transcript of transcript_prompts "
+                "prompts of the prompt workload as user rows"
+            ),
+            "brief_hook_wall_probed": (
+                "subprocess.run of `python -m bettermemory hook session-start`, "
+                "the probed payload on stdin, wall time from spawn to exit"
+            ),
+            "passes": (
+                "as_migrated on the store as migrated (ambient records standing by "
+                "category, no answers); standing_answered after standing was "
+                "answered, the daemon down, on the first brief_standing WORK ids "
+                "the first probed brief of as_migrated showed"
+            ),
+        },
+        "passes": passes,
     }
 
 
@@ -1549,13 +1915,14 @@ def main() -> None:
     )
     parser.add_argument(
         "--arm",
-        choices=("read", "write", "prompt", "stop"),
+        choices=("read", "write", "prompt", "stop", "brief"),
         default="read",
         help=(
             "read: the hook and memory_search arms (the default); write: the "
             "memory_write arm on a copy imported from --tgz; prompt: the "
             "per-prompt recall, prompts spaced 3 s apart; stop: the /hook/stop "
-            "service time with capture off and on, and the capture open decision"
+            "service time with capture off and on, and the capture open decision; "
+            "brief: the session brief, standing off and on"
         ),
     )
     parser.add_argument(
@@ -1621,6 +1988,18 @@ def main() -> None:
             tempfile.mkdtemp(prefix="bettermemory-daemon-prompt-bench-")
         )
         artifact = run_prompt_arm(v8=args.v8, scratch=scratch, n=args.n)
+        write_artifact(args.out, artifact)
+        print(f"wrote {args.out}", file=sys.stderr)
+        return
+    if args.arm == "brief":
+        scratch = args.scratch or Path(
+            tempfile.mkdtemp(prefix="bettermemory-daemon-brief-bench-")
+        )
+        try:
+            artifact = run_brief_arm(v8=args.v8, scratch=scratch, n=args.n)
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
+        artifact["scratch_removed"] = not scratch.exists()
         write_artifact(args.out, artifact)
         print(f"wrote {args.out}", file=sys.stderr)
         return
