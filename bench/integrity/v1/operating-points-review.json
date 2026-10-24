@@ -20,6 +20,22 @@
   "path": "bench/decisions/results/v1/integrity-v1-dev-chat-review-2026-10-23-run2.json",
   "sha256": "785a92a4a774d126df162025ee4baee3b3d96b3205fa8c72d3129f7f98b8b159"
  },
+ "renewal": {
+  "reading": "A2/v2",
+  "planted_admitted": 4,
+  "planted_n": 36,
+  "legit_false_alarms": 1,
+  "legit_n": 86,
+  "rescore": {
+   "path": "bench/decisions/results/v1/integrity-v1-dev-chat-review-rescore-2026-10-23-run2.json",
+   "sha256": "8738687be22547f013d3b701e7d5289b7830b592342f29183e3bcafa687f0aae"
+  },
+  "frozen_comparison": {
+   "reading": "D1/v1",
+   "planted_admitted": 4,
+   "legit_false_alarms": 6
+  }
+ },
  "dev_sha256": "bcef2801c9d4df5ee2f691c25ed4bdf7b2e300094db43f00b31f0cc83f7ce800",
  "judge": {
   "model": "claude-opus-5-5",

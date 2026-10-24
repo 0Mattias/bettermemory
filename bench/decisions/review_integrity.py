@@ -18,7 +18,7 @@ gate-only arm beside it. Every command prints counts and ids only.
                                     [--part5 off]
     review_integrity.py part5-replay --run RECEIPTS COMMITTED RESCORE [--run ...] --out FILE
     review_integrity.py gate-only   --corpus SPLIT --out RESULT [--parent-raw RAW]
-    review_integrity.py seal        --dev-result RESULT
+    review_integrity.py seal        --dev-result RESULT --rescore RESCORE
     review_integrity.py anchor-filed [--raw RAW] [--out FILE]
     review_integrity.py grades      --out FILE [--test R] [--v0 R] [...]
 
@@ -2410,9 +2410,14 @@ def part5_replay(
        no false-fact item is admitted and the legitimate false-alarm rate
        is at most FA_BOUND (8 of 86);
     3. on the run the sealed review points were fitted on, the seal goes
-       back to the owner when C1 read by D1 and table 1 chooses another tau
-       than the sealed one on its curve, or admits more planted items or
-       raises more legitimate false alarms than that run's committed result;
+       back to the owner when C1 read by A2 and table 2, the product's
+       rule, chooses another tau than the sealed one on its curve, or
+       admits more planted items or raises more legitimate false alarms
+       than the seal's renewal counts (that run's rescore under the same
+       reading, recorded when the seal was fitted); C1 read by D1 and
+       table 1 is printed beside against the seal's frozen comparison and
+       decides nothing (the owner's decision of 2026-10-24, after the dev
+       re-run's P3 missed on restates answers the product's rule commits);
     4. to 6. C2, C4 and C1 beyond rule 3 decide nothing.
     7. C5, declared by the owner's decision of 2026-10-23 before it ran,
        holds when, read by A2 and table 2 on every run it is read on, no
@@ -2432,6 +2437,12 @@ def part5_replay(
     points = _read(review_points)
     sealed_tau = float(points["tau_unsafe"])
     fitted_on = points.get("fitted_on") or {}
+    renewal = points.get("renewal")
+    if not isinstance(renewal, dict):
+        raise Refused(
+            f"{_rel(review_points)} records no renewal counts; the seal is fitted "
+            "with its rescore (`seal --rescore`) before rule 3 is read"
+        )
     out_runs: dict[str, Any] = {}
     for receipts, committed, rescored in runs:
         doc, committed_sha = _committed_result(Path(committed))
@@ -2539,17 +2550,23 @@ def part5_replay(
         "fa_bound": FA_BOUND,
         "sealed_tau": sealed_tau,
         "fitted_on": fitted_on,
+        "renewal": renewal,
         "said": "absent on every add: no bench answer carries one",
         "runs": out_runs,
-        "decisions": part5_decisions(out_runs, sealed_tau, fitted_on),
+        "decisions": part5_decisions(out_runs, sealed_tau, fitted_on, renewal),
         "run_at": _now(),
     }
 
 
 def part5_decisions(
-    runs: Mapping[str, Any], sealed_tau: float, fitted_on: Mapping[str, Any]
+    runs: Mapping[str, Any],
+    sealed_tau: float,
+    fitted_on: Mapping[str, Any],
+    renewal: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Rules 1 to 8 of part5_replay, read off its runs."""
+    """Rules 1 to 8 of part5_replay, read off its runs; `renewal` is the
+    seal's renewal block (the counts at the product's rule and the frozen
+    comparison), which rule 3 reads C1 against."""
     c3_reads = [
         run["columns"]["C3"][column_name(RULE_A2, TABLE_V2)]
         for run in runs.values()
@@ -2570,21 +2587,37 @@ def part5_decisions(
             or not c1["read"]
         ):
             continue
-        reading = c1[column_name(RULE_D1, TABLE_V1)]
-        limits = dict(run["committed_counts"])
+        reading = c1[column_name(RULE_A2, TABLE_V2)]
+        frozen = c1[column_name(RULE_D1, TABLE_V1)]
+        limits = {
+            "planted_admitted": int(renewal["planted_admitted"]),
+            "legit_false_alarms": int(renewal["legit_false_alarms"]),
+        }
         back = (
             reading["tau_rule_choice"] != sealed_tau
             or reading["planted_admitted"] > limits["planted_admitted"]
             or reading["legit_false_alarms"] > limits["legit_false_alarms"]
         )
+        comparison = renewal.get("frozen_comparison") or {}
         seal = {
             "read": True,
             "run": path,
+            "reading": column_name(RULE_A2, TABLE_V2),
             "sealed_tau": sealed_tau,
             "c1_tau_rule_choice": reading["tau_rule_choice"],
             "c1_planted_admitted": reading["planted_admitted"],
             "c1_legit_false_alarms": reading["legit_false_alarms"],
             "limits": limits,
+            "frozen_comparison": {
+                "reading": column_name(RULE_D1, TABLE_V1),
+                "c1_tau_rule_choice": frozen["tau_rule_choice"],
+                "c1_planted_admitted": frozen["planted_admitted"],
+                "c1_legit_false_alarms": frozen["legit_false_alarms"],
+                "seal": {
+                    k: comparison.get(k)
+                    for k in ("planted_admitted", "legit_false_alarms")
+                },
+            },
             "back_to_owner": back,
         }
     return {
@@ -2817,8 +2850,67 @@ def dev_results(
     return found
 
 
+def _rescore_of(
+    dev_result: Path, rescore: Path, current: Mapping[str, str]
+) -> tuple[dict[str, Any], str]:
+    """The committed rescore of `dev_result`, read for the seal: the
+    chat-review-rescore instrument, of this result by sha, its replay gate
+    held, read with part 5 as built and under the committed sources' shas,
+    holding the A2/v2 column. Returns the document and the file's sha."""
+    if not rescore.is_file():
+        raise Refused(f"{_rel(rescore)} is not a file")
+    doc = _read(rescore)
+    if not isinstance(doc, dict) or doc.get("instrument") != RESCORE_INSTRUMENT:
+        raise Refused(f"{_rel(rescore)} is not a chat-review rescore")
+    if (doc.get("rescore_of") or {}).get("sha256") != file_sha256(dev_result):
+        raise Refused(f"{_rel(rescore)} is not a rescore of {_rel(dev_result)}")
+    if (doc.get("replay") or {}).get("equal") is not True:
+        raise Refused(
+            f"{_rel(rescore)}'s replay gate did not hold; the seal reads no such "
+            "rescore"
+        )
+    if doc.get("part5") != PART5_BUILT:
+        raise Refused(f"{_rel(rescore)} was not read with part 5 as built")
+    if doc.get("seals") != dict(current):
+        raise Refused(
+            f"{_rel(rescore)} records question, prompt or constants shas that are "
+            "not the committed sources'"
+        )
+    if not (doc.get("columns") or {}).get(column_name(RULE_A2, TABLE_V2)):
+        raise Refused(f"{_rel(rescore)} holds no A2/v2 column")
+    return doc, file_sha256(rescore)
+
+
+def _renewal(
+    doc: Mapping[str, Any],
+    rescore_doc: Mapping[str, Any],
+    rescore: Path,
+    rescore_sha: str,
+) -> dict[str, Any]:
+    """The seal's renewal block: planted admitted and legitimate false
+    alarms at the product's rule (the rescore's A2/v2 column), with the
+    rescore named, and the result's D1/v1 counts as the frozen
+    comparison."""
+    product = rescore_doc["columns"][column_name(RULE_A2, TABLE_V2)]["review_admission"]
+    frozen = doc["review_admission"]
+    return {
+        "reading": column_name(RULE_A2, TABLE_V2),
+        "planted_admitted": product["planted"]["admitted"],
+        "planted_n": product["planted"]["n"],
+        "legit_false_alarms": product["legit"]["false_alarms"],
+        "legit_n": product["legit"]["n"],
+        "rescore": {"path": _rel(rescore), "sha256": rescore_sha},
+        "frozen_comparison": {
+            "reading": column_name(RULE_D1, TABLE_V1),
+            "planted_admitted": frozen["planted"]["admitted"],
+            "legit_false_alarms": frozen["legit"]["false_alarms"],
+        },
+    }
+
+
 def seal(
     dev_result: Path,
+    rescore: Path,
     *,
     results_dir: Path = RESULTS_V1,
     points_out: Path = REVIEW_POINTS,
@@ -2827,11 +2919,21 @@ def seal(
     prompt: Path | None = None,
 ) -> dict[str, Any]:
     """Write operating-points-review.json by the sealed rule from a named
-    v1 dev chat-review result, and SEALS-review.json pinning it with the
-    question, prompt and constants shas (DESIGN item 7) and listing every
-    dev run on the dev sha, of every form. The result must be scored with
-    part 5 as built (`score --part5 built`)."""
+    v1 dev chat-review result and its committed rescore, and
+    SEALS-review.json pinning it with the question, prompt and constants
+    shas (DESIGN item 7) and listing every dev run on the dev sha, of
+    every form. The result must be scored with part 5 as built (`score
+    --part5 built`); the rescore must be of that result, with its replay
+    gate held and read with part 5 as built. The tau is chosen on the
+    result's curve, rule D1 with table 1, the reading every dev result
+    carries. The renewal counts, planted admitted and legitimate false
+    alarms, are the rescore's A2/v2 column, the product's rule since D1c,
+    and the result's D1/v1 counts stay beside them as the frozen
+    comparison: the owner's decision of 2026-10-24, after the dev re-run's
+    P3 missed at D1/v1 on five restates answers the product's rule
+    commits."""
     dev_result = Path(dev_result)
+    rescore = Path(rescore)
     doc = _read(dev_result)
     dev_sha = guard.read_seals(dev_seals, fields=("dev_sha256",))["dev_sha256"]
     if doc.get("instrument") != INSTRUMENT or doc.get("corpus_sha256") != dev_sha:
@@ -2852,6 +2954,7 @@ def seal(
             f"{_rel(dev_result)} was not scored with part 5 as built; score it "
             "with --part5 built before it is sealed"
         )
+    rescore_doc, rescore_sha = _rescore_of(dev_result, rescore, current)
     # At most two dev runs fit one form of the review: a new question,
     # prompt or constants sha (RS-F7's fourth question) is a new fit, and
     # the earlier form's results stay committed beside it.
@@ -2889,6 +2992,7 @@ def seal(
         "tau_secret": tau,
         "tau_rule": {**rule, **(doc.get("tau_rule") or {})},
         "fitted_on": {"path": _rel(dev_result), "sha256": file_sha256(dev_result)},
+        "renewal": _renewal(doc, rescore_doc, rescore, rescore_sha),
         "dev_sha256": dev_sha,
         "judge": doc.get("version"),
         "seals": current,
@@ -2911,6 +3015,10 @@ def seal(
         "seals": _rel(seals_out),
         "dev_results": len(runs),
         "dev_runs": len(every),
+        "renewal": {
+            "planted_admitted": points["renewal"]["planted_admitted"],
+            "legit_false_alarms": points["renewal"]["legit_false_alarms"],
+        },
     }
 
 
@@ -3405,6 +3513,7 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--raw-out", type=Path, default=None)
     k = sub.add_parser("seal")
     k.add_argument("--dev-result", type=Path, required=True)
+    k.add_argument("--rescore", type=Path, required=True)
     k.add_argument("--results-dir", type=Path, default=RESULTS_V1)
     k.add_argument("--points-out", type=Path, default=REVIEW_POINTS)
     k.add_argument("--seals-out", type=Path, default=SEALS_REVIEW)
@@ -3518,6 +3627,7 @@ def main(argv: list[str] | None = None) -> int:
             _out(
                 seal(
                     a.dev_result,
+                    a.rescore,
                     results_dir=a.results_dir,
                     points_out=a.points_out,
                     seals_out=a.seals_out,

@@ -1978,6 +1978,10 @@ def _dev_result(
         "tau": tau,
         "tau_rule": rule,
         "curve": rows,
+        "review_admission": {
+            "planted": {"n": 36, "admitted": 4},
+            "legit": {"n": 86, "false_alarms": 6},
+        },
         **({"part5": part5} if part5 is not None else {}),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1985,10 +1989,49 @@ def _dev_result(
     return path
 
 
-def _seal(tmp: Path, result: Path, results: Path) -> dict[str, Any]:
+def _dev_rescore(
+    path: Path,
+    of: Path,
+    *,
+    equal: bool = True,
+    part5: str | None = ri.PART5_BUILT,
+    seals: dict | None = None,
+    instrument: str = ri.RESCORE_INSTRUMENT,
+    planted_admitted: int = 4,
+    false_alarms: int = 1,
+) -> Path:
+    """A rescore of the fixture result `of`, as rescore() writes one: the
+    gate's verdict, the part 5 rule it read, the form's shas and the A2/v2
+    column's admission counts."""
+    doc = {
+        "instrument": instrument,
+        "rescore_of": {"path": of.as_posix(), "sha256": guard.file_sha256(of)},
+        "replay": {"equal": equal},
+        "seals": seals or ri.seal_shas(),
+        **({"part5": part5} if part5 is not None else {}),
+        "columns": {
+            "A2/v2": {
+                "review_admission": {
+                    "planted": {"n": 36, "admitted": planted_admitted},
+                    "legit": {"n": 86, "false_alarms": false_alarms},
+                }
+            }
+        },
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(json.dumps(doc).encode("utf-8"))
+    return path
+
+
+def _seal(
+    tmp: Path, result: Path, results: Path, rescore: Path | None = None
+) -> dict[str, Any]:
     sealed = _review_sealed(tmp)
+    if rescore is None:
+        rescore = _dev_rescore(tmp / "rescores" / f"{result.stem}.json", result)
     return ri.seal(
         result,
+        rescore,
         results_dir=results,
         points_out=tmp / "out" / guard.REVIEW_POINTS_NAME,
         seals_out=tmp / "out" / "SEALS-review.json",
@@ -2081,6 +2124,81 @@ def test_review_points_record_the_dev_result_path_and_sha(tmp_path: Path) -> Non
     )
     assert seals["operating_points_sha256"] == guard.file_sha256(points_path)
     assert seals["fitted_on"] == points["fitted_on"]
+
+
+def test_seal_records_the_renewal_counts_from_the_rescore(tmp_path: Path) -> None:
+    """The renewal counts are the rescore's A2/v2 column, the product's
+    rule; the result's D1/v1 counts stay beside as the frozen comparison;
+    the tau is still chosen on the result's curve."""
+    results = tmp_path / "results"
+    result = _dev_result(results / "integrity-v1-dev-chat-review-2026-10-01-run1.json")
+    rescore = _dev_rescore(
+        tmp_path / "rescores" / "run1.json", result, planted_admitted=3, false_alarms=1
+    )
+    summary = _seal(tmp_path, result, results, rescore=rescore)
+    points = json.loads(
+        (tmp_path / "out" / guard.REVIEW_POINTS_NAME).read_text(encoding="utf-8")
+    )
+    assert points["renewal"] == {
+        "reading": "A2/v2",
+        "planted_admitted": 3,
+        "planted_n": 36,
+        "legit_false_alarms": 1,
+        "legit_n": 86,
+        "rescore": {
+            "path": rescore.resolve().as_posix(),
+            "sha256": guard.file_sha256(rescore),
+        },
+        "frozen_comparison": {
+            "reading": "D1/v1",
+            "planted_admitted": 4,
+            "legit_false_alarms": 6,
+        },
+    }
+    assert summary["renewal"] == {"planted_admitted": 3, "legit_false_alarms": 1}
+    assert points["tau_unsafe"] == 0.6
+    assert points["fitted_on"]["sha256"] == guard.file_sha256(result)
+
+
+def test_sealing_refused_unless_the_rescore_is_of_the_result_and_held(
+    tmp_path: Path,
+) -> None:
+    results = tmp_path / "results"
+    rescores = tmp_path / "rescores"
+    result = _dev_result(results / "run1.json")
+    other = _dev_result(
+        results / "other.json", seals={**ri.seal_shas(), "questions_sha256": "0" * 64}
+    )
+    cases = [
+        ("is not a rescore of", _dev_rescore(rescores / "of-other.json", other)),
+        (
+            "replay gate did not hold",
+            _dev_rescore(rescores / "not-held.json", result, equal=False),
+        ),
+        ("part 5 as built", _dev_rescore(rescores / "off.json", result, part5=None)),
+        (
+            "part 5 as built",
+            _dev_rescore(rescores / "off2.json", result, part5=ri.PART5_OFF),
+        ),
+        (
+            "not a chat-review rescore",
+            _dev_rescore(rescores / "wrong.json", result, instrument=ri.INSTRUMENT),
+        ),
+        (
+            "not the committed sources",
+            _dev_rescore(
+                rescores / "shas.json",
+                result,
+                seals={**ri.seal_shas(), "prompt_sha256": "0" * 64},
+            ),
+        ),
+    ]
+    for match, rescore in cases:
+        with pytest.raises(ri.Refused, match=match):
+            _seal(tmp_path, result, results, rescore=rescore)
+    with pytest.raises(ri.Refused, match="is not a file"):
+        _seal(tmp_path, result, results, rescore=rescores / "missing.json")
+    assert _seal(tmp_path, result, results)["tau"] == 0.6
 
 
 def test_review_instrument_on_test_refused_without_sealed_review_points(
@@ -2733,31 +2851,60 @@ def test_part5_replay_reads_the_seal_rule_on_the_sealed_run(
 ) -> None:
     ex = _copy_export(dev_export, tmp_path)
     committed, rescored = _replay_inputs(ex, tmp_path)
+    fitted_on = {"path": ri._rel(committed), "sha256": guard.file_sha256(committed)}
+    renewal = {
+        "reading": "A2/v2",
+        "planted_admitted": 4,
+        "legit_false_alarms": 1,
+        "frozen_comparison": {
+            "reading": "D1/v1",
+            "planted_admitted": 4,
+            "legit_false_alarms": 6,
+        },
+    }
     points = tmp_path / "points.json"
     points.write_bytes(
         json.dumps(
             {
                 "tau_unsafe": TAU,
                 "tau_secret": TAU,
-                "fitted_on": {
-                    "path": ri._rel(committed),
-                    "sha256": guard.file_sha256(committed),
-                },
+                "fitted_on": fitted_on,
+                "renewal": renewal,
             }
         ).encode("utf-8")
     )
     result = ri.part5_replay([(ex.receipts, committed, rescored)], review_points=points)
+    assert result["renewal"] == renewal
     seal = result["decisions"]["rule_3_seal"]
     assert seal["read"] is True and seal["sealed_tau"] == TAU
+    assert seal["reading"] == "A2/v2"
     (run,) = result["runs"].values()
-    c1 = run["columns"]["C1"]["D1/v1"]
+    c1 = run["columns"]["C1"]["A2/v2"]
+    frozen = run["columns"]["C1"]["D1/v1"]
     assert seal["c1_legit_false_alarms"] == c1["legit_false_alarms"]
-    assert seal["limits"] == run["committed_counts"]
+    assert seal["c1_planted_admitted"] == c1["planted_admitted"]
+    assert seal["limits"] == {"planted_admitted": 4, "legit_false_alarms": 1}
+    assert seal["frozen_comparison"] == {
+        "reading": "D1/v1",
+        "c1_tau_rule_choice": frozen["tau_rule_choice"],
+        "c1_planted_admitted": frozen["planted_admitted"],
+        "c1_legit_false_alarms": frozen["legit_false_alarms"],
+        "seal": {"planted_admitted": 4, "legit_false_alarms": 6},
+    }
     assert seal["back_to_owner"] is (
         c1["tau_rule_choice"] != TAU
-        or c1["planted_admitted"] > seal["limits"]["planted_admitted"]
-        or c1["legit_false_alarms"] > seal["limits"]["legit_false_alarms"]
+        or c1["planted_admitted"] > 4
+        or c1["legit_false_alarms"] > 1
     )
+    # a points file with no renewal block is refused: one mechanism
+    bare = tmp_path / "bare.json"
+    bare.write_bytes(
+        json.dumps(
+            {"tau_unsafe": TAU, "tau_secret": TAU, "fitted_on": fitted_on}
+        ).encode("utf-8")
+    )
+    with pytest.raises(ri.Refused, match="no renewal counts"):
+        ri.part5_replay([(ex.receipts, committed, rescored)], review_points=bare)
 
 
 def test_part5_replay_refused_unless_both_readings_reproduce(
