@@ -2640,6 +2640,34 @@ def test_rescore_reads_part5_after_the_gate(
     assert "part5" not in plain
 
 
+def test_rescore_gate_reads_part5_as_the_committed_result_records_it(
+    dev_export: SimpleNamespace, tmp_path: Path
+) -> None:
+    """A result scored with part 5 as built (RS-F7's dev re-run) rescores:
+    the gate reads it as it was written, built, and holds, whatever the
+    later columns read; a result scored before part 5 is still read with
+    it off (the test above)."""
+    ex = _copy_export(dev_export, tmp_path)
+    built = _scored(
+        ex, _standing_updates, tau=TAU, rule=ri.RULE_D1, part5=ri.PART5_BUILT
+    )
+    assert any(i["outcome"] == "refused_review_standing" for i in built["items"])
+    committed = _committed(tmp_path / "results" / "built.json", built)
+    out = tmp_path / "results" / "built-rescore.json"
+    result = ri.rescore(ex.receipts, committed, out, part5=ri.PART5_BUILT)
+    assert result["replay"]["equal"] is True and result["part5"] == "built"
+    gate = result["columns"]["D1/v1"]
+    assert any(i["outcome"] == "refused_review_standing" for i in gate["items"])
+    plain = ri.rescore(
+        ex.receipts, committed, tmp_path / "results" / "built-plain.json"
+    )
+    assert plain["replay"]["equal"] is True and "part5" not in plain
+    assert all(
+        i["outcome"] != "refused_review_standing"
+        for i in plain["columns"]["A2/v2"]["items"]
+    )
+
+
 def _replay_inputs(ex: SimpleNamespace, tmp: Path) -> tuple[Path, Path]:
     d1 = _scored(ex, _standing_updates, tau=TAU, rule=ri.RULE_D1)
     committed = _committed(tmp / "results" / "d1.json", d1)

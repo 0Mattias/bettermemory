@@ -2147,7 +2147,8 @@ def rescore(
     Three columns: D1/v1, which the replay gate holds to the committed
     result before anything else is read, then D1/v2, A1/v2 and A2/v2
     (unit D1c). `part5` reads part 5 in the columns after the gate; the
-    gate's own column is read as the committed result was, with it off. On the
+    gate's own column is read as the committed result was: with the part 5
+    rule it records, which every result before RS-F7 left off. On the
     test split the guard runs first, as chat-review, so the committed
     result and its stamp make a reason necessary; the rescore is written
     under its own instrument, chat-review-rescore, which the guard counts
@@ -2193,6 +2194,7 @@ def rescore(
         results_dirs=[results_dir, committed.parent],
     )
     run = doc.get("run") or {}
+    committed_part5 = str(doc.get("part5") or PART5_OFF)
     columns: dict[str, Any] = {}
     replayed: dict[str, Any] = {}
     scored: Mapping[str, Any] = {}
@@ -2210,7 +2212,7 @@ def rescore(
             prompt=prompt,
             rule=rule,
             table=table,
-            part5=PART5_OFF if gate else part5,
+            part5=committed_part5 if gate else part5,
         )
         if gate:
             replayed = replay(doc, scored)
