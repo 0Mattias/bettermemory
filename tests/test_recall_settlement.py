@@ -113,8 +113,8 @@ def test_a_prompt_the_harness_composed_leaves_no_row(world: PromptWorld) -> None
 
 
 def test_an_empty_pool_is_held_as_no_signal(world: PromptWorld) -> None:
-    """The probe reads an empty pool as no signal; ``no_hits`` is the
-    cause for a verdict with no hits behind it."""
+    """The probe reads an empty pool as no signal: no verdict was formed,
+    so the cause is ``no_signal`` with no hits and nothing held."""
     assert world.recall().stdout == ""
     (row,) = _held(world)
     assert (row["cause"], row["top_hits"], row["held"]) == ("no_signal", [], [])
@@ -477,8 +477,11 @@ def test_an_interrupt_before_any_words_is_not_a_turn(
 def test_a_turn_before_the_previous_audit_is_not_walked(
     world: PromptWorld, tmp_path: Path
 ) -> None:
-    """The walk ends at the session's previous `turn_audited`: an
-    interrupted turn older than it was that Stop's to settle."""
+    """The walk ends at the session's previous `turn_audited`: a Stop
+    whose transcript held no interrupted row audits its own turn alone,
+    and the next Stop, whose transcript holds the interrupted turn, walks
+    back no further than that previous audit's stamp, so an interrupted
+    turn stamped before it is not walked again."""
     world.write()
     at = datetime.now(timezone.utc) - timedelta(minutes=10)
     transcript = _interrupted(tmp_path / "t.jsonl", at=at)

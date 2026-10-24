@@ -219,7 +219,8 @@ def test_the_brief_shape_and_its_event(world: _World) -> None:
     rule = world.standing(world.fresh("prefer short release notes in this project"))
     note = world.fresh("the deploy window is tuesday mornings for this project")
 
-    result = world.brief(source="startup", transcript_path="/tmp/t.jsonl")
+    unwritten = str(world.tmp_path / "unwritten.jsonl")
+    result = world.brief(source="startup", transcript_path=unwritten)
 
     lines = result.stdout.splitlines()
     assert lines[0] == (
@@ -252,7 +253,7 @@ def test_the_brief_shape_and_its_event(world: _World) -> None:
     assert event["rc3_admitted"] == [rule.id, note.id]
     assert event["triggered_from"] == "session_hook"
     assert event["session"] == "transcript-brief"
-    assert event["transcript_path"] == "/tmp/t.jsonl"
+    assert event["transcript_path"] == unwritten
     assert event["worktree_root"] == str(world.repo)
     # No body, no scope list: pointers only.
     assert "projects:foo" not in result.stdout
@@ -688,7 +689,8 @@ def test_a_resume_with_every_candidate_shown_prints_nothing_and_records_the_row(
     startup = world.brief(source="startup")
     assert startup.ids == (second.id, first.id)
 
-    resumed = world.brief(source="resume", transcript_path="/tmp/t.jsonl")
+    unwritten = str(world.tmp_path / "unwritten.jsonl")
+    resumed = world.brief(source="resume", transcript_path=unwritten)
 
     assert (resumed.stdout, resumed.ids, resumed.chars) == ("", (), 0)
     assert resumed.surface == "session_brief"
@@ -700,7 +702,7 @@ def test_a_resume_with_every_candidate_shown_prints_nothing_and_records_the_row(
     assert (row["source"], row["segment"], row["rule"]) == ("resume", 0, "rs-v6")
     assert (row["standing"], row["work"]) == ([], [])
     assert row["session"] == "transcript-brief"
-    assert row["transcript_path"] == "/tmp/t.jsonl"
+    assert row["transcript_path"] == unwritten
     assert row["triggered_from"] == "session_hook"
     # No segment was opened, and the shown set is as the startup left it.
     assert [e for e in world.store.iter_events() if e["kind"] == "segment_opened"] == []

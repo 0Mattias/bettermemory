@@ -8,11 +8,13 @@ audit, capture's stretch reader and the recall review (a transcript row,
 
 Marks. A row flagged ``isMeta`` (a skill or command expansion, the wrapper
 a message from another session is kept behind) or ``isCompactSummary`` (a
-compaction's summary) is not the owner's. A row that carries
-``turnOrigin`` (Claude Code 2.1.280 and later) is the owner's only when it
-says ``human``; the other values name who else submitted it
-(``task_notification``, ``peer``, ``sdk``, ``system``). A row without the
-key is judged by its text alone, as the payload is.
+compaction's summary) is not the owner's, and neither is a row carrying
+``isSidechain`` or ``agentId`` (a subagent's turn, which the harness keeps
+in a file of its own). A row that carries ``turnOrigin`` (Claude Code
+2.1.280 and later) is the owner's only when it says ``human``; the other
+values name who else submitted it (``task_notification``, ``peer``,
+``sdk``, ``system``). A row without the key is judged by its text alone,
+as the payload is.
 
 Text. The complete app envelope blocks (`ENVELOPE_TAGS`) are removed
 wherever they stand, and the rest is cut at `PROMPT_CUT_CHARS`
@@ -173,15 +175,21 @@ def submitted_text(row: Mapping[str, Any]) -> str | None:
 QUEUED_COMMAND = "queued_command"
 
 
+def _subagents(row: Mapping[str, Any]) -> bool:
+    """Whether the row is a subagent's (``isSidechain`` or ``agentId``)."""
+    return bool(row.get("isSidechain") or row.get("agentId"))
+
+
 def queued_text(row: Mapping[str, Any]) -> str | None:
     """The prompt of a queued-command attachment row: a row of type
     ``attachment`` whose ``attachment`` is a `QUEUED_COMMAND` with a
-    string ``prompt``. None for any other row, for an attachment flagged
-    ``isMeta`` (a note the app queued, not the owner's words, the mark a
-    user row carries for the same thing) and for a blank prompt. Whether
+    string ``prompt``. None for any other row, for a subagent's row, for
+    an attachment flagged ``isMeta`` (a note the app queued, not the
+    owner's words, the mark a user row carries for the same thing) and for
+    a blank prompt. Whether
     the words are the owner's is `owner_text`'s question, as for a
     submitted row."""
-    if row.get("type") != "attachment":
+    if row.get("type") != "attachment" or _subagents(row):
         return None
     attachment = row.get("attachment")
     if not isinstance(attachment, Mapping) or attachment.get("type") != QUEUED_COMMAND:
@@ -197,10 +205,10 @@ def queued_text(row: Mapping[str, Any]) -> str | None:
 def owner_prompt(row: Mapping[str, Any], *, cut: bool = True) -> str | None:
     """The owner's typed text of a transcript row as the probe reads it
     (`owner_text`), or None when the row is not the owner's: not a
-    submitted user row, flagged ``isMeta`` or ``isCompactSummary``, or
-    carrying a ``turnOrigin`` other than ``human``. `cut` as in
-    `owner_text`."""
-    if row.get("isMeta") or row.get("isCompactSummary"):
+    submitted user row, flagged ``isMeta`` or ``isCompactSummary``, a
+    subagent's (``isSidechain`` or ``agentId``), or carrying a
+    ``turnOrigin`` other than ``human``. `cut` as in `owner_text`."""
+    if row.get("isMeta") or row.get("isCompactSummary") or _subagents(row):
         return None
     origin = row.get("turnOrigin")
     if origin is not None and origin != HUMAN_ORIGIN:

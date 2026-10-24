@@ -341,6 +341,23 @@ def test_the_review_marks_its_rows_by_the_definition() -> None:
     )
 
 
+def test_a_subagents_row_is_not_the_owners() -> None:
+    """A row carrying ``isSidechain`` or ``agentId`` is a subagent's turn,
+    whether it is a submitted row or a queued command; the harness writes
+    both marks on the row, as it does for every row of a subagent's file."""
+    assert owner_prompt(tr.user(TYPED, "p1", isSidechain=True)) is None
+    assert owner_prompt(tr.user(TYPED, "p1", agentId="a1")) is None
+    assert human_prompt(tr.user(TYPED, "p1", isSidechain=True)) is None
+    assert queued_text({**tr.queued(TYPED), "isSidechain": True}) is None
+    assert queued_text({**tr.queued(TYPED), "agentId": "a1"}) is None
+    # The marks absent or false leave the row the owner's.
+    assert owner_prompt(tr.user(TYPED, "p1", isSidechain=False)) == TYPED
+    assert queued_text({**tr.queued(TYPED), "isSidechain": False}) == TYPED
+    assert [row.human for row in _user_rows([tr.user(TYPED, "p1", agentId="a1")])] == [
+        False
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Queued commands (RS-F7 part 7)
 # ---------------------------------------------------------------------------

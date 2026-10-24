@@ -371,9 +371,11 @@ def owner_words(
     `chars`. The session brief ranks by it (RS-F7 part 4). Read newest
     row first (`ReverseLines`) and stopped once `chars` are held, so a
     long transcript is read back only as far as its last words reach; ""
-    for no file, no owner row, or `chars` at zero. A walk the budget ends
-    first returns what it held."""
-    if chars <= 0:
+    for no file, no owner row, or `chars` at zero. A path that is not a
+    regular file (a pipe, a device) is not opened, so a hook worker can
+    never block on it. A walk the budget ends first returns what it
+    held."""
+    if chars <= 0 or not path.is_file():
         return ""
     pieces: list[str] = []
     held = 0

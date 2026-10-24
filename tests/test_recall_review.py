@@ -331,6 +331,33 @@ def test_a_missing_transcript_or_another_host_is_passed_over(
     assert doc["ungradeable"][0]["pointers"][0]["id"] == memory.id
 
 
+def test_a_queued_command_is_never_a_turns_prompt_by_position(
+    world: PromptWorld, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A queued command is stamped when typed, inside the turn before it,
+    so a silent turn's prompt, read as the latest human row before its
+    Stop, passes over it to the row the turn began with."""
+    from tests import _transcript_rows as tr
+
+    retrieved = world.write("nightly builds publish coverage to the shared bucket")
+    _stop(world)
+    _search(world, [retrieved.id])
+    _stop(world)
+    transcripts = tmp_path / "transcripts"
+    _transcript(
+        transcripts,
+        SILENT_SESSION,
+        [
+            _user("where do coverage reports go", hours=-1),
+            {**tr.queued("and who owns the bucket"), "timestamp": _stamp(-0.5)},
+        ],
+    )
+    (sample,) = _review(world, transcripts, capsys)["samples"]
+    assert sample["stratum"] == STRATUM_SILENT
+    assert sample["prompt"] == "where do coverage reports go"
+    assert sample["prompt_kind"] == "owner"
+
+
 # ---------------------------------------------------------------------------
 # The prompt a delivery answered
 # ---------------------------------------------------------------------------

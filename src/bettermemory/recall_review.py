@@ -464,6 +464,9 @@ class _UserRow:
     probed: str
     digest: str
     human: bool
+    #: A queued command: stamped when typed, inside the turn before it, so
+    #: never the prompt a turn is read by position.
+    queued: bool = False
 
 
 def _row_text(row: dict[str, Any]) -> str | None:
@@ -496,6 +499,7 @@ def _user_rows(rows: list[dict[str, Any]]) -> list[_UserRow]:
     out: list[_UserRow] = []
     for row in rows:
         text = _row_text(row)
+        queued = False
         if text is not None:
             human = owner_prompt(row) is not None
             prompt_id = _str(row.get("promptId"))
@@ -505,6 +509,7 @@ def _user_rows(rows: list[dict[str, Any]]) -> list[_UserRow]:
                 continue
             human = owner_text(text) is not None
             prompt_id = None
+            queued = True
         probed = probed_text(text)
         out.append(
             _UserRow(
@@ -514,6 +519,7 @@ def _user_rows(rows: list[dict[str, Any]]) -> list[_UserRow]:
                 probed=probed,
                 digest=probe_digest(probed),
                 human=human,
+                queued=queued,
             )
         )
     return out
@@ -566,7 +572,9 @@ def prompt_for(
     row stands in as ``unverified``. A delivery without a hash (a log
     written before 9) takes its `prompt_id` row, else the latest human
     prompt before it. A brief takes the first human prompt after it, a
-    silent turn the latest before its Stop. The kind is read from the
+    silent turn the latest before its Stop; a queued command, stamped
+    inside the turn it was typed in, is never read by position. The kind
+    is read from the
     log's preview when that opens with a tag, else from the row found."""
     hinted = prompt_kind(candidate.probe_preview)
     if candidate.harness != DEFAULT_HARNESS:
@@ -586,12 +594,16 @@ def prompt_for(
         found = _by_prompt_id(rows, candidate.prompt_id)
     elif candidate.stratum == STRATUM_BRIEF:
         for row in rows:
-            if row.human and row.stamp is not None and row.stamp >= candidate.ts:
+            if row.queued or not row.human or row.stamp is None:
+                continue
+            if row.stamp >= candidate.ts:
                 found = row
                 break
     else:
         for row in rows:
-            if row.human and row.stamp is not None and row.stamp <= candidate.ts:
+            if row.queued or not row.human or row.stamp is None:
+                continue
+            if row.stamp <= candidate.ts:
                 found = row
     if found is None:
         return None, PROMPT_UNGRADEABLE, hinted or KIND_UNKNOWN

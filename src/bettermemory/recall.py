@@ -1315,10 +1315,12 @@ def _select_brief(
     carries that record's id as its note (part 3).
 
     When both lists are empty and the store holds candidates of a
-    deliverable label, the selection names the newest `_SUPPRESSED_NAMED`
-    with why each was withheld, and how many there were, for the
-    `recall_suppressed` row (design 4, failure 8). A store opened without
-    its key verifies no label, so it shows nothing."""
+    deliverable label the admission withholds, the selection names the
+    newest `_SUPPRESSED_NAMED` of them with why each was withheld, and how
+    many there were, for the `recall_suppressed` row (design 4, failure
+    8); a candidate the admission admits is not withheld and is not
+    named. A store opened without its key verifies no label, so it shows
+    nothing."""
     # Imported here: the handlers import this module's word table
     # (`handlers.questions`), so a module-level import would be a cycle.
     from .handlers.search import default_search_width, resolve_search_pool
@@ -1356,20 +1358,23 @@ def _select_brief(
             memory for memory in work if not _contradiction_open(memory, contradicted)
         ]
     if not standing and not work:
+        # Withheld means not admitted: a deliverable record of the
+        # caller's own project that the pool's slice over the probe did
+        # not reach is not withheld, and is not named.
         candidates = store.brief_rows(
             admit=lambda _scopes, _home: True, provenance=_DELIVERED_PROVENANCE
         )
-        named = candidates[:_SUPPRESSED_NAMED]
-        admission.prime(named)
+        admission.prime(candidates)
+        withheld = [rid for rid in candidates if not admission.admits_id(rid)]
         return _BriefSelection(
             [],
             [],
             _ranked_by(probe),
             suppressed=tuple(
                 {"id": rid, "reason": _suppressed_reason(admission, rid)}
-                for rid in named
+                for rid in withheld[:_SUPPRESSED_NAMED]
             ),
-            candidates=len(candidates),
+            candidates=len(withheld),
         )
     standing = _ranked(
         standing,
@@ -2308,23 +2313,32 @@ def prompt_recall(
     excluded_scopes = _disabled_scopes_from_events(
         recent, worktree_root=caller.worktree_root, server_session=server_session
     )
-    settle_interrupted(
-        store=store,
-        cfg=cfg,
-        session_id=key[1],
-        transcript_path=transcript_path,
-        admission=admission.on(POOL_PREFILTER)
-        if surface == PROMPT_RECALL
-        else admission,
-        excluded_scopes=excluded_scopes,
-        recent=recent,
-        server_session=server_session,
-        worktree_root=caller.worktree_root,
-        now=now,
-        previous_audit=previous_audit_at(store, key[1], now=now),
-        triggered_from="prompt_hook",
-        exclude_prompt_id=None,
-    )
+    # Best effort, as every settlement is: a past turn's audit never costs
+    # this prompt its recall.
+    try:
+        settle_interrupted(
+            store=store,
+            cfg=cfg,
+            session_id=key[1],
+            transcript_path=transcript_path,
+            admission=admission.on(POOL_PREFILTER)
+            if surface == PROMPT_RECALL
+            else admission,
+            excluded_scopes=excluded_scopes,
+            recent=recent,
+            server_session=server_session,
+            worktree_root=caller.worktree_root,
+            now=now,
+            previous_audit=previous_audit_at(store, key[1], now=now),
+            triggered_from="prompt_hook",
+            exclude_prompt_id=None,
+        )
+    except Exception as exc:  # noqa: BLE001 - logged, never raised at the hook
+        log.warning(
+            "interrupted turns not settled at the prompt: %s: %s",
+            exc.__class__.__name__,
+            exc,
+        )
     report = _probe_message(
         cfg=cfg,
         store=store,

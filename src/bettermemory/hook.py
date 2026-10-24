@@ -104,6 +104,7 @@ from __future__ import annotations
 import dataclasses
 from datetime import datetime, timedelta, timezone
 import json
+import logging
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Collection, Iterable, Mapping
@@ -143,6 +144,8 @@ from .transcript import stop_turn
 if TYPE_CHECKING:
     from .admission import Admission
     from .recall import RecallState
+
+log = logging.getLogger("bettermemory.hook")
 
 
 def _utcnow() -> datetime:
@@ -674,21 +677,30 @@ def run_audit(
                 rule=RULE,
             ),
         )
-    settle_interrupted(
-        store=store,
-        cfg=cfg,
-        session_id=session_id,
-        transcript_path=transcript_path,
-        admission=admission,
-        excluded_scopes=excluded_scopes,
-        recent=recent,
-        server_session=server_session,
-        worktree_root=caller_origin.worktree_root,
-        now=now,
-        previous_audit=previous_audit,
-        triggered_from="stop_hook",
-        exclude_prompt_id=prompt_id,
-    )
+    # Best effort, as every settlement is: a past turn's audit never costs
+    # the Stop its own rows.
+    try:
+        settle_interrupted(
+            store=store,
+            cfg=cfg,
+            session_id=session_id,
+            transcript_path=transcript_path,
+            admission=admission,
+            excluded_scopes=excluded_scopes,
+            recent=recent,
+            server_session=server_session,
+            worktree_root=caller_origin.worktree_root,
+            now=now,
+            previous_audit=previous_audit,
+            triggered_from="stop_hook",
+            exclude_prompt_id=prompt_id,
+        )
+    except Exception as exc:  # noqa: BLE001 - logged, never raised at the hook
+        log.warning(
+            "interrupted turns not settled at the Stop: %s: %s",
+            exc.__class__.__name__,
+            exc,
+        )
 
     # Post-hoc use settlement — the turn's end is the semantically
     # correct place to decide what happened to this turn's retrievals.

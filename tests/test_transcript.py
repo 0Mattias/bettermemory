@@ -18,6 +18,7 @@ any size.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import os
 from pathlib import Path
 from typing import Any
 
@@ -807,6 +808,18 @@ def test_owner_words_of_no_file_or_no_owner_row_are_empty(tmp_path: Path) -> Non
         tr.user("an sdk turn", "p2", turnOrigin="sdk"),
     )
     assert owner_words(path, chars=100, chunk_bytes=CHUNK) == ""
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="no named pipes here")
+def test_owner_words_of_a_path_that_is_no_regular_file_are_empty(
+    tmp_path: Path,
+) -> None:
+    """A named pipe is not opened: a read of it would block the hook's
+    worker until something wrote to it."""
+    fifo = tmp_path / "t.jsonl"
+    os.mkfifo(fifo)
+    assert owner_words(fifo, chars=100) == ""
+    assert owner_words(tmp_path, chars=100) == ""
 
 
 def test_owner_words_read_as_far_back_as_the_budget(tmp_path: Path) -> None:

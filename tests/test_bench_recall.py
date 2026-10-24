@@ -474,12 +474,32 @@ def test_the_stops_split_by_their_own_rule_or_the_nearest_earlier() -> None:
                 {"triggered_from": "stop_hook", "rule": "rs-v3", "prompt_id": "p"},
             ),
             (_at(5), SESSION, "turn_audited", {"triggered_from": "prompt_hook"}),
+            # A turn the owner interrupted, audited by the Stop after it: a
+            # row of the Stop hook that is not a Stop (RS-F7 part 6).
+            (
+                _at(6),
+                SESSION,
+                "turn_audited",
+                {
+                    "triggered_from": "stop_hook",
+                    "rule": "rs-v6",
+                    "reply_source": "interrupted",
+                    "prompt_id": "q",
+                    "assistant_present": False,
+                },
+            ),
         ]
     )
     marks = read_p11.rule_marks(db)
     counted = read_p11.stops(db, _at(0), _at(9), marks)
-    assert {rule: c["stops"] for rule, c in counted.items()} == {"rs-v1": 1, "rs-v3": 1}
+    assert {rule: c["stops"] for rule, c in counted.items()} == {
+        "rs-v1": 1,
+        "rs-v3": 1,
+        "rs-v6": 0,
+    }
     assert counted["rs-v3"]["stops_with_prompt_id"] == 1
+    assert counted["rs-v6"]["interrupted_audits"] == 1
+    assert counted["rs-v6"]["stops_with_prompt_id"] == 0
 
 
 def test_a_queued_command_is_counted_beside_the_denominator(tmp_path: Path) -> None:

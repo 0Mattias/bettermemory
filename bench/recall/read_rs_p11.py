@@ -52,8 +52,12 @@ joined deliveries to the settlement use rows, measured settlement (the
 RS-P6 number) and is gone.
 
 (3) replies / stops, both ways: with repeat Stops counted and without. A
-Stop is a turn_audited row with triggered_from stop_hook; a repeat
-carries repeat true; a reply is assistant_present true. That field is
+Stop is a turn_audited row with triggered_from stop_hook whose
+reply_source is not "interrupted" (from rs-v6 a Stop also audits the
+turns the owner interrupted since the previous audit, RS-F7 part 6; those
+rows are counted on their own line and are not Stops, while for clause
+(2) they carry prompt ids as a Stop's row does); a repeat carries repeat
+true; a reply is assistant_present true. That field is
 true for a reply taken from the payload's last_assistant_message or, when
 the payload has none, from the transcript tail, and the log does not say
 which; the value reads at or above the clause.
@@ -211,8 +215,18 @@ def _events(db: sqlite3.Connection, kinds: tuple[str, ...]) -> list[Event]:
     return out
 
 
-def _is_stop(event: dict[str, Any]) -> bool:
+def _is_stop_hook(event: dict[str, Any]) -> bool:
     return event.get("triggered_from") == "stop_hook"
+
+
+def _is_interrupted_audit(event: dict[str, Any]) -> bool:
+    return event.get("reply_source") == "interrupted"
+
+
+def _is_stop(event: dict[str, Any]) -> bool:
+    """A Stop's own row: written by the Stop hook for the turn it closed,
+    not for a turn the owner interrupted."""
+    return _is_stop_hook(event) and not _is_interrupted_audit(event)
 
 
 def _probe_hash(event: dict[str, Any]) -> str | None:
@@ -303,7 +317,7 @@ def carried_by_stops(
     direct: set[tuple[str, str]] = set()
     proxy: set[tuple[str, str]] = set()
     for stamp, session, _kind, event in _events(db, ("turn_audited",)):
-        if stamp >= until or not _is_stop(event):
+        if stamp >= until or not _is_stop_hook(event):
             continue
         session_id = str(event.get("session_id") or session)
         prompt_id = event.get("prompt_id")
@@ -356,9 +370,12 @@ def stops(
 ) -> dict[str, Counter[str]]:
     out: dict[str, Counter[str]] = defaultdict(Counter)
     for stamp, _session, _kind, event in _events(db, ("turn_audited",)):
-        if not (since <= stamp < until) or not _is_stop(event):
+        if not (since <= stamp < until) or not _is_stop_hook(event):
             continue
         counts = out[rule_of(event, stamp, marks)]
+        if _is_interrupted_audit(event):
+            counts["interrupted_audits"] += 1
+            continue
         counts["stops"] += 1
         if "prompt_id" in event:
             counts["stops_with_prompt_id"] += 1
@@ -446,7 +463,8 @@ def main() -> None:
             f"{_ratio(t['replies'], t['stops'])} with repeat Stops; "
             f"{t['first_replies']} / {t['first_stops']} = "
             f"{_ratio(t['first_replies'], t['first_stops'])} without "
-            f"(repeats {t['repeat_stops']})"
+            f"(repeats {t['repeat_stops']}; interrupted turns audited by a Stop, "
+            f"not counted as Stops: {t['interrupted_audits']})"
         )
     print(
         "(1) target 0; (2) and (3) target at least 0.95, read as the docstring says: "
