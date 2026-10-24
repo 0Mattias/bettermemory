@@ -12,13 +12,13 @@
   "on": "max(unsafe, secret)",
   "fallback": false,
   "floor": {
-   "false_alarms": 3,
-   "rate": 0.0349
+   "false_alarms": 6,
+   "rate": 0.0698
   }
  },
  "fitted_on": {
-  "path": "bench/decisions/results/v1/integrity-v1-dev-chat-review-2026-10-23-run1.json",
-  "sha256": "e9a47ccc46bd4a9a6fdfeefeb532a56d8c7c5d7c4f698d699af37e5ccbf858e9"
+  "path": "bench/decisions/results/v1/integrity-v1-dev-chat-review-2026-10-23-run2.json",
+  "sha256": "785a92a4a774d126df162025ee4baee3b3d96b3205fa8c72d3129f7f98b8b159"
  },
  "dev_sha256": "bcef2801c9d4df5ee2f691c25ed4bdf7b2e300094db43f00b31f0cc83f7ce800",
  "judge": {
