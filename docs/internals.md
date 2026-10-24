@@ -46,16 +46,27 @@ validated ships as declared claims on `memory_write` / `memory_verify`.
   deliberate tool call; the recall surface (`recall.py`) is the one
   delivery that bypasses it, and it delivers pointers only: an id and a
   summary, never a body, so the verify-before-relying read path stays on
-  `memory_show`. On SessionStart inside a repository the session brief
-  points at up to eight of the newest memories written there whose
-  verdict is fresh as `memory_show` computes it, local or imported, not
-  ambient and not contradicted; a warm brief reads memoised verdicts and
-  runs no git. On UserPromptSubmit the prompt recall probes the owner's
-  words as the one definition of an owner prompt reads them
-  (`owner_prompt.py`: the app's envelope blocks removed, reminders,
-  pastes and artifact views, then 2,000 characters) through the audit's
-  probe and delivers up to three relevant hits written in the caller's
-  project; a disputed one carries a `[disputed: cf-…]` mark. A prompt
+  `memory_show`. On SessionStart inside a project the session brief is
+  two lists, standing first: the caller's standing records in force
+  (`standing.standing_ids`: an answer at or above `TAU_STANDING` for the
+  current body, or category ambient; history excluded), eight at most,
+  each line marked `[in force]`; then the admitted in-force records the
+  conversation so far bears on, eight at most, drawn from the hooks'
+  pool over a probe of the newest 12,000 characters of owner words in
+  the session's transcript (`transcript.owner_words`), history excluded
+  (`in_force`), an open contradiction held. Each list ranks by the probe
+  through the search ranker; with no transcript, or one not yet written,
+  the probe is empty and both rank by recency. A record another in-force
+  record extends carries `[extended by <id>]`. The header counts both
+  lists, and there is no character cap. On UserPromptSubmit the prompt
+  recall probes the owner's words as the one definition of an owner
+  prompt reads them (`owner_prompt.py`: the app's envelope blocks
+  removed, reminders, pastes and artifact views, then 2,000 characters)
+  through the audit's probe and delivers its top three hits admitted for
+  the caller, unless held by provenance, an open contradiction or the
+  segment; a superseded hit yields its slot to its head, marked
+  `[replaces <id>]`. On both surfaces a disputed record carries a
+  `[disputed: cf-…]` mark. A prompt
   the harness composed and no human typed (a task notification, a
   message from another session, an interrupt line, any other harness
   tag, reminder blocks alone) is not probed and records nothing. The
@@ -63,7 +74,7 @@ validated ships as declared claims on `memory_write` / `memory_verify`.
   same definition, its marks first (`isMeta`, `isCompactSummary`, a
   `turnOrigin` other than `human`), so the recall and the Stop hash a
   prompt alike. A per-session cooldown shows no id twice in a segment,
-  by the brief or the recall, and at most twelve recalls per segment.
+  by the brief or the recall.
   A clear opens a new segment. A compact opens one only on the
   compaction marker its transcript holds, a `compact_boundary` row newer
   than the one the segments last opened on; without it the compact is a
@@ -73,10 +84,13 @@ validated ships as declared claims on `memory_write` / `memory_verify`.
   brief omits what the segment has shown. The cooldown is rebuilt from
   the session's own rows whenever they were stamped, so a restart, an
   eviction after a day idle and the CLI path see the segment the daemon
-  held. Each show is recorded
-  (`session_brief`, `prompt_recall`), and the Stop settles a shown
-  pointer as an applied `use` naming its surface when the reply used
-  it, never by the auto fallback. Nothing is shown with telemetry off.
+  held. Each show is recorded (`session_brief`, `prompt_recall`), a
+  probed prompt that delivered nothing records `recall_held` with its
+  cause, and the Stop settles a shown pointer as an applied `use` naming
+  its surface when the reply used it, never by the auto fallback; what a
+  closing segment never settled is written `unused`, and a turn the
+  owner interrupted is audited by the next Stop. Nothing is shown with
+  telemetry off.
   `[behavior] prompt_recall` takes `project` (default), `everywhere` or
   `off`; `session_brief = false` turns the brief off.
 - Claims about the user commit like any fact but carry the
@@ -278,19 +292,21 @@ an imported project that may be one here.
 the caller's chain: its project, the projects it is a part of, the
 workspaces around it), `sub_project` (the home is a part of the caller's
 project), `other_tenant` (the two sit on different sides of a boundary),
-`global`, `other_project`, or `unknown` (nothing could be read where the
-caller is, or it was deferred). `admitted(surface, home, caller)` applies
+`global_named` (a record homed outside any project whose `projects:<name>`
+scopes name a project on the caller's chain, the names compared
+case-folded), `global`, `other_project`, or `unknown` (nothing could be
+read where the caller is, or it was deferred). `admitted(surface, home, caller)` applies
 one fixed table (`IN_PROJECT_POLICY` and `OUTSIDE_POLICY`), and nothing
 else decides delivery (`admission.py` caches its answers for a request):
 
 | Surface | Caller in a project | Caller outside any project |
 | --- | --- | --- |
-| `session_brief` | `same_project` | nothing |
-| `prompt_recall` | `same_project` | nothing |
-| `review_strata` (the write review's related statements) | `same_project` | nothing |
-| `search_auto_scope` (`memory_search` with `auto_scope` on) | `same_project`, `sub_project`, `global` | `global` |
-| `pool_prefilter` (the hooks' candidate pool) | `same_project`, `sub_project`, `global` | `global` |
-| `links` | `same_project`, `sub_project`, `global` | `global` |
+| `session_brief` | `same_project`, `global_named` | nothing |
+| `prompt_recall` | `same_project`, `global_named` | nothing |
+| `review_strata` (the write review's related statements) | `same_project`, `global_named` | nothing |
+| `search_auto_scope` (`memory_search` with `auto_scope` on) | `same_project`, `sub_project`, `global`, `global_named` | `global` |
+| `pool_prefilter` (the hooks' candidate pool) | `same_project`, `sub_project`, `global`, `global_named` | `global` |
+| `links` | `same_project`, `sub_project`, `global`, `global_named` | `global` |
 | `search_unscoped` (`memory_search` with `auto_scope` off) | `same_project`, `sub_project`, `global`, `other_project` | `global`, `other_project` |
 
 `unknown` and `other_tenant` are admitted nowhere. A record with no home
@@ -689,10 +705,14 @@ accepts; a turn with none records `turn_audited` with verdict
 nothing, and a turn the walk cannot decide within the budget records
 nothing. The reply is the payload's `last_assistant_message`, else the
 turn's newest assistant text after its prompt, else none; the row
-carries `prompt_id` and `reply_source` (`payload` or `tail`).
+carries `prompt_id`, `rule` and `reply_source` (`payload`, `tail`, or
+`interrupted` for a turn the owner interrupted, which the next Stop
+audits from the previous audit's row on).
 `recall.py` is the recall surface, the session brief and
-the prompt recall with their per-session cooldown; `verdict.py` is the
-one memoised verdict it and `memory_show` read. The bodies run in the
+the prompt recall with their per-session cooldown; `standing.py` says
+what is standing and `in_force.py` what is in force at delivery;
+`owner_prompt.py` is the one definition of an owner prompt; `verdict.py`
+is the memoised verdict `memory_show` reads. The bodies run in the
 daemon but outside the MCP request path, so they read the store rather
 than a session's state. They join the conversation's tool rows by the
 harness session stamp, the worktree bridge when nothing carries it.

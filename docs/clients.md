@@ -35,7 +35,7 @@ The manual path also skips the plugin's **hooks**, which carry real behavior on 
 
 - The Stop hook (`bettermemory hook stop`) settles retrievals at turn end and runs the silent-miss audit. With `[capture] stop_checkpoint = true` it also asks the chat model to save what the conversation established since its last capture.
 - The UserPromptSubmit hook (`bettermemory hook prompt`) prints up to three pointers to this project's memories that match the prompt.
-- The SessionStart hook (`bettermemory hook session-start`) prints the session brief: up to eight pointers to the repository's newest fresh memories.
+- The SessionStart hook (`bettermemory hook session-start`) prints the session brief: the project's standing memories in force and the memories the conversation so far bears on, eight pointers of each at most.
 
 Without the Stop hook, the health report suppresses its dead-weight and cold-endorsement verdicts rather than misread the silence. To wire the hooks on a manual install, copy the shapes in the plugin's `hooks/hooks.json`. Other hosts have no hook surface; the in-process settlement and the suppressed verdicts are the designed degradation.
 

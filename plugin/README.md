@@ -10,9 +10,10 @@ and three hooks ([`hooks/hooks.json`](hooks/hooks.json)). The
 SessionStart and UserPromptSubmit hooks print pointers, never bodies;
 all three always exit 0.
 
-- SessionStart: the session brief, up to eight pointers to the
-  repository's newest fresh memories. `[behavior] session_brief = false`
-  turns it off.
+- SessionStart: the session brief, the project's standing memories in
+  force and the memories the conversation so far bears on, eight pointers
+  of each at most, the standing ones marked in force. `[behavior]
+  session_brief = false` turns it off.
 - UserPromptSubmit: up to three pointers to this project's memories
   that match the prompt. `[behavior] prompt_recall` takes `project`
   (the default), `everywhere` or `off`.

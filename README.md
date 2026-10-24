@@ -57,8 +57,9 @@ start beside the old files and says why.
   outside the tool reads `unaccounted` on the next search;
   `bettermemory log verify` audits the whole chain.
 - Memory reaches the model through tool calls. On Claude Code the hooks
-  add pointers, never bodies: up to eight fresh memories from the
-  repository when a session opens, and up to three matching memories
+  add pointers, never bodies: when a session opens, the project's
+  standing memories in force and the memories the conversation so far
+  bears on, eight of each at most, and up to three matching memories
   from the project on each prompt.
 - Writes pass gates for transient state, secret-shaped tokens and
   near-duplicates, then a review: the model sees the stored statements

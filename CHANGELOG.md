@@ -25,6 +25,134 @@ bettermemory` and the plugin's `uvx bettermemory` keep resolving 8.0.0
 until the stable `9.0.0` is tagged. Ask for a candidate by version
 (`uvx bettermemory==9.0.0rc1`) to run it.
 
+### 9.0.0rc7
+
+The seventh candidate puts what is in force in front of the model and
+delivers what the evidence supports. Unit RS-F7's measurements decided
+each change below (Stage A, 100 live prompts with their top ten hits
+graded; Stage B, 60 prompts answered under six recall conditions and
+judged blind; Stage C, 41 session starts and compactions answered under
+five brief conditions and judged blind), and every constant names the
+measurement that set it. The recall's rule name moves from `rs-v5` to
+`rs-v6`, and every row of the recall surface and its audit carries it.
+The store's schema gains one membership table; a store rc7 opened reads
+under rc6 as before.
+
+#### Added
+
+- **Standing memories.** A memory is standing when it directs future
+  work until it is replaced: a ruling, a rule, a standing preference.
+  The write review asks it as a fourth question, as a probability, and a
+  committed write stores the answer beside its record in a `standing`
+  table (the `standing_put` row kind, folded like homes; rc6 skips the
+  kind, so a rollback still reads the store). A record is standing when
+  its answer for its current body is at or above `standing.TAU_STANDING`
+  (0.30: on 100 stored records answered blind by the ENG-7 judges, the
+  threshold agreeing best with their settled verdicts, weighted kappa
+  0.637 where the judges agree with each other at 0.764) or its category
+  is ambient. `memory_update` takes `standing=`; `memory_show` carries
+  the question for a record with no answer for its current body;
+  `memory_admin(action="answer_standing")` answers five at a time, and a
+  session's first output names how many wait.
+  (`src/bettermemory/standing.py`)
+- **What is in force.** `in_force` walks the `supersedes` and `extends`
+  links of admitted active records: a superseded record is history and
+  its head takes its slot; the newest in-force record extending a record
+  is named. The prompt recall gives a history hit's slot to its head,
+  marked `[replaces <id>]` and decided by the head's own gates; the
+  session brief shows no history row; both mark a record another
+  in-force record extends `[extended by <id>]`.
+  (`src/bettermemory/in_force.py`)
+- **The session brief is two lists ranked by the owner's words.** At a
+  SessionStart inside a project: STANDING, the caller's standing records
+  in force, eight at most, each line marked `[in force]`; then WORK, the
+  admitted in-force records the conversation so far bears on, eight at
+  most, drawn from the hooks' pool over a probe of the newest 12,000
+  characters of owner words in the session's transcript
+  (`transcript.owner_words`), history excluded, an open contradiction
+  held. Both lists rank by the probe; with no transcript they rank by
+  recency. The header counts both lists, and there is no character cap.
+  Stage C decided the shape on a seeded draw of 41 cases from the
+  sealed copy: STANDING 8 plus WORK 8 raised the judged reply score by
+  +0.45 [+0.11, +0.82] over no brief, the one condition whose interval
+  cleared zero (rc6's brief read -0.07 [-0.33, +0.16]). Gone with the
+  old brief: the background fill of memoised verdicts, the brief's
+  window, its 1,200-character cap and its eight-newest-fresh rule. The
+  `session_brief` row records `standing`, `work`, `probe_query` and
+  `ranked_by`.
+- **Every recall outcome is a row.** A probed owner prompt that
+  delivered nothing writes `recall_held` naming its cause (`no_signal`,
+  `no_hits`, `every_hit_held` with each hit's reason, `nothing_rendered`,
+  `segment_claimed`). Pointers a segment showed and nothing settled are
+  written as `unused` when the segment closes. A turn the owner
+  interrupted is audited by the next Stop, from the previous audit on
+  (`reply_source` `interrupted`). `turn_audited` and `search_miss` rows
+  carry `rule`.
+- **The bench's brief arm.** `bench/daemon/latency.py --arm brief` times
+  the session brief on the sealed copy, as migrated and with standing
+  answered on eight records, with the transcript of a session not yet
+  written and with one holding a session's worth of prompts, as the
+  service time and as the hook's wall time. On the sealed copy the
+  brief's service p50 reads 87 ms probed as migrated and 96 ms with both
+  lists filled, the hook's wall 129 and 134 ms, every p95 under 140 ms
+  (part 4's bound: 300). (`bench/daemon/results/latency-2026-10-24-*`)
+
+#### Changed
+
+- **The recall's gates.** The prompt recall delivers the probe's top
+  three unless held by provenance, an open contradiction, admission or
+  the segment; the coverage-label hold (`low_relevance`) and the twelve
+  deliveries per segment are gone. In Stage A the labels did not
+  separate relevant from irrelevant records (high 0.34, medium 0.30, low
+  0.28); the live log's 202 segments reached twelve deliveries once; in
+  Stage B the unfiltered top three raised the judged reply score by
+  +0.39 [+0.17, +0.62] over no block.
+- **Admission by declared scope.** A record homed outside any project
+  whose `projects:<name>` scopes name a project on the caller's chain
+  (relation `global_named`) is admitted on the session brief, the prompt
+  recall and the review strata beside `same_project`; one naming only
+  other projects is not. In Stage A's grades such records were relevant
+  0.44 [0.35, 0.54] against 0.31 [0.28, 0.35] for the project's own, and
+  global records naming no project 0.12 [0.06, 0.24]. Names compare
+  case-folded.
+- **The write review.** `extends` is the relation question's fifth
+  label: the new statement adds to the stored one, which stays in force,
+  and the answer sets an `extends` link. A conflict answer on a standing
+  memory refuses the write (`refused_standing`). A standing memory is
+  replaced, edited, removed, demoted or taken out of force through the
+  tools only with `said`, the user's words for the change, checked
+  against the prompts the hook saw in the caller's checkout as a join's
+  words are; every such change is one `standing_guard` row naming the
+  door, the memories and the quote. `update` still links only between
+  claim-sized statements: the ENG-7 judges, blind, read 6 of 60
+  long-record update answers as a replacement (0.10 [0.047, 0.20]).
+- **The RS read scripts.** `bench/recall/read_rs_p5.py` and
+  `read_rs_p11.py` take each row's rule from the log (a row without one
+  takes the nearest earlier rule-carrying row's) and count queued-command
+  prompts, what the owner typed while a turn ran, beside the
+  denominator; `bettermemory recall review` reads them as user rows
+  (`owner_prompt.queued_text`), never as a turn's prompt by position.
+  RS-P11 counts an interrupted turn's audit on its own line, not as a
+  Stop.
+- **The prompt recall's cost.** Six runs of 50 spaced prompts on the
+  sealed copy: service p50 median 79.6 ms, hook wall 116.1 ms, against
+  rc3's 74.2 and 111.1 and rc6's 77.5 and 119.0, every difference within
+  the unloaded spread phase 0 measured (9.8 and 15.5 ms).
+- **The hooks' reads.** `transcript.owner_words` opens a regular file
+  only, so a named pipe posted as a transcript path cannot hold a daemon
+  hook worker; a transcript row carrying `isSidechain` or `agentId` is a
+  subagent's, not the owner's; the audit of interrupted turns is best
+  effort behind a warning, never at the cost of the Stop's own rows or
+  the prompt's recall.
+
+#### Removed
+
+- `bench/recall/brief.py`; `verdict.fill_verdicts` and `FillReport`;
+  `RecallState`'s background flag; `BRIEF_WINDOW`, `BRIEF_CAP_CHARS` and
+  `BRIEF_MAX_POINTERS`; `SEGMENT_DELIVERY_CAP` and the `low_relevance`
+  and `segment_cap` hold reasons; the `--landing` flag of the RS read
+  scripts.
+
 ### 9.0.0rc6
 
 The sixth candidate retires the one place the product waited on a

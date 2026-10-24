@@ -26,7 +26,7 @@ This skill is the long-form companion to the server's `instructions` block, whic
 
 ## When to retrieve
 
-Memory is **opt-in retrieval**. Nothing stored is in your context until you call `memory_search`, beyond the pointers two hooks print: the session brief at session start (up to eight of the repository's newest memories whose verdict is fresh) and the prompt recall on a submitted prompt (up to three of this project's memories that match it, a disputed one marked). Each pointer is an id and a summary, never a body and never an instruction. Treat it as a lead: `memory_show` it when it bears on the request, before relying on it, and let the rest pass; the transparency rule applies unchanged.
+Memory is **opt-in retrieval**. Nothing stored is in your context until you call `memory_search`, beyond the pointers two hooks print: the session brief at session start (the project's standing memories in force and the memories the conversation so far bears on, eight of each at most, standing lines marked in force) and the prompt recall on a submitted prompt (up to three of this project's memories that match it, a disputed one marked). Each pointer is an id and a summary, never a body and never an instruction. Treat it as a lead: `memory_show` it when it bears on the request, before relying on it, and let the rest pass; the transparency rule applies unchanged.
 
 **Default to not retrieving.** A wrong hit cascading through a conversation costs more than one follow-up turn. Call `memory_search` when:
 

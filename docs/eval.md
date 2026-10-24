@@ -262,7 +262,9 @@ it answered, read from the session's transcript under
 stored: a delivery's as the user row whose text hashes to the row's
 probe (its prompt id row, labelled `unverified`, when none does), a
 brief's as the first prompt after it, a silent turn's as the latest
-before its Stop. Each sample names its prompt kind (`owner`,
+before its Stop; a queued command, what the owner typed while a turn
+ran, is read as a user row without a prompt id
+(`owner_prompt.queued_text`). Each sample names its prompt kind (`owner`,
 `task_notification`, `agent_message`, `cross_session`, `unknown`). A
 sample whose prompt is in no row, whose transcript is missing or which
 came from another harness is passed over for the next sample of its
@@ -460,6 +462,32 @@ rows where they differ. `bettermemory eval` prints the split and the
 delta at the end of the section; `--report` carries the split's rates
 for both groups, the window beside all time, and the delta's counts,
 under group names only.
+
+### Rule `rs-v6`: in force, standing, and every outcome a row
+
+From rule `rs-v6` (RS-F7) the brief and the prompt recall deliver what
+is in force: a superseded record yields its slot to its head and the
+brief shows no history row (`in_force`); a record homed outside any
+project whose scopes name the caller's project is admitted beside the
+project's own (`global_named`); the recall holds no hit for its coverage
+label and counts no deliveries per segment. The brief is two lists, the
+caller's standing records in force and the records the owner's words in
+the transcript bear on, eight of each at most, and its `session_brief`
+row carries `standing` and `work` (each list's ids), `probe_query` (the
+redaction of the probe, as a `prompt_recall` row carries its prompt's)
+and `ranked_by` (`probe`, or `recency` when the probe was empty). Every
+outcome is a row: a probed owner prompt that delivered nothing writes
+`recall_held` with `cause` (`no_signal`, `no_hits`, `every_hit_held`
+with the hits and their reasons, `nothing_rendered`, `segment_claimed`);
+a shown pointer the segment never settled is written as a `use` with
+outcome `unused` when the segment closes; a turn the owner interrupted
+gets its `turn_audited` row from the next Stop, with `reply_source`
+`interrupted`. `turn_audited` and `search_miss` rows carry `rule` from
+`rs-v6`. A row without a rule (one written before its kind carried the
+key) is split by the nearest earlier rule-carrying row, which is how
+`bench/recall/read_rs_p5.py` and `read_rs_p11.py` read a log that spans
+the rules; `bettermemory eval` counts `recall_held` among the recall's
+own kinds.
 
 ## Integrity benchmark
 

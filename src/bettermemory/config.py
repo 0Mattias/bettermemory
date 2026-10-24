@@ -117,12 +117,14 @@ write_supersession = true
 # "project" / "off".
 prompt_recall = "project"
 
-# The session brief: on SessionStart inside a repository, up to eight
-# pointers (id and an 80-character summary) to the newest memories written
-# in that repository whose staleness verdict is fresh as memory_show
-# computes it, no ambient notes and nothing with an open contradiction.
-# Pointers, not instructions; recorded as a `session_brief` event, so it
-# needs telemetry.enabled. Set false to open sessions with nothing.
+# The session brief: on SessionStart inside a project, two lists of
+# pointers (id and an 80-character summary): the project's standing records
+# in force, each marked in force, and the records the conversation so far
+# bears on, ranked by the owner's words in the session's transcript, eight
+# of each at most; a superseded record is never shown, and an open
+# contradiction holds a record out of the second list. Pointers, not
+# instructions; recorded as a `session_brief` event, so it needs
+# telemetry.enabled. Set false to open sessions with nothing.
 session_brief = true
 
 # Floor on `applied_count` for inclusion in `memory_health.heavily_used`.

@@ -1,9 +1,9 @@
 """`bettermemory session-start` — the session brief, in process.
 
-Prints the session brief (`recall.session_brief`) on stdout: up to eight
-pointers to the newest memories written in the current repository whose
-staleness verdict is fresh, under a header that says they are pointers,
-not instructions. Claude Code injects a SessionStart hook's stdout
+Prints the session brief (`recall.session_brief`) on stdout: the project's
+standing records in force and the records the conversation so far bears
+on, eight pointers of each at most, under a header that says they are
+pointers, not instructions. Claude Code injects a SessionStart hook's stdout
 verbatim into the model's context. The installed hook runs `bettermemory
 hook session-start`, which the process entry point routes to the daemon
 before this package is imported; this subcommand is the same body run in
@@ -54,14 +54,14 @@ def add_subparser(
 ) -> argparse.ArgumentParser:
     """Register the ``session-start`` subparser on the parent parser."""
     help_text = (
-        "Print the session brief on stdout: up to eight pointers to the "
-        "newest fresh memories written in the current repository. "
-        "Intended as a Claude Code SessionStart hook target; reads the "
-        "hook's stdin JSON (`session_id`, `source`, `cwd`). Records the "
-        "show as a `session_brief` event under that session. Prints "
-        "nothing without a session id, outside a repository, or when "
-        "nothing is fresh, and always exits 0 so a hook misfire never "
-        "breaks session start."
+        "Print the session brief on stdout: the project's standing records "
+        "in force and the records the conversation so far bears on, eight "
+        "pointers of each at most. Intended as a Claude Code SessionStart "
+        "hook target; reads the hook's stdin JSON (`session_id`, `source`, "
+        "`cwd`, `transcript_path`). Records the show as a `session_brief` "
+        "event under that session. Prints nothing without a session id, "
+        "outside a project, or when nothing is admitted, and always exits 0 "
+        "so a hook misfire never breaks session start."
     )
     parser = sub.add_parser("session-start", help=help_text, description=help_text)
     parser.add_argument(
