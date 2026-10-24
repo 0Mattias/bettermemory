@@ -35,11 +35,10 @@ segment) or a prompt recall. Target 0.
 (2) with_prompt_id / deliveries, the clause's first half as the log
 carries it. The second half is read directly where a turn_audited row
 carries a prompt_id key: a delivery is carried when a Stop of its session
-carries its prompt_id. No row carries the key yet (`audit.
-turn_audited_fields` takes none; a later unit adds it), so that line
-prints n/a until rows written after that unit exist, and it is the
-primary reading for those rows. For rows written before it, the labelled
-proxy is the transcript join: a Stop (a turn_audited row with
+carries its prompt_id. Rows carry the key since RS-F3 (rs-v3,
+`audit.turn_audited_fields`), and the direct line is the primary reading
+for them; for rows written before it the line prints n/a, and the
+labelled proxy is the transcript join: a Stop (a turn_audited row with
 triggered_from stop_hook) writes probe_query as `events.redact_query` of
 the raw human row its tail walk found (`hook.human_prompt`); that hash
 finds the latest top-level human row of the same session at or before
@@ -59,13 +58,13 @@ true for a reply taken from the payload's last_assistant_message or, when
 the payload has none, from the transcript tail, and the log does not say
 which; the value reads at or above the clause.
 
-THE SPLIT. prompt_recall and session_brief rows carry their rule (rs-v1
-at rc1, rs-v2 from the RS-F1 landing) and split by it. turn_audited rows
-and transcript rows carry none and split at the landing instant, the
-moment the rc2 daemon began serving: 2026-10-17T05:50:18Z, the default of
---landing. The first log row whose rule is rs-v2, the landing row the
-RS-F1 record names, is at 2026-10-17T05:50:51.886601Z; 2 user rows and no
-delivery or Stop fall between the two instants.
+THE SPLIT, by the rule the daemon served under. A log row of the recall's
+own kinds (RULE_KINDS) carries its rule (rs-v1 at rc1, rs-v2 from the
+RS-F1 landing, and so on) and splits by it. A row without one (a
+turn_audited row written before RS-F7 part 6 gave the audit's rows the
+key) takes the rule of the nearest earlier rule-carrying row by
+timestamp (`rule_at`), and a row before the first such row reads as
+UNLABELLED. The output prints each rule's first row.
 
 Usage (store and transcripts opened read-only; counts only, no text):
 
@@ -77,6 +76,7 @@ Usage (store and transcripts opened read-only; counts only, no text):
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import sqlite3
 import sys
@@ -91,8 +91,19 @@ from bettermemory.hook import _SYNTHETIC_USER_PREFIXES, human_prompt  # noqa: E4
 from bettermemory.recall import STATE_IDLE_SECONDS  # noqa: E402
 
 PROBE_SESSION_PREFIX = "switch-probe"
-#: The instant the rc2 daemon began serving (install done 05:50:14Z).
-LANDING_DEFAULT = "2026-10-17T05:50:18Z"
+#: The log kinds whose rows carry the rule the daemon served under when
+#: they were written (read_rs_p5.RULE_KINDS, the same list).
+RULE_KINDS = (
+    "session_brief",
+    "prompt_recall",
+    "segment_opened",
+    "turn_audited",
+    "search_miss",
+    "recall_held",
+    "recall_suppressed",
+)
+#: The rule of a row before the first rule-carrying row.
+UNLABELLED = "unlabelled"
 #: `events.redact_query` keeps the first 32 characters of the probed text.
 PREVIEW_CHARS = 32
 #: The gate's tags as a preview can show them.
@@ -127,8 +138,57 @@ def _is_probe(session: Any) -> bool:
     return isinstance(session, str) and session.startswith(PROBE_SESSION_PREFIX)
 
 
-def _rule_at(stamp: datetime, landing: datetime) -> str:
-    return "rs-v2" if stamp >= landing else "rs-v1"
+#: (timestamp, rule) of every RULE_KINDS row carrying a rule, by timestamp.
+RuleMarks = tuple[list[datetime], list[str]]
+
+
+def rule_marks(db: sqlite3.Connection) -> RuleMarks:
+    """Every RULE_KINDS row's (timestamp, rule), sorted by timestamp, as
+    two parallel lists for `rule_at`."""
+    marks: list[tuple[datetime, str]] = []
+    placeholders = ",".join("?" for _ in RULE_KINDS)
+    rows = db.execute(
+        f"select ts, payload from log where kind in ({placeholders}) order by seq",
+        RULE_KINDS,
+    )
+    for ts, payload in rows:
+        if '"rule"' not in payload:
+            continue
+        stamp = _stamp(ts)
+        try:
+            event = json.loads(payload)
+        except ValueError:
+            continue
+        rule = event.get("rule") if isinstance(event, dict) else None
+        if stamp is not None and isinstance(rule, str) and rule:
+            marks.append((stamp, rule))
+    marks.sort()
+    return [stamp for stamp, _ in marks], [rule for _, rule in marks]
+
+
+def rule_at(stamp: datetime, marks: RuleMarks) -> str:
+    """The rule of the nearest rule-carrying row at or before `stamp`;
+    UNLABELLED before the first."""
+    stamps, rules = marks
+    index = bisect.bisect_right(stamps, stamp)
+    return rules[index - 1] if index else UNLABELLED
+
+
+def rule_of(event: dict[str, Any], stamp: datetime, marks: RuleMarks) -> str:
+    """A log row's rule: its own when it carries one, else `rule_at`."""
+    rule = event.get("rule")
+    return rule if isinstance(rule, str) and rule else rule_at(stamp, marks)
+
+
+def first_rows(marks: RuleMarks) -> list[tuple[str, datetime]]:
+    """Each rule and the timestamp of its first row, in order of appearance."""
+    out: list[tuple[str, datetime]] = []
+    seen: set[str] = set()
+    for stamp, rule in zip(*marks):
+        if rule not in seen:
+            seen.add(rule)
+            out.append((rule, stamp))
+    return out
 
 
 def _events(db: sqlite3.Connection, kinds: tuple[str, ...]) -> list[Event]:
@@ -168,7 +228,7 @@ def _is_owner_delivery(event: dict[str, Any]) -> bool:
 
 
 def shows(
-    db: sqlite3.Connection, since: datetime, until: datetime
+    db: sqlite3.Connection, since: datetime, until: datetime, marks: RuleMarks
 ) -> dict[str, Counter[str]]:
     out: dict[str, Counter[str]] = defaultdict(Counter)
     #: (session_id, segment) -> each shown id's most recent show.
@@ -180,8 +240,7 @@ def shows(
         ids = event.get("ids") if kind == "session_brief" else event.get("shown_ids")
         key = (event.get("session_id") or session, event.get("segment"))
         inside = stamp >= since
-        # Both kinds carry their rule; the split needs no instant here.
-        rule = str(event.get("rule"))
+        rule = rule_of(event, stamp, marks)
         repeated_by = (
             "repeat_shows_brief" if kind == "session_brief" else "repeat_shows_recall"
         )
@@ -267,12 +326,13 @@ def prompt_ids(
     until: datetime,
     direct: set[tuple[str, str]],
     proxy: set[tuple[str, str]],
+    marks: RuleMarks,
 ) -> dict[str, Counter[str]]:
     out: dict[str, Counter[str]] = defaultdict(Counter)
     for stamp, session, _kind, event in _events(db, ("prompt_recall",)):
         if not (since <= stamp < until):
             continue
-        counts = out[str(event.get("rule"))]
+        counts = out[rule_of(event, stamp, marks)]
         counts["deliveries"] += 1
         owner = _is_owner_delivery(event)
         if owner:
@@ -292,13 +352,13 @@ def prompt_ids(
 
 
 def stops(
-    db: sqlite3.Connection, since: datetime, until: datetime, landing: datetime
+    db: sqlite3.Connection, since: datetime, until: datetime, marks: RuleMarks
 ) -> dict[str, Counter[str]]:
     out: dict[str, Counter[str]] = defaultdict(Counter)
     for stamp, _session, _kind, event in _events(db, ("turn_audited",)):
         if not (since <= stamp < until) or not _is_stop(event):
             continue
-        counts = out[_rule_at(stamp, landing)]
+        counts = out[rule_of(event, stamp, marks)]
         counts["stops"] += 1
         if "prompt_id" in event:
             counts["stops_with_prompt_id"] += 1
@@ -327,29 +387,27 @@ def main() -> None:
     parser.add_argument(
         "--until", default=None, help="ISO 8601 UTC, exclusive; default now"
     )
-    parser.add_argument(
-        "--landing",
-        default=LANDING_DEFAULT,
-        help="ISO 8601 UTC; rule-less rows at or after it read as rs-v2",
-    )
     parser.add_argument("--store", default="~/.bettermemory/memory.sqlite")
     parser.add_argument("--transcripts", default="~/.claude/projects")
     args = parser.parse_args()
     since = _stamp(args.since)
     until = _stamp(args.until) if args.until else datetime.now(timezone.utc)
-    landing = _stamp(args.landing)
-    if since is None or until is None or landing is None:
-        parser.error("--since, --until and --landing take ISO 8601 timestamps")
+    if since is None or until is None:
+        parser.error("--since and --until take ISO 8601 timestamps")
     db = _ro(Path(args.store).expanduser())
-    shown = shows(db, since, until)
+    marks = rule_marks(db)
+    shown = shows(db, since, until, marks)
     direct, proxy = carried_by_stops(
         db, until, transcript_turns(Path(args.transcripts).expanduser())
     )
-    joined = prompt_ids(db, since, until, direct, proxy)
-    stopped = stops(db, since, until, landing)
+    joined = prompt_ids(db, since, until, direct, proxy, marks)
+    stopped = stops(db, since, until, marks)
+    firsts = ", ".join(
+        f"{rule} from {_iso(stamp)}" for rule, stamp in first_rows(marks)
+    )
     print(
         f"RS-P11 window {_iso(since)} to {_iso(until)}; "
-        f"landing {_iso(landing)} (rc2 daemon up)"
+        f"rules from the log's rows: {firsts or 'none'}"
     )
     for rule in sorted(set(shown) | set(joined) | set(stopped)):
         s, j, t = shown[rule], joined[rule], stopped[rule]
@@ -392,9 +450,9 @@ def main() -> None:
         )
     print(
         "(1) target 0; (2) and (3) target at least 0.95, read as the docstring says: "
-        "the direct line waits for turn_audited to carry prompt_id, the proxy is a "
-        "transcript join, and assistant_present does not say whether the reply came "
-        "from the Stop payload or the transcript tail"
+        "the direct line reads turn_audited rows that carry prompt_id (rs-v3 on), "
+        "the proxy is a transcript join, and assistant_present does not say whether "
+        "the reply came from the Stop payload or the transcript tail"
     )
 
 

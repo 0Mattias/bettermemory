@@ -22,6 +22,20 @@ def user(text: str, prompt_id: str | None = None, **marks: Any) -> dict[str, Any
     return row
 
 
+def queued(text: str, **marks: Any) -> dict[str, Any]:
+    """A queued-command attachment row: what the owner typed while a turn
+    ran, as Claude Code writes it; `marks` are attachment keys such as
+    ``isMeta``."""
+    attachment: dict[str, Any] = {
+        "type": "queued_command",
+        "prompt": text,
+        "commandMode": "prompt",
+        "timestamp": 1_760_000_000_000,
+    }
+    attachment.update(marks)
+    return {"type": "attachment", "attachment": attachment}
+
+
 def tool_result(size: int, prompt_id: str | None = None) -> dict[str, Any]:
     """A user row carrying a tool result of about `size` bytes."""
     row: dict[str, Any] = {

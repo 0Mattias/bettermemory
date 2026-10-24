@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+from datetime import datetime, timezone
 import sqlite3
 import sys
 from pathlib import Path
@@ -386,3 +387,161 @@ def test_prompt_deliveries_count_pointers_and_repeats() -> None:
         "pointers": 5,
         "ids_shown_twice_in_a_session": 1,
     }
+
+
+# ---------------------------------------------------------------------------
+# The RS read scripts: the rule from the log, queued commands beside the count
+# ---------------------------------------------------------------------------
+
+read_p5 = _load("bench_recall_read_rs_p5", _ROOT / "bench" / "recall" / "read_rs_p5.py")
+read_p11 = _load(
+    "bench_recall_read_rs_p11", _ROOT / "bench" / "recall" / "read_rs_p11.py"
+)
+
+SESSION = "d2f1a0c4-0000-4000-8000-000000000001"
+
+
+def _at(minute: int) -> datetime:
+    return datetime(2026, 10, 17, 5, minute, tzinfo=timezone.utc)
+
+
+def _log(rows: list[tuple[datetime, str, str, dict[str, Any]]]) -> sqlite3.Connection:
+    """An in-memory log with (ts, session, kind, payload) rows in order."""
+    db = sqlite3.connect(":memory:")
+    db.execute(
+        "create table log (seq integer primary key, ts text, session text, "
+        "kind text, payload text)"
+    )
+    for stamp, session, kind, payload in rows:
+        db.execute(
+            "insert into log (ts, session, kind, payload) values (?, ?, ?, ?)",
+            (
+                stamp.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                session,
+                kind,
+                json.dumps(payload),
+            ),
+        )
+    return db
+
+
+def test_the_rule_marks_are_the_recalls_own_rows_only() -> None:
+    """A checkout_registered row's rule names a ladder rule and a
+    recall_grade's copies the graded row's; neither marks the rule the
+    daemon served under, so neither is read."""
+    db = _log(
+        [
+            (_at(0), "", "checkout_registered", {"rule": "new"}),
+            (_at(1), SESSION, "session_brief", {"rule": "rs-v1", "ids": []}),
+            (_at(2), SESSION, "turn_audited", {"triggered_from": "stop_hook"}),
+            (_at(5), SESSION, "recall_grade", {"rule": "rs-v1"}),
+            (_at(3), SESSION, "prompt_recall", {"rule": "rs-v2", "shown_ids": []}),
+        ]
+    )
+    assert read_p5.RULE_KINDS == read_p11.RULE_KINDS
+    for module in (read_p5, read_p11):
+        stamps, rules = module.rule_marks(db)
+        assert stamps == [_at(1), _at(3)] and rules == ["rs-v1", "rs-v2"]
+        assert module.first_rows((stamps, rules)) == [
+            ("rs-v1", _at(1)),
+            ("rs-v2", _at(3)),
+        ]
+
+
+def test_a_row_without_a_rule_takes_the_nearest_earlier_one() -> None:
+    marks = ([_at(1), _at(3)], ["rs-v1", "rs-v2"])
+    for module in (read_p5, read_p11):
+        assert module.rule_at(_at(0), marks) == module.UNLABELLED
+        assert module.rule_at(_at(1), marks) == "rs-v1"
+        assert module.rule_at(_at(2), marks) == "rs-v1"
+        assert module.rule_at(_at(3), marks) == "rs-v2"
+        assert module.rule_at(_at(9), marks) == "rs-v2"
+        assert module.rule_of({"rule": "rs-v9"}, _at(2), marks) == "rs-v9"
+        assert module.rule_of({"rule": ""}, _at(2), marks) == "rs-v1"
+        assert module.rule_of({}, _at(0), marks) == module.UNLABELLED
+
+
+def test_the_stops_split_by_their_own_rule_or_the_nearest_earlier() -> None:
+    db = _log(
+        [
+            (_at(1), SESSION, "session_brief", {"rule": "rs-v1", "ids": []}),
+            (_at(2), SESSION, "turn_audited", {"triggered_from": "stop_hook"}),
+            (_at(3), SESSION, "session_brief", {"rule": "rs-v2", "ids": []}),
+            (
+                _at(4),
+                SESSION,
+                "turn_audited",
+                {"triggered_from": "stop_hook", "rule": "rs-v3", "prompt_id": "p"},
+            ),
+            (_at(5), SESSION, "turn_audited", {"triggered_from": "prompt_hook"}),
+        ]
+    )
+    marks = read_p11.rule_marks(db)
+    counted = read_p11.stops(db, _at(0), _at(9), marks)
+    assert {rule: c["stops"] for rule, c in counted.items()} == {"rs-v1": 1, "rs-v3": 1}
+    assert counted["rs-v3"]["stops_with_prompt_id"] == 1
+
+
+def test_a_queued_command_is_counted_beside_the_denominator(tmp_path: Path) -> None:
+    """A queued-command row is no user row: it is counted on its own line,
+    through the gate and the in-repository test, and a delivery no
+    denominator row matches is joined to it by the same hash."""
+    from bettermemory.events import redact_query
+    from bettermemory.recall import clean_prompt
+
+    from tests import _transcript_rows as tr
+
+    typed = "where does the nightly backup run"
+    queued = "and when does its restic prune run"
+    stamp = _at(2).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    where = {"sessionId": SESSION, "timestamp": stamp, "cwd": "/work/repo"}
+    transcripts = tmp_path / "projects"
+    (transcripts / "-work-repo").mkdir(parents=True)
+    tr.write(
+        transcripts / "-work-repo" / f"{SESSION}.jsonl",
+        {**tr.user(typed, "p1"), **where},
+        {**tr.queued(queued), **where},
+        {**tr.queued("<task-notification>done</task-notification>"), **where},
+        {**tr.queued("a note the app queued", isMeta=True), **where},
+        {
+            **tr.user("before the window", "p0"),
+            **where,
+            "timestamp": "2026-10-01T00:00:00.000000Z",
+        },
+    )
+    typed_hash = redact_query(clean_prompt(typed))["hash"]
+    queued_hash = redact_query(clean_prompt(queued))["hash"]
+
+    def delivery(probe_hash: str, prompt_id: str | None) -> dict[str, Any]:
+        return {
+            "session_id": SESSION,
+            "harness": "claude-code",
+            "rule": "rs-v1",
+            "prompt_id": prompt_id,
+            "probe_query": {"hash": probe_hash, "preview": "x", "len": 1},
+        }
+
+    db = _log(
+        [
+            (_at(1), SESSION, "session_brief", {"rule": "rs-v1", "ids": []}),
+            (_at(3), SESSION, "prompt_recall", delivery(typed_hash, "p1")),
+            (_at(4), SESSION, "prompt_recall", delivery(queued_hash, None)),
+            (_at(5), SESSION, "prompt_recall", delivery("0" * 16, "p9")),
+        ]
+    )
+    marks = read_p5.rule_marks(db)
+    prompts = read_p5.count_prompts(
+        transcripts, _at(0), _at(9), marks, verdicts={SESSION: True}
+    )
+    counts = prompts.counts["rs-v1"]
+    assert counts["owner_prompts"] == 1 and counts["accepted_rows"] == 1
+    assert counts["queued_rows"] == 1 and counts["queued_prompts"] == 1
+    assert prompts.hashes == {(SESSION, typed_hash)}
+    assert prompts.queued_hashes == {(SESSION, queued_hash)}
+    assert prompts.prompt_ids == {(SESSION, "p1")}
+    assert set(prompts.counts) == {"rs-v1"}
+
+    deliveries, unmatched = read_p5.count_deliveries(db, _at(0), _at(9), prompts, marks)
+    d = deliveries["rs-v1"]
+    assert d["owner_deliveries"] == 3 and d["matched_deliveries"] == 1
+    assert unmatched["rs-v1"] == [3, 4] and d["matched_queued"] == 1

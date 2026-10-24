@@ -25,6 +25,14 @@ the Stop's are computed over the same bytes; a reader that counts the
 owner's words rather than probes them (capture) asks for them whole with
 ``cut=False``, and the test of whose words they are is the same. The
 module imports nothing from the package, so any module may read it.
+
+Queued commands. What the owner types while a turn runs, the harness
+holds for the next turn and writes to the transcript as a row of type
+``attachment`` carrying a ``queued_command`` (`queued_text`). Such a row
+is no turn of its own, so `is_submitted` and `owner_prompt` do not read
+it; the readers that account for every prompt the owner typed (the
+recall review, the RS read scripts) read it beside the submitted rows
+and judge its words by `owner_text`, as a submitted row's are judged.
 """
 
 from __future__ import annotations
@@ -56,6 +64,12 @@ ENVELOPE_TAGS: tuple[str, ...] = (
 #: and the wrapper sentence the transcript keeps it behind), the app's
 #: side-session notes, scheduled-task payloads, and the line the harness
 #: writes when the owner interrupts a turn.
+#: The line the harness writes into a turn when the owner interrupts it
+#: ("[Request interrupted by user]", "... for tool use"): a turn that holds
+#: one ended without a Stop (RS-F3-M5), and the next hook settles it
+#: (`transcript.interrupted_turns`, RS-F7 part 6).
+INTERRUPT_OPENING = "[Request interrupted"
+
 HARNESS_OPENINGS: tuple[str, ...] = (
     "<task-notification>",
     "<command-name>",
@@ -67,7 +81,7 @@ HARNESS_OPENINGS: tuple[str, ...] = (
     "<side-sessions-event",
     "<scheduled-task",
     "Another Claude session sent a message",
-    "[Request interrupted",
+    INTERRUPT_OPENING,
 )
 
 #: What a probed text may not open with: a harness opening, or an
@@ -154,6 +168,32 @@ def submitted_text(row: Mapping[str, Any]) -> str | None:
     return content if isinstance(content, str) else text_blocks(content)
 
 
+#: The attachment type of a prompt the owner typed while a turn ran and
+#: the harness held for the next one.
+QUEUED_COMMAND = "queued_command"
+
+
+def queued_text(row: Mapping[str, Any]) -> str | None:
+    """The prompt of a queued-command attachment row: a row of type
+    ``attachment`` whose ``attachment`` is a `QUEUED_COMMAND` with a
+    string ``prompt``. None for any other row, for an attachment flagged
+    ``isMeta`` (a note the app queued, not the owner's words, the mark a
+    user row carries for the same thing) and for a blank prompt. Whether
+    the words are the owner's is `owner_text`'s question, as for a
+    submitted row."""
+    if row.get("type") != "attachment":
+        return None
+    attachment = row.get("attachment")
+    if not isinstance(attachment, Mapping) or attachment.get("type") != QUEUED_COMMAND:
+        return None
+    if attachment.get("isMeta"):
+        return None
+    prompt = attachment.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        return None
+    return prompt
+
+
 def owner_prompt(row: Mapping[str, Any], *, cut: bool = True) -> str | None:
     """The owner's typed text of a transcript row as the probe reads it
     (`owner_text`), or None when the row is not the owner's: not a
@@ -175,10 +215,12 @@ __all__ = [
     "HARNESS_OPENINGS",
     "HUMAN_ORIGIN",
     "PROMPT_CUT_CHARS",
+    "QUEUED_COMMAND",
     "is_submitted",
     "owner_prompt",
     "owner_text",
     "probe_text",
+    "queued_text",
     "submitted_text",
     "text_blocks",
 ]

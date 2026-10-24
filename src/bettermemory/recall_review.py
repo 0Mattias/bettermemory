@@ -15,7 +15,8 @@ review time and never stored: a delivery's as the user row, the human's
 or not, whose text hashes to the row's `probe_query` hash through
 `recall.clean_prompt` and `events.redact_query` (the production hash
 exactly), falling back to its `prompt_id` row, labelled ``unverified``,
-when no row hashes to it; a brief's as the first prompt after it; a
+when no row hashes to it (a queued command, what the owner typed while a
+turn ran, is read as a user row here: `owner_prompt.queued_text`); a brief's as the first prompt after it; a
 silent turn's as the latest prompt before its Stop. Each sample names its
 prompt kind: ``owner``, ``task_notification``, ``agent_message``,
 ``cross_session`` or ``unknown``. A sample whose prompt is in no row of a
@@ -48,7 +49,7 @@ from .events import redact_query
 from .hook import event_joined, joined_sessions
 from .membership import PROMPT_RECALL, Membership
 from .models import Memory
-from .owner_prompt import owner_prompt, submitted_text
+from .owner_prompt import owner_prompt, owner_text, queued_text, submitted_text
 from .recall import DEFAULT_HARNESS, clean_prompt
 from .recall_counters import (
     RECALL_GRADE,
@@ -448,7 +449,9 @@ class Transcripts:
 
 @dataclass(frozen=True)
 class _UserRow:
-    """One user row of a transcript with text in it, the human's or not.
+    """One user row of a transcript with text in it, the human's or not,
+    or one queued command (`owner_prompt.queued_text`), which has no
+    prompt id.
 
     `probed` is the text the hook would have received for it: the row's
     text, or the tagged body after the wrapper's first line for a message
@@ -493,17 +496,24 @@ def _user_rows(rows: list[dict[str, Any]]) -> list[_UserRow]:
     out: list[_UserRow] = []
     for row in rows:
         text = _row_text(row)
-        if text is None:
-            continue
+        if text is not None:
+            human = owner_prompt(row) is not None
+            prompt_id = _str(row.get("promptId"))
+        else:
+            text = queued_text(row)
+            if text is None:
+                continue
+            human = owner_text(text) is not None
+            prompt_id = None
         probed = probed_text(text)
         out.append(
             _UserRow(
                 stamp=parse_event_ts(row.get("timestamp")),
-                prompt_id=_str(row.get("promptId")),
+                prompt_id=prompt_id,
                 text=text,
                 probed=probed,
                 digest=probe_digest(probed),
-                human=owner_prompt(row) is not None,
+                human=human,
             )
         )
     return out

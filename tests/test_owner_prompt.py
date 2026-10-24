@@ -31,6 +31,7 @@ from bettermemory.owner_prompt import (
     owner_prompt,
     owner_text,
     probe_text,
+    queued_text,
     submitted_text,
     text_blocks,
 )
@@ -337,6 +338,55 @@ def test_the_review_marks_its_rows_by_the_definition() -> None:
     ]
     assert (
         marked[0].digest == redact_query(clean_prompt(f"{REMINDER}\n{TYPED}"))["hash"]
+    )
+
+
+# ---------------------------------------------------------------------------
+# Queued commands (RS-F7 part 7)
+# ---------------------------------------------------------------------------
+
+
+def test_a_queued_command_is_read_beside_the_submitted_rows() -> None:
+    """A queued-command attachment row holds what the owner typed while a
+    turn ran: `queued_text` returns it, and the hook's readers, which
+    judge turns, do not see it as one."""
+    row = tr.queued(TYPED)
+    assert queued_text(row) == TYPED
+    assert not is_submitted(row)
+    assert submitted_text(row) is None
+    assert owner_prompt(row) is None
+    assert human_prompt(row) is None
+
+
+def test_a_queued_note_the_app_flags_or_leaves_blank_is_not_read() -> None:
+    assert queued_text(tr.queued(TYPED, isMeta=True)) is None
+    assert queued_text(tr.queued("   ")) is None
+    assert queued_text(tr.user(TYPED, "p1")) is None
+    assert queued_text({"type": "attachment", "attachment": {"type": "other"}}) is None
+    assert queued_text({"type": "attachment", "attachment": "queued_command"}) is None
+
+
+def test_the_review_reads_a_queued_command_as_a_row_without_a_prompt_id() -> None:
+    """The review's rows carry a queued command, hashed as the log hashes
+    a probe, the owner's by `owner_text`'s test and never with a prompt
+    id; one the app composed is not the owner's."""
+    marked = _user_rows(
+        [
+            tr.user(TYPED, "p1"),
+            tr.queued(f"{TYPED} and the retention"),
+            tr.queued(HARNESS_OPENINGS[0] + " queued by the app"),
+            tr.queued(TYPED, isMeta=True),
+        ]
+    )
+    assert [(row.prompt_id, row.human) for row in marked] == [
+        ("p1", True),
+        (None, True),
+        (None, False),
+    ]
+    assert marked[1].text == f"{TYPED} and the retention"
+    assert (
+        marked[1].digest
+        == redact_query(clean_prompt(f"{TYPED} and the retention"))["hash"]
     )
 
 

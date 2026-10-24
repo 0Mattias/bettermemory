@@ -56,13 +56,26 @@ denominator by construction. Unmatched deliveries are printed as a
 separate count with their seqs (pre-landing: seq 22448, whose probed
 text is in no transcript row).
 
-THE SPLIT. A prompt_recall row carries its rule (rs-v1 at rc1, rs-v2
-from the RS-F1 landing) and splits by it. Transcript rows carry none and
-split at the landing instant, the moment the rc2 daemon began serving:
-2026-10-17T05:50:18Z, the default of --landing. The first log row whose
-rule is rs-v2, the landing row the RS-F1 record names, is at
-2026-10-17T05:50:51.886601Z; 2 user rows and no delivery or Stop fall
-between the two instants.
+QUEUED COMMANDS, beside the denominator. What the owner types while a
+turn runs, the harness holds for the next turn and writes to the
+transcript as a row of type attachment carrying a queued_command
+(`owner_prompt.queued_text`; an attachment flagged isMeta is the app's
+own note and is not read). Such a row is no user row, so it is not in
+the denominator the prediction was settled on; it is counted on its own
+line per rule, through the same gate and the same in-repository test,
+and a delivery no denominator row matches is joined to it by the same
+hash. The output names how many of the unmatched deliveries a queued
+command accounts for; the value line does not move.
+
+THE SPLIT, by the rule the daemon served under. A log row of the recall's
+own kinds (RULE_KINDS) carries its rule (rs-v1 at rc1, rs-v2 from the
+RS-F1 landing, and so on) and splits by it. A row without one, a
+transcript row or a log row written before its kind carried the key,
+takes the rule of the nearest earlier rule-carrying row by timestamp
+(`rule_at`), and a row before the first such row reads as
+UNLABELLED. The output prints each rule's first row, so a reader can
+see the span a daemon served before its first recall row (at rc2, 33
+seconds and 2 user rows), which this labelling gives to the rule before.
 
 Usage (store and transcripts opened read-only; counts only, no text):
 
@@ -74,6 +87,7 @@ Usage (store and transcripts opened read-only; counts only, no text):
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import sqlite3
 import subprocess
@@ -91,13 +105,28 @@ from bettermemory.hook import (  # noqa: E402
     _flatten_assistant_content,
     is_synthetic_prompt,
 )
+from bettermemory.owner_prompt import queued_text  # noqa: E402
 from bettermemory.recall import clean_prompt  # noqa: E402
 
 PROBE_SESSION_PREFIX = "switch-probe"
 INTERRUPT_PREFIX = "[Request interrupted"
 HARNESS = "claude-code"
-#: The instant the rc2 daemon began serving (install done 05:50:14Z).
-LANDING_DEFAULT = "2026-10-17T05:50:18Z"
+#: The log kinds whose rows carry the rule the daemon served under when
+#: they were written: the recall's own rows and its audit's. Other kinds
+#: carry a ``rule`` key of their own meaning (checkout_registered names
+#: the ladder rule that decided a home, recall_grade copies the graded
+#: row's) and are not read.
+RULE_KINDS = (
+    "session_brief",
+    "prompt_recall",
+    "segment_opened",
+    "turn_audited",
+    "search_miss",
+    "recall_held",
+    "recall_suppressed",
+)
+#: The rule of a row before the first rule-carrying row.
+UNLABELLED = "unlabelled"
 #: `events.redact_query` keeps the first 32 characters of the probed text.
 PREVIEW_CHARS = 32
 #: The gate's tags as a preview can show them.
@@ -128,21 +157,72 @@ def _is_probe(session: Any) -> bool:
     return isinstance(session, str) and session.startswith(PROBE_SESSION_PREFIX)
 
 
-def _rule_at(stamp: datetime, landing: datetime) -> str:
-    return "rs-v2" if stamp >= landing else "rs-v1"
+#: (timestamp, rule) of every RULE_KINDS row carrying a rule, by timestamp.
+RuleMarks = tuple[list[datetime], list[str]]
+
+
+def rule_marks(db: sqlite3.Connection) -> RuleMarks:
+    """Every RULE_KINDS row's (timestamp, rule), sorted by timestamp, as
+    two parallel lists for `rule_at`."""
+    marks: list[tuple[datetime, str]] = []
+    placeholders = ",".join("?" for _ in RULE_KINDS)
+    rows = db.execute(
+        f"select ts, payload from log where kind in ({placeholders}) order by seq",
+        RULE_KINDS,
+    )
+    for ts, payload in rows:
+        if '"rule"' not in payload:
+            continue
+        stamp = _stamp(ts)
+        try:
+            event = json.loads(payload)
+        except ValueError:
+            continue
+        rule = event.get("rule") if isinstance(event, dict) else None
+        if stamp is not None and isinstance(rule, str) and rule:
+            marks.append((stamp, rule))
+    marks.sort()
+    return [stamp for stamp, _ in marks], [rule for _, rule in marks]
+
+
+def rule_at(stamp: datetime, marks: RuleMarks) -> str:
+    """The rule of the nearest rule-carrying row at or before `stamp`;
+    UNLABELLED before the first."""
+    stamps, rules = marks
+    index = bisect.bisect_right(stamps, stamp)
+    return rules[index - 1] if index else UNLABELLED
+
+
+def rule_of(event: dict[str, Any], stamp: datetime, marks: RuleMarks) -> str:
+    """A log row's rule: its own when it carries one, else `rule_at`."""
+    rule = event.get("rule")
+    return rule if isinstance(rule, str) and rule else rule_at(stamp, marks)
+
+
+def first_rows(marks: RuleMarks) -> list[tuple[str, datetime]]:
+    """Each rule and the timestamp of its first row, in order of appearance."""
+    out: list[tuple[str, datetime]] = []
+    seen: set[str] = set()
+    for stamp, rule in zip(*marks):
+        if rule not in seen:
+            seen.add(rule)
+            out.append((rule, stamp))
+    return out
 
 
 @dataclass
 class Prompts:
     """The denominator per rule, with the keys a delivery is joined by
     ((session, probe hash) and (session, promptId) of every denominator
-    row) and the sessions decided each way."""
+    row), the queued commands' keys ((session, probe hash)) beside them,
+    and the sessions decided each way."""
 
     counts: dict[str, Counter[str]] = field(
         default_factory=lambda: defaultdict(Counter)
     )
     hashes: set[tuple[str, str]] = field(default_factory=set)
     prompt_ids: set[tuple[str, str]] = field(default_factory=set)
+    queued_hashes: set[tuple[str, str]] = field(default_factory=set)
     decided: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
 
 
@@ -226,7 +306,7 @@ def count_prompts(
     transcripts: Path,
     since: datetime,
     until: datetime,
-    landing: datetime,
+    marks: RuleMarks,
     verdicts: dict[str, bool],
 ) -> Prompts:
     out = Prompts()
@@ -238,7 +318,10 @@ def count_prompts(
                     row = json.loads(raw)
                 except ValueError:
                     continue
-                if not isinstance(row, dict) or row.get("type") != "user":
+                if not isinstance(row, dict):
+                    continue
+                queued = row.get("type") == "attachment"
+                if row.get("type") != "user" and not queued:
                     continue
                 if row.get("isSidechain") or row.get("agentId"):
                     continue
@@ -250,15 +333,18 @@ def count_prompts(
                     continue
                 if row.get("isMeta") or row.get("isCompactSummary"):
                     continue
-                text = _row_text(row)
+                text = queued_text(row) if queued else _row_text(row)
                 if text is None:
                     continue
                 # The rc2 recall's gate, in its order.
                 query = clean_prompt(text)
                 if not query.strip() or is_synthetic_prompt(query):
                     continue
-                counts = out.counts[_rule_at(stamp, landing)]
-                counts["accepted_rows"] += 1
+                counts = out.counts[rule_at(stamp, marks)]
+                if queued:
+                    counts["queued_rows"] += 1
+                else:
+                    counts["accepted_rows"] += 1
                 if query.lstrip().startswith(INTERRUPT_PREFIX):
                     counts["interrupt_excluded"] += 1
                     continue
@@ -266,7 +352,15 @@ def count_prompts(
                 if not _in_repository(
                     session, row.get("cwd"), verdicts, out.decided, cache, counts
                 ):
-                    counts["outside_repository_excluded"] += 1
+                    counts[
+                        "queued_outside_repository"
+                        if queued
+                        else "outside_repository_excluded"
+                    ] += 1
+                    continue
+                if queued:
+                    counts["queued_prompts"] += 1
+                    out.queued_hashes.add((session, redact_query(query)["hash"]))
                     continue
                 counts["owner_prompts"] += 1
                 out.hashes.add((session, redact_query(query)["hash"]))
@@ -281,6 +375,7 @@ def count_deliveries(
     since: datetime,
     until: datetime,
     prompts: Prompts,
+    marks: RuleMarks,
 ) -> tuple[dict[str, Counter[str]], dict[str, list[int]]]:
     out: dict[str, Counter[str]] = defaultdict(Counter)
     unmatched: dict[str, list[int]] = defaultdict(list)
@@ -293,9 +388,7 @@ def count_deliveries(
         if stamp is None or not (since <= stamp < until):
             continue
         event = json.loads(payload)
-        # Every prompt_recall row carries its rule; the split needs no
-        # instant here.
-        rule = str(event.get("rule"))
+        rule = rule_of(event, stamp, marks)
         counts = out[rule]
         counts["rows"] += 1
         if _is_probe(session) or _is_probe(event.get("session_id")):
@@ -319,6 +412,8 @@ def count_deliveries(
             counts["matched_deliveries"] += 1
         else:
             unmatched[rule].append(int(seq))
+            if (session_id, probe_hash) in prompts.queued_hashes:
+                counts["matched_queued"] += 1
     return out, unmatched
 
 
@@ -330,27 +425,25 @@ def main() -> None:
     parser.add_argument(
         "--until", default=None, help="ISO 8601 UTC, exclusive; default now"
     )
-    parser.add_argument(
-        "--landing",
-        default=LANDING_DEFAULT,
-        help="ISO 8601 UTC; rule-less rows at or after it read as rs-v2",
-    )
     parser.add_argument("--store", default="~/.bettermemory/memory.sqlite")
     parser.add_argument("--transcripts", default="~/.claude/projects")
     args = parser.parse_args()
     since = _stamp(args.since)
     until = _stamp(args.until) if args.until else datetime.now(timezone.utc)
-    landing = _stamp(args.landing)
-    if since is None or until is None or landing is None:
-        parser.error("--since, --until and --landing take ISO 8601 timestamps")
+    if since is None or until is None:
+        parser.error("--since and --until take ISO 8601 timestamps")
     db = _ro(Path(args.store).expanduser())
+    marks = rule_marks(db)
     prompts = count_prompts(
-        Path(args.transcripts).expanduser(), since, until, landing, hook_verdicts(db)
+        Path(args.transcripts).expanduser(), since, until, marks, hook_verdicts(db)
     )
-    deliveries, unmatched = count_deliveries(db, since, until, prompts)
+    deliveries, unmatched = count_deliveries(db, since, until, prompts, marks)
+    firsts = ", ".join(
+        f"{rule} from {_iso(stamp)}" for rule, stamp in first_rows(marks)
+    )
     print(
         f"RS-P5 window {_iso(since)} to {_iso(until)}; "
-        f"landing {_iso(landing)} (rc2 daemon up)"
+        f"rules from the log's rows: {firsts or 'none'}"
     )
     for rule in sorted(set(deliveries) | set(prompts.counts)):
         d = deliveries[rule]
@@ -379,6 +472,12 @@ def main() -> None:
             f"  value            {matched:.3f} matched ({raw:.3f} raw)"
             if matched is not None and raw is not None
             else "  value            n/a"
+        )
+        print(
+            f"  queued_prompts   {p['queued_prompts']}  beside the denominator "
+            f"(queued rows the gate accepts {p['queued_rows']}, outside a "
+            f"repository {p['queued_outside_repository']}; unmatched deliveries "
+            f"a queued command accounts for {d['matched_queued']})"
         )
     decided = prompts.decided
     print(
