@@ -8,7 +8,16 @@ module-level docs and `prompts.SYSTEM_PROMPT_ADDENDUM` for the
 consumer-side instructions.
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    # The three lazy names, declared for the type checkers only: a checker
+    # reads them here and checks `__all__` against them, while the
+    # interpreter never runs this block, so importing the package still
+    # imports neither `builder` (and with it the MCP SDK) nor `cli`.
+    from .builder import build_server
+    from .cli import main
+    from .prompts import SYSTEM_PROMPT_ADDENDUM
 
 # Bound on first read by `__getattr__` below, which then stores it here.
 __version__: str

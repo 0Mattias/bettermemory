@@ -1,13 +1,13 @@
 """Client-side hook entry points: the Stop-hook turn audit, and the
-CLI shims of the recall surface (`recall.py`) — one probe, two moments.
+CLI shims of the recall surface (`recall.py`): one probe, two moments.
 
-The audit MCP tool (`memory_audit_turn`) needs to fire after every
-assistant turn to populate silent-miss telemetry. The model is
-supposed to invoke it via its tool surface, but in practice it
-forgets — the audit's value is opt-in-on-top-of-opt-in. The natural
-distribution point is a Claude Code Stop hook: the harness invokes
-a CLI on the user's machine at the end of every turn, before
-control returns to the user.
+The turn audit fires after every assistant turn to populate silent-miss
+telemetry. 9.0 removed the MCP tool that once carried it
+(`memory_audit_turn`): a model left to call it forgot, so the audit's
+value was opt-in on top of opt-in. The distribution point is a Claude
+Code Stop hook: the harness invokes a CLI on the user's machine at the
+end of every turn, before control returns to the user, and the hook
+posts the payload to the daemon, which runs the audit.
 
 This module is the thin CLI surface those hooks wire to. The Stop
 half (`main` / `run_audit`) reads Claude Code's Stop hook payload
@@ -25,11 +25,11 @@ The session brief, the SessionStart surface, lives in `recall.py` too.
 
 Cross-process limitation: the model and the hook run in different
 processes, so the hook can't share the model's in-memory
-SessionState. It CAN share the event log on disk — the audit
-function only needs the session id and a list of recent events to
-decide whether the model retrieved memory this turn. The session
-id is carried in the Stop hook payload; recent events are read
-from `.events.jsonl`.
+SessionState. It CAN share the store's log: the audit function only
+needs the session id and a list of recent events to decide whether
+the model retrieved memory this turn. The session id is carried in
+the Stop hook payload; recent events are read from the store's event
+rows (`Store.events_since`).
 
 Session-disabled scopes: the hook reconstructs them from the event
 log rather than the model's in-memory `SessionState` (which it can't
@@ -37,8 +37,8 @@ see across the process boundary). `memory_scope_disable` /
 `memory_scope_enable` already append `scope_disable` / `scope_enable`
 events stamped with the MCP server's stable per-process session id,
 so the hook replays those toggles for the *current in-process server
-session* and feeds the net set into the probe as `excluded_scopes` —
-the same shield the in-process `memory_audit_turn` applies. A turn the
+session* and feeds the net set into the probe as `excluded_scopes`,
+the same shield `audit.probe_for_miss` applies in process. A turn the
 user framed as "unrelated to project X" is therefore no longer
 false-flagged as a silent miss here. See `_disabled_scopes_from_events`.
 Stop-hook events still carry `triggered_from="stop_hook"` so

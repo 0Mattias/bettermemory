@@ -51,19 +51,18 @@ AdminAction = Literal[
 
 DESC_MEMORY_ADMIN = (
     "restore: tombstone `id` back. "
-    "tombstones: the removed memories. health: the health report. "
-    "rename_scope: `old_scope` to `new_scope`. conflicts: pending "
-    "conflict pairs; scan=True detects, `id` with `verdict` "
-    "(contradiction|compatible) and `note` resolves. acknowledge_miss: "
-    "search_miss `id` with `reason`, or all misses before ISO `before`. "
-    "disable_scope, "
-    "enable_scope: hide or unhide `scope` this session. "
-    "answer_question: a membership question (a `bettermemory:` line; `id` "
-    "Qnnn, or this checkout's first): `answer` separate on your own "
-    "judgement, or join only when the user said so, their words in `said` "
-    "(`target` picks among several projects). join_project: merge project "
-    "`id` into this checkout's, on the user's words in `said`. "
-    "unjoin_project: undo that merge."
+    "tombstones: removed memories. health: the health report. "
+    "rename_scope: `old_scope` to `new_scope`. conflicts: pending pairs; "
+    "scan=True detects; `id`, `verdict` (contradiction|compatible), `note` "
+    "resolve. acknowledge_miss: search_miss `id` with `reason`, or all "
+    "before ISO `before`. disable_scope, enable_scope: hide or unhide "
+    "`scope` this session. relations: a capture's closing call. "
+    "answer_question: a membership question (`id` Qnnn, else the first "
+    "here): `answer` separate on your judgement, or join on the user's "
+    "words in `said`; `target` picks among several. join_project: merge "
+    "project `id` into this checkout's, on the user's words in `said`. "
+    "unjoin_project: undo it. answer_standing: `standing` {id: 0 to 1} "
+    "answers the standing question."
 )
 
 

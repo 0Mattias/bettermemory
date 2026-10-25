@@ -22,7 +22,7 @@ This skill is the long-form companion to the server's `instructions` block, whic
 
 ## The nine tools
 
-`memory_search`, `memory_show`, `memory_write`, `memory_update`, `memory_remove`, `memory_verify`, `memory_record_use`, `episode` (actions `write` and `handoff`) and `memory_admin` (actions `restore`, `tombstones`, `health`, `rename_scope`, `conflicts`, `acknowledge_miss`, `disable_scope`, `enable_scope`, and `relations`, a session capture's closing call). The `bettermemory` command carries the offline work: `health`, `eval`, `export`, `tombstones`, `episodes`, `rename-scope`, `migrate`, `log verify`, `capture`.
+`memory_search`, `memory_show`, `memory_write`, `memory_update`, `memory_remove`, `memory_verify`, `memory_record_use`, `episode` (actions `write` and `handoff`) and `memory_admin` (actions `restore`, `tombstones`, `health`, `rename_scope`, `conflicts`, `acknowledge_miss`, `disable_scope`, `enable_scope`, `relations`, a session capture's closing call, `answer_question`, `join_project` and `unjoin_project`, the membership declarations, and `answer_standing`, the standing question for the records that wait for it). The `bettermemory` command carries the offline work: `health`, `eval`, `export`, `tombstones`, `episodes`, `rename-scope`, `migrate`, `log verify`, `capture`.
 
 ## When to retrieve
 
@@ -37,7 +37,7 @@ Skip it for generic factual questions, self-contained technical questions and fu
 
 `memory_search` auto-scopes to the caller's current repo and worktree; memories from another repo are filtered out and legacy memories with no origin pass as global. Pass `auto_scope=False` for a cross-project query. `scopes` keeps only those tags, `exclude_scopes` drops them for one call, and `memory_admin(action="disable_scope", scope=...)` drops one for the rest of the session. `since_prior_session=True` lists what this session changed since the last other-session activity.
 
-A session that sees no brief has nothing fresh stored for the repository, or stands outside one; `memory_search` still reaches what is stored.
+A session that sees no brief has no standing memory in force and nothing the conversation so far bears on stored for the repository, or stands outside one; `memory_search` still reaches what is stored.
 
 ## Transparency
 

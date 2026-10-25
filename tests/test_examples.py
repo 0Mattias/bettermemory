@@ -27,13 +27,20 @@ right contract surface for that.
 
 from __future__ import annotations
 
+import importlib.util
+import json
 import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
+from types import ModuleType
+from typing import Any
 
 import pytest
 
 from bettermemory import _frontmatter as frontmatter
+from bettermemory import review
+from bettermemory.builder import build_server
+from bettermemory.config import Config, StorageConfig
 from bettermemory.models import (
     Category,
     Confidence,
@@ -43,6 +50,8 @@ from bettermemory.models import (
     Source,
 )
 from bettermemory.origin import Origin
+from bettermemory.session import SessionState
+from bettermemory.store import Store
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -201,3 +210,103 @@ def test_mypy_python_version_stays_at_project_minimum() -> None:
         "bumping it silently lets newer-syntax code through on the "
         "oldest supported interpreter."
     )
+
+
+# ---------------------------------------------------------------------------
+# examples/programmatic_client.py: its review answers, against the server
+# ---------------------------------------------------------------------------
+
+_EXAMPLE_CLIENT = _REPO_ROOT / "examples" / "programmatic_client.py"
+
+# The example's two writes, body for body, so the reviews answered here are
+# the ones the example's own statements draw.
+_EXAMPLE_WRITES: tuple[dict[str, Any], ...] = (
+    {
+        "content": (
+            "Project atlas uses pnpm with a workspace, not npm or yarn. "
+            "Install with `pnpm install` at the root; per-package lockfiles "
+            "are disallowed by `.npmrc`. Add deps with "
+            "`pnpm --filter <pkg> add <dep>`."
+        ),
+        "scopes": ["projects:atlas", "tools"],
+        "confidence": "high",
+        "category": "fact",
+    },
+    {
+        "content": (
+            "User prefers code-driven walkthroughs over GUI tours: when asked "
+            "for a tutorial, lead with runnable snippets, not screenshots."
+        ),
+        "scopes": ["learning-style"],
+        "confidence": "medium",
+        "category": "user-inference",
+    },
+)
+
+
+def _load_example_client() -> ModuleType:
+    """The example as a module, loaded from its path: it is a script and
+    not a package, so a plain import cannot reach it."""
+    spec = importlib.util.spec_from_file_location(
+        "programmatic_client", _EXAMPLE_CLIENT
+    )
+    assert spec is not None and spec.loader is not None, _EXAMPLE_CLIENT
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class _InProcessSession:
+    """Stands in for `mcp.ClientSession`: `call_tool` goes to the server
+    object `build_server` returns instead of over stdio. The result is the
+    SDK's `CallToolResult`, whose `content[0].text` the example reads, so
+    the example's own parsing runs unchanged."""
+
+    def __init__(self, server: Any) -> None:
+        self._server = server
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        return await self._server.call_tool(name, arguments)
+
+
+async def test_example_client_answers_the_write_review(
+    memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The example's `_write` answers the review the server issues, and
+    both of its writes commit. The answer shape is the server's
+    (`review.parse_answers`): a score the server requires and the example
+    omits, as `standing` was omitted at 9.0.0rc7, leaves the first write a
+    teaching error instead of a commit, and the example then fails on its
+    own assertion. Every test starts with the review off (conftest), so
+    the thresholds are set here."""
+    monkeypatch.setattr(review, "TAU_UNSAFE", 0.5)
+    monkeypatch.setattr(review, "TAU_SECRET", 0.5)
+    example = _load_example_client()
+    store = Store(memory_dir)
+    try:
+        server = build_server(
+            config=Config(storage=StorageConfig(directory=str(memory_dir))),
+            store=store,
+            state=SessionState(),
+        )
+        session = _InProcessSession(server)
+
+        for args in _EXAMPLE_WRITES:
+            # A first call is a review and writes nothing, so one more ahead
+            # of the example's own loop changes nothing; it pins that the
+            # review is on and asks the four questions the example answers.
+            first = await session.call_tool("memory_write", args)
+            issued = json.loads(first.content[0].text)
+            assert issued["status"] == "review", issued
+            assert set(issued["review"]["questions"]) == {
+                "relation",
+                "unsafe",
+                "secret",
+                "standing",
+            }
+            payload = await example._write(session, args)
+            assert payload["status"] == "committed", payload
+            (row,) = store.standing_rows([payload["id"]])
+            assert row["probability"] == 0.0, row
+    finally:
+        store.close()

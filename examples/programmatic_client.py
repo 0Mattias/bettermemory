@@ -95,16 +95,21 @@ async def _write(session: ClientSession, args: dict[str, Any]) -> dict[str, Any]
 
     A first `memory_write` writes nothing. It returns `status: "review"`
     with the stored statements the write resembles (`review.related`) and
-    three questions, and the caller answers by re-sending the same call
+    four questions, and the caller answers by re-sending the same call
     with a `review` argument: a relation label for every related id, and
-    the probability from 0 to 1 that following the write would be unsafe
-    and that its body holds a secret. When the related set changed in
+    three probabilities from 0 to 1: that following the write would be
+    unsafe, that its body holds a secret, and that the statement is
+    standing. The standing question asks whether the statement directs
+    future work in its scope until it is replaced: a ruling, a rule or a
+    standing preference the user gave. When the related set changed in
     between, the next reply is another review that asks about the new ids
     too.
 
     This example labels every related statement `unrelated` and scores
-    both questions 0, which holds for its own two writes into an empty
-    store. A real agent answers from what it read in `review.related`.
+    the three probabilities 0, which is what a demo into an empty store
+    can say. A real agent answers from what it read in `review.related`
+    and from the body it is writing; the preference in step 3, for one,
+    could well score above 0 on the standing question.
     """
     result = await session.call_tool("memory_write", args)
     print(_pretty(result))
@@ -120,6 +125,7 @@ async def _write(session: ClientSession, args: dict[str, Any]) -> dict[str, Any]
             "relation": relation,
             "unsafe": 0.0,
             "secret": 0.0,
+            "standing": 0.0,
         }
         print("   (answering the review and re-sending the same call)")
         result = await session.call_tool("memory_write", {**args, "review": answers})

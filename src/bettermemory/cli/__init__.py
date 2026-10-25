@@ -54,20 +54,14 @@ from . import (
     try_cmd,
 )
 
-# Round-3 audit fix: the CLI modules for the ``health`` and
-# ``audit-turn`` subcommands were originally named ``cli/health.py`` and
-# ``cli/audit_turn.py``, colliding with the MCP-tool-handler modules at
-# ``handlers/health.py`` and ``handlers/audit_turn.py``. Grepping
-# ``audit_turn`` from a fresh checkout returned both files with no hint
-# at which was which. Renaming the CLI side (the handler side keeps the
-# established "strip the memory_ prefix" convention) eliminates the
-# basename collision while preserving every CLI surface — the
-# subcommand strings ``bettermemory health`` and ``bettermemory
-# audit-turn`` are unchanged. ``session_start_cmd`` carries the same
-# suffix for the same reason: ``handlers/scope_overview.py`` is the
-# sibling this command's counts come from, and a bare
-# ``cli/session_start.py`` would re-create exactly the ambiguity the
-# rename removed.
+# Several CLI modules carry a ``_cmd`` suffix (``cli/health_cmd.py``,
+# ``cli/audit_turn_cmd.py``, ``cli/session_start_cmd.py`` and their
+# kin). The handler side keeps the established "strip the memory_
+# prefix" convention (``handlers/health.py``), and a bare
+# ``cli/health.py`` beside it made a grep for the name return both
+# files with no hint at which was which. The suffix keeps the basenames
+# apart; the subcommand strings (``bettermemory health``,
+# ``bettermemory audit-turn`` and the rest) are unchanged.
 
 
 def _build_parser() -> tuple[

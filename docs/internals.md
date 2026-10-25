@@ -65,7 +65,10 @@ validated ships as declared claims on `memory_write` / `memory_verify`.
   through the audit's probe and delivers its top three hits admitted for
   the caller, unless held by provenance, an open contradiction or the
   segment; a superseded hit yields its slot to its head, marked
-  `[replaces <id>]`. On both surfaces a disputed record carries a
+  `[replaces <id>]`. The recall block is cut to `RECALL_CAP_CHARS`, 900
+  characters: the snippets are shortened first, from the last pointer
+  back, a snippet that would fall under a dozen characters dropped, and
+  then trailing pointers go. On both surfaces a disputed record carries a
   `[disputed: cf-…]` mark. A prompt
   the harness composed and no human typed (a task notification, a
   message from another session, an interrupt line, any other harness
@@ -450,6 +453,7 @@ unaccounted.
 | `checkout_views` | checkout, machine, path, first and last sight |
 | `homes` | record id, kind, project, checkout, rule, decided at |
 | `proposals` | id, checkout, kind, candidates, evidence, reason, line, state, answer, answered by, signature |
+| `standing` | record id, probability, body sha256, source, answered by, answered at: a record's answer to the standing question for its current body (`standing.py`; `standing_put` rows, which a build before rc7 skips) |
 
 `checkouts.unresolved_json` is the one column added to an existing
 membership table, by `ALTER TABLE` at open where it is missing. A checkout
@@ -786,7 +790,8 @@ config directory (`keys/<store_id>.key`), never in the store; the store
 holds the key's fingerprint, and a head checkpoint beside the key
 records the last row written. Every record row carries the MAC of the
 log row that produced it, which is what the provenance label reads. The
-membership tables (the section above) are folded by the same log.
+membership tables (the section above), the `standing` table among them,
+are folded by the same log.
 
 The store resolves to `$BETTERMEMORY_DIR` if set, else
 `[storage] directory` in `config.toml` if set, else `./.claude-memory/`
@@ -800,9 +805,11 @@ Nine MCP tools, all registered on every start: `memory_search`,
 `memory_show`, `memory_write`, `memory_update`, `memory_remove`,
 `memory_verify`, `memory_record_use`, `episode` (write, handoff) and
 `memory_admin` (restore, tombstones, health, rename_scope, conflicts,
-acknowledge_miss, disable_scope, enable_scope, and relations, a session
-capture's closing call). Signatures, defaults and
-return shapes: [api.md](api.md).
+acknowledge_miss, disable_scope, enable_scope, relations, a session
+capture's closing call, answer_question, join_project and
+unjoin_project, the membership declarations, and answer_standing, the
+standing question for the records that wait for it). Signatures,
+defaults and return shapes: [api.md](api.md).
 
 The surface is charged on every turn whether a memory tool is called or
 not, so its size is measured: `bench/toolcost` serialises `tools/list`
@@ -837,6 +844,7 @@ bettermemory project list          # projects; show, why, pending, join, new, in
 bettermemory memory move ID --project P  # re-home one record
 bettermemory membership migrate    # build the membership tables; export, import
 bettermemory up                    # the local daemon; down, status
+bettermemory serve                 # the MCP server over stdio, in this process
 ```
 
 `bettermemory <command> --help` for flags. `hook session-start|stop|prompt`
@@ -849,9 +857,13 @@ local daemon (`bettermemory up`, `down`, `status`), which is also what
 `config.toml` lives under platformdirs (`~/Library/Application
 Support/bettermemory/` on macOS, `~/.config/bettermemory/` on Linux).
 Most installs never edit it. `[behavior]` holds
-the knobs (`default_max_results`, `search_mode`, `conversational`,
-`write_supersession`, `prompt_recall`, `session_brief`,
-`verification_stale_days`, `tombstone_retention_days`, the size caps),
+the knobs (`default_max_results`, `recency_boost_half_life_days`,
+`search_mode`, `conversational`, `write_supersession`, `prompt_recall`,
+`session_brief`, `heavily_used_min_applied`,
+`cold_endorsement_ratio_threshold`, `verification_stale_days`,
+`tombstone_retention_days`, the bounds `max_content_bytes`,
+`max_takeaway_bytes` and `max_scopes_per_write`, and the floor
+`min_content_tokens`),
 `[scopes]` the allowed list and typo exceptions, `[telemetry]` the one
 switch, `enabled`, `[daemon]` the port (7397 by default), and
 `[capture]` session capture's switch and bounds (`stop_checkpoint`,

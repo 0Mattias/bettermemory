@@ -3,10 +3,11 @@
 Resolution order for the storage directory:
 
 1. The `BETTERMEMORY_DIR` env var, if set.
-2. `./.claude-memory/` if it exists in the current working directory
-   (project-scoped — write a memory while in that project, see it only
+2. `[storage] directory` in `config.toml`, if set.
+3. `./.claude-memory/` if it exists in the current working directory
+   (project-scoped: write a memory while in that project, see it only
    when you come back to that project).
-3. `~/.claude-memory/` (global fallback).
+4. `~/.claude-memory/` (global fallback).
 
 A user-level config file lives at `~/.config/bettermemory/config.toml` (or the
 platform equivalent). It's created with defaults on first run.
@@ -43,10 +44,11 @@ DEFAULT_CONFIG = """\
 # See: https://github.com/0Mattias/bettermemory
 
 [storage]
-# Where memories live. Leave commented to use the default resolution rule:
+# Where memories live. The resolution rule:
 #   1. $BETTERMEMORY_DIR
-#   2. ./.claude-memory if cwd has one
-#   3. ~/.claude-memory
+#   2. this key, when set
+#   3. ./.claude-memory if cwd has one
+#   4. ~/.claude-memory
 # directory = "~/.claude-memory"
 
 [behavior]
@@ -101,12 +103,12 @@ write_supersession = true
 # model before the turn starts: an id, a relevance label, an 80-character
 # summary and the matched snippet, never a body, so the read path's
 # verify-before-relying discipline still runs through memory_show. A
-# pointer is a medium- or high-relevance hit written or imported here
+# pointer is one of the probe's top three hits, written or imported here
 # (never a synced or unaccounted one), with no open contradiction, that
 # this session segment has not already been shown, retrieved, written or
-# updated.
-# At most twelve deliveries per segment; a compact or a clear opens a new
-# one. "project" (default) delivers only memories of the project the
+# updated; a superseded hit yields its slot to its head. No relevance
+# label and no count holds a delivery; a compact or a clear opens a new
+# segment. "project" (default) delivers only memories of the project the
 # prompt comes from (inside a project only); "everywhere" delivers as an
 # unscoped search reaches: every project's memories and the ones written
 # outside any project, inside a project or outside one, never a memory
@@ -169,42 +171,32 @@ tombstone_retention_days = 0
 max_content_bytes = 1000000
 
 # Hard cap on a single episode takeaway's UTF-8 byte length at
-# `episode_write` time. Separate from `max_content_bytes` because the
-# takeaway lives in the YAML frontmatter region, which is itself capped
-# at 64 KB (see `_frontmatter._MAX_YAML_BYTES`) — a takeaway over that
-# threshold would corrupt the frontmatter, the loader would raise
-# ValueError on every subsequent read, and `EpisodeStore.list_by_session`
-# would silently skip the file. The episode would look committed (the
-# write returned status="committed") but vanish from every read surface.
-# 4 KB is generous for the documented "one-sentence summary" while
-# leaving comfortable headroom inside the 64 KB YAML cap for the rest
-# of the frontmatter (id, session_id, created, scopes, origin). Set to
-# 0 to disable the cap.
+# `episode(action="write")` time, checked at the handler boundary.
+# Separate from `max_content_bytes` because the takeaway is the one-line
+# summary `episode(action="handoff")` delivers ahead of any body, so it
+# has a bound of its own. 4 KB is generous for a one-sentence summary and
+# keeps an 8.x mirror's frontmatter (`bettermemory export --mirror`,
+# capped at 64 KB by `_frontmatter._MAX_YAML_BYTES`) well inside its cap.
+# Set to 0 to disable the cap.
 max_takeaway_bytes = 4096
 
 # Hard cap on the number of scopes accepted by a single memory_write,
-# memory_update, or episode_write call. Defense-in-depth alongside the
-# model-layer cap (also 64) — every list-shaped frontmatter field needs one.
-# Roughly 2200 short scope names serialise to ~64 KB of YAML and push the
-# frontmatter past `_frontmatter._MAX_YAML_BYTES`, after which the loader
-# raises `ValueError` on every subsequent read and the record vanishes from
-# every read surface despite the write returning status="committed". 64
-# matches the verified_paths cap and is well above any realistic per-record
-# scope count (1-5 in practice). Set to 0 to disable the handler-boundary
+# memory_update or episode(action="write") call, checked at the handler
+# boundary alongside the model-layer cap (also 64). 64 matches the
+# verified_paths cap and is well above any realistic per-record scope
+# count (1 to 5 in practice). Set to 0 to disable the handler-boundary
 # cap (the model-layer cap still fires at 64).
 max_scopes_per_write = 64
 
 # Opt-in floor on a memory body's whitespace-separated token count at
 # `memory_write` time. 0 (the default) disables it: the only shipped lower
-# bound is "non-empty after stripping", so a one-word body still commits —
+# bound is "non-empty after stripping", so a one-word body still commits,
 # which is correct for a caller storing an identifier, a path, or a version
-# pin. Set it (5-8 is a reasonable band for a self-contained statement) when
-# writes arrive from unattended or bulk callers, where a fragment costs a
-# durable record plus the curation pass that later removes it. Enabling it
-# also binds `bettermemory proposals accept` / `memory_proposals`, which
-# share the write validator; `memory_update` does NOT, so a body edit can
-# still take an existing memory below the floor. The default is revisited
-# at 4.0.
+# pin. Set it (5 to 8 is a reasonable band for a self-contained statement)
+# when writes arrive from unattended or bulk callers, where a fragment costs
+# a durable record plus the curation pass that later removes it. The floor
+# binds `memory_write` only; `memory_update` does NOT, so a body edit can
+# still take an existing memory below the floor.
 min_content_tokens = 0
 
 [scopes]
@@ -337,9 +329,11 @@ class BehaviorConfig:
     # path refuses to fire rather than fire off the books. See
     # DEFAULT_CONFIG for prose.
     prompt_recall: str = "project"
-    # The session brief (`recall.session_brief`): pointers to the newest
-    # fresh memories of the caller's repository on SessionStart. Default
-    # ON; needs `telemetry.enabled` like the prompt recall.
+    # The session brief (`recall.session_brief`): on SessionStart inside a
+    # project, two lists of pointers, the caller's standing records in
+    # force and the records the conversation so far bears on, eight of
+    # each at most. Default ON; needs `telemetry.enabled` like the prompt
+    # recall.
     session_brief: bool = True
     # Floor on `applied_count` for inclusion in the heavily_used report.
     # Default is 3 — at 1 the bucket is mostly noise (one acknowledgement
@@ -373,39 +367,29 @@ class BehaviorConfig:
     # boundary; existing on-disk memories are never re-validated, so
     # raising the cap downward doesn't reject already-stored data.
     max_content_bytes: int = 1_000_000
-    # Hard cap on an episode takeaway's UTF-8 byte length at write time.
-    # Separate from `max_content_bytes` because the takeaway is stored
-    # in the YAML frontmatter region, which `_frontmatter` caps at
-    # 64 KB to neutralise an alias-expansion DoS. A takeaway over that
-    # threshold would corrupt the frontmatter, the loader would raise
-    # ValueError on every subsequent read, and `list_by_session` would
-    # silently skip — the episode would look committed but vanish from
-    # every read surface (search, handoff, promote). Default 4 KB is
-    # generous for the documented "one-sentence summary" while leaving
-    # comfortable headroom inside the 64 KB YAML cap for the rest of
-    # the frontmatter (id, session_id, created, scopes, origin). 0
-    # disables the cap.
+    # Hard cap on an episode takeaway's UTF-8 byte length at write time,
+    # checked at the handler boundary (`handlers.episode_write`). Separate
+    # from `max_content_bytes` because the takeaway is the one-line
+    # summary the handoff delivers ahead of any body. Default 4 KB, which
+    # also keeps an 8.x mirror's frontmatter inside the 64 KB cap
+    # `_frontmatter` holds it to. 0 disables the cap.
     max_takeaway_bytes: int = 4_096
     # Hard cap on the number of scopes accepted by a single memory_write /
-    # memory_update / episode_write call. Defense-in-depth alongside the
-    # model-layer cap (`models._MAX_SCOPES_PER_RECORD`, also 64) — the same
-    # silent-data-loss class the takeaway cap closed in t16, applied to a
-    # list-shaped frontmatter field. ~2200 short scope names serialise to
-    # ~64 KB of YAML and push the frontmatter past `_frontmatter._MAX_YAML_BYTES`;
-    # the loader then raises `ValueError` on every subsequent read and the
-    # record vanishes from every read surface (search / list / handoff) despite
-    # `status="committed"` returning. 64 matches `verified_paths` and is well
-    # above the typical 1-5 scopes used in practice. Set to 0 to disable the
-    # handler-boundary cap (the model-layer cap still fires).
+    # memory_update / episode write call, checked at the handler boundary
+    # (`handlers._shared._validate_scope_count`) alongside the model-layer
+    # cap (`models._MAX_SCOPES_PER_RECORD`, also 64). 64 matches
+    # `verified_paths` and is well above the typical 1 to 5 scopes used in
+    # practice. Set to 0 to disable the handler-boundary cap (the
+    # model-layer cap still fires).
     max_scopes_per_write: int = 64
     # Opt-in floor on a memory body's whitespace-token count at write time.
-    # 0 (default, and the loader default too — this is NOT one of the
+    # 0 (default, and the loader default too, so this is NOT one of the
     # deliberate asymmetries) leaves the shipped "non-empty after strip"
     # bound, so a one-word body commits exactly as it always has. Enabling
-    # it binds every caller of `_validate_write_payload` — memory_write and
-    # accept_proposal — but not `memory_update`, which size-checks a
-    # replacement body without routing through that validator. See
-    # DEFAULT_CONFIG for the recommendation and the 4.0 revisit.
+    # it binds `memory_write` through `_validate_write_payload`, but not
+    # `memory_update`, which size-checks a replacement body without
+    # routing through that validator. See DEFAULT_CONFIG for the
+    # recommendation.
     min_content_tokens: int = 0
 
 

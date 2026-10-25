@@ -54,6 +54,18 @@ store batch whose transaction cannot begin leaves the store as it was.
   restarted: every later mutation ran in autocommit with no head
   checkpoint, and every later batch was refused as already open. The
   mark now follows a BEGIN that succeeded. (`src/bettermemory/store.py`)
+- **The texts, the example and the template follow the code.** The
+  shipped `examples/programmatic_client.py` answered the write review
+  without the standing score, so its first write could not commit under
+  rc7; it answers the four questions now, and a test drives its review
+  flow against an in-process server. The served `memory_admin`
+  description, api.md, internals.md, the plugin skill and the
+  system-prompt text name the same thirteen actions; the config
+  template gives the four-step store-directory rule and the recall's
+  top-three delivery; the standing table joins both table lists; the
+  rc7 entry's p95 line reads what the bench file holds; the stale
+  docstrings in `hook.py`, `cli/__init__.py` and `config.py` no longer
+  cite removed modules or surfaces.
 
 #### Changed
 
@@ -135,8 +147,9 @@ under rc6 as before.
   written and with one holding a session's worth of prompts, as the
   service time and as the hook's wall time. On the sealed copy the
   brief's service p50 reads 87 ms probed as migrated and 96 ms with both
-  lists filled, the hook's wall 129 and 134 ms, every p95 under 140 ms
-  (part 4's bound: 300). (`bench/daemon/results/latency-2026-10-24-*`)
+  lists filled, the hook's wall 129 and 134 ms, every service p95 under
+  140 ms and the hook's wall p95 at 145 and 148 ms (part 4's bound:
+  300). (`bench/daemon/results/latency-2026-10-24-*`)
 
 #### Changed
 

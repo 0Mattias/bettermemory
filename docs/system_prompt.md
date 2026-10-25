@@ -32,10 +32,10 @@ only what these tools hold.
 Tools: memory_search, memory_show, memory_write, memory_update,
 memory_remove, memory_verify, memory_record_use, episode (write,
 handoff), memory_admin (restore, tombstones, health, rename_scope,
-conflicts, acknowledge_miss, disable_scope, enable_scope,
-answer_question, join_project, unjoin_project). The `bettermemory`
-command carries the offline work: health, eval, export, tombstones,
-episodes, rename-scope, migrate, log verify.
+conflicts, acknowledge_miss, disable_scope, enable_scope, relations,
+answer_question, join_project, unjoin_project, answer_standing). The
+`bettermemory` command carries the offline work: health, eval, export,
+tombstones, episodes, rename-scope, migrate, log verify.
 
 ## Membership questions
 

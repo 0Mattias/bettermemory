@@ -63,7 +63,7 @@ start beside the old files and says why.
   from the project on each prompt.
 - Writes pass gates for transient state, secret-shaped tokens and
   near-duplicates, then a review: the model sees the stored statements
-  the write resembles and answers three questions before anything is
+  the write resembles and answers four questions before anything is
   written. Claims about you are stored labelled as inferences. No
   second model is involved.
 - Session capture is off by default. With
