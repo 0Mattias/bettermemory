@@ -53,7 +53,7 @@ from bettermemory.verify import (
     unverifiable_attestations,
 )
 
-from ._mcp import call_tool
+from ._mcp import call_tool, crash_text
 from .conftest import set_git_discovery_ceiling
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
@@ -859,8 +859,9 @@ async def test_memory_verify_writes_no_home_and_no_stamp_when_the_witness_fails(
         raise RuntimeError("witness write refused")
 
     monkeypatch.setattr(location.Caller, "add_head_witness", refuse)
-    with pytest.raises(Exception, match="witness write refused"):
+    with pytest.raises(Exception) as excinfo:
         await call_tool(server, "memory_verify", {"id": rid})
+    assert "witness write refused" in crash_text(excinfo.value)
 
     assert _model(store, this_machine).home(rid) is None
     assert store.load_one(rid).last_verified_at is None

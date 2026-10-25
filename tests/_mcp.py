@@ -207,4 +207,31 @@ def output_schema(tool: Any) -> dict[str, Any] | None:
     return dict(schema) if schema is not None else None
 
 
-__all__ = ["call_tool", "fake_ctx", "input_schema", "output_schema", "probe_server"]
+def crash_text(exc: BaseException) -> str:
+    """The words of ``exc`` and of every exception on its ``__cause__``
+    chain, one per line, for asserting on a simulated crash's text at
+    the tool boundary.
+
+    mcp 2.0.0 repeated a crashing tool's text in the wrapper it raised;
+    2.1 and later keep a crash's text on the server, raise a wrapper that
+    says only ``Error executing tool <name>``, and chain the cause. A
+    test that reads the wrapper's text alone passes under one SDK and
+    fails under the other; the chain carries the words under both."""
+    parts: list[str] = []
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        parts.append(str(cur))
+        cur = cur.__cause__
+    return "\n".join(parts)
+
+
+__all__ = [
+    "call_tool",
+    "crash_text",
+    "fake_ctx",
+    "input_schema",
+    "output_schema",
+    "probe_server",
+]

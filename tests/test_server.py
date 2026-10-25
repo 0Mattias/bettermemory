@@ -9,6 +9,7 @@ way their former stand-alone tools were.
 
 from __future__ import annotations
 from ._mcp import call_tool as _mcp_call
+from ._mcp import crash_text as _crash_text
 
 from pathlib import Path
 from typing import Any
@@ -2593,11 +2594,12 @@ async def test_handoff_floor_written_before_handoff_event_recorded(
     monkeypatch.setattr(Recorder, "record", crashing_record)
 
     # The handoff call raises (mimicking a crash after the floor
-    # write succeeded but during/before the event-record stage).
-    # The SDK wraps the underlying RuntimeError in a ToolError —
-    # `_call` propagates whichever shape lands.
-    with pytest.raises(Exception, match=crash_msg):
+    # write succeeded but during/before the event-record stage). The
+    # SDK wraps the RuntimeError; `crash_text` reads the words off the
+    # wrapper's cause chain, which every supported SDK version keeps.
+    with pytest.raises(Exception) as excinfo:
         await _call(server, "episode", action="handoff")
+    assert crash_msg in _crash_text(excinfo.value)
 
     # CRITICAL: the floor exists in the store. If it doesn't, the ordering
     # invariant is violated and the fix doesn't help under the most

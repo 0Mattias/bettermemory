@@ -25,6 +25,47 @@ bettermemory` and the plugin's `uvx bettermemory` keep resolving 8.0.0
 until the stable `9.0.0` is tagged. Ask for a candidate by version
 (`uvx bettermemory==9.0.0rc1`) to run it.
 
+### 9.0.0rc8
+
+The eighth candidate adds no behaviour. The dependency lock moves off
+the advisories a vulnerability audit found, a refusal keeps its words on
+the wire under the SDK versions a fresh install now resolves, and a
+store batch whose transaction cannot begin leaves the store as it was.
+
+#### Fixed
+
+- **A refusal's words reach the model on every supported mcp.** mcp
+  2.0.0 forwarded the text of every exception a tool raised; from 2.1
+  the SDK treats anything but its own `ToolError` as a crash and sends
+  the client only `Error executing tool <name>`. The handlers refuse
+  with `ValueError`, so a fresh install of rc7, which resolves mcp
+  2.3.0, lost every refusal's words: an invalid scope, a cap, an unknown
+  or tombstoned id. Each `ToolHandlers` tool method now re-raises a
+  `ValueError` as `RefusedError`, which derives from both `ToolError`
+  and `ValueError`: the wire form is what 2.0.0 sent, a direct caller
+  that catches `ValueError` still does, and a genuine crash stays masked
+  as the SDK intends. Two tests that simulate a crash read its words off
+  the wrapper's cause chain now, which both SDK versions keep.
+  (`src/bettermemory/_handlers.py`, `tests/_mcp.py`)
+- **A batch whose BEGIN fails leaves the store transactional.**
+  `Store.batch` marked itself open before issuing `BEGIN IMMEDIATE` and
+  cleared the mark only around its body, so a BEGIN that failed on the
+  busy wait against another writer left the mark set until the daemon
+  restarted: every later mutation ran in autocommit with no head
+  checkpoint, and every later batch was refused as already open. The
+  mark now follows a BEGIN that succeeded. (`src/bettermemory/store.py`)
+
+#### Changed
+
+- **The dependency lock.** `uv lock --upgrade` within the declared
+  bounds, which do not move: mcp 2.0.0 to 2.3.0, starlette 1.0.0 to
+  1.10.0, pyjwt 2.12.1 to 2.15.1, cryptography 48.0.0 to 50.0.2,
+  python-multipart 0.0.27 to 0.0.32, httpx2 and httpcore2 2.9.1 to
+  2.16.0, anyio 4.13.0 to 4.15.1, opentelemetry-api 1.44.0 to 1.45.1,
+  and the development tools (ruff 0.17.2, mypy 2.4.0, pyright 1.1.414,
+  pytest 9.1.1). pip-audit on the exported runtime closure read 52
+  advisories in 9 packages before the refresh and none after it.
+
 ### 9.0.0rc7
 
 The seventh candidate puts what is in force in front of the model and

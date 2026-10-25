@@ -17,9 +17,12 @@ patch propagates (see `handlers/_shared.py`).
 from __future__ import annotations
 
 import copy
+import functools
 import logging
-from typing import Any
+from collections.abc import Awaitable, Callable, Coroutine
+from typing import Any, ParamSpec, TypeVar
 
+from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 from pydantic.fields import FieldInfo
 
@@ -150,6 +153,47 @@ def load_search_candidates(
     return loaded, len(candidate_pairs) == _PREFILTER_CAP, True
 
 
+class RefusedError(ToolError, ValueError):
+    """A refusal raised at the MCP boundary with the words the model is
+    meant to read.
+
+    The handlers refuse with ``ValueError`` (an invalid scope, a cap, a
+    missing parameter, an unknown or tombstoned id), and docs/api.md names
+    ``ValueError`` as a refusal's form at the MCP boundary. mcp 2.0.0
+    forwarded the text of every exception a tool raised; from 2.1 the SDK
+    treats anything but its own ``ToolError`` as a crash and sends the
+    client only ``Error executing tool <name>``, keeping the text on the
+    server. A refusal that derives from both keeps its words on the wire
+    under every SDK version the declared bound admits, a direct caller
+    that catches ``ValueError`` still catches it, and a genuine crash
+    stays masked as the SDK intends.
+    """
+
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _refusals_as_tool_errors(
+    fn: Callable[_P, Awaitable[_R]],
+) -> Callable[_P, Coroutine[Any, Any, _R]]:
+    """Re-raise a tool method's ``ValueError`` as a ``RefusedError`` with
+    the same text. ``functools.wraps`` keeps the signature the SDK
+    introspects for the served schema, and ``str(exc)`` is the text the
+    SDK forwarded before 2.1, so the wire form does not change."""
+
+    @functools.wraps(fn)
+    async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        try:
+            return await fn(*args, **kwargs)
+        except ToolError:
+            raise
+        except ValueError as exc:
+            raise RefusedError(str(exc)) from exc
+
+    return wrapper
+
+
 class ToolHandlers:
     """One instance per server, captures the dependencies every handler
     needs.
@@ -213,6 +257,7 @@ class ToolHandlers:
     # function's minus its leading `deps` argument, so the SDK's
     # `inspect.signature` introspection produces the served schema.
 
+    @_refusals_as_tool_errors
     async def memory_search(
         self,
         query: str,
@@ -243,10 +288,12 @@ class ToolHandlers:
             ctx=ctx,
         )
 
+    @_refusals_as_tool_errors
     async def memory_show(self, id: str, ctx: Context | None = None) -> dict[str, Any]:
         deps = self.for_request(ctx)
         return await _handlers_pkg.memory_show(deps, id, ctx=ctx)
 
+    @_refusals_as_tool_errors
     async def memory_write(
         self,
         content: str,
@@ -290,6 +337,7 @@ class ToolHandlers:
             ctx=ctx,
         )
 
+    @_refusals_as_tool_errors
     async def memory_update(
         self,
         id: str,
@@ -324,6 +372,7 @@ class ToolHandlers:
             ctx=ctx,
         )
 
+    @_refusals_as_tool_errors
     async def memory_remove(
         self,
         id: str,
@@ -334,6 +383,7 @@ class ToolHandlers:
         deps = self.for_request(ctx)
         return await _handlers_pkg.memory_remove(deps, id, reason, said=said, ctx=ctx)
 
+    @_refusals_as_tool_errors
     async def memory_verify(
         self,
         id: str,
@@ -358,6 +408,7 @@ class ToolHandlers:
             ctx=ctx,
         )
 
+    @_refusals_as_tool_errors
     async def memory_record_use(
         self,
         memory_ids: list[str],
@@ -376,6 +427,7 @@ class ToolHandlers:
             ctx=ctx,
         )
 
+    @_refusals_as_tool_errors
     async def episode(
         self,
         action: EpisodeAction,
@@ -402,6 +454,7 @@ class ToolHandlers:
             ctx=ctx,
         )
 
+    @_refusals_as_tool_errors
     async def memory_admin(
         self,
         action: AdminAction,
