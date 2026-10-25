@@ -2299,8 +2299,14 @@ class Store:
             raise RuntimeError(f"a batch is already open on store {self._path}")
         conn = self._conn
         self._last_appended = None
-        self._in_batch = True
+        # BEGIN first, then the flag: a BEGIN that fails (the busy wait
+        # against another writer ran out) must leave the store as it
+        # was. With the flag set first and only the body guarded, that
+        # failure left _in_batch set for the store's lifetime: every
+        # later mutation ran in autocommit, the head never moved, and
+        # every later batch was refused as already open.
         conn.execute("BEGIN IMMEDIATE")
+        self._in_batch = True
         try:
             yield self
         except BaseException:

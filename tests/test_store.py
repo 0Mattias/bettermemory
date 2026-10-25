@@ -931,6 +931,42 @@ def test_a_batch_commits_everything_together_and_moves_the_head_once(
                 pass
 
 
+def test_a_batch_that_cannot_begin_leaves_the_store_transactional(
+    store: Store, tmp_path: Path
+) -> None:
+    """Another writer holds the file's write lock, so the batch's BEGIN
+    IMMEDIATE fails once the busy wait runs out. The failure has to
+    leave the store as it was: nothing open, the next mutation in a
+    transaction of its own with the head moved, the next batch able to
+    open. With the flag set before BEGIN and only the body guarded, the
+    store kept the batch flag for its lifetime: every later mutation ran
+    in autocommit with no head checkpoint, and every later batch was
+    refused as already open."""
+    store.conn.execute("PRAGMA busy_timeout = 100")
+    holder = sqlite3.connect(str(tmp_path / STORE_FILENAME), isolation_level=None)
+    holder.execute("BEGIN IMMEDIATE")
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            with store.batch():
+                pytest.fail("the body must not run when BEGIN fails")
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+    assert store.conn.in_transaction is False
+
+    store.put_memory(_memory("written after the lock was released"))
+    assert store.count_memories() == 1
+    head = store.keyring.read_head()
+    assert head is not None and head.seq == len(store.log_rows())
+
+    with store.batch():
+        store.put_memory(_memory("written inside a later batch"))
+    assert store.count_memories() == 2
+    head = store.keyring.read_head()
+    assert head is not None and head.seq == len(store.log_rows())
+    assert store.log_verify()["status"] == "ok"
+
+
 def test_put_tombstone_inserts_directly_and_refuses_an_active_id(
     store: Store,
 ) -> None:
