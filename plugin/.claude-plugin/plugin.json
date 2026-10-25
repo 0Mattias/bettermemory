@@ -1,6 +1,6 @@
 {
   "name": "bettermemory",
-  "version": "9.0.0rc7",
+  "version": "9.0.0rc8",
   "description": "Memory for Claude Code, checked against your files and git history on every read, with a session brief and recall on each prompt.",
   "author": {
     "name": "Mattias Rask",

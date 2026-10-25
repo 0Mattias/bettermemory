@@ -1,6 +1,6 @@
 [project]
 name = "bettermemory"
-version = "9.0.0rc7"
+version = "9.0.0rc8"
 description = "MCP memory server for coding agents. Memories are checked against your files and git history on every read. Signed change log, one local SQLite file, MIT."
 readme = "README.md"
 requires-python = ">=3.11"
