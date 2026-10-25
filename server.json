@@ -3,7 +3,7 @@
   "name": "io.github.0Mattias/bettermemory",
   "title": "bettermemory",
   "description": "MCP memory for coding agents, checked against your files and git history on every read.",
-  "version": "9.0.0rc6",
+  "version": "9.0.0rc7",
   "repository": {
     "url": "https://github.com/0Mattias/bettermemory",
     "source": "github"
@@ -13,7 +13,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "bettermemory",
-      "version": "9.0.0rc6",
+      "version": "9.0.0rc7",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
