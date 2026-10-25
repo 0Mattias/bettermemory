@@ -37,6 +37,7 @@ leg available" with:
 ```python
 try:
     import sentence_transformers
+
     return True
 except ImportError:
     pass
