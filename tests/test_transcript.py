@@ -810,12 +810,15 @@ def test_owner_words_of_no_file_or_no_owner_row_are_empty(tmp_path: Path) -> Non
     assert owner_words(path, chars=100, chunk_bytes=CHUNK) == ""
 
 
-@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="no named pipes here")
 def test_owner_words_of_a_path_that_is_no_regular_file_are_empty(
     tmp_path: Path,
 ) -> None:
     """A named pipe is not opened: a read of it would block the hook's
     worker until something wrote to it."""
+    if not hasattr(os, "mkfifo"):  # pragma: no cover - non-unix
+        pytest.skip("os.mkfifo not available")
+    # POSIX-only; the hasattr guard above is what mypy on Windows narrows on
+    # (tests/test_fsutil.py gates its FIFO the same way).
     fifo = tmp_path / "t.jsonl"
     os.mkfifo(fifo)
     assert owner_words(fifo, chars=100) == ""
