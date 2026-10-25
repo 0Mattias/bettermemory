@@ -589,7 +589,7 @@ def _foreground_start(tmp_path: Path, left: Left, env: dict[str, str], n: int) -
             else:
                 raise AssertionError("the daemon never answered")
             assert state is not None
-            assert shutdown_daemon(state, timeout=20.0)
+            assert shutdown_daemon(state, state_dir=state_dir, timeout=20.0)
             assert child.wait(timeout=30) == 0
         finally:
             if child.poll() is None:

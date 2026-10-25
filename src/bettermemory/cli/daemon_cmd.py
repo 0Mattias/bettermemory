@@ -127,8 +127,10 @@ def run_down(args: argparse.Namespace) -> None:
     if state is None:
         print(f"bettermemory daemon: not running for {store_path}")
         return
-    stopped = shutdown_daemon(state)
-    remove_state(state_dir, store_path)
+    stopped = shutdown_daemon(state, state_dir=state_dir)
+    # Only the file that still names this daemon: a daemon started in the
+    # meantime keeps its own.
+    remove_state(state_dir, store_path, pid=int(state["pid"]))
     if not stopped:
         print(
             f"bettermemory daemon: pid {state['pid']} did not stop; the state file is removed",

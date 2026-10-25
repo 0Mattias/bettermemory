@@ -70,7 +70,13 @@ STORE_FILENAME = "memory.sqlite"
 
 START_TIMEOUT_SECONDS = 8.0
 HOOK_TIMEOUT_SECONDS = 15.0
-SHUTDOWN_TIMEOUT_SECONDS = 5.0
+#: How long `shutdown_daemon` waits for a daemon to release the store
+#: after the shutdown endpoint answered, before it falls back to a
+#: signal: the daemon's own bounds, `daemon.GRACEFUL_SHUTDOWN_SECONDS`
+#: (20 s for the requests in flight) plus `daemon.WORKERS_CLOSE_SECONDS`
+#: (10 s for the hook workers' join); tests/test_daemon_lifecycle.py pins
+#: the sum. A daemon with nothing in flight stops in milliseconds.
+SHUTDOWN_TIMEOUT_SECONDS = 30.0
 _POLL_SECONDS = 0.02
 _STDIN_CAP_BYTES = 1 << 20
 _STATE_KEYS = ("pid", "port", "token", "version", "store", "started")
@@ -456,23 +462,30 @@ def wait_for_daemon(
 
 
 def shutdown_daemon(
-    state: dict[str, Any], *, timeout: float = SHUTDOWN_TIMEOUT_SECONDS
+    state: dict[str, Any],
+    *,
+    state_dir: Path,
+    timeout: float = SHUTDOWN_TIMEOUT_SECONDS,
 ) -> bool:
     """Ask the daemon in `state` to stop, then make sure it did. The
-    shutdown endpoint is the mechanism; a signal is the fallback."""
+    shutdown endpoint is the mechanism; a signal is the fallback. Stopped
+    means the store is released, not only the port closed (`_stopped`);
+    `state_dir` is where the daemon's lock lives, the last thing it gives
+    back."""
     try:
         post(state["port"], state["token"], SHUTDOWN_PATH, {}, timeout=2.0)
     except (OSError, ValueError, urllib.error.URLError):
         pass
     pid = int(state["pid"])
     port = int(state["port"])
-    if _wait_stopped(pid, port, timeout):
+    lock_path = lock_file_for(state_dir, state["store"])
+    if _wait_stopped(pid, port, lock_path, timeout):
         return True
     try:
         os.kill(pid, signal.SIGTERM)
     except OSError:
-        return _stopped(pid, port)
-    return _wait_stopped(pid, port, timeout)
+        return _stopped(pid, port, lock_path)
+    return _wait_stopped(pid, port, lock_path, timeout)
 
 
 def _port_open(port: int) -> bool:
@@ -483,17 +496,42 @@ def _port_open(port: int) -> bool:
         return False
 
 
-def _stopped(pid: int, port: int) -> bool:
-    """A daemon is stopped when its process is gone or its port is
-    closed. The second clause covers a foreground daemon whose parent
-    has not reaped it yet: a zombie still answers `os.kill(pid, 0)`
-    but holds no socket."""
-    return not pid_alive(pid) or not _port_open(port)
+def _lock_free(path: Path) -> bool:
+    """Whether nobody holds the lock at `path`: taken for an instant and
+    given back when it is free. A lock this process cannot open (another
+    user's state directory, a read-only one) reads as free, and the port
+    is then the signal, as it was before the lock."""
+    try:
+        handle = try_lock(path)
+    except OSError:
+        return True
+    if handle is None:
+        return False
+    release_lock(handle)
+    return True
 
 
-def _wait_stopped(pid: int, port: int, timeout: float) -> bool:
+def _stopped(pid: int, port: int, lock_path: Path) -> bool:
+    """A daemon is stopped when its process is gone, or when it holds
+    neither its port nor the store's lock. The lock (`lock_file_for`) is
+    the last thing a daemon gives back: `daemon.serve` closes the store
+    and removes the state file before it, so a free lock means no handle
+    of the daemon is open on the store's files, and the store can be
+    moved, copied or removed the moment `down` returns, on Windows too,
+    where an open handle refuses the rename. The port closes earlier, as
+    the server stops accepting and while the store is still open, so it
+    is the signal only for a daemon that holds no lock: one from before
+    the lock, or a zombie a parent has not reaped, which still answers
+    `os.kill(pid, 0)` but whose socket and lock the OS dropped with its
+    handles."""
+    if not pid_alive(pid):
+        return True
+    return not _port_open(port) and _lock_free(lock_path)
+
+
+def _wait_stopped(pid: int, port: int, lock_path: Path, timeout: float) -> bool:
     deadline = time.monotonic() + timeout
-    while not _stopped(pid, port):
+    while not _stopped(pid, port, lock_path):
         if time.monotonic() >= deadline:
             return False
         time.sleep(_POLL_SECONDS)
@@ -593,7 +631,7 @@ def ensure_daemon(
         if answer is not None:
             if _keeps(state, answer.get("version"), version):
                 return state
-            shutdown_daemon(state)
+            shutdown_daemon(state, state_dir=state_dir)
             remove_state(state_dir, store_path, pid=int(state["pid"]))
     if not start:
         return None

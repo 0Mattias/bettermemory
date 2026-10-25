@@ -53,6 +53,7 @@ from bettermemory import daemon as _daemon
 from bettermemory._daemon_client import (
     _stopped,
     health,
+    lock_file_for,
     pid_alive,
     post,
     read_state,
@@ -716,14 +717,16 @@ def _start(tmp_path: Path, env: dict[str, str]) -> dict:
     return _wait_running(tmp_path)
 
 
-def _exited_within(state: dict, bound: float) -> float | None:
+def _exited_within(state: dict, state_dir: Path, bound: float) -> float | None:
     """Seconds until the daemon in `state` was gone, None when it outlived
     `bound`. Gone is `_daemon_client._stopped`: the process gone, or its
-    port closed, which covers a daemon the shim started and has not
-    reaped yet (a zombie still answers ``kill(pid, 0)``)."""
+    port closed and its lock under `state_dir` free, which covers a daemon
+    the shim started and has not reaped yet (a zombie still answers
+    ``kill(pid, 0)``, holding neither)."""
+    lock_path = lock_file_for(state_dir, state["store"])
     started = time.monotonic()
     while time.monotonic() - started < bound:
-        if _stopped(int(state["pid"]), int(state["port"])):
+        if _stopped(int(state["pid"]), int(state["port"]), lock_path):
             return time.monotonic() - started
         time.sleep(0.02)
     return None
@@ -741,13 +744,16 @@ def _process_gone(pid: int, bound: float = 10.0) -> bool:
     return True
 
 
-def _orphans_at_exit(state: dict, directory: Path, bound: float) -> list[Path] | None:
+def _orphans_at_exit(
+    state: dict, state_dir: Path, directory: Path, bound: float
+) -> list[Path] | None:
     """The orphans beside the store at the first moment the daemon in
     `state` was seen gone, None when it outlived `bound`: the backup runs
     before the shutdown, so it is there before the port closes."""
+    lock_path = lock_file_for(state_dir, state["store"])
     started = time.monotonic()
     while time.monotonic() - started < bound:
-        if _stopped(int(state["pid"]), int(state["port"])):
+        if _stopped(int(state["pid"]), int(state["port"]), lock_path):
             return _orphans(directory)
         time.sleep(0.02)
     return None
@@ -771,7 +777,7 @@ def test_the_daemon_exits_when_its_store_is_unlinked(
     store = _store_path(tmp_path)
     store_id = _store_id(store)
     store.unlink()
-    orphans = _orphans_at_exit(state, store.parent, EXIT_BOUND)
+    orphans = _orphans_at_exit(state, tmp_path / "state", store.parent, EXIT_BOUND)
     assert orphans is not None, f"the daemon outlived its store by {EXIT_BOUND} s"
     # Saved through the daemon's own connection before the port closed.
     assert len(orphans) == 1
@@ -795,7 +801,7 @@ def test_the_daemon_exits_when_its_store_is_renamed_over(
     replacement = tmp_path / "replacement.sqlite"
     replacement.write_bytes(b"not the store the daemon opened")
     os.replace(replacement, store)
-    orphans = _orphans_at_exit(state, store.parent, EXIT_BOUND)
+    orphans = _orphans_at_exit(state, tmp_path / "state", store.parent, EXIT_BOUND)
     assert orphans is not None
     assert [_store_id(path) for path in orphans] == [store_id]
     assert store.read_bytes() == b"not the store the daemon opened"
@@ -819,7 +825,7 @@ def test_the_daemon_stays_up_through_a_copy_over_its_store(
     # And the normal shutdown still works with the watch running.
     down = _cli(["down"], watched_env)
     assert down.returncode == 0, down.stderr
-    assert _exited_within(state, 10.0) is not None
+    assert _exited_within(state, tmp_path / "state", 10.0) is not None
     assert _process_gone(state["pid"])
     assert not _state_path(tmp_path).exists()
 
@@ -847,7 +853,7 @@ def test_the_next_daemon_reports_the_store_it_replaced(
     first = _start(tmp_path, watched_env)
     store = _store_path(tmp_path)
     store.unlink()
-    orphans = _orphans_at_exit(first, store.parent, EXIT_BOUND)
+    orphans = _orphans_at_exit(first, tmp_path / "state", store.parent, EXIT_BOUND)
     assert orphans is not None and len(orphans) == 1
     assert _process_gone(first["pid"])
     second = _start(tmp_path, watched_env)
@@ -877,7 +883,7 @@ def test_a_normal_shutdown_is_not_held_by_the_watch(
     started = time.monotonic()
     down = _cli(["down"], env)
     assert down.returncode == 0, down.stderr
-    assert _exited_within(state, 10.0) is not None
+    assert _exited_within(state, tmp_path / "state", 10.0) is not None
     assert _process_gone(state["pid"])
     assert time.monotonic() - started < 10.0
     assert not _state_path(tmp_path).exists()
@@ -898,7 +904,7 @@ async def test_an_open_shim_restarts_a_daemon_that_stopped_this_way(
             await session.list_tools()
             first = _wait_running(tmp_path)
             _store_path(tmp_path).unlink()
-            assert _exited_within(first, EXIT_BOUND) is not None
+            assert _exited_within(first, tmp_path / "state", EXIT_BOUND) is not None
             answered = await session.call_tool(
                 "memory_search", {"query": "anything at all"}
             )

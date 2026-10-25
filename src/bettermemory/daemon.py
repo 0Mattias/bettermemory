@@ -51,6 +51,7 @@ import logging
 import os
 import queue
 import secrets
+import signal
 import socket
 import sqlite3
 import sys
@@ -166,6 +167,18 @@ _T = TypeVar("_T")
 HOOK_WORKERS = 4
 
 
+#: How long a stopping daemon gives the requests in flight before uvicorn
+#: cancels them: the longest bound a handler runs under, the git runner's
+#: `location._GIT_TIMEOUT_SECONDS` (20 s), so a request that would have
+#: finished on its own does, and one that would not is cut where its own
+#: timeout would have cut it. `_daemon_client.SHUTDOWN_TIMEOUT_SECONDS`
+#: waits this plus `WORKERS_CLOSE_SECONDS` before its signal fallback;
+#: tests/test_daemon_lifecycle.py pins both relations.
+GRACEFUL_SHUTDOWN_SECONDS = 20
+#: How long `_HookWorkers.close` waits for the workers' current jobs.
+WORKERS_CLOSE_SECONDS = 10.0
+
+
 class _HookWorkers:
     """The threads the hook bodies run on, each with its own connection.
 
@@ -230,7 +243,7 @@ class _HookWorkers:
         self._jobs.put((body, future))
         return await asyncio.wrap_future(future)
 
-    def close(self, timeout: float = 10.0) -> None:
+    def close(self, timeout: float = WORKERS_CLOSE_SECONDS) -> None:
         """Stop every worker; each closes its own connection on the way
         out, after the job it is running. `timeout` bounds the whole wait,
         not each worker's."""
@@ -841,9 +854,16 @@ def serve(
     any other stop is caught as the app shuts down and saved the same
     way; a forced exit (a second signal) saves as the loop closes, or
     after the server returns when the loop left the app's tasks
-    running. Writes the state file after the
-    socket is bound and removes it on the way out. Returns the exit
-    status.
+    running. Writes the state file after the socket is bound; on the
+    way out, on every stop but a kill, it closes `store`, removes the
+    state file and then gives the lock back, in that order, so a free
+    lock, which is what `_daemon_client.shutdown_daemon` waits for,
+    means the store's files are released. A SIGTERM is such a stop (the
+    daemon's own handler asks the server to exit); a forced exit (a
+    second SIGINT) skips the app's shutdown, so a hook worker's
+    connection can still be open when the lock is given back and closes
+    as the process ends. A stop gives the requests in flight
+    `GRACEFUL_SHUTDOWN_SECONDS`. Returns the exit status.
 
     One daemon per store: before anything else it takes the store's lock
     (`_daemon_client.lock_file_for`, beside the state file) and holds it
@@ -1041,9 +1061,20 @@ def _serve_locked(
         log_level="warning",
         access_log=False,
         lifespan="on",
+        timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_SECONDS,
     )
     server = uvicorn.Server(uv_config)
     holder["server"] = server
+    if threading.current_thread() is threading.main_thread():
+        # uvicorn captures SIGTERM while it serves and, once serving ends,
+        # re-raises it against the handler it found; the default handler
+        # would end the process there, before the ordered exit below. This
+        # one asks the server to exit, so a SIGTERM (a supervisor's stop,
+        # `_daemon_client.shutdown_daemon`'s fallback) stops the daemon the
+        # way the shutdown endpoint does, and the re-raised signal is a
+        # no-op. uvicorn installs its handlers on the main thread only,
+        # and so does this.
+        signal.signal(signal.SIGTERM, lambda signum, frame: shutdown())
     try:
         server.run(sockets=[sock])
     finally:
@@ -1058,8 +1089,17 @@ def _serve_locked(
                 except Exception:
                     log.exception("saving the removed store %s failed", store.path)
         finally:
-            remove_state(state_dir, store.path, pid=os.getpid())
-            sock.close()
+            try:
+                # `down` waits for the store's lock, which `serve` gives
+                # back once this returns: the store is closed here first,
+                # so a free lock means no handle of this daemon is open
+                # on the store's files (`_daemon_client._stopped`).
+                store.close()
+            except Exception:
+                log.exception("closing the store %s failed", store.path)
+            finally:
+                remove_state(state_dir, store.path, pid=os.getpid())
+                sock.close()
     return 0
 
 

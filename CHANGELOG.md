@@ -25,7 +25,48 @@ bettermemory` and the plugin's `uvx bettermemory` keep resolving 8.0.0
 until the stable `9.0.0` is tagged. Ask for a candidate by version
 (`uvx bettermemory==9.0.0rc1`) to run it.
 
+### 9.0.0rc9
+
+The ninth candidate carries the eighth's changes with one fix the
+eighth's release run found: the rc8 tag was cut on a green CI run, and
+the release workflow's Windows leg then failed on a test that moved the
+store right after `bettermemory down` returned, so nothing was
+published under 9.0.0rc8.
+
+#### Fixed
+
+- **`down` returns once the daemon has released the store.** `down` took
+  the daemon as stopped when its port closed, and the daemon closes its
+  port first, as the server stops accepting, while its store's connection
+  closed only as the process exited, after the lock it holds for its
+  whole life was already given back; so for a moment after `down`
+  returned the store's files were still open. POSIX renames through an
+  open handle and Windows refuses, which is how the release run's Windows
+  leg caught it. The daemon now closes its store and removes its state
+  file before it gives the lock back, and `down` waits for that lock: a
+  free lock means no handle of the daemon is open on the store, so the
+  store can be moved, copied or removed the moment `down` returns, on
+  every platform. The port stays the signal for a daemon that holds no
+  lock (one from before the lock, or a zombie whose handles the OS
+  dropped). With `down` waiting for the real end of a stop, the stop is
+  bounded: the daemon gives the requests in flight 20 s, the longest
+  bound a handler runs under (the git runner's), before uvicorn cancels
+  them, and `down` waits that plus the hook workers' 10 s join before
+  its signal fallback (5 s before, which covered only the port). A
+  SIGTERM now stops the daemon the same ordered way: uvicorn re-raises a
+  captured SIGTERM once it has served, and with no handler of its own
+  the daemon died there, its state file left behind. A stand-in daemon
+  that stops in the real order, port first and lock a second later,
+  fails `down` on the old predicate and passes on the new; a second test
+  sends a foreground daemon SIGTERM and finds its exit 0, its state file
+  gone and its lock free. (`src/bettermemory/_daemon_client.py`,
+  `src/bettermemory/daemon.py`, `tests/test_daemon_lifecycle.py`)
+
 ### 9.0.0rc8
+
+Tagged as `v9.0.0rc8` on 820d7464 and never published: its release
+run failed on the race the ninth candidate fixes, and its changes ship
+in rc9.
 
 The eighth candidate adds no behaviour. The dependency lock moves off
 the advisories a vulnerability audit found, a refusal keeps its words on

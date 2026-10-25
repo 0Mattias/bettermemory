@@ -294,7 +294,7 @@ def storage_dir(
     for state_file in state_dir.glob("daemon-*.json"):
         state = _daemon_client.read_state_file(state_file)
         if state is not None:
-            _daemon_client.shutdown_daemon(state, timeout=10.0)
+            _daemon_client.shutdown_daemon(state, state_dir=state_dir, timeout=10.0)
         state_file.unlink(missing_ok=True)
 
 

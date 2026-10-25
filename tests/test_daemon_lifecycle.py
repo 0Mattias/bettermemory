@@ -23,9 +23,13 @@ import pytest
 from bettermemory import __version__
 from bettermemory._daemon_client import (
     health,
+    lock_file_for,
     pid_alive,
     read_state,
+    release_lock,
+    shutdown_daemon,
     state_file_for,
+    try_lock,
 )
 
 from .conftest import shielded_child_env
@@ -333,3 +337,212 @@ def test_the_wait_goes_on_when_the_started_child_found_the_store_held(
     )
     assert answered is None
     assert time.monotonic() - started >= 0.5
+
+
+# ---------------------------------------------------------------------------
+# `down` returns once the store is released, not when the port closes
+# ---------------------------------------------------------------------------
+
+# A daemon's shape as `shutdown_daemon` sees it, in a process of its own:
+# it answers /health and the shutdown endpoint, and on the shutdown it
+# closes its port first and gives the store's lock back HOLD seconds
+# later, the order the real daemon stops in (the server stops accepting,
+# the lifespan shutdown closes the store, `serve` gives the lock back).
+# argv: the state directory, the store path, HOLD, "lock" or "nolock".
+_STOPPING_DAEMON = r"""
+import http.server, json, os, sys, threading, time
+from datetime import datetime, timezone
+from pathlib import Path
+from bettermemory._daemon_client import lock_file_for, release_lock, try_lock, write_state
+
+state_dir, store_path = Path(sys.argv[1]), sys.argv[2]
+hold, mode = float(sys.argv[3]), sys.argv[4]
+lock = try_lock(lock_file_for(state_dir, store_path)) if mode == "lock" else None
+assert lock is not None or mode == "nolock"
+stop = threading.Event()
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def _json(self, status, payload):
+        body = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        self._json(200, {"status": "ok", "version": "0", "store": store_path, "pid": os.getpid()})
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        self._json(200, {})
+        stop.set()
+
+
+server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+write_state(state_dir, {
+    "pid": os.getpid(), "port": server.server_address[1], "token": "t" * 64,
+    "version": "0", "store": store_path,
+    "started": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+})
+thread = threading.Thread(target=server.serve_forever, daemon=True)
+thread.start()
+stop.wait()
+server.shutdown()
+server.server_close()  # the port is closed; the lock is still held
+time.sleep(hold)
+if lock is not None:
+    release_lock(lock)
+"""
+
+
+def _stopping_daemon(
+    tmp_path: Path, *, hold: float, lock: bool
+) -> tuple[subprocess.Popen[str], dict]:
+    """The stand-in daemon, answering; its state as the client reads it."""
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(exist_ok=True)
+    store_path = _store_path(tmp_path)
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            _STOPPING_DAEMON,
+            str(state_dir),
+            str(store_path),
+            str(hold),
+            "lock" if lock else "nolock",
+        ],
+        env=shielded_child_env(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        state = read_state(state_dir, store_path)
+        if state is not None and health(state["port"], timeout=0.5) is not None:
+            return child, state
+        if child.poll() is not None:
+            _, err = child.communicate(timeout=15)
+            raise AssertionError(f"the stand-in exited {child.returncode}: {err}")
+        time.sleep(0.02)
+    _ended(child)
+    raise AssertionError("the stand-in daemon never answered")
+
+
+def _ended(child: subprocess.Popen[str]) -> None:
+    """The stand-in gone and its pipes closed."""
+    if child.poll() is None:
+        child.kill()
+    child.communicate(timeout=15)
+
+
+def test_down_waits_for_the_stores_lock_not_for_the_port(tmp_path: Path) -> None:
+    """`shutdown_daemon` returns once the daemon has given the store's
+    lock back, not when its port closes. The real daemon closes its port
+    first and its store after, so a `down` that returned on the port left
+    the store's files open for a moment, and a rename of the store right
+    after it failed on Windows, where an open handle refuses the rename
+    (the 9.0.0rc8 release run). The stand-in stops in that order and
+    holds the lock for a second after its port has closed: on the old
+    predicate `down` returns at once and finds the lock held."""
+    child, state = _stopping_daemon(tmp_path, hold=1.0, lock=True)
+    try:
+        started = time.monotonic()
+        assert shutdown_daemon(state, state_dir=tmp_path / "state", timeout=15.0)
+        elapsed = time.monotonic() - started
+        handle = try_lock(lock_file_for(tmp_path / "state", state["store"]))
+        assert handle is not None, (
+            "down returned while the daemon held the store's lock"
+        )
+        release_lock(handle)
+        assert elapsed >= 0.9
+    finally:
+        _ended(child)
+
+
+def test_down_takes_a_daemon_without_a_lock_as_stopped_at_its_port(
+    tmp_path: Path,
+) -> None:
+    """A daemon that holds no lock (one from before the lock, or a zombie
+    whose handles the OS dropped) is stopped when its port is closed, as
+    before: `down` waits for no lock such a daemon will never give back."""
+    child, state = _stopping_daemon(tmp_path, hold=5.0, lock=False)
+    try:
+        started = time.monotonic()
+        assert shutdown_daemon(state, state_dir=tmp_path / "state", timeout=15.0)
+        assert time.monotonic() - started < 4.0
+        assert pid_alive(state["pid"])
+    finally:
+        _ended(child)
+
+
+def test_down_returns_with_the_store_released(
+    tmp_path: Path, daemon_env: dict[str, str]
+) -> None:
+    """When `down` returns, the daemon's lock is free, its state file is
+    gone, and the store's directory can be renamed at once, on Windows
+    too, where an open handle in it would refuse the rename."""
+    assert _cli(["up", "--port", "0"], daemon_env).returncode == 0
+    state = _wait_running(tmp_path)
+    assert _cli(["down"], daemon_env).returncode == 0
+    handle = try_lock(lock_file_for(tmp_path / "state", state["store"]))
+    assert handle is not None, "down returned while the daemon held the store's lock"
+    release_lock(handle)
+    assert not _state_path(tmp_path).exists()
+    store_dir = tmp_path / "store"
+    parked = tmp_path / "store-parked"
+    store_dir.rename(parked)
+    parked.rename(store_dir)
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="SIGTERM is TerminateProcess on Windows"
+)
+def test_a_sigterm_stops_the_daemon_with_the_store_released(
+    tmp_path: Path, daemon_env: dict[str, str]
+) -> None:
+    """A SIGTERM stops a foreground daemon the way `down` does: the
+    process exits 0 after closing its store, removing its state file and
+    giving the lock back. uvicorn re-raises a captured SIGTERM once it
+    has served; without a handler of the daemon's own the process died
+    there, its state file left behind and its exit the signal's."""
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "bettermemory", "up", "--foreground", "--port", "0"],
+        env=daemon_env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        state = _wait_running(tmp_path)
+        os.kill(int(state["pid"]), signal.SIGTERM)
+        _, err = proc.communicate(timeout=30)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.communicate(timeout=15)
+    assert proc.returncode == 0, err
+    assert not _state_path(tmp_path).exists()
+    handle = try_lock(lock_file_for(tmp_path / "state", state["store"]))
+    assert handle is not None, "the daemon exited with the store's lock held"
+    release_lock(handle)
+
+
+def test_the_clients_wait_is_the_daemons_own_bounds() -> None:
+    """`down` waits for what the daemon itself allows a stop to take: the
+    requests in flight, bounded by the longest bound a handler runs under
+    (the git runner's), then the hook workers' join; past that, the
+    signal."""
+    from bettermemory import daemon, location
+    from bettermemory._daemon_client import SHUTDOWN_TIMEOUT_SECONDS
+
+    assert daemon.GRACEFUL_SHUTDOWN_SECONDS == location._GIT_TIMEOUT_SECONDS
+    assert SHUTDOWN_TIMEOUT_SECONDS == (
+        daemon.GRACEFUL_SHUTDOWN_SECONDS + daemon.WORKERS_CLOSE_SECONDS
+    )
