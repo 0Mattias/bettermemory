@@ -41,8 +41,11 @@ until the stable `9.0.0` is tagged. Ask for a candidate by version
 
 - **The test suite's shared store fixture closes its Store.** Every
   test that took `store` left a sqlite connection to the garbage
-  collector (1,914 ResourceWarnings in the rc7 release build); the
-  fixture now closes it when the test ends. (`tests/conftest.py`)
+  collector, which Python 3.13 and later report as a ResourceWarning at
+  finalization; the fixture now closes it when the test ends. It is one
+  source among many: the rc7 release build logged 1,914 such warnings,
+  and about 1,800 remain from stores the tests open themselves, which a
+  later change closes. (`tests/conftest.py`)
 
 ### 9.0.0rc9
 

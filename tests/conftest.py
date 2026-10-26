@@ -550,8 +550,11 @@ def workspace(
 def store(memory_dir: Path) -> Iterator[Store]:
     """The test's own Store, closed when the test ends. A test that
     closes it itself is fine: closing a closed connection is a no-op.
-    Left open, each test leaked a sqlite connection to the garbage
-    collector (1,914 ResourceWarnings in the rc7 release build)."""
+    Left open, each test that took it leaked its connection to the
+    garbage collector, which Python 3.13 and later report as a
+    ResourceWarning at finalization. The stores tests open themselves
+    are not this fixture's: about 1,800 such warnings remain in a 3.13
+    run of the suite at the commit that closed it."""
     store = Store(memory_dir)
     try:
         yield store
