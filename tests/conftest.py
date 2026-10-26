@@ -547,8 +547,16 @@ def workspace(
 
 
 @pytest.fixture
-def store(memory_dir: Path) -> Store:
-    return Store(memory_dir)
+def store(memory_dir: Path) -> Iterator[Store]:
+    """The test's own Store, closed when the test ends. A test that
+    closes it itself is fine: closing a closed connection is a no-op.
+    Left open, each test leaked a sqlite connection to the garbage
+    collector (1,914 ResourceWarnings in the rc7 release build)."""
+    store = Store(memory_dir)
+    try:
+        yield store
+    finally:
+        store.close()
 
 
 @pytest.fixture
