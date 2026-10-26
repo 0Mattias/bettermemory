@@ -27,6 +27,13 @@ until the stable `9.0.0` is tagged. Ask for a candidate by version
 
 ### 9.0.0rc10
 
+The tenth candidate carries the ninth's changes with the first of the
+open list after rc9: the daemon's tool bodies off its event loop, the
+brief's claim under the state's lock, a store rekeyed only by its owner,
+one git runner, the Stop's settle order, and the test suite's stores
+closed. It is a release candidate like the ninth; the stable 9.0.0
+follows the candidates' testing.
+
 #### Added
 
 - **The RS-F7 receipts under `bench/`.** The figures the rc7 entry cites
@@ -122,6 +129,20 @@ until the stable `9.0.0` is tagged. Ask for a candidate by version
   too; the rest were the stores the tests open themselves, and 32 of
   the 38 the stores one test's own threads reopened, which that test
   now closes. (`tests/conftest.py`)
+- **The daemon runs the tool bodies on worker threads.** The nine MCP
+  tool handlers are coroutines whose bodies await nothing: the origin
+  capture's git calls, the sqlite reads and the response build ran on
+  the daemon's event loop, so a hook of another session sent during a
+  tool call waited the call out (a body held for 20 s answered a hook
+  sent 0.5 s in after 19.6 s). The daemon now runs them on a second
+  pool beside the hooks' (`TOOL_WORKERS` threads, each with its own
+  connection), each body over a copy of the handler bundle bound to
+  the worker's store; the same hook answers in 13 ms, and a
+  memory_search through the shim costs what it did (p50 19.2 ms before,
+  19.3 ms after, the read arm of `bench/daemon/latency.py`). Two calls
+  of one session may now run at once, so the session's state takes a
+  lock. The stdio server runs the bodies inline as before.
+  (`daemon.py`, `_handlers.py`, `builder.py`, `session.py`)
 
 ### 9.0.0rc9
 
