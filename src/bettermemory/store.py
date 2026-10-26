@@ -4545,9 +4545,16 @@ class Store:
         self, since: datetime, *, memoised: bool = False
     ) -> Iterator[dict[str, Any]]:
         """The telemetry rows stamped at or after `since`, in log order:
-        what a window read wants. The cut compares the stamp's first
-        nineteen characters, which no index serves, so this reads the
-        whole log. With `memoised`, the rows come from the store's event
+        what a window read wants. The cut is the instant to the second,
+        nineteen characters, compared against the whole stamp: both
+        stamp spellings (``Z`` and ``+00:00``) share that prefix and a
+        nineteen-character string sorts below any longer one that starts
+        with it, so ``ts >= cut`` reads as a cut on the prefix. The read
+        starts at the window's floor, the first row so stamped, found
+        through the `log_by_ts` index (`_window_floor`), and walks the rows
+        from there in log order, so a window at the log's end costs its
+        own rows and not the log's (measured 0.07 ms against 2.1 ms for a
+        100-row window on 34,000 rows). With `memoised`, the rows come from the store's event
         window memo (`_EVENT_WINDOWS`), which reads only the rows past the
         log's head as it last read it; the answer is the same, and each
         call gets events of its own. For a caller whose `since` only moves
@@ -4563,14 +4570,43 @@ class Store:
                 if event is not None:
                     yield event
             return
+        floor = self._window_floor(prefix)
+        if floor is None:
+            return
         for raw in self._conn.execute(
             "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log "
-            "WHERE substr(ts, 1, 19) >= ? ORDER BY seq",
-            (prefix,),
+            "WHERE seq >= ? AND ts >= ? ORDER BY seq",
+            (floor, prefix),
         ):
             event = self._event_from_raw(raw)
             if event is not None:
                 yield event
+
+    def _window_floor(self, prefix: str, *, head_seq: int | None = None) -> int | None:
+        """The sequence number of the first row stamped at or after `prefix`
+        (at or before `head_seq` when given): where a window read starts.
+        Found through `log_by_ts`, named by ``INDEXED BY`` because the
+        planner otherwise takes the rows in sequence order for the MIN and
+        reads most of the log for a window at its end (1.4 ms against
+        4 µs on 34,000 rows). None when no row is stamped in the window.
+        A row stamped later than the rows after it (an import, a clock set
+        back) lowers the floor, and the read from it is then the scan it
+        was before, never more. A store whose index is gone (it has been
+        in the schema since 9.0.0rc1, and `open` re-creates nothing, so
+        only a hand-altered one) refuses the hint; the floor is then read
+        without it, by the scan every window read was before."""
+        hinted = "SELECT MIN(seq) FROM log INDEXED BY log_by_ts WHERE ts >= ?"
+        params: tuple[Any, ...] = (prefix,)
+        if head_seq is not None:
+            hinted += " AND seq <= ?"
+            params = (prefix, head_seq)
+        try:
+            row = self._conn.execute(hinted, params).fetchone()
+        except sqlite3.OperationalError:
+            plain = hinted.replace(" INDEXED BY log_by_ts", "")
+            row = self._conn.execute(plain, params).fetchone()
+        value = None if row is None else row[0]
+        return None if value is None else int(value)
 
     def _window_rows(self, prefix: str) -> tuple[_WindowRow, ...]:
         """The telemetry rows whose stamp's first nineteen characters are at
@@ -4601,16 +4637,29 @@ class Store:
                 head_seq, head_mac = self._gather_window(read, rows, head_seq, head_mac)
         if rows is None:
             rows = []
-            # The window's rows and the log's last row, in one statement so
-            # the head is the last row of the same snapshot.
-            read = self._conn.execute(
-                "SELECT seq, ts, session, kind, payload, mac, "
-                "substr(ts, 1, 19) AS cut, substr(ts, 1, 19) >= ? AS inside "
-                "FROM log WHERE substr(ts, 1, 19) >= ? "
-                "OR seq = (SELECT MAX(seq) FROM log) ORDER BY seq",
-                (prefix, prefix),
-            )
-            head_seq, head_mac = self._gather_window(read, rows, 0, "")
+            # The head first, then the window's rows at or before it, so the
+            # memo's head and its rows are one snapshot without a
+            # transaction: a row appended between the two reads has a higher
+            # sequence number, and the next read, from the head, picks it
+            # up. The floor comes through `log_by_ts` (`_window_floor`), so
+            # the read touches the window's rows where one statement
+            # scanned the log.
+            head = self._conn.execute(
+                "SELECT seq, mac FROM log ORDER BY seq DESC LIMIT 1"
+            ).fetchone()
+            if head is not None:
+                head_seq, head_mac = int(head["seq"]), str(head["mac"])
+                floor = self._window_floor(prefix, head_seq=head_seq)
+                if floor is not None:
+                    read = self._conn.execute(
+                        "SELECT seq, ts, session, kind, payload, mac, "
+                        "substr(ts, 1, 19) AS cut, substr(ts, 1, 19) >= ? AS inside "
+                        "FROM log WHERE seq >= ? AND seq <= ? AND ts >= ? "
+                        "ORDER BY seq",
+                        (prefix, floor, head_seq, prefix),
+                    )
+                    # The head stays the log's last row, not the window's.
+                    self._gather_window(read, rows, head_seq, head_mac)
         kept = tuple(rows)
         if not in_transaction and all(isinstance(row.cut, str) for row in kept):
             with _EVENT_WINDOWS_LOCK:

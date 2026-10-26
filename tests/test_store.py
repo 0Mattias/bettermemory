@@ -1666,6 +1666,46 @@ def test_events_since_and_backward(store: Store) -> None:
     ]
 
 
+def test_events_since_reads_through_the_ts_index(store: Store) -> None:
+    """A window read finds its floor through `log_by_ts` and walks the rows
+    from it by sequence number, in the plain read and the memo's cold
+    read alike: no statement of either scans the log, as the cut on
+    ``substr(ts, 1, 19)`` did on every call."""
+    store.record_event("search", session="s", query="one")
+    statements: list[str] = []
+    store._conn.set_trace_callback(statements.append)
+    try:
+        list(store.events_since(_NOW - timedelta(hours=1)))
+        list(store.events_since(_NOW - timedelta(hours=1), memoised=True))
+    finally:
+        store._conn.set_trace_callback(None)
+    reads = [s for s in statements if "FROM log" in s and "ts >= " in s]
+    floors = [s for s in reads if "MIN(seq)" in s]
+    assert len(floors) == 2 and len(reads) == 4, statements
+    plans = {}
+    for statement in reads:
+        plans[statement] = " ".join(
+            str(row[3])
+            for row in store._conn.execute(f"EXPLAIN QUERY PLAN {statement}")
+        )
+    assert all("SCAN log" not in plan for plan in plans.values()), plans
+    assert all("log_by_ts" in plans[s] for s in floors), plans
+    assert all("PRIMARY KEY" in plans[s] for s in reads if s not in floors), plans
+
+
+def test_a_window_reads_without_its_index(store: Store) -> None:
+    """`INDEXED BY` refuses a statement whose index is gone, where the cut
+    before it scanned: a store without `log_by_ts` (in the schema since
+    9.0.0rc1, so one altered by hand) still reads its window, plain and
+    memoised, by the scan it read by before."""
+    store.record_event("search", session="s", query="one")
+    store._conn.execute("DROP INDEX log_by_ts")
+    since = _NOW - timedelta(hours=1)
+    plain = [row["kind"] for row in store.events_since(since)]
+    memoised = [row["kind"] for row in store.events_since(since, memoised=True)]
+    assert plain == memoised == ["search"]
+
+
 def test_the_journal_writes_lists_prunes_and_measures(store: Store) -> None:
     old = store.write_episode(
         session_id="sess_old",
