@@ -319,7 +319,8 @@ def test_the_state_is_thread_safe(tmp_path: Path) -> None:
                     ("claude-code", f"w{worker}-{i % 7}"), [], delivery=False, now=now
                 )
                 if i % 50 == 0:
-                    state.segment(store.reopen(), KEY, now=now)
+                    with store.reopen() as reopened:
+                        state.segment(reopened, KEY, now=now)
         except BaseException as exc:  # noqa: BLE001
             errors.append(exc)
 

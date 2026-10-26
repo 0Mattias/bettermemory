@@ -118,8 +118,10 @@ until the stable `9.0.0` is tagged. Ask for a candidate by version
   autouse fixture closes every other store a test opens on its own
   thread, inline or through a function-scoped fixture. The rc7 release
   build logged 1,914 such warnings and the CI test job 1,903 lines,
-  1,833 with the shared fixture closed; the rest were the stores the
-  tests open themselves. (`tests/conftest.py`)
+  1,833 with the shared fixture closed and 38 with the autouse fixture
+  too; the rest were the stores the tests open themselves, and 32 of
+  the 38 the stores one test's own threads reopened, which that test
+  now closes. (`tests/conftest.py`)
 
 ### 9.0.0rc9
 
