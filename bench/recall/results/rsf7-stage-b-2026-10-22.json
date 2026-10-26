@@ -1,0 +1,1035 @@
+{
+ "kind": "rsf7-stage-b",
+ "unit": "RS-F7",
+ "stage": "B",
+ "question": "Does the per-prompt recall block help an agent that already holds memory_search and memory_show, and how many pointers.",
+ "run_at": "2026-10-22",
+ "commit": "862b712c8ebc30dfc6705c614b39f727555f347d",
+ "version": "9.0.0rc6",
+ "store_snapshot": {
+  "sha256": "d4263520ada15dd969a8e8a18b6f9d796401c663772d52c240b213383e4b948a",
+  "note": "Stage A's snapshot"
+ },
+ "cases": {
+  "total": 60,
+  "some": 46,
+  "nil": 14,
+  "draw": "all 14 Stage A prompts with no relevant memory in their top 10, and a seeded draw (seed 20261022) of 46 of the 86 with one",
+  "context": "the session's owner words and assistant text before the prompt, compaction summaries kept"
+ },
+ "conditions": [
+  "none",
+  "top1",
+  "top2",
+  "top3",
+  "top5",
+  "relevant"
+ ],
+ "block": "production's recall block (render_recall_block, the line format, the provenance annotation, the summary and the query snippet); the 900-character cap raised to 300 per pointer above three so the top 5 is five pointers",
+ "agent": {
+  "model": "anthropic/claude-opus-5.5",
+  "distinct_replies": 342,
+  "tools": "memory_search and memory_show as of the case's time, four tool rounds, then the nudged forced answer"
+ },
+ "judges": {
+  "record": "openai/gpt-6.1-sol",
+  "second": "anthropic/claude-opus-5.5",
+  "settle": "google/gemini-4-argon"
+ },
+ "score": "1 to 5, the mean of the record and second judges; paired difference from `none`, bootstrap 95%",
+ "spend_usd": {
+  "by_the_keys_meter": 30.0,
+  "agent_including_dry_runs": 22.5,
+  "judging": 7.52,
+  "cap": 70.0,
+  "source": "the OpenRouter key's meter, as the stage's result record states (the first agent run's tally was not logged); judging matches judge.out"
+ },
+ "results": {
+  "primary_paired_difference_from_none": {
+   "all": {
+    "top1": {
+     "diff": 0.25,
+     "ci95": [
+      0.03,
+      0.47
+     ],
+     "wins": 25,
+     "ties": 20,
+     "losses": 15,
+     "n": 60
+    },
+    "top2": {
+     "diff": 0.29,
+     "ci95": [
+      0.05,
+      0.55
+     ],
+     "wins": 23,
+     "ties": 21,
+     "losses": 16,
+     "n": 60
+    },
+    "top3": {
+     "diff": 0.39,
+     "ci95": [
+      0.17,
+      0.62
+     ],
+     "wins": 26,
+     "ties": 22,
+     "losses": 12,
+     "n": 60
+    },
+    "top5": {
+     "diff": 0.12,
+     "ci95": [
+      -0.1,
+      0.34
+     ],
+     "wins": 29,
+     "ties": 14,
+     "losses": 17,
+     "n": 60
+    },
+    "relevant": {
+     "diff": 0.45,
+     "ci95": [
+      0.24,
+      0.67
+     ],
+     "wins": 30,
+     "ties": 23,
+     "losses": 7,
+     "n": 60
+    }
+   },
+   "some": {
+    "top1": {
+     "diff": 0.32,
+     "ci95": [
+      0.07,
+      0.58
+     ],
+     "wins": 20,
+     "ties": 15,
+     "losses": 11,
+     "n": 46
+    },
+    "top2": {
+     "diff": 0.39,
+     "ci95": [
+      0.1,
+      0.71
+     ],
+     "wins": 19,
+     "ties": 15,
+     "losses": 12,
+     "n": 46
+    },
+    "top3": {
+     "diff": 0.57,
+     "ci95": [
+      0.3,
+      0.85
+     ],
+     "wins": 24,
+     "ties": 16,
+     "losses": 6,
+     "n": 46
+    },
+    "top5": {
+     "diff": 0.15,
+     "ci95": [
+      -0.12,
+      0.41
+     ],
+     "wins": 22,
+     "ties": 12,
+     "losses": 12,
+     "n": 46
+    },
+    "relevant": {
+     "diff": 0.59,
+     "ci95": [
+      0.32,
+      0.87
+     ],
+     "wins": 30,
+     "ties": 9,
+     "losses": 7,
+     "n": 46
+    }
+   },
+   "nil": {
+    "top1": {
+     "diff": 0.04,
+     "ci95": [
+      -0.32,
+      0.36
+     ],
+     "wins": 5,
+     "ties": 5,
+     "losses": 4,
+     "n": 14
+    },
+    "top2": {
+     "diff": -0.04,
+     "ci95": [
+      -0.36,
+      0.25
+     ],
+     "wins": 4,
+     "ties": 6,
+     "losses": 4,
+     "n": 14
+    },
+    "top3": {
+     "diff": -0.18,
+     "ci95": [
+      -0.46,
+      0.11
+     ],
+     "wins": 2,
+     "ties": 6,
+     "losses": 6,
+     "n": 14
+    },
+    "top5": {
+     "diff": 0.04,
+     "ci95": [
+      -0.32,
+      0.36
+     ],
+     "wins": 7,
+     "ties": 2,
+     "losses": 5,
+     "n": 14
+    }
+   }
+  },
+  "mean_score": {
+   "none": {
+    "all": 3.15,
+    "some": 3.07,
+    "nil": 3.43
+   },
+   "top1": {
+    "all": 3.4,
+    "some": 3.38,
+    "nil": 3.46
+   },
+   "top2": {
+    "all": 3.44,
+    "some": 3.46,
+    "nil": 3.39
+   },
+   "top3": {
+    "all": 3.54,
+    "some": 3.63,
+    "nil": 3.25
+   },
+   "top5": {
+    "all": 3.27,
+    "some": 3.22,
+    "nil": 3.46
+   },
+   "relevant": {
+    "all": 3.6,
+    "some": 3.65,
+    "nil": 3.43
+   }
+  },
+  "key_note_use_some_stratum": {
+   "none": {
+    "used": 0.51,
+    "contradicted": 0.075,
+    "notes": [
+     74,
+     146
+    ],
+    "replies_using_any": [
+     36,
+     46
+    ]
+   },
+   "top1": {
+    "used": 0.59,
+    "contradicted": 0.034,
+    "notes": [
+     86,
+     146
+    ],
+    "replies_using_any": [
+     38,
+     46
+    ]
+   },
+   "top2": {
+    "used": 0.62,
+    "contradicted": 0.041,
+    "notes": [
+     90,
+     146
+    ],
+    "replies_using_any": [
+     40,
+     46
+    ]
+   },
+   "top3": {
+    "used": 0.62,
+    "contradicted": 0.027,
+    "notes": [
+     90,
+     146
+    ],
+    "replies_using_any": [
+     42,
+     46
+    ]
+   },
+   "top5": {
+    "used": 0.58,
+    "contradicted": 0.068,
+    "notes": [
+     84,
+     146
+    ],
+    "replies_using_any": [
+     39,
+     46
+    ]
+   },
+   "relevant": {
+    "used": 0.66,
+    "contradicted": 0.041,
+    "notes": [
+     97,
+     146
+    ],
+    "replies_using_any": [
+     43,
+     46
+    ]
+   }
+  },
+  "misled": {
+   "none": {
+    "some": [
+     0,
+     46
+    ],
+    "nil": [
+     0,
+     14
+    ]
+   },
+   "top1": {
+    "some": [
+     1,
+     46
+    ],
+    "nil": [
+     1,
+     14
+    ]
+   },
+   "top2": {
+    "some": [
+     1,
+     46
+    ],
+    "nil": [
+     2,
+     14
+    ]
+   },
+   "top3": {
+    "some": [
+     2,
+     46
+    ],
+    "nil": [
+     1,
+     14
+    ]
+   },
+   "top5": {
+    "some": [
+     2,
+     46
+    ],
+    "nil": [
+     3,
+     14
+    ]
+   },
+   "relevant": {
+    "some": [
+     0,
+     46
+    ],
+    "nil": [
+     0,
+     14
+    ]
+   }
+  },
+  "agents_own_retrieval": {
+   "none": {
+    "searches_per_reply": 0.7,
+    "shows_per_reply": 0.68,
+    "retrieved_nothing": [
+     28,
+     60
+    ],
+    "opened_shown": [
+     0,
+     0
+    ],
+    "prompt_tokens": 18939,
+    "cost_usd": 0.082
+   },
+   "top1": {
+    "searches_per_reply": 0.53,
+    "shows_per_reply": 0.83,
+    "retrieved_nothing": [
+     19,
+     60
+    ],
+    "opened_shown": [
+     20,
+     60
+    ],
+    "prompt_tokens": 16622,
+    "cost_usd": 0.053
+   },
+   "top2": {
+    "searches_per_reply": 0.5,
+    "shows_per_reply": 0.93,
+    "retrieved_nothing": [
+     23,
+     60
+    ],
+    "opened_shown": [
+     25,
+     120
+    ],
+    "prompt_tokens": 18294,
+    "cost_usd": 0.056
+   },
+   "top3": {
+    "searches_per_reply": 0.5,
+    "shows_per_reply": 1.03,
+    "retrieved_nothing": [
+     16,
+     60
+    ],
+    "opened_shown": [
+     30,
+     180
+    ],
+    "prompt_tokens": 19433,
+    "cost_usd": 0.063
+   },
+   "top5": {
+    "searches_per_reply": 0.48,
+    "shows_per_reply": 1.0,
+    "retrieved_nothing": [
+     16,
+     60
+    ],
+    "opened_shown": [
+     28,
+     300
+    ],
+    "prompt_tokens": 20170,
+    "cost_usd": 0.062
+   },
+   "relevant": {
+    "searches_per_reply": 0.52,
+    "shows_per_reply": 1.05,
+    "retrieved_nothing": [
+     16,
+     60
+    ],
+    "opened_shown": [
+     30,
+     146
+    ],
+    "prompt_tokens": 18707,
+    "cost_usd": 0.063
+   }
+  },
+  "judge_agreement": {
+   "key_note_used": {
+    "pairs": 868,
+    "agree": 0.78,
+    "kappa": 0.57
+   },
+   "misled": {
+    "pairs": 342,
+    "agree": 0.96,
+    "kappa": 0.4,
+    "record_true": 19,
+    "second_true": 5
+   },
+   "score": {
+    "replies": 342,
+    "mean_record": 2.92,
+    "mean_second": 3.87,
+    "mean_abs_diff": 1.08,
+    "correlation": 0.41
+   }
+  },
+  "post_hoc_written_after_the_primary": {
+   "per_judge_from_none": {
+    "record": {
+     "all": {
+      "top1": {
+       "diff": 0.15,
+       "ci95": [
+        -0.05,
+        0.37
+       ],
+       "wins": 18,
+       "ties": 31,
+       "losses": 11,
+       "n": 60
+      },
+      "top2": {
+       "diff": 0.2,
+       "ci95": [
+        -0.03,
+        0.45
+       ],
+       "wins": 20,
+       "ties": 27,
+       "losses": 13,
+       "n": 60
+      },
+      "top3": {
+       "diff": 0.23,
+       "ci95": [
+        -0.02,
+        0.5
+       ],
+       "wins": 20,
+       "ties": 29,
+       "losses": 11,
+       "n": 60
+      },
+      "top5": {
+       "diff": -0.02,
+       "ci95": [
+        -0.25,
+        0.22
+       ],
+       "wins": 19,
+       "ties": 24,
+       "losses": 17,
+       "n": 60
+      },
+      "relevant": {
+       "diff": 0.42,
+       "ci95": [
+        0.18,
+        0.65
+       ],
+       "wins": 23,
+       "ties": 31,
+       "losses": 6,
+       "n": 60
+      }
+     },
+     "some": {
+      "top1": {
+       "diff": 0.26,
+       "ci95": [
+        0.04,
+        0.5
+       ],
+       "wins": 15,
+       "ties": 25,
+       "losses": 6,
+       "n": 46
+      },
+      "top2": {
+       "diff": 0.3,
+       "ci95": [
+        0.02,
+        0.61
+       ],
+       "wins": 17,
+       "ties": 21,
+       "losses": 8,
+       "n": 46
+      },
+      "top3": {
+       "diff": 0.46,
+       "ci95": [
+        0.2,
+        0.74
+       ],
+       "wins": 18,
+       "ties": 23,
+       "losses": 5,
+       "n": 46
+      },
+      "top5": {
+       "diff": 0.07,
+       "ci95": [
+        -0.17,
+        0.3
+       ],
+       "wins": 14,
+       "ties": 22,
+       "losses": 10,
+       "n": 46
+      },
+      "relevant": {
+       "diff": 0.54,
+       "ci95": [
+        0.24,
+        0.85
+       ],
+       "wins": 23,
+       "ties": 17,
+       "losses": 6,
+       "n": 46
+      }
+     },
+     "nil": {
+      "top1": {
+       "diff": -0.21,
+       "ci95": [
+        -0.64,
+        0.21
+       ],
+       "wins": 3,
+       "ties": 6,
+       "losses": 5,
+       "n": 14
+      },
+      "top2": {
+       "diff": -0.14,
+       "ci95": [
+        -0.5,
+        0.21
+       ],
+       "wins": 3,
+       "ties": 6,
+       "losses": 5,
+       "n": 14
+      },
+      "top3": {
+       "diff": -0.5,
+       "ci95": [
+        -1.0,
+        0.0
+       ],
+       "wins": 2,
+       "ties": 6,
+       "losses": 6,
+       "n": 14
+      },
+      "top5": {
+       "diff": -0.29,
+       "ci95": [
+        -0.86,
+        0.29
+       ],
+       "wins": 5,
+       "ties": 2,
+       "losses": 7,
+       "n": 14
+      }
+     }
+    },
+    "second": {
+     "all": {
+      "top1": {
+       "diff": 0.35,
+       "ci95": [
+        0.05,
+        0.63
+       ],
+       "wins": 24,
+       "ties": 27,
+       "losses": 9,
+       "n": 60
+      },
+      "top2": {
+       "diff": 0.38,
+       "ci95": [
+        0.08,
+        0.7
+       ],
+       "wins": 20,
+       "ties": 30,
+       "losses": 10,
+       "n": 60
+      },
+      "top3": {
+       "diff": 0.55,
+       "ci95": [
+        0.28,
+        0.82
+       ],
+       "wins": 25,
+       "ties": 30,
+       "losses": 5,
+       "n": 60
+      },
+      "top5": {
+       "diff": 0.27,
+       "ci95": [
+        -0.03,
+        0.57
+       ],
+       "wins": 23,
+       "ties": 27,
+       "losses": 10,
+       "n": 60
+      },
+      "relevant": {
+       "diff": 0.48,
+       "ci95": [
+        0.23,
+        0.73
+       ],
+       "wins": 25,
+       "ties": 31,
+       "losses": 4,
+       "n": 60
+      }
+     },
+     "some": {
+      "top1": {
+       "diff": 0.37,
+       "ci95": [
+        0.02,
+        0.72
+       ],
+       "wins": 19,
+       "ties": 19,
+       "losses": 8,
+       "n": 46
+      },
+      "top2": {
+       "diff": 0.48,
+       "ci95": [
+        0.11,
+        0.87
+       ],
+       "wins": 17,
+       "ties": 20,
+       "losses": 9,
+       "n": 46
+      },
+      "top3": {
+       "diff": 0.67,
+       "ci95": [
+        0.35,
+        1.0
+       ],
+       "wins": 22,
+       "ties": 20,
+       "losses": 4,
+       "n": 46
+      },
+      "top5": {
+       "diff": 0.24,
+       "ci95": [
+        -0.13,
+        0.59
+       ],
+       "wins": 19,
+       "ties": 18,
+       "losses": 9,
+       "n": 46
+      },
+      "relevant": {
+       "diff": 0.63,
+       "ci95": [
+        0.33,
+        0.93
+       ],
+       "wins": 25,
+       "ties": 17,
+       "losses": 4,
+       "n": 46
+      }
+     },
+     "nil": {
+      "top1": {
+       "diff": 0.29,
+       "ci95": [
+        -0.21,
+        0.71
+       ],
+       "wins": 5,
+       "ties": 8,
+       "losses": 1,
+       "n": 14
+      },
+      "top2": {
+       "diff": 0.07,
+       "ci95": [
+        -0.29,
+        0.43
+       ],
+       "wins": 3,
+       "ties": 10,
+       "losses": 1,
+       "n": 14
+      },
+      "top3": {
+       "diff": 0.14,
+       "ci95": [
+        -0.14,
+        0.43
+       ],
+       "wins": 3,
+       "ties": 10,
+       "losses": 1,
+       "n": 14
+      },
+      "top5": {
+       "diff": 0.36,
+       "ci95": [
+        -0.07,
+        0.86
+       ],
+       "wins": 4,
+       "ties": 9,
+       "losses": 1,
+       "n": 14
+      }
+     }
+    }
+   },
+   "shown_conditions_against_each_other": {
+    "all": {
+     "top3-top1": {
+      "diff": 0.14,
+      "ci95": [
+       -0.04,
+       0.33
+      ],
+      "wins": 23,
+      "ties": 22,
+      "losses": 15,
+      "n": 60
+     },
+     "top3-top2": {
+      "diff": 0.1,
+      "ci95": [
+       -0.07,
+       0.29
+      ],
+      "wins": 21,
+      "ties": 19,
+      "losses": 20,
+      "n": 60
+     },
+     "top3-top5": {
+      "diff": 0.27,
+      "ci95": [
+       0.07,
+       0.47
+      ],
+      "wins": 23,
+      "ties": 24,
+      "losses": 13,
+      "n": 60
+     },
+     "relevant-top3": {
+      "diff": 0.06,
+      "ci95": [
+       -0.16,
+       0.27
+      ],
+      "wins": 21,
+      "ties": 21,
+      "losses": 18,
+      "n": 60
+     }
+    },
+    "some": {
+     "top3-top1": {
+      "diff": 0.25,
+      "ci95": [
+       0.05,
+       0.45
+      ],
+      "wins": 21,
+      "ties": 15,
+      "losses": 10,
+      "n": 46
+     },
+     "top3-top2": {
+      "diff": 0.17,
+      "ci95": [
+       -0.03,
+       0.39
+      ],
+      "wins": 17,
+      "ties": 16,
+      "losses": 13,
+      "n": 46
+     },
+     "top3-top5": {
+      "diff": 0.41,
+      "ci95": [
+       0.17,
+       0.65
+      ],
+      "wins": 21,
+      "ties": 18,
+      "losses": 7,
+      "n": 46
+     },
+     "relevant-top3": {
+      "diff": 0.02,
+      "ci95": [
+       -0.25,
+       0.28
+      ],
+      "wins": 15,
+      "ties": 15,
+      "losses": 16,
+      "n": 46
+     }
+    },
+    "nil": {
+     "top3-top1": {
+      "diff": -0.21,
+      "ci95": [
+       -0.61,
+       0.18
+      ],
+      "wins": 2,
+      "ties": 7,
+      "losses": 5,
+      "n": 14
+     },
+     "top3-top2": {
+      "diff": -0.14,
+      "ci95": [
+       -0.46,
+       0.25
+      ],
+      "wins": 4,
+      "ties": 3,
+      "losses": 7,
+      "n": 14
+     },
+     "top3-top5": {
+      "diff": -0.21,
+      "ci95": [
+       -0.46,
+       0.04
+      ],
+      "wins": 2,
+      "ties": 6,
+      "losses": 6,
+      "n": 14
+     }
+    }
+   },
+   "some_stratum_gain_by_whether_the_block_holds_a_key_note": {
+    "top1_holds_key": {
+     "diff": 0.62,
+     "ci95": [
+      0.22,
+      1.02
+     ],
+     "wins": 14,
+     "ties": 8,
+     "losses": 3,
+     "n": 25
+    },
+    "top1_holds_none": {
+     "diff": -0.05,
+     "ci95": [
+      -0.29,
+      0.19
+     ],
+     "wins": 6,
+     "ties": 7,
+     "losses": 8,
+     "n": 21
+    },
+    "top2_holds_key": {
+     "diff": 0.5,
+     "ci95": [
+      0.14,
+      0.88
+     ],
+     "wins": 17,
+     "ties": 10,
+     "losses": 9,
+     "n": 36
+    },
+    "top2_holds_none": {
+     "diff": 0.0,
+     "ci95": [
+      -0.35,
+      0.35
+     ],
+     "wins": 2,
+     "ties": 5,
+     "losses": 3,
+     "n": 10
+    },
+    "top3_holds_key": {
+     "diff": 0.72,
+     "ci95": [
+      0.42,
+      1.03
+     ],
+     "wins": 22,
+     "ties": 12,
+     "losses": 3,
+     "n": 37
+    },
+    "top3_holds_none": {
+     "diff": -0.06,
+     "ci95": [
+      -0.39,
+      0.33
+     ],
+     "wins": 2,
+     "ties": 4,
+     "losses": 3,
+     "n": 9
+    },
+    "top5_holds_key": {
+     "diff": 0.25,
+     "ci95": [
+      -0.04,
+      0.51
+     ],
+     "wins": 21,
+     "ties": 10,
+     "losses": 9,
+     "n": 40
+    },
+    "top5_holds_none": {
+     "diff": -0.5,
+     "ci95": [
+      -1.17,
+      0.08
+     ],
+     "wins": 1,
+     "ties": 2,
+     "losses": 3,
+     "n": 6
+    }
+   }
+  }
+ },
+ "receipts": "~/.cache/bettermemory-v9/receipts/stage-b-2026-10-22 (prep.py, agent.py, judge.py, analyse.py, posthoc.py, cases.json, replies.json, judged.json, analysis.txt, posthoc.txt)",
+ "note": "Committed 2026-10-26 from the receipts' readings, kept as written (a post-hoc or later re-reading is labelled as such where it appears) (bench/README.md: a program's results/ holds the receipts for the numbers the docs and the CHANGELOG cite). `commit` is the checkout whose code ran the measurement; `version` is that tree's declared version, not a release. Prompt, case and reply text stays in the receipts folder named under `receipts`."
+}

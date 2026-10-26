@@ -1,0 +1,608 @@
+{
+ "kind": "rsf7-stage-c",
+ "unit": "RS-F7",
+ "stage": "C",
+ "question": "Which session brief helps a reply after a session start or a compaction: five brief conditions on a seeded draw of cases from the sealed copy, judged blind.",
+ "run_at": "2026-10-24T20:00:00Z to 21:30:00Z",
+ "commit": "465ebd9e6473894e2131a76f921c173b7d56ad45",
+ "version": "9.0.0rc6",
+ "store_snapshot": {
+  "copied_at": "2026-10-24",
+  "sha256": "8ec63bcf1f6c43fbd71b684f50a0e452adf3f241d17e42a2272bc19c960ee06a",
+  "note": "the phase 2 snapshot with its standing answers"
+ },
+ "declaration": "revision 3 as amended by revision 4 (the draw widened to two compactions per session)",
+ "cases": {
+  "drawn": 41,
+  "read": 40,
+  "sessions": 22,
+  "worktrees": 4,
+  "by_source_judged": {
+   "startup": 15,
+   "compact": 21,
+   "resume": 4
+  },
+  "by_source_drawn": {
+   "startup": 15,
+   "compact": 22,
+   "resume": 4
+  },
+  "by_probe": {
+   "empty": 15,
+   "words": 25
+  },
+  "relevant_some": 40,
+  "relevant_nil": 0,
+  "dropped": "one compaction case after the second judge's answer failed to parse twice",
+  "prep_counts": {
+   "candidates": 111,
+   "no_following_prompt": 36,
+   "no_transcript": 4,
+   "below_probe_floor": 6,
+   "prompt_unverified": 5,
+   "no_owner_row_after_start": 6,
+   "no_recorded_checkout": 1,
+   "compaction_draw_1": 15,
+   "compaction_draw_2": 7,
+   "compactions_not_drawn": 70,
+   "pc1_ok": 41
+  }
+ },
+ "conditions": [
+  "none",
+  "rc6",
+  "standing3",
+  "standing3_work3",
+  "standing8_work8",
+  "relevant"
+ ],
+ "pointers_shown_per_case": {
+  "none": 0.0,
+  "rc6": 5.6,
+  "standing3": 3.0,
+  "standing3_work3": 6.0,
+  "standing8_work8": 14.8,
+  "relevant": 5.8
+ },
+ "brief_chars_per_case": {
+  "none": 0,
+  "rc6": 771,
+  "standing3": 510,
+  "standing3_work3": 850,
+  "standing8_work8": 1882,
+  "relevant": 836
+ },
+ "agent": {
+  "model": "anthropic/claude-opus-5.5",
+  "calls_in_the_full_run": 491,
+  "cached_calls": 15,
+  "distinct_replies": 244,
+  "cost_per_reply_usd": 0.0863,
+  "prompt_tokens_per_reply": 27623
+ },
+ "judges": {
+  "record": "openai/gpt-6.1-sol",
+  "second": "anthropic/claude-opus-5.5",
+  "settle": "google/gemini-4-argon"
+ },
+ "score": "1 to 5, the mean of the record and second judges; paired difference from `none`, cluster bootstrap 95% over sessions",
+ "spend_usd": {
+  "grading": 10.1,
+  "replies": 20.86,
+  "judging": 9.65,
+  "total_by_the_keys_meter": 40.72,
+  "cap": 60.0,
+  "source": "the OpenRouter key's meter, as the stage's result record states; grading, replies and judging are the scripts' own tallies and do not sum to the meter's total"
+ },
+ "decision": {
+  "rule": "a condition qualifies when its interval from no brief is above zero; the brief that lands is the qualifying condition with the fewest pointers whose interval against the best qualifier includes zero",
+  "qualifiers": [
+   "standing8_work8"
+  ],
+  "landed": "standing8_work8"
+ },
+ "results": {
+  "primary_paired_difference_from_none": {
+   "rc6": {
+    "diff": -0.07,
+    "ci95": [
+     -0.33,
+     0.16
+    ],
+    "wins": 11,
+    "ties": 19,
+    "losses": 10,
+    "n": 40
+   },
+   "standing3": {
+    "diff": 0.19,
+    "ci95": [
+     -0.14,
+     0.52
+    ],
+    "wins": 13,
+    "ties": 18,
+    "losses": 9,
+    "n": 40
+   },
+   "standing3_work3": {
+    "diff": 0.16,
+    "ci95": [
+     -0.17,
+     0.55
+    ],
+    "wins": 11,
+    "ties": 18,
+    "losses": 11,
+    "n": 40
+   },
+   "standing8_work8": {
+    "diff": 0.45,
+    "ci95": [
+     0.11,
+     0.82
+    ],
+    "wins": 16,
+    "ties": 17,
+    "losses": 7,
+    "n": 40
+   },
+   "relevant": {
+    "diff": 0.46,
+    "ci95": [
+     0.1,
+     0.88
+    ],
+    "wins": 17,
+    "ties": 15,
+    "losses": 8,
+    "n": 40
+   }
+  },
+  "mean_score": {
+   "all": {
+    "none": 3.01,
+    "rc6": 2.94,
+    "standing3": 3.2,
+    "standing3_work3": 3.17,
+    "standing8_work8": 3.46,
+    "relevant": 3.48
+   },
+   "startup_n15": {
+    "none": 2.57,
+    "rc6": 2.6,
+    "standing3": 3.03,
+    "standing3_work3": 3.27,
+    "standing8_work8": 3.63,
+    "relevant": 3.7
+   },
+   "resume_n4": {
+    "none": 3.5,
+    "rc6": 3.62,
+    "standing3": 3.62,
+    "standing3_work3": 3.25,
+    "standing8_work8": 3.5,
+    "relevant": 3.62
+   },
+   "compact_n21": {
+    "none": 3.24,
+    "rc6": 3.05,
+    "standing3": 3.24,
+    "standing3_work3": 3.1,
+    "standing8_work8": 3.33,
+    "relevant": 3.29
+   }
+  },
+  "paired_difference_from_none_by_stratum": {
+   "startup_n15": {
+    "rc6": [
+     0.03,
+     -0.53,
+     0.57
+    ],
+    "standing3": [
+     0.47,
+     0.03,
+     0.97
+    ],
+    "standing3_work3": [
+     0.7,
+     0.07,
+     1.37
+    ],
+    "standing8_work8": [
+     1.07,
+     0.33,
+     1.83
+    ],
+    "relevant": [
+     1.13,
+     0.47,
+     1.87
+    ]
+   },
+   "resume_n4": {
+    "rc6": [
+     0.12,
+     0.0,
+     0.38
+    ],
+    "standing3": [
+     0.12,
+     -0.25,
+     0.5
+    ],
+    "standing3_work3": [
+     -0.25,
+     -0.75,
+     0.0
+    ],
+    "standing8_work8": [
+     0.0,
+     -0.38,
+     0.38
+    ],
+    "relevant": [
+     0.12,
+     0.0,
+     0.38
+    ]
+   },
+   "compact_n21": {
+    "rc6": [
+     -0.19,
+     -0.52,
+     0.1
+    ],
+    "standing3": [
+     0.0,
+     -0.4,
+     0.43
+    ],
+    "standing3_work3": [
+     -0.14,
+     -0.5,
+     0.28
+    ],
+    "standing8_work8": [
+     0.1,
+     -0.2,
+     0.41
+    ],
+    "relevant": [
+     0.05,
+     -0.33,
+     0.5
+    ]
+   },
+   "probe_words_n25": {
+    "rc6": [
+     -0.14,
+     -0.45,
+     0.11
+    ],
+    "standing3": [
+     0.02,
+     -0.35,
+     0.39
+    ],
+    "standing3_work3": [
+     -0.16,
+     -0.44,
+     0.21
+    ],
+    "standing8_work8": [
+     0.08,
+     -0.19,
+     0.38
+    ],
+    "relevant": [
+     0.06,
+     -0.26,
+     0.45
+    ]
+   },
+   "note": "probe_empty equals startup; relevant_nil has fewer than 3 sessions"
+  },
+  "record_judge_alone_from_none": {
+   "rc6": [
+    -0.03,
+    -0.27,
+    0.2
+   ],
+   "standing3": [
+    0.12,
+    -0.19,
+    0.44
+   ],
+   "standing3_work3": [
+    0.17,
+    -0.16,
+    0.54
+   ],
+   "standing8_work8": [
+    0.35,
+    0.06,
+    0.68
+   ],
+   "relevant": [
+    0.38,
+    0.0,
+    0.78
+   ]
+  },
+  "key_note_use": {
+   "none": {
+    "used": 0.49,
+    "contradicted": 0.094,
+    "notes": [
+     114,
+     234
+    ],
+    "replies_using_any": [
+     36,
+     40
+    ]
+   },
+   "rc6": {
+    "used": 0.53,
+    "contradicted": 0.09,
+    "notes": [
+     123,
+     234
+    ],
+    "replies_using_any": [
+     35,
+     40
+    ]
+   },
+   "standing3": {
+    "used": 0.56,
+    "contradicted": 0.064,
+    "notes": [
+     131,
+     234
+    ],
+    "replies_using_any": [
+     38,
+     40
+    ]
+   },
+   "standing3_work3": {
+    "used": 0.57,
+    "contradicted": 0.017,
+    "notes": [
+     134,
+     234
+    ],
+    "replies_using_any": [
+     39,
+     40
+    ]
+   },
+   "standing8_work8": {
+    "used": 0.63,
+    "contradicted": 0.03,
+    "notes": [
+     148,
+     234
+    ],
+    "replies_using_any": [
+     38,
+     40
+    ]
+   },
+   "relevant": {
+    "used": 0.65,
+    "contradicted": 0.03,
+    "notes": [
+     151,
+     234
+    ],
+    "replies_using_any": [
+     40,
+     40
+    ]
+   }
+  },
+  "misled": {
+   "none": [
+    3,
+    40
+   ],
+   "rc6": [
+    6,
+    40
+   ],
+   "standing3": [
+    2,
+    40
+   ],
+   "standing3_work3": [
+    1,
+    40
+   ],
+   "standing8_work8": [
+    0,
+    40
+   ],
+   "relevant": [
+    0,
+    40
+   ]
+  },
+  "agents_own_retrieval": {
+   "none": {
+    "searches_per_reply": 0.78,
+    "shows_per_reply": 1.7,
+    "retrieved_nothing": [
+     4,
+     40
+    ],
+    "opened_shown": [
+     0,
+     0
+    ],
+    "prompt_tokens": 30355,
+    "cost_usd": 0.107
+   },
+   "rc6": {
+    "searches_per_reply": 0.57,
+    "shows_per_reply": 1.82,
+    "retrieved_nothing": [
+     5,
+     40
+    ],
+    "opened_shown": [
+     13,
+     224
+    ],
+    "prompt_tokens": 26059,
+    "cost_usd": 0.08
+   },
+   "standing3": {
+    "searches_per_reply": 0.53,
+    "shows_per_reply": 1.77,
+    "retrieved_nothing": [
+     5,
+     40
+    ],
+    "opened_shown": [
+     34,
+     120
+    ],
+    "prompt_tokens": 24802,
+    "cost_usd": 0.08
+   },
+   "standing3_work3": {
+    "searches_per_reply": 0.7,
+    "shows_per_reply": 2.2,
+    "retrieved_nothing": [
+     4,
+     40
+    ],
+    "opened_shown": [
+     47,
+     238
+    ],
+    "prompt_tokens": 30316,
+    "cost_usd": 0.087
+   },
+   "standing8_work8": {
+    "searches_per_reply": 0.5,
+    "shows_per_reply": 1.95,
+    "retrieved_nothing": [
+     4,
+     40
+    ],
+    "opened_shown": [
+     47,
+     593
+    ],
+    "prompt_tokens": 27228,
+    "cost_usd": 0.085
+   },
+   "relevant": {
+    "searches_per_reply": 0.6,
+    "shows_per_reply": 2.35,
+    "retrieved_nothing": [
+     5,
+     40
+    ],
+    "opened_shown": [
+     52,
+     234
+    ],
+    "prompt_tokens": 29808,
+    "cost_usd": 0.087
+   }
+  },
+  "grades_the_oracles_basis": {
+   "pointers_graded": 816,
+   "relevant": 244,
+   "precision": {
+    "rc6": [
+     39,
+     228
+    ],
+    "standing3": [
+     67,
+     123
+    ],
+    "standing3_work3": [
+     115,
+     244
+    ],
+    "standing8_work8": [
+     214,
+     609
+    ]
+   },
+   "prompts_own_recall_block": [
+    22,
+    33
+   ]
+  },
+  "judge_agreement": {
+   "key_note_used": {
+    "pairs": 1395,
+    "agree": 0.8,
+    "kappa": 0.6
+   },
+   "misled": {
+    "pairs": 238,
+    "agree": 0.97,
+    "kappa": 0.68,
+    "record_true": 16,
+    "second_true": 10
+   },
+   "score": {
+    "replies": 238,
+    "mean_record": 2.69,
+    "mean_second": 3.73,
+    "mean_abs_diff": 1.08,
+    "correlation": 0.62,
+    "settled_packets": 36
+   }
+  },
+  "ranker_wall_ms_per_case": {
+   "pool": {
+    "median": 44,
+    "p75": 56,
+    "p95": 74,
+    "max": 190
+   },
+   "standing": {
+    "median": 41,
+    "p75": 58,
+    "p95": 75,
+    "max": 200
+   },
+   "work": {
+    "median": 19,
+    "p75": 35,
+    "p95": 111,
+    "max": 232
+   },
+   "standing_plus_work": {
+    "median": 70,
+    "p75": 119,
+    "p95": 235,
+    "max": 297
+   }
+  },
+  "predictions": {
+   "PC1": "HIT after revision 4 (41 cases; every rc6 block equals the logged ids)",
+   "PC2": "HIT: rc6 not separable from no brief",
+   "PC3": "HIT: the oracle qualifies",
+   "PC4": "HIT: the record judge alone reads the landed condition with the same sign"
+  }
+ },
+ "limits_named_before_the_run": [
+  "one reply after the start understates a standing rule's value, which accrues over later turns",
+  "standing status and in-force links were read as the store held them at the run, not as they stood at each start",
+  "the prompt's own recall block was identical across conditions where production would hold a pointer the brief had shown"
+ ],
+ "receipts": "~/.cache/bettermemory-v9/receipts/stage-c-2026-10-24 (prep.py, agent.py, grade.py, judge.py, analyse.py, cases.json, grades.json, replies.json, judged.json, analysis.txt)",
+ "note": "Committed 2026-10-26 from the receipts' readings, kept as written (a post-hoc or later re-reading is labelled as such where it appears) (bench/README.md: a program's results/ holds the receipts for the numbers the docs and the CHANGELOG cite). `commit` is the checkout whose code ran the measurement; `version` is that tree's declared version, not a release. Prompt, case and reply text stays in the receipts folder named under `receipts`."
+}

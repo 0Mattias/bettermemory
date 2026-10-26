@@ -25,6 +25,25 @@ bettermemory` and the plugin's `uvx bettermemory` keep resolving 8.0.0
 until the stable `9.0.0` is tagged. Ask for a candidate by version
 (`uvx bettermemory==9.0.0rc1`) to run it.
 
+### 9.0.0rc10
+
+#### Added
+
+- **The RS-F7 receipts under `bench/`.** The figures the rc7 entry cites
+  now have their result files, written from each stage's reading (the
+  post-hoc parts labelled as such) and kept as written: Stage A, B and C under
+  `bench/recall/results/rsf7-*`, the standing threshold's kappa round
+  and the update-relation round under `bench/decisions/results/rsf7-*`.
+  Each names the commit it measured; `bench/README.md` says a result is
+  read by its commit, since a tree's declared version is not a release.
+
+#### Changed
+
+- **The test suite's shared store fixture closes its Store.** Every
+  test that took `store` left a sqlite connection to the garbage
+  collector (1,914 ResourceWarnings in the rc7 release build); the
+  fixture now closes it when the test ends. (`tests/conftest.py`)
+
 ### 9.0.0rc9
 
 The ninth candidate carries the eighth's changes with one fix the

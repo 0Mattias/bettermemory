@@ -1,0 +1,382 @@
+{
+ "kind": "rsf7-stage-a",
+ "unit": "RS-F7",
+ "stage": "A",
+ "question": "Which memories are relevant to an owner-typed prompt, and how many: the production ranker's top ten per prompt, graded blind.",
+ "graded_at": "2026-10-22T03:31:26+00:00",
+ "commit": "862b712c8ebc30dfc6705c614b39f727555f347d",
+ "version": "9.0.0rc6",
+ "store_snapshot": {
+  "backup_at": "2026-10-22T03:21:23.878376+00:00",
+  "sha256": "d4263520ada15dd969a8e8a18b6f9d796401c663772d52c240b213383e4b948a"
+ },
+ "sample": {
+  "prompts": 100,
+  "seed": 20261022,
+  "since": "2026-10-12T04:31",
+  "counts": {
+   "turns": 321,
+   "recovered": 300,
+   "duplicate_text": 13,
+   "unrecoverable_or_not_owner": 8
+  },
+  "drawn_from": "owner-typed prompts of in-repository Stop turns recovered from the live log and transcripts; scratch chats outside any repository excluded (the hook never delivers there)"
+ },
+ "ranking": "the production pool and probe at each prompt's typed time against the snapshot, width 10; the replay holds 116 of the 135 logged shown ids in its top 3",
+ "judges": {
+  "record": "openai/gpt-6.1-sol",
+  "second": "anthropic/claude-opus-5.5",
+  "settle": "google/gemini-4-argon"
+ },
+ "body_chars": 4000,
+ "spend_usd": 11.4612,
+ "calls": 272,
+ "graded": {
+  "ids": 988,
+  "relevant": 294,
+  "settled_by_third_judge": 150,
+  "ungraded": 0
+ },
+ "results": {
+  "precision_by_rank": [
+   [
+    1,
+    45,
+    100
+   ],
+   [
+    2,
+    37,
+    100
+   ],
+   [
+    3,
+    40,
+    100
+   ],
+   [
+    4,
+    31,
+    100
+   ],
+   [
+    5,
+    26,
+    100
+   ],
+   [
+    6,
+    25,
+    98
+   ],
+   [
+    7,
+    22,
+    98
+   ],
+   [
+    8,
+    25,
+    98
+   ],
+   [
+    9,
+    24,
+    98
+   ],
+   [
+    10,
+    19,
+    96
+   ]
+  ],
+  "precision_ranks_1_to_3_pooled": [
+   122,
+   300
+  ],
+  "precision_ranks_4_to_10_pooled": [
+   172,
+   688
+  ],
+  "relevant_per_prompt_in_top_10": {
+   "0": 14,
+   "1": 10,
+   "2": 18,
+   "3": 23,
+   "4": 14,
+   "5": 12,
+   "6": 4,
+   "7": 2,
+   "8": 2,
+   "9": 1
+  },
+  "prompts_with_no_relevant_in_top_10": [
+   14,
+   100
+  ],
+  "top_k_no_gate": [
+   {
+    "k": 1,
+    "relevant_per_prompt": 0.45,
+    "irrelevant_per_prompt": 0.55,
+    "precision": 0.45,
+    "prompts_helped": 45,
+    "relevant_reached": 45
+   },
+   {
+    "k": 2,
+    "relevant_per_prompt": 0.82,
+    "irrelevant_per_prompt": 1.18,
+    "precision": 0.41,
+    "prompts_helped": 63,
+    "relevant_reached": 82
+   },
+   {
+    "k": 3,
+    "relevant_per_prompt": 1.22,
+    "irrelevant_per_prompt": 1.78,
+    "precision": 0.41,
+    "prompts_helped": 71,
+    "relevant_reached": 122
+   },
+   {
+    "k": 4,
+    "relevant_per_prompt": 1.53,
+    "irrelevant_per_prompt": 2.47,
+    "precision": 0.38,
+    "prompts_helped": 75,
+    "relevant_reached": 153
+   },
+   {
+    "k": 5,
+    "relevant_per_prompt": 1.79,
+    "irrelevant_per_prompt": 3.21,
+    "precision": 0.36,
+    "prompts_helped": 79,
+    "relevant_reached": 179
+   },
+   {
+    "k": 6,
+    "relevant_per_prompt": 2.04,
+    "irrelevant_per_prompt": 3.94,
+    "precision": 0.34,
+    "prompts_helped": 81,
+    "relevant_reached": 204
+   },
+   {
+    "k": 7,
+    "relevant_per_prompt": 2.26,
+    "irrelevant_per_prompt": 4.7,
+    "precision": 0.32,
+    "prompts_helped": 82,
+    "relevant_reached": 226
+   },
+   {
+    "k": 8,
+    "relevant_per_prompt": 2.51,
+    "irrelevant_per_prompt": 5.43,
+    "precision": 0.32,
+    "prompts_helped": 84,
+    "relevant_reached": 251
+   },
+   {
+    "k": 9,
+    "relevant_per_prompt": 2.75,
+    "irrelevant_per_prompt": 6.17,
+    "precision": 0.31,
+    "prompts_helped": 84,
+    "relevant_reached": 275
+   },
+   {
+    "k": 10,
+    "relevant_per_prompt": 2.94,
+    "irrelevant_per_prompt": 6.94,
+    "precision": 0.3,
+    "prompts_helped": 86,
+    "relevant_reached": 294
+   }
+  ],
+  "by_coverage_label": {
+   "high": [
+    40,
+    117
+   ],
+   "medium": [
+    162,
+    544
+   ],
+   "low": [
+    92,
+    327
+   ]
+  },
+  "by_home_relation": {
+   "global": [
+    60,
+    243
+   ],
+   "same_project": [
+    234,
+    745
+   ]
+  },
+  "by_declared_scope": {
+   "note": "a re-reading of the same grades for RS-F7 revision 1 (no model call): a global-homed record by what its projects:<name> scopes name",
+   "global_named_callers_project": [
+    42,
+    95
+   ],
+   "global_named_callers_project_top3": [
+    23,
+    37
+   ],
+   "same_project_rate_ci95": [
+    0.31,
+    0.28,
+    0.35
+   ],
+   "same_project_top3_rate": 0.4,
+   "global_naming_other_projects_only": [
+    12,
+    98
+   ],
+   "global_naming_no_project": [
+    6,
+    50
+   ]
+  },
+  "rc6_rule_same_project_medium_or_high_top3": {
+   "delivered": [
+    77,
+    201
+   ],
+   "not_delivered": [
+    217,
+    787
+   ],
+   "relevant_reached": [
+    77,
+    294
+   ],
+   "prompts_reached": 53
+  },
+  "rs_v6_rule_top3_with_declared_scope_admission": {
+   "relevant": [
+    124,
+    293
+   ],
+   "rate_ci95": [
+    0.42,
+    0.37,
+    0.48
+   ],
+   "prompts_reached": 69,
+   "against_the_unfiltered_top3_of_all_globals": {
+    "relevant": [
+     122,
+     300
+    ],
+    "prompts_reached": 71
+   }
+  },
+  "by_score_quintile": [
+   [
+    "q1",
+    0.0272,
+    46,
+    190
+   ],
+   [
+    "q2",
+    0.029,
+    37,
+    176
+   ],
+   [
+    "q3",
+    0.0296,
+    59,
+    220
+   ],
+   [
+    "q4",
+    0.0305,
+    56,
+    181
+   ],
+   [
+    "q5",
+    0.0315,
+    96,
+    221
+   ]
+  ],
+  "score_relative_to_top": {
+   "0.6-0.8": [
+    1,
+    3
+   ],
+   "0.8-1.0": [
+    293,
+    985
+   ]
+  },
+  "silence": {
+   "auc_top_score": 0.51,
+   "auc_top_coverage": 0.48,
+   "auc_prompt_content_words": 0.7,
+   "auc_rank1_relevant_by_top_score": 0.6,
+   "top_label_some_vs_none": {
+    "high": [
+     30,
+     3
+    ],
+    "medium": [
+     51,
+     10
+    ],
+    "low": [
+     5,
+     1
+    ]
+   }
+  },
+  "fired_vs_silent_turns": {
+   "fired": {
+    "prompts": 70,
+    "top3": [
+     75,
+     210
+    ],
+    "any_relevant_in_top_10": 57
+   },
+   "silent": {
+    "prompts": 30,
+    "top3": [
+     47,
+     90
+    ],
+    "any_relevant_in_top_10": 29
+   },
+   "silent_relevant_top3_already_seen_in_session": [
+    28,
+    47
+   ],
+   "held_by_label_or_home_gate_alone": 14
+  },
+  "judge_agreement": {
+   "pairs": 961,
+   "agree": 0.87,
+   "kappa": 0.71,
+   "record_says_relevant": 0.28,
+   "second_says_relevant": 0.35
+  }
+ },
+ "live_log_reads_for_revision_1": {
+  "prompt_recall_rows": 437,
+  "segments": 202,
+  "segments_reaching_twelve_deliveries": 1
+ },
+ "receipts": "~/.cache/bettermemory-v9/receipts/stage-a-2026-10-22 (sample.py, rank.py, grade.py, analyse.py, prompts.json, ranked.json, results.json)",
+ "note": "Committed 2026-10-26 from the receipts' readings, kept as written (a post-hoc or later re-reading is labelled as such where it appears) (bench/README.md: a program's results/ holds the receipts for the numbers the docs and the CHANGELOG cite). `commit` is the checkout whose code ran the measurement; `version` is that tree's declared version, not a release. Prompt, case and reply text stays in the receipts folder named under `receipts`."
+}

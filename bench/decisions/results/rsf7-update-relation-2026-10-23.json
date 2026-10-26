@@ -1,0 +1,54 @@
+{
+ "kind": "rsf7-update-relation",
+ "unit": "RS-F7",
+ "phase": 2,
+ "question": "Does an `update` answer on a long record replace the stored statement, add to it, or change a part: the ENG-7 judges, blind, on 60 long-record update answers.",
+ "judged_at": "2026-10-23T01:36:09+00:00",
+ "commit": "67ba04a150f274f64a59dd157241efc787193512",
+ "version": "9.0.0rc6",
+ "store_snapshot": {
+  "backup_at": "2026-10-23T01:27:08.708599+00:00",
+  "sha256": "d8c1ad9989f4a9b2490e8f3e129f661af109d87cbe3280c3d410ec66ac6efe56"
+ },
+ "judges": {
+  "record": "openai/gpt-6.1-sol",
+  "second": "anthropic/claude-opus-5.5",
+  "settle": "google/gemini-4-argon"
+ },
+ "body_chars": 4000,
+ "spend_usd": 1.1902,
+ "calls": 47,
+ "decision": {
+  "settled": 60,
+  "unsettled": 0,
+  "counts": {
+   "REPLACES": 6,
+   "ADDS": 10,
+   "PARTIAL": 43,
+   "OTHER": 1
+  },
+  "replaces_share": 0.1,
+  "replaces_ci95": [
+   0.0466,
+   0.2015
+  ],
+  "judges_agree": 40,
+  "verdict": "the claim-size rule stays; extends carries additions",
+  "per_judge": {
+   "openai/gpt-6.1-sol": {
+    "REPLACES": 5,
+    "ADDS": 8,
+    "PARTIAL": 46,
+    "OTHER": 1
+   },
+   "anthropic/claude-opus-5.5": {
+    "REPLACES": 3,
+    "ADDS": 17,
+    "PARTIAL": 34,
+    "OTHER": 6
+   }
+  }
+ },
+ "receipts": "~/.cache/bettermemory-v9/receipts/rsf7-phase2-2026-10-23 (update_round.py, update-draw.json, update-results.json, update-decision.json)",
+ "note": "Committed 2026-10-26 from the receipts' readings, kept as written (a post-hoc or later re-reading is labelled as such where it appears) (bench/README.md: a program's results/ holds the receipts for the numbers the docs and the CHANGELOG cite). `commit` is the checkout whose code ran the measurement; `version` is that tree's declared version, not a release. Prompt, case and reply text stays in the receipts folder named under `receipts`."
+}

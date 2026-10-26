@@ -2,7 +2,28 @@
 
 What each program here measures. A program's `results/` holds the
 receipts for the numbers the docs and the CHANGELOG cite, kept as
-written.
+written: a result is never rewritten, a new reading is a new file.
+
+A result file names the code it measured in its `commit` field, the
+checkout's HEAD at the run, and that tree's declared `version`. Read a
+result by its commit: the version is the tree's at the time, not a
+release (the pre-rc7 tree declares 9.0.0rc6, so the rc7 measurements
+under `daemon/results/latency-2026-10-24-*`, `recall/results/rsf7-*` and
+`decisions/results/rsf7-*` are stamped rc6 and belong to the commits
+they name).
+
+Unit RS-F7's receipts (the 9.0.0rc7 CHANGELOG entry's figures) are
+aggregates written from each stage's reading, the post-hoc parts
+labelled as such, with the prompt, case and reply text left in the
+owner's receipts folders:
+`recall/results/rsf7-stage-a-2026-10-22.json` (100 live prompts, the
+top ten graded), `rsf7-stage-b-2026-10-22.json` (60 prompts under six
+recall conditions, judged blind), `rsf7-stage-c-2026-10-24.json` (41
+session starts and compactions drawn, 40 judged, under five brief
+conditions), `decisions/results/rsf7-standing-tau-2026-10-23.json` (the
+standing threshold's weighted kappa against the judges) and
+`rsf7-update-relation-2026-10-23.json` (the update answer read as a
+replacement on 60 long records).
 
 ## Programs
 
