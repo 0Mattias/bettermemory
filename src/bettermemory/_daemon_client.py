@@ -44,6 +44,13 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 STATE_DIR_ENV = "BETTERMEMORY_STATE_DIR"
+#: The path variables a starting daemon resolves (`config.ENV_DIR_OVERRIDE`
+#: and `config.KEYS_DIR_ENV`, spelled here so a hook imports no config;
+#: tests/test_daemon_lifecycle.py pins them equal). `_spawn` hands them to
+#: the child absolute, since the child does not run where its parent stands.
+_STORE_DIR_ENV = "BETTERMEMORY_DIR"
+_KEYS_DIR_ENV = "BETTERMEMORY_KEYS_DIR"
+_PATH_ENVS: tuple[str, ...] = (_STORE_DIR_ENV, _KEYS_DIR_ENV)
 DEFAULT_PORT = 7397
 HOST = "127.0.0.1"
 HEALTH_PATH = "/health"
@@ -371,7 +378,8 @@ def start_daemon(
     child and waits for it, and the daemon writes its own pid to the state
     file, which is the one to act on. The child inherits `env` (default:
     this environment) with the state directory pinned, so it writes the
-    state file where the caller will look for it."""
+    state file where the caller will look for it, and the store's
+    directory pinned when `env` names none, so it serves `store_path`."""
     return _spawn(state_dir, store_path, port=port, env=env).child.pid
 
 
@@ -382,10 +390,29 @@ def _spawn(
     port: int | None,
     env: dict[str, str] | None,
 ) -> Started:
-    """`start_daemon`, returning the child itself and where its log begins."""
-    state_dir = Path(state_dir)
+    """`start_daemon`, returning the child itself and where its log begins.
+
+    The child runs in the state directory, not where this process stands.
+    Windows holds a process's working directory open, so a daemon spawned
+    from a project checkout pinned that checkout against a rename or a
+    delete until `down`; the state directory is held by the child's log
+    and lock handles anyway. Nothing the daemon reads once it serves
+    depends on its working directory (each hook posts its caller's cwd,
+    the shim sends its own), but the path variables it resolves at
+    startup (`_PATH_ENVS`, the state directory) would resolve a relative
+    value against it, so they are made absolute here, against this
+    process's directory, which is what a relative value meant. The
+    store's directory is pinned the same way when `env` names none
+    (`daemon_env_for` does), since a daemon left to resolve its store
+    where it runs would open one under the state directory."""
+    state_dir = Path(state_dir).expanduser().resolve()
     state_dir.mkdir(parents=True, exist_ok=True)
     child_env = dict(os.environ if env is None else env)
+    child_env.setdefault(_STORE_DIR_ENV, str(Path(store_path).parent))
+    for name in _PATH_ENVS:
+        value = child_env.get(name)
+        if value:
+            child_env[name] = str(Path(value).expanduser().resolve())
     child_env[STATE_DIR_ENV] = str(state_dir)
     command = [sys.executable, "-m", "bettermemory", "up", "--foreground"]
     if port is not None:
@@ -399,6 +426,7 @@ def _spawn(
             "stdout": log_handle,
             "stderr": subprocess.STDOUT,
             "env": child_env,
+            "cwd": str(state_dir),
             "close_fds": True,
         }
         if sys.platform == "win32":
@@ -713,7 +741,7 @@ def daemon_env_for(store_path: Path | str) -> dict[str, str]:
     attended mark is dropped for the same reason: it describes the session
     whose hook started the daemon, and each hook forwards its own."""
     env = dict(os.environ)
-    env["BETTERMEMORY_DIR"] = str(Path(store_path).parent)
+    env[_STORE_DIR_ENV] = str(Path(store_path).parent)
     env.pop(HARNESS_SESSION_ENV, None)
     env.pop(ATTENDED_ENV, None)
     return env

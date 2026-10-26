@@ -22,6 +22,8 @@ import pytest
 
 from bettermemory import __version__
 from bettermemory._daemon_client import (
+    _PATH_ENVS,
+    _spawn,
     health,
     lock_file_for,
     pid_alive,
@@ -31,6 +33,7 @@ from bettermemory._daemon_client import (
     state_file_for,
     try_lock,
 )
+from bettermemory.config import ENV_DIR_OVERRIDE, KEYS_DIR_ENV
 
 from .conftest import shielded_child_env
 
@@ -151,6 +154,47 @@ def test_a_stale_state_file_reads_not_running_and_is_removed(
     assert status.returncode == 0, status.stderr
     assert "not running" in status.stdout
     assert not _state_path(tmp_path).exists()
+
+
+def test_a_spawned_daemon_runs_in_the_state_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_spawn` gives the child the state directory as its working
+    directory, so a daemon pins no project checkout (Windows holds a
+    process's working directory open against a rename or a delete), and
+    hands it the path variables it resolves at startup absolute, since a
+    relative one would otherwise resolve against that directory. An
+    environment that names no store directory gets the store's, so the
+    child never resolves a store of its own where it runs."""
+    captured: dict = {}
+
+    class _Child:
+        pid = 4242
+
+    def fake_popen(command: list[str], **kwargs: object) -> _Child:
+        captured.update(kwargs, command=command)
+        return _Child()
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    monkeypatch.chdir(tmp_path)
+    env = {"BETTERMEMORY_DIR": "store", "BETTERMEMORY_KEYS_DIR": "keys"}
+    started = _spawn(
+        Path("state"), tmp_path / "store" / "memory.sqlite", port=None, env=env
+    )
+    assert started.child.pid == 4242
+    state_dir = (tmp_path / "state").resolve()
+    assert captured["cwd"] == str(state_dir)
+    assert captured["env"]["BETTERMEMORY_STATE_DIR"] == str(state_dir)
+    assert captured["env"]["BETTERMEMORY_DIR"] == str((tmp_path / "store").resolve())
+    assert captured["env"]["BETTERMEMORY_KEYS_DIR"] == str(
+        (tmp_path / "keys").resolve()
+    )
+    assert "--foreground" in captured["command"]
+    assert _PATH_ENVS == (ENV_DIR_OVERRIDE, KEYS_DIR_ENV)
+    bare = _spawn(Path("state"), Path("store") / "memory.sqlite", port=None, env={})
+    assert bare.child.pid == 4242
+    assert captured["env"]["BETTERMEMORY_DIR"] == str((tmp_path / "store").resolve())
+    assert "BETTERMEMORY_KEYS_DIR" not in captured["env"]
 
 
 # A launcher in front of the interpreter, as a Windows venv's python.exe

@@ -859,10 +859,16 @@ def serve(
     state file and then gives the lock back, in that order, so a free
     lock, which is what `_daemon_client.shutdown_daemon` waits for,
     means the store's files are released. A SIGTERM is such a stop (the
-    daemon's own handler asks the server to exit); a forced exit (a
-    second SIGINT) skips the app's shutdown, so a hook worker's
-    connection can still be open when the lock is given back and closes
-    as the process ends. A stop gives the requests in flight
+    daemon's own handler asks the server to exit). A forced exit (a
+    second SIGINT) skips the app's shutdown event, but the loop's close
+    cancels the lifespan task and the app's contexts unwind on that
+    cancellation, so the hook workers are joined (`WORKERS_CLOSE_SECONDS`)
+    and the store is closed before the lock is given back; the one
+    residue is a worker job that outlives the join, whose connection
+    closes with the process microseconds after the lock frees, which the
+    WAL store tolerates. Skipping the lock release on a forced exit was
+    considered and declined (2026-10-26): a branch in the exit path for a
+    window with no defect behind it. A stop gives the requests in flight
     `GRACEFUL_SHUTDOWN_SECONDS`. Returns the exit status.
 
     One daemon per store: before anything else it takes the store's lock
