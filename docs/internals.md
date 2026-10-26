@@ -167,10 +167,14 @@ search hits, `memory_show`, the recall pointer and the health report's
 and the handoff never delivers the body of an unaccounted episode.
 
 A server that opens a store whose key is not on this machine writes a
-new key and appends a `rekey` row. Rows signed under a key this
-machine does not hold keep their stored labels, since their pointers
-cannot be checked, and stamps copied with the store read as this
-host's. `bettermemory log verify` is the whole-chain audit: it walks
+new key and appends a `rekey` row: it opens through `Store.open_or_create`,
+the owner's opener, which passes `allow_rekey=True`. A plain `Store.open`
+does not: since 9.0.0rc10 it leaves such a store readable and refuses the
+first write, naming the key directory, so a copy on another machine or a
+daemon under the wrong key directory never splits the chain by accident.
+Rows signed under a key this machine does not hold keep their stored
+labels, since their pointers cannot be checked, and stamps copied with
+the store read as this host's. `bettermemory log verify` is the whole-chain audit: it walks
 every row, checks every MAC and every link to the row before,
 compares the head checkpoint, and refolds the log to compare every
 table against it. It reports a rekeyed store `unverifiable`.

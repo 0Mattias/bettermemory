@@ -1280,7 +1280,7 @@ def test_rows_from_before_a_rekey_still_verify(tmp_path: Path, keys_dir: Path) -
     current = next(keys_dir.glob("*.key"))
     saved = current.read_bytes()
     current.unlink()
-    with Store.open(path, keys_dir=keys_dir) as rekeyed:
+    with Store.open(path, keys_dir=keys_dir, allow_rekey=True) as rekeyed:
         from bettermemory.log import fingerprint as _fp
 
         retired = rekeyed.keyring.retired_path(_fp(saved))

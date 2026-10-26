@@ -26,9 +26,11 @@ together.
 Keys. ``create`` writes the store's key under the keys directory
 (``log.default_keys_dir`` unless the caller names one) and records only
 its fingerprint in ``meta``. ``open`` finds the key by fingerprint; a
-missing or foreign key is retired, a fresh one written, and a ``rekey``
-row appended, unless the caller opens with ``allow_rekey=False``, which
-leaves the store readable and refuses mutations.
+missing or foreign key leaves the store readable and refuses mutations,
+naming the key directory, unless the caller opens with
+``allow_rekey=True`` (the owner's openers, `open_or_create` and the
+migrations, do), when the key is retired, a fresh one written, and a
+``rekey`` row appended.
 """
 
 from __future__ import annotations
@@ -2127,11 +2129,16 @@ class Store:
         path: Path | str,
         *,
         keys_dir: Path | str | None = None,
-        allow_rekey: bool = True,
+        allow_rekey: bool = False,
     ) -> Store:
-        """An existing store. With ``allow_rekey`` (the default) a missing
-        or foreign key is replaced and a ``rekey`` row appended; without
-        it the store opens for reading and refuses to mutate."""
+        """An existing store. Without ``allow_rekey`` (the default) a store
+        whose key under the key directory is missing or foreign opens for
+        reading and refuses to mutate, naming the directory; with it the
+        key is replaced and a ``rekey`` row appended, which splits the
+        chain. The owner's own openers pass it (`open_or_create`, which
+        the hooks, the daemon and the CLI open through, and the
+        migrations); a reader, a copy on another machine or a daemon
+        under the wrong key directory never rekeys by accident."""
         path = store_path(path)
         if not path.is_file():
             raise FileNotFoundError(f"no store at {path}")
@@ -2198,7 +2205,9 @@ class Store:
         answer. `create` itself is unchanged."""
         path = store_path(path)
         if path.is_file():
-            return cls.open(path, keys_dir=keys_dir)
+            # The owner-process opener: a store this machine writes to
+            # whose key moved is its owner's to rekey.
+            return cls.open(path, keys_dir=keys_dir, allow_rekey=True)
         refuse_unmigrated_v8(path)
         return cls.create(path, keys_dir=keys_dir)
 
@@ -2336,7 +2345,11 @@ class Store:
     ) -> LogRow:
         if self._key is None:
             raise RuntimeError(
-                f"store {self._path} has no key (opened with allow_rekey=False)"
+                f"store {self._path} is open for reading only: no key under "
+                f"{self._keyring.keys_dir} matches its fingerprint. Put the "
+                f"store's key back there, or open it with allow_rekey=True from "
+                f"the process that owns the store to write a new key and start a "
+                f"new chain segment."
             )
         row = append_row(
             conn, key=self._key, kind=kind, payload=payload, session=session, ts=ts

@@ -99,8 +99,8 @@ def run_migration_at_open(
     """`membership_migrate.ensure_migrated` at an entry point's open
     (design 8.6): the report of a run that homed records, else None.
 
-    A store opened for reading (``allow_rekey=False`` found no key) is left
-    as it is; the next open with its key migrates it. When this process
+    A store opened for reading (an open without ``allow_rekey`` found no
+    key) is left as it is; the next open with its key migrates it. When this process
     has no machine id (`location.process_machine` raises OSError: the state
     directory could not be opened), one line is logged at `level`, the
     store is left as it is, and the next open tries again. The hook

@@ -391,6 +391,7 @@ def test_the_daemon_without_a_machine_id_serves_the_store_as_it_is(
     def no_machine() -> Any:
         raise PermissionError("the state directory is not writable")
 
+    real_machine = location.process_machine
     monkeypatch.setattr(location, "process_machine", no_machine)
     caplog.set_level(logging.INFO, logger="bettermemory.daemon")
     with Store.open(left.path) as store:
@@ -400,7 +401,9 @@ def test_the_daemon_without_a_machine_id_serves_the_store_as_it_is(
     assert unhomed_count(left.path) == left.records
     warned = [r for r in caplog.records if "no machine id" in r.getMessage()]
     assert len(warned) == 1 and warned[0].levelno == logging.WARNING
-    monkeypatch.undo()
+    # Only the machine patch is lifted: an undo would also lift the key
+    # directory the fixtures set, and the store would open without its key.
+    monkeypatch.setattr(location, "process_machine", real_machine)
     with Store.open(left.path) as store:
         _daemon._migrate_at_start(store, load_config())
     assert unhomed_count(left.path) == 0

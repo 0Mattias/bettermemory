@@ -362,7 +362,9 @@ def run_command(*, dry_run: bool) -> None:
     if not path.is_file():
         sys.stderr.write(f"bettermemory: no bettermemory 9 store at {path}\n")
         raise SystemExit(2)
-    store = Store.open(path)
+    # The migration writes, from the owner's process: a store whose key
+    # moved is rekeyed here as `open_or_create` would.
+    store = Store.open(path, allow_rekey=True)
     try:
         report = migrate(
             store,

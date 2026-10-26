@@ -184,7 +184,7 @@ def test_reopening_uses_the_same_key_and_appends_no_rekey_row(
     fingerprint = first.key_fingerprint
     first.close()
 
-    again = Store.open(path, keys_dir=keys_dir)
+    again = Store.open(path, keys_dir=keys_dir, allow_rekey=True)
     try:
         assert again.key_fingerprint == fingerprint
         assert [r.kind for r in again.log_rows()] == [chain.STORE_CREATED, "memory_put"]
@@ -435,7 +435,7 @@ def test_opening_without_the_key_rekeys_and_splits_the_chain(
     first.close()
     (keys_dir / f"{first.store_id}.key").unlink()
 
-    again = Store.open(path, keys_dir=keys_dir)
+    again = Store.open(path, keys_dir=keys_dir, allow_rekey=True)
     try:
         assert again.key_fingerprint != old_fingerprint
         rows = again.log_rows()
@@ -458,6 +458,35 @@ def test_opening_without_the_key_rekeys_and_splits_the_chain(
         again.close()
 
 
+def test_a_missing_key_refuses_to_write_by_default(
+    tmp_path: Path, keys_dir: Path
+) -> None:
+    """A store whose key is not under the key directory opens for reading
+    and refuses to mutate, naming the directory and the two ways out; no
+    key is written and no `rekey` row appended, so a copy on another
+    machine, or a daemon under the wrong key directory, never splits the
+    chain by accident. The owner's openers pass `allow_rekey=True`."""
+    path = tmp_path / "memory.sqlite"
+    first = Store.create(path, keys_dir=keys_dir)
+    first.put_memory(_memory("alpha"))
+    fingerprint_before = first.key_fingerprint
+    first.close()
+    (keys_dir / f"{first.store_id}.key").unlink()
+
+    with Store.open(path, keys_dir=keys_dir) as blind:
+        assert len(blind.load_all()) == 1
+        with pytest.raises(RuntimeError) as refused:
+            blind.put_memory(_memory("beta"))
+        message = str(refused.value)
+        assert str(keys_dir) in message
+        assert "allow_rekey=True" in message
+        assert blind.log_rows()[-1].kind != chain.REKEY
+        assert blind.meta()["key_fingerprint"] == fingerprint_before
+    assert list(keys_dir.glob("*.key")) == []
+    with Store.open_or_create(path, keys_dir=keys_dir) as owner:
+        assert owner.log_rows()[-1].kind == chain.REKEY
+
+
 def test_a_retired_key_that_is_present_verifies_its_segment(
     tmp_path: Path, keys_dir: Path
 ) -> None:
@@ -470,7 +499,7 @@ def test_a_retired_key_that_is_present_verifies_its_segment(
     old_key = key_path.read_bytes()
     key_path.unlink()
 
-    again = Store.open(path, keys_dir=keys_dir)
+    again = Store.open(path, keys_dir=keys_dir, allow_rekey=True)
     try:
         assert again.log_verify()["status"] == "unverifiable"
         again.keyring.retired_path(old_fingerprint).write_bytes(old_key)
@@ -496,7 +525,7 @@ def test_a_foreign_key_under_the_store_name_is_retired_not_destroyed(
     foreign = secrets.token_bytes(32)
     key_path.write_bytes(foreign)
 
-    again = Store.open(path, keys_dir=keys_dir)
+    again = Store.open(path, keys_dir=keys_dir, allow_rekey=True)
     try:
         assert again.key_fingerprint != chain.fingerprint(foreign)
         retired = again.keyring.retired_path(chain.fingerprint(foreign))

@@ -467,9 +467,11 @@ def migrate(
         )
     else:
         # The migration is the one path that creates a store beside 8.x
-        # files; `open_or_create` refuses that and names this command.
+        # files; `open_or_create` refuses that and names this command. It
+        # writes, from the owner's process, so a store whose key moved is
+        # rekeyed here as `open_or_create` would.
         store = (
-            Store.open(store_path, keys_dir=keys_dir)
+            Store.open(store_path, keys_dir=keys_dir, allow_rekey=True)
             if store_path.is_file()
             else Store.create(store_path, keys_dir=keys_dir)
         )
