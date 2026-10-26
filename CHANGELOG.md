@@ -37,8 +37,50 @@ until the stable `9.0.0` is tagged. Ask for a candidate by version
   Each names the commit it measured; `bench/README.md` says a result is
   read by its commit, since a tree's declared version is not a release.
 
+#### Fixed
+
+- **An interrupted turn's audit draws its pool as a Stop would, from
+  either hook.** Under `[behavior] prompt_recall = "everywhere"` the
+  prompt hook probed the interrupted turns it settled under the unscoped
+  search's admission, where a Stop settling the same turn used the hooks'
+  prefilter, so a `turn_audited` row's verdict could depend on which hook
+  wrote it. Both hooks now probe interrupted turns under the prefilter;
+  the prompt recall's own pool is unchanged, and the texts that described
+  the two pools as one say what each is. (`src/bettermemory/recall.py`,
+  `src/bettermemory/hook.py`, `plugin/hooks/hooks.json`)
+- **The GitHub release carries the version's CHANGELOG section.** The
+  release workflow's generated notes list merged pull requests, and this
+  repository lands commits directly, so each pre-release page read as a
+  compare link alone. `tools/changelog_section.py` prints the tag's
+  section into the release body ahead of that link; the build job runs
+  it first and fails when the tag's version has no section, so nothing
+  reaches PyPI for such a tag. (`.github/workflows/release.yml`,
+  `docs/release.md`)
+
 #### Changed
 
+- **The Stop settles its own turn before it audits the past ones.** The
+  interrupted turns a Stop audits are walked after its retrieval and
+  pointer settlements and its review count, so a long walk delays only
+  their rows. (`src/bettermemory/hook.py`)
+- **`Store.events_since` reads a window's rows, not the log.** The cut
+  compared the stamp's first nineteen characters, which no index serves,
+  so every window read scanned the whole log. The read now finds the
+  window's first row through the `log_by_ts` index and walks the rows
+  from there by sequence number, in the plain read and the event window
+  memo's cold read alike: 0.07 ms against 2.1 ms for a 100-row window on
+  34,000 rows, the same rows in the same order. No schema change.
+  (`src/bettermemory/store.py`)
+- **A spawned daemon runs in its state directory.** It inherited the
+  working directory of the hook that started it, a project checkout,
+  which Windows holds open against a rename or a delete for the daemon's
+  life; the path variables it resolves at startup are handed to it
+  absolute. (`src/bettermemory/_daemon_client.py`)
+- **Every workflow action is pinned to a commit.** `actions/checkout`,
+  `actions/upload-artifact`, `actions/download-artifact` and
+  `astral-sh/setup-uv` floated on their major tags; each now names the
+  commit behind its release tag, with the version in a comment, as the
+  publishing actions already did. (`.github/workflows/`)
 - **The test suite's shared store fixture closes its Store.** Every
   test that took `store` left a sqlite connection to the garbage
   collector, which Python 3.13 and later report as a ResourceWarning at
