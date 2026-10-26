@@ -26,12 +26,14 @@ import pytest
 
 from bettermemory import transcript as transcript_module
 from bettermemory.owner_prompt import PROMPT_CUT_CHARS
+from bettermemory.time_utils import isoformat_utc
 from bettermemory.transcript import (
     CHUNK_BYTES,
     WALK_BYTES,
     CompactMarker,
     ReverseLines,
     compact_marker,
+    interrupted_turns,
     owner_words,
     stop_turn,
 )
@@ -833,3 +835,97 @@ def test_owner_words_read_as_far_back_as_the_budget(tmp_path: Path) -> None:
     assert owner_words(
         path, chars=12_000, chunk_bytes=CHUNK, budget=len(data) - last
     ) == ("third words")
+
+
+# ---------------------------------------------------------------------------
+# Interrupted turns: the interrupt row's promptId names the turn
+# ---------------------------------------------------------------------------
+
+SINCE = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc)
+
+
+def _stamp(seconds: int) -> str:
+    """A row timestamp `seconds` after `SINCE`."""
+    return isoformat_utc(SINCE + timedelta(seconds=seconds))
+
+
+def test_an_interrupted_turn_is_read_with_the_interrupt_rows_id(
+    tmp_path: Path,
+) -> None:
+    """Newest row first, the interrupt row opens the group and its
+    ``promptId`` is the turn's; the owner's row of the same id supplies
+    the prompt, the assistant rows between them the partial reply and
+    the model, and `at` is the interrupt row's stamp (the newest
+    submitted row's). A turn before `since` and the turn after are not
+    returned."""
+    path = tr.write(
+        tmp_path / "t.jsonl",
+        tr.user("an older ask", "p0", timestamp=_stamp(-5)),
+        tr.assistant("an older reply"),
+        tr.user(OWNER, "p1", timestamp=_stamp(1)),
+        tr.assistant(None),
+        tr.tool_result(40, "p1"),
+        tr.assistant("a partial reply"),
+        tr.user(
+            "[Request interrupted by user for tool use]", "p1", timestamp=_stamp(3)
+        ),
+        tr.user("ok thanks", "p2", timestamp=_stamp(5)),
+        tr.assistant("reply two"),
+    )
+    (turn,) = interrupted_turns(path, since=SINCE, chunk_bytes=CHUNK)
+    assert turn.prompt_id == "p1"
+    assert (turn.prompt, turn.reply, turn.model) == (OWNER, "a partial reply", MODEL)
+    assert turn.at == SINCE + timedelta(seconds=3)
+
+
+def test_an_interrupt_row_without_a_prompt_id_names_no_turn(
+    tmp_path: Path,
+) -> None:
+    """A row without ``promptId`` is a turn of its own (as in `stop_turn`):
+    an interrupt row carrying none holds no prompt and is dropped, and the
+    owner's row before it opens a turn nothing interrupted, so nothing is
+    returned. The same when the ids begin after the owner's row."""
+    path = tr.write(
+        tmp_path / "t.jsonl",
+        tr.user(OWNER, "p1", timestamp=_stamp(1)),
+        tr.assistant("a partial reply"),
+        tr.user("[Request interrupted by user]", timestamp=_stamp(3)),
+        tr.user("ok thanks", "p2", timestamp=_stamp(5)),
+        tr.assistant("reply two"),
+    )
+    assert interrupted_turns(path, since=SINCE, chunk_bytes=CHUNK) == []
+    path = tr.write(
+        tmp_path / "u.jsonl",
+        tr.user(OWNER, timestamp=_stamp(1)),
+        tr.assistant("a partial reply"),
+        tr.user("[Request interrupted by user]", "p1", timestamp=_stamp(3)),
+        tr.user("ok thanks", "p2", timestamp=_stamp(5)),
+        tr.assistant("reply two"),
+    )
+    assert interrupted_turns(path, since=SINCE, chunk_bytes=CHUNK) == []
+
+
+def test_an_unstamped_interrupt_row_takes_the_owners_rows_stamp(
+    tmp_path: Path,
+) -> None:
+    """`at` is the newest submitted row's stamp that parses; a turn none of
+    whose submitted rows is stamped is not returned."""
+    path = tr.write(
+        tmp_path / "t.jsonl",
+        tr.user(OWNER, "p1", timestamp=_stamp(1)),
+        tr.assistant("a partial reply"),
+        tr.user("[Request interrupted by user]", "p1"),
+        tr.user("ok thanks", "p2", timestamp=_stamp(5)),
+        tr.assistant("reply two"),
+    )
+    (turn,) = interrupted_turns(path, since=SINCE, chunk_bytes=CHUNK)
+    assert (turn.prompt_id, turn.at) == ("p1", SINCE + timedelta(seconds=1))
+    path = tr.write(
+        tmp_path / "u.jsonl",
+        tr.user(OWNER, "p1"),
+        tr.assistant("a partial reply"),
+        tr.user("[Request interrupted by user]", "p1"),
+        tr.user("ok thanks", "p2", timestamp=_stamp(5)),
+        tr.assistant("reply two"),
+    )
+    assert interrupted_turns(path, since=SINCE, chunk_bytes=CHUNK) == []
