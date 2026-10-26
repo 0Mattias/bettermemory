@@ -21,6 +21,8 @@ import pytest
 
 from bettermemory.recall import (
     STATE_MAX_SESSIONS,
+    SURFACE_BRIEF,
+    SURFACE_RECALL,
     RecallState,
     rebuild_session,
 )
@@ -435,6 +437,32 @@ def test_a_claim_keeps_unshown_ids_and_counts_without_a_cap(
         state.claim_delivery(KEY, [f"x{i}"], now=now)
     assert state.segment(world.store, KEY, now=now).deliveries == 32
     assert state.claim_delivery(KEY, ["fresh"], now=now) == (["fresh"], 0)
+
+
+def test_a_brief_claim_keeps_each_lists_unshown_ids_and_counts_no_delivery(
+    world: PromptWorld,
+) -> None:
+    """`claim_brief` mirrors `claim_delivery`: the ids not yet shown in the
+    segment, per list and in order, noted as the brief's show; a brief is
+    no delivery, and what a prompt recall showed first stays its show."""
+    state = RecallState()
+    now = _now()
+    assert state.claim_delivery(KEY, ["a"], now=now, event_id="recall-1") == (["a"], 0)
+    assert state.claim_brief(
+        KEY, ["s1", "a"], ["w1", "w2"], now=now, event_id="b1"
+    ) == (["s1"], ["w1", "w2"], 0)
+    assert state.claim_brief(KEY, ["s1", "s2"], ["w2"], now=now, event_id="b2") == (
+        ["s2"],
+        [],
+        0,
+    )
+    view = state.segment(world.store, KEY, now=now)
+    assert view.shown == {"a", "s1", "s2", "w1", "w2"}
+    assert view.deliveries == 1
+    assert view.shown_by["a"] == (SURFACE_RECALL, "recall-1")
+    assert view.shown_by["s1"] == (SURFACE_BRIEF, "b1")
+    assert view.shown_by["s2"] == (SURFACE_BRIEF, "b2")
+    assert state.claim_delivery(KEY, ["s1", "fresh"], now=now) == (["fresh"], 0)
 
 
 def test_concurrent_prompts_deliver_an_id_once(world: PromptWorld) -> None:

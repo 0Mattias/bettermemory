@@ -51,6 +51,7 @@ from bettermemory.recall import (
     BRIEF_WORK,
     STATE_IDLE_SECONDS,
     SURFACE_BRIEF,
+    SURFACE_RECALL,
     RecallState,
     render_brief,
     session_brief,
@@ -642,6 +643,41 @@ def test_a_resume_omits_what_its_segment_has_shown(world: _World) -> None:
     assert view.shown == {first.id, second.id, third.id}
     assert view.shown_by[third.id] == (SURFACE_BRIEF, resumed.event_id)
     assert view.shown_by[second.id] == (SURFACE_BRIEF, startup.event_id)
+
+
+def test_a_prompt_recall_between_the_selection_and_the_print_is_omitted(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The brief reads its segment, selects, then prints; a prompt recall
+    of the same session can deliver one of the selected ids in between.
+    The claim under the state's lock (`RecallState.claim_brief`) decides
+    after the selection, so the id the recall took is omitted, named in
+    the row, and keeps the recall's show; the other id prints under the
+    brief's own event."""
+    first = world.fresh("prefer short release notes in this project")
+    second = world.fresh("the deploy window is tuesday mornings for this project")
+    select = recall_module._select_brief
+
+    def select_then_deliver(*args: Any, **kwargs: Any) -> Any:
+        selection = select(*args, **kwargs)
+        world.state.claim_delivery(
+            BRIEF_KEY, [second.id], now=datetime.now(timezone.utc), event_id="recall-1"
+        )
+        return selection
+
+    monkeypatch.setattr(recall_module, "_select_brief", select_then_deliver)
+    shown = world.brief(source="startup")
+
+    assert shown.ids == (first.id,)
+    row = world.briefs()[-1]
+    assert row["ids"] == [first.id]
+    assert row["omitted"] == [second.id]
+    assert row["event_id"] == shown.event_id
+    view = _segment_view(world)
+    assert view.shown == {first.id, second.id}
+    assert view.shown_by[first.id] == (SURFACE_BRIEF, shown.event_id)
+    assert view.shown_by[second.id] == (SURFACE_RECALL, "recall-1")
+    assert view.deliveries == 1
 
 
 def test_a_resume_omits_from_both_lists(world: _World) -> None:

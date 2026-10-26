@@ -1172,6 +1172,34 @@ class RecallState:
             entry.deliveries += 1
             return kept, entry.segment
 
+    def claim_brief(
+        self,
+        key: tuple[str, str],
+        standing: Sequence[str],
+        work: Sequence[str],
+        *,
+        now: datetime,
+        event_id: str | None = None,
+    ) -> tuple[list[str], list[str], int]:
+        """Check and note one brief's show under one lock, as
+        `claim_delivery` does a prompt recall's: each list's ids not yet
+        shown in the session's segment, in order, noted as shown by the
+        brief (`shown_by`, for the Stop), and the segment they were
+        counted in. The brief read its segment (`segment`) before it
+        selected, and a prompt recall of the same session may have shown
+        some of these ids since, or a compaction opened the next segment;
+        this is the step that decides, so no id is shown twice in a
+        segment by either surface and the row names the segment the ids
+        were claimed in. A brief counts as no delivery."""
+        with self._lock:
+            entry = self._held(key, now)
+            kept_standing = [m for m in standing if m not in entry.shown]
+            kept_work = [m for m in work if m not in entry.shown]
+            for memory_id in [*kept_standing, *kept_work]:
+                entry.shown.add(memory_id)
+                entry.shown_by.setdefault(memory_id, (SURFACE_BRIEF, event_id))
+            return kept_standing, kept_work, entry.segment
+
     def note_settled(
         self, key: tuple[str, str], ids: Iterable[str], *, now: datetime
     ) -> None:
@@ -1804,10 +1832,14 @@ def _brief_in_segment(
     (``surface: session_brief``, design 4 failure 8).
 
     The cooldown's rule, on the brief: an id the segment has shown (by
-    either surface, as `view.shown` has it) is not printed again. The
-    selection is split after `_select_brief` and before `render_brief`,
-    in selection order, into the ids kept and the ids omitted, and the
-    freed slots are not filled, so the selection stays the ranker's. The
+    either surface) is not printed again. The selection is split after
+    `_select_brief` and before `render_brief`, in selection order, into
+    the ids kept and the ids omitted, under the state's lock
+    (`RecallState.claim_brief`), which notes the kept ids as shown in the
+    same step: a prompt recall of the same session running at once can
+    neither show an id the brief is printing nor have the brief print one
+    it has just delivered. The freed slots are not filled, so the
+    selection stays the ranker's. The
     rule reads the shown set on every source: on a ``clear``, and on a
     ``compact`` that opened a segment on its marker, the set is empty by
     construction, on a ``startup`` for a session the state has not seen
@@ -1838,9 +1870,17 @@ def _brief_in_segment(
     admission = admission_for(SESSION_BRIEF, store, resolution)
     membership = _delivery_membership(resolution, admission)
 
-    def record(ids: list[str], *, chars: int, extra: Mapping[str, Any]) -> str:
+    def record(
+        ids: list[str],
+        *,
+        chars: int,
+        extra: Mapping[str, Any],
+        event_id: str | None = None,
+        segment: int | None = None,
+    ) -> str:
         identity.bind_transcript(session_id=key[1], model=None, client=key[0])
-        event_id = generate_ulid()
+        if event_id is None:
+            event_id = generate_ulid()
         recorder = Recorder(
             store=store,
             session_id=key[1],
@@ -1853,7 +1893,7 @@ def _brief_in_segment(
             "session_id": key[1],
             "harness": key[0],
             "source": opened_by,
-            "segment": view.segment,
+            "segment": view.segment if segment is None else segment,
             "ids": ids,
             "chars": chars,
             **extra,
@@ -1904,20 +1944,36 @@ def _brief_in_segment(
                 session=key[1],
             )
         return empty
-    standing = [memory for memory in selection.standing if memory.id not in view.shown]
-    work = [memory for memory in selection.work if memory.id not in view.shown]
-    omitted = [
-        memory.id
-        for memory in [*selection.standing, *selection.work]
-        if memory.id in view.shown
-    ]
+    # The one store read before the print comes first, so that between
+    # the claim and the row only pure functions and the recorder run (the
+    # recorder never raises): ids the claim noted as shown are never left
+    # without their row by a read that fails.
     marks = disputed_marks(store.pending_conflict_pairs())
     for memory_id, note in selection.notes.items():
         marks[memory_id] = f"{marks[memory_id]} {note}" if memory_id in marks else note
+    # The cooldown decides atomically: a concurrent prompt of the same
+    # session may have shown some of these ids since `view` was read, and
+    # what the claim keeps is noted as shown before anything is printed.
+    event_id = generate_ulid()
+    kept_standing, kept_work, segment = state.claim_brief(
+        key,
+        [memory.id for memory in selection.standing],
+        [memory.id for memory in selection.work],
+        now=now,
+        event_id=event_id,
+    )
+    kept = {*kept_standing, *kept_work}
+    standing = [memory for memory in selection.standing if memory.id in kept]
+    work = [memory for memory in selection.work if memory.id in kept]
+    omitted = [
+        memory.id
+        for memory in [*selection.standing, *selection.work]
+        if memory.id not in kept
+    ]
     text, ids = render_brief(standing, work, marks)
     if not ids and not omitted:
         return empty
-    event_id = record(
+    record(
         ids,
         chars=len(text),
         extra={
@@ -1930,9 +1986,8 @@ def _brief_in_segment(
                 [*standing, *work], caller, project_only=True
             ),
         },
-    )
-    state.note_shown(
-        key, ids, delivery=False, now=now, surface=SURFACE_BRIEF, event_id=event_id
+        event_id=event_id,
+        segment=segment,
     )
     return HookResult(
         stdout=text,
