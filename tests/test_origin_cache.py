@@ -27,6 +27,7 @@ from typing import Any
 import pytest
 
 from bettermemory import _caches, githead, identity, origin
+from bettermemory._git import subcommand
 from bettermemory.origin import Origin, capture
 
 from .conftest import set_git_discovery_ceiling
@@ -737,7 +738,7 @@ def test_a_capture_whose_later_probe_could_not_run_is_not_cached(
     real_run = subprocess.run
 
     def branch_probe_times_out(argv: list[str], *args: Any, **kwargs: Any) -> Any:
-        if argv[:2] == ["git", "symbolic-ref"]:
+        if argv[0] == "git" and subcommand(argv[1:]) == "symbolic-ref":
             raise subprocess.TimeoutExpired(argv, kwargs.get("timeout", 1.0))
         return real_run(argv, *args, **kwargs)
 

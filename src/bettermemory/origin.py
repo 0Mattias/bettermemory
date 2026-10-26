@@ -54,6 +54,7 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, PrivateAttr
 
+from . import _git as _git_runner
 from . import _caches, githead, identity
 
 log = logging.getLogger("bettermemory.origin")
@@ -696,56 +697,26 @@ def should_include_for_caller(
 
 
 def _log_subcommand(args: tuple[str, ...]) -> str:
-    """The subcommand in a git argv, for failure log lines.
-
-    Skips leading ``-c <key>=<val>`` pairs so a config-pinned call
-    (`commit_patch_stream`) logs as ``git log``, not ``git -c``.
-    """
-    i = 0
-    while i + 1 < len(args) and args[i] == "-c":
-        i += 2
-    return args[i] if i < len(args) else ""
-
-
-# How many git invocations could not run at all since import, on any
-# thread: no binary on PATH, a timeout, an OSError from the spawn. Read
-# through `unanswered_git_calls`.
-_unanswered = 0
+    """The subcommand in a git argv, for failure log lines
+    (`_git.subcommand`)."""
+    return _git_runner.subcommand(args)
 
 
 def unanswered_git_calls() -> int:
     """How many git invocations since import could not run at all (the
-    None `_git_result` returns), on every thread. The drift memos read
-    `failed_git_calls` instead, which counts these and every other None
-    on the calling thread."""
-    return _unanswered
-
-
-class _Failed(threading.local):
-    """The number of git calls on the current thread that came back None
-    from `_git` or `_git_result`, whatever the reason. Read through
-    `failed_git_calls`."""
-
-    count = 0
-
-
-_FAILED = _Failed()
+    None `_git_result` returns), on every thread (`_git.unanswered_calls`).
+    The drift memos read `failed_git_calls` instead, which counts these
+    and every other None on the calling thread."""
+    return _git_runner.unanswered_calls()
 
 
 def failed_git_calls() -> int:
     """How many git calls on the current thread have come back None from
     `_git` or `_git_result`: git could not run, it exited non-zero, or
-    `_git` folded an empty output into None.
-
-    The drift readers fold each such None into a fallback (the unfiltered
-    count, the author-date basis, the could-not-ask applicability), and a
-    non-zero exit cannot be told from a failure that clears (an object
-    briefly unreadable, an I/O error, a lock) without reading git's
-    message. The uncached code takes the fallback on the call that met the
-    failure and not on the next one, so a memo reads this count before and
-    after computing a value and keeps the value only when it did not
-    move."""
-    return _FAILED.count
+    `_git` folded an empty output into None (`_git.failed_calls`, where
+    the drift memos' reason for reading it before and after a value is
+    given)."""
+    return _git_runner.failed_calls()
 
 
 def _git_result(
@@ -762,60 +733,14 @@ def _git_result(
     read this directly. Each None is counted (`unanswered_git_calls`,
     and on the calling thread `failed_git_calls`).
 
-    Failure logging is tiered so the operationally interesting failures
-    (missing binary, timeouts) reach the log at WARNING while the
-    per-call non-zero exits, which `_git` logs at DEBUG, stay out of it.
+    The run itself is `_git.run_git`: the caller's environment with
+    ``GIT_DIR`` and its kin removed, so a shell that exports them never
+    turns a capture of `cwd` into one of another repository; fsmonitor
+    and hooks pinned off; UTF-8 with ``errors="replace"``; the could-not-
+    run failures logged at WARNING there, the non-zero exits that `_git`
+    folds at DEBUG.
     """
-    global _unanswered
-    try:
-        return subprocess.run(
-            ["git", *args],
-            cwd=str(cwd),
-            capture_output=True,
-            # Git emits UTF-8 (paths especially, and unconditionally so
-            # under the core.quotePath=false pin in commit_patch_stream).
-            # Bare text=True decodes with locale.getpreferredencoding —
-            # cp1252 on Windows — which mojibakes every non-ASCII path
-            # and mis-binds the drift legs there. Decode UTF-8
-            # explicitly; errors="replace" keeps failure soft, matching
-            # this runner's origin-is-nice-to-have posture.
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-            check=False,
-        )
-    except FileNotFoundError as exc:
-        log.warning("git binary not found on PATH: %s", exc)
-    except subprocess.TimeoutExpired:
-        log.warning(
-            "git %s timed out after %ss in %s",
-            _log_subcommand(args),
-            timeout,
-            cwd,
-        )
-    except OSError as exc:
-        log.warning("git invocation failed in %s: %s", cwd, exc)
-    _unanswered += 1
-    _FAILED.count += 1
-    return None
-
-
-def _log_nonzero_exit(
-    args: tuple[str, ...], result: subprocess.CompletedProcess[str], cwd: Path
-) -> None:
-    """DEBUG-level note of a non-zero git exit. Trimmed to stderr's first
-    line — git's "fatal: ..." messages are one-liners; deeper output is
-    rare and not worth flooding the log with. Empty stderr is still
-    logged so the returncode itself is at least visible."""
-    stderr = (result.stderr or "").strip().splitlines()
-    first = stderr[0] if stderr else ""
-    log.debug(
-        "git %s exited %s in %s: %s",
-        _log_subcommand(args),
-        result.returncode,
-        cwd,
-        first,
-    )
+    return _git_runner.run_git(args, cwd=cwd, timeout=timeout)
 
 
 def _git(
@@ -838,31 +763,24 @@ def _git(
     Failure logging is tiered so the common "not a repo" case stays
     silent while operationally interesting failures (missing binary,
     timeouts, safe.directory rejection, corrupted .git) reach the log:
-
-    * `FileNotFoundError` / `OSError` → WARNING. The git binary isn't
-      reachable; every origin capture for this process will fail the
-      same way. `doctor` and verbose-mode users want to see this.
-    * `subprocess.TimeoutExpired` → WARNING. A hanging git is rare
-      enough that surfacing it is worth more than the noise.
-    * Non-zero exit → DEBUG with stderr. The vast majority of these are
-      "fatal: not a git repository" from a non-repo cwd, which is fully
-      expected (memories written outside any repo get `repo=None`).
-      DEBUG keeps the signal available to anyone who flips the log
-      level (or to `doctor`) without spamming WARNING for every memory
-      written from a home directory or a freshly-cloned scratch dir.
+    the could-not-run failures at WARNING (`_git.run_git`), a non-zero
+    exit at DEBUG with stderr's first line (`_git.log_nonzero_exit`),
+    since the vast majority of those are "fatal: not a git repository"
+    from a non-repo cwd, which is fully expected (memories written
+    outside any repo get `repo=None`).
     """
     result = _git_result(cwd, *args, timeout=timeout)
     if result is None:
         _UNANSWERED.count += 1
         return None
     if result.returncode != 0:
-        _log_nonzero_exit(args, result, cwd)
-        _FAILED.count += 1
+        _git_runner.log_nonzero_exit(args, result, cwd)
+        _git_runner.note_failed()
         return None
     out = result.stdout.strip()
     if out or empty_ok:
         return out
-    _FAILED.count += 1
+    _git_runner.note_failed()
     return None
 
 
@@ -950,7 +868,7 @@ def _probe_worktree_root(cwd: Path) -> tuple[str | None, bool]:
     if result is None:
         return None, True
     if result.returncode != 0:
-        _log_nonzero_exit(("rev-parse", "--show-toplevel"), result, cwd)
+        _git_runner.log_nonzero_exit(("rev-parse", "--show-toplevel"), result, cwd)
         return None, False
     raw = result.stdout.strip()
     if not raw:
@@ -1315,7 +1233,7 @@ def commit_reachable(cwd: Path | None, sha: str) -> bool | None:
         return None
     if result.returncode == 0:
         return True
-    _log_nonzero_exit(("merge-base", "--is-ancestor"), result, cwd)
+    _git_runner.log_nonzero_exit(("merge-base", "--is-ancestor"), result, cwd)
     # A non-zero exit is "not an ancestor", "no such commit" and "not a
     # repository" alike. Tell the last apart with the cheapest question
     # that answers differently for it: can git see a HEAD here at all?
@@ -1475,13 +1393,13 @@ def commits_since_anchor(
         if isinstance(seen, ReachableWalk):
             return seen
         if seen:
-            _FAILED.count += 1
+            _git_runner.note_failed()
         return None
-    failed = _FAILED.count
+    failed = _git_runner.failed_calls()
     walk = _walk_reachable(toplevel, anchor, head)
     if walk is None:
         if walked is not None:
-            walked[within] = _FAILED.count != failed
+            walked[within] = _git_runner.failed_calls() != failed
         return None
     if key is None:
         if walked is not None:

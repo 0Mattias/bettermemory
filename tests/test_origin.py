@@ -94,6 +94,25 @@ def _init_repo(path: Path, *, remote: str | None = None) -> None:
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_an_exported_git_dir_does_not_reach_the_capture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A shell that exports GIT_DIR and GIT_WORK_TREE (a deploy script, a
+    hook of another repository) must not turn a capture of `cwd` into one
+    of the environment's repository: the runner (`_git.run_git`) removes
+    them, so git reads the repository at `cwd`."""
+    here = tmp_path / "here"
+    elsewhere = tmp_path / "elsewhere"
+    here.mkdir()
+    elsewhere.mkdir()
+    _init_repo(here, remote="git@github.com:example/here.git")
+    _init_repo(elsewhere, remote="git@github.com:example/elsewhere.git")
+    monkeypatch.setenv("GIT_DIR", str(elsewhere / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(elsewhere))
+    assert capture(cwd=here).repo == "git@github.com:example/here.git"
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
 def test_capture_in_repo_with_origin_remote(tmp_path: Path) -> None:
     _init_repo(tmp_path, remote="git@github.com:example/repo.git")
     origin = capture(cwd=tmp_path)

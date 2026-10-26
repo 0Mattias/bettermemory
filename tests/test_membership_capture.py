@@ -618,6 +618,7 @@ print(json.dumps(sorted(sys.modules)))
         "bettermemory._caches",
         "bettermemory._daemon_client",
         "bettermemory._fsutil",
+        "bettermemory._git",
         "bettermemory._location_probe",
         "bettermemory.checkout_token",
         "bettermemory.githead",

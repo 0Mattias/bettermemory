@@ -195,6 +195,16 @@ def _stamp(
         )
 
 
+def _git_args(argv: list[str]) -> tuple[str, ...]:
+    """The git subcommand and its arguments as a spied `subprocess.run`
+    saw them, without the configuration pins every call carries
+    (`bettermemory._git.PINS`)."""
+    args = list(argv[1:])
+    while len(args) >= 2 and args[0] == "-c":
+        del args[:2]
+    return tuple(args)
+
+
 def _attach(
     memories: list[Any],
     caller: Origin,
@@ -217,7 +227,7 @@ def _attach(
     real_run = subprocess.run
 
     def spy(argv: Any, *args: Any, **kwargs: Any) -> Any:
-        calls.append(tuple(argv[1:]))
+        calls.append(_git_args(argv))
         return real_run(argv, *args, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", spy)
@@ -781,7 +791,7 @@ def test_the_files_answer_what_git_answers(
         real_run = subprocess.run
 
         def spy(argv: Any, *args: Any, **kwargs: Any) -> Any:
-            calls.append(tuple(argv[1:]))
+            calls.append(_git_args(argv))
             return real_run(argv, *args, **kwargs)
 
         monkeypatch.setattr(subprocess, "run", spy)
@@ -986,7 +996,7 @@ def test_the_whole_history_is_memoised_per_root_and_head(
     real_run = subprocess.run
 
     def spy(argv: Any, *args: Any, **kwargs: Any) -> Any:
-        calls.append(tuple(argv[1:]))
+        calls.append(_git_args(argv))
         return real_run(argv, *args, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", spy)
@@ -1296,7 +1306,7 @@ def test_a_health_pass_walks_a_dead_anchor_once(
     real_run = subprocess.run
 
     def spy(argv: Any, *args: Any, **kwargs: Any) -> Any:
-        calls.append(tuple(argv[1:]))
+        calls.append(_git_args(argv))
         return real_run(argv, *args, **kwargs)
 
     for _ in range(2):

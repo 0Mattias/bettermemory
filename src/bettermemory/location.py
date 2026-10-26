@@ -60,7 +60,6 @@ import dataclasses
 import os
 import re
 import stat
-import subprocess
 import sys
 import threading
 import time
@@ -70,6 +69,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import _caches, checkout_token, githead, gitobjects, project_file
+from . import _git as _git_runner
 from ._location_probe import INDETERMINATE, TOKEN_VERSION, _hostname, _path_state, probe
 
 if TYPE_CHECKING:
@@ -1459,33 +1459,18 @@ _GIT_TIMEOUT_SECONDS = 20.0
 def _git(
     common_dir: str, args: Sequence[str], stdin: bytes | None = None
 ) -> bytes | None:
-    """`git` against the repository at `common_dir`, with no optional
-    locks, hooks or fsmonitor and no configuration of the caller's own
-    beyond git's (design 8.8); None when git cannot run or fails."""
-    env = dict(os.environ)
-    env["GIT_OPTIONAL_LOCKS"] = "0"
-    for var in ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"):
-        env.pop(var, None)
-    try:
-        done = subprocess.run(
-            [
-                "git",
-                "-c",
-                "core.fsmonitor=false",
-                "-c",
-                "core.hooksPath=/dev/null",
-                f"--git-dir={common_dir}",
-                *args,
-            ],
-            input=stdin,
-            capture_output=True,
-            timeout=_GIT_TIMEOUT_SECONDS,
-            check=False,
-            env=env,
-        )
-    except (OSError, subprocess.SubprocessError):
+    """`git` against the repository at `common_dir` through `_git.run_git`:
+    no optional locks, hooks or fsmonitor and no configuration of the
+    caller's own beyond git's (design 8.8), raw bytes, within
+    `_GIT_TIMEOUT_SECONDS`; None when git cannot run (logged there at
+    WARNING, a hang against the bound included) or fails (at DEBUG)."""
+    done = _git_runner.run_git(
+        args, git_dir=common_dir, stdin=stdin, timeout=_GIT_TIMEOUT_SECONDS, text=False
+    )
+    if done is None:
         return None
     if done.returncode != 0:
+        _git_runner.log_nonzero_exit(args, done, common_dir)
         return None
     return done.stdout
 
