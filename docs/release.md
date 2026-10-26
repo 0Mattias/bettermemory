@@ -105,7 +105,7 @@ git push origin v<X.Y.Z>
 The tag push triggers the `Release` workflow. Watch it from the Actions tab. On success:
 
 - `bettermemory==<X.Y.Z>` is on PyPI.
-- A GitHub release appears on the Releases page, with the sdist and wheel attached as assets. Its notes are GitHub's generated ones (`generate_release_notes` in `release.yml`): the pull requests merged since the previous tag and a compare link, nothing from the CHANGELOG. Edit the release by hand afterwards to add a line linking the version's CHANGELOG entry and the README's install section.
+- A GitHub release appears on the Releases page, with the sdist and wheel attached as assets. Its notes are the version's CHANGELOG section (`tools/changelog_section.py` prints it in the `github-release` job; the `build` job runs it first and fails when the tag's version has no section, so nothing reaches PyPI for such a tag), followed by GitHub's generated compare link (`generate_release_notes` in `release.yml`; merged pull requests would be listed there too, but this repository lands commits directly). For a stable tag the section is the summary under the `## <X.Y.Z> - <date>` heading, above the first candidate's subsection.
 - For a stable tag, `publish-mcp.yml` lists the version in the MCP registry once the Release run succeeds.
 
 ## Pre-release tags
