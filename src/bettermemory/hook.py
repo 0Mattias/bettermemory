@@ -259,18 +259,23 @@ def _probe_message(
     """The one probe both hooks run: production pool, production
     ranking inputs, `probe_for_miss`, nothing else.
 
-    `admission` is the caller's POOL_PREFILTER admission (design 3.5),
-    built once by the hook from the caller's resolution: the pool, the
-    ranked set, the document frequencies and the audit's project tests
-    all decide through it.
+    `admission` is the caller's admission for the pool, built once by the
+    hook from the caller's resolution: the pool, the ranked set, the
+    document frequencies and the audit's project tests all decide
+    through it. The Stop's is always POOL_PREFILTER (design 3.5), and so
+    is the prompt recall's under `prompt_recall = "project"`; under
+    ``"everywhere"`` the prompt recall draws under the unscoped search's
+    admission (decision B21), the pool its delivery admits, and a turn it
+    served is shielded from the Stop's narrower probe by its
+    `prompt_recall` row.
 
     Shared by `run_audit` (Stop — the after-the-fact audit) and
     `recall.prompt_recall` (UserPromptSubmit — the same probe run before
     the turn, its hits delivered as pointers). One body because the two
-    callers MUST rank alike: a pointer the recall delivers is a hit the
-    audit's probe ranks for the same message, and two hand-kept copies
-    of this plumbing would let them drift the first time one of them
-    was retuned.
+    callers MUST rank alike over one pool: a pointer the recall delivers
+    is a hit the audit's probe ranks for the same message, and two
+    hand-kept copies of this plumbing would let them drift the first
+    time one of them was retuned.
     """
     from .handlers.search import default_search_width, resolve_search_pool
 
@@ -812,7 +817,8 @@ def settle_interrupted(
     recording its own (`recall.previous_audit_at`; the idle window back
     when it has none), other than `exclude_prompt_id` (the turn this Stop
     audits itself) and any turn a row already names: the probe's verdict over the prompt, as a Stop
-    probes it (`_probe_message`, the same admission, scopes and shield),
+    probes it (`_probe_message` under the Stop's POOL_PREFILTER admission
+    whichever hook settles the turn, the same scopes and shield),
     ``reply_source="interrupted"``, whether a partial reply exists and its
     model, stamped `triggered_from` the hook that settled it. No
     `search_miss`: the turn did not finish, so a miss is not the reply's;

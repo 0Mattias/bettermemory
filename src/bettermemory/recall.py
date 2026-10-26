@@ -19,7 +19,9 @@ a tool call, on two hook moments.
   words as the one definition reads them (`owner_prompt.owner_text`: the
   app's envelope blocks removed, cut at 2,000 characters, nothing for a
   prompt the harness composed), probed through the audit's own probe
-  (`hook._probe_message`: the production pool and ranker, top three),
+  (`hook._probe_message`: the production ranker, top three, over the
+  pool the mode admits: the hooks' prefilter under ``"project"``, the
+  unscoped search's under ``"everywhere"``),
   and up to three of those hits delivered as pointers when they are
   relevant (medium or high), written or imported here, admitted for the
   caller (under `prompt_recall = "project"` the PROMPT_RECALL surface of
@@ -737,9 +739,12 @@ class _SessionRecall:
     review_roots: set[str] = field(default_factory=set)
     marker: str | None = None
     signal: _Signal | None = None
-    #: The segment the session last left (`_closing_view`), until the hook
-    #: that opened the next one settles its unused pointers
-    #: (`RecallState.take_closed`, `settle_unused`).
+    #: The segment the session last left (`_closing_view`), set and taken
+    #: within one hook call: `open_segment` or `resolve_compaction` sets it
+    #: under the lock and `settle_unused`, in the same call, takes it
+    #: (`RecallState.take_closed`) to settle its unused pointers. A Stop
+    #: never reads it; with telemetry off it holds an empty view until the
+    #: next open replaces it.
     closed: SegmentView | None = None
 
 
@@ -2321,9 +2326,10 @@ def prompt_recall(
             cfg=cfg,
             session_id=key[1],
             transcript_path=transcript_path,
-            admission=admission.on(POOL_PREFILTER)
-            if surface == PROMPT_RECALL
-            else admission,
+            # An interrupted turn's row is a Stop's row: its probe draws
+            # under the Stop's prefilter in both modes, so the verdict
+            # does not depend on which hook settled the turn.
+            admission=admission.on(POOL_PREFILTER),
             excluded_scopes=excluded_scopes,
             recent=recent,
             server_session=server_session,

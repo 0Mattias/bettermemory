@@ -28,12 +28,13 @@ from bettermemory import hook as hook_module
 from bettermemory import recall as recall_module
 from bettermemory.audit import HELD_CAUSES
 from bettermemory.hook import audit_transcript
+from bettermemory.origin import Origin
 from bettermemory.recall import RecallState, session_brief
 from bettermemory.time_utils import isoformat_utc
 
 from . import _transcript_rows as tr
 from .test_hook import _TURN_AUDITED_KEYS
-from .test_recall_prompt import BODY, QUERY, PromptWorld
+from .test_recall_prompt import BODY, OTHER_REPO, QUERY, PromptWorld, config
 
 SESSION = "transcript-recall"
 KEY = ("claude-code", SESSION)
@@ -457,6 +458,34 @@ def test_the_prompt_hook_audits_it_before_any_stop(
     # The Stop that follows does not audit it again.
     _stop(world, transcript, "p2")
     assert [r["prompt_id"] for r in _rows(world, "turn_audited")] == ["p1", "p2"]
+
+
+def test_the_prompt_hook_audits_it_under_the_stops_pool_everywhere(
+    world: PromptWorld, tmp_path: Path
+) -> None:
+    """Under ``prompt_recall = "everywhere"`` the prompt hook's own pool is
+    the unscoped search's, but an interrupted turn's row is a Stop's row,
+    so its probe draws under the Stop's prefilter in both modes: another
+    project's record the prompt's recall delivers never ranks in the
+    interrupted turn's `top_hits`, which read as a Stop's would."""
+    mine = world.write()
+    elsewhere = world.write(
+        f"{BODY} elsewhere",
+        origin=Origin(cwd="/bar", repo=OTHER_REPO, worktree_root="/bar"),
+    )
+    transcript = _interrupted(
+        tmp_path / "t.jsonl", at=datetime.now(timezone.utc) - timedelta(minutes=10)
+    )
+    wide = world.recall(
+        transcript_path=str(transcript),
+        config=config(world.store_dir, mode="everywhere"),
+    )
+    assert elsewhere.id in wide.ids
+    (row,) = _rows(world, "turn_audited")
+    assert (row["prompt_id"], row["reply_source"]) == ("p1", "interrupted")
+    hit_ids = [hit["id"] for hit in row["top_hits"]]
+    assert mine.id in hit_ids
+    assert elsewhere.id not in hit_ids
 
 
 def test_an_interrupt_before_any_words_is_not_a_turn(
