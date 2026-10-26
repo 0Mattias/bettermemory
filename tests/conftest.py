@@ -19,6 +19,7 @@ import os
 import re
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any, Iterator, Sequence
@@ -546,6 +547,43 @@ def workspace(
     return here
 
 
+@pytest.fixture(autouse=True)
+def close_opened_stores(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Every Store the test opens on its own thread is closed when the test
+    ends: the ones it builds inline (``build_server(store=Store(...))``),
+    the ones its function-scoped fixtures hand it, the ones it reopens.
+    Left open, each leaked its sqlite connection to the garbage
+    collector, which Python 3.13 and later report as a ResourceWarning at
+    finalization: about 1,800 in a 3.13 run of the suite before this
+    fixture, from the stores the tests open themselves. A test that
+    closes a store itself is unaffected, since closing a closed
+    connection is a no-op; one that holds a store in a wider-scoped
+    fixture is too, since that store opens before this fixture records.
+    Stores a worker thread reopened (`Store.reopen`) are left to their
+    workers: sqlite binds a connection to the thread that opened it and
+    refuses a close from another, and the daemon's workers close theirs
+    when they stop. Recorded at `Store._adopt`, the one point where a
+    Store takes its connection (`__init__` and `_bind` both pass through
+    it), and held until the test ends: the warning is raised where the
+    collector frees a dropped connection, so a store the test let go of
+    midway (``Store(memory_dir).iter_events()``, a helper's local) must
+    stay alive to be closed here."""
+    opened: list[tuple[Store, int]] = []
+    adopt = Store._adopt
+
+    def recording(self: Store, *args: Any, **kwargs: Any) -> None:
+        adopt(self, *args, **kwargs)
+        opened.append((self, threading.get_ident()))
+
+    monkeypatch.setattr(Store, "_adopt", recording)
+    yield
+    here = threading.get_ident()
+    for store, thread in opened:
+        if thread == here:
+            store.close()
+    opened.clear()
+
+
 @pytest.fixture
 def store(memory_dir: Path) -> Iterator[Store]:
     """The test's own Store, closed when the test ends. A test that
@@ -553,8 +591,7 @@ def store(memory_dir: Path) -> Iterator[Store]:
     Left open, each test that took it leaked its connection to the
     garbage collector, which Python 3.13 and later report as a
     ResourceWarning at finalization. The stores tests open themselves
-    are not this fixture's: about 1,800 such warnings remain in a 3.13
-    run of the suite at the commit that closed it."""
+    are `close_opened_stores`'s."""
     store = Store(memory_dir)
     try:
         yield store
