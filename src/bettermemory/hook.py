@@ -473,7 +473,9 @@ def run_audit(
     After the real retrievals are settled, the recall surface's shown
     pointers are (`recall.settle_shown`), and the reviews the session
     left open since its previous turn are counted
-    (`recall.review_unanswered`). `state` is the daemon's recall state;
+    (`recall.review_unanswered`); last, the session's interrupted turns
+    are audited (`settle_interrupted`), best effort, so a slow walk
+    delays only their rows. `state` is the daemon's recall state;
     the in-process path passes None and the state is rebuilt from the
     log. `harness` names the session's harness (the recall's key) and
     `prompt_id` the harness turn, stamped on a settlement and, with
@@ -494,7 +496,14 @@ def run_audit(
     A caller whose resolution raised, read nothing, or is deferred is
     admitted nothing, so its probe ranks nothing and reports
     ``no_signal``; a namespace the daemon cannot read is the same here,
-    since the Stop has no round left to ask its client."""
+    since the Stop has no round left to ask its client.
+
+    Both resolutions are read from caches keyed by directory and good
+    for ten minutes (`origin._ORIGIN_CACHE`, `location._CACHE`), which
+    the prompt hook of the same turn has warmed: measured 2026-10-26, the
+    origin 36.7 ms cold (four git spawns) and 0.2 ms warm, the admission
+    0.9 ms cold and 0.2 ms warm with no subprocess, so a Stop with no
+    owner prompt pays under a millisecond for them."""
     from .membership import POOL_PREFILTER
     from .recall import RULE, RecallState as _RecallState
     from .recall import (
@@ -682,31 +691,6 @@ def run_audit(
                 rule=RULE,
             ),
         )
-    # Best effort, as every settlement is: a past turn's audit never costs
-    # the Stop its own rows.
-    try:
-        settle_interrupted(
-            store=store,
-            cfg=cfg,
-            session_id=session_id,
-            transcript_path=transcript_path,
-            admission=admission,
-            excluded_scopes=excluded_scopes,
-            recent=recent,
-            server_session=server_session,
-            worktree_root=caller_origin.worktree_root,
-            now=now,
-            previous_audit=previous_audit,
-            triggered_from="stop_hook",
-            exclude_prompt_id=prompt_id,
-        )
-    except Exception as exc:  # noqa: BLE001 - logged, never raised at the hook
-        log.warning(
-            "interrupted turns not settled at the Stop: %s: %s",
-            exc.__class__.__name__,
-            exc,
-        )
-
     # Post-hoc use settlement — the turn's end is the semantically
     # correct place to decide what happened to this turn's retrievals.
     # Two tiers per pending retrieval:
@@ -787,6 +771,32 @@ def run_audit(
             sessions=review_sessions,
             since=since,
             now=now,
+        )
+
+    # Best effort, as every settlement is, and last: a past turn's audit
+    # never costs the Stop its own rows, and a slow walk delays only the
+    # past turns' rows, never this turn's settlements above.
+    try:
+        settle_interrupted(
+            store=store,
+            cfg=cfg,
+            session_id=session_id,
+            transcript_path=transcript_path,
+            admission=admission,
+            excluded_scopes=excluded_scopes,
+            recent=recent,
+            server_session=server_session,
+            worktree_root=caller_origin.worktree_root,
+            now=now,
+            previous_audit=previous_audit,
+            triggered_from="stop_hook",
+            exclude_prompt_id=prompt_id,
+        )
+    except Exception as exc:  # noqa: BLE001 - logged, never raised at the hook
+        log.warning(
+            "interrupted turns not settled at the Stop: %s: %s",
+            exc.__class__.__name__,
+            exc,
         )
 
     return report.to_dict()
