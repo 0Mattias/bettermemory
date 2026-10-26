@@ -39,6 +39,26 @@ until the stable `9.0.0` is tagged. Ask for a candidate by version
 
 #### Fixed
 
+- **The brief claims its ids under the state's lock.** The brief read its
+  segment's shown set, selected, printed and only then noted what it
+  showed, each step outside the lock a prompt recall of the same session
+  claims its delivery under, so on a resume (the prompt that resumed the
+  session fires with the SessionStart) a recall could deliver an id
+  between the brief's read and its print, and the segment showed it
+  twice. `RecallState.claim_brief` now decides under the lock, as the
+  recall's claim does, and notes the kept ids as the brief's show in the
+  same step; the omitted list names the ids a concurrent recall took.
+  (`src/bettermemory/recall.py`)
+- **A store is rekeyed only by the opener that owns it.** `Store.open`
+  replaced a missing or foreign key by default, retiring the key file,
+  writing a new one and splitting the chain with a `rekey` row: a reader
+  on another machine, a daemon under the wrong key directory or a plain
+  `Store.open(path)` split the chain on first contact. The default is now
+  to refuse: such a store opens for reading, and the first write raises,
+  naming the store, the key directory and the two ways out. The hooks,
+  the daemon and the CLI open through `open_or_create`, which rekeys as
+  before, and so do the migrations. (`src/bettermemory/store.py`,
+  `src/bettermemory/migrate_v8.py`, `src/bettermemory/membership_migrate.py`)
 - **An interrupted turn's audit draws its pool as a Stop would, from
   either hook.** Under `[behavior] prompt_recall = "everywhere"` the
   prompt hook probed the interrupted turns it settled under the unscoped
@@ -59,6 +79,16 @@ until the stable `9.0.0` is tagged. Ask for a candidate by version
 
 #### Changed
 
+- **One git runner for the origin capture and the history reader.** The
+  origin capture ran git in the caller's environment, so a shell that
+  exported `GIT_DIR` and `GIT_WORK_TREE` had a `memory_write` capture the
+  environment's repository for an unrelated cwd; the history reader
+  scrubbed those variables and pinned fsmonitor and hooks off but logged
+  nothing, not even a hang against its 20 s bound. Both now run through
+  `_git.run_git`: the scrubbed environment and the pins on every call,
+  UTF-8 with errors replaced (or bytes for the object reader), the tiered
+  logging and the failure counters. (`src/bettermemory/_git.py`,
+  `src/bettermemory/origin.py`, `src/bettermemory/location.py`)
 - **The Stop settles its own turn before it audits the past ones.** The
   interrupted turns a Stop audits are walked after its retrieval and
   pointer settlements and its review count, so a long walk delays only
