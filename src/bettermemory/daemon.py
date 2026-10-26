@@ -16,14 +16,19 @@ recall surface's (`recall.session_brief`, `recall.prompt_recall`) and the
 Stop audit's (`hook.audit_transcript`), so a hook is one HTTP round trip
 instead of a process that imports the SDK and opens the store.
 
-The three hook bodies run on the daemon's own hook workers
-(`_HookWorkers`): a few long-lived threads, so their store reads and
-their git work never block the event loop the MCP surface is served
-from. SQLite binds a connection to the thread that opened it, so each
-worker opens its own connection to the store once (`Store.reopen`), keeps
-it for the daemon's life and closes it when the app shuts down. The
-recall surface's per-session state (`recall.RecallState`) is the
-daemon's, one for its lifetime, lock-guarded.
+The three hook bodies run on the daemon's hook workers and the nine tool
+bodies on its tool workers (`_Workers`, two pools): a few long-lived
+threads each, so their store reads and their git work never block the
+event loop the MCP surface is served from, and a tool call waiting on
+git holds no hook up. SQLite binds a connection to the thread that
+opened it, so each worker opens its own connection to the store once
+(`Store.reopen`), keeps it for the daemon's life and closes it when the
+app shuts down; a tool body runs over a copy of the handler bundle bound
+to its worker's connection (`ToolHandlers.with_store`). The recall
+surface's per-session state (`recall.RecallState`) is the daemon's, one
+for its lifetime, lock-guarded, as is each MCP session's state
+(`session.SessionState.lock`): two tool calls of one session may run on
+two workers at once.
 
 Every hook endpoint answers ``stdout`` (the text the harness injects,
 unchanged) and beside it ``surface``, ``ids``, ``chars``, ``rule`` and
@@ -46,6 +51,8 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import contextlib
+import contextvars
+import inspect
 import json
 import logging
 import os
@@ -58,7 +65,7 @@ import sys
 import tempfile
 import threading
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Coroutine
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -165,6 +172,10 @@ _T = TypeVar("_T")
 #: How many hook workers the daemon runs: enough that a cold brief's git
 #: work does not hold up another session's prompt.
 HOOK_WORKERS = 4
+#: The threads the MCP tool bodies run on (`_Workers`, the second pool):
+#: a tool body's git calls and sqlite reads hold no event loop, so a hook
+#: of another session is answered while a tool call waits on git.
+TOOL_WORKERS = 4
 
 
 #: How long a stopping daemon gives the requests in flight before uvicorn
@@ -175,27 +186,52 @@ HOOK_WORKERS = 4
 #: waits this plus `WORKERS_CLOSE_SECONDS` before its signal fallback;
 #: tests/test_daemon_lifecycle.py pins both relations.
 GRACEFUL_SHUTDOWN_SECONDS = 20
-#: How long `_HookWorkers.close` waits for the workers' current jobs.
+#: How long the daemon's stop waits for the workers' current jobs, both
+#: pools under the one deadline (`_Workers.join`).
 WORKERS_CLOSE_SECONDS = 10.0
 
 
-class _HookWorkers:
-    """The threads the hook bodies run on, each with its own connection.
+async def _awaited(value: Awaitable[_T]) -> _T:
+    return await value
+
+
+class _Workers:
+    """The threads the hook bodies run on and, in a second pool, the tool
+    bodies, each thread with its own connection.
 
     SQLite refuses a connection on any thread but the one that opened
     it, and a pool that retires idle threads (anyio's, after ten seconds)
     would reopen the store on most hooks. These threads live as long as
     the app: each opens its connection (`Store.reopen`) on its first job,
-    keeps it, and closes it itself when `close` asks every worker to
+    keeps it, and closes it itself when `stop` asks every worker to
     stop. The connections share the file, its WAL and its key; every
     write is its own ``BEGIN IMMEDIATE`` transaction, the discipline a
-    CLI process writing beside the daemon already relies on."""
+    CLI process writing beside the daemon already relies on.
 
-    def __init__(self, store: Store, *, count: int = HOOK_WORKERS) -> None:
+    A job runs in a copy of its caller's context (`contextvars`): what
+    the request's task bound on the loop, the identity middleware's
+    binding and the SDK's request state among it, is seen in the body,
+    and what the body binds stays in that copy, so one call's binding
+    reaches no other. A pool runs synchronous bodies (`run`) and, for
+    the tools, handler coroutines (`run_coroutine`): the bodies await
+    nothing real, so a worker runs one to completion on a private event
+    loop of its own. One pool per kind, so a hook never queues behind a
+    tool and a tool never behind a hook; the daemon's lifespan stops
+    both and joins both under one deadline (`WORKERS_CLOSE_SECONDS`)."""
+
+    def __init__(
+        self, store: Store, *, count: int = HOOK_WORKERS, name: str = "hook"
+    ) -> None:
         self._store = store
         self._count = count
+        self._name = name
         self._jobs: queue.Queue[
-            tuple[Callable[[Store], Any], concurrent.futures.Future[Any]] | None
+            tuple[
+                Callable[[Store], Any],
+                contextvars.Context,
+                concurrent.futures.Future[Any],
+            ]
+            | None
         ] = queue.Queue()
         self._threads: list[threading.Thread] = []
         self._lock = threading.Lock()
@@ -203,58 +239,87 @@ class _HookWorkers:
 
     def _loop(self) -> None:
         held: Store | None = None
+        # The worker's own loop, made before any body runs, so a coroutine
+        # a body returns is never left un-awaited for want of one.
+        loop = asyncio.new_event_loop()
         try:
             while True:
                 job = self._jobs.get()
                 if job is None:
                     return
-                body, future = job
+                body, context, future = job
                 if not future.set_running_or_notify_cancel():
                     continue
                 try:
                     if held is None:
                         held = self._store.reopen()
-                    future.set_result(body(held))
+                    value = context.run(body, held)
+                    if inspect.isawaitable(value):
+                        value = loop.run_until_complete(
+                            loop.create_task(_awaited(value), context=context)
+                        )
+                    future.set_result(value)
                 except BaseException as exc:  # noqa: BLE001 - handed to the caller
                     future.set_exception(exc)
         finally:
+            loop.close()
             if held is not None:
                 held.close()
 
     def _start(self) -> None:
         with self._lock:
             if self._closed:
-                raise RuntimeError("the daemon's hook workers are stopped")
+                raise RuntimeError(f"the daemon's {self._name} workers are stopped")
             if self._threads:
                 return
             for index in range(self._count):
                 thread = threading.Thread(
                     target=self._loop,
-                    name=f"bettermemory-hook-{index}",
+                    name=f"bettermemory-{self._name}-{index}",
                     daemon=True,
                 )
                 thread.start()
                 self._threads.append(thread)
 
     async def run(self, body: Callable[[Store], _T]) -> _T:
-        """Run `body` on a worker, with that worker's store."""
+        """Run `body` on a worker, with that worker's store, in a copy of
+        the caller's context."""
         self._start()
         future: concurrent.futures.Future[_T] = concurrent.futures.Future()
-        self._jobs.put((body, future))
+        self._jobs.put((body, contextvars.copy_context(), future))
         return await asyncio.wrap_future(future)
 
-    def close(self, timeout: float = WORKERS_CLOSE_SECONDS) -> None:
-        """Stop every worker; each closes its own connection on the way
-        out, after the job it is running. `timeout` bounds the whole wait,
-        not each worker's."""
+    async def run_coroutine(
+        self, make: Callable[[Store], Coroutine[Any, Any, _T]]
+    ) -> _T:
+        """Run the coroutine `make(worker_store)` returns on a worker, to
+        completion on the worker's own loop (`_loop`)."""
+        return cast(_T, await self.run(make))
+
+    def stop(self) -> None:
+        """Ask every worker to stop after the job it is running; each
+        closes its own connection on the way out."""
         with self._lock:
             self._closed = True
             threads = list(self._threads)
         for _ in threads:
             self._jobs.put(None)
-        deadline = time.monotonic() + timeout
+
+    def join(self, deadline: float) -> None:
+        """Wait for the stopped workers until `deadline` (a
+        `time.monotonic` reading), the whole pool's bound, not each
+        worker's."""
+        with self._lock:
+            threads = list(self._threads)
         for thread in threads:
             thread.join(max(0.0, deadline - time.monotonic()))
+
+    def close(self, timeout: float = WORKERS_CLOSE_SECONDS) -> None:
+        """`stop`, then `join` within `timeout`: one pool on its own. The
+        daemon's lifespan stops its two pools and joins both under one
+        deadline instead, so a stop takes `WORKERS_CLOSE_SECONDS` once."""
+        self.stop()
+        self.join(time.monotonic() + timeout)
 
 
 def _failed(surface: str, exc: Exception) -> Response:
@@ -288,9 +353,12 @@ def build_app(
     from . import recall as _recall
 
     served_version = version if version is not None else _version()
-    mcp = build_server(config=config, store=store)
+    # Two pools over the daemon's store: the hook bodies' and the tool
+    # bodies' (design: a tool body waiting on git holds no hook up).
+    workers = _Workers(store)
+    tool_workers = _Workers(store, count=TOOL_WORKERS, name="tool")
+    mcp = build_server(config=config, store=store, offload=tool_workers.run_coroutine)
     recall_state = _recall.RecallState()
-    workers = _HookWorkers(store)
 
     @_route(mcp, "/health", ["GET"])
     async def health(request: Request) -> Response:
@@ -495,7 +563,14 @@ def build_app(
             async with served_lifespan(served) as state:
                 yield state
         finally:
-            workers.close()
+            # Both pools stopped, then joined under one deadline: the
+            # client's wait, `_daemon_client.SHUTDOWN_TIMEOUT_SECONDS`, is
+            # the graceful bound plus WORKERS_CLOSE_SECONDS once.
+            for pool in (workers, tool_workers):
+                pool.stop()
+            deadline = time.monotonic() + WORKERS_CLOSE_SECONDS
+            for pool in (workers, tool_workers):
+                pool.join(deadline)
 
     app.router.lifespan_context = lifespan
     return app

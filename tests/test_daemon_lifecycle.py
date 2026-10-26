@@ -581,8 +581,8 @@ def test_a_sigterm_stops_the_daemon_with_the_store_released(
 def test_the_clients_wait_is_the_daemons_own_bounds() -> None:
     """`down` waits for what the daemon itself allows a stop to take: the
     requests in flight, bounded by the longest bound a handler runs under
-    (the git runner's), then the hook workers' join; past that, the
-    signal."""
+    (the git runner's), then the workers' join, both pools under one
+    deadline; past that, the signal."""
     from bettermemory import daemon, location
     from bettermemory._daemon_client import SHUTDOWN_TIMEOUT_SECONDS
 

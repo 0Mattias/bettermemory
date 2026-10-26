@@ -593,21 +593,28 @@ def _advance_turn(
     The drain runs before `consume_old_tokens` because the dedup purge
     it performs is the same purge the auto-commit depends on.
     """
-    state.advance_turn()
-    # Drain + dedup in one pass: `_drain_expired_use_tokens` also
-    # purges the LIVE tokens the log already settled, which is why the
-    # standalone purge loop that used to live here is gone.
-    lost_tokens = _drain_expired_use_tokens(state, recorder, override_ids=override_ids)
-    _emit_expired_use_tokens(state, recorder, lost_tokens)
-    auto_ids = state.consume_old_tokens(override_ids=override_ids)
-    if auto_ids:
-        recorder.record(
-            "use",
-            ids=list(auto_ids),
-            outcome="applied",
-            auto=True,
-            attribution="auto",
+    # Under the session's lock from the bump to the auto-commit row: two
+    # calls of one session on two tool workers would otherwise both
+    # select the same ready ids (two auto rows, one KeyError). The lock
+    # is re-entrant, so the state's own methods nest.
+    with state.lock:
+        state.advance_turn()
+        # Drain + dedup in one pass: `_drain_expired_use_tokens` also
+        # purges the LIVE tokens the log already settled, which is why
+        # the standalone purge loop that used to live here is gone.
+        lost_tokens = _drain_expired_use_tokens(
+            state, recorder, override_ids=override_ids
         )
+        _emit_expired_use_tokens(state, recorder, lost_tokens)
+        auto_ids = state.consume_old_tokens(override_ids=override_ids)
+        if auto_ids:
+            recorder.record(
+                "use",
+                ids=list(auto_ids),
+                outcome="applied",
+                auto=True,
+                attribution="auto",
+            )
 
 
 def _event_ts_epoch(raw: Any) -> float | None:
@@ -726,11 +733,13 @@ def _already_recorded_pending_ids(
     no-early-exit worst case, and only invoked when there ARE pending
     tokens.
     """
-    if not state.pending_use_tokens and not extra_pending:
+    # A snapshot under the lock: another worker's `issue_use_tokens` or
+    # `purge_use_token` landing mid-comprehension would raise.
+    with state.lock:
+        pending = dict(state.pending_use_tokens)
+    if not pending and not extra_pending:
         return set()
-    pending_issued_at = {
-        mid: tok.issued_at for mid, tok in state.pending_use_tokens.items()
-    }
+    pending_issued_at = {mid: tok.issued_at for mid, tok in pending.items()}
     pending_issued_at.update(extra_pending or {})
     # Oldest pending token's mint time. Any event timestamped before
     # this cannot have recorded any of these tokens, so we can stop

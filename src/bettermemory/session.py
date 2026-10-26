@@ -33,13 +33,23 @@ down the same call read the request's declarations.
 
 from __future__ import annotations
 
+import functools
 import logging
 import secrets
 import threading
 import time
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ParamSpec,
+    Protocol,
+    TypeAlias,
+    TypeVar,
+    cast,
+)
 
 from . import identity
 
@@ -128,6 +138,23 @@ class PendingUseToken:
     issued_at_turn: int
 
 
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _locked(method: Callable[_P, _R]) -> Callable[_P, _R]:
+    """Run `method`, a `SessionState` method, under the state's lock
+    (`SessionState.lock`)."""
+
+    @functools.wraps(method)
+    def inner(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        state = cast("SessionState", args[0])
+        with state.lock:
+            return method(*args, **kwargs)
+
+    return inner
+
+
 @dataclass
 class SessionState:
     """Mutable per-session state.
@@ -169,19 +196,32 @@ class SessionState:
     # only: a server restart legitimately opens a new session, which is
     # a new opportunity to corroborate.
     corroborated_ids: set[str] = field(default_factory=set)
+    # The lock every mutating method takes (`_locked`), re-entrant so the
+    # handler layer's `_advance_turn` can hold it across the calls it
+    # nests. Two tool calls of one session run at once on the daemon's
+    # tool workers (Claude Code sends a turn's parallel calls as parallel
+    # requests), and this state is both calls'; before the tool bodies
+    # left the event loop, the loop serialised them. Out of equality and
+    # the repr: it is not state.
+    lock: threading.RLock = field(
+        default_factory=threading.RLock, repr=False, compare=False
+    )
 
     # ---- scopes ----------------------------------------------------------
 
+    @_locked
     def disable(self, scope: str) -> set[str]:
         self.disabled_scopes.add(scope)
         return set(self.disabled_scopes)
 
+    @_locked
     def enable(self, scope: str) -> set[str]:
         self.disabled_scopes.discard(scope)
         return set(self.disabled_scopes)
 
     # ---- turns and use-tokens -------------------------------------------
 
+    @_locked
     def advance_turn(self) -> int:
         """Bump the per-session turn counter. Returns the new value.
 
@@ -196,6 +236,7 @@ class SessionState:
         self._evict_expired_use_tokens()
         return self.turn_counter
 
+    @_locked
     def issue_use_tokens(self, memory_ids: list[str]) -> dict[str, str]:
         """Mint one opaque token per `memory_id`.
 
@@ -218,6 +259,7 @@ class SessionState:
             out[mid] = token
         return out
 
+    @_locked
     def consume_old_tokens(
         self,
         *,
@@ -269,6 +311,7 @@ class SessionState:
             del self.pending_use_tokens[mid]
         return ready
 
+    @_locked
     def purge_use_token(self, memory_id: str) -> bool:
         """Drop the pending token for `memory_id`. True if one existed.
 
@@ -308,6 +351,7 @@ class SessionState:
         for mid in stale:
             self._expired_use_tokens[mid] = self.pending_use_tokens.pop(mid)
 
+    @_locked
     def pop_expired_use_tokens(self) -> list[PendingUseToken]:
         """Drain and return use-tokens evicted since the last drain.
 
@@ -329,6 +373,7 @@ class SessionState:
 
     # ---- lifecycle -------------------------------------------------------
 
+    @_locked
     def reset(self) -> None:
         # `session_id` is intentionally NOT reset — it's a stable per-process
         # tag used in the event log, and a reset() is meant to clear in-memory

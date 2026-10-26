@@ -479,3 +479,43 @@ def test_a_registered_handler_still_declares_a_context_parameter(
         "memory_write no longer declares a `ctx` parameter; session routing "
         "has nothing to key on and every caller shares one SessionState"
     )
+
+
+def test_the_state_is_safe_under_parallel_tool_calls() -> None:
+    """Two tool calls of one session run on two of the daemon's tool
+    workers at once (before the tool bodies left the event loop, the loop
+    serialised them): the state's maps are mutated under its lock, so a
+    turn's bump, a mint, a purge and the auto-commit's selection never
+    cross an iteration (``dictionary changed size during iteration``) or
+    a double delete (``KeyError``)."""
+    import threading
+
+    from bettermemory.session import SessionState
+
+    state = SessionState()
+    workers, rounds = 8, 400
+    barrier = threading.Barrier(workers)
+    errors: list[BaseException] = []
+
+    def drive(worker: int) -> None:
+        try:
+            barrier.wait()
+            for i in range(rounds):
+                state.advance_turn()
+                state.issue_use_tokens([f"{worker}-{i}", f"{worker}-{i - 1}"])
+                state.consume_old_tokens(ttl_turns=0, min_age_seconds=0)
+                if i % 3 == 0:
+                    state.purge_use_token(f"{worker}-{i}")
+                state.pop_expired_use_tokens()
+                state.disable(f"s{worker}")
+                state.enable(f"s{worker}")
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=drive, args=(w,)) for w in range(workers)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+    assert state.turn_counter == workers * rounds

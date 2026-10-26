@@ -3,8 +3,9 @@
 Every public tool method re-lists the kwargs the SDK will introspect,
 because `mcp.tool(...)` builds the JSON schema from
 `inspect.signature(method)`, and a `**kwargs` delegate would land in the
-client manifest as a typeless catch-all. The body underneath is one line
-forwarding to the per-tool module function under `handlers/`.
+client manifest as a typeless catch-all. The body underneath forwards to
+the per-tool module function under `handlers/` through `_run`: on a
+worker of the daemon's tool pool, inline everywhere else.
 
 Why this file carries names like `_already_recorded_pending_ids` and
 `capture_origin`: the test suite monkey-patches both. Keeping them as
@@ -17,10 +18,11 @@ patch propagates (see `handlers/_shared.py`).
 from __future__ import annotations
 
 import copy
+import dataclasses
 import functools
 import logging
 from collections.abc import Awaitable, Callable, Coroutine
-from typing import Any, ParamSpec, TypeVar
+from typing import Any, ParamSpec, TypeVar, cast
 
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
@@ -174,6 +176,13 @@ _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
 
+#: Where a server runs its tool bodies when it has a worker pool: given a
+#: function of a worker's store that returns the body's coroutine, it runs
+#: that coroutine on a worker and answers with its result
+#: (`daemon._Workers.run_coroutine`). None means every body runs inline.
+Offload = Callable[[Callable[[Store], Coroutine[Any, Any, Any]]], Awaitable[Any]]
+
+
 def _refusals_as_tool_errors(
     fn: Callable[_P, Awaitable[_R]],
 ) -> Callable[_P, Coroutine[Any, Any, _R]]:
@@ -218,9 +227,14 @@ class ToolHandlers:
         recorder: Recorder,
         responses: ResponseBuilder,
         store_source: StoreSource | None = None,
+        offload: Offload | None = None,
     ) -> None:
         self.config = config
         self.store = store
+        # The tool bodies' worker pool, when the server has one (the
+        # daemon); None runs every body on the caller's loop (the stdio
+        # server, the in-process servers the tests build). `_run`.
+        self.offload = offload
         self.sessions = sessions
         self.recorder = recorder
         self.responses = responses
@@ -248,7 +262,31 @@ class ToolHandlers:
             return self
         clone = copy.copy(self)
         clone.store = resolved
+        # A worker's connection is a reopen of the process store, not of
+        # the store this source resolved: the clone runs its body inline.
+        clone.offload = None
         return clone
+
+    def with_store(self, store: Store) -> ToolHandlers:
+        """This bundle bound to `store`, a worker's connection to the same
+        file: the store and the recorder, which writes through it; the
+        sessions, the config and the response builder are shared."""
+        clone = copy.copy(self)
+        clone.store = store
+        clone.recorder = dataclasses.replace(self.recorder, store=store)
+        return clone
+
+    async def _run(self, make: Callable[[ToolHandlers], Coroutine[Any, Any, _R]]) -> _R:
+        """Run the tool body `make` builds over this bundle: on a worker
+        of the server's pool, bound to that worker's connection, so the
+        body's git calls and sqlite reads hold no event loop and a hook of
+        another session is answered meanwhile; inline, on the caller's
+        loop, when the server has no pool or this bundle is a per-request
+        clone bound to another store. An exception travels back as it
+        would from the inline call."""
+        if self.offload is None:
+            return await make(self)
+        return cast(_R, await self.offload(lambda store: make(self.with_store(store))))
 
     # ---- delegations to per-tool modules --------------------------------
     #
@@ -273,25 +311,27 @@ class ToolHandlers:
         ctx: Context | None = None,
     ) -> list[dict[str, Any]]:
         deps = self.for_request(ctx)
-        return await _handlers_pkg.memory_search(
-            deps,
-            query,
-            scopes=scopes,
-            exclude_scopes=exclude_scopes,
-            max_results=max_results,
-            expand_top=expand_top,
-            auto_scope=auto_scope,
-            since_prior_session=since_prior_session,
-            mode=mode,
-            client=client,
-            model=model,
-            ctx=ctx,
+        return await deps._run(
+            lambda d: _handlers_pkg.memory_search(
+                d,
+                query,
+                scopes=scopes,
+                exclude_scopes=exclude_scopes,
+                max_results=max_results,
+                expand_top=expand_top,
+                auto_scope=auto_scope,
+                since_prior_session=since_prior_session,
+                mode=mode,
+                client=client,
+                model=model,
+                ctx=ctx,
+            )
         )
 
     @_refusals_as_tool_errors
     async def memory_show(self, id: str, ctx: Context | None = None) -> dict[str, Any]:
         deps = self.for_request(ctx)
-        return await _handlers_pkg.memory_show(deps, id, ctx=ctx)
+        return await deps._run(lambda d: _handlers_pkg.memory_show(d, id, ctx=ctx))
 
     @_refusals_as_tool_errors
     async def memory_write(
@@ -319,22 +359,24 @@ class ToolHandlers:
         # default itself; the SDK's validation fills in the empty dict.
         if isinstance(review, FieldInfo):
             review = {}
-        return await _handlers_pkg.memory_write(
-            deps,
-            content,
-            scopes,
-            confidence=confidence,
-            source=source,
-            force=force,
-            acknowledge_transient=acknowledge_transient,
-            acknowledge_scope_mismatch=acknowledge_scope_mismatch,
-            acknowledge_credential=acknowledge_credential,
-            acknowledge_user_claim=acknowledge_user_claim,
-            category=category,
-            claims=claims,
-            supersedes=supersedes,
-            review=review,
-            ctx=ctx,
+        return await deps._run(
+            lambda d: _handlers_pkg.memory_write(
+                d,
+                content,
+                scopes,
+                confidence=confidence,
+                source=source,
+                force=force,
+                acknowledge_transient=acknowledge_transient,
+                acknowledge_scope_mismatch=acknowledge_scope_mismatch,
+                acknowledge_credential=acknowledge_credential,
+                acknowledge_user_claim=acknowledge_user_claim,
+                category=category,
+                claims=claims,
+                supersedes=supersedes,
+                review=review,
+                ctx=ctx,
+            )
         )
 
     @_refusals_as_tool_errors
@@ -355,21 +397,23 @@ class ToolHandlers:
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         deps = self.for_request(ctx)
-        return await _handlers_pkg.memory_update(
-            deps,
-            id,
-            content=content,
-            scopes=scopes,
-            confidence=confidence,
-            category=category,
-            links=links,
-            acknowledge_credential=acknowledge_credential,
-            acknowledge_transient=acknowledge_transient,
-            acknowledge_user_claim=acknowledge_user_claim,
-            acknowledge_truncation=acknowledge_truncation,
-            standing=standing,
-            said=said,
-            ctx=ctx,
+        return await deps._run(
+            lambda d: _handlers_pkg.memory_update(
+                d,
+                id,
+                content=content,
+                scopes=scopes,
+                confidence=confidence,
+                category=category,
+                links=links,
+                acknowledge_credential=acknowledge_credential,
+                acknowledge_transient=acknowledge_transient,
+                acknowledge_user_claim=acknowledge_user_claim,
+                acknowledge_truncation=acknowledge_truncation,
+                standing=standing,
+                said=said,
+                ctx=ctx,
+            )
         )
 
     @_refusals_as_tool_errors
@@ -381,7 +425,9 @@ class ToolHandlers:
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         deps = self.for_request(ctx)
-        return await _handlers_pkg.memory_remove(deps, id, reason, said=said, ctx=ctx)
+        return await deps._run(
+            lambda d: _handlers_pkg.memory_remove(d, id, reason, said=said, ctx=ctx)
+        )
 
     @_refusals_as_tool_errors
     async def memory_verify(
@@ -396,16 +442,18 @@ class ToolHandlers:
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         deps = self.for_request(ctx)
-        return await _handlers_pkg.memory_verify(
-            deps,
-            id,
-            note=note,
-            verified_paths=verified_paths,
-            verified_commits=verified_commits,
-            verified_versions=verified_versions,
-            verified_absent_paths=verified_absent_paths,
-            claims=claims,
-            ctx=ctx,
+        return await deps._run(
+            lambda d: _handlers_pkg.memory_verify(
+                d,
+                id,
+                note=note,
+                verified_paths=verified_paths,
+                verified_commits=verified_commits,
+                verified_versions=verified_versions,
+                verified_absent_paths=verified_absent_paths,
+                claims=claims,
+                ctx=ctx,
+            )
         )
 
     @_refusals_as_tool_errors
@@ -418,13 +466,15 @@ class ToolHandlers:
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         deps = self.for_request(ctx)
-        return await _handlers_pkg.memory_record_use(
-            deps,
-            memory_ids,
-            outcome,
-            note=note,
-            claim_excerpts=claim_excerpts,
-            ctx=ctx,
+        return await deps._run(
+            lambda d: _handlers_pkg.memory_record_use(
+                d,
+                memory_ids,
+                outcome,
+                note=note,
+                claim_excerpts=claim_excerpts,
+                ctx=ctx,
+            )
         )
 
     @_refusals_as_tool_errors
@@ -441,17 +491,19 @@ class ToolHandlers:
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         deps = self.for_request(ctx)
-        return await _handlers_pkg.episode(
-            deps,
-            action,
-            body=body,
-            takeaway=takeaway,
-            scopes=scopes,
-            swarm_id=swarm_id,
-            prior_session_id=prior_session_id,
-            max_episodes=max_episodes,
-            include_bodies=include_bodies,
-            ctx=ctx,
+        return await deps._run(
+            lambda d: _handlers_pkg.episode(
+                d,
+                action,
+                body=body,
+                takeaway=takeaway,
+                scopes=scopes,
+                swarm_id=swarm_id,
+                prior_session_id=prior_session_id,
+                max_episodes=max_episodes,
+                include_bodies=include_bodies,
+                ctx=ctx,
+            )
         )
 
     @_refusals_as_tool_errors
@@ -484,25 +536,27 @@ class ToolHandlers:
             relations = {}
         if isinstance(standing, FieldInfo):
             standing = {}
-        return await _handlers_pkg.memory_admin(
-            deps,
-            action,
-            id=id,
-            scope=scope,
-            scopes=scopes,
-            old_scope=old_scope,
-            new_scope=new_scope,
-            scan=scan,
-            verdict=verdict,
-            note=note,
-            reason=reason,
-            before=before,
-            relations=relations,
-            answer=answer,
-            target=target,
-            said=said,
-            standing=standing,
-            ctx=ctx,
+        return await deps._run(
+            lambda d: _handlers_pkg.memory_admin(
+                d,
+                action,
+                id=id,
+                scope=scope,
+                scopes=scopes,
+                old_scope=old_scope,
+                new_scope=new_scope,
+                scan=scan,
+                verdict=verdict,
+                note=note,
+                reason=reason,
+                before=before,
+                relations=relations,
+                answer=answer,
+                target=target,
+                said=said,
+                standing=standing,
+                ctx=ctx,
+            )
         )
 
 

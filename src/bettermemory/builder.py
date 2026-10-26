@@ -46,6 +46,7 @@ from ._handlers import (
     DESC_MEMORY_UPDATE,
     DESC_MEMORY_VERIFY,
     DESC_MEMORY_WRITE,
+    Offload,
     ToolHandlers,
 )
 from . import identity
@@ -98,6 +99,9 @@ def build_server(
     # The per-request store seam. `None` means "every request is served
     # from `store`", which is the behaviour every caller has today.
     store_source: StoreSource | None = None,
+    # The tool bodies' worker pool (`ToolHandlers.offload`): the daemon
+    # passes its pool's `run_coroutine`; every other caller runs inline.
+    offload: Offload | None = None,
 ) -> MCPServer:
     """Return a configured `MCPServer` instance.
 
@@ -209,6 +213,7 @@ def build_server(
         sessions=sessions,
         recorder=recorder,
         store_source=store_source,
+        offload=offload,
     )
     return mcp
 
@@ -221,6 +226,7 @@ def _register_tools(
     sessions: SessionSource,
     recorder: Recorder,
     store_source: StoreSource | None = None,
+    offload: Offload | None = None,
 ) -> None:
     """Bind each `ToolHandlers` method against the `MCPServer` instance.
 
@@ -242,6 +248,7 @@ def _register_tools(
         recorder=recorder,
         responses=responses,
         store_source=store_source,
+        offload=offload,
     )
 
     mcp.tool(name="memory_search", description=DESC_MEMORY_SEARCH)(

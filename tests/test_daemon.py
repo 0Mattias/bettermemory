@@ -605,3 +605,336 @@ async def test_stop_endpoint_stamps_prompt_id_and_reply_source(
     assert response.status_code == 200
     [audited] = [e for e in daemon_store.iter_events() if e["kind"] == "turn_audited"]
     assert (audited["prompt_id"], audited["reply_source"]) == ("turn-3", "payload")
+
+
+async def test_tool_bodies_run_on_a_tool_worker(
+    daemon_config: Config, daemon_store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tool body runs on a thread of the tool pool, bound to that
+    worker's connection: the store it reads and the recorder it writes
+    through are the worker's, not the loop's (open list item 13)."""
+    import threading
+
+    from bettermemory import handlers as handlers_pkg
+
+    seen: list[tuple[str, Store, Store]] = []
+    real = handlers_pkg.memory_search
+
+    async def spy(deps: Any, *args: Any, **kwargs: Any) -> Any:
+        seen.append((threading.current_thread().name, deps.store, deps.recorder.store))
+        return await real(deps, *args, **kwargs)
+
+    monkeypatch.setattr(handlers_pkg, "memory_search", spy)
+    async with running_app(daemon_config, daemon_store) as client:
+        async with mcp_session(client, headers=_auth()) as session:
+            found = await session.call_tool("memory_search", {"query": "anything"})
+    assert not found.is_error
+    [(thread, store, recorder_store)] = seen
+    assert thread.startswith("bettermemory-tool-")
+    assert store is not daemon_store
+    assert store.path == daemon_store.path
+    assert recorder_store is store
+
+
+async def test_a_held_tool_body_blocks_neither_health_nor_a_hook(
+    daemon_config: Config,
+    daemon_store: Store,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tool body waiting on git or sqlite holds no event loop: while one
+    is held on its worker, ``/health`` and another session's hook are
+    answered. Before item 13 the bodies ran on the loop, and a hook sent
+    during a tool call waited the whole call out."""
+    import asyncio
+    import threading
+
+    from bettermemory import handlers as handlers_pkg
+
+    real = handlers_pkg.memory_search
+    entered = threading.Event()
+    release = threading.Event()
+
+    async def held(deps: Any, *args: Any, **kwargs: Any) -> Any:
+        entered.set()
+        assert release.wait(60.0), "the test never released the body"
+        return await real(deps, *args, **kwargs)
+
+    monkeypatch.setattr(handlers_pkg, "memory_search", held)
+    async with running_app(daemon_config, daemon_store) as client:
+        async with mcp_session(client, headers=_auth()) as session:
+            call = asyncio.ensure_future(
+                session.call_tool("memory_search", {"query": "anything"})
+            )
+            try:
+                assert await asyncio.to_thread(entered.wait, 30.0)
+                health = await asyncio.wait_for(client.get("/health"), 30.0)
+                hook = await asyncio.wait_for(
+                    client.post(
+                        "/api/v1/hook/prompt",
+                        json={
+                            "session_id": "o",
+                            "cwd": str(tmp_path),
+                            "prompt": "plan",
+                        },
+                        headers=_auth(),
+                    ),
+                    30.0,
+                )
+                # Both answered while the body was still held: the
+                # property is the ordering, not a latency.
+                assert not release.is_set()
+            finally:
+                release.set()
+            found = await call
+    assert health.status_code == 200
+    assert hook.status_code == 200
+    assert not found.is_error
+
+
+async def test_tool_workers_keep_their_connections_and_close_them(
+    daemon_config: Config, daemon_store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The tool pool opens at most one connection per worker across a run
+    of calls, and the app's shutdown closes every one of them."""
+    import sqlite3
+    import threading
+
+    from bettermemory import daemon as daemon_module
+
+    opened: list[tuple[str, Store]] = []
+    real_reopen = Store.reopen
+
+    def reopen(self: Store) -> Store:
+        other = real_reopen(self)
+        opened.append((threading.current_thread().name, other))
+        return other
+
+    monkeypatch.setattr(Store, "reopen", reopen)
+    async with running_app(daemon_config, daemon_store) as client:
+        async with mcp_session(client, headers=_auth()) as session:
+            for _ in range(8):
+                found = await session.call_tool("memory_search", {"query": "daemon"})
+                assert not found.is_error
+    tool_stores = [s for name, s in opened if name.startswith("bettermemory-tool-")]
+    assert 1 <= len(tool_stores) <= daemon_module.TOOL_WORKERS
+    for store in tool_stores:
+        with pytest.raises(sqlite3.ProgrammingError):
+            store._conn.execute("SELECT 1")
+
+
+async def test_a_worker_runs_a_coroutine_in_its_own_context(
+    daemon_store: Store,
+) -> None:
+    """`_Workers.run_coroutine` runs the body to completion on the worker's
+    own loop, with the worker's store; a context variable the body binds
+    is gone for the next body on the same worker; an exception comes back
+    as the body raised it."""
+    import asyncio
+    import contextvars
+    import threading
+
+    from bettermemory.daemon import _Workers
+
+    var: contextvars.ContextVar[str] = contextvars.ContextVar("item13", default="unset")
+    pool = _Workers(daemon_store, count=1, name="probe")
+
+    async def binds(store: Store) -> tuple[str, str, Path]:
+        var.set("bound")
+        await asyncio.sleep(0)
+        return var.get(), threading.current_thread().name, store.path
+
+    async def reads(store: Store) -> str:
+        return var.get()
+
+    async def raises(store: Store) -> None:
+        raise KeyError("boom")
+
+    try:
+        # The caller's binding travels with the job (a copy of the
+        # caller's context), and the reset below ends it here.
+        caller = var.set("caller")
+        try:
+            assert await pool.run_coroutine(reads) == "caller"
+        finally:
+            var.reset(caller)
+        assert await pool.run_coroutine(binds) == (
+            "bound",
+            "bettermemory-probe-0",
+            daemon_store.path,
+        )
+        assert await pool.run_coroutine(reads) == "unset"
+        with pytest.raises(KeyError, match="boom"):
+            await pool.run_coroutine(raises)
+    finally:
+        pool.close()
+
+
+async def test_a_tool_body_runs_inline_without_a_pool_or_on_a_clone(
+    tmp_path: Path,
+) -> None:
+    """`ToolHandlers._run`: with no pool (the stdio server, the in-process
+    servers the tests build) the body runs on the caller's loop over the
+    bundle itself; with a pool it runs over a copy bound to the worker's
+    store, recorder included; a per-request clone (the store seam
+    resolved another store) runs inline too, since a worker's connection
+    is a reopen of the process store and not of the resolved one."""
+    from bettermemory._handlers import ToolHandlers
+    from bettermemory._response import ResponseBuilder
+    from bettermemory.events import Recorder
+    from bettermemory.session import SessionState
+
+    store = Store(tmp_path / "store")
+    other = Store(tmp_path / "other")
+    worker = store.reopen()
+    offloaded: list[int] = []
+
+    async def offload(make: Any) -> Any:
+        offloaded.append(1)
+        return await make(worker)
+
+    class Source:
+        def for_request(self, ctx: Any) -> Store:
+            return other if ctx == "other" else store
+
+    def bundle(offload_: Any) -> ToolHandlers:
+        cfg = Config(storage=StorageConfig(directory=str(tmp_path / "store")))
+        state = SessionState()
+        return ToolHandlers(
+            config=cfg,
+            store=store,
+            sessions=state,
+            recorder=Recorder(store=store, session_id=state.session_id, enabled=True),
+            responses=ResponseBuilder(stale_after_days=1),
+            store_source=Source(),
+            offload=offload_,
+        )
+
+    async def body(deps: ToolHandlers) -> tuple[Store, Store]:
+        return deps.store, deps.recorder.store
+
+    pooled = bundle(offload)
+    assert await pooled._run(body) == (worker, worker)
+    assert offloaded == [1]
+    assert pooled.store is store and pooled.recorder.store is store
+    other_request: Any = "other"  # the fake source reads it; the type is the seam's
+    clone = pooled.for_request(other_request)
+    assert clone is not pooled and clone.offload is None
+    # The seam keeps the recorder process-wide on purpose (`for_request`).
+    assert await clone._run(body) == (other, store)
+    assert offloaded == [1]
+    assert await bundle(None)._run(body) == (store, store)
+    assert offloaded == [1]
+
+
+async def test_every_tool_runs_on_the_pool_without_error(
+    daemon_config: Config, daemon_store: Store
+) -> None:
+    """One call per tool through the daemon app with the pool on. A handler
+    reaching the process store's connection by any path but the bundle's
+    store and recorder would raise sqlite's cross-thread error on the
+    worker, which the in-process servers the rest of the suite builds (no
+    pool) cannot catch. The row the write made on a worker reads back
+    through the daemon's own store."""
+
+    async with running_app(daemon_config, daemon_store) as client:
+        async with mcp_session(client, headers=_auth()) as session:
+
+            async def attempt(name: str, **arguments: Any) -> dict[str, Any] | None:
+                """A call the handler may refuse (its words come back as
+                the tool's error), never one that crashed on the worker."""
+                result = await session.call_tool(name, arguments)
+                text = "".join(getattr(block, "text", "") for block in result.content)
+                for crash in ("ProgrammingError", "Traceback", "created in a thread"):
+                    assert crash not in text, (name, text)
+                if result.is_error:
+                    return None
+                payload = result.structured_content
+                return payload if payload is not None else json.loads(text)
+
+            async def call(name: str, **arguments: Any) -> dict[str, Any]:
+                payload = await attempt(name, **arguments)
+                assert payload is not None, (name, arguments)
+                return payload
+
+            written = await call(
+                "memory_write",
+                content="the daemon's tool pool serves every tool",
+                scopes=["tools"],
+            )
+            memory_id = written["id"]
+            assert daemon_store.load_one(memory_id).id == memory_id
+            await call("memory_show", id=memory_id)
+            await call("memory_search", query="tool pool serves every tool")
+            await call("memory_update", id=memory_id, confidence="high")
+            await call("memory_verify", id=memory_id, note="checked by the test")
+            await call("memory_record_use", memory_ids=[memory_id], outcome="applied")
+            # `health` swallows a sqlite error in its membership section
+            # (`handlers/health.py::_membership`): the section itself is
+            # the assertion.
+            health = await call("memory_admin", action="health")
+            assert health["membership"] is not None
+            await call("memory_admin", action="tombstones")
+            await call("memory_admin", action="conflicts")
+            await call("memory_admin", action="disable_scope", scope="tools")
+            await call("memory_admin", action="enable_scope", scope="tools")
+            await attempt(
+                "memory_admin",
+                action="rename_scope",
+                old_scope="tools",
+                new_scope="kit",
+            )
+            await attempt(
+                "memory_admin",
+                action="rename_scope",
+                old_scope="kit",
+                new_scope="tools",
+            )
+            await attempt("memory_admin", action="relations", relations={})
+            await attempt(
+                "memory_admin", action="answer_question", id=memory_id, answer="no"
+            )
+            await attempt("memory_admin", action="join_project", id=memory_id)
+            await attempt("memory_admin", action="unjoin_project", id=memory_id)
+            await attempt(
+                "memory_admin", action="acknowledge_miss", id=memory_id, reason="t"
+            )
+            await attempt("memory_admin", action="answer_standing", standing={})
+            await call("episode", action="write", body="the pool served an episode")
+            await call("episode", action="handoff")
+            await call("memory_remove", id=memory_id, reason="the test is done")
+            await call("memory_admin", action="restore", id=memory_id)
+
+
+async def test_parallel_calls_of_one_session_run_at_once_without_error(
+    daemon_config: Config, daemon_store: Store
+) -> None:
+    """Claude Code sends a turn's parallel tool calls as parallel
+    requests; on the tool pool they run at once, all over the one
+    `SessionState` of the session (`SessionState.lock`). None fails."""
+    import asyncio
+
+    async with running_app(daemon_config, daemon_store) as client:
+        async with mcp_session(client, headers=_auth()) as session:
+            for i in range(3):
+                written = await session.call_tool(
+                    "memory_write",
+                    {
+                        "content": f"parallel calls share one session {i}",
+                        "scopes": ["tools"],
+                    },
+                )
+                assert not written.is_error
+            for _ in range(4):
+                results = await asyncio.gather(
+                    *(
+                        session.call_tool("memory_search", {"query": "parallel calls"})
+                        for _ in range(12)
+                    )
+                )
+                errors = [
+                    "".join(getattr(b, "text", "") for b in r.content)
+                    for r in results
+                    if r.is_error
+                ]
+                assert errors == []

@@ -81,7 +81,8 @@ HOOK_TIMEOUT_SECONDS = 15.0
 #: after the shutdown endpoint answered, before it falls back to a
 #: signal: the daemon's own bounds, `daemon.GRACEFUL_SHUTDOWN_SECONDS`
 #: (20 s for the requests in flight) plus `daemon.WORKERS_CLOSE_SECONDS`
-#: (10 s for the hook workers' join); tests/test_daemon_lifecycle.py pins
+#: (10 s for the workers' join, both pools under one deadline);
+#: tests/test_daemon_lifecycle.py pins
 #: the sum. A daemon with nothing in flight stops in milliseconds.
 SHUTDOWN_TIMEOUT_SECONDS = 30.0
 _POLL_SECONDS = 0.02
