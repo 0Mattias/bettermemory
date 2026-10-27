@@ -57,6 +57,8 @@ from bettermemory._daemon_client import (
     pid_alive,
     post,
     read_state,
+    release_lock,
+    try_lock,
 )
 from bettermemory.store import CREATED_AFTER_ORPHANS, Store
 
@@ -1220,3 +1222,191 @@ def test_a_forced_exit_still_saves_the_removed_store(
     assert expected[0] == "ok"
     assert _integrity_and_counts(orphans[0]) == expected
     assert _leftovers(directory) == []
+
+
+# ---------------------------------------------------------------------------
+# The daemon in-process: the forced exit and the lock
+# ---------------------------------------------------------------------------
+
+
+def _held_hook_under_a_forced_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> dict[str, Any]:
+    """A daemon on its thread with a prompt hook held on a hook worker,
+    then forced out as a second SIGINT forces uvicorn. It records the
+    worker stores, every store closed, and the stores closed by the time
+    `serve` gives the lock back."""
+    import uvicorn
+
+    import bettermemory.recall
+
+    monkeypatch.setattr(_daemon, "STORE_WATCH_SECONDS", NO_TICK)
+    servers: list[uvicorn.Server] = []
+    real_init = uvicorn.Server.__init__
+
+    def recording(self: uvicorn.Server, *args: Any, **kwargs: Any) -> None:
+        real_init(self, *args, **kwargs)
+        servers.append(self)
+
+    monkeypatch.setattr(uvicorn.Server, "__init__", recording)
+    entered = threading.Event()
+    release = threading.Event()
+    real_recall = bettermemory.recall.prompt_recall
+
+    def held(*args: Any, **kwargs: Any) -> Any:
+        entered.set()
+        assert release.wait(60)
+        return real_recall(*args, **kwargs)
+
+    monkeypatch.setattr(bettermemory.recall, "prompt_recall", held)
+    reopened: list[tuple[str, Store]] = []
+    real_reopen = Store.reopen
+
+    def reopen(self: Store) -> Store:
+        other = real_reopen(self)
+        reopened.append((threading.current_thread().name, other))
+        return other
+
+    monkeypatch.setattr(Store, "reopen", reopen)
+    closed: list[Store] = []
+    real_close = Store.close
+
+    def close(self: Store) -> None:
+        closed.append(self)
+        real_close(self)
+
+    monkeypatch.setattr(Store, "close", close)
+    at_release: dict[str, list[Store]] = {}
+
+    def releasing(handle: Any) -> None:
+        # The one `serve` imported by name: `_daemon_client.release_lock`.
+        at_release["closed"] = list(closed)
+        release_lock(handle)
+
+    monkeypatch.setattr(_daemon, "release_lock", releasing)
+    thread, out = _serve_in_a_thread(tmp_path, lambda store: None)
+    store = out["store"]
+    state = read_state(tmp_path / "state", store.path)
+    assert state is not None
+    port, token = int(state["port"]), str(state["token"])
+    workdir = tmp_path / "cwd"
+    workdir.mkdir()
+
+    def hook() -> None:
+        try:
+            post(
+                port,
+                token,
+                "/api/v1/hook/prompt",
+                {"session_id": "held", "cwd": str(workdir), "prompt": "plan"},
+                timeout=60,
+            )
+        except Exception:
+            pass  # the forced exit cuts the request
+
+    poster = threading.Thread(target=hook, daemon=True)
+    poster.start()
+    assert entered.wait(30)
+    (server,) = servers
+    forced = time.monotonic()
+    server.force_exit = True
+    server.should_exit = True
+    return {
+        "thread": thread,
+        "out": out,
+        "store": store,
+        "port": port,
+        "poster": poster,
+        "release": release,
+        "reopened": reopened,
+        "closed": closed,
+        "at_release": at_release,
+        "forced": forced,
+    }
+
+
+def _hook_worker_store(held: dict[str, Any]) -> Store:
+    (store,) = [
+        store
+        for name, store in held["reopened"]
+        if name.startswith("bettermemory-hook-")
+    ]
+    return store
+
+
+def _is_in(store: Store, stores: list[Store]) -> bool:
+    return any(other is store for other in stores)
+
+
+def _lock_is_free(tmp_path: Path, store: Store) -> bool:
+    handle = try_lock(lock_file_for(tmp_path / "state", store.path))
+    if handle is None:
+        return False
+    release_lock(handle)
+    return True
+
+
+def test_a_forced_exit_closes_the_workers_connections_before_the_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A forced exit skips the app's shutdown, but closing the loop
+    cancels the lifespan, whose finally joins the workers. The lock is
+    given back only after a held hook worker has finished and closed its
+    connection, so no second daemon opens the store under it. The exit
+    is forced off the main thread, as `force_exit` sets it; uvicorn's
+    re-raise of a captured SIGINT on the main thread, which ends the
+    process by KeyboardInterrupt after the same order, is not run here."""
+    held = _held_hook_under_a_forced_exit(tmp_path, monkeypatch)
+    store = held["store"]
+    try:
+        deadline = time.monotonic() + 30
+        while health(held["port"], timeout=0.2) is not None:
+            assert time.monotonic() < deadline, "the daemon kept answering"
+            time.sleep(0.05)
+        # The socket is closed and the loop waits on the held worker.
+        assert try_lock(lock_file_for(tmp_path / "state", store.path)) is None
+        worker = _hook_worker_store(held)
+        assert not _is_in(worker, held["closed"])
+        held["release"].set()
+        held["thread"].join(30)
+        assert not held["thread"].is_alive()
+        assert held["out"]["code"] == 0
+        assert _is_in(worker, held["at_release"]["closed"])
+        assert _lock_is_free(tmp_path, store)
+        assert read_state(tmp_path / "state", store.path) is None
+    finally:
+        # A failed assertion leaves no worker held into the next test.
+        held["release"].set()
+        held["poster"].join(30)
+        held["thread"].join(30)
+
+
+def test_a_forced_exit_waits_for_the_workers_no_longer_than_their_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The join is bounded: a worker job held past WORKERS_CLOSE_SECONDS
+    does not keep the daemon from giving the lock back. That job's
+    connection is the one residue; the worker closes it once the job
+    ends and it takes the stop sentinel."""
+    monkeypatch.setattr(_daemon, "WORKERS_CLOSE_SECONDS", 0.5)
+    held = _held_hook_under_a_forced_exit(tmp_path, monkeypatch)
+    store = held["store"]
+    try:
+        held["thread"].join(30)
+        assert not held["thread"].is_alive()
+        assert held["out"]["code"] == 0
+        # About 0.7 s measured: uvicorn's own stop and the 0.5 s bound.
+        assert time.monotonic() - held["forced"] < 10
+        assert _lock_is_free(tmp_path, store)
+        worker = _hook_worker_store(held)
+        assert not _is_in(worker, held["at_release"]["closed"])
+        held["release"].set()
+        deadline = time.monotonic() + 10
+        while not _is_in(worker, held["closed"]):
+            assert time.monotonic() < deadline, "the worker never closed its store"
+            time.sleep(0.05)
+    finally:
+        # A failed assertion leaves no worker held into the next test.
+        held["release"].set()
+        held["poster"].join(30)
+        held["thread"].join(30)
