@@ -25,6 +25,43 @@ bettermemory` and the plugin's `uvx bettermemory` keep resolving 8.0.0
 until the stable `9.0.0` is tagged. Ask for a candidate by version
 (`uvx bettermemory==9.0.0rc1`) to run it.
 
+### 9.0.0rc11
+
+The eleventh candidate carries the tenth's changes with the two items
+the rc9 review recorded and the testing period put on the gap list: a
+daemon started by hand runs in its state directory, and the order of a
+forced exit against the workers' connections is pinned by tests. It is
+a release candidate like the tenth; the stable 9.0.0 follows the
+candidates' testing.
+
+#### Fixed
+
+- **A daemon started by hand runs in its state directory.** `bettermemory
+  up --foreground` kept the directory it was started from, which Windows
+  holds open for the process's life: started from inside the store
+  directory, as a supervisor with no working directory set or a hand-run
+  start does, it pinned that directory against a rename or a removal
+  past `down`, where the spawned daemon has run in its state directory
+  since rc10. The foreground command now enters the state directory
+  itself before it serves, with the path variables it resolves at
+  startup made absolute first, through the one helper the spawn uses
+  for its child. (`src/bettermemory/cli/daemon_cmd.py`,
+  `src/bettermemory/_daemon_client.py`)
+
+#### Changed
+
+- **The order of a forced exit is pinned.** A second SIGINT makes
+  uvicorn skip the app's shutdown event, and the rc9 review recorded
+  that the daemon's lock could then be given back with a worker's
+  connection still open. It is not: the loop's close cancels the app's
+  lifespan, which stops and joins both worker pools before the store is
+  closed and the lock given back, under `WORKERS_CLOSE_SECONDS`. Two
+  tests now hold a hook body at a forced exit and assert the worker's
+  connection is closed before the lock is given back, and that a body
+  held past the bound cannot pin the lock: that one connection closes
+  as the process ends, which the WAL store tolerates.
+  (`tests/test_daemon_store_watch.py`)
+
 ### 9.0.0rc10
 
 The tenth candidate carries the ninth's changes with the first of the
