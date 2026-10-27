@@ -91,7 +91,7 @@ def run_up(args: argparse.Namespace) -> None:
 def _run_foreground(port: int | None) -> None:
     import logging
 
-    from .._daemon_client import resolve_state_dir
+    from .._daemon_client import enter_state_dir, resolve_state_dir
     from ..daemon import serve
     from ._common import cli_context
 
@@ -103,10 +103,15 @@ def _run_foreground(port: int | None) -> None:
     # The daemon runs the migration under the store's lock
     # (`daemon._migrate_at_start`), not here before the lock is taken.
     ctx = cli_context(migrate=False)
+    # The store is resolved where the process was started (./.claude-memory
+    # is read from there); then the daemon moves to its state directory, as
+    # a spawned one runs there, so no other directory is its working
+    # directory and `down` leaves none held.
+    state_dir = enter_state_dir(resolve_state_dir(), ctx.store.path)
     code = serve(
         config=ctx.config,
         store=ctx.store,
-        state_dir=resolve_state_dir(),
+        state_dir=state_dir,
         port=port,
     )
     raise SystemExit(code)

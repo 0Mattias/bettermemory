@@ -33,7 +33,9 @@ from bettermemory._daemon_client import (
     state_file_for,
     try_lock,
 )
+from bettermemory.cli.daemon_cmd import _run_foreground
 from bettermemory.config import ENV_DIR_OVERRIDE, KEYS_DIR_ENV
+from bettermemory.store import Store
 
 from .conftest import shielded_child_env
 
@@ -64,6 +66,32 @@ def _store_path(tmp_path: Path) -> Path:
 
 def _state_path(tmp_path: Path) -> Path:
     return state_file_for(tmp_path / "state", _store_path(tmp_path))
+
+
+def _cwd_of_process(pid: int) -> Path | None:
+    """A process's working directory where the platform lets another
+    process read it: Linux through /proc, macOS through lsof. None where
+    it cannot be read (Windows, no lsof), and the caller asserts
+    nothing."""
+    if sys.platform.startswith("linux"):
+        try:
+            return Path(os.readlink(f"/proc/{pid}/cwd"))
+        except OSError:
+            return None
+    if sys.platform == "darwin":
+        try:
+            listed = subprocess.run(
+                ["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        for line in listed.stdout.splitlines():
+            if line.startswith("n"):
+                return Path(line[1:])
+    return None
 
 
 def _wait_running(tmp_path: Path, timeout: float = 15.0) -> dict:
@@ -164,8 +192,9 @@ def test_a_spawned_daemon_runs_in_the_state_directory(
     process's working directory open against a rename or a delete), and
     hands it the path variables it resolves at startup absolute, since a
     relative one would otherwise resolve against that directory. An
-    environment that names no store directory gets the store's, so the
-    child never resolves a store of its own where it runs."""
+    environment that names no store directory, or names it empty, which
+    the resolution rule reads as none, gets the store's, so the child
+    never resolves a store of its own where it runs."""
     captured: dict = {}
 
     class _Child:
@@ -195,6 +224,66 @@ def test_a_spawned_daemon_runs_in_the_state_directory(
     assert bare.child.pid == 4242
     assert captured["env"]["BETTERMEMORY_DIR"] == str((tmp_path / "store").resolve())
     assert "BETTERMEMORY_KEYS_DIR" not in captured["env"]
+    empty = _spawn(
+        Path("state"),
+        Path("store") / "memory.sqlite",
+        port=None,
+        env={"BETTERMEMORY_DIR": ""},
+    )
+    assert empty.child.pid == 4242
+    assert captured["env"]["BETTERMEMORY_DIR"] == str((tmp_path / "store").resolve())
+
+
+def test_a_foreground_daemon_moves_to_the_state_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`up --foreground` resolves its store where it was started, then
+    runs in the state directory with its path variables absolute, as a
+    spawned daemon does, so a daemon started by hand from inside the
+    store's directory does not hold that directory open. A relative path
+    variable keeps the meaning it had where the process was started."""
+    import bettermemory.daemon as daemon_module
+
+    seen: dict = {}
+
+    def fake_serve(
+        *, config: object, store: Store, state_dir: Path, port: object
+    ) -> int:
+        seen["cwd"] = os.getcwd()
+        seen["store"] = store.path
+        seen["env"] = {
+            name: os.environ.get(name)
+            for name in (
+                "BETTERMEMORY_DIR",
+                "BETTERMEMORY_KEYS_DIR",
+                "BETTERMEMORY_STATE_DIR",
+            )
+        }
+        seen["state_dir"] = state_dir
+        return 0
+
+    monkeypatch.setattr(daemon_module, "serve", fake_serve)
+    (tmp_path / "store").mkdir()
+    (tmp_path / "state").mkdir()
+    # monkeypatch.chdir records the directory before this call and
+    # restores it at teardown, after `_run_foreground` has moved away.
+    monkeypatch.chdir(tmp_path / "store")
+    monkeypatch.setenv("BETTERMEMORY_DIR", ".")
+    monkeypatch.setenv("BETTERMEMORY_KEYS_DIR", "../keys")
+    monkeypatch.setenv("BETTERMEMORY_STATE_DIR", "../state")
+    with pytest.raises(SystemExit) as exited:
+        _run_foreground(None)
+    assert exited.value.code == 0
+    root = tmp_path.resolve()
+    assert seen["cwd"] == str(root / "state")
+    assert seen["env"] == {
+        "BETTERMEMORY_DIR": str(root / "store"),
+        "BETTERMEMORY_KEYS_DIR": str(root / "keys"),
+        "BETTERMEMORY_STATE_DIR": str(root / "state"),
+    }
+    assert seen["state_dir"] == root / "state"
+    # The store is the one resolved where the process was started.
+    assert seen["store"] == root / "store" / "memory.sqlite"
 
 
 # A launcher in front of the interpreter, as a Windows venv's python.exe
@@ -540,6 +629,47 @@ def test_down_returns_with_the_store_released(
     release_lock(handle)
     assert not _state_path(tmp_path).exists()
     store_dir = tmp_path / "store"
+    parked = tmp_path / "store-parked"
+    store_dir.rename(parked)
+    parked.rename(store_dir)
+
+
+def test_a_foreground_daemon_started_in_the_store_releases_it_on_down(
+    tmp_path: Path, daemon_env: dict[str, str]
+) -> None:
+    """A daemon started by hand with the store's directory as its working
+    directory runs in its state directory instead, so once `down` returns
+    the store's directory can be renamed, on Windows too, where a
+    process's working directory is held open against a rename."""
+    store_dir = tmp_path / "store"
+    store_dir.mkdir(exist_ok=True)
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "bettermemory", "up", "--foreground", "--port", "0"],
+        env=daemon_env,
+        cwd=str(store_dir),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        state = _wait_running(tmp_path)
+        # Where POSIX lets another process read it, the daemon's working
+        # directory is the state directory while it serves; on Windows the
+        # rename below is the proof.
+        cwd = _cwd_of_process(int(state["pid"]))
+        if cwd is not None:
+            assert cwd == (tmp_path / "state").resolve()
+        assert _cli(["down"], daemon_env).returncode == 0
+        _, err = proc.communicate(timeout=15)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.communicate(timeout=15)
+    assert proc.returncode == 0, err
+    handle = try_lock(lock_file_for(tmp_path / "state", state["store"]))
+    assert handle is not None, "down returned while the daemon held the store's lock"
+    release_lock(handle)
+    assert not _state_path(tmp_path).exists()
     parked = tmp_path / "store-parked"
     store_dir.rename(parked)
     parked.rename(store_dir)

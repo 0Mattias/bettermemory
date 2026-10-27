@@ -40,6 +40,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -384,6 +385,51 @@ def start_daemon(
     return _spawn(state_dir, store_path, port=port, env=env).child.pid
 
 
+def daemon_process_env(
+    env: Mapping[str, str], *, state_dir: Path, store_path: Path | str
+) -> dict[str, str]:
+    """A copy of `env` for a daemon process that runs in `state_dir`.
+
+    The store's directory is set to the store's parent when `env` names
+    none, or names it empty, which the resolution rule reads as none, so
+    a daemon never resolves a store of its own where it runs.
+    Each of `_PATH_ENVS` that is set is made absolute against this
+    process's directory, which is what a relative value meant:
+    `Config.resolved_directory` reads the store directory on every call,
+    so a relative value left in place would resolve against the state
+    directory once the process has moved there. The state directory is
+    set to `state_dir`, resolved."""
+    pinned = dict(env)
+    if not pinned.get(_STORE_DIR_ENV):
+        pinned[_STORE_DIR_ENV] = str(Path(store_path).parent)
+    for name in _PATH_ENVS:
+        value = pinned.get(name)
+        if value:
+            pinned[name] = str(Path(value).expanduser().resolve())
+    pinned[STATE_DIR_ENV] = str(Path(state_dir).expanduser().resolve())
+    return pinned
+
+
+def enter_state_dir(state_dir: Path, store_path: Path | str) -> Path:
+    """Move this process into `state_dir` as a daemon, and return it resolved.
+
+    A daemon started by hand (`up --foreground`, or a supervisor that sets
+    no working directory) would otherwise keep the directory it was
+    started from, and Windows holds a process's working directory open
+    against a rename or a delete for the process's life. The path
+    variables are pinned in this environment first (`daemon_process_env`),
+    since they must be made absolute before the process moves. A spawned
+    daemon arrives here already pinned and already in its state directory,
+    so for it nothing changes."""
+    state_dir = Path(state_dir).expanduser().resolve()
+    state_dir.mkdir(parents=True, exist_ok=True)
+    os.environ.update(
+        daemon_process_env(os.environ, state_dir=state_dir, store_path=store_path)
+    )
+    os.chdir(state_dir)
+    return state_dir
+
+
 def _spawn(
     state_dir: Path,
     store_path: Path | str,
@@ -401,20 +447,17 @@ def _spawn(
     depends on its working directory (each hook posts its caller's cwd,
     the shim sends its own), but the path variables it resolves at
     startup (`_PATH_ENVS`, the state directory) would resolve a relative
-    value against it, so they are made absolute here, against this
-    process's directory, which is what a relative value meant. The
+    value against it, so they are made absolute first
+    (`daemon_process_env`), against this process's directory, which is
+    what a relative value meant. The
     store's directory is pinned the same way when `env` names none
     (`daemon_env_for` does), since a daemon left to resolve its store
     where it runs would open one under the state directory."""
     state_dir = Path(state_dir).expanduser().resolve()
     state_dir.mkdir(parents=True, exist_ok=True)
-    child_env = dict(os.environ if env is None else env)
-    child_env.setdefault(_STORE_DIR_ENV, str(Path(store_path).parent))
-    for name in _PATH_ENVS:
-        value = child_env.get(name)
-        if value:
-            child_env[name] = str(Path(value).expanduser().resolve())
-    child_env[STATE_DIR_ENV] = str(state_dir)
+    child_env = daemon_process_env(
+        os.environ if env is None else env, state_dir=state_dir, store_path=store_path
+    )
     command = [sys.executable, "-m", "bettermemory", "up", "--foreground"]
     if port is not None:
         command += ["--port", str(port)]
@@ -979,6 +1022,8 @@ __all__ = [
     "Started",
     "acquire_lock",
     "daemon_env_for",
+    "daemon_process_env",
+    "enter_state_dir",
     "ensure_daemon",
     "health",
     "hook_main",
