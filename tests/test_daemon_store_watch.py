@@ -1387,7 +1387,14 @@ def test_a_forced_exit_waits_for_the_workers_no_longer_than_their_bound(
     """The join is bounded: a worker job held past WORKERS_CLOSE_SECONDS
     does not keep the daemon from giving the lock back. That job's
     connection is the one residue; the worker closes it once the job
-    ends and it takes the stop sentinel."""
+    ends and it takes the stop sentinel. On Python 3.12 and later
+    `asyncio.Server.wait_closed` waits for the connections, so uvicorn's
+    own stop holds the held request's connection until
+    `timeout_graceful_shutdown` cancels its task, where 3.11's returned
+    at once: both bounds are lowered here and the exit is held under their
+    sum (about 0.7 s on 3.11 and 1.7 s on 3.13; 20.7 s with the graceful
+    bound at its 20 s, which CI measured on every 3.12 and later leg)."""
+    monkeypatch.setattr(_daemon, "GRACEFUL_SHUTDOWN_SECONDS", 1.0)
     monkeypatch.setattr(_daemon, "WORKERS_CLOSE_SECONDS", 0.5)
     held = _held_hook_under_a_forced_exit(tmp_path, monkeypatch)
     store = held["store"]
@@ -1395,7 +1402,7 @@ def test_a_forced_exit_waits_for_the_workers_no_longer_than_their_bound(
         held["thread"].join(30)
         assert not held["thread"].is_alive()
         assert held["out"]["code"] == 0
-        # About 0.7 s measured: uvicorn's own stop and the 0.5 s bound.
+        # The two lowered bounds and uvicorn's own stop, well under this.
         assert time.monotonic() - held["forced"] < 10
         assert _lock_is_free(tmp_path, store)
         worker = _hook_worker_store(held)

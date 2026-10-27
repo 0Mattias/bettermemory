@@ -941,7 +941,10 @@ def serve(
     and the store is closed before the lock is given back; the one
     residue is a worker job that outlives the join, whose connection
     closes with the process microseconds after the lock frees, which the
-    WAL store tolerates. Skipping the lock release on a forced exit was
+    WAL store tolerates. On Python 3.12 and later uvicorn's own stop first
+    waits for the requests in flight under the same graceful bound, since
+    `asyncio.Server.wait_closed` waits for their connections there, where
+    3.11's returned at once. Skipping the lock release on a forced exit was
     considered and declined (2026-10-26): a branch in the exit path for a
     window with no defect behind it. A stop gives the requests in flight
     `GRACEFUL_SHUTDOWN_SECONDS`. Returns the exit status.

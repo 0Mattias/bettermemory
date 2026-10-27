@@ -59,8 +59,11 @@ candidates' testing.
   tests now hold a hook body at a forced exit and assert the worker's
   connection is closed before the lock is given back, and that a body
   held past the bound cannot pin the lock: that one connection closes
-  as the process ends, which the WAL store tolerates.
-  (`tests/test_daemon_store_watch.py`)
+  as the process ends, which the WAL store tolerates. On Python 3.12 and
+  later uvicorn's own stop first waits for the requests in flight, the
+  graceful bound at most, since `asyncio.Server.wait_closed` waits for
+  their connections there; the test lowers both bounds.
+  (`tests/test_daemon_store_watch.py`, `src/bettermemory/daemon.py`)
 
 ### 9.0.0rc10
 
