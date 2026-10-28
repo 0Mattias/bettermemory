@@ -875,6 +875,46 @@ def test_a_bound_store_that_cannot_be_read_keeps_the_ring(
         assert owner.log_verify()["status"] == "ok"
 
 
+def test_a_bound_store_sqlite_cannot_open_by_its_uri_keeps_the_ring(
+    home: tuple[Path, Memory, str],
+    keys: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """On Windows a store on a network share resolves to a UNC path, whose
+    server `Path.as_uri` makes the URI's authority, and SQLite refuses that
+    open with SQLITE_ERROR, the code a database with no `meta` table gives
+    its query. Read as no store there, the bound store released the ring to
+    every second file, which then signed with its key and moved its head.
+    The same refusal is made here on any host: the URI the id read builds
+    is given a server."""
+    path, _genuine, store_id = home
+    copy = _copy(path, tmp_path / "repo" / STORE_FILENAME)
+    ring_before = _ring_files(keys, store_id)
+    real_connect = sqlite3.connect
+
+    def unc_connect(database: Any, *args: Any, **kwargs: Any) -> sqlite3.Connection:
+        if (
+            kwargs.get("uri")
+            and isinstance(database, str)
+            and database.startswith(path.resolve().as_uri())
+        ):
+            database = database.replace("file:///", "file://server/", 1)
+        return real_connect(database, *args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", unc_connect)
+    with pytest.raises(OSError, match="invalid uri authority"):
+        store_module._store_id_at(path)
+    with caplog.at_level(logging.WARNING, logger="bettermemory.store"):
+        with Store.open_or_create(copy, keys_dir=keys) as twin:
+            assert twin.has_key is False
+    monkeypatch.setattr(sqlite3, "connect", real_connect)
+    assert "could not be read to tell" in caplog.text
+    assert _binding(keys, store_id) == {"path": str(path.resolve())}
+    assert _ring_files(keys, store_id) == ring_before
+
+
 def test_the_bound_store_id_read_answers_what_a_file_is(tmp_path: Path) -> None:
     """A file that is no store is an answer (the binding may move); one
     that cannot be opened is not."""

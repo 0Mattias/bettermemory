@@ -2086,11 +2086,15 @@ def _current_key(keyring: KeyRing, path: Path, *, writing: bool) -> bytes | None
         return None
 
 
-# SQLite's primary result codes that answer what a file is rather than
-# fail to read it: SQLITE_ERROR (here, no ``meta`` table: a database that
-# is no store), SQLITE_CORRUPT and SQLITE_NOTADB. Any other (SQLITE_CANTOPEN,
-# SQLITE_IOERR, SQLITE_BUSY, SQLITE_PERM, ...) is a read that failed, which
-# may pass in a moment (`_store_id_at`).
+# SQLite's primary result codes that, from the query, answer what a file
+# is rather than fail to read it: SQLITE_ERROR (here, no ``meta`` table: a
+# database that is no store), SQLITE_CORRUPT and SQLITE_NOTADB. Any other
+# (SQLITE_CANTOPEN, SQLITE_IOERR, SQLITE_BUSY, SQLITE_PERM, ...) is a read
+# that failed, which may pass in a moment, and so is every failure of the
+# open itself, whatever its code: an open reads nothing of the file, and
+# SQLite answers SQLITE_ERROR there for a URI it will not take, such as
+# the one a Windows UNC path gives, whose server becomes the URI's
+# authority (`_store_id_at`).
 _NOT_A_STORE_CODES = frozenset({1, 11, 26})
 
 
@@ -2106,8 +2110,9 @@ def _store_id_at(path: Path) -> str | None:
     None when there is no file there or it does not read as a store (no
     database, or one with no store id). OSError when it cannot be read to
     tell (a directory on the way that cannot be searched, a file that
-    cannot be opened, an I/O error, a store whose meta is only in its WAL
-    and whose lock is held): a failure that may pass in a moment says
+    cannot be opened, by any SQLite error, an I/O error, a store whose
+    meta is only in its WAL and whose lock is held): a failure that may
+    pass in a moment, or that SQLite meets before it reads a byte, says
     nothing about whether the file still holds a store, and the caller
     keeps the key ring bound to it (`_claim_key_ring`). A symbolic link
     that loops is no file there, as `Path.is_file` reads it."""
@@ -2136,16 +2141,23 @@ def _store_id_at(path: Path) -> str | None:
                 timeout=2.0,
                 isolation_level=None,
             )
-            try:
-                row = conn.execute(
-                    "SELECT value FROM meta WHERE key = 'store_id'"
-                ).fetchone()
-            finally:
-                conn.close()
+        except sqlite3.Error as exc:
+            # The open failed, so nothing of the file was read: no answer.
+            # Read as no store, a bound store SQLite cannot open by this
+            # URI (one on a network share, on Windows) would release the
+            # ring to every second file.
+            failed = exc
+            continue
+        try:
+            row = conn.execute(
+                "SELECT value FROM meta WHERE key = 'store_id'"
+            ).fetchone()
         except sqlite3.Error as exc:
             if getattr(exc, "sqlite_errorcode", 0) & 0xFF not in _NOT_A_STORE_CODES:
                 failed = exc
             continue
+        finally:
+            conn.close()
         if row is not None:
             return str(row[0])
     if failed is not None:
