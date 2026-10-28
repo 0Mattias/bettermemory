@@ -2068,11 +2068,19 @@ def configured_strict_provenance() -> bool:
     trust by default. Nor may it fail the read that asked: a daemon reads
     this long after its own start, from a file edited since, and a
     section of the wrong type makes `load_config` raise TypeError or
-    AttributeError, not only OSError or ValueError."""
+    AttributeError, not only OSError or ValueError.
+
+    Read without the first-run write (``create=False``): a missing file
+    reads as the defaults it would be written with, the managed file still
+    applied. A read-only command (`memory history`) labels rows through
+    this, and must not write a config.toml, nor read a config directory it
+    cannot write as a config it cannot read. Every writing entry point
+    (the daemon, the hooks, the CLI's writers) has written the file at its
+    own start already."""
     from .config import load_config
 
     try:
-        return load_config().security.strict_provenance
+        return load_config(create=False).security.strict_provenance
     except Exception as exc:  # noqa: BLE001 - a bad config must not fail a read
         log.warning(
             "[security] strict_provenance could not be read (%s); rows under a "

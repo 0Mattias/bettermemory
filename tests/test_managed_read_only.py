@@ -209,6 +209,35 @@ def test_read_only_commands_write_no_config(
     assert not no_user_config.parent.exists()
 
 
+@pytest.mark.parametrize("diff", [False, True])
+def test_memory_history_on_a_copied_store_writes_no_config(
+    tmp_path: Path,
+    no_user_config: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    diff: bool,
+) -> None:
+    """A store copied here and taken over has a leading segment under a
+    key this host does not hold. Labelling one of its records reads the
+    `strict_provenance` switch, which went through `load_config` with its
+    first-run write: `memory history` wrote a default config.toml."""
+    directory = tmp_path / "store"
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(directory))
+    arrived = _memory("a record written on the machine the store came from")
+    with Store.create(
+        directory / STORE_FILENAME, keys_dir=tmp_path / "keys-elsewhere"
+    ) as elsewhere:
+        elsewhere.put_memory(arrived)
+    with Store.open_or_create(directory / STORE_FILENAME, strict_provenance=False):
+        pass
+    argv = ["memory", "history", arrived.id, *(["--diff"] if diff else [])]
+    assert _run_cli(argv, monkeypatch) == 0
+    captured = capsys.readouterr()
+    assert "local" in captured.out
+    assert "created default config" not in captured.err
+    assert not no_user_config.exists()
+
+
 def test_a_restore_plan_writes_no_config(
     store_with_a_record: str,
     no_user_config: Path,

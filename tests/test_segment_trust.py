@@ -773,9 +773,11 @@ def test_the_config_is_read_only_when_a_row_needs_it(
     calls: list[None] = []
     original = config_module.load_config
 
-    def counting(path: Path | None = None) -> config_module.Config:
+    def counting(
+        path: Path | None = None, *, create: bool = True
+    ) -> config_module.Config:
         calls.append(None)
-        return original(path)
+        return original(path, create=create)
 
     monkeypatch.setattr(config_module, "load_config", counting)
 
@@ -801,7 +803,9 @@ def test_the_config_is_read_only_when_a_row_needs_it(
 def test_a_config_that_cannot_be_read_reads_as_strict(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    def broken(path: Path | None = None) -> config_module.Config:
+    def broken(
+        path: Path | None = None, *, create: bool = True
+    ) -> config_module.Config:
         raise ValueError("malformed config in managed.toml")
 
     monkeypatch.setattr(config_module, "load_config", broken)
