@@ -87,7 +87,7 @@ from typing import Any, NamedTuple, Protocol
 from pydantic import ValidationError
 
 from . import _caches
-from ._fsutil import ensure_owner_only_dir
+from ._fsutil import ensure_owner_only_dir, sqlite_file_uri
 from .events import _redact_event_fields
 from .identity import Actor
 from . import log as _chain
@@ -2093,8 +2093,8 @@ def _current_key(keyring: KeyRing, path: Path, *, writing: bool) -> bytes | None
 # that failed, which may pass in a moment, and so is every failure of the
 # open itself, whatever its code: an open reads nothing of the file, and
 # SQLite answers SQLITE_ERROR there for a URI it will not take, such as
-# the one a Windows UNC path gives, whose server becomes the URI's
-# authority (`_store_id_at`).
+# one with a server as its authority, which `Path.as_uri` once wrote for a
+# Windows UNC path (`_fsutil.sqlite_file_uri`, `_store_id_at`).
 _NOT_A_STORE_CODES = frozenset({1, 11, 26})
 
 
@@ -2139,7 +2139,7 @@ def _store_id_at(path: Path) -> str | None:
     for query in queries:
         try:
             conn = sqlite3.connect(
-                f"{resolved.as_uri()}?{query}",
+                f"{sqlite_file_uri(resolved)}?{query}",
                 uri=True,
                 timeout=2.0,
                 isolation_level=None,
@@ -2147,8 +2147,7 @@ def _store_id_at(path: Path) -> str | None:
         except sqlite3.Error as exc:
             # The open failed, so nothing of the file was read: no answer.
             # Read as no store, a bound store SQLite cannot open by this
-            # URI (one on a network share, on Windows) would release the
-            # ring to every second file.
+            # URI would release the ring to every second file.
             failed = exc
             continue
         try:

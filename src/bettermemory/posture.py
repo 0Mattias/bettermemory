@@ -76,7 +76,7 @@ from pathlib import Path
 from typing import Any
 
 from . import _daemon_client, sandbox_settings
-from ._fsutil import bounded_read
+from ._fsutil import bounded_read, sqlite_file_uri
 from ._git import run_git
 from .config import (
     ENV_DIR_OVERRIDE,
@@ -513,7 +513,9 @@ def read_meta(store_file: Path) -> dict[str, str]:
             f"{wal.name} is there without {shm.name}, and reading it read-only "
             f"would create {shm.name}"
         )
-    conn = sqlite3.connect(f"{resolved.as_uri()}?{query}", uri=True, timeout=5.0)
+    conn = sqlite3.connect(
+        f"{sqlite_file_uri(resolved)}?{query}", uri=True, timeout=5.0
+    )
     try:
         rows = conn.execute("SELECT key, value FROM meta").fetchall()
     finally:

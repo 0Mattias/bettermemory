@@ -99,7 +99,12 @@ from ._daemon_client import (
     valid_nonce,
     write_state,
 )
-from ._fsutil import ensure_owner_only_dir, fsync_dir, replace_atomic
+from ._fsutil import (
+    ensure_owner_only_dir,
+    fsync_dir,
+    replace_atomic,
+    sqlite_file_uri,
+)
 from .builder import build_server
 from .config import Config
 from .store import CREATED_AFTER_ORPHANS, Store, orphan_names, orphan_order
@@ -1059,7 +1064,7 @@ def _tell_successor(
                 f"{store_path.name}{suffix}",
             )
             return
-    uri = f"{Path(os.path.abspath(store_path)).as_uri()}?mode=rw"
+    uri = f"{sqlite_file_uri(Path(os.path.abspath(store_path)))}?mode=rw"
     try:
         conn = sqlite3.connect(uri, uri=True, timeout=5.0, isolation_level=None)
     except sqlite3.Error as exc:

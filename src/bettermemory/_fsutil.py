@@ -75,6 +75,12 @@ because the helpers open in binary mode.
   carries more. Detects over-cap by attempting one extra byte after
   the limit. Use for stdin and other unseekable streams the caller
   has already opened.
+
+**SQLite file URIs (`sqlite_file_uri`).** An open that passes SQLite a
+query parameter (``mode=ro``, ``immutable=1``) names its file by a
+``file:`` URI, and `Path.as_uri` writes a Windows UNC path's server as
+the URI's authority, which SQLite refuses. The one helper writes the
+form SQLite takes for every absolute path on every platform.
 """
 
 from __future__ import annotations
@@ -85,8 +91,9 @@ import stat
 import sys
 import time
 from collections.abc import Generator
-from pathlib import Path
+from pathlib import Path, PurePath, PureWindowsPath
 from typing import BinaryIO
+from urllib.parse import quote_from_bytes
 
 
 def ensure_owner_only_dir(path: Path, *, parents: bool = False) -> None:
@@ -632,6 +639,79 @@ def bounded_stream_read(stream: BinaryIO, max_bytes: int) -> bytes:
     return raw
 
 
+def sqlite_file_uri(path: PurePath) -> str:
+    """The SQLite ``file:`` URI naming the absolute path ``path``, for
+    ``sqlite3.connect(uri, uri=True)`` with the caller's query (``mode=ro``,
+    ``immutable=1``, ``mode=rw``) appended after a ``?``. Every opener that
+    hands SQLite a query parameter builds its URI here: `store._store_id_at`
+    (the key ring binding check), `posture.read_meta`,
+    `backup._read_only_uri` and the daemon's store-moved check
+    (`daemon._tell_successor`).
+
+    `Path.as_uri` is not that URI on Windows. It writes a UNC path's server
+    as the URI's authority, ``\\\\server\\share\\d\\memory.sqlite`` giving
+    ``file://server/share/d/memory.sqlite``, and SQLite takes only an empty
+    or ``localhost`` authority: "Any other authority results in an error"
+    (https://www.sqlite.org/uri.html, section 3), here SQLITE_ERROR
+    ``invalid uri authority: server``. A store on a network share resolves
+    to a UNC path, so every one of those reads failed on it. An admin share
+    on this host was worse: ``\\\\localhost\\C$\\d`` gave
+    ``file://localhost/C%24/d``, whose ``localhost`` authority SQLite
+    accepts and drops, opening ``/C$/d`` on the current drive, another file.
+
+    The forms, by the path's flavour:
+
+    * POSIX: ``file://`` and the path's filesystem bytes, percent-encoded:
+      ``/home/a b/memory.sqlite`` is ``file:///home/a%20b/memory.sqlite``.
+      Byte for byte what `Path.as_uri` writes.
+    * A Windows drive path: an empty authority and the drive as the path's
+      first segment, ``C:\\a b\\memory.sqlite`` giving
+      ``file:///C:/a%20b/memory.sqlite``, the ``/X:/`` section 3.1 reads as
+      the drive. Byte for byte what `Path.as_uri` writes.
+    * Any other Windows path, a UNC path first: an empty authority and the
+      whole path, slashes forward, in the path part:
+      ``\\\\server\\share\\d\\memory.sqlite`` gives
+      ``file:////server/share/d/memory.sqlite``. The documentation shows no
+      UNC URI; the comment in ``sqlite3ParseUri`` (src/main.c) names this
+      one, ``file:////host/path``, as the correct URI for the UNC name
+      ``//host/path``. Nothing stands between the second and third slash,
+      so the authority is empty whether or not SQLite was built with
+      SQLITE_ALLOW_URI_AUTHORITY, and the Windows VFS is handed
+      ``//server/share/d/memory.sqlite``, which `GetFullPathNameW` reads
+      as the UNC path. A verbatim (``\\\\?\\C:\\d``) or device
+      (``\\\\.\\C:\\d``) path takes the same form, ``file:////%3F/C%3A/d``:
+      a device path spelled with forward slashes, which Windows normalizes
+      as it does every device path but one spelled exactly ``\\\\?\\``. The
+      tests pin that URI; none opens a store through it.
+
+    The encoding is `urllib.parse.quote_from_bytes`, as `Path.as_uri`'s:
+    every byte but ASCII letters, digits, ``_.-~`` and ``/`` is written
+    ``%HH``, from the UTF-8 of a Windows path and the filesystem encoding of
+    a POSIX one. That covers the three characters SQLite's parser reads as
+    syntax inside a path: ``?`` starts the query, ``#`` the fragment, and
+    ``%`` an escape, so a directory named ``a%41`` written plainly would
+    open ``aA``. SQLite decodes every ``%HH`` in the path before the VFS
+    sees it (https://www.sqlite.org/c3ref/open.html, "URI Filenames").
+
+    Raises ValueError on a relative path, as `Path.as_uri` does: an
+    authority, even an empty one, names an absolute path."""
+    if not path.is_absolute():
+        raise ValueError(
+            f"{str(path)!r} is relative; a file: URI names an absolute path"
+        )
+    if not isinstance(path, PureWindowsPath):
+        return "file://" + quote_from_bytes(os.fsencode(path))
+    posix = path.as_posix()
+    drive = path.drive
+    if len(drive) == 2 and drive[1] == ":":
+        posix, prefix = posix[2:], f"file:///{drive}"
+    else:
+        prefix = "file://"
+    # `os.fsencode` on Windows: UTF-8, a lone surrogate NTFS allows passed
+    # through rather than refused.
+    return prefix + quote_from_bytes(posix.encode("utf-8", "surrogatepass"))
+
+
 __all__ = [
     "atomic_write_bytes",
     "bounded_read",
@@ -640,4 +720,5 @@ __all__ = [
     "fsync_dir",
     "fsync_file",
     "replace_atomic",
+    "sqlite_file_uri",
 ]

@@ -47,6 +47,7 @@ import pytest
 from bettermemory import backup
 from bettermemory import log as chain
 from bettermemory import store as store_module
+from bettermemory._fsutil import sqlite_file_uri
 from bettermemory.backup import create_backup, restore_bundle, verify_bundle
 from bettermemory.log import HistoryOrigin, KeyRing, KeyUnreadableError
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
@@ -882,13 +883,13 @@ def test_a_bound_store_sqlite_cannot_open_by_its_uri_keeps_the_ring(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """On Windows a store on a network share resolves to a UNC path, whose
-    server `Path.as_uri` makes the URI's authority, and SQLite refuses that
-    open with SQLITE_ERROR, the code a database with no `meta` table gives
-    its query. Read as no store there, the bound store released the ring to
-    every second file, which then signed with its key and moved its head.
-    The same refusal is made here on any host: the URI the id read builds
-    is given a server."""
+    """SQLite refuses an open whose URI it will not take with SQLITE_ERROR,
+    the code a database with no `meta` table gives its query. `Path.as_uri`
+    wrote such a URI for a store on a Windows network share (its server as
+    the authority) before `_fsutil.sqlite_file_uri`; read as no store
+    there, the bound store released the ring to every second file, which
+    then signed with its key and moved its head. The same refusal is made
+    here on any host: the URI the id read builds is given a server."""
     path, _genuine, store_id = home
     copy = _copy(path, tmp_path / "repo" / STORE_FILENAME)
     ring_before = _ring_files(keys, store_id)
@@ -898,7 +899,7 @@ def test_a_bound_store_sqlite_cannot_open_by_its_uri_keeps_the_ring(
         if (
             kwargs.get("uri")
             and isinstance(database, str)
-            and database.startswith(path.resolve().as_uri())
+            and database.startswith(sqlite_file_uri(path.resolve()))
         ):
             database = database.replace("file:///", "file://server/", 1)
         return real_connect(database, *args, **kwargs)

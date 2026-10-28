@@ -133,6 +133,7 @@ from ._fsutil import (
     fsync_dir,
     fsync_file,
     replace_atomic,
+    sqlite_file_uri,
 )
 from .config import STORE_FILENAME
 from .log import (
@@ -323,7 +324,7 @@ def _tighten_wal_siblings(path: Path) -> None:
 
 
 def _read_only_uri(path: Path, *, immutable: bool = False) -> str:
-    uri = path.resolve().as_uri() + "?mode=ro"
+    uri = sqlite_file_uri(path.resolve()) + "?mode=ro"
     return uri + "&immutable=1" if immutable else uri
 
 
