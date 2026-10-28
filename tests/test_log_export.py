@@ -273,6 +273,7 @@ def test_row_class_by_kind(kind: str, expected: str) -> None:
         ("standing_delete", {"record_id": "m1"}, ["m1"]),
         ("project_put", {"project": {"id": "p1"}}, []),
         ("capture_member", {"memory_id": "m1", "batch": "b"}, ["m1"]),
+        ("import_homed", {"record": "m1", "project": "p", "kind": "memory"}, ["m1"]),
         ("show", {"id": "m1"}, ["m1"]),
         ("show", {"id": "m1", "memory_id": "m1", "record_id": "m2"}, ["m1", "m2"]),
         ("search", {"returned": ["m1"]}, []),

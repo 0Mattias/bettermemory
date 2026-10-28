@@ -220,11 +220,12 @@ def record_ids(kind: str, payload: Any) -> list[str]:
     verification row its ``memory_id``; a conflict row the two records
     it pairs (``a_id``, ``b_id``; the conflict's own id is not a record);
     an import row the ``memory_id`` it brought in; a ``homes`` or
-    ``standing`` row the ``record_id`` it describes. Any other row names
-    what its top-level ``id``, ``memory_id`` and ``record_id`` hold, when
-    they are text: a `show`, an `update` or a `capture_member` row, for
-    example. A list of results (a search's ``returned``) is not read: it
-    is in the payload for a consumer that wants it.
+    ``standing`` row the ``record_id`` it describes; an ``import_homed``
+    row the ``record`` it homed (as `membership` reads it). Any other row
+    names what its top-level ``id``, ``memory_id`` and ``record_id``
+    hold, when they are text: a `show`, an `update` or a `capture_member`
+    row, for example. A list of results (a search's ``returned``) is not
+    read: it is in the payload for a consumer that wants it.
     """
     if not isinstance(payload, dict):
         return []
@@ -247,6 +248,8 @@ def record_ids(kind: str, payload: Any) -> list[str]:
             found.append(_text(record.get("record_id")))
     elif kind in _RECORD_KEYED_DELETES:
         found.append(_text(payload.get("record_id")))
+    elif kind == "import_homed":
+        found.append(_text(payload.get("record")))
     elif kind not in MUTATION_KINDS:
         found.extend(_text(payload.get(name)) for name in _ID_FIELDS)
     out: list[str] = []
