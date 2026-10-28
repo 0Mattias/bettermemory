@@ -356,7 +356,10 @@ no store it can read. `--store PATH` scans another store, a directory
 holding `memory.sqlite` or the file itself; to scan a backup bundle, copy
 its `memory.sqlite` into a directory of its own first, since opening it
 in place breaks the bundle's hash (the scan refuses a file that has a
-bundle's `manifest.json` beside it).
+bundle's `manifest.json` beside it, through a symlink too, and a
+`--store` file with other names, since a hard link to a bundle's file
+has no manifest beside it; `log verify`, `log export`, `log anchor`,
+`stats` and `memory history` refuse a store directory that is a bundle).
 
 When something is found: rotate the credential at its issuer first,
 because the log keeps every version of every record and no command

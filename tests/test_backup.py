@@ -599,6 +599,35 @@ def test_a_bundle_file_that_cannot_be_read_is_mismatched_not_raised(
     assert "does not verify (mismatched)" in out
 
 
+@pytest.mark.parametrize(
+    ("argv", "code"),
+    [
+        (["log", "verify"], 1),
+        (["log", "export"], 2),
+        (["log", "anchor"], 2),
+        (["stats"], 2),
+        (["memory", "history", "01J0000000000000000000000A"], 2),
+    ],
+)
+def test_a_read_only_command_refuses_a_bundle_as_the_store(
+    bundle: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+    code: int,
+) -> None:
+    """With `BETTERMEMORY_DIR` naming a bundle, the read-only commands
+    opened its snapshot in place, which switches the file to WAL: the
+    bundle then failed its hash, and `backup restore` refused it. They
+    refuse it now, with the command's code for a store it cannot read."""
+    before = _tree(bundle)
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(bundle))
+    assert _run_cli(argv, monkeypatch) == code
+    assert "backup bundle" in capsys.readouterr().err
+    assert _tree(bundle) == before
+    assert verify_bundle(bundle)["status"] == "ok"
+
+
 def test_a_snapshot_that_is_not_a_database_is_unreadable(bundle: Path) -> None:
     manifest = _manifest(bundle)
     (bundle / STORE_FILENAME).write_bytes(b"not a database" * 100)

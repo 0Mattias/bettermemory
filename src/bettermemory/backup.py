@@ -612,6 +612,31 @@ def _hex_digest(value: object) -> bool:
     return isinstance(value, str) and _HEX_DIGEST_RE.fullmatch(value) is not None
 
 
+def bundle_manifest_beside(path: Path) -> Path | None:
+    """The manifest of the backup bundle whose file `path` names, or None.
+
+    A bundle's files are read, never opened in place: opening a snapshot
+    as a store switches its journal mode to WAL, which rewrites its
+    header, and the bundle then fails its signed hash, so `verify_bundle`
+    reads it mismatched and `restore_bundle` refuses it. `path` is checked
+    as spelled and resolved, so a symlink to a bundle's file, or a path
+    through a symlink to the bundle directory, is caught. A hard link is
+    another name for the file in a directory of its own, which no path
+    check sees; a caller that opens a file it was handed checks the link
+    count for that."""
+    candidates = [path]
+    with contextlib.suppress(OSError, RuntimeError):
+        candidates.append(path.resolve())
+    for candidate in candidates:
+        manifest = candidate.parent / MANIFEST_NAME
+        try:
+            if manifest.is_file():
+                return manifest
+        except OSError:
+            continue
+    return None
+
+
 def read_manifest(bundle: Path) -> dict[str, Any]:
     """The bundle's manifest, checked for shape; `_ManifestProblem` names
     what is wrong with one that is missing or malformed."""
@@ -1356,6 +1381,7 @@ __all__ = [
     "VERIFY_EXIT",
     "BackupError",
     "SnapshotFacts",
+    "bundle_manifest_beside",
     "create_backup",
     "default_backups_dir",
     "manifest_mac",

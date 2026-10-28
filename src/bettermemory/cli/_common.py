@@ -76,9 +76,25 @@ def open_read_only(
     written. No file at `path` is a usage error; a file that is not a
     store this build reads (not a database, no meta table, a store id or
     schema it refuses) ends the command with the reason and `exit_code`
-    rather than a traceback."""
+    rather than a traceback.
+
+    A file inside a backup bundle (`BETTERMEMORY_DIR` naming the bundle)
+    is refused the same way: opening it switches its journal mode, which
+    rewrites the snapshot's header, and the bundle would then fail its
+    signed hash; `backup verify` checks a bundle on a copy."""
+    from ..backup import bundle_manifest_beside
+
     if not path.is_file():
         parser.error(f"no bettermemory 9 store at {path}")
+    manifest = bundle_manifest_beside(path)
+    if manifest is not None:
+        _refuse(
+            parser,
+            f"{path} is in a backup bundle ({manifest} is beside it), and "
+            "opening it would change it and fail the bundle's hash: `bettermemory "
+            "backup verify` checks a bundle without opening it in place",
+            exit_code,
+        )
     try:
         return Store.open(path, allow_rekey=False)
     except (ValueError, sqlite3.DatabaseError) as exc:

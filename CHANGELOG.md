@@ -308,7 +308,8 @@ stable 9.0.0 follows the candidates' testing.
   paths (`--format settings|managed`). `scan` finds where a secret-shaped
   string persists in memories, tombstones, episodes and conflicts, and
   with `--log` in every log payload, and never prints the value; it
-  refuses a file inside a backup bundle, which opening would change.
+  refuses a file inside a backup bundle, which opening would change,
+  and a `--store` file with other names (hard links).
   (`src/bettermemory/posture.py`, `src/bettermemory/sandbox_settings.py`,
   `src/bettermemory/secret_scan.py`, `src/bettermemory/cli/security_cmd.py`)
 - **`bettermemory stats`, `memory history ID` and `completion

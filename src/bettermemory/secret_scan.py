@@ -83,8 +83,10 @@ another machine scans without its key. Nothing here writes a row, a key
 or a record. Opening a store file does what every opener does to it: a
 file saved in rollback-journal mode (a backup bundle's snapshot) is
 switched to WAL, which changes its bytes, so a file inside a backup
-bundle is refused with the instruction to scan a copy, and a bundle
-stays one `backup verify` passes.
+bundle (spelled through a symlink too) is refused with the instruction
+to scan a copy, and so is a `--store` file with other names (hard
+links), which may be a bundle's under a name no manifest sits beside: a
+bundle stays one `backup verify` passes.
 
 Not covered, and said in every report: freed pages and earlier page
 images in the file and its WAL, the full-text index's token pages, saved
@@ -719,9 +721,9 @@ def add_scan_parser(
             "holding memory.sqlite, or that file itself, such as a copy of a "
             "backup bundle's memory.sqlite in a directory of its own or a "
             "copy from another machine (it needs no key). A file inside a "
-            "backup bundle is refused: opening it would change it and fail "
-            "the bundle's hash. Default: memory.sqlite in the resolved store "
-            "directory."
+            "backup bundle, or one with other names (hard links), is "
+            "refused: opening it would change it and fail the bundle's hash. "
+            "Default: memory.sqlite in the resolved store directory."
         ),
     )
     parser.add_argument(
@@ -736,6 +738,14 @@ def add_scan_parser(
 def _fail(message: str) -> NoReturn:
     sys.stderr.write(f"bettermemory security scan: error: {message}\n")
     raise SystemExit(2)
+
+
+def _other_names(path: Path) -> bool:
+    """Whether the file at `path` has more than one name (hard links)."""
+    try:
+        return path.stat().st_nlink > 1
+    except OSError:
+        return False
 
 
 def run_scan(args: argparse.Namespace) -> None:
@@ -766,17 +776,28 @@ def run_scan(args: argparse.Namespace) -> None:
                 f"to {STORE_FILENAME} in a directory of its own and scan that"
             )
         _fail(f"no bettermemory 9 store at {path}")
-    from .backup import MANIFEST_NAME
+    from .backup import bundle_manifest_beside
 
-    if (path.parent / MANIFEST_NAME).is_file():
-        # Opening a store switches its journal mode to WAL, which rewrites
-        # the header of a file saved in rollback mode: a bundle's snapshot
-        # would then fail its signed hash, and `backup verify` and
-        # `backup restore` would refuse the bundle.
+    # Opening a store switches its journal mode to WAL, which rewrites the
+    # header of a file saved in rollback mode: a bundle's snapshot would
+    # then fail its signed hash, and `backup verify` and `backup restore`
+    # would refuse the bundle. Checked through a symlink too.
+    manifest = bundle_manifest_beside(path)
+    if manifest is not None:
         _fail(
-            f"{path} is in a backup bundle ({path.parent / MANIFEST_NAME} is "
-            "beside it), and opening it would change it and fail the bundle's "
-            f"hash: copy {path.name} to a directory of its own and scan the copy"
+            f"{path} is in a backup bundle ({manifest} is beside it), and "
+            "opening it would change it and fail the bundle's hash: copy "
+            f"{path.name} to a directory of its own and scan the copy"
+        )
+    if store_arg is not None and _other_names(path):
+        # A hard link to a bundle's snapshot is the snapshot under a name
+        # no manifest sits beside. A store file has one name unless it was
+        # linked, and the scan's open would change the file under every
+        # name it has; a copy has one.
+        _fail(
+            f"{path} has other names (hard links), and opening it would change "
+            "the file under each of them, a backup bundle's snapshot among "
+            f"them: copy {path.name} to a directory of its own and scan the copy"
         )
     # `allow_rekey=False`: a scan reads; it must not write a rekey row
     # into the log it is scanning, nor a key beside a copied store.

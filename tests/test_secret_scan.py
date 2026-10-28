@@ -921,6 +921,38 @@ def test_a_backup_bundle_is_refused_not_opened_in_place(
     assert verify_bundle(bundle)["status"] == "ok"
 
 
+@pytest.mark.parametrize("link", ["file_symlink", "dir_symlink", "hard_link"])
+def test_a_link_to_a_bundles_file_is_refused_not_opened(
+    store: Store, tmp_path: Path, capsys: pytest.CaptureFixture[str], link: str
+) -> None:
+    """A symlink to a bundle's file, a symlinked bundle directory and a
+    hard link to the snapshot each name the bundle's file from a directory
+    with no manifest in it: the scan's open switched the snapshot to WAL
+    through them and `backup verify` then read the bundle mismatched."""
+    from bettermemory.backup import create_backup, verify_bundle
+
+    store.write(content=f"deploy uses {_AWS}", scopes=["x"])
+    bundle = Path(create_backup(store.path)["bundle"])
+    before = {p.name: p.read_bytes() for p in bundle.iterdir()}
+    elsewhere = tmp_path / "elsewhere"
+    try:
+        if link == "file_symlink":
+            elsewhere.mkdir()
+            (elsewhere / "memory.sqlite").symlink_to(bundle / "memory.sqlite")
+        elif link == "dir_symlink":
+            elsewhere.symlink_to(bundle, target_is_directory=True)
+        else:
+            elsewhere.mkdir()
+            (elsewhere / "memory.sqlite").hardlink_to(bundle / "memory.sqlite")
+    except OSError:
+        pytest.skip("this account cannot create the link")
+    code, _out, err = _run(capsys, "--store", str(elsewhere))
+    assert code == 2
+    assert "copy" in err
+    assert {p.name: p.read_bytes() for p in bundle.iterdir()} == before
+    assert verify_bundle(bundle)["status"] == "ok"
+
+
 def test_text_report_groups_findings_with_their_remediation(store: Store) -> None:
     live = store.write(content=f"deploy uses {_AWS}", scopes=["x"])
     gone = store.write(content=f"ci token {_GITHUB}", scopes=["x"])
