@@ -12,8 +12,9 @@ paths and Windows drive paths.
 
 The URI cases run on every host on pure paths. A real open through a
 directory whose name holds every character SQLite's URI parser reads as
-syntax runs where such a name can exist (POSIX), and the UNC open runs
-on Windows through this host's admin share when that share answers.
+syntax runs where such a name can exist (POSIX), the UNC open runs on
+Windows through this host's admin share when that share answers, and
+the device-path (``\\\\?\\C:\\...``) open runs on every Windows host.
 """
 
 from __future__ import annotations
@@ -162,7 +163,16 @@ def test_a_relative_path_is_refused(path: PurePath) -> None:
 def test_sqlite_refuses_the_server_authority_as_uri_wrote() -> None:
     """The defect, on SQLite itself and on any host: the server `as_uri`
     made the authority fails the URI's parse, before any file is
-    looked for. (`localhost` is the authority SQLite takes, and drops.)"""
+    looked for. (`localhost` is the authority SQLite takes, and drops.)
+    A SQLite built with SQLITE_ALLOW_URI_AUTHORITY hands a server on as a
+    UNC name instead, so there is no defect to show on it."""
+    probe = sqlite3.connect(":memory:")
+    try:
+        options = {str(row[0]) for row in probe.execute("PRAGMA compile_options")}
+    finally:
+        probe.close()
+    if "ALLOW_URI_AUTHORITY" in options:
+        pytest.skip("this SQLite passes a URI's authority on as a UNC name")
     path = PureWindowsPath(r"\\server\share\dir\memory.sqlite")
     with pytest.raises(sqlite3.OperationalError, match="invalid uri authority: server"):
         sqlite3.connect(f"{_as_uri(path)}?mode=ro", uri=True)
@@ -281,6 +291,23 @@ SITES: dict[str, ModuleType] = {
 }
 
 
+def _read_then_run_site(site: str, named: Path, path: Path, store_id: str) -> None:
+    """Read the store's id through the helper's URI for `named` resolved,
+    then run `site` through `named`; `path` is the store's own name, the
+    daemon leg's marker read back through it.
+
+    The direct read is ``immutable=1``. A ``mode=ro`` read of a WAL-mode
+    store leaves its ``-wal`` and ``-shm`` behind, and the daemon's
+    store-moved check leaves alone a store with sidecars it cannot place
+    (`daemon._tell_successor`), so the daemon leg would find nothing
+    written, whatever the URI."""
+    resolved = named.resolve()
+    assert _read_marker(f"{sqlite_file_uri(resolved)}?mode=ro&immutable=1") == store_id
+    _run_site(site, named, store_id)
+    if site == "daemon":
+        assert _orphan_marker(path) == [_ORPHAN_NAME]
+
+
 @pytest.mark.parametrize("site", sorted(SITES))
 def test_every_query_opener_names_its_file_through_the_helper(
     site: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -288,7 +315,8 @@ def test_every_query_opener_names_its_file_through_the_helper(
     """The key ring binding check (`store._store_id_at`), the posture
     audit's meta read, the backup's read-only reads and the daemon's
     store-moved check each build their URI with `sqlite_file_uri`, for
-    the file they were given."""
+    the file they were given. Each runs after a read through the helper,
+    as the Windows tests below run it."""
     path, store_id = _created_store((tmp_path / "store").resolve())
     seen: list[PurePath] = []
 
@@ -297,10 +325,8 @@ def test_every_query_opener_names_its_file_through_the_helper(
         return sqlite_file_uri(target)
 
     monkeypatch.setattr(SITES[site], "sqlite_file_uri", recording)
-    _run_site(site, path, store_id)
+    _read_then_run_site(site, path, path, store_id)
     assert seen and set(seen) == {path}
-    if site == "daemon":
-        assert _orphan_marker(path) == [_ORPHAN_NAME]
 
 
 def _admin_share_path(path: Path) -> Path:
@@ -331,8 +357,30 @@ def test_a_store_on_a_unc_path_opens_at_every_site(site: str, tmp_path: Path) ->
     resolved = unc.resolve()
     assert PureWindowsPath(resolved).drive.lower() == PureWindowsPath(unc).drive.lower()
     with pytest.raises(sqlite3.Error):
-        _read_marker(f"{resolved.as_uri()}?mode=ro")
-    assert _read_marker(f"{sqlite_file_uri(resolved)}?mode=ro") == store_id
-    _run_site(site, unc, store_id)
-    if site == "daemon":
-        assert _orphan_marker(path) == [_ORPHAN_NAME]
+        _read_marker(f"{resolved.as_uri()}?mode=ro&immutable=1")
+    _read_then_run_site(site, unc, path, store_id)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="a Windows device path")
+@pytest.mark.parametrize("site", sorted(SITES))
+def test_a_store_named_by_a_device_path_opens_at_every_site(
+    site: str, tmp_path: Path
+) -> None:
+    """A store named ``\\\\?\\C:\\...`` (a store directory configured that
+    way, or a name past MAX_PATH that `Path.resolve` leaves prefixed) keeps
+    its prefix through `Path.resolve`, and the helper writes it as
+    ``file:////%3F/C%3A/...``: SQLite hands its VFS ``//?/C:/...``, which
+    Windows reads as the device path it names. It opens at every site, as
+    the device form ``\\\\.\\C:\\...`` (``file:////./C%3A/...``) opens.
+    Python 3.11 to 3.13's `as_uri` wrote ``file://%3F/...`` for it, which
+    SQLite refuses; 3.14's drops the prefix."""
+    path, store_id = _created_store((tmp_path / "device store").resolve())
+    verbatim = Path("\\\\?\\" + str(path))
+    resolved = verbatim.resolve()
+    assert str(resolved).startswith("\\\\?\\"), resolved
+    assert sqlite_file_uri(resolved).startswith("file:////%3F/")
+    device = PureWindowsPath("\\\\.\\" + str(path))
+    uri = sqlite_file_uri(device)
+    assert uri.startswith("file:////./")
+    assert _read_marker(f"{uri}?mode=ro&immutable=1") == store_id
+    _read_then_run_site(site, verbatim, path, store_id)

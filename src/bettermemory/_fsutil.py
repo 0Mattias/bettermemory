@@ -679,10 +679,17 @@ def sqlite_file_uri(path: PurePath) -> str:
       SQLITE_ALLOW_URI_AUTHORITY, and the Windows VFS is handed
       ``//server/share/d/memory.sqlite``, which `GetFullPathNameW` reads
       as the UNC path. A verbatim (``\\\\?\\C:\\d``) or device
-      (``\\\\.\\C:\\d``) path takes the same form, ``file:////%3F/C%3A/d``:
-      a device path spelled with forward slashes, which Windows normalizes
-      as it does every device path but one spelled exactly ``\\\\?\\``. The
-      tests pin that URI; none opens a store through it.
+      (``\\\\.\\C:\\d``) path takes the same form, ``file:////%3F/C%3A/d``
+      and ``file:////./C%3A/d``: a device path spelled with forward
+      slashes, which Windows reads as the device path it names and
+      normalizes as it does every device path but one spelled exactly
+      ``\\\\?\\``. Python 3.14's `Path.as_uri` drops a verbatim prefix
+      instead (``file:///C:/d``), the one path on a drive letter whose URI
+      here is not `as_uri`'s there. The prefix is kept: `Path.resolve`
+      keeps it only where it was given or where the name without it does
+      not reach the same file (one past MAX_PATH, say). A Windows test
+      opens a store through the verbatim form at every site and through
+      the device form directly.
 
     The encoding is `urllib.parse.quote_from_bytes`, as `Path.as_uri`'s:
     every byte but ASCII letters, digits, ``_.-~`` and ``/`` is written
