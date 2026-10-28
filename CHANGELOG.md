@@ -139,9 +139,11 @@ stable 9.0.0 follows the candidates' testing.
   directory is made 0700 before the daemon log is opened in it, and the
   log is created 0600. A hook to its own daemon is still one GET and one
   POST. What a listener's reply names, and what a bundle's manifest or a
-  store's meta says, reaches the text of `status`, `down`, `doctor` and
-  `backup verify|restore` with control and format characters replaced, as
-  `stats` and `memory history` print stored text.
+  store file says about itself, reaches the text of `status`, `down`,
+  `doctor`, `log verify`, `backup verify|restore` and `backup create`'s
+  warnings and errors with each control and format character written as
+  its ASCII escape (`\x1b`), as `stats` and `memory history` print stored
+  text, so the text encodes in any code page.
   (`src/bettermemory/_daemon_client.py`, `src/bettermemory/daemon.py`,
   `src/bettermemory/shim.py`, `src/bettermemory/cli/daemon_cmd.py`)
 - **Nothing for the daemon goes through a proxy.** The client's

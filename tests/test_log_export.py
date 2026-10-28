@@ -1079,3 +1079,27 @@ def test_out_through_a_linked_directory_is_refused(
         assert _run_cli(["log", command, "--out", str(out)], monkeypatch) == 2
         assert "--out:" in capsys.readouterr().err
     assert _run_cli(["log", "verify"], monkeypatch) == 0
+
+
+def test_log_verify_text_prints_the_stores_own_words_as_text(
+    cli_store: Store,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`log verify` reports what the store file says about itself: a
+    row's kind on a problem line, a record id the fold cannot account
+    for, a fingerprint a rekey row names. An editor of the file chooses
+    them; an escape sequence in them reaches the terminal as text, as in
+    `backup verify`'s rendering of the same report."""
+    cli_store.put_memory(_memory("kept"))
+    escape = "x\x1b]52;c;aGk=\x07"
+    outside = _outside(cli_store)
+    last = outside.execute("SELECT MAX(seq) FROM log").fetchone()[0]
+    outside.execute("UPDATE log SET kind = ? WHERE seq = ?", (escape, last))
+    outside.execute("UPDATE memories SET id = ?", (escape,))
+    outside.commit()
+    outside.close()
+    assert _run_cli(["log", "verify"], monkeypatch) == 1
+    out = capsys.readouterr().out
+    assert "\x1b" not in out and "\x07" not in out
+    assert "(x\\x1b]52;c;aGk=\\x07)" in out

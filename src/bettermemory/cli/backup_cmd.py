@@ -205,10 +205,13 @@ def _create(args: argparse.Namespace, *, parser: argparse.ArgumentParser) -> Non
     try:
         result = create_backup(store_file, out_dir=out, include_key=args.include_key)
     except BackupError as exc:
-        sys.stderr.write(f"bettermemory backup create: {exc}\n")
+        # The error and the warnings quote fingerprints read from the
+        # store's meta and its rekey rows, which an editor of the file
+        # chose: printed as text, like the report.
+        sys.stderr.write(_text([f"bettermemory backup create: {exc}"]))
         raise SystemExit(1) from None
     for warning in result["warnings"]:
-        sys.stderr.write(f"bettermemory backup create: warning: {warning}\n")
+        sys.stderr.write(_text([f"bettermemory backup create: warning: {warning}"]))
     if args.json:
         _emit_json(result)
     else:

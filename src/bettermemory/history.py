@@ -125,14 +125,20 @@ _EVENT_DETAIL = ("status", "reason", "fields", "door", "attribution", "triggered
 def printable(text: str) -> str:
     """`text` made safe to print on one terminal line: control and format
     characters (category Cc and Cf: escapes, line breaks, bidi controls,
-    zero-width characters) become U+FFFD, as does a lone surrogate (Cs,
-    which a ``\\ud800`` escape in stored JSON decodes to and which a
-    strict UTF-8 stdout refuses to write); a tab is kept. The text comes
-    from the store, which an editor of the file may have written; a raw
-    escape sequence in a reason or a scope must not reach the terminal as
-    one."""
+    zero-width characters) are written as their Python escape (``\\x1b``,
+    ``\\n``, ``\\u202e``), as is a lone surrogate (Cs, which a
+    ``\\ud800`` escape in stored JSON decodes to and which a strict UTF-8
+    stdout refuses to write); a tab is kept. The text comes from the
+    store, which an editor of the file may have written; a raw escape
+    sequence in a reason or a scope must not reach the terminal as one.
+    The stand-in is ASCII, so it encodes in every code page: U+FFFD did
+    not in cp1252, the one Windows gives a redirected stdout, and a path
+    holding a soft hyphen (Cf, which cp1252 does encode) ended a report in
+    UnicodeEncodeError."""
     return "".join(
-        "�" if ch != "\t" and unicodedata.category(ch) in ("Cc", "Cf", "Cs") else ch
+        ch.encode("unicode_escape").decode("ascii")
+        if ch != "\t" and unicodedata.category(ch) in ("Cc", "Cf", "Cs")
+        else ch
         for ch in text
     )
 

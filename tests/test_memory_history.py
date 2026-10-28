@@ -539,12 +539,22 @@ def test_a_record_deleted_outside_the_store_reads_missing(
 
 
 def test_printable_neutralises_terminal_controls() -> None:
-    assert printable("ok\x1b[31mred‮\n") == "ok�[31mred��"
-    assert printable("a​zero-width") == "a�zero-width"
+    assert printable("ok\x1b[31mred\u202e\n") == ("ok\\x1b[31mred\\u202e\\n")
+    assert printable("a\u200bzero-width") == "a\\u200bzero-width"
     assert printable("tab\tkept, é kept") == "tab\tkept, é kept"
     # A lone surrogate (a `\ud800` escape in stored JSON) would make a
     # strict UTF-8 stdout raise instead of printing the report.
-    assert printable("a\ud800b") == "a�b"
+    assert printable("a\ud800b") == "a\\ud800b"
+
+
+def test_printable_text_encodes_in_any_code_page() -> None:
+    """Windows writes a redirected stdout in its ANSI code page (cp1252)
+    with strict errors. A soft hyphen (U+00AD, category Cf) in a path
+    encodes there; the U+FFFD that stood in for it did not, and the
+    report ended in UnicodeEncodeError with nothing printed."""
+    for text in ("store\u00adhere", "x\x1b]52;c;aGk=\x07", "a\ud800b"):
+        printable(text).encode("cp1252")
+        assert printable(text).isascii()
 
 
 def test_text_output_never_carries_a_raw_escape(store: Store) -> None:
@@ -568,7 +578,7 @@ def test_the_header_is_made_printable_too(store: Store, store_dir: Path) -> None
     outside.close()
     text = render_text(record_history(store, memory.id))
     assert "\x1b" not in text and "\x07" not in text
-    assert "  provenance local�]0;title�\n" in text
+    assert "  provenance local\\x1b]0;title\\x07\n" in text
 
 
 def test_a_prune_committed_mid_read_does_not_read_as_tampering(

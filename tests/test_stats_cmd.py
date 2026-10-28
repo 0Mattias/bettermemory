@@ -280,7 +280,7 @@ def test_text_names_every_section(store: Store) -> None:
 
 def test_store_text_is_made_printable(store: Store, store_dir: Path) -> None:
     memory = _put(store, "tools", days_ago=0, client="evil\x1b[2Jclient")
-    assert "evil�[2Jclient 1" in render(collect(store, days=1, now=_NOW))
+    assert "evil\\x1b[2Jclient 1" in render(collect(store, days=1, now=_NOW))
     # Not only names: ids, stamps and the engine version in `meta` are
     # whatever an editor of the file wrote there too.
     outside = sqlite3.connect(str(store_dir / STORE_FILENAME))
@@ -296,7 +296,7 @@ def test_store_text_is_made_printable(store: Store, store_dir: Path) -> None:
     text = render(collect(store, days=1, now=_NOW))
     for raw in ("\x1b", "\x07", "\x9b"):
         assert raw not in text
-    assert "engine 9�31m" in text
+    assert "engine 9\\x9b31m" in text
 
 
 def test_a_record_s_day_is_its_utc_day(store: Store) -> None:

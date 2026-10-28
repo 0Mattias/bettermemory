@@ -513,7 +513,13 @@ def _cli_log_anchor(
 
 
 def render_report(report: dict[str, Any]) -> str:
-    """The text form of a `log_verify` report."""
+    """The text form of a `log_verify` report. It quotes what the store
+    file says about itself (the fingerprints rekey rows name, a row's
+    kind, a record id), which an editor of the file chose: each line goes
+    through `history.printable`, so an escape sequence in them stays
+    text, as in `backup verify`'s rendering of the same report."""
+    from ..history import printable
+
     head = report["head"]
     head_text = head["status"]
     if "seq" in head:
@@ -581,4 +587,4 @@ def render_report(report: dict[str, Any]) -> str:
             lines.append(
                 f"    seq {problem['seq']} ({problem['kind']}): {problem['problem']}"
             )
-    return "\n".join(lines) + "\n"
+    return "\n".join(printable(line) for line in lines) + "\n"

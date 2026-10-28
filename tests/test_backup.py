@@ -1302,7 +1302,34 @@ def test_a_bundles_text_reaches_the_terminal_without_its_escapes(
     assert "\x1b" not in out and "\x07" not in out
     # The verify report a refused restore carries keeps its own lines.
     assert "\nbettermemory backup verify: mismatched\n    bundle " in out
-    assert "\N{REPLACEMENT CHARACTER}    bundle" not in out
+    assert "\\n    bundle" not in out
+
+
+@pytest.mark.parametrize("include_key", [False, True])
+def test_backup_creates_warnings_and_errors_reach_the_terminal_as_text(
+    store_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    include_key: bool,
+) -> None:
+    """`backup create` quotes the fingerprint meta names in a warning (no
+    key matches it) and in the error `--include-key` ends with. Anyone who
+    can write the store file chooses it; an OSC 52 clipboard write in it
+    reaches stderr as text."""
+    conn = sqlite3.connect(str(store_file))
+    conn.execute(
+        "UPDATE meta SET value = ? WHERE key = 'key_fingerprint'",
+        ("\x1b]52;c;aGk=\x07",),
+    )
+    conn.commit()
+    conn.close()
+    argv = ["backup", "create", "--out", str(store_file.parent.parent / "b")]
+    if include_key:
+        argv.append("--include-key")
+    assert _run_cli(argv, monkeypatch) == (1 if include_key else 0)
+    err = capsys.readouterr().err
+    assert "\\x1b]52;c;aGk=\\x07" in err
+    assert "\x1b" not in err and "\x07" not in err
 
 
 def test_a_snapshot_from_a_newer_schema_is_unreadable_here(bundle: Path) -> None:
