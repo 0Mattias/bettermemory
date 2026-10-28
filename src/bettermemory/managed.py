@@ -286,9 +286,12 @@ def read_registry_text(location: RegistryValue = MANAGED_REGISTRY) -> str | None
     """The managed TOML text a registry value holds, None when the key or
     the value is absent, which is the only reading of "no managed config".
 
-    Read through the registry's 64-bit view (``KEY_WOW64_64KEY``), so a
-    32-bit Python reads the value a 64-bit one reads instead of being
-    redirected under WOW6432Node, a key an administrator never wrote.
+    Read through the registry's 64-bit view (``KEY_WOW64_64KEY``). WOW64
+    lists ``SOFTWARE\\Policies`` among its shared keys today, so a 32-bit
+    and a 64-bit process, writer or reader, already meet at one key; the
+    flag keeps it so should a Windows release redirect the key under
+    WOW6432Node, as Microsoft says its lists of redirected keys may change.
+    A 32-bit Python then still reads what a 64-bit tool wrote.
 
     Fails closed, as an unreadable managed file does. A key this account
     may not open, a value of a type other than REG_SZ or REG_MULTI_SZ, or
@@ -297,7 +300,15 @@ def read_registry_text(location: RegistryValue = MANAGED_REGISTRY) -> str | None
     set. A REG_MULTI_SZ is its strings joined with newlines, one line
     each. A leading byte-order mark, which text pasted from a file saved
     by Windows PowerShell 5.1 can carry, is dropped, as the file's
-    ``utf-8-sig`` decoding drops it."""
+    ``utf-8-sig`` decoding drops it.
+
+    Text the file could not hold is refused as the file refuses bytes
+    that are not UTF-8. The registry stores UTF-16 and hands over an
+    unpaired surrogate as it is; TOML parses one inside a string or a
+    comment without complaint, so a pinned ``[storage] directory`` would
+    carry it to the store's open and stop there with a bare
+    UnicodeEncodeError naming nothing. Refused here, it fails the load
+    with the file's own error, naming the value."""
     try:
         reg = _winreg()
         with reg.OpenKey(
@@ -319,6 +330,10 @@ def read_registry_text(location: RegistryValue = MANAGED_REGISTRY) -> str | None
             "the settings it pins. Give every account that runs bettermemory "
             "read access to the key, or remove the value."
         ) from exc
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ValueError(f"malformed managed config in {location}: {exc}") from exc
     return text.removeprefix("\ufeff")
 
 

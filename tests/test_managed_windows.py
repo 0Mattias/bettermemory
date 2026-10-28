@@ -78,8 +78,10 @@ class _Key:
 class FakeRegistry:
     """HKEY_LOCAL_MACHINE as the reader sees it, behind a module that has
     winreg's names. Values live in the 64-bit view only: a reader that
-    opens a key without ``KEY_WOW64_64KEY`` is a 32-bit process redirected
-    under WOW6432Node, where an administrator wrote nothing."""
+    opens a key without ``KEY_WOW64_64KEY`` is a 32-bit process on a
+    Windows that redirects the key under WOW6432Node (none does today,
+    ``SOFTWARE\\Policies`` being shared), where an administrator wrote
+    nothing."""
 
     def __init__(self) -> None:
         self.keys: dict[str, dict[str, tuple[Any, int]]] = {}
@@ -486,6 +488,53 @@ def test_a_text_type_whose_data_is_not_text_fails_closed(
     assert str(exc.value).startswith(
         f"managed config {_LABEL} is a {name} value whose data does not read as text"
     )
+
+
+@pytest.mark.parametrize(
+    ("value", "kind"),
+    [
+        ('[storage]\ndirectory = "C:/store\udc80"\n', REG_SZ),
+        (["# \ud800", "[telemetry]", "enabled = false"], REG_MULTI_SZ),
+    ],
+)
+def test_text_no_file_could_hold_fails_closed_as_the_file_does(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    registry: FakeRegistry,
+    value: str | list[str],
+    kind: int,
+) -> None:
+    """An unpaired surrogate is the registry's form of bytes that are not
+    UTF-8: its UTF-16 holds one, TOML parses it inside a string or a
+    comment, and a pinned directory would carry it to the store's open.
+    The file refuses those bytes, so the value refuses the text, with the
+    same error naming its source, and the check reports the same."""
+    user = _user_config(tmp_path)
+    text = value if isinstance(value, str) else "\n".join(value)
+    managed_file = tmp_path / "managed.toml"
+    managed_file.write_bytes(text.encode("utf-8", "surrogatepass"))
+    monkeypatch.setattr(_managed, "managed_config_path", lambda: managed_file)
+    with pytest.raises(ValueError) as from_file:
+        load_config(user)
+    assert str(from_file.value).startswith(
+        f"malformed managed config in {managed_file}: "
+    )
+
+    monkeypatch.setattr(_managed, "managed_config_path", lambda: None)
+    registry.set(value, kind)
+    with pytest.raises(ValueError) as from_registry:
+        load_config(user)
+    message = str(from_registry.value)
+    assert message.startswith(f"malformed managed config in {_LABEL}: ")
+    assert "surrogates not allowed" in message
+    message.encode("utf-8")  # the error itself prints
+
+    _config.default_config_path().write_text("", encoding="utf-8")
+    report = config_cmd.check_report()
+    assert report["loads"] is False
+    [unreadable] = [f for f in report["findings"] if f["code"] == "unreadable"]
+    assert unreadable["file"] == "managed"
+    assert unreadable["message"].startswith(f"malformed managed config in {_LABEL}: ")
 
 
 # ---------------------------------------------------------------------------
