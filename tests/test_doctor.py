@@ -375,6 +375,27 @@ def test_the_text_lists_every_raised_finding_of_a_check() -> None:
     assert "fine" not in text
 
 
+def test_the_text_lists_a_warning_read_before_the_failure_it_reports() -> None:
+    """The check's line carries the first finding of its worst status,
+    not the first raised: a warning that came before stays listed, and
+    the failure is not printed twice."""
+    check = doctor._from_findings(
+        "claude_code",
+        [
+            doctor.Finding("warn", "the earlier warning", "fix the warning"),
+            doctor.Finding("fail", "the failure", "fix the failure"),
+        ],
+        ok_summary="fine",
+        details={},
+    )
+    assert check.summary == "the failure (and 1 more)"
+    text = doctor.render_text(doctor.report([check]))
+    assert "warn: the earlier warning" in text
+    assert "fix: fix the warning" in text
+    assert "fail: the failure" not in text
+    assert text.count("fix: fix the failure") == 1
+
+
 def test_exit_codes_by_status() -> None:
     assert doctor.exit_code("ok") == 0
     assert doctor.exit_code("fail") == 1
@@ -632,6 +653,18 @@ def test_the_home_default_rule(env: Env, monkeypatch: pytest.MonkeyPatch) -> Non
     assert check.details["directory"] == str((env.home / ".claude-memory").resolve())
 
 
+def test_the_home_store_seen_from_the_home_directory_is_the_home_rule(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Run from the home directory, the cwd rule finds the home store
+    itself: that is the default install, not a repository's store."""
+    monkeypatch.delenv("BETTERMEMORY_DIR")
+    (env.home / ".claude-memory").mkdir()
+    check = env.checks(cwd=env.home.resolve())["store_location"]
+    assert check.status == "ok", check
+    assert check.details["rule"] == "home"
+
+
 def test_a_store_directory_that_is_a_file_fails(env: Env) -> None:
     env.store_dir.write_bytes(b"a file where the store's directory should be")
     checks = env.checks()
@@ -864,11 +897,44 @@ def test_an_unreadable_state_file_warns(env: Env) -> None:
     assert state_file.exists()
 
 
-def test_a_held_lock_with_no_state_file_fails(env: Env) -> None:
+def test_a_held_lock_with_no_state_file_fails(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(doctor, "DAEMON_START_GRACE_SECONDS", 0.0)
     with _held_lock(env):
         check = env.checks()["daemon"]
     assert check.status == "fail"
     assert "no state file names it" in check.summary
+    # A long first start holds the lock with no file too: the remedy
+    # says to wait for it before stopping anything.
+    assert "still starting" in (check.remedy or "")
+
+
+def test_a_daemon_that_writes_its_state_file_during_the_wait_is_ok(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A daemon takes the lock before it writes its state file: a start
+    caught between the two is waited for, not reported as a fault."""
+    store_path = env.store_dir / STORE_FILENAME
+    monkeypatch.setattr(doctor, "DAEMON_START_GRACE_SECONDS", 30.0)
+    monkeypatch.setattr(
+        _daemon_client,
+        "health",
+        lambda port, timeout=1.0: {
+            "status": "ok",
+            "version": _daemon_client.package_version(),
+            "store": str(store_path),
+        },
+    )
+    started = threading.Timer(0.2, lambda: _state(env, pid=4242))
+    with _held_lock(env):
+        started.start()
+        try:
+            check = env.checks()["daemon"]
+        finally:
+            started.join()
+    assert check.status == "ok", check
+    assert check.summary.startswith("running: pid 4242")
 
 
 def test_a_free_lock_file_with_no_state_file_is_ok(env: Env) -> None:
@@ -1055,6 +1121,32 @@ def test_a_hook_that_runs_a_missing_binary_fails(env: Env) -> None:
     assert check.status == "fail"
     assert "the Stop hook runs" in check.summary
     assert "does not exist" in check.summary
+
+
+def test_a_hook_path_the_shell_expands_is_read_expanded(env: Env) -> None:
+    """A hook runs through a shell, so `~` and `$HOME` in its program word
+    name the binary the shell will find there."""
+    binary = env.home / ".local" / "bin" / "bettermemory"
+    binary.parent.mkdir(parents=True)
+    binary.write_bytes(b"#!/bin/sh\n")
+    env.settings(
+        {
+            "hooks": _hooks(
+                {
+                    "SessionStart": "~/.local/bin/bettermemory hook session-start",
+                    "UserPromptSubmit": "$HOME/.local/bin/bettermemory hook prompt",
+                    "Stop": "~/.local/bin/bettermemory hook stop --quiet || true",
+                }
+            )
+        }
+    )
+    env.write_json(
+        env.home / ".claude.json",
+        {"mcpServers": {"bettermemory": {"command": str(binary)}}},
+    )
+    check = env.checks()["claude_code"]
+    assert check.status == "ok", check
+    assert set(check.details["hooks"]) == set(doctor.CLAUDE_HOOK_EVENTS)
 
 
 def test_a_hook_whose_binary_is_not_on_path_fails(env: Env) -> None:

@@ -49,6 +49,7 @@ import shutil
 import sqlite3
 import sys
 import sysconfig
+import time
 import tomllib
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -96,6 +97,13 @@ DISK_FAIL_BYTES = 64 * 1024 * 1024
 #: above. Twice the store's size is the room a copy of it needs (a
 #: backup, a VACUUM, a restore), whichever is larger.
 DISK_WARN_BYTES = 1024 * 1024 * 1024
+
+#: How long the daemon check waits for the state file of a process that
+#: holds the store's lock without one: an ordinary start writes it within
+#: this, and a lock still held with no file after it is the fault (or a
+#: long first-start migration, which the remedy names).
+DAEMON_START_GRACE_SECONDS = 2.0
+_GRACE_POLL_SECONDS = 0.05
 
 #: The Claude Code hook events the plugin's hooks.json wires, and the
 #: `bettermemory hook` word each one runs.
@@ -512,21 +520,24 @@ def _store_rule(
     """Which rule chose `directory`, read back from the result rather than
     re-derived, so a rule the loader gains (or skips) is not misnamed: the
     environment variable and `[storage] directory` decide whenever they are
-    set, the cwd's `.claude-memory` when the result is that directory, the
-    home default when it is that one."""
+    set, the home default when the result is that directory, the cwd's
+    `.claude-memory` when it is that one. Home is asked before the cwd:
+    run from the home directory, the cwd rule finds the home store itself,
+    and naming that the repository-store risk would warn on the default
+    install from the directory a terminal opens in."""
     from .config import GLOBAL_DIR_NAME, PROJECT_DIR_NAME
 
     if env_value:
         return "env"
     if config.storage.directory:
         return "config"
+    with contextlib.suppress(OSError, RuntimeError):
+        if directory == (Path.home() / GLOBAL_DIR_NAME).resolve():
+            return "home"
     if cwd is not None:
         with contextlib.suppress(OSError):
             if directory == (cwd / PROJECT_DIR_NAME).resolve():
                 return "cwd"
-    with contextlib.suppress(OSError, RuntimeError):
-        if directory == (Path.home() / GLOBAL_DIR_NAME).resolve():
-            return "home"
     return "other"
 
 
@@ -836,6 +847,25 @@ def _lock_held(path: Path) -> bool:
     return False
 
 
+def _await_state_file(state_file: Path, lock_path: Path) -> dict[str, Any] | None:
+    """The state file of a daemon that holds the store's lock and has not
+    written one yet, waited for up to `DAEMON_START_GRACE_SECONDS`. A
+    daemon takes the lock first and writes its state file only once its
+    port is bound (`daemon.serve`), so a start caught between the two
+    holds the lock with no file; the wait ends when the file appears,
+    when the lock is given back, or at the deadline."""
+    from . import _daemon_client as _dc
+
+    deadline = time.monotonic() + DAEMON_START_GRACE_SECONDS
+    while True:
+        state = _dc.read_state_file(state_file)
+        if state is not None or state_file.exists() or not _lock_held(lock_path):
+            return state
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(_GRACE_POLL_SECONDS)
+
+
 def check_daemon(ctx: _Context) -> Check:
     """The daemon for this store: its state file, whether it answers
     `/health`, whether the store it serves is this one, and its version
@@ -859,6 +889,8 @@ def check_daemon(ctx: _Context) -> Check:
         "lock_file": str(lock_path),
     }
     state = _dc.read_state_file(state_file)
+    if state is None and not state_file.exists() and _lock_held(lock_path):
+        state = _await_state_file(state_file, lock_path)
     if state is None:
         if state_file.exists():
             return Check(
@@ -875,7 +907,10 @@ def check_daemon(ctx: _Context) -> Check:
                 f"a process holds the store's daemon lock ({lock_path}) but no "
                 "state file names it: no client can reach it, and no other "
                 "daemon can start",
-                f"stop the process holding {lock_path}, then `bettermemory up`",
+                "if a daemon is still starting (the first start of an upgraded "
+                "store migrates it before it binds its port), wait and run doctor "
+                f"again; otherwise stop the process holding {lock_path}, then "
+                "`bettermemory up`",
                 details,
             )
         return Check(
@@ -1189,8 +1224,12 @@ def check_claude_code(ctx: _Context) -> Check:
     for event, commands in hooks.items():
         for command in commands:
             words = _command_words(command)
+            # A hook runs through a shell, which expands `~` and `$HOME`
+            # in the program word; an MCP entry is spawned directly and
+            # does not, so only the hooks expand here.
+            program = os.path.expandvars(os.path.expanduser(words[0]))
             problem = launcher_problem(
-                words[0],
+                program,
                 what=f"the {event} hook",
                 remedy=(
                     f"point the hook at an installed bettermemory, or replace the "
@@ -1499,7 +1538,20 @@ def render_text(document: Mapping[str, Any]) -> str:
             for finding in check["details"].get("findings", [])
             if finding["status"] != OK
         ]
-        for finding in raised[1:]:
+        # The check's own line carries the first finding of its worst
+        # status (`_from_findings`), which need not be the first raised:
+        # a warning read before a failure stays above it in the list.
+        headline = next(
+            (
+                index
+                for index, finding in enumerate(raised)
+                if finding["status"] == check["status"]
+            ),
+            None,
+        )
+        for index, finding in enumerate(raised):
+            if index == headline:
+                continue
             lines.append(f"{indent}{finding['status']}: {finding['summary']}")
             if finding["remedy"]:
                 lines.append(f"{indent}  fix: {finding['remedy']}")
