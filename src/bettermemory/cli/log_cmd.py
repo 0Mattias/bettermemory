@@ -1,36 +1,169 @@
-"""`bettermemory log verify`: the store's hash-chained log against its key,
-its head checkpoint and a fold of its own rows."""
+"""`bettermemory log`: the store's hash-chained log. `log verify` checks
+it against its key, its head checkpoint, a fold of its own rows and, on
+request, anchors kept off the host; `log export` writes it as JSON Lines
+for a SIEM (`bettermemory.audit_export`); `log anchor` takes one of those
+anchors (`bettermemory.anchor`).
+
+Every command here is read-only: the store opens with
+``allow_rekey=False``, so a missing key is reported and never replaced,
+and nothing is written into the log being read."""
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import os
 import sys
-from typing import Any
+import tempfile
+from collections.abc import Iterator, Sequence
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, TextIO
+
+if TYPE_CHECKING:
+    from ..store import Store
 
 
 def add_subparser(
     sub: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> argparse.ArgumentParser:
-    """Register the ``log`` subparser and its ``verify`` command."""
+    """Register the ``log`` subparser and its ``verify``, ``export`` and
+    ``anchor`` commands."""
     help_text = (
         "The bettermemory 9 store's hash-chained log. `log verify` checks "
         "every row's MAC against the key kept outside the store, the chain "
         "between rows, the head checkpoint against the last row, and every "
         "table against a replay of the log. Exit 0 when the log verifies, "
-        "1 when it is tampered or cannot be verified."
+        "1 when it is tampered or cannot be verified. `log export` writes "
+        "the log as JSON Lines for an audit pipeline, and `log anchor` "
+        "takes an anchor to keep off this host for `log verify --anchor`."
     )
     parser = sub.add_parser("log", help=help_text, description=help_text)
     log_sub = parser.add_subparsers(dest="log_cmd")
     verify_text = (
-        "Verify the log: MACs, chain, head and fold. Prints a report and "
-        "exits 0 only when every check passes."
+        "Verify the log: MACs, chain, head and fold, and every --anchor "
+        "given. Prints a report and exits 0 only when every check passes; "
+        "1 when the log is tampered or cannot be verified (an anchor that "
+        "no longer matches is tampering); 2 when there is no store or an "
+        "anchor file cannot be read."
     )
     verify = log_sub.add_parser("verify", help=verify_text, description=verify_text)
     verify.add_argument(
         "--json",
         action="store_true",
         help="Emit the report as JSON instead of text.",
+    )
+    verify.add_argument(
+        "--anchor",
+        action="append",
+        default=None,
+        metavar="FILE",
+        help=(
+            "Also check the anchors in FILE (written by `log anchor`; one JSON "
+            "object, or JSON Lines of them): the log must still hold each "
+            "anchor's seq with the same MAC and the same chain digest. A "
+            "failed anchor adds the problem anchor_mismatch. An anchor of "
+            "another store is listed as other_store and changes nothing. "
+            "Repeat for several files. Without it the report is unchanged."
+        ),
+    )
+    export_text = (
+        "Write the log as JSON Lines, one object per row in seq order, for "
+        "a SIEM or an audit archive: seq, ts, kind, class, session, actor, "
+        "record ids, the payload, the MAC and the MAC it chains to, the "
+        "segment's key fingerprint and whether the row's MAC verifies "
+        "under the key held here (null when it is not held). Bodies and "
+        "other free text are replaced by their sha256 and length unless "
+        "--include-bodies. Read-only and deterministic: the same log gives "
+        "the same bytes. Exit 0 when the export is written, 1 when the "
+        "output closed before it was, 2 when there is no store, an "
+        "argument is wrong or --out cannot be written. The export is a "
+        "trail, not a verdict: run `log verify` for that."
+    )
+    export = log_sub.add_parser("export", help=export_text, description=export_text)
+    export.add_argument(
+        "--since-seq",
+        type=int,
+        default=0,
+        metavar="N",
+        help=(
+            "Export only the rows after seq N. A cron job passes the last "
+            "seq it exported (the through_seq --out reports). Default 0: "
+            "from the first row."
+        ),
+    )
+    export.add_argument(
+        "--until-seq",
+        type=int,
+        default=None,
+        metavar="M",
+        help="Export only the rows up to and including seq M.",
+    )
+    export.add_argument(
+        "--kinds",
+        default=None,
+        metavar="K1,K2",
+        help=(
+            "Export only rows of these kinds, comma-separated "
+            "(memory_put,tombstone_put,rekey for example)."
+        ),
+    )
+    export.add_argument(
+        "--include-bodies",
+        action="store_true",
+        help=(
+            "Keep every payload as the log holds it, memory bodies, "
+            "takeaways and episode bodies included, every version of each. "
+            "The output is then as sensitive as the store file. Warns on "
+            "stderr."
+        ),
+    )
+    export.add_argument(
+        "--out",
+        default=None,
+        metavar="FILE",
+        help=(
+            "Write the lines to FILE (owner-only, 0600, replaced atomically "
+            "when the export completes) instead of stdout, and print a "
+            "summary: rows written, the seq range, and the through_seq to "
+            "pass as the next --since-seq."
+        ),
+    )
+    export.add_argument(
+        "--json",
+        action="store_true",
+        help=(
+            "With --out, print the summary as JSON. The rows themselves are "
+            "always JSON Lines."
+        ),
+    )
+    anchor_text = (
+        "Take an anchor of the log: the store id, the last row's seq and "
+        "MAC, a SHA-256 over every row's MAC up to it, and the time. Keep it "
+        "off this host (a ticket, a git repository, a WORM bucket); `log "
+        "verify --anchor FILE` then shows whether history up to that seq "
+        "was rewritten since, even by a process that holds the key. Prints "
+        "the anchor as one JSON line, or writes it to --out. Exit 0 when "
+        "the anchor is taken, 2 when there is no store, its log is empty or "
+        "--out cannot be written."
+    )
+    anchor = log_sub.add_parser("anchor", help=anchor_text, description=anchor_text)
+    anchor.add_argument(
+        "--out",
+        default=None,
+        metavar="FILE",
+        help=(
+            "Write the anchor to FILE (owner-only, 0600, replaced atomically) "
+            "and print where it went, instead of printing the anchor."
+        ),
+    )
+    anchor.add_argument(
+        "--json",
+        action="store_true",
+        help=(
+            "With --out, print {anchor, out} as JSON. Without it the anchor "
+            "is printed as JSON either way."
+        ),
     )
     return parser
 
@@ -45,12 +178,23 @@ def run(
         sub_parser.print_help()
         raise SystemExit(2)
     if args.log_cmd == "verify":
-        _cli_log_verify(json_out=args.json, parser=sub_parser)
+        _cli_log_verify(
+            json_out=args.json, parser=sub_parser, anchor_files=args.anchor or ()
+        )
+        return
+    if args.log_cmd == "export":
+        _cli_log_export(args, parser=sub_parser)
+        return
+    if args.log_cmd == "anchor":
+        _cli_log_anchor(args, parser=sub_parser)
         return
     sub_parser.error(f"unknown log subcommand: {args.log_cmd!r}")
 
 
-def _cli_log_verify(*, json_out: bool, parser: argparse.ArgumentParser) -> None:
+def _open_read_only(parser: argparse.ArgumentParser) -> Store:
+    """The resolved store, opened for reading. `allow_rekey=False`: a
+    command that reads the log must not write a rekey row into it. A
+    missing key is then reported, not fixed."""
     from ..config import load_config
     from ..store import STORE_FILENAME, Store
 
@@ -58,11 +202,38 @@ def _cli_log_verify(*, json_out: bool, parser: argparse.ArgumentParser) -> None:
     path = directory / STORE_FILENAME
     if not path.is_file():
         parser.error(f"no bettermemory 9 store at {path}")
-    # `allow_rekey=False`: a verification must not write a rekey row into
-    # the log it is verifying. A missing key is then reported, not fixed.
-    store = Store.open(path, allow_rekey=False)
+    return Store.open(path, allow_rekey=False)
+
+
+def _cli_log_verify(
+    *,
+    json_out: bool,
+    parser: argparse.ArgumentParser,
+    anchor_files: Sequence[str] = (),
+) -> None:
+    from ..anchor import (
+        Anchor,
+        AnchorFileError,
+        check_anchors,
+        load_anchors,
+        merge_into_report,
+    )
+
+    # Read every anchor before the store: a file that is not one is a
+    # usage error, reported before any work and never as a verdict.
+    anchors: list[tuple[str, Anchor]] = []
+    for name in anchor_files:
+        try:
+            anchors.extend((name, anchor) for anchor in load_anchors(name))
+        except AnchorFileError as exc:
+            parser.error(str(exc))
+    store = _open_read_only(parser)
     try:
         report = store.log_verify()
+        if anchor_files:
+            merge_into_report(
+                report, check_anchors(store.conn, store.store_id, anchors)
+            )
     finally:
         store.close()
     if json_out:
@@ -70,6 +241,191 @@ def _cli_log_verify(*, json_out: bool, parser: argparse.ArgumentParser) -> None:
     else:
         sys.stdout.write(render_report(report))
     raise SystemExit(0 if report["status"] == "ok" else 1)
+
+
+def _output_path(parser: argparse.ArgumentParser, name: str) -> Path:
+    """``--out``'s path, its directory required to exist: a mistyped
+    path is an error, not a tree created on the way (as `export -o`)."""
+    path = Path(name).expanduser()
+    if not path.parent.is_dir():
+        parser.error(f"--out: no directory {path.parent}")
+    if path.is_dir():
+        parser.error(f"--out: {path} is a directory")
+    return path
+
+
+@contextlib.contextmanager
+def _owner_only_output(path: Path) -> Iterator[TextIO]:
+    """A text stream whose contents land at ``path`` only when the block
+    completes: written to a temporary file beside it, created owner-only
+    (0600) before the first byte, flushed, fsynced, then renamed over
+    ``path``. A failure part way leaves ``path`` as it was and removes the
+    temporary file, so a cron job never reads half an export."""
+    from .._fsutil import fsync_dir, fsync_file, replace_atomic
+
+    fd, name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=path.name + ".", suffix=".tmp"
+    )
+    tmp = Path(name)
+    done = False
+    try:
+        if sys.platform != "win32":
+            # mkstemp creates 0600 already; the fchmod says so for a
+            # platform whose default differs.
+            with contextlib.suppress(OSError):
+                os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            yield handle
+            handle.flush()
+            fsync_file(handle.fileno())
+        replace_atomic(tmp, path)
+        with contextlib.suppress(OSError):
+            os.chmod(path, 0o600)
+        fsync_dir(path.parent)
+        done = True
+    finally:
+        if not done:
+            with contextlib.suppress(OSError):
+                tmp.unlink()
+
+
+def _parse_kinds(parser: argparse.ArgumentParser, raw: str | None) -> list[str] | None:
+    if raw is None:
+        return None
+    kinds = [name.strip() for name in raw.split(",") if name.strip()]
+    if not kinds:
+        parser.error("--kinds: name at least one kind")
+    return kinds
+
+
+def _blackhole_stdout() -> None:
+    """Point stdout's descriptor at /dev/null after the reader went away,
+    so the interpreter's own flush at exit does not fail again and
+    overrule the exit code (the recipe from the `signal` docs' SIGPIPE
+    note, as `session_start_cmd` uses it). Silent when stdout has no real
+    descriptor (a capture object, an embedding host)."""
+    try:
+        fd = sys.stdout.fileno()
+        devnull = os.open(os.devnull, os.O_WRONLY)
+    except (AttributeError, OSError, ValueError):
+        return
+    try:
+        os.dup2(devnull, fd)
+    except OSError:
+        pass
+    finally:
+        os.close(devnull)
+
+
+def _cli_log_export(
+    args: argparse.Namespace, *, parser: argparse.ArgumentParser
+) -> None:
+    from ..audit_export import export
+
+    since = int(args.since_seq)
+    until = None if args.until_seq is None else int(args.until_seq)
+    if since < 0:
+        parser.error("--since-seq must be 0 or more")
+    if until is not None and until < since:
+        parser.error("--until-seq must be at least --since-seq")
+    kinds = _parse_kinds(parser, args.kinds)
+    out = None if args.out is None else _output_path(parser, args.out)
+    if args.include_bodies:
+        sys.stderr.write(
+            "bettermemory log export: --include-bodies exports every body, "
+            "takeaway and other free text the log holds, every version of each, "
+            "removed records' included; keep the output as you keep the store "
+            "file\n"
+        )
+    store = _open_read_only(parser)
+    try:
+        if out is None:
+            try:
+                summary = export(
+                    store,
+                    sys.stdout.write,
+                    since_seq=since,
+                    until_seq=until,
+                    kinds=kinds,
+                    include_bodies=args.include_bodies,
+                )
+                sys.stdout.flush()
+            except BrokenPipeError:
+                _blackhole_stdout()
+                raise SystemExit(1) from None
+        else:
+            try:
+                with _owner_only_output(out) as handle:
+                    summary = export(
+                        store,
+                        handle.write,
+                        since_seq=since,
+                        until_seq=until,
+                        kinds=kinds,
+                        include_bodies=args.include_bodies,
+                    )
+            except OSError as exc:
+                parser.error(f"--out: cannot write {out}: {exc}")
+    finally:
+        store.close()
+    if summary.log_last_seq is not None and summary.log_last_seq < since:
+        sys.stderr.write(
+            f"bettermemory log export: the log ends at seq {summary.log_last_seq}, "
+            f"before --since-seq {since}: the store was restored or its tail "
+            f"removed since the last export, or this is another store; "
+            f"run `bettermemory log verify`\n"
+        )
+    if out is None:
+        raise SystemExit(0)
+    if args.json:
+        sys.stdout.write(json.dumps({**summary.to_dict(), "out": str(out)}) + "\n")
+    elif summary.rows:
+        sys.stdout.write(
+            f"bettermemory log export: {summary.rows} row(s), seq "
+            f"{summary.first_seq} to {summary.last_seq}, written to {out}; "
+            f"next --since-seq {summary.through_seq}\n"
+        )
+    else:
+        sys.stdout.write(
+            f"bettermemory log export: no rows to export after seq {since}, "
+            f"written to {out}; next --since-seq {summary.through_seq}\n"
+        )
+    raise SystemExit(0)
+
+
+def _cli_log_anchor(
+    args: argparse.Namespace, *, parser: argparse.ArgumentParser
+) -> None:
+    from .._fsutil import atomic_write_bytes
+    from ..anchor import take
+
+    out = None if args.out is None else _output_path(parser, args.out)
+    store = _open_read_only(parser)
+    try:
+        anchor = take(store)
+    except ValueError as exc:
+        parser.error(str(exc))
+    finally:
+        store.close()
+    if out is None:
+        sys.stdout.write(anchor.to_line())
+        raise SystemExit(0)
+    try:
+        atomic_write_bytes(
+            out, anchor.to_line().encode("utf-8"), mode_before_rename=0o600
+        )
+    except OSError as exc:
+        parser.error(f"--out: cannot write {out}: {exc}")
+    if args.json:
+        sys.stdout.write(
+            json.dumps({"anchor": anchor.to_dict(), "out": str(out)}, indent=2) + "\n"
+        )
+    else:
+        sys.stdout.write(
+            f"bettermemory log anchor: seq {anchor.seq} of store "
+            f"{anchor.store_id} anchored to {out}; keep it off this host\n"
+        )
+    raise SystemExit(0)
 
 
 def render_report(report: dict[str, Any]) -> str:
@@ -116,6 +472,15 @@ def render_report(report: dict[str, Any]) -> str:
                 lines.append(f"      unaccounted {key}")
             for key in counts["missing"]:
                 lines.append(f"      missing {key}")
+    # Present only when `--anchor` was given, so a report without anchors
+    # renders exactly as it did before anchors existed.
+    if "anchors" in report:
+        lines.append(f"  anchors {len(report['anchors'])}")
+        for entry in report["anchors"]:
+            status = entry["status"]
+            if "reason" in entry:
+                status += f" ({entry['reason']})"
+            lines.append(f"    seq {entry['seq']}: {status} ({entry['file']})")
     if report["problems"]:
         lines.append("  problems")
         for problem in report["problems"]:
