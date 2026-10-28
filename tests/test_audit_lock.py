@@ -213,8 +213,11 @@ def test_no_ignore_file_is_no_entries(tmp_path: Path) -> None:
 
 
 def test_the_repositorys_ignore_file_loads() -> None:
-    """Shipped with no live entries; it must parse, or the workflow exits 2."""
-    assert audit_lock.load_ignores(TOOLS / "audit-ignore.toml") == []
+    """It must parse, or the workflow exits 2. Its entries are not pinned:
+    adding an acceptance is the file's purpose, and whether one has expired
+    is the audit's verdict on the day, not this test's."""
+    entries = audit_lock.load_ignores(TOOLS / "audit-ignore.toml")
+    assert all(e.id and e.reason for e in entries)
 
 
 @pytest.mark.parametrize(
@@ -231,6 +234,12 @@ def test_the_repositorys_ignore_file_loads() -> None:
         (
             '[[ignore]]\nid = "X-1"\nreason = "r"\nexpires = 2026-12-31\n'
             '[[ignore]]\nid = "x-1"\nreason = "again"\nexpires = 2026-12-31\n',
+            "listed twice",
+        ),
+        (
+            '[[ignore]]\nid = "X-1"\nreason = "r"\nexpires = 2026-12-31\npackage = "Web_Frame"\n'
+            '[[ignore]]\nid = " X-1"\nreason = "again"\nexpires = 2026-12-31\n'
+            'package = "web-frame"\n',
             "listed twice",
         ),
         ("ignore = 3\n", "array of tables"),
@@ -561,6 +570,31 @@ def test_a_fixture_without_a_named_vulnerability_exits_2(
     assert "no recorded vulnerability NOPE-1" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [("[]", "not a JSON object"), ('{"results": []}', "must be objects")],
+)
+def test_a_fixture_of_the_wrong_shape_exits_2(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, body: str, message: str
+) -> None:
+    """Not a traceback: its exit status 1 would read as a finding."""
+    fixture = tmp_path / "wrong.json"
+    fixture.write_text(body, encoding="utf-8")
+    code = audit_lock.main(
+        [
+            "--lock",
+            str(LOCK),
+            "--offline",
+            str(fixture),
+            "--ignore-file",
+            str(tmp_path / "n"),
+        ],
+        today=TODAY,
+    )
+    assert code == 2
+    assert message in capsys.readouterr().err
+
+
 # ----------------------------------------------------------- OSV itself
 
 
@@ -712,6 +746,34 @@ def test_fold_keeps_separate_vulnerabilities_apart() -> None:
         ("GHSA-2", ("CVE-2",), "two"),
         ("OSV-3", (), "three spread over lines"),
     ]
+
+
+def test_fold_merges_groups_a_later_record_links() -> None:
+    """GHSA-1 and PYSEC-2 name nothing in common, so each starts a group;
+    OSV-3 names an alias of each, so all three are one vulnerability. One
+    finding, led by the GHSA record, which an ignore entry naming GHSA-1
+    then covers whole."""
+    docs = [
+        {"id": "GHSA-1", "aliases": ["CVE-1"], "summary": "one"},
+        {
+            "id": "PYSEC-2",
+            "aliases": ["CVE-2"],
+            "affected": [
+                {
+                    "package": {"ecosystem": "PyPI", "name": "x"},
+                    "ranges": [{"events": [{"introduced": "0"}, {"fixed": "2.0"}]}],
+                }
+            ],
+        },
+        {"id": "OSV-3", "aliases": ["CVE-1", "CVE-2"]},
+    ]
+    (folded,) = audit_lock.fold(docs, "x")
+    assert folded.id == "GHSA-1"
+    assert folded.aliases == ("CVE-1", "CVE-2", "OSV-3", "PYSEC-2")
+    assert folded.summary == "one"
+    assert folded.fixed == ("2.0",)
+    entry = audit_lock.IgnoreEntry(id="GHSA-1", reason="r", expires=TODAY)
+    assert entry.matches(folded, "x")
 
 
 # ------------------------------------------------------- the workflow

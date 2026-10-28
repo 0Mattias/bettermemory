@@ -150,8 +150,16 @@ class OsvFixture:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
             raise AuditError(f"{path}: {exc}") from exc
-        self._results: Mapping[str, Any] = data.get("results", {})
-        self._vulns: Mapping[str, Any] = data.get("vulns", {})
+        # A fixture of the wrong shape is an audit that cannot run (exit 2),
+        # not a traceback, whose exit status 1 would read as a finding.
+        if not isinstance(data, Mapping):
+            raise AuditError(f"{path}: not a JSON object")
+        results = data.get("results", {})
+        vulns = data.get("vulns", {})
+        if not isinstance(results, Mapping) or not isinstance(vulns, Mapping):
+            raise AuditError(f"{path}: `results` and `vulns` must be objects")
+        self._results: Mapping[str, Any] = results
+        self._vulns: Mapping[str, Any] = vulns
         self.path = path
 
     def querybatch(self, queries: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -319,7 +327,10 @@ def load_ignores(path: Path) -> list[IgnoreEntry]:
             raise AuditError(f"{where} ({vuln_id}) has no expires date (YYYY-MM-DD)")
         if package is not None and not isinstance(package, str):
             raise AuditError(f"{where} ({vuln_id}): package must be a string")
-        key = f"{vuln_id.upper()}|{package or ''}"
+        # Compared the way `matches` compares them, so two spellings of one
+        # package (or a stray space around an id) cannot list an id twice.
+        narrowed = _uvlock.normalize(package) if package else ""
+        key = f"{vuln_id.strip().upper()}|{narrowed}"
         if key in seen:
             raise AuditError(f"{where}: {vuln_id} is listed twice")
         seen.add(key)
@@ -398,22 +409,35 @@ def fold(docs: Iterable[Mapping[str, Any]], name: str) -> list[Advisory]:
     aliases. Records whose ids and aliases overlap are one finding, led by
     the preferred record, carrying every other id as an alias and the union
     of their fixed versions, so a report of nine vulnerabilities reads nine
-    and not eighteen."""
+    and not eighteen.
+
+    The overlap is followed through: a record met later can name ids from
+    two groups that do not name each other (a GHSA listing CVE-1, a PYSEC
+    listing CVE-2, a third record listing both), and then the two groups
+    are one vulnerability and merge. Left apart, the second would stay open
+    after an ignore entry named the first."""
     groups: list[tuple[set[str], list[Mapping[str, Any]]]] = []
     for doc in sorted(docs, key=lambda d: _preference(str(d["id"]))):
         names = {
             str(doc["id"]).upper(),
             *(str(a).upper() for a in doc.get("aliases") or ()),
         }
-        for known, members in groups:
-            if known & names:
-                known |= names
-                members.append(doc)
-                break
-        else:
+        joined = [group for group in groups if group[0] & names]
+        if not joined:
             groups.append((names, [doc]))
+            continue
+        known, members = joined[0]
+        known |= names
+        members.append(doc)
+        for other_known, other_members in joined[1:]:
+            known |= other_known
+            members.extend(other_members)
+        groups = [g for g in groups if not any(g is other for other in joined[1:])]
     out: list[Advisory] = []
     for _known, members in groups:
+        # Merging can interleave the groups' records; the lead and the order
+        # of fixed versions follow the preference order either way.
+        members.sort(key=lambda d: _preference(str(d["id"])))
         lead = advisory(members[0], name)
         aliases = {
             str(a) for m in members for a in (m["id"], *(m.get("aliases") or ()))
