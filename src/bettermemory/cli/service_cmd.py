@@ -49,6 +49,14 @@ COMMAND_MARGIN_SECONDS = 30
 
 #: The most of a failed command's error output carried into a report.
 _ERROR_CHARS = 500
+#: Every subcommand's exit code when the config does not load: the store
+#: the unit would serve is not known, and the daemon would not start on it.
+EXIT_NO_CONFIG = 2
+
+
+class _ConfigUnreadable(Exception):
+    """The config the unit's daemon would read does not load; the message
+    is the loader's, which names the file."""
 
 
 def add_subparser(
@@ -61,7 +69,8 @@ def add_subparser(
         "after a crash. `install` writes and loads the unit, `uninstall` "
         "unloads and removes it, `status` reports it, `print` writes it to "
         "stdout only. Exit 2 on other platforms, with the command to "
-        "supervise yourself."
+        "supervise yourself, and when the config (config.toml or the managed "
+        "file) does not load, with the loader's message."
     )
     parser = sub.add_parser("service", help=help_text, description=help_text)
     service_sub = parser.add_subparsers(dest="service_cmd")
@@ -70,7 +79,8 @@ def add_subparser(
         "Write the unit for this install and this store, stop a daemon of the "
         "store running outside the supervisor, and load the unit, which starts "
         "the daemon. Exit 0 when written and loaded, 1 when loading failed or "
-        "the interpreter lives in a package manager's cache."
+        "the interpreter lives in a package manager's cache, 2 when the config "
+        "does not load."
     )
     install = service_sub.add_parser(
         "install", help=install_text, description=install_text
@@ -84,7 +94,8 @@ def add_subparser(
 
     uninstall_text = (
         "Unload the unit, which stops its daemon, and remove the file. Exit 0 "
-        "when removed or not installed, 1 when the file could not be removed."
+        "when removed or not installed, 1 when the file could not be removed, "
+        "2 when the config does not load."
     )
     uninstall = service_sub.add_parser(
         "uninstall", help=uninstall_text, description=uninstall_text
@@ -100,14 +111,16 @@ def add_subparser(
         "Report the unit: installed or not, whether it matches what `install` "
         "would write now, whether the supervisor has it loaded, and the "
         "daemon's state. Changes nothing. Exit 0 installed and loaded, 1 not "
-        "installed, 3 installed but not loaded."
+        "installed, 3 installed but not loaded, 2 when the config does not "
+        "load."
     )
     status = service_sub.add_parser("status", help=status_text, description=status_text)
     status.add_argument("--json", action="store_true", help="Print JSON.")
 
     print_text = (
         "Write the unit `install` would write to stdout, for review or for "
-        "deployment by other means. Writes no file. Exit 0."
+        "deployment by other means. Writes no file. Exit 0, or 2 when the "
+        "config does not load."
     )
     printer = service_sub.add_parser("print", help=print_text, description=print_text)
     printer.add_argument(
@@ -155,13 +168,17 @@ def _service_store(pinned: dict[str, str], state_dir: Path) -> Path:
     the config's own rule, read from the state directory. The config is
     loaded without its first-run write (``create=False``), since `print`
     and `status` write nothing: an absent file is the defaults, with the
-    organisation-managed file's pins over them, as the daemon reads it."""
+    organisation-managed file's pins over them, as the daemon reads it. A
+    config that does not load raises `_ConfigUnreadable`."""
     from ..config import STORE_FILENAME, load_config
 
     named = pinned.get("BETTERMEMORY_DIR")
     if named:
         return Path(named).resolve() / STORE_FILENAME
-    config = load_config(create=False)
+    try:
+        config = load_config(create=False)
+    except (ValueError, OSError) as exc:
+        raise _ConfigUnreadable(str(exc)) from exc
     return config.resolved_directory(cwd=state_dir) / STORE_FILENAME
 
 
@@ -546,7 +563,15 @@ def run(args: argparse.Namespace, *, sub_parser: argparse.ArgumentParser) -> Non
     supervisor = units.supervisor_for(_platform())
     if supervisor is None:
         raise SystemExit(_unsupported(json_out))
-    ctx = _context(supervisor)
+    try:
+        ctx = _context(supervisor)
+    except _ConfigUnreadable as exc:
+        # The reason on stderr and 2, not a traceback whose exit 1 `status`
+        # documents as "not installed".
+        sys.stderr.write(
+            f"bettermemory service {command}: error: the config does not load: {exc}\n"
+        )
+        raise SystemExit(EXIT_NO_CONFIG) from None
     load = not getattr(args, "no_load", False)
     if command == "install":
         raise SystemExit(_install(ctx, load=load, json_out=json_out))
@@ -562,6 +587,7 @@ def run(args: argparse.Namespace, *, sub_parser: argparse.ArgumentParser) -> Non
 __all__ = [
     "COMMAND_MARGIN_SECONDS",
     "EXIT_NOT_INSTALLED",
+    "EXIT_NO_CONFIG",
     "EXIT_NOT_LOADED",
     "EXIT_UNSUPPORTED",
     "add_subparser",

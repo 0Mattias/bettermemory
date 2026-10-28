@@ -936,6 +936,44 @@ def test_the_store_is_the_one_a_daemon_in_the_state_directory_resolves(
     assert named == (tmp_path / "s").resolve() / "memory.sqlite"
 
 
+@pytest.mark.parametrize("source", ["config", "managed"])
+@pytest.mark.parametrize("command", ["install", "uninstall", "status", "print"])
+def test_a_config_that_does_not_load_ends_with_its_reason_and_2(
+    command: str,
+    source: str,
+    svc: Callable[[str], tuple[Path, Path]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    managed_config_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """With BETTERMEMORY_DIR unset the unit's store comes from the config.
+    One that does not load, a malformed config.toml or managed file, ended
+    every subcommand in a ValueError traceback and exit 1, which `status`
+    documents as "not installed". It ends with the loader's message and
+    2 now, and nothing runs or is written."""
+    from bettermemory import config as _config
+
+    svc("darwin")
+    monkeypatch.delenv("BETTERMEMORY_DIR", raising=False)
+    config_path = tmp_path / "cfg" / "config.toml"
+    monkeypatch.setattr(_config, "default_config_path", lambda: config_path)
+    if source == "config":
+        config_path.parent.mkdir(parents=True)
+        config_path.write_text("storage = 5\n", encoding="utf-8")
+    else:
+        managed_config_path.write_text("daemon = 5\n", encoding="utf-8")
+    _no_subprocess(monkeypatch)
+    argv = ["service", command]
+    if command in ("install", "uninstall"):
+        argv.append("--no-load")
+    assert _main(argv, monkeypatch) == service_cmd.EXIT_NO_CONFIG
+    err = capsys.readouterr().err
+    assert "the config does not load" in err and "Traceback" not in err
+    assert not (tmp_path / "home").exists()
+    assert config_path.exists() == (source == "config")
+
+
 def test_a_command_whose_output_does_not_decode_is_still_reported() -> None:
     """A supervisor command's output is read as text with what does not
     decode replaced: bytes in another encoding (a path in `launchctl
