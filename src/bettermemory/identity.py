@@ -135,6 +135,14 @@ ENV_HARNESS_SESSION = "CLAUDE_CODE_SESSION_ID"
 #: has a hard byte cap. Anything longer than this is not an identity.
 MAX_DECLARED_LEN = 256
 
+#: The longest non-ASCII value `_clean` walks for format characters, four
+#: times the cap. The walk reads a code point at a time in Python, and a
+#: `clientInfo` name can be megabytes long (the transport's body cap is
+#: 4 MiB), read again on every request: 200 ms a request for a 4 MB name.
+#: A value longer than this cannot be a name padded with marks, so it is
+#: dropped unread, as every over-long value was before the walk existed.
+_MAX_FORMAT_WALK_LEN = 4 * MAX_DECLARED_LEN
+
 #: How long `middleware` waits for a client to answer `roots/list` before
 #: recording "no roots" for the connection. One round-trip per connection,
 #: never per request.
@@ -281,14 +289,16 @@ def _clean(value: object, *, strip_format: bool = True) -> str | None:
     Silently dropping a bad value is the right failure here — the fields
     are evidence, and a mangled header is no evidence of anything.
 
-    Format characters are stripped first (`_strip_format_characters`).
-    A declared client or model name is printed in the health text, the
-    rollback output and every record's actor block, and a right-to-left
-    override or a zero-width space there makes one name read as another.
-    They are stripped rather than refused: a client that pads its name
-    with a byte-order mark keeps its attribution, under the name it
-    reads as. A value that was nothing but format characters is blank
-    and dropped.
+    Format characters are stripped before the checks
+    (`_strip_format_characters`). A declared client or model name is
+    printed in the health text, the rollback output and every record's
+    actor block, and a right-to-left override or a zero-width space there
+    makes one name read as another. They are stripped rather than
+    refused: a client that pads its name with a byte-order mark keeps its
+    attribution, under the name it reads as. A value that was nothing but
+    format characters is blank and dropped. ASCII holds no format
+    character, so an ASCII value is not walked, and a value longer than
+    `_MAX_FORMAT_WALK_LEN` is dropped before it is.
 
     `strip_format=False` keeps them for the two values whose exact code
     points are their meaning, not a label: a declared workspace path,
@@ -298,8 +308,11 @@ def _clean(value: object, *, strip_format: bool = True) -> str | None:
     could make two distinct subjects one)."""
     if not isinstance(value, str):
         return None
-    text = _strip_format_characters(value) if strip_format else value
-    text = text.strip()
+    text = value.strip()
+    if strip_format and not text.isascii():
+        if len(text) > _MAX_FORMAT_WALK_LEN:
+            return None
+        text = _strip_format_characters(text).strip()
     if not text or len(text) > MAX_DECLARED_LEN:
         return None
     if any(ch.isspace() and ch != " " for ch in text) or any(

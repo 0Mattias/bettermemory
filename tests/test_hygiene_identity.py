@@ -66,6 +66,29 @@ def test_a_value_padded_to_the_cap_with_format_characters_is_kept() -> None:
     assert identity._clean(raw) == "c"
 
 
+def test_an_over_long_or_ascii_value_is_never_walked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The walk is a Python loop over code points, and a `clientInfo` name
+    is read on every request: a value too long to be a padded name is
+    dropped before it, and an ASCII value, which holds no format
+    character, skips it."""
+
+    # Surrounding whitespace is not counted against the walk's bound, as
+    # it never counted against the cap.
+    padded = " " * (8 * identity.MAX_DECLARED_LEN) + "h\u00e9rm\u200bes"
+    assert identity._clean(padded) == "h\u00e9rmes"
+
+    def walked(text: str) -> str:
+        raise AssertionError(f"walked a {len(text)}-character value")
+
+    monkeypatch.setattr(identity, "_strip_format_characters", walked)
+    assert identity._clean("\u00e9" * (4 * 1024 * 1024)) is None
+    assert identity._clean("\u00e9" * (identity._MAX_FORMAT_WALK_LEN + 1)) is None
+    assert identity._clean("  claude-code  ") == "claude-code"
+    assert identity._clean("x" * (identity.MAX_DECLARED_LEN + 1)) is None
+
+
 def test_declared_identity_resolves_without_format_characters(undeclared: None) -> None:
     caller = identity.resolve(
         fake_ctx(
@@ -104,7 +127,13 @@ def test_a_declared_workspace_path_keeps_its_code_points(undeclared: None) -> No
     assert from_env.workspace.path == path
 
 
-def test_the_attested_principal_is_never_folded(undeclared: None) -> None:
+def test_the_attested_principal_is_never_folded(
+    undeclared: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The SDK's principal is ASCII JSON today, so a subject's format
+    character reaches `_clean` escaped; the principal must still be read
+    with its code points kept, whatever binding answers."""
+    from mcp.server import request_state
     from mcp.server.auth.middleware.auth_context import auth_context_var
     from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
     from mcp.server.auth.provider import AccessToken, principal_components
@@ -123,7 +152,12 @@ def test_the_attested_principal_is_never_folded(undeclared: None) -> None:
     finally:
         auth_context_var.reset(reset)
     assert caller.actor.principal == compact_json(principal_components(token))
-    assert identity._clean("user\u200b42", strip_format=False) == "user\u200b42"
+    # A binding that answers with the raw code points keeps them.
+    monkeypatch.setattr(
+        request_state, "authenticated_principal", lambda _ctx: "user\u200b42"
+    )
+    caller = identity.resolve(fake_ctx().request_context, environ={})
+    assert caller.actor.principal == "user\u200b42"
 
 
 # ---------------------------------------------------------------------------
