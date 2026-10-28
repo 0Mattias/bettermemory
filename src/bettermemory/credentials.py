@@ -462,6 +462,27 @@ def _merged_secret_spans(text: str) -> list[tuple[int, int, str]]:
     return merged
 
 
+def secret_spans(text: str) -> list[tuple[int, int, str]]:
+    """Every credential span in `text`, merged and in order, as
+    ``(start, end, kind)`` tuples: the spans this module's detectors see,
+    for a caller that must redact a secret rather than refuse the text.
+
+    The one public door to the detector list. The signed log's query
+    previews (`events.redact_query`) once kept their own five patterns
+    beside these fourteen shapes, and the two lists drifted: a `gho_`,
+    `sk-proj-`, `sk_live_`, `xoxb-` or `AIza` token reached the log's
+    preview whole or in part while the write gate refused the same token
+    in a body. A caller that splices markers from these spans gets every
+    shape a detector here learns, with no second list to keep in step.
+
+    The spans are disjoint and sorted by start, so a caller splices them
+    right to left with valid offsets (`_redact_all` does). `kind` is the
+    detector's name, the same one `find_credential_markers` reports, and
+    the masked-token guard and the generic rule's `_looks_like_secret`
+    gate apply exactly as they do at the write gate."""
+    return _merged_secret_spans(text)
+
+
 def _redact_all(text: str) -> str:
     """Replace every credential span in `text` with a ``[redacted:kind]``
     placeholder. Used to build leak-free snippets — no raw secret survives
@@ -550,4 +571,5 @@ def find_credential_markers(content: str) -> list[CredentialMatch]:
 __all__ = [
     "CredentialMatch",
     "find_credential_markers",
+    "secret_spans",
 ]

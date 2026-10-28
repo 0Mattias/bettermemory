@@ -87,7 +87,9 @@ def read_words(
 
 def record(deps: ToolHandlers, door: str, records: list[str], words: Words) -> None:
     """The ``standing_guard`` row: the change to `records` through `door`
-    that `words` carried."""
+    that `words` carried. An audit row, not telemetry: the recorder writes
+    it with ``[telemetry] enabled = false`` too (`events.is_audit_row`),
+    since the trail is what lets a wrong change be found and reverted."""
     deps.recorder.record(
         "standing_guard",
         door=door,

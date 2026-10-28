@@ -5,8 +5,12 @@ process, and calls `record()` once per invocation. The recorder carries
 what the store's `record_event` does not know on its own: the session
 and the worktree an event belongs to (the request's own when the caller
 declared them, else the process's), and the admin attribution a CLI
-command stamps on its writes. `enabled=False`
-makes every call a no-op, so handlers call unconditionally.
+command stamps on its writes. `enabled=False` (`[telemetry] enabled =
+false`) makes every telemetry call a no-op, so handlers call
+unconditionally; an audit row (`is_audit_row`: the standing guard's row
+and the override evidence on a write or an update) is recorded whatever
+the switch says, because it is the trail SECURITY.md promises, not a
+measurement.
 
 A failure to record is swallowed at WARNING: telemetry never fails the
 tool call it describes. Query text is never stored verbatim: `query` and
@@ -19,10 +23,12 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from . import identity
+from .credentials import secret_spans
 
 if TYPE_CHECKING:
     from .store import Store
@@ -51,6 +57,17 @@ _QUERY_HASH_PREFIX = 16
 # a shared bug report). Patterns are applied BEFORE the 32-char
 # truncation so the truncation never captures a partial secret.
 #
+# These five run first and keep their markers, so a query they strip
+# reads in the log exactly as it read before the second pass existed.
+# The second pass is the write gate's own detector list
+# (`credentials.secret_spans`), which covers what these five never knew
+# (`gho_`/`ghs_` tokens, `sk-proj-` keys, Stripe, Slack, Google, the
+# `password=…` assignment and the rest) and every shape it learns
+# later: the preview and the gate read one list. The five stay because
+# they are wider than the detectors in places a redaction can afford to
+# be (an all-lowercase `sk-` body, a masked `AKIA` run), and because
+# their markers are already in signed logs.
+#
 # Order matters: the more-specific Anthropic key pattern runs before
 # the generic `sk-` pattern so `sk-ant-…` is labelled correctly rather
 # than caught as a generic OpenAI key.
@@ -76,6 +93,59 @@ HARNESS_STAMPED_KINDS: frozenset[str] = frozenset(
 HARNESS_SESSION_FIELD = "harness_session"
 
 
+# Audit rows: the rows `[telemetry] enabled = false` does not switch off.
+# Telemetry measures how the tools are used, and a user may decline to
+# be measured. An audit row records that a guard was passed on the
+# user's say-so or by an escape hatch, and SECURITY.md promises it is on
+# the log ("Every such change is one signed `standing_guard` row … so a
+# wrong one is found and reverted"). Before 9.0.0rc12 the recorder's
+# switch dropped both kinds with the rest, so a store with telemetry off
+# changed standing memories and committed forced or acknowledged writes
+# with no trail at all, while the guard itself still ran.
+#
+#: The kinds that are audit rows whatever their fields: the standing
+#: guard's row (`handlers._guard.record`), one per change the user's
+#: quoted words carried.
+AUDIT_KINDS: frozenset[str] = frozenset({"standing_guard"})
+
+#: The kinds whose rows are audit rows when they carry override evidence:
+#: memory_write's and memory_update's events, which name the escape
+#: hatches a committed change used (`forced`, `credentials_acknowledged`,
+#: `markers_acknowledged`, `user_claims_acknowledged`,
+#: `truncation_acknowledged`). A row of these kinds with no hatch used
+#: (`forced=False`, every `*_acknowledged` empty or false) is telemetry.
+OVERRIDE_EVIDENCE_KINDS: frozenset[str] = frozenset({"write", "update"})
+
+#: The suffix every override-evidence field but `forced` carries.
+_ACKNOWLEDGED_SUFFIX = "_acknowledged"
+
+
+def is_audit_row(kind: str, fields: Mapping[str, Any]) -> bool:
+    """Whether a `kind` row with `fields` is an audit row, recorded with
+    telemetry off: a standing guard row, or a write or update that used
+    an escape hatch (`force=True`, or an acknowledge flag that waved a
+    gate's hit through). Read on the fields as the handler passes them,
+    so a new `*_acknowledged` field on either kind is covered without a
+    second list to keep in step."""
+    if kind in AUDIT_KINDS:
+        return True
+    if kind not in OVERRIDE_EVIDENCE_KINDS:
+        return False
+    if fields.get("forced") is True:
+        return True
+    return any(
+        bool(value)
+        for key, value in fields.items()
+        if key.endswith(_ACKNOWLEDGED_SUFFIX)
+    )
+
+
+#: The marker the second pass splices in for a span the five patterns
+#: above left: the detector's own kind (`credentials.secret_spans`), in
+#: the five patterns' spelling.
+_DETECTOR_MARKER = "[REDACTED:{kind}]"
+
+
 def _strip_known_secrets(text: str) -> str:
     """Replace known secret token shapes with redaction markers.
 
@@ -84,9 +154,21 @@ def _strip_known_secrets(text: str) -> str:
     secret-stripped text so a repeated query with the same secret
     still correlates, but the secret bytes don't feed into the hash
     input either.
+
+    Two passes: the five legacy patterns with their markers, then every
+    span the write gate's detectors still see in what is left (see the
+    comment on `_SECRET_PATTERNS`). The second pass reads the first's
+    output, so a marker is never cut by a later splice, and a text in
+    which neither pass finds a shape comes back as the same string: its
+    hash, preview and length are what they were before the second pass
+    existed. A legacy marker alone does not read as a secret to the
+    second pass: the markers carry no digit, which the generic
+    assignment rule needs, and no vendor prefix.
     """
     for pattern, replacement in _SECRET_PATTERNS:
         text = pattern.sub(replacement, text)
+    for start, end, kind in reversed(secret_spans(text)):
+        text = f"{text[:start]}{_DETECTOR_MARKER.format(kind=kind)}{text[end:]}"
     return text
 
 
@@ -101,12 +183,12 @@ def redact_query(text: str) -> dict[str, Any]:
     rather than the full secret). The full text is not recoverable
     from the event log.
 
-    Known token shapes (Anthropic / OpenAI / GitHub / AWS) are
-    stripped to opaque markers BEFORE the 32-char preview is taken,
-    so the preview never carries a partial high-entropy secret. The
-    pre-strip text length is retained as ``len`` so downstream
-    triage can still see "this query was 87 chars" without seeing
-    what those chars were.
+    Known token shapes (every shape the write gate's credential
+    detectors know, plus the five legacy patterns) are stripped to
+    opaque markers BEFORE the 32-char preview is taken, so the preview
+    never carries a partial high-entropy secret. The pre-strip text
+    length is retained as ``len`` so downstream triage can still see
+    "this query was 87 chars" without seeing what those chars were.
     """
     original_len = len(text)
     stripped = _strip_known_secrets(text)
@@ -180,7 +262,10 @@ class Recorder:
         return _h.capture_origin().worktree_root
 
     def record(self, kind: str, **fields: Any) -> None:
-        if not self.enabled:
+        # Off means no telemetry, not no trail: an audit row passes the
+        # switch (`is_audit_row`) and is stamped and signed exactly as it
+        # would be with telemetry on.
+        if not self.enabled and not is_audit_row(kind, fields):
             return
         if self.attribution:
             fields.setdefault("attribution", self.attribution)
@@ -249,8 +334,11 @@ def _event_id_list(value: Any) -> list[str]:
 
 
 __all__ = [
+    "AUDIT_KINDS",
     "HARNESS_SESSION_FIELD",
     "HARNESS_STAMPED_KINDS",
+    "OVERRIDE_EVIDENCE_KINDS",
     "Recorder",
+    "is_audit_row",
     "redact_query",
 ]
