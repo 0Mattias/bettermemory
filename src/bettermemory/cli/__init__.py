@@ -34,6 +34,7 @@ from . import (
     backup_cmd,
     capture_cmd,
     daemon_cmd,
+    doctor_cmd,
     episodes,
     eval as eval_cmd,
     export,
@@ -132,6 +133,7 @@ def _build_parser() -> tuple[
         "try": try_cmd.add_subparser(sub),
         "backup": backup_cmd.add_subparser(sub),
         "service": service_cmd.add_subparser(sub),
+        "doctor": doctor_cmd.add_subparser(sub),
         "up": daemon_cmd.add_up(sub),
         "down": daemon_cmd.add_down(sub),
         "status": daemon_cmd.add_status(sub),
@@ -276,6 +278,9 @@ def main() -> None:
         return
     if cmd == "service":
         service_cmd.run(args, sub_parser=subparsers["service"])
+        return
+    if cmd == "doctor":
+        doctor_cmd.run(args)
         return
 
     # argparse already rejects unknown subcommands; this is belt-and-

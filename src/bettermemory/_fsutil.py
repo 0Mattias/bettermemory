@@ -110,7 +110,8 @@ def ensure_owner_only_dir(path: Path, *, parents: bool = False) -> None:
     keeps their choice. Best-effort: POSIX mode bits are meaningless on
     Windows, and a sandboxed or network filesystem can reject `chmod` on a
     directory the caller genuinely owns. In both cases the directory is still
-    usable and `doctor` reports the residual exposure — the same guard shape
+    usable and `bettermemory security audit` reports the residual exposure
+    (`bettermemory doctor` points there) — the same guard shape
     `atomic_write_bytes` uses for its fchmod.
     """
     if parents:
