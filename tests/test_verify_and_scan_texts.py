@@ -42,6 +42,22 @@ def test_log_verify_help_names_the_origin_check_and_its_outcomes(
     assert "<store_id>.origin" in text
 
 
+def test_log_verify_help_reads_a_lost_key_as_unverifiable_not_tampered(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Since the origin anchor names the key that signed its row, a row no
+    held key verifies because that key was lost reads `unverifiable`
+    (`log.check_origin`); only one its own key, still held, does not
+    verify is `origin_mismatch`. The help said any row signed by no held
+    key was tampering, which sent a user who lost a key file after the
+    wrong cause."""
+    text = _help(["log", "verify"], monkeypatch, capsys)
+    assert "signed by no held key" not in text
+    assert "the key that signed it" in text
+    assert "one that key does not verify while it is still held" in text
+    assert "When that key is no longer held (its key file was lost)" in text
+
+
 def test_the_log_group_help_names_the_origin_check(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
