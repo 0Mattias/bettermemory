@@ -62,7 +62,9 @@ snippet to the model that already holds the body; the scan's output goes
 to a terminal, a ticket or a CI log, so it reports an offset into the
 field instead, which locates the hit for `memory_show` without carrying a
 byte of it. Field paths are printed only where a JSON key is a plain
-identifier and no detector fires on it.
+identifier and no detector fires on it, and a record id or a log kind
+only where it is a plain token no detector fires on: the id column and
+an event's `id` are scanned text like any other.
 
 The acknowledgement comes from the telemetry events. A committed
 `write` and a successful `update` event always carry
@@ -159,6 +161,13 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 _PLAIN_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_-]{0,63}")
 _MASKED_KEY = "*"
 
+# A record id or a log kind printed as it is: a plain token (a ULID, a
+# `cf-` conflict id, a log kind). The id column and an event's `id` are
+# scanned text, and a row written outside the store can hold anything in
+# them or in a log row's kind, a secret or a terminal escape included, so
+# anything else, and a token a detector fires on, prints as `*`.
+_PLAIN_TOKEN_RE = re.compile(r"[A-Za-z0-9_.:-]{1,128}")
+
 _ROTATE = "Rotate the credential at its issuer"
 REMEDIATION = {
     "memories": (
@@ -203,11 +212,12 @@ class SecretFinding:
     `location` is a table name or ``"log"``; `seq` and `log_kind` are set
     for a log row only. `offset` is the character offset of the first hit
     of `kind` in the field and `occurrences` how many hits of that kind
-    the field holds; neither carries any of the value. `record_state` is
-    None for a log row that names no record (a membership or control row,
-    a telemetry event about something that is not a record this store
-    holds). `acknowledged` is None when the log holds no gated write for
-    the record."""
+    the field holds; neither carries any of the value. `record_id` and
+    `log_kind` are `*` when they are not plain tokens or a detector fires
+    on them. `record_state` is None for a log row that names no record (a
+    membership or control row, a telemetry event about something that is
+    not a record this store holds). `acknowledged` is None when the log
+    holds no gated write for the record."""
 
     location: str
     record_id: str | None
@@ -302,6 +312,17 @@ def _segment(key: object) -> str:
     text = str(key)
     if _PLAIN_KEY_RE.fullmatch(text) and not _merged_secret_spans(text):
         return text
+    return _MASKED_KEY
+
+
+def _shown(value: str | None) -> str | None:
+    """A record id or a log kind as a finding prints it: as it is when it
+    is a plain token no detector fires on, `*` otherwise. The state and
+    acknowledgement lookups use the value as stored."""
+    if value is None:
+        return None
+    if _PLAIN_TOKEN_RE.fullmatch(value) and not _merged_secret_spans(value):
+        return value
     return _MASKED_KEY
 
 
@@ -433,7 +454,7 @@ def _scan_table(
                 findings.append(
                     SecretFinding(
                         location=table,
-                        record_id=record_id,
+                        record_id=_shown(record_id),
                         seq=None,
                         log_kind=None,
                         field=field_name,
@@ -489,9 +510,9 @@ def _scan_log(
                 findings.append(
                     SecretFinding(
                         location=LOG,
-                        record_id=record_id,
+                        record_id=_shown(record_id),
                         seq=log_row.seq,
-                        log_kind=log_row.kind,
+                        log_kind=_shown(log_row.kind),
                         field=field_name or "payload",
                         kind=kind,
                         offset=offset,

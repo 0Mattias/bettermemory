@@ -543,6 +543,46 @@ def test_a_secret_shaped_json_key_prints_as_a_mask(
     assert "two words" not in out
 
 
+def test_a_secret_shaped_record_id_or_log_kind_prints_as_a_mask(
+    store: Store, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The id column and an event's `id` are scanned text, and a row
+    written outside the store can hold anything there or in a log row's
+    kind: a finding about such a value must not print it as the record
+    or the kind it is about. A terminal escape prints as `*` too."""
+    store.record_event("probe_note", id=_GITHUB, note="clean")
+    store.conn.execute(
+        "INSERT INTO memories(id, created, updated, confidence, body, scopes_text, "
+        "scopes_json, provenance, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (_AWS, "x", "x", "x", "clean", "", "[]", "local", "explicit"),
+    )
+    store.conn.execute(
+        "INSERT INTO memories(id, created, updated, confidence, body, scopes_text, "
+        "scopes_json, provenance, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("\x1b[2Jforged", "x", "x", "x", f"uses {_GITHUB}", "", "[]", "l", "e"),
+    )
+    last = store.log_rows()[-1]
+    store.conn.execute(
+        "INSERT INTO log(seq, ts, session, kind, payload, prev_mac, mac) "
+        "VALUES (?, ?, NULL, ?, ?, ?, ?)",
+        (last.seq + 1, last.ts, _GITHUB, json.dumps({"note": _AWS}), last.mac, "0"),
+    )
+
+    report = scan_store(store, include_log=True)
+    assert {(f.location, f.record_id, f.field) for f in report.findings} == {
+        ("memories", "*", "id"),
+        ("memories", "*", "body"),
+        ("log", "*", "id"),
+        ("log", None, "note"),
+    }
+    assert _only(report.findings, field="note").log_kind == "*"
+    for flags in ((), ("--json",)):
+        code, out, _ = _run(capsys, "--log", *flags, "--store", str(store.path))
+        assert code == 1
+        for needle in (_GITHUB, _AWS, "\x1b", "\\u001b"):
+            assert needle not in out
+
+
 # ---------------------------------------------------------------------------
 # Rows the models refuse and payloads that are not JSON
 # ---------------------------------------------------------------------------
