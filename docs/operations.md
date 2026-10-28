@@ -203,7 +203,10 @@ verifies: run `log verify` first, and `backup verify` after.
 signature and its claims, then runs the whole log check on a copy in a
 private temporary directory; the bundle is never opened in place. Exit 0
 ok; 1 mismatched or tampered; 2 unverifiable, when the key is held
-nowhere or the manifest is unsigned. Do not point another command at a
+nowhere, the manifest is unsigned, or it is signed only by a key the
+bundle carries (signature `self_signed`: anyone who can write a bundle
+can remake it under a key of their own, so the signature counts only
+under a key the keys directory holds). Do not point another command at a
 bundle's `memory.sqlite`: opening a store switches its journal mode,
 which changes the file's bytes, and the bundle then fails its hash.
 Copy the file to a directory of its own first, as for the secret scan
@@ -213,8 +216,13 @@ below.
 bundle holds no key, and verifies and restores only where the keys
 directory holds it. Back the keys directory up separately, to a place
 the bundles' readers cannot reach. A bundle made with `--include-key`
-carries the store's key and any retired keys its log names: it restores
-on a fresh machine, and anyone holding it can sign rows as the store.
+carries the store's key and any retired keys its log names, and anyone
+holding it can sign rows as the store. On a machine whose keys directory
+does not hold that key it verifies `unverifiable` (`self_signed`) and
+restores only with `--trust-bundle-key`, which makes the bundle's key the
+store's current key: pass it only for a bundle kept where no one else
+can write. The default `backups/` directory is not such a place, since
+whatever can write the store can write it.
 
 To restore:
 
@@ -223,9 +231,10 @@ To restore:
    `serve`, the shim's in-process fallback and the writing CLI commands
    open the store without those locks, so close them too.
 2. `bettermemory backup restore BUNDLE` verifies the bundle (it refuses
-   one that does not verify) and prints the plan: the files it moves
-   aside, the keys it installs, the head checkpoint before and after.
-   Without `--yes` it changes nothing and exits 3.
+   one that does not verify, and one signed only by a key it carries
+   unless `--trust-bundle-key` is given) and prints the plan: the files
+   it moves aside, the keys it installs, the head checkpoint before and
+   after. Without `--yes` it changes nothing and exits 3.
 3. `bettermemory backup restore BUNDLE --yes` moves `memory.sqlite`,
    `-wal` and `-shm` aside as `memory.sqlite.pre-restore-<UTC stamp>`
    (never deleted), copies the bundle's database in and checks it against

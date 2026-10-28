@@ -68,9 +68,10 @@ def add_subparser(
         "--include-key",
         action="store_true",
         help=(
-            "Copy the store's keys into the bundle (0600), so it verifies and "
-            "restores on a machine without them. Anyone holding such a "
-            "bundle can sign rows as this store."
+            "Copy the store's keys into the bundle (0600), so it can be "
+            "checked and restored on a machine without them (there it reads "
+            "unverifiable, self-signed, and restores with --trust-bundle-key). "
+            "Anyone holding such a bundle can sign rows as this store."
         ),
     )
     create.add_argument(
@@ -81,11 +82,13 @@ def add_subparser(
         "Check a bundle: every file's size and SHA-256 against the manifest, "
         "the manifest's signature, then the log (MACs, chain, segments, the "
         "head and the fold) on a temporary copy; the bundle itself is never "
-        "opened in place. Keys come from the bundle when it carries them, "
-        "else from the keys directory. Exit 0 when the bundle verifies, 1 "
-        "when it is tampered or does not match its manifest, 2 when it "
-        "cannot be verified (a key is held nowhere, or the manifest is "
-        "unsigned) or on a usage error."
+        "opened in place. Keys come from the keys directory, else from the "
+        "bundle when it carries them; a signature counts only under a key "
+        "the keys directory holds, since anyone who can write a bundle can "
+        "sign it with a key they put in it. Exit 0 when the bundle verifies, "
+        "1 when it is tampered or does not match its manifest, 2 when it "
+        "cannot be verified (a key is held nowhere, the manifest is unsigned "
+        "or signed only by a key the bundle carries) or on a usage error."
     )
     verify = backup_sub.add_parser("verify", help=text, description=text)
     verify.add_argument("bundle", metavar="BUNDLE", help="The bundle directory.")
@@ -106,7 +109,9 @@ def add_subparser(
     text = (
         "Restore a bundle over the store this command resolves. Refuses "
         "while a daemon holds the store (close every session, run "
-        "`bettermemory down`) and refuses a bundle that does not verify. "
+        "`bettermemory down`) and refuses a bundle that does not verify, "
+        "including one signed only by a key it carries unless "
+        "--trust-bundle-key. "
         "Moves the current store file and its -wal and -shm aside as "
         "<store>.pre-restore-<UTC timestamp> (never deleted), copies the "
         "bundle's database in, installs any key it needs from the bundle, "
@@ -120,6 +125,17 @@ def add_subparser(
     restore.add_argument("bundle", metavar="BUNDLE", help="The bundle directory.")
     restore.add_argument(
         "--yes", action="store_true", help="Carry out the restore; without it, plan."
+    )
+    restore.add_argument(
+        "--trust-bundle-key",
+        action="store_true",
+        help=(
+            "Restore a bundle whose manifest is signed only by a key it "
+            "carries (an --include-key bundle on a machine whose keys "
+            "directory does not hold that key). The bundle's key becomes the "
+            "store's current key, retiring any other, so use it only for a "
+            "bundle kept where no one else can write."
+        ),
     )
     restore.add_argument(
         "--json", action="store_true", help="Emit the result as JSON instead of text."
@@ -261,7 +277,12 @@ def render_verify(report: dict[str, Any], *, title: str = "backup verify") -> st
             "  files "
             + ", ".join(f"{f['name']} {f['status']}" for f in report["files"])
         )
-    if report["manifest_mac"] is not None:
+    if report["manifest_mac"] == "self_signed":
+        lines.append(
+            "  manifest signature self_signed: made with a key only the bundle "
+            "carries, which proves the bundle whole but not who made it"
+        )
+    elif report["manifest_mac"] is not None:
         lines.append(f"  manifest signature {report['manifest_mac']}")
     for key in report["keys"]:
         source = key["source"] or "held nowhere"
@@ -294,7 +315,12 @@ def _restore(args: argparse.Namespace, *, parser: argparse.ArgumentParser) -> No
     from ..backup import RESTORE_EXIT, restore_bundle
 
     bundle = _bundle_dir(args.bundle, parser)
-    report = restore_bundle(bundle, _store_file(), apply=args.yes)
+    report = restore_bundle(
+        bundle,
+        _store_file(),
+        apply=args.yes,
+        trust_bundle_key=args.trust_bundle_key,
+    )
     if args.json:
         _emit_json(report)
     else:
@@ -333,6 +359,11 @@ def render_restore(report: dict[str, Any]) -> str:
             lines.append(
                 f"  current store {current}; the bundle is a different store, "
                 f"{plan['bundle_store_id']}"
+            )
+        if plan.get("trusted_bundle_key"):
+            lines.append(
+                f"  trusting the bundle's own key {plan['trusted_bundle_key'][:16]} "
+                "(--trust-bundle-key)"
             )
         # A plan says what would happen; a restore that ran, finished or
         # not, says what did, so a failure part way never reads as a key

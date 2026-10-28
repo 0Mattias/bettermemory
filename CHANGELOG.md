@@ -219,8 +219,15 @@ stable 9.0.0 follows the candidates' testing.
   file's SHA-256). Keys stay out unless `--include-key`. `verify` checks
   the hashes, the signature, the manifest's claims and then the whole
   log on a private copy, never in place (exit 0 ok, 1 mismatched or
-  tampered, 2 unverifiable). `restore` refuses while the daemon or
-  spawn lock is held, refuses a bundle that does not verify, plans
+  tampered, 2 unverifiable). The signature counts only under a key the
+  keys directory holds: anyone who can write a bundle can remake it
+  under a key of their own and put that key in it, so a manifest signed
+  with a key only the bundle carries reads `self_signed` and the bundle
+  `unverifiable`. `restore` refuses while the daemon or
+  spawn lock is held, refuses a bundle that does not verify, and refuses
+  a `self_signed` one (an `--include-key` bundle on a machine without
+  its key, or a forged one) unless `--trust-bundle-key`, which makes the
+  bundle's key the store's current key and is named in the record. It plans
   without `--yes` (exit 3), moves the current files aside as
   `<store>.pre-restore-<stamp>` and never deletes them, installs the
   keys and the anchor the bundle needs, rewinds the head checkpoint on

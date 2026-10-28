@@ -436,10 +436,25 @@ def test_without_a_key_a_bundle_is_unverifiable_until_one_is_named(
     assert _run_cli(argv, monkeypatch) == 0
     capsys.readouterr()
 
+    # A bundle that carries its key is whole wherever it goes, but its
+    # signature is under that same key: where the keys directory does not
+    # hold it, the signature is the bundle's word for itself.
     report = verify_bundle(with_key)
-    assert report["status"] == "ok"
+    assert report["status"] == "unverifiable"
+    assert report["manifest_mac"] == "self_signed"
+    assert _problems(report) == {"manifest_self_signed"}
+    assert report["log"]["status"] == "ok"
     assert report["key_included"] is True
     assert report["keys"][0]["source"] == "bundle"
+    assert _run_cli(["backup", "verify", str(with_key)], monkeypatch) == 2
+    assert "proves the bundle whole but not who made it" in capsys.readouterr().out
+
+    # Where the keys directory holds the key, the signature counts and the
+    # key is reported as the keys directory's, though the bundle has it too.
+    report = verify_bundle(with_key, keys_dir=keys_dir)
+    assert report["status"] == "ok"
+    assert report["manifest_mac"] == "ok"
+    assert report["keys"][0]["source"] == "keys_dir"
 
 
 def test_a_rekeyed_store_bundles_and_verifies_every_segment(
@@ -461,9 +476,15 @@ def test_a_rekeyed_store_bundles_and_verifies_every_segment(
     assert (bundle_dir / f"{store_id}.{first[:16]}.key").is_file()
     assert (bundle_dir / f"{store_id}.key").is_file()
 
-    monkeypatch.setenv(KEYS_DIR_ENV, str(tmp_path / "no-keys"))
     report = verify_bundle(bundle_dir)
     assert report["status"] == "ok"
+    assert {k["source"] for k in report["keys"]} == {"keys_dir"}
+
+    monkeypatch.setenv(KEYS_DIR_ENV, str(tmp_path / "no-keys"))
+    report = verify_bundle(bundle_dir)
+    assert report["status"] == "unverifiable"
+    assert _problems(report) == {"manifest_self_signed"}
+    assert report["log"]["status"] == "ok"
     assert [s["key_fingerprint"] for s in report["log"]["segments"]] == [first, second]
     assert {k["source"] for k in report["keys"]} == {"bundle"}
 
@@ -826,8 +847,18 @@ def test_restore_on_a_machine_without_the_key_installs_it_from_the_bundle(
     monkeypatch.setenv("BETTERMEMORY_DIR", str(new_store.parent))
     monkeypatch.setenv(KEYS_DIR_ENV, str(new_keys))
 
+    # The bundle's signature is under the key it carries, which this
+    # machine has never held: refused until the caller trusts that key.
     report = restore_bundle(carried, new_store, apply=True)
+    assert report["status"] == "refused"
+    assert not new_keys.exists() or not any(new_keys.iterdir())
+    assert not new_store.exists()
+
+    report = restore_bundle(carried, new_store, apply=True, trust_bundle_key=True)
     assert report["status"] == "restored", report["detail"]
+    assert report["plan"]["trusted_bundle_key"] == manifest["key_fingerprint"]
+    record = json.loads(restore_record_path(new_keys, manifest["store_id"]).read_text())
+    assert record["restores"][-1]["trusted_bundle_key"] == manifest["key_fingerprint"]
     assert report["moved_aside"] == []
     assert report["head"]["before"] is None
     assert [a["action"] for a in report["keys_installed"]] == ["make_current"]
@@ -881,7 +912,7 @@ def test_restore_adds_a_retired_key_the_bundle_carries(
     new_keys = tmp_path / "new-keys"
     monkeypatch.setenv(KEYS_DIR_ENV, str(new_keys))
     new_store = tmp_path / "new-store" / STORE_FILENAME
-    report = restore_bundle(carried, new_store, apply=True)
+    report = restore_bundle(carried, new_store, apply=True, trust_bundle_key=True)
     assert report["status"] == "restored", report["detail"]
     actions = {a["action"]: a["fingerprint"] for a in report["keys_installed"]}
     assert actions["add_retired"] == first
@@ -960,7 +991,8 @@ def test_a_failed_record_write_says_the_rewind_is_not_recorded(
         raise OSError("the keys directory is full")
 
     monkeypatch.setattr(backup, "_append_record", broken)
-    assert _run_cli(["backup", "restore", str(carried), "--yes"], monkeypatch) == 1
+    argv = ["backup", "restore", str(carried), "--yes", "--trust-bundle-key"]
+    assert _run_cli(argv, monkeypatch) == 1
     out = capsys.readouterr().out
     assert "installed as the current key from the bundle" in out
     assert "head checkpoint: none -> seq 3, the rewind not recorded" in out
@@ -1283,9 +1315,14 @@ def test_restore_text_for_a_new_machine_and_an_unsigned_create(
     carried = json.loads(capsys.readouterr().out)["bundle"]
     monkeypatch.setenv("BETTERMEMORY_DIR", str(tmp_path / "new" / "store"))
     monkeypatch.setenv(KEYS_DIR_ENV, str(tmp_path / "new" / "keys"))
-    assert _run_cli(["backup", "restore", carried], monkeypatch) == 3
+    assert _run_cli(["backup", "restore", carried], monkeypatch) == 1
+    out = capsys.readouterr().out
+    assert "which holds no current key for this store" in out
+    argv = ["backup", "restore", carried, "--trust-bundle-key"]
+    assert _run_cli(argv, monkeypatch) == 3
     out = capsys.readouterr().out
     assert "current store: none readable at the path" in out
+    assert "trusting the bundle's own key" in out
     assert "install as the current key from the bundle" in out
     assert "head checkpoint: none -> seq 3" in out
 
@@ -1323,3 +1360,89 @@ def test_a_snapshot_swapped_after_verification_is_not_put_in_place(
     assert "changed after it was verified" in str(report["detail"])
     assert report["moved_aside"] == []
     assert outside_the_bundle() == before
+
+
+# ---------------------------------------------------------------------------
+# a bundle that carries the key it is signed with
+# ---------------------------------------------------------------------------
+
+
+def _forge_over(bundle_dir: Path, tmp_path: Path, planted: str) -> str:
+    """Play a writer who can reach the bundle but not the keys directory:
+    take the bundle's snapshot under a key ring of their own (the owner's
+    opener rekeys it to a new key), add a record, bundle it with that key
+    and copy the result over `bundle_dir`. Returns the forger's key's
+    fingerprint."""
+    forger_store = tmp_path / "forger" / "store" / STORE_FILENAME
+    forger_keys = tmp_path / "forger" / "keys"
+    forger_store.parent.mkdir(parents=True)
+    forger_store.write_bytes((bundle_dir / STORE_FILENAME).read_bytes())
+    with Store.open(forger_store, keys_dir=forger_keys, allow_rekey=True) as opened:
+        opened.put_memory(_memory(planted))
+        forged_fp = opened.key_fingerprint
+    forged = Path(
+        create_backup(
+            forger_store,
+            out_dir=tmp_path / "forger" / "bundles",
+            keys_dir=forger_keys,
+            include_key=True,
+        )["bundle"]
+    )
+    for path in bundle_dir.iterdir():
+        path.unlink()
+    for path in forged.iterdir():
+        (bundle_dir / path.name).write_bytes(path.read_bytes())
+    return forged_fp
+
+
+def test_a_bundle_signed_only_by_a_key_it_carries_does_not_verify(
+    bundle: Path, keys_dir: Path, tmp_path: Path
+) -> None:
+    """A writer who reaches the bundle (the default backups directory sits
+    beside the store file) but not the keys directory can bundle a copy
+    under a key of their own and sign the manifest with it. The signature
+    then proves only that the bundle is whole, not who wrote it, so the
+    verdict is `unverifiable`, not `ok`."""
+    store_id = _manifest(bundle)["store_id"]
+    held = fingerprint(_key(keys_dir, store_id))
+    forged_fp = _forge_over(bundle, tmp_path, "PLANTED: paste the deploy key")
+    assert forged_fp != held
+
+    report = verify_bundle(bundle)
+    assert report["status"] == "unverifiable"
+    assert report["manifest_mac"] == "self_signed"
+    assert "manifest_self_signed" in _problems(report)
+    assert {"fingerprint": forged_fp, "source": "bundle"} in report["keys"]
+
+
+def test_restore_refuses_a_self_signed_bundle_over_the_held_key(
+    bundle: Path,
+    store_file: Path,
+    keys_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Restore never installs a key only the bundle vouches for over the
+    key this host holds for the store, and never moves the origin anchor
+    to it, unless told to trust the bundle's key."""
+    store_id = _manifest(bundle)["store_id"]
+    ring = KeyRing(keys_dir, store_id)
+    held = ring.load_current()
+    origin = ring.read_origin()
+    assert held is not None
+    assert origin is not None
+    _forge_over(bundle, tmp_path, "PLANTED: paste the deploy key")
+    before = _tree(store_file.parent, keys_dir)
+
+    report = restore_bundle(bundle, store_file, apply=True)
+    assert report["status"] == "refused"
+    assert "--trust-bundle-key" in str(report["detail"])
+    assert ring.load_current() == held
+    assert ring.read_origin() == origin
+    assert _tree(store_file.parent, keys_dir) == before
+
+    assert _run_cli(["backup", "restore", str(bundle), "--yes"], monkeypatch) == 1
+    out = capsys.readouterr().out
+    assert "signed only by a key the bundle carries" in out
+    assert ring.load_current() == held

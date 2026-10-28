@@ -22,19 +22,27 @@ needed to put the store back and to prove it is the store that was saved.
   for its store (`KeyRing(bundle, store_id)`).
 * ``<store_id>.key`` and the retired ``<store_id>.<prefix>.key`` files,
   only with ``include_key``: every key a segment of the snapshot's log
-  names that this host holds. A bundle that carries its key verifies and
-  restores anywhere, and anyone holding it can sign rows as the store, so
-  the default leaves the keys out and the manifest names the fingerprints
-  they must match.
+  names that this host holds. Anyone holding such a bundle can sign rows
+  as the store, so the default leaves the keys out and the manifest names
+  the fingerprints they must match. A bundle that carries the key its
+  manifest is signed with is also one anyone who can write it can remake
+  under a key of their own: the signature shows the bundle is whole, not
+  who wrote it. So a signature counts only under a key the keys directory
+  holds; one made with a key only the bundle carries reads
+  ``self_signed`` and the bundle ``unverifiable``, and a restore puts it
+  back (installing its key as the store's current key and its origin
+  anchor) only when told to trust the bundle's key, as on a fresh machine
+  restoring from a bundle kept where no one else can write.
 * ``manifest.json``, written last, so a bundle without one is a bundle
   whose creation did not finish. It records the format, the bettermemory
   version, the store id, the key fingerprints, the head (seq and MAC), row
   counts per table, the size and SHA-256 of every other file, and the time.
   It is signed: ``mac`` is an HMAC under the store's current key, which no
-  file in the bundle replaces without the key. In the live store the head
-  checkpoint sits in the keys directory, apart from the store file, which
-  is what lets it catch a deleted tail: an editor of the store file cannot
-  move it. In a bundle the head sits beside the snapshot, and the signature
+  file in the bundle replaces without the key (the keys directory's copy
+  of it: see above for a bundle that carries its own). In the live store
+  the head checkpoint sits in the keys directory, apart from the store
+  file, which is what lets it catch a deleted tail: an editor of the store
+  file cannot move it. In a bundle the head sits beside the snapshot, and the signature
   restores the separation: an editor who truncates the snapshot's log and
   rewrites the head and the hashes to match cannot re-sign the manifest. A
   bundle written where the store's key is not held carries no signature and
@@ -49,7 +57,7 @@ additive schema step and sets WAL mode on the file it opens, so verifying a
 backup where it lies would change it. `verify_bundle` checks every file
 against the manifest, checks the signature, then copies the snapshot into a
 private temporary directory beside a temporary key ring (the keys from the
-bundle first, then from the keys directory, and the head and the origin
+keys directory first, then from the bundle, and the head and the origin
 anchor from the signed manifest) and runs the store's own `log_verify`
 there: MACs, chain, segments, head, origin and the fold, with no change to
 `bettermemory.log`.
@@ -63,8 +71,9 @@ the store's daemon lock and the spawn lock (`_daemon_client.lock_file_for`
 and `spawn_lock_file_for`), refusing while anything holds either, so no
 daemon serves mid-restore and no hook, `up` or newly started shim spawns
 one (each spawns through `ensure_daemon`, under the spawn lock); it
-verifies the bundle and refuses
-one that does not verify; without ``apply`` it stops there with the plan.
+verifies the bundle and refuses one that does not verify, save a
+``self_signed`` one the caller said to trust (``trust_bundle_key``);
+without ``apply`` it stops there with the plan.
 Then it copies the snapshot into a temporary file beside the store, moves
 the store file and its ``-wal`` and ``-shm`` aside as
 ``<store>.pre-restore-<UTC stamp>`` (with ``-wal`` and ``-shm`` suffixes,
@@ -193,8 +202,13 @@ MISMATCH_PROBLEMS = frozenset(
     }
 )
 # Problems that leave a claim unproven rather than disproven: no key for a
-# segment, or a manifest with no signature to check. Verdict `unverifiable`.
-UNVERIFIABLE_PROBLEMS = frozenset({"key_absent", "manifest_unsigned"})
+# segment, a manifest with no signature to check, or one signed with a key
+# only the bundle carries, which anyone able to write the bundle could have
+# made. Verdict `unverifiable`.
+SELF_SIGNED = "self_signed"
+UNVERIFIABLE_PROBLEMS = frozenset(
+    {"key_absent", "manifest_unsigned", "manifest_self_signed"}
+)
 
 # Restore outcomes, and the exit status each maps to.
 RESTORED = "restored"
@@ -678,10 +692,11 @@ def verify_bundle(bundle: Path, *, keys_dir: Path | None = None) -> dict[str, An
     """Check the bundle at `bundle` and return the report; ``status`` is
     ``ok``, ``mismatched`` (a file or the manifest is not what was written),
     ``tampered`` (the snapshot's log or tables fail verification) or
-    ``unverifiable`` (a segment's key is in neither the bundle nor
-    `keys_dir`, default `store.resolve_keys_dir`, or the manifest is
-    unsigned). Reads the bundle and writes nothing to it: the log
-    verification runs on a copy in a private temporary directory."""
+    ``unverifiable`` (a segment's key is in neither `keys_dir`, default
+    `store.resolve_keys_dir`, nor the bundle, the manifest is unsigned, or
+    it is signed with a key only the bundle carries: ``manifest_mac`` then
+    reads ``self_signed``). Reads the bundle and writes nothing to it: the
+    log verification runs on a copy in a private temporary directory."""
     from . import store as _store
 
     bundle = Path(bundle)
@@ -789,39 +804,54 @@ def verify_bundle(bundle: Path, *, keys_dir: Path | None = None) -> dict[str, An
             )
         scratch_ring = KeyRing(Path(scratch) / "keys", store_id)
         scratch_ring.ensure_dir()
-        keys: dict[str, bytes] = {}
+        # The keys directory first: a key it holds is one this host already
+        # trusts, and the report says so. A key found only in the bundle
+        # comes with the bundle and is worth what the bundle is.
+        keys: dict[str, tuple[bytes, str]] = {}
         wanted = dict.fromkeys(
             (*facts.key_fingerprints, str(manifest["key_fingerprint"]))
         )
         for fp in wanted:
             source: str | None = None
-            key = bundle_ring.key_for_fingerprint(fp)
+            key = live_ring.key_for_fingerprint(fp)
             if key is not None:
-                source = "bundle"
+                source = "keys_dir"
             else:
-                key = live_ring.key_for_fingerprint(fp)
-                source = "keys_dir" if key is not None else None
+                key = bundle_ring.key_for_fingerprint(fp)
+                source = "bundle" if key is not None else None
             report["keys"].append({"fingerprint": fp, "source": source})
-            if key is None:
+            if key is None or source is None:
                 problems.append({"problem": "key_absent", "fingerprint": fp})
                 continue
-            keys[fp] = key
+            keys[fp] = (key, source)
             _write_private(scratch_ring.retired_path(fp), key)
             if fp == facts.key_fingerprint:
                 _write_private(scratch_ring.current_path(), key)
-        signing_key = keys.get(str(manifest["key_fingerprint"]))
+        signing = keys.get(str(manifest["key_fingerprint"]))
         if "mac" not in manifest:
             report["manifest_mac"] = "absent"
             problems.append({"problem": "manifest_unsigned"})
-        elif signing_key is None:
+        elif signing is None:
             report["manifest_mac"] = UNVERIFIABLE
-        elif hmac.compare_digest(
-            manifest_mac(signing_key, manifest), str(manifest["mac"])
+        elif not hmac.compare_digest(
+            manifest_mac(signing[0], manifest), str(manifest["mac"])
         ):
-            report["manifest_mac"] = OK
-        else:
             report["manifest_mac"] = "mismatch"
             problems.append({"problem": "manifest_mac_mismatch"})
+        elif signing[1] == "bundle":
+            # The MAC holds, under a key the bundle itself supplied: anyone
+            # who can write the bundle can remake it under a key of their
+            # own and sign it so. It proves the bundle is whole, not that
+            # this store's key holder wrote it.
+            report["manifest_mac"] = SELF_SIGNED
+            problems.append(
+                {
+                    "problem": "manifest_self_signed",
+                    "fingerprint": str(manifest["key_fingerprint"]),
+                }
+            )
+        else:
+            report["manifest_mac"] = OK
         _write_private(scratch_ring.head_path(), _head_bytes(head))
         # The anchor the signed manifest records, so `log_verify` checks the
         # snapshot against where the host's history of the store begins.
@@ -1028,6 +1058,43 @@ def _swap_in(
     fsync_dir(store_file.parent)
 
 
+def _self_signed_fingerprint(verification: Mapping[str, Any]) -> str | None:
+    """The key a ``self_signed`` manifest is signed with, or None."""
+    for problem in verification["problems"]:
+        if problem.get("problem") == "manifest_self_signed":
+            return str(problem.get("fingerprint", ""))
+    return None
+
+
+def _only_self_signed(verification: Mapping[str, Any]) -> bool:
+    """True when the bundle verifies in every respect but one: its
+    manifest is signed with a key only the bundle carries. Every file
+    matches the manifest and the log reads ``ok``; what is missing is any
+    sign that the store's key holder, not whoever could write the bundle,
+    made it."""
+    names = {str(problem.get("problem")) for problem in verification["problems"]}
+    log = verification["log"]
+    return names == {"manifest_self_signed"} and log is not None and log["status"] == OK
+
+
+def _self_signed_refusal(verification: Mapping[str, Any], keys_root: Path) -> str:
+    """Why a ``self_signed`` bundle is refused, and how to restore it."""
+    fp = _self_signed_fingerprint(verification) or ""
+    current = KeyRing(keys_root, str(verification["store_id"])).load_current()
+    holds = (
+        f"which holds {fingerprint(current)[:16]} as this store's current key"
+        if current is not None
+        else "which holds no current key for this store"
+    )
+    return (
+        f"the bundle is signed only by a key the bundle carries ({fp[:16]}), "
+        f"not by one under {keys_root}, {holds}. The signature shows the "
+        "bundle is whole, not who made it, and the restore would make that "
+        "key the store's current key. If the bundle comes from a place only "
+        "you can write, run the restore again with --trust-bundle-key"
+    )
+
+
 @contextlib.contextmanager
 def _daemon_locks(state_dir: Path, store_file: Path) -> Iterator[str | None]:
     """Hold the store's spawn lock and its daemon lock for the block, or
@@ -1073,6 +1140,7 @@ def restore_bundle(
     keys_dir: Path | None = None,
     state_dir: Path | None = None,
     now: datetime | None = None,
+    trust_bundle_key: bool = False,
 ) -> dict[str, Any]:
     """Restore the bundle at `bundle` over the store at `store_file` and
     return the report; ``status`` is ``restored``, ``planned`` (`apply`
@@ -1081,7 +1149,14 @@ def restore_bundle(
     the restored store does not verify; ``detail`` and ``moved_aside`` say
     what is where). `keys_dir` and `state_dir` default to the ones the
     store and its daemon resolve. See the module docstring for the order
-    and why."""
+    and why.
+
+    A bundle whose only shortfall is a manifest signed with a key it
+    carries itself (`verify_bundle`'s ``self_signed``) is refused unless
+    `trust_bundle_key`: restoring it makes that key the store's current
+    key, retiring the one the keys directory holds, and installs its
+    origin anchor, so the bundle's writer would hold the store's key from
+    then on. The record names the key so trusted."""
     from . import _daemon_client as client
     from . import store as _store
 
@@ -1113,12 +1188,18 @@ def restore_bundle(
             return report
         verification = verify_bundle(bundle, keys_dir=keys_root)
         report["verify"] = verification
-        if verification["status"] != OK:
+        self_signed = _only_self_signed(verification)
+        if verification["status"] != OK and not (self_signed and trust_bundle_key):
             report["detail"] = (
-                f"the bundle does not verify ({verification['status']}); run "
-                f"`bettermemory backup verify {bundle}` for the report"
+                _self_signed_refusal(verification, keys_root)
+                if self_signed
+                else (
+                    f"the bundle does not verify ({verification['status']}); run "
+                    f"`bettermemory backup verify {bundle}` for the report"
+                )
             )
             return report
+        trusted_key = _self_signed_fingerprint(verification) if self_signed else None
         store_id = str(verification["store_id"])
         live = KeyRing(keys_root, store_id)
         bundle_ring = KeyRing(bundle, store_id)
@@ -1155,6 +1236,7 @@ def restore_bundle(
                 "after": _origin_dict(origin),
             },
             "record": str(record),
+            "trusted_bundle_key": trusted_key,
         }
         if not apply:
             report["status"] = PLANNED
@@ -1218,6 +1300,7 @@ def restore_bundle(
                     "origin_after": report["origin"]["after"],
                     "moved_aside": report["moved_aside"],
                     "keys_installed": [a["fingerprint"] for a in actions],
+                    "trusted_bundle_key": trusted_key,
                 },
                 stamp,
             )
