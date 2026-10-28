@@ -11,7 +11,9 @@ Resolution order for the storage directory:
 4. `~/.claude-memory/` (global fallback).
 
 A user-level config file lives at `~/.config/bettermemory/config.toml` (or the
-platform equivalent). It's created with defaults on first run.
+platform equivalent). It's created on first run with every setting commented
+out (`DEFAULT_CONFIG`), so the code's defaults apply until a line is
+uncommented; a file that exists is never rewritten.
 
 An organisation-managed file (`managed.py`, at a fixed system path) is read
 after it, and every key it sets is pinned: the user file's value for that
@@ -48,6 +50,13 @@ DEFAULT_CONFIG = """\
 # bettermemory config
 #
 # See: https://github.com/0Mattias/bettermemory
+#
+# Nothing in this file is set. Every setting is commented out, so the
+# built-in default applies to each, and a later release that changes a
+# default reaches you. To choose a value, remove the "# " in front of its
+# line, under its [section] header, and edit it. Most lines show the
+# default; a few show the value that changes it, and the comment above
+# such a line says what the default is.
 
 [storage]
 # Where memories live. The resolution rule:
@@ -70,10 +79,10 @@ DEFAULT_CONFIG = """\
 # (the same range an explicit max_results is clamped to), not rejected
 # here: a value outside the range is a harmless typo, and erroring at load
 # would take the whole server down over one knob.
-default_max_results = 5
+# default_max_results = 5
 
 # Recency boost decay. Larger = older memories get a meaningful bump.
-recency_boost_half_life_days = 30
+# recency_boost_half_life_days = 30
 
 # Retrieval ranker for memory_search. One of:
 #   "keyword" — the original TF + coverage + recency scorer (legacy default
@@ -84,7 +93,7 @@ recency_boost_half_life_days = 30
 #       deterministic code — the project ships no embedding models
 #       (removed in 4.0.0). The MCP `mode` parameter on memory_search
 #       overrides this per-call.
-search_mode = "hybrid"
+# search_mode = "hybrid"
 
 # The Lane L conversational repairs (6.1.0): when a query has a temporal
 # reading ("how many weeks ago did I…", "what did I do in March?"), its
@@ -96,7 +105,7 @@ search_mode = "hybrid"
 # instrument byte-identical and no question type regressed
 # (the L1 record). Queries with no temporal reading are untouched
 # byte for byte. Set false to reproduce the pre-6.1.0 ranking exactly.
-conversational = true
+# conversational = true
 
 # Write-time supersession. When a claim-sized memory_write carries a
 # change cue (moved, switched, renamed, raised, no longer, the previous,
@@ -109,7 +118,7 @@ conversational = true
 # link to the statement they replace and nothing links a distractor,
 # a hard negative or a cross-topic pair (bench/integrity/results/). Set
 # false to leave links to the writer's explicit `supersedes=` list.
-write_supersession = true
+# write_supersession = true
 
 # Recall at prompt time. The plugin's UserPromptSubmit hook probes every
 # submitted prompt with the production ranker (the pool and ranking the
@@ -131,7 +140,7 @@ write_supersession = true
 # a `prompt_recall` event, so it needs telemetry.enabled (off-the-books
 # injections are refused). true / false in an older config read as
 # "project" / "off".
-prompt_recall = "project"
+# prompt_recall = "project"
 
 # The session brief: on SessionStart inside a project, two lists of
 # pointers (id and an 80-character summary): the project's standing records
@@ -141,13 +150,13 @@ prompt_recall = "project"
 # contradiction holds a record out of the second list. Pointers, not
 # instructions; recorded as a `session_brief` event, so it needs
 # telemetry.enabled. Set false to open sessions with nothing.
-session_brief = true
+# session_brief = true
 
 # Floor on `applied_count` for inclusion in `memory_health.heavily_used`.
 # Default 3 — at 1 the bucket is dominated by one-off acknowledgements
 # rather than repeat-use patterns. Lower it on a fresh store; raise it
 # once the event log has weeks of data.
-heavily_used_min_applied = 3
+# heavily_used_min_applied = 3
 
 # Cold-endorsement ratio threshold (0.0-1.0). When > 0, the
 # `cold_endorsement_memories` bucket in `memory_health` ALSO flags
@@ -157,7 +166,7 @@ heavily_used_min_applied = 3
 # keeps the strict behaviour (only zero-explicit memories surface).
 # Set to 0.1 to additionally surface memories where less than 10% of
 # applies are explicit endorsements.
-cold_endorsement_ratio_threshold = 0.0
+# cold_endorsement_ratio_threshold = 0.0
 
 # Days after `last_verified_at` past which a memory's verification is
 # considered "stale" — the retrieval surface attaches a re-spot-check
@@ -165,7 +174,7 @@ cold_endorsement_ratio_threshold = 0.0
 # half-life: memories the ranker no longer treats as fresh for ordering
 # also stop counting as fresh for verification. Set 0 to mark every
 # verified memory stale immediately (useful in tests, rarely in practice).
-verification_stale_days = 30
+# verification_stale_days = 30
 
 # Default retention for `bettermemory tombstones prune` (days). Tombstones
 # are never auto-pruned; this is just the default for the CLI subcommand,
@@ -173,7 +182,7 @@ verification_stale_days = 30
 # CLI requires --older-than to be passed. Set this to e.g. 365 if you want
 # `bettermemory tombstones prune` with no flag to default to one-year
 # retention. Active memories are unaffected.
-tombstone_retention_days = 0
+# tombstone_retention_days = 0
 
 # Hard cap on a single memory body's UTF-8 byte length at `memory_write`
 # / `memory_update` time. Existing memories on disk are never re-validated
@@ -182,7 +191,7 @@ tombstone_retention_days = 0
 # 1 MB is ~1000x a typical memory (which sits at 1–2 KB); raise it if you
 # legitimately curate very long context dumps as single memories, lower
 # it for stricter resource boundaries. Set to 0 to disable the cap.
-max_content_bytes = 1000000
+# max_content_bytes = 1000000
 
 # Hard cap on a single episode takeaway's UTF-8 byte length at
 # `episode(action="write")` time, checked at the handler boundary.
@@ -192,7 +201,7 @@ max_content_bytes = 1000000
 # keeps an 8.x mirror's frontmatter (`bettermemory export --mirror`,
 # capped at 64 KB by `_frontmatter._MAX_YAML_BYTES`) well inside its cap.
 # Set to 0 to disable the cap.
-max_takeaway_bytes = 4096
+# max_takeaway_bytes = 4096
 
 # Hard cap on the number of scopes accepted by a single memory_write,
 # memory_update or episode(action="write") call, checked at the handler
@@ -200,7 +209,7 @@ max_takeaway_bytes = 4096
 # verified_paths cap and is well above any realistic per-record scope
 # count (1 to 5 in practice). Set to 0 to disable the handler-boundary
 # cap (the model-layer cap still fires at 64).
-max_scopes_per_write = 64
+# max_scopes_per_write = 64
 
 # Opt-in floor on a memory body's whitespace-separated token count at
 # `memory_write` time. 0 (the default) disables it: the only shipped lower
@@ -211,7 +220,7 @@ max_scopes_per_write = 64
 # a durable record plus the curation pass that later removes it. The floor
 # binds `memory_write` only; `memory_update` does NOT, so a body edit can
 # still take an existing memory below the floor.
-min_content_tokens = 0
+# min_content_tokens = 0
 
 [scopes]
 # If non-empty, writes with caller-supplied scopes outside this list fail.
@@ -221,7 +230,7 @@ min_content_tokens = 0
 # runs over what an edit ADDS. A scope already on the record passes
 # because it was already accepted; one that is not is still checked by
 # name, so the exemption cannot be borrowed to plant an unallowed scope.
-allowed = []
+# allowed = []
 
 # Singleton scopes the `fix_typo_scopes` health check must stop flagging.
 # That check looks for a one-memory scope that resembles a more common one
@@ -237,7 +246,7 @@ allowed = []
 # `cold_endorsement`) already carry suppression flags; this is that.
 # Name the scope exactly as it appears; entries that are not currently
 # flagged are simply inert.
-typo_exceptions = []
+# typo_exceptions = []
 
 [policy]
 # The write gates' escape hatches are parameters the agent sets itself:
@@ -260,7 +269,7 @@ typo_exceptions = []
 # back to an ephemeral port when this one is held by something else and
 # records the port it got in the state file, which is how the stdio
 # shim and the hook commands find it.
-port = 7397
+# port = 7397
 
 [telemetry]
 # Telemetry events are rows of the store's own signed log: one per tool
@@ -270,7 +279,7 @@ port = 7397
 # Same file, same trust boundary, no new permissions story. Set
 # `enabled = false` to opt out; the recall surface then shows nothing,
 # since an off-the-books delivery is refused.
-enabled = true
+# enabled = true
 
 [security]
 # Which rows of the signed log this machine trusts. A record reads
@@ -300,10 +309,10 @@ enabled = true
 # is involved, and only a session a person is attending is ever asked.
 # Each capture is a batch: `bettermemory capture review` lists them and
 # `bettermemory capture undo <batch>` takes one back.
-stop_checkpoint = false
-checkpoint_tokens = 12000
+# stop_checkpoint = false
+# checkpoint_tokens = 12000
 # At most this many capture requests per store per UTC day.
-daily_cap = 12
+# daily_cap = 12
 
 [membership]
 # Which project a session belongs to is decided from what its checkout
@@ -316,13 +325,13 @@ daily_cap = 12
 # repository or a read-only one. With `write_token = false` it is written
 # nowhere and the other evidence decides alone: a moved or copied checkout
 # with no commits, which its token would have recognised, is asked about.
-write_token = true
+# write_token = true
 # With `strict = true`, a checkout that would join a project because it
 # holds the project's commits asks once instead. Joins by a
 # bettermemory.toml, by your own `bettermemory project join`, by the same
 # git directory or object store, or by a restore at the project's old path
 # stay silent.
-strict = false
+# strict = false
 """
 
 
@@ -1311,12 +1320,19 @@ def load_config(path: Path | None = None, *, create: bool = True) -> Config:
     pin every key the organisation-managed file sets, when the machine has
     one (`managed.py`, `_apply_managed`).
 
+    The file written on first run is DEFAULT_CONFIG, which sets no key:
+    every setting in it is commented out, so a fresh install pins nothing
+    and the code's defaults (`Config()`) apply, a later release's changed
+    default included. A file that exists is read, never rewritten, so a
+    config.toml an earlier release wrote, with every key spelled at that
+    release's default, keeps the values it spells.
+
     With ``create=False`` nothing is written: a missing file reads as the
     defaults it would have been created with (the shipped DEFAULT_CONFIG
-    sets each key to its dataclass default), and the managed file is still
-    applied over them. The read-only commands use it (`bettermemory
-    config`), so a machine with a managed file and no config.toml reports
-    the pins in force rather than the bare defaults."""
+    sets no key), and the managed file is still applied over them. The
+    read-only commands use it (`bettermemory config`), so a machine with a
+    managed file and no config.toml reports the pins in force rather than
+    the bare defaults."""
     config_path = path or default_config_path()
     if not create:
         # Missing means FileNotFoundError and nothing else. `Path.exists`
@@ -1389,8 +1405,15 @@ def _apply_managed(
     user's value for it is dropped BEFORE the user's file is parsed, so a
     pinned key the user mistyped cannot fail the load: it is ignored, not
     read. A user value that differs from the pinned one gets one notice
-    per key, naming both files (`_warn_pinned_key`). Lists are replaced
-    whole, never merged: a managed `[scopes] allowed` is the allowlist.
+    per key, naming both files (`_warn_pinned_key`), unless it is the
+    code's own default for the key (`_restates_default`): such a line
+    restates the default and expresses no choice the pin overrides, and a
+    config.toml an earlier release wrote spelled every key at its default,
+    so every process, every hook among them, would warn about a line the
+    user never chose. `bettermemory config check` and `config show` still
+    report the line, from the files themselves rather than this log.
+    Lists are replaced whole, never merged: a managed `[scopes] allowed`
+    is the allowlist.
 
     A key the loader does not read is ignored here as it is in
     config.toml, and is not listed in `managed_keys`. The keys are found
@@ -1429,11 +1452,14 @@ def _apply_managed(
     if isinstance(user_behavior, dict):
         _apply_legacy_endorsement_debt_alias(user_behavior, config_path)
 
+    defaults = Config()
     for section, key in keys:
         user_section = data.get(section)
         if isinstance(user_section, dict) and key in user_section:
             user_value = user_section.pop(key)
-            if user_value != managed_data[section][key]:
+            if user_value != managed_data[section][key] and not _restates_default(
+                user_value, getattr(getattr(defaults, section), key)
+            ):
                 _warn_pinned_key(
                     section=section,
                     key=key,
@@ -1447,6 +1473,21 @@ def _apply_managed(
     config.managed_path = managed_path
     config.managed_keys = frozenset(f"{section}.{key}" for section, key in keys)
     return config
+
+
+def _restates_default(raw: object, default: object) -> bool:
+    """Whether `raw`, a user's line for a pinned key as TOML parsed it, is
+    the code's default for that key (`default`, the field of `Config()`).
+
+    Compared as written, before any coercion: ``30`` restates a default
+    of ``30.0`` and ``[]`` an empty list, but ``"true"`` does not restate
+    ``True``, since the loader would read that spelling through a coercion
+    the user chose. A boolean only restates a boolean: Python takes
+    ``False == 0``, but ``tombstone_retention_days = false`` restates no
+    default of 0."""
+    if isinstance(raw, bool) or isinstance(default, bool):
+        return type(raw) is type(default) and raw == default
+    return raw == default
 
 
 def _warn_pinned_key(

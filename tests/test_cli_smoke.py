@@ -299,7 +299,7 @@ def _config_with_ratio_threshold(
     cfg_dir = tmp_path / "bm-config"
     cfg_dir.mkdir(exist_ok=True)
     cfg_path = cfg_dir / "config.toml"
-    original = "cold_endorsement_ratio_threshold = 0.0"
+    original = "# cold_endorsement_ratio_threshold = 0.0"
     assert original in DEFAULT_CONFIG, "DEFAULT_CONFIG key drifted"
     cfg_path.write_text(
         DEFAULT_CONFIG.replace(original, f"cold_endorsement_ratio_threshold = {value}"),

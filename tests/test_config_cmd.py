@@ -269,8 +269,8 @@ def test_a_missing_file_reads_as_the_defaults_it_would_be_written_with(
     tmp_path: Path,
 ) -> None:
     """``create=False`` reads a missing file as ``{}``; that is the config
-    the first-run write would produce, because DEFAULT_CONFIG sets every
-    key to its dataclass default."""
+    the first-run write would produce, because DEFAULT_CONFIG sets no key:
+    every setting in it is commented out."""
     written = tmp_path / "written.toml"
     written.write_text(DEFAULT_CONFIG, encoding="utf-8")
     absent = asdict(load_config(tmp_path / "absent.toml", create=False))
@@ -532,15 +532,14 @@ def test_show_lists_every_setting_config_reads() -> None:
         (s, k) for s, keys in config_cmd.settings_catalogue().items() for k in keys
     }
     assert shown == expected
-    assert all(
-        entry["source"] == "user"
+    # Every setting is commented out in the shipped config, so each is the
+    # default, and a managed file that pins one draws no notice about a
+    # line the user never wrote.
+    assert {
+        entry["source"]
         for table in report["settings"].values()
-        for key, entry in table.items()
-        if key in ("default_max_results", "enabled")
-    ), "the shipped default config sets these keys itself"
-    # A key rc12 adds is commented out in the shipped config, so a managed
-    # file that pins it draws no notice about a line the user never wrote.
-    assert report["settings"]["security"]["strict_provenance"]["source"] == "default"
+        for entry in table.values()
+    } == {"default"}
 
 
 def test_show_labels_a_value_the_loader_could_not_read_as_the_default() -> None:

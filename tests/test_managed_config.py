@@ -218,19 +218,21 @@ def test_the_shipped_config_under_the_shipped_example_draws_no_new_notice(
     managed_config_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A key rc12 adds is commented out in DEFAULT_CONFIG, so the config
-    a first run writes sets nothing a managed file pins: every process,
+    """Every setting is commented out in DEFAULT_CONFIG, so the config a
+    first run writes sets nothing a managed file pins: every process,
     every hook among them, would otherwise warn about a line the user
-    never wrote. `[telemetry] enabled` predates the managed file and is
-    in every config.toml already written; the runbook names its notice."""
+    never wrote. A config.toml an earlier release wrote spells
+    `[telemetry] enabled = true`, the default, which draws no notice
+    either (tests/test_followup_defaults.py)."""
     managed_config_path.write_bytes(_EXAMPLE.read_bytes())
     with caplog.at_level(logging.WARNING, logger="bettermemory.config"):
         loaded = load_config(_user_config(tmp_path, DEFAULT_CONFIG))
     assert loaded.security.strict_provenance is True
+    assert loaded.telemetry.enabled is False
     notices = [r.getMessage() for r in caplog.records if "pins" in r.getMessage()]
-    assert not [n for n in notices if "strict_provenance" in n], notices
-    assert [n for n in notices if "[telemetry] `enabled`" in n]
+    assert notices == []
     assert "\nstrict_provenance =" not in DEFAULT_CONFIG
+    assert "\nenabled =" not in DEFAULT_CONFIG
     assert _comparable(load_config(_user_config(tmp_path, DEFAULT_CONFIG))) == (
         _comparable(load_config(_user_config(tmp_path, "")))
     )

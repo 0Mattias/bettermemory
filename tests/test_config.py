@@ -1455,18 +1455,22 @@ def test_capture_defaults_are_off_with_the_declared_bounds(tmp_path: Path) -> No
 
 
 def test_the_shipped_config_documents_capture_off(tmp_path: Path) -> None:
-    """The first-run file carries `[capture]` with the checkpoint off, and
+    """The first-run file carries `[capture]` with its three keys commented
+    out at their defaults, the checkpoint off, so it sets none of them, and
     loading it gives the dataclass defaults; none of the keys 8.x shipped
     in the section comes back."""
     from bettermemory.config import _REMOVED_CAPTURE_KEYS
 
-    section = tomllib.loads(DEFAULT_CONFIG)["capture"]
-    assert section == {
-        "stop_checkpoint": False,
-        "checkpoint_tokens": 12_000,
-        "daily_cap": 12,
-    }
-    assert not set(section) & set(_REMOVED_CAPTURE_KEYS)
+    assert tomllib.loads(DEFAULT_CONFIG)["capture"] == {}
+    prose = DEFAULT_CONFIG.split("[capture]")[1].split("[membership]")[0]
+    for line in (
+        "# stop_checkpoint = false",
+        "# checkpoint_tokens = 12000",
+        "# daily_cap = 12",
+    ):
+        assert f"\n{line}\n" in prose, line
+    for key in _REMOVED_CAPTURE_KEYS:
+        assert f"# {key} =" not in prose, key
     config_path = tmp_path / "config.toml"
     config_path.write_text(DEFAULT_CONFIG, encoding="utf-8")
     assert load_config(config_path).capture == Config().capture
@@ -1558,10 +1562,12 @@ def test_membership_defaults_write_the_token_and_join_silently(tmp_path: Path) -
 
 
 def test_the_shipped_config_documents_membership(tmp_path: Path) -> None:
-    """The first-run file carries `[membership]` with both keys at their
-    defaults, and its prose names what the token is and where it lives."""
-    section = tomllib.loads(DEFAULT_CONFIG)["membership"]
-    assert section == {"write_token": True, "strict": False}
+    """The first-run file carries `[membership]` with both keys commented
+    out at their defaults, and its prose names what the token is and
+    where it lives."""
+    assert tomllib.loads(DEFAULT_CONFIG)["membership"] == {}
+    for line in ("# write_token = true", "# strict = false"):
+        assert f"\n{line}\n" in DEFAULT_CONFIG.split("[membership]")[1], line
     config_path = tmp_path / "config.toml"
     config_path.write_text(DEFAULT_CONFIG, encoding="utf-8")
     assert load_config(config_path).membership == Config().membership
