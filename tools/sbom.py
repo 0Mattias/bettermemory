@@ -637,7 +637,9 @@ def declared(meta: Metadata) -> tuple[str | None, str | None]:
     None)`` when the metadata names no license at all."""
     expression = _field(meta, "License-Expression")
     if expression is not None and expression.strip():
-        return expression.strip(), "License-Expression"
+        # A folded header keeps its line break; the expression is the same
+        # on one line, and the report prints it as one.
+        return " ".join(expression.split()), "License-Expression"
     legacy = _field(meta, "License")
     if legacy is not None:
         found = _legacy(legacy)

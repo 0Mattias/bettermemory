@@ -489,7 +489,7 @@ def test_the_text_report_names_each_finding(
     assert "(5 runtime, 5 dev), scope all, source offline fixture" in out
     assert "not audited (not a PyPI package): vendored 0.1.0 (git " in out
     assert "VULNERABLE: GHSA-test-0001-aaaa webframe 2.0.0 [runtime, HIGH]" in out
-    assert "  webframe reads an unbounded multipart body into memory" in out
+    assert "  summary: webframe reads an unbounded multipart body into memory" in out
     assert "  aliases: CVE-0000-0001, PYSEC-0000-1" in out
     assert "  fixed in: 2.0.1, 3.0.2" in out
     assert "  fixed in: no fixed version listed" in out
@@ -593,6 +593,32 @@ def test_a_fixture_of_the_wrong_shape_exits_2(
     )
     assert code == 2
     assert message in capsys.readouterr().err
+
+
+def test_osv_text_never_starts_a_log_line() -> None:
+    """The Actions runner runs a log line that begins `::` (after leading
+    spaces) as a workflow command. Advisory text is third-party data: each
+    piece stays on one line behind a label of the report's own."""
+    hostile = audit_lock.Advisory(
+        id="GHSA-evil\n::add-mask::x",
+        aliases=("CVE-1\n::warning::y",),
+        summary="::error title=spoofed::the build is fine",
+        severity="HIGH\n::debug::z",
+        fixed=("1.0\n::notice::w",),
+    )
+    package = audit_lock.Locked(name="webframe", version="2.0.0", set="runtime")
+    report = audit_lock.Report(
+        lock="uv.lock",
+        scope="all",
+        source="test",
+        audited=[package],
+        skipped=[],
+        findings=[audit_lock.Finding(package, hostile, audit_lock.OPEN)],
+        withdrawn=["W-1\n::error::v (webframe 2.0.0)"],
+    )
+    text = audit_lock.render_text(report)
+    assert not [line for line in text.splitlines() if line.lstrip().startswith("::")]
+    assert "  summary: ::error title=spoofed::the build is fine" in text
 
 
 # ----------------------------------------------------------- OSV itself

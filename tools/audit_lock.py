@@ -569,7 +569,18 @@ def audit(
     return report
 
 
+def _line(value: object) -> str:
+    """OSV-supplied text as one line: every run of whitespace, line breaks
+    included, read as one space."""
+    return " ".join(str(value).split())
+
+
 def render_text(report: Report) -> str:
+    """The report for a person, or for a CI log. Text OSV supplies (ids,
+    aliases, versions, the summary) is third-party data, and the Actions
+    runner reads a log line that begins ``::``, after any leading spaces,
+    as a workflow command. So that text is kept to one line each and never
+    starts one: every line opens with a label or a URL of this script's own."""
     counts = report.as_json()["packages"]
     shown = ", ".join(
         f"{n} {label}" for label, n in sorted(counts.items(), reverse=True)
@@ -587,18 +598,18 @@ def render_text(report: Report) -> str:
             IGNORED: "ignored",
             EXPIRED: "VULNERABLE (ignore expired)",
         }[finding.status]
+        severity = f", {_line(a.severity)}" if a.severity else ""
         lines.append(
-            f"{tag}: {a.id} {finding.package.name} {finding.package.version} "
-            f"[{finding.package.set}{', ' + a.severity if a.severity else ''}]"
+            f"{tag}: {_line(a.id)} {finding.package.name} {finding.package.version} "
+            f"[{finding.package.set}{severity}]"
         )
         if a.summary:
-            lines.append(f"  {a.summary}")
+            lines.append(f"  summary: {_line(a.summary)}")
         if a.aliases:
-            lines.append(f"  aliases: {', '.join(a.aliases)}")
-        lines.append(
-            f"  fixed in: {', '.join(a.fixed) if a.fixed else 'no fixed version listed'}"
-        )
-        lines.append(f"  https://osv.dev/vulnerability/{a.id}")
+            lines.append(f"  aliases: {_line(', '.join(a.aliases))}")
+        fixed = _line(", ".join(a.fixed)) if a.fixed else "no fixed version listed"
+        lines.append(f"  fixed in: {fixed}")
+        lines.append(f"  https://osv.dev/vulnerability/{_line(a.id)}")
         if finding.ignore is not None:
             lines.append(
                 f"  ignore entry: {finding.ignore.id}, expires {finding.ignore.expires}: "
@@ -615,7 +626,7 @@ def render_text(report: Report) -> str:
             f"(it expires {entry.expires})"
         )
     for line in report.withdrawn:
-        lines.append(f"note: withdrawn advisory not reported: {line}")
+        lines.append(f"note: withdrawn advisory not reported: {_line(line)}")
     open_count = sum(1 for f in report.findings if f.status != IGNORED)
     ignored = sum(1 for f in report.findings if f.status == IGNORED)
     lines.append(

@@ -543,6 +543,11 @@ def _meta(
             ),
             ("MIT", "License-Expression"),
         ),
+        # A folded header is the same expression, reported on one line.
+        (
+            _meta(expression="MIT OR\n Apache-2.0"),
+            ("MIT OR Apache-2.0", "License-Expression"),
+        ),
         (_meta(license_text="Apache 2.0"), ("Apache-2.0", "License")),
         (_meta(license_text="BSD"), ("BSD", "License")),
         (_meta(license_text="BSD-3-Clause"), ("BSD-3-Clause", "License")),
