@@ -1116,6 +1116,9 @@ def test_out_spelled_in_another_case_is_refused_where_the_volume_folds_case(
     if target == "store":
         out = store_file.with_name(store_file.name.upper())
     elif target == "shm":
+        # Closed first: Windows refuses to delete a -shm that an open
+        # connection maps, and the last connection's close removes it.
+        cli_store.close()
         shm = store_file.with_name(store_file.name + "-shm")
         shm.unlink(missing_ok=True)
         out = shm.with_name(shm.name.upper())
