@@ -304,15 +304,24 @@ bindings) or when the bound file no longer holds this store id; and
 - The bound file's id is read without opening it as a store
   (`store._store_id_at`): `immutable=1`, or `mode=ro` first when its
   `-wal` and `-shm` are present, so a store a running daemon just
-  created, whose tables are still only in its WAL, is seen. No file
+  created, whose tables are still only in its WAL, is seen. The URI is
+  `_fsutil.sqlite_file_uri`'s, as for every open that passes SQLite a
+  query parameter (`posture.read_meta`, `backup._read_only_uri`, the
+  daemon's store-moved check `daemon._tell_successor`): `Path.as_uri`'s
+  URI for a POSIX or a drive-letter path, and for any other Windows path,
+  a UNC path first, the whole path after an empty authority
+  (`file:////server/share/d/memory.sqlite`), since SQLite refuses an
+  authority other than `localhost` and drops `localhost`, which would
+  turn `\\localhost\C$\d` into `/C$/d` on the current drive. A
+  verbatim `\\?\` or device `\\.\` path keeps its prefix
+  (`file:////%3F/C%3A/d`). No file
   there, a file that is no store (SQLite's query answers `SQLITE_ERROR`,
   such as no `meta` table, `SQLITE_CORRUPT` or `SQLITE_NOTADB`), one with
   another id, or a symbolic link loop is no store there, and the ring is
   rebound to the file being opened. Any other failure (a permission, a
   directory that cannot be searched, an I/O error, another SQLite error,
-  and any failure of SQLite's open itself, such as the `SQLITE_ERROR` it
-  gives the URI of a Windows UNC path) cannot tell, and keeps the
-  binding.
+  and any failure of SQLite's open itself, whatever its code, since an
+  open reads nothing of the file) cannot tell, and keeps the binding.
 - When the binding names another file that still holds the id, or
   cannot be read to tell, and that is not this file under another
   spelling (`os.path.samefile`), the owner's open retires no key,
@@ -320,7 +329,13 @@ bindings) or when the bound file no longer holds this store id; and
   writes no anchor. It opens as a reader with writes refused, even when
   its key matches, and so do its worker connections (`reopen`); a
   WARNING on the `bettermemory.store` logger names both files and the
-  remedy (move or remove one store, or delete `<store_id>.path`). A
+  remedy (move or remove one store, or delete `<store_id>.path`). The
+  WARNING comes once per process for each (store file, bound file)
+  pair, both resolved (`store._BOUND_ELSEWHERE_WARNED`, tested and added
+  under one lock, since worker connections open at once), and later
+  opens of the pair log the line at DEBUG; a spelling `resolve` does
+  not fold (a case variant on a case-insensitive file system) is a new
+  pair. A
   reader whose key matches asks the same (`KeyRing.bound_elsewhere`),
   since a reader with the key can write (the session-start hook records
   the brief it shows), and opens the same way.
@@ -339,7 +354,22 @@ link to nothing (a volume not mounted yet), raises `KeyUnreadableError`
 new key and a `rekey` row over a failure that may pass; a reader opens
 without the key and logs why; `held_keys` skips the file; `doctor`
 fails its key check, `security audit` reports it high, and `backup
-restore` refuses before it changes anything.
+restore` refuses before it changes anything. The CLI's owner openers
+(`cli._common.open_owner_store`, which `cli_context`, `serve`, the
+shim's in-process fallback and `up --foreground` reach, and
+`membership migrate`) end the command in one line through
+`cli._common.exit_if_key_unreadable`, `bettermemory: <the error>; make
+it readable and run the command again`, exit 1 (2 from `membership
+migrate`); `migrate v8` prints `migrate v8: <the error>`, exit 1. A
+daemon's line is the last of its log, which `up` and the hooks quote
+through `DaemonExited`. The shim opens its fallback's store
+(`cli.serve.open_for_serve`) before it warns that it falls back, so that
+line, a `SystemExit`, ends it alone; any other failure of that open
+logs the two warnings first. `_daemon_client.daemon_process_env` hands
+a daemon it starts the keys directory resolved but for its last
+component (`_pin_keys_dir`), so a keys directory that is a symbolic
+link reaches the daemon as the link, as a service unit pins it, and a
+dangling one fails there rather than naming a directory with no key.
 
 Cost: one indexed log lookup and one HMAC per row served, nothing per
 candidate; the segment map and the anchor add one file read, one row
@@ -1137,10 +1167,16 @@ unpaired surrogate refused as the file refuses bytes that are not UTF-8;
 errors and reports name it `registry
 HKLM\SOFTWARE\Policies\bettermemory\ManagedConfig`. It is read after the
 user's file, and every key it sets is pinned: the user's value is
-ignored, with one logged notice per key whose raw value differs from
-the pinned one and is not the code's own default for the key
-(`config._restates_default`: compared as written, a boolean restating
-only a boolean), and a list replaces the user's whole. Unknown sections and keys in it are ignored, as in config.toml,
+ignored, with one logged notice per key whose value differs from the
+pinned one and is not the code's own default for the key
+(`config._restates_pin_or_default`), and a list replaces the user's
+whole. The value is compared as written (`_restates_default`, a boolean
+restating only a boolean), except for a key with a legacy spelling
+(`_LEGACY_SPELLINGS`): `[behavior] prompt_recall`, which 3.41.0 to
+8.0.0 wrote as `true`, is compared as `_prompt_recall_spelling` reads
+it, against the pinned value as loaded and the default, so `true` (read
+as `project`) restates the default and a spelling it does not read
+still draws the notice. Unknown sections and keys in it are ignored, as in config.toml,
 but a top-level value outside a section is an error. It fails closed: a
 file that exists but cannot be read, does not parse or holds an invalid
 value stops the load with an error naming it. `Config.managed_keys`

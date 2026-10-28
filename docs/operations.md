@@ -64,7 +64,10 @@ replaces an older daemon, and an older client leaves a newer one alone.
 While another process holds the store's lock (a daemon still starting,
 or one busy or hung), a client starts none: it waits up to 8 s for that
 daemon to answer and prove itself, and starts one only if the lock comes
-free first. A daemon reads the config and the managed config at its
+free first. When the wait ends with the lock still held, `up` exits 1
+and its line (and its `--json` `error`) ends `: a process holds the
+store's lock (a daemon starting, busy or hung) and none answered within
+8 s`. A daemon reads the config and the managed config at its
 start, so a config change takes effect after `bettermemory down` and the
 next start.
 
@@ -116,6 +119,11 @@ What to know before rolling it out:
   `uv tool install bettermemory` or `pipx install bettermemory` first, and
   install the service from the same install the clients run, since a
   newer client stops an older supervised daemon and it is not restarted.
+- `install` refuses a store inside a backup bundle (`BETTERMEMORY_DIR`
+  naming a bundle's directory), exit 1, before it writes the unit, the
+  log or the state directory and before it stops any daemon: the unit's
+  daemon would refuse that store at every start. Copy `memory.sqlite`
+  out of the bundle first, as the message says.
 - After `bettermemory down` a supervised daemon stays down until the
   next login or a reload: `launchctl kickstart gui/$(id -u)/io.github.0mattias.bettermemory`
   or `systemctl --user start bettermemory.service`. Meanwhile the next
@@ -181,7 +189,8 @@ What the daemon's log and the clients say when something is wrong:
   whose daemon holds the lock but does not answer, and `bettermemory
   down` stops it; `lsof` on `daemon-<hash>.lock` in the state directory
   finds a holder with no state file. A hook in the same case starts
-  none either and gives up after the same wait.
+  none either and gives up after the same wait. `up` says the same
+  after `bettermemory: no daemon could be started for <store>:`.
 - **"store ... was opened without its key; a new key ... was written and
   the log rekeyed".** This host did not hold the store's key: a store
   copied in, or a keys directory that moved. See
@@ -191,12 +200,21 @@ What the daemon's log and the clients say when something is wrong:
   permission, an I/O error, a volume not mounted. The daemon and every
   writing command fail until it can be read, and nothing is rekeyed;
   `doctor` fails its key check and `security audit` reports it high.
+  A command ends in that one line, not a traceback, and exits 1
+  (`membership migrate` exits 2, and `migrate v8` prints it after
+  `migrate v8:`). A daemon writes it last in its log and exits 1; `up`
+  and the hooks quote it with the log's path, and a hook still exits 0.
+  A keys directory that is a symbolic link reaches a daemon a client
+  starts as the link, so a link to a volume not mounted fails there in
+  the same line.
   Make it readable to this account again (`0600`), or mount the volume.
 - **"store ... carries store id ..., and the key ring under ... belongs
   to the store at ...; this one opens for reading only".** Two store
   files carry one store id, and the key ring is bound to the other one
   (Files and modes, above). Move or remove one of them, or delete the
-  `<store_id>.path` the message names.
+  `<store_id>.path` the message names. A process logs it once for each
+  pair of files, and every later open of the pair at DEBUG, so one
+  daemon logs it once however many worker connections open the store.
 - **`log verify` reports `foreign_segment`.** Rows signed by a key this
   host does not hold come after its own. Either someone wrote into the
   store file without the key, or the store was moved away and back, or
@@ -263,14 +281,17 @@ wrote the bundle, reads `tampered` (`foreign_segment`), as the live store
 reads that shape, and nothing restores it. Every command that would open
 a bundle's `memory.sqlite` as a store refuses it, since opening a store
 switches its journal mode, which changes the file's bytes, and the
-bundle would then fail its hash (`backup create` and `security audit`
-read it without changing it): a store file with a bundle's
+bundle would then fail its hash (`security audit` reads it without
+changing it): a store file with a bundle's
 `manifest.json` beside it, through a symbolic link too, is refused
 before it is opened, with a message that says to copy `memory.sqlite`
 out of the bundle to a directory of its own first and point the command
 at the copy. A `manifest.json` counts when it names the format
 `bettermemory.backup` or does not parse, so another tool's file of that
-name beside a store changes nothing.
+name beside a store changes nothing. `backup create` refuses a bundle's
+store too (`BETTERMEMORY_DIR` naming a bundle), with or without `--out`,
+exit 1, and writes nothing: keep a bundle by copying its directory as
+it is.
 
 **Keep the keys apart from the bundles.** Without `--include-key` a
 bundle holds no key, and verifies and restores only where the keys
@@ -505,7 +526,12 @@ none. The config.toml a first run writes sets nothing: every setting is
 commented out, so the code's defaults apply and a pin finds no line. One
 an earlier release wrote spells every key it knew at that release's
 default; a line that is still today's default, `[telemetry] enabled =
-true` among them, draws no warning when a pin overrides it. `config
+true` among them, draws no warning when a pin overrides it. Lines are
+compared as written, but `[behavior] prompt_recall`, which releases
+3.41.0 to 8.0.0 wrote as `true`, is compared as the loader reads it
+(`true`, `"yes"`, `"on"` and `"1"` are `project`; `false`, `"no"`,
+`"off"`, `"0"` and `""` are `off`; strings in any case): a line that
+reads as the default or as the pinned value draws none. `config
 check` still reports every ignored line as a note, and `config show`
 names it. Such a file also keeps those values for the user where
 nothing pins them: delete the lines nobody chose, and a later release's
