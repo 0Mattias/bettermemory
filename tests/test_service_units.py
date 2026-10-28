@@ -12,6 +12,7 @@ and stops it with the supervisor's signal.
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import plistlib
@@ -610,6 +611,45 @@ def test_install_reports_a_daemon_that_would_not_hand_over(
         capsys.readouterr().out
     )
     assert read_state(state_dir, store) is not None
+
+
+def test_install_passes_over_a_port_that_does_not_speak_http(
+    svc: Callable[[str], tuple[Path, Path]],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A listener on the state file's port that answers in another
+    protocol makes `health` raise, not return; `install` asks nothing of
+    it, stops nothing, and loads the unit."""
+    _, state_dir = svc("darwin")
+    store = resolved_store_path()
+    write_state(
+        state_dir,
+        {
+            "pid": os.getpid(),
+            "port": 1,
+            "token": "t" * 64,
+            "version": "9.0.0",
+            "store": str(store),
+            "started": "2026-01-01T00:00:00Z",
+        },
+    )
+
+    def not_http(port: int, timeout: float = 1.0) -> None:
+        raise http.client.BadStatusLine("SSH-2.0-OpenSSH_9.9")
+
+    def never(state: dict[str, Any], **kw: Any) -> bool:
+        raise AssertionError("shutdown_daemon reached a listener that is not ours")
+
+    monkeypatch.setattr(_daemon_client, "health", not_http)
+    monkeypatch.setattr(_daemon_client, "shutdown_daemon", never)
+    supervisor = _Supervisor()
+    monkeypatch.setattr(subprocess, "run", supervisor)
+    assert _main(["service", "install", "--json"], monkeypatch) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["handed_over"] is None
+    assert payload["loaded"] is True
+    assert supervisor.calls[-1][1] == "bootstrap"
 
 
 def test_install_refuses_an_interpreter_in_a_package_managers_cache(

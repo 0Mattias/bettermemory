@@ -45,6 +45,7 @@ from bettermemory.cli.daemon_cmd import (
     daemon_report,
     is_this_daemon,
     lock_held,
+    probe,
     uptime_seconds,
 )
 from bettermemory.server import main as cli_main
@@ -142,6 +143,70 @@ def _listener(answer: dict[str, Any]) -> Iterator[tuple[int, list[str]]]:
         server.server_close()
 
 
+#: Replies of listeners that are no daemon's /health, each with what
+#: `probe` names it.
+_NOT_HEALTH = {
+    "http-404": (
+        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        "HTTP 404",
+    ),
+    # Not followed off the port.
+    "redirect": (
+        b"HTTP/1.1 302 Found\r\nLocation: http://192.0.2.1/health\r\n"
+        b"Content-Length: 0\r\nConnection: close\r\n\r\n",
+        "HTTP 302",
+    ),
+    "not-json": (
+        b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello",
+        "a reply that is not JSON",
+    ),
+    "not-ok": (
+        b"HTTP/1.1 200 OK\r\nContent-Length: 22\r\nConnection: close\r\n\r\n"
+        b'{"status": "starting"}',
+        "a reply that is not a daemon's /health",
+    ),
+    "not-http": (
+        b"SSH-2.0-OpenSSH_9.9\r\n",
+        "a reply that is not HTTP (BadStatusLine)",
+    ),
+}
+
+
+@contextmanager
+def _replying(reply: bytes) -> Iterator[tuple[int, list[bytes]]]:
+    """A local TCP listener that answers every connection with `reply`,
+    whatever was asked; the first line of each request it received."""
+    asked: list[bytes] = []
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("127.0.0.1", 0))
+    server.listen()
+    server.settimeout(0.1)
+    done = threading.Event()
+
+    def serve() -> None:
+        while not done.is_set():
+            try:
+                conn, _ = server.accept()
+            except OSError:
+                continue
+            with conn:
+                conn.settimeout(2.0)
+                try:
+                    asked.append(conn.recv(65536).split(b"\r\n", 1)[0])
+                    conn.sendall(reply)
+                except OSError:
+                    pass
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        yield int(server.getsockname()[1]), asked
+    finally:
+        done.set()
+        thread.join(timeout=5)
+        server.close()
+
+
 # ---------------------------------------------------------------------------
 # The pieces
 # ---------------------------------------------------------------------------
@@ -186,6 +251,44 @@ def test_a_lock_that_cannot_be_opened_reads_unknown(
 
     monkeypatch.setattr(_daemon_client, "try_lock", refused)
     assert lock_held(path) is None
+
+
+def test_the_probe_reads_a_daemon_a_stranger_and_silence_apart() -> None:
+    """A daemon's /health is the reply; any other answer is named; a port
+    that refuses, or accepts and stays silent, is nothing. `health`, which
+    the hooks use, reads the last two alike and lets a reply that is not
+    HTTP escape as an exception, which `status --check` would have turned
+    into exit 1."""
+    answer = {"status": "ok", "store": "/s/memory.sqlite", "pid": 7}
+    with _listener(answer) as (port, _):
+        assert probe(port) == (answer, None)
+    for reply, named in _NOT_HEALTH.values():
+        with _replying(reply) as (port, asked):
+            assert probe(port) == (None, named)
+        assert asked == [b"GET /health HTTP/1.1"]
+    assert probe(_closed_port()) == (None, None)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as silent:
+        # Listening, never accepting: the connection waits in the backlog
+        # with no reply, as it does for a daemon too busy to answer.
+        silent.bind(("127.0.0.1", 0))
+        silent.listen()
+        assert probe(int(silent.getsockname()[1]), timeout=0.2) == (None, None)
+
+
+def test_the_probe_asks_the_port_itself_whatever_proxy_is_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """urllib sends a request for 127.0.0.1 through ``http_proxy`` when
+    ``no_proxy`` does not name it; the probe connects to the port."""
+    answer = {"status": "ok", "store": "/s/memory.sqlite", "pid": 7}
+    proxy_reply = _NOT_HEALTH["http-404"][0]
+    with _replying(proxy_reply) as (proxy, proxied), _listener(answer) as (port, _):
+        for name in ("no_proxy", "NO_PROXY"):
+            monkeypatch.delenv(name, raising=False)
+        for name in ("http_proxy", "HTTP_PROXY"):
+            monkeypatch.setenv(name, f"http://127.0.0.1:{proxy}")
+        assert probe(port) == (answer, None)
+    assert proxied == []
 
 
 # ---------------------------------------------------------------------------
@@ -352,6 +455,53 @@ def test_a_listener_beside_a_daemon_that_holds_the_lock_keeps_the_file(
     assert "answers for another process" in out
     assert f"its state file is kept (pid {os.getpid()} holds the lock)" in out
     assert path.exists()
+
+
+@pytest.mark.parametrize("kind", sorted(_NOT_HEALTH))
+def test_a_listener_that_is_no_daemon_reads_not_ours_without_a_traceback(
+    where: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    kind: str,
+) -> None:
+    """An HTTP error, a body that is not a daemon's /health, or a protocol
+    that is not HTTP on the state file's port answers, but not as this
+    store's daemon: --check answers 3, not the 1 ("not running") that the
+    traceback of a reply that is not HTTP used to exit with. The file
+    follows the rule: kept while a live pid holds the lock, removed once
+    the named daemon is gone."""
+    state_dir, store = where
+    reply, named = _NOT_HEALTH[kind]
+    with _replying(reply) as (port, _):
+        path = _stage(state_dir, store, pid=os.getpid(), port=port)
+        with _held(state_dir, store):
+            assert _main(["status", "--json", "--check"], monkeypatch) == 3
+            report = json.loads(capsys.readouterr().out)
+            assert path.exists()
+            assert _main(["status"], monkeypatch) == 0
+            out = capsys.readouterr().out
+        assert report["state"] == "not_ours"
+        assert report["check"] == CHECK_NOT_OURS
+        assert report["answered"] == {
+            "store": None,
+            "pid": None,
+            "version": None,
+            "reply": named,
+        }
+        assert report["state_file_removed"] is False
+        assert f"answers for something that is not a bettermemory daemon ({named})" in (
+            out
+        )
+        assert f"its state file is kept (pid {os.getpid()} holds the lock)" in out
+        _stage(state_dir, store, pid=_DEAD_PID, port=port)
+        assert _main(["status", "--check"], monkeypatch) == CHECK_NOT_OURS
+        # The line a stale state file always printed comes first.
+        assert capsys.readouterr().out == (
+            f"bettermemory daemon: not running for {store} (stale state file for "
+            f"pid {_DEAD_PID} removed); port {port} answers for something that "
+            f"is not a bettermemory daemon ({named})\n"
+        )
+        assert not path.exists()
 
 
 def test_a_daemon_that_answers_as_itself_reads_running(
@@ -521,6 +671,63 @@ def test_down_leaves_a_listener_that_is_not_this_daemon_alone(
         assert "nothing was stopped" in capsys.readouterr().err
         assert posts == []
         assert path.exists()
+
+
+def test_down_posts_nothing_to_a_listener_that_is_no_daemon(
+    where: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A reply that is no daemon's /health does not come from the daemon
+    the state file names either, so the token is not posted there and no
+    pid is signalled: the stale file of a gone daemon is removed, and the
+    file of a live pid whose lock cannot be checked is kept, which the
+    message says rather than claiming the lock is held."""
+    state_dir, store = where
+
+    def never(state: dict[str, Any], **kw: Any) -> bool:
+        raise AssertionError("shutdown_daemon reached a listener that is not ours")
+
+    monkeypatch.setattr(_daemon_client, "shutdown_daemon", never)
+    reply, named = _NOT_HEALTH["http-404"]
+    with _replying(reply) as (port, asked):
+        path = _stage(state_dir, store, pid=_DEAD_PID, port=port)
+        assert _main(["down", "--json"], monkeypatch) == 0
+        outcome = json.loads(capsys.readouterr().out)
+        assert outcome["result"] == "not_ours"
+        assert outcome["answered"]["reply"] == named
+        assert not path.exists()
+        path = _stage(state_dir, store, pid=os.getpid(), port=port)
+        monkeypatch.setattr(daemon_cmd, "lock_held", lambda path: None)
+        assert _main(["down"], monkeypatch) == 1
+        err = capsys.readouterr().err
+    assert f"answers for something that is not a bettermemory daemon ({named})" in err
+    assert (
+        "nothing was stopped and the state file is kept "
+        f"(pid {os.getpid()} is alive; its lock could not be checked)"
+    ) in err
+    assert path.exists()
+    assert asked and all(line.startswith(b"GET /health ") for line in asked)
+
+
+def test_down_says_why_it_kept_the_file_of_a_daemon_that_is_gone(
+    where: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A gone daemon's file that could not be removed (or names a daemon
+    started since) is kept, and the message does not claim a live pid."""
+    state_dir, store = where
+    monkeypatch.setattr(_daemon_client, "shutdown_daemon", _no_stop)
+    monkeypatch.setattr(daemon_cmd, "_remove_stale", lambda *a: False)
+    path = _stage(state_dir, store, pid=_DEAD_PID, port=_closed_port())
+    assert _main(["down"], monkeypatch) == 1
+    assert capsys.readouterr().err == (
+        f"bettermemory daemon: pid {_DEAD_PID} did not stop; the state file is "
+        f"kept (the daemon of pid {_DEAD_PID} is gone, but the file could not "
+        "be removed or names a daemon started since)\n"
+    )
+    assert path.exists()
 
 
 # ---------------------------------------------------------------------------

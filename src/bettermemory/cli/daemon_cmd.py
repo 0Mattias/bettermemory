@@ -7,8 +7,11 @@ this directory.
 
 Each of the three takes ``--json`` for scripts, and ``status --check``
 turns the answer into an exit code a monitor can read
-(`CHECK_RUNNING` and its siblings). Without those flags the text and
-the exit codes are what they always were.
+(`CHECK_RUNNING` and its siblings). Without those flags the exit codes
+are what they always were, and so is the text, except where a state
+file is now kept (below) or the port answers for something that is not
+this store's daemon (`probe`), which `status` used to call running or
+not running.
 
 A state file is removed only when the daemon it names is provably gone:
 its process no longer exists, or nobody holds the store's lock
@@ -42,9 +45,12 @@ CHECK_NOT_RUNNING = 1
 #: exists and the store's lock is held (or cannot be checked). Starting,
 #: busy or hung; the file is kept.
 CHECK_NOT_ANSWERING = 2
-#: Something answers /health on the state file's port, but not as this
-#: store's daemon: another store, another pid. On a shared host that can
-#: be another account's listener on a port a crashed daemon left behind.
+#: Something answers on the state file's port, but not as this store's
+#: daemon: a /health reply naming another store or pid, or a reply that
+#: is no daemon's /health at all (an HTTP error, a body that is not the
+#: daemon's, a protocol that is not HTTP), which is also how a daemon
+#: that answers unhealthily reads. On a shared host that can be another
+#: account's listener on a port a crashed daemon left behind.
 CHECK_NOT_OURS = 3
 
 #: The `state` of `daemon_report`, one per `--check` outcome, with the
@@ -122,7 +128,8 @@ def add_status(
         "with --check the exit code is the answer: 0 running and answering as "
         "this store's daemon, 1 not running, 2 a state file whose daemon does "
         "not answer but may be alive (it holds the store's lock), 3 the port "
-        "answers for a process that is not this store's daemon."
+        "answers, but not as this store's healthy daemon (another store or "
+        "process, or a reply that is not a daemon's /health)."
     )
     parser = sub.add_parser("status", help=help_text, description=help_text)
     parser.add_argument(
@@ -158,6 +165,76 @@ def is_this_daemon(answer: dict[str, Any], state: dict[str, Any]) -> bool:
     fields; one that does not is not taken as this store's."""
     same_store = answer.get("store") == state.get("store")
     return same_store and answer.get("pid") == state.get("pid")
+
+
+def probe(
+    port: int, *, timeout: float = _HEALTH_TIMEOUT_SECONDS
+) -> tuple[dict[str, Any] | None, str | None]:
+    """GET /health on `port`, read three ways: (the reply, None) when it
+    is a daemon's (a JSON object with status ok, `_daemon_client.health`'s
+    reading); (None, what answered) when something answered that is not;
+    (None, None) when nothing did: the port refused, closed the
+    connection, or stayed silent past `timeout`.
+
+    `health` reads the last two alike, which is what a hook wants (either
+    way there is no daemon to use), and lets a reply that is not HTTP at
+    all escape as `http.client.HTTPException`. A report must tell them
+    apart and must not end in a traceback, which `status --check` would
+    turn into exit 1, "not running": a silent port beside a live daemon is
+    a daemon starting, busy or hung, while a port that answers as
+    something else is not this store's daemon, and `down` posts the token
+    to no such listener.
+
+    One plain connection to the port, not `urllib`: a report asks the port
+    itself, so no ``http_proxy`` in the environment is consulted (urllib
+    sends even 127.0.0.1 through one unless ``no_proxy`` names it) and no
+    redirect is followed off the port."""
+    import http.client
+
+    from .._daemon_client import HEALTH_PATH, HOST
+
+    connection = http.client.HTTPConnection(HOST, port, timeout=timeout)
+    try:
+        connection.request("GET", HEALTH_PATH)
+        response = connection.getresponse()
+        status, raw = response.status, response.read()
+    except OSError:
+        # Refused, reset, closed without a reply (`RemoteDisconnected` is
+        # an OSError too), or silent past the timeout.
+        return None, None
+    except http.client.HTTPException as exc:
+        return None, f"a reply that is not HTTP ({type(exc).__name__})"
+    finally:
+        connection.close()
+    if not 200 <= status < 300:
+        return None, f"HTTP {status}"
+    try:
+        body = json.loads(raw.decode("utf-8"))
+    except ValueError:
+        return None, "a reply that is not JSON"
+    if not isinstance(body, dict) or body.get("status") != "ok":
+        return None, "a reply that is not a daemon's /health"
+    return body, None
+
+
+def _answered(answer: dict[str, Any] | None, other: str | None) -> dict[str, Any]:
+    """What answered on a port that is not this store's daemon, for a
+    report: the identity a /health reply gave, and `reply`, what the
+    answer was when it was no daemon's /health (None when it was one)."""
+    reply = answer or {}
+    return {
+        "store": reply.get("store"),
+        "pid": reply.get("pid"),
+        "version": reply.get("version"),
+        "reply": other,
+    }
+
+
+def _who(answer: dict[str, Any] | None, other: str | None) -> str:
+    """The listener `_answered` describes, for a message."""
+    if answer is not None:
+        return f"another process (store {answer.get('store')}, pid {answer.get('pid')})"
+    return f"something that is not a bettermemory daemon ({other})"
 
 
 def lock_held(path: Path) -> bool | None:
@@ -213,8 +290,15 @@ def _gone(state: dict[str, Any], lock_path: Path) -> tuple[bool, bool, bool | No
     return (not alive or held is False), alive, held
 
 
-def _why_kept(pid: int, held: bool | None) -> str:
-    """Why a state file whose daemon does not answer is kept."""
+def _why_kept(pid: int, held: bool | None, *, gone: bool = False) -> str:
+    """Why a state file whose daemon does not answer is kept: the daemon
+    may be alive, or, when it is `gone`, the file could not be removed or
+    names a daemon started since (`_remove_stale`)."""
+    if gone:
+        return (
+            f"the daemon of pid {pid} is gone, but the file could not be "
+            "removed or names a daemon started since"
+        )
     if held:
         return f"pid {pid} holds the lock"
     return f"pid {pid} is alive; its lock could not be checked"
@@ -244,7 +328,6 @@ def daemon_report(
     is provably gone is removed, as `status` always removed a stale one;
     `service status` passes False and reports without touching anything."""
     from .._daemon_client import (
-        health,
         lock_file_for,
         log_file_for,
         package_version,
@@ -285,7 +368,7 @@ def daemon_report(
         version=state.get("version"),
         started=state.get("started"),
     )
-    answer = health(state["port"], timeout=_HEALTH_TIMEOUT_SECONDS)
+    answer, other = probe(state["port"])
     if answer is not None and is_this_daemon(answer, state):
         version = answer.get("version", state["version"])
         orphans = answer.get("store_orphans")
@@ -307,30 +390,28 @@ def daemon_report(
     gone, alive, held = _gone(state, lock_path)
     removed = tidy and gone and _remove_stale(state_dir, store_path, pid)
     report.update(pid_alive=alive, lock_held=held, state_file_removed=removed)
-    if answer is not None:
-        report["answered"] = {
-            "store": answer.get("store"),
-            "pid": answer.get("pid"),
-            "version": answer.get("version"),
-        }
+    what = "removed" if removed else "left in place"
+    stale = (
+        f"bettermemory daemon: not running for {store_path} "
+        f"(stale state file for pid {pid} {what})"
+    )
+    if answer is not None or other is not None:
+        report["answered"] = _answered(answer, other)
         report["state"] = NOT_OURS
-        tail = ""
-        if removed:
-            tail = f"; the stale state file for pid {pid} is removed"
-        elif not gone:
-            tail = f"; its state file is kept ({_why_kept(pid, held)})"
-        report["message"] = (
-            f"bettermemory daemon: port {state['port']} answers for another "
-            f"process (store {answer.get('store')}, pid {answer.get('pid')}), "
-            f"not the daemon of {store_path}{tail}"
-        )
+        who = _who(answer, other)
+        if gone:
+            # The line a stale state file always printed, then what holds
+            # its port now.
+            report["message"] = f"{stale}; port {state['port']} answers for {who}"
+        else:
+            report["message"] = (
+                f"bettermemory daemon: port {state['port']} answers for {who}, "
+                f"not the daemon of {store_path}; its state file is kept "
+                f"({_why_kept(pid, held)})"
+            )
     elif gone:
         report["state"] = STALE
-        what = "removed" if removed else "left in place"
-        report["message"] = (
-            f"bettermemory daemon: not running for {store_path} "
-            f"(stale state file for pid {pid} {what})"
-        )
+        report["message"] = stale
     else:
         report["state"] = NOT_ANSWERING
         report["message"] = (
@@ -449,7 +530,6 @@ def _run_foreground(port: int | None) -> None:
 
 def run_down(args: argparse.Namespace) -> None:
     from .._daemon_client import (
-        health,
         lock_file_for,
         pid_alive,
         read_state,
@@ -482,8 +562,8 @@ def run_down(args: argparse.Namespace) -> None:
         return
     pid, port = int(state["pid"]), int(state["port"])
     outcome.update(pid=pid, port=port)
-    answer = health(port, timeout=_HEALTH_TIMEOUT_SECONDS)
-    if answer is not None and not is_this_daemon(answer, state):
+    answer, other = probe(port)
+    if other is not None or (answer is not None and not is_this_daemon(answer, state)):
         # The port answers, but not as the daemon the file names: the token
         # is not posted to it and no pid is signalled on its say-so. The
         # daemon the file named is gone when its pid is, or when the
@@ -494,20 +574,21 @@ def run_down(args: argparse.Namespace) -> None:
             result="not_ours",
             lock_held=held,
             state_file_kept=not removed,
-            answered={"store": answer.get("store"), "pid": answer.get("pid")},
+            answered=_answered(answer, other),
         )
+        who = _who(answer, other)
         if removed:
             outcome["message"] = (
                 f"bettermemory daemon: not running for {store_path}; port {port} "
-                f"answers for another process (store {answer.get('store')}), which "
-                f"was left alone, and the stale state file for pid {pid} is removed"
+                f"answers for {who}, which was left alone, and the stale state "
+                f"file for pid {pid} is removed"
             )
             _emit(outcome, json_out=json_out, text=outcome["message"])
             return
         outcome["message"] = (
-            f"bettermemory daemon: port {port} answers for another process (store "
-            f"{answer.get('store')}), not pid {pid}, which still holds the store's "
-            "lock; nothing was stopped and the state file is kept"
+            f"bettermemory daemon: port {port} answers for {who}, not pid {pid}; "
+            "nothing was stopped and the state file is kept "
+            f"({_why_kept(pid, held, gone=gone)})"
         )
         _emit(outcome, json_out=json_out, text=outcome["message"], err=True)
         raise SystemExit(1)
@@ -527,7 +608,7 @@ def run_down(args: argparse.Namespace) -> None:
     if removed:
         why = "the state file is removed (no process holds the store's lock)"
     else:
-        why = f"the state file is kept ({_why_kept(pid, held)})"
+        why = f"the state file is kept ({_why_kept(pid, held, gone=gone)})"
     outcome["message"] = f"bettermemory daemon: pid {pid} did not stop; {why}"
     _emit(outcome, json_out=json_out, text=outcome["message"], err=True)
     raise SystemExit(1)
@@ -553,6 +634,7 @@ __all__ = [
     "daemon_report",
     "is_this_daemon",
     "lock_held",
+    "probe",
     "run_down",
     "run_status",
     "run_up",
