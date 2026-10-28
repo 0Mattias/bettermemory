@@ -554,6 +554,20 @@ def test_a_pretty_printed_anchor_file_is_one_anchor(tmp_path: Path) -> None:
     assert anchor.seq == 3
 
 
+def test_an_anchor_file_saved_with_a_byte_order_mark_reads(tmp_path: Path) -> None:
+    """What a Windows editor or PowerShell's UTF-8 writer saves: the
+    anchors behind a byte-order mark, one or several."""
+    one = tmp_path / "one.json"
+    one.write_text(json.dumps(_good()), encoding="utf-8-sig")
+    assert [a.seq for a in load_anchors(one)] == [3]
+    many = tmp_path / "many.jsonl"
+    many.write_text(
+        json.dumps(_good()) + "\r\n" + json.dumps({**_good(), "seq": 4}) + "\r\n",
+        encoding="utf-8-sig",
+    )
+    assert [a.seq for a in load_anchors(many)] == [3, 4]
+
+
 # ---------------------------------------------------------------------------
 # Without --anchor, verify is unchanged
 # ---------------------------------------------------------------------------

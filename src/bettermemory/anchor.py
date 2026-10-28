@@ -205,7 +205,11 @@ def load_anchors(path: Path | str) -> list[Anchor]:
     read, holds no anchor, or holds anything that is not one."""
     path = Path(path)
     try:
-        text = bounded_read(path, MAX_ANCHOR_FILE_BYTES).decode("utf-8")
+        # `utf-8-sig`: an anchor kept off the host comes back through
+        # whatever tool kept it, and a Windows editor or PowerShell's
+        # UTF-8 writer puts a byte-order mark first, which `json.loads`
+        # refuses. Without one the text decodes as plain UTF-8.
+        text = bounded_read(path, MAX_ANCHOR_FILE_BYTES).decode("utf-8-sig")
     except (OSError, ValueError) as exc:
         raise AnchorFileError(f"{path}: cannot read an anchor file: {exc}") from exc
     # A whole file that parses is one anchor (a JSON Lines file of one
