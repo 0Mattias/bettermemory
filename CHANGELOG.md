@@ -309,6 +309,13 @@ testing.
   credential at its issuer: that is the fix`, since the log keeps every
   earlier version after an edit, a removal and a prune.
   (`src/bettermemory/cli/log_cmd.py`, `src/bettermemory/secret_scan.py`)
+- **The security audit's text report escapes what a finding quotes.** A
+  summary can quote a path or an OS error's reason, such as a symbolic
+  link's target, and the text report printed it raw: a line break in
+  one split the report's line, and an escape sequence reached the
+  terminal. The store path, every summary and every fix now print
+  through the same escaping `doctor` and `log` use. `--json` is
+  unchanged. (`src/bettermemory/posture.py`)
 
 #### Known limitations
 

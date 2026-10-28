@@ -1415,17 +1415,25 @@ def _claude(config: Config, *, cwd: Path | None, platform: str) -> Iterator[Find
 
 def render(report: Audit) -> str:
     """The text form of an audit: the verdict, the store, one line per
-    finding, and the fix under each warning and high finding."""
+    finding, and the fix under each warning and high finding. A summary
+    can quote a path or an OS error's reason (a symbolic link's target),
+    so it is printed through `history.printable`, as doctor prints its
+    report: a line break or an escape in one cannot split or restyle a
+    line."""
+    from .history import printable
+
     counts = report.counts()
     lines = [
         f"bettermemory security audit: {report.status}",
-        f"  store {report.store} ({report.store_rule})",
+        f"  store {printable(str(report.store))} ({report.store_rule})",
     ]
     width = max((len(finding.id) for finding in report.findings), default=0)
     for finding in report.findings:
-        lines.append(f"  {finding.status:<4}  {finding.id:<{width}}  {finding.summary}")
+        lines.append(
+            f"  {finding.status:<4}  {finding.id:<{width}}  {printable(finding.summary)}"
+        )
         if finding.fix and finding.status in ("warn", "high"):
-            lines.append(f"  {'':<4}  {'':<{width}}  fix: {finding.fix}")
+            lines.append(f"  {'':<4}  {'':<{width}}  fix: {printable(finding.fix)}")
     lines.append(
         f"  {counts['high']} high, {counts['warn']} warning(s); "
         "`bettermemory log verify` checks the log itself"

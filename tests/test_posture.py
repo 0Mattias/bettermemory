@@ -910,3 +910,27 @@ def test_cli_text(
     assert _run_cli(["security", "audit"], monkeypatch) == 1
     out = capsys.readouterr().out
     assert "fix: restore" in out
+
+
+def test_the_text_report_escapes_what_a_finding_quotes() -> None:
+    """A summary or a fix can quote a path or an OS error's reason (a
+    symbolic link's target): a line break or an escape in one is written
+    as its escape, so it cannot split a line or restyle the terminal."""
+    report = Audit(
+        store=Path("/tmp/store\x1b[2J"),
+        store_rule="BETTERMEMORY_DIR",
+        platform="linux",
+        findings=[
+            Finding(
+                id="mode.key",
+                status="high",
+                summary="key file /k cannot be read (target /x\nok  fake)",
+                fix="make /k\x1b[31m readable",
+            )
+        ],
+    )
+    text = posture.render(report)
+    assert "\x1b" not in text
+    assert "(target /x\\nok  fake)" in text
+    assert "\\x1b[2J" in text and "\\x1b[31m" in text
+    assert len(text.splitlines()) == 5
