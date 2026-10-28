@@ -296,13 +296,12 @@ def run_shim() -> None:
         START_TIMEOUT_SECONDS,
         DaemonExited,
         _answering,
-        _spawn,
         daemon_env_for,
         ensure_daemon,
         package_version,
         resolve_state_dir,
         resolved_store_path,
-        wait_for_daemon,
+        start_and_wait,
     )
     from .config import load_config
 
@@ -351,14 +350,19 @@ def run_shim() -> None:
         # not upgrade it, so an older daemon that came up meanwhile is not
         # replaced here either. Whatever daemon answers and proves itself
         # the state file's (`_answering`) serves; one is started only when
-        # none does, and another listener on the port counts as none.
+        # none does, and another listener on the port counts as none. None
+        # is started while another process holds the store's lock: that
+        # daemon is waited for instead (`start_and_wait`).
         found = _answering(state_dir, store_path)
         if found is not None:
             return found, None
         try:
-            started = _spawn(state_dir, store_path, port=config.daemon.port, env=env)
-            found = wait_for_daemon(
-                state_dir, store_path, timeout=START_TIMEOUT_SECONDS, started=started
+            found = start_and_wait(
+                state_dir,
+                store_path,
+                port=config.daemon.port,
+                env=env,
+                timeout=START_TIMEOUT_SECONDS,
             )
         except (DaemonExited, OSError) as exc:
             return None, f"{exc.__class__.__name__}: {exc}"

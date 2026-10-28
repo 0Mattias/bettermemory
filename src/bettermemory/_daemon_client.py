@@ -727,6 +727,66 @@ def wait_for_daemon(
         time.sleep(_POLL_SECONDS)
 
 
+def start_and_wait(
+    state_dir: Path,
+    store_path: Path | str,
+    *,
+    port: int | None,
+    env: dict[str, str] | None,
+    timeout: float,
+) -> dict[str, Any] | None:
+    """Start a daemon for `store_path` and wait up to `timeout` for one to
+    answer (`wait_for_daemon`), unless another process holds the store's
+    lock (`lock_file_for`): then start none, and wait for that process.
+
+    A held lock means a daemon of this store is alive: one still starting
+    (it takes the lock before it writes its state file or listens), one
+    busy past the health probe's half second, or one whose state file is
+    gone. A daemon started beside it could not serve: it waits
+    `LOCK_WAIT_SECONDS` for the lock and exits with `DAEMON_HELD_STATUS`,
+    a process and a log line spent on every hook while the holder is slow.
+    So while the lock is held this polls for a daemon that answers and
+    proves itself (`_answering`, the check every discovery makes) and
+    returns its state; when the lock comes free first (the holder exited
+    without answering), it starts a daemon, within what is left of
+    `timeout`; and when `timeout` passes first, it answers None, as a
+    start nobody answered does. The lock is probed, never held
+    (`_held_elsewhere`), so a daemon starting meanwhile is not kept from
+    it. With the lock free this is the start it always was.
+
+    Raises `OSError` when the spawn fails and `DaemonExited` as
+    `wait_for_daemon` does."""
+    deadline = time.monotonic() + timeout
+    lock_path = lock_file_for(state_dir, store_path)
+    while _held_elsewhere(lock_path):
+        state = _answering(state_dir, store_path)
+        if state is not None:
+            return state
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(_POLL_SECONDS)
+    started = _spawn(state_dir, store_path, port=port, env=env)
+    return wait_for_daemon(
+        state_dir,
+        store_path,
+        timeout=max(deadline - time.monotonic(), _POLL_SECONDS),
+        started=started,
+    )
+
+
+def _held_elsewhere(lock_path: Path) -> bool:
+    """Whether the store's lock at `lock_path` is held at this instant by
+    another process (or another open of it in this one). Probed as
+    `_lock_free` probes it, taken and given back at once; a lock file that
+    does not exist is free without being made, since a daemon creates it
+    before it can hold it and nothing removes it. A lock this process
+    cannot open reads as free, so the start goes ahead as it did before
+    the probe."""
+    if not os.path.exists(lock_path):
+        return False
+    return not _lock_free(lock_path)
+
+
 def shutdown_daemon(
     state: dict[str, Any],
     *,
@@ -927,7 +987,10 @@ def ensure_daemon(
     store; the client side only keeps concurrent clients from each
     spawning one: whoever takes the spawn lock spawns and waits, and the
     others wait for the lock or for a daemon to answer, whichever comes
-    first.
+    first. Whoever takes it spawns nothing while another process holds the
+    store's lock: it waits, within `timeout`, for that holder to answer
+    and prove itself, and starts a daemon only if the lock comes free
+    first (`start_and_wait`).
 
     A daemon answers only when it proves itself the one the state file
     names (`identify`). Something else answering at that port, a listener
@@ -963,16 +1026,18 @@ def ensure_daemon(
         state = _answering(state_dir, store_path)
         if state is not None and _keeps(state, state.get("version"), version):
             return state
+        # No daemon is started while the store's lock is held: the holder
+        # is waited for instead (`start_and_wait`).
         try:
-            started = _spawn(state_dir, store_path, port=port, env=env)
+            return start_and_wait(
+                state_dir,
+                store_path,
+                port=port,
+                env=env,
+                timeout=max(deadline - time.monotonic(), _POLL_SECONDS),
+            )
         except OSError:
             return None
-        return wait_for_daemon(
-            state_dir,
-            store_path,
-            timeout=max(deadline - time.monotonic(), _POLL_SECONDS),
-            started=started,
-        )
     finally:
         release_lock(spawn_lock)
 
@@ -1286,6 +1351,7 @@ __all__ = [
     "resolved_store_path",
     "shutdown_daemon",
     "spawn_lock_file_for",
+    "start_and_wait",
     "start_daemon",
     "state_file_for",
     "try_lock",

@@ -1,4 +1,4 @@
-"""Two follow-ups on defaults, each pinned with the
+"""Three follow-ups on defaults and discovery, each pinned with the
 behaviour it promises:
 
 1. **The pinned-key notice is for a choice.** A user line for a key the
@@ -10,21 +10,40 @@ behaviour it promises:
    `DEFAULT_CONFIG` is commented out with its prose kept, so a fresh
    install loads exactly `Config()` and a later release's changed default
    reaches it. A file that exists is never rewritten.
+3. **No second daemon beside a lock holder.** While another process holds
+   the store's lock, `ensure_daemon` and the shim's reconnect start no
+   daemon: they wait, within their timeout, for the holder to answer and
+   prove itself, and give up at the timeout. With the lock free the start
+   is what it was.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import logging
+import threading
+import time
+import tomllib
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
-import tomllib
 
+from bettermemory import _daemon_client
 from bettermemory import config as _config
+from bettermemory._daemon_client import (
+    lock_file_for,
+    package_version,
+    read_state,
+    release_lock,
+    try_lock,
+    write_state,
+)
 from bettermemory.cli import config_cmd
 from bettermemory.config import DEFAULT_CONFIG, Config, load_config
+
+from .test_daemon_identity import TOKEN, _another_store, _Listener, _proving, _state
 
 
 def _user_config(tmp_path: Path, text: str) -> Path:
@@ -215,3 +234,200 @@ def test_an_existing_config_is_never_rewritten(tmp_path: Path) -> None:
     assert loaded.behavior.search_mode == "keyword"
     assert path.read_text(encoding="utf-8") == earlier
     assert path.stat().st_mtime_ns == before
+
+
+# ---------------------------------------------------------------------------
+# 3. No second daemon beside a lock holder
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def started_listeners() -> Iterator[list[_Listener]]:
+    made: list[_Listener] = []
+    yield made
+    for listener in made:
+        listener.stop()
+
+
+class _Spawns:
+    """`_spawn` replaced: each call recorded with the time it came, and
+    refused, so no daemon is ever started here."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.at: list[float] = []
+        monkeypatch.setattr(_daemon_client, "_spawn", self)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        self.at.append(time.monotonic())
+        raise OSError("no daemon is started in this test")
+
+
+@pytest.fixture
+def spawns(monkeypatch: pytest.MonkeyPatch) -> _Spawns:
+    return _Spawns(monkeypatch)
+
+
+@pytest.fixture
+def store_file(tmp_path: Path) -> Path:
+    return tmp_path / "memory.sqlite"
+
+
+@pytest.fixture
+def state_dir(tmp_path: Path) -> Path:
+    return tmp_path / "state"
+
+
+@pytest.fixture
+def held(state_dir: Path, store_file: Path) -> Iterator[list[Any]]:
+    """The store's lock, held by another open of it, as a daemon that is
+    starting or busy holds it. A test may release it early (the list is
+    emptied then)."""
+    handle = try_lock(lock_file_for(state_dir, store_file))
+    assert handle is not None
+    holder = [handle]
+    yield holder
+    for remaining in holder:
+        release_lock(remaining)
+
+
+def _ensure(state_dir: Path, store_file: Path, timeout: float) -> dict[str, Any] | None:
+    return _daemon_client.ensure_daemon(
+        state_dir, store_file, version=package_version(), timeout=timeout, env={}
+    )
+
+
+def _after(seconds: float, action: Any) -> threading.Timer:
+    timer = threading.Timer(seconds, action)
+    timer.start()
+    return timer
+
+
+def test_a_silent_holder_gets_no_daemon_beside_it(
+    state_dir: Path, store_file: Path, held: list[Any], spawns: _Spawns
+) -> None:
+    """Nothing answers and the lock stays held: the start gives up at the
+    timeout, as a start nobody answered does, having started nothing."""
+    began = time.monotonic()
+    assert _ensure(state_dir, store_file, timeout=0.6) is None
+    assert time.monotonic() - began >= 0.6
+    assert spawns.at == []
+
+
+def test_a_slow_holder_is_waited_for_and_used_once_it_proves_itself(
+    state_dir: Path,
+    store_file: Path,
+    held: list[Any],
+    spawns: _Spawns,
+    started_listeners: list[_Listener],
+) -> None:
+    """The holder writes its state file and listens a moment after the
+    client looked: the client answers with it, and its health request
+    carried a nonce the holder proved."""
+
+    def come_up() -> None:
+        listener = _Listener(_proving(TOKEN, store_file))
+        started_listeners.append(listener)
+        write_state(state_dir, _state(listener.port, store_file))
+
+    timer = _after(0.3, come_up)
+    try:
+        found = _ensure(state_dir, store_file, timeout=10.0)
+    finally:
+        timer.join()
+    assert found is not None
+    assert found["port"] == started_listeners[0].port
+    assert spawns.at == []
+    assert started_listeners[0].gets
+    assert all("nonce=" in path for path in started_listeners[0].gets)
+
+
+def test_a_holder_that_does_not_prove_itself_is_never_taken(
+    state_dir: Path,
+    store_file: Path,
+    held: list[Any],
+    spawns: _Spawns,
+    started_listeners: list[_Listener],
+) -> None:
+    """Something answers at the state file's port without the proof: it is
+    not the holder, nothing is posted to it, and the wait runs out."""
+    listener = _Listener(_another_store())
+    started_listeners.append(listener)
+    write_state(state_dir, _state(listener.port, store_file))
+    assert _ensure(state_dir, store_file, timeout=0.6) is None
+    assert spawns.at == []
+    assert listener.posts == []
+
+
+def test_the_start_goes_ahead_once_the_holder_lets_the_lock_go(
+    state_dir: Path, store_file: Path, held: list[Any], spawns: _Spawns
+) -> None:
+    """The holder exits without ever answering: with the lock free the
+    client starts a daemon, within the same timeout, as it always did."""
+    released: list[float] = []
+
+    def let_go() -> None:
+        release_lock(held.pop())
+        released.append(time.monotonic())
+
+    timer = _after(0.3, let_go)
+    try:
+        assert _ensure(state_dir, store_file, timeout=10.0) is None
+    finally:
+        timer.join()
+    assert len(spawns.at) == 1
+    assert spawns.at[0] >= released[0]
+
+
+def test_with_the_lock_free_the_start_is_immediate_and_makes_no_lock_file(
+    state_dir: Path, store_file: Path, spawns: _Spawns
+) -> None:
+    """The free-lock path is unchanged: one start, at once, and the probe
+    creates no lock file of its own."""
+    began = time.monotonic()
+    assert _ensure(state_dir, store_file, timeout=10.0) is None
+    assert len(spawns.at) == 1
+    assert spawns.at[0] - began < 2.0
+    assert not lock_file_for(state_dir, store_file).exists()
+
+
+def test_the_shims_reconnect_starts_no_daemon_beside_a_holder(
+    tmp_path: Path,
+    state_dir: Path,
+    store_file: Path,
+    held: list[Any],
+    spawns: _Spawns,
+    started_listeners: list[_Listener],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shim's `find()`, which starts a daemon when its own went away,
+    waits for the holder too and answers with it once it proves itself."""
+    from bettermemory import shim
+
+    store_file.write_bytes(b"")
+    monkeypatch.setattr(_daemon_client, "resolved_store_path", lambda: store_file)
+    monkeypatch.setattr(_daemon_client, "resolve_state_dir", lambda: state_dir)
+    monkeypatch.setattr(
+        _daemon_client, "ensure_daemon", lambda *a, **k: {"port": 1, "pid": 1}
+    )
+    monkeypatch.setattr(logging, "basicConfig", lambda **kwargs: None)
+    found: list[tuple[dict[str, Any] | None, str | None]] = []
+
+    async def serve(state: dict[str, Any], version: str, find: Any) -> None:
+        def come_up() -> None:
+            listener = _Listener(_proving(TOKEN, store_file))
+            started_listeners.append(listener)
+            write_state(state_dir, _state(listener.port, store_file))
+
+        timer = _after(0.3, come_up)
+        try:
+            found.append(find())
+        finally:
+            timer.join()
+
+    monkeypatch.setattr(shim, "_serve_through_daemon", serve)
+    shim.run_shim()
+    [(state, error)] = found
+    assert error is None
+    assert state is not None and state["port"] == started_listeners[0].port
+    assert spawns.at == []
+    assert read_state(state_dir, store_file) == state
