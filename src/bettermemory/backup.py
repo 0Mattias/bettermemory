@@ -210,6 +210,11 @@ SELF_SIGNED = "self_signed"
 UNVERIFIABLE_PROBLEMS = frozenset(
     {"key_absent", "manifest_unsigned", "manifest_self_signed"}
 )
+# A segment under a key only the bundle carries that follows a segment
+# under a key the keys directory holds: the shape the live store reads as
+# `foreign_segment` (`log.verify_chain`), rows written without this host's
+# key into history it signed. Verdict `tampered`, so no flag restores it.
+TAMPER_PROBLEMS = frozenset({"foreign_segment"})
 
 # Restore outcomes, and the exit status each maps to.
 RESTORED = "restored"
@@ -705,7 +710,7 @@ def _verdict(problems: Sequence[Mapping[str, Any]], log_status: str | None) -> s
     names = {str(p["problem"]) for p in problems}
     if names & MISMATCH_PROBLEMS:
         return MISMATCHED
-    if log_status == TAMPERED:
+    if log_status == TAMPERED or names & TAMPER_PROBLEMS:
         return TAMPERED
     if names & UNVERIFIABLE_PROBLEMS or log_status == UNVERIFIABLE:
         return UNVERIFIABLE
@@ -717,7 +722,9 @@ def _verdict(problems: Sequence[Mapping[str, Any]], log_status: str | None) -> s
 def verify_bundle(bundle: Path, *, keys_dir: Path | None = None) -> dict[str, Any]:
     """Check the bundle at `bundle` and return the report; ``status`` is
     ``ok``, ``mismatched`` (a file or the manifest is not what was written),
-    ``tampered`` (the snapshot's log or tables fail verification) or
+    ``tampered`` (the snapshot's log or tables fail verification, or a
+    segment under a key only the bundle carries follows one under a key
+    `keys_dir` holds: ``foreign_segment``, as the live store reads it) or
     ``unverifiable`` (a segment's key is in neither `keys_dir`, default
     `store.resolve_keys_dir`, nor the bundle, the manifest is unsigned, or
     it is signed with a key only the bundle carries: ``manifest_mac`` then
@@ -866,6 +873,25 @@ def verify_bundle(bundle: Path, *, keys_dir: Path | None = None) -> dict[str, An
             _write_private(scratch_ring.retired_path(fp), key)
             if fp == facts.key_fingerprint:
                 _write_private(scratch_ring.current_path(), key)
+        # The snapshot's log is checked under every key found, so a
+        # segment under a key only the bundle carries verifies whatever
+        # comes before it. The live store reads a segment whose key this
+        # host does not hold, after one its key signs, as rows written
+        # into its history without its key (`foreign_segment`), and so
+        # does this check: otherwise a writer of the bundle could rekey
+        # the owner's snapshot to a key of their own, add rows, and have
+        # the log read `ok` and the bundle wait only on --trust-bundle-key.
+        # An --include-key bundle on a machine that holds none of its keys
+        # has no held segment and is not affected.
+        held_seen = False
+        for fp in facts.key_fingerprints:
+            found_key = keys.get(fp)
+            if found_key is None:
+                continue
+            if found_key[1] == "keys_dir":
+                held_seen = True
+            elif held_seen:
+                problems.append({"problem": "foreign_segment", "fingerprint": fp})
         signing = keys.get(str(manifest["key_fingerprint"]))
         if "mac" not in manifest:
             report["manifest_mac"] = "absent"

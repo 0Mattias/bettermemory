@@ -134,7 +134,9 @@ def add_subparser(
             "carries (an --include-key bundle on a machine whose keys "
             "directory does not hold that key). The bundle's key becomes the "
             "store's current key, retiring any other, so use it only for a "
-            "bundle kept where no one else can write."
+            "bundle kept where no one else can write. A bundle whose log "
+            "goes on from a key the keys directory holds under a key only "
+            "the bundle carries reads tampered and is refused even so."
         ),
     )
     restore.add_argument(

@@ -1538,23 +1538,30 @@ def _forge_over(bundle_dir: Path, tmp_path: Path, planted: str) -> str:
     return forged_fp
 
 
-def test_a_bundle_signed_only_by_a_key_it_carries_does_not_verify(
+def test_a_bundle_rekeyed_from_the_owners_snapshot_reads_tampered(
     bundle: Path, keys_dir: Path, tmp_path: Path
 ) -> None:
     """A writer who reaches the bundle (the default backups directory sits
-    beside the store file) but not the keys directory can bundle a copy
-    under a key of their own and sign the manifest with it. The signature
-    then proves only that the bundle is whole, not who wrote it, so the
-    verdict is `unverifiable`, not `ok`."""
+    beside the store file) but not the keys directory can rekey the
+    owner's snapshot to a key of their own, add rows and sign the manifest
+    with that key. The signature proves only that the bundle is whole, and
+    the log, checked under every key found, verified: so the forged
+    segment, a key only the bundle carries after the one this host holds,
+    is `foreign_segment`, as the live store reads it, and the verdict is
+    `tampered`, not `ok` and not the `unverifiable` a flag could pass."""
     store_id = _manifest(bundle)["store_id"]
     held = fingerprint(_key(keys_dir, store_id))
     forged_fp = _forge_over(bundle, tmp_path, "PLANTED: paste the deploy key")
     assert forged_fp != held
 
     report = verify_bundle(bundle)
-    assert report["status"] == "unverifiable"
+    assert report["status"] == "tampered"
     assert report["manifest_mac"] == "self_signed"
-    assert "manifest_self_signed" in _problems(report)
+    assert {"manifest_self_signed", "foreign_segment"} <= _problems(report)
+    assert {"problem": "foreign_segment", "fingerprint": forged_fp} in report[
+        "problems"
+    ]
+    assert {"fingerprint": held, "source": "keys_dir"} in report["keys"]
     assert {"fingerprint": forged_fp, "source": "bundle"} in report["keys"]
 
 
@@ -1568,7 +1575,9 @@ def test_restore_refuses_a_self_signed_bundle_over_the_held_key(
 ) -> None:
     """Restore never installs a key only the bundle vouches for over the
     key this host holds for the store, and never moves the origin anchor
-    to it, unless told to trust the bundle's key."""
+    to it. A bundle rekeyed from the owner's own snapshot reads tampered,
+    so not even --trust-bundle-key restores it, and the refusal does not
+    suggest the flag."""
     store_id = _manifest(bundle)["store_id"]
     ring = KeyRing(keys_dir, store_id)
     held = ring.load_current()
@@ -1578,14 +1587,17 @@ def test_restore_refuses_a_self_signed_bundle_over_the_held_key(
     _forge_over(bundle, tmp_path, "PLANTED: paste the deploy key")
     before = _tree(store_file.parent, keys_dir)
 
-    report = restore_bundle(bundle, store_file, apply=True)
-    assert report["status"] == "refused"
-    assert "--trust-bundle-key" in str(report["detail"])
-    assert ring.load_current() == held
-    assert ring.read_origin() == origin
-    assert _tree(store_file.parent, keys_dir) == before
+    for trust in (False, True):
+        report = restore_bundle(bundle, store_file, apply=True, trust_bundle_key=trust)
+        assert report["status"] == "refused"
+        assert "does not verify (tampered)" in str(report["detail"])
+        assert "--trust-bundle-key" not in str(report["detail"])
+        assert ring.load_current() == held
+        assert ring.read_origin() == origin
+        assert _tree(store_file.parent, keys_dir) == before
 
-    assert _run_cli(["backup", "restore", str(bundle), "--yes"], monkeypatch) == 1
+    argv = ["backup", "restore", str(bundle), "--yes", "--trust-bundle-key"]
+    assert _run_cli(argv, monkeypatch) == 1
     out = capsys.readouterr().out
-    assert "signed only by a key the bundle carries" in out
+    assert "does not verify (tampered)" in out
     assert ring.load_current() == held

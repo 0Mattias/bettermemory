@@ -206,7 +206,11 @@ ok; 1 mismatched or tampered; 2 unverifiable, when the key is held
 nowhere, the manifest is unsigned, or it is signed only by a key the
 bundle carries (signature `self_signed`: anyone who can write a bundle
 can remake it under a key of their own, so the signature counts only
-under a key the keys directory holds). Do not point another command at a
+under a key the keys directory holds). A bundle whose log goes on from a
+segment under a key the keys directory holds into one under a key only
+the bundle carries, which is this host's snapshot rekeyed by whoever
+wrote the bundle, reads `tampered` (`foreign_segment`), as the live store
+reads that shape, and nothing restores it. Do not point another command at a
 bundle's `memory.sqlite`: opening a store switches its journal mode,
 which changes the file's bytes, and the bundle then fails its hash.
 Copy the file to a directory of its own first, as for the secret scan

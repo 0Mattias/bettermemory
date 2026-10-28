@@ -249,10 +249,15 @@ stable 9.0.0 follows the candidates' testing.
   keys directory holds: anyone who can write a bundle can remake it
   under a key of their own and put that key in it, so a manifest signed
   with a key only the bundle carries reads `self_signed` and the bundle
-  `unverifiable`. `restore` refuses while the daemon or
+  `unverifiable`. A bundle whose log goes on from a segment under a key
+  the keys directory holds into one under a key only the bundle carries
+  (this host's snapshot, rekeyed by whoever wrote the bundle) reads
+  `foreign_segment` and `tampered`, as the live store reads that shape.
+  `restore` refuses while the daemon or
   spawn lock is held, refuses a bundle that does not verify, and refuses
-  a `self_signed` one (an `--include-key` bundle on a machine without
-  its key, or a forged one) unless `--trust-bundle-key`, which makes the
+  a `self_signed` one (an `--include-key` bundle on a machine that holds
+  none of its keys, or one forged from nothing this host signed) unless
+  `--trust-bundle-key`, which makes the
   bundle's key the store's current key and is named in the record. It plans
   without `--yes` (exit 3), moves the current files aside as
   `<store>.pre-restore-<stamp>` and never deletes them, installs the
