@@ -144,6 +144,10 @@ _DIGEST_CHUNK = 1 << 20
 #: out of the bundle and restore's out of the keys directory. A snapshot
 #: or a manifest that names any other id is not a bundle this reads.
 _STORE_ID_RE = re.compile(r"[0-9A-Za-z_-]{1,128}")
+#: A SHA-256 or HMAC-SHA256 hex digest: every file hash, key fingerprint
+#: and MAC a manifest holds. Each is held to this shape before anything
+#: compares it, since `hmac.compare_digest` raises on a non-ASCII string.
+_HEX_DIGEST_RE = re.compile(r"[0-9a-f]{64}")
 
 # Verification verdicts, and the exit status each maps to.
 OK = "ok"
@@ -364,7 +368,14 @@ def _snapshot_facts(path: Path) -> SnapshotFacts:
             raise BackupError(
                 f"{path} carries a store id that is not one: {store_id!r}"
             )
-        row = last_row(conn)
+        try:
+            row = last_row(conn)
+            schema_version = int(meta.get("schema_version", "0") or 0)
+        except (ValueError, TypeError) as exc:
+            # A seq or a schema version that is not a number: rows changed
+            # outside the store, which `verify_bundle` reports as a snapshot
+            # that does not read, not as a traceback.
+            raise BackupError(f"{path} does not read as a store: {exc}") from exc
         if row is None:
             raise BackupError(f"{path} has an empty log")
         present = {
@@ -381,7 +392,7 @@ def _snapshot_facts(path: Path) -> SnapshotFacts:
         return SnapshotFacts(
             store_id=store_id,
             key_fingerprint=final,
-            schema_version=int(meta.get("schema_version", "0") or 0),
+            schema_version=schema_version,
             head=Head(seq=row.seq, mac=row.mac, ts=row.ts),
             key_fingerprints=_segment_fingerprints(conn, final),
             counts=counts,
@@ -549,6 +560,12 @@ def _plain_name(name: object) -> bool:
     )
 
 
+def _hex_digest(value: object) -> bool:
+    """A lowercase SHA-256 hex digest, the shape of every hash, fingerprint
+    and MAC a manifest holds (`_HEX_DIGEST_RE`)."""
+    return isinstance(value, str) and _HEX_DIGEST_RE.fullmatch(value) is not None
+
+
 def read_manifest(bundle: Path) -> dict[str, Any]:
     """The bundle's manifest, checked for shape; `_ManifestProblem` names
     what is wrong with one that is missing or malformed."""
@@ -586,11 +603,19 @@ def read_manifest(bundle: Path) -> dict[str, Any]:
         raise _ManifestProblem(
             "manifest_invalid", f"store_id {manifest['store_id']!r} is not a store id"
         )
+    if (
+        not _hex_digest(manifest["key_fingerprint"])
+        or not _hex_digest(head["mac"])
+        or ("mac" in manifest and not _hex_digest(manifest["mac"]))
+    ):
+        raise _ManifestProblem(
+            "manifest_invalid", "key_fingerprint, head mac or mac is not a hex digest"
+        )
     for name, entry in files.items():
         if (
             not _plain_name(name)
             or not isinstance(entry, dict)
-            or not isinstance(entry.get("sha256"), str)
+            or not _hex_digest(entry.get("sha256"))
             or not isinstance(entry.get("size"), int)
         ):
             raise _ManifestProblem("manifest_invalid", f"file entry {name!r}")
@@ -768,9 +793,11 @@ def verify_bundle(bundle: Path, *, keys_dir: Path | None = None) -> dict[str, An
                 log_report = opened.log_verify()
             finally:
                 opened.close()
-        except (sqlite3.Error, ValueError, OSError) as exc:
-            # A newer schema, or a page the replay cannot read: the bundle
-            # is not one this build can verify, whatever its hashes say.
+        except (sqlite3.Error, ValueError, TypeError, OSError) as exc:
+            # A newer schema, a page the replay cannot read, or a row whose
+            # MAC is not a digest (`hmac.compare_digest` raises TypeError on
+            # a non-ASCII one): the bundle is not one this build can
+            # verify, whatever its hashes say.
             problems.append({"problem": "snapshot_unreadable", "detail": str(exc)})
             report["status"] = _verdict(problems, None)
             return report
