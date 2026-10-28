@@ -797,17 +797,17 @@ def _stopped(pid: int, port: int | None, lock_path: Path) -> bool:
     """A daemon is stopped when its process is gone, or when it holds
     neither its port nor the store's lock; with `port` None (what answers
     at the state file's port did not prove itself ours, `shutdown_daemon`),
-    when its process is gone or the lock is free. The lock (`lock_file_for`) is
-    the last thing a daemon gives back: `daemon.serve` closes the store
-    and removes the state file before it, so a free lock means no handle
-    of the daemon is open on the store's files, and the store can be
-    moved, copied or removed the moment `down` returns, on Windows too,
-    where an open handle refuses the rename. The port closes earlier, as
-    the server stops accepting and while the store is still open, so it
-    is the signal only for a daemon that holds no lock: one from before
-    the lock, or a zombie a parent has not reaped, which still answers
-    `os.kill(pid, 0)` but whose socket and lock the OS dropped with its
-    handles."""
+    when its process is gone or the lock is free. The lock
+    (`lock_file_for`) is the last thing a daemon gives back: `daemon.serve`
+    closes the store and removes the state file before it, so a free lock
+    means no handle of the daemon is open on the store's files, and the
+    store can be moved, copied or removed the moment `down` returns, on
+    Windows too, where an open handle refuses the rename. The port closes
+    earlier, as the server stops accepting and while the store is still
+    open, so it is the signal only for a daemon that holds no lock: one
+    from before the lock, or a zombie a parent has not reaped, which still
+    answers `os.kill(pid, 0)` but whose socket and lock the OS dropped
+    with its handles."""
     if not pid_alive(pid):
         return True
     if port is not None and _port_open(port):

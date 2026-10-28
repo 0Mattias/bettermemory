@@ -162,8 +162,8 @@ class LocalHostMiddleware:
     The SDK checks Host and Origin only inside its ``/mcp`` transport, so
     before this ``/health``, the hook routes and the shutdown route took
     any Host. A page a browser loaded from an attacker's name, rebound to
-    127.0.0.1 (DNS rebinding), could then read ``/health``, the store path
-    with the user's name in it among it, on a browser that does not block
+    127.0.0.1 (DNS rebinding), could then read ``/health``, whose store
+    path carries the user's name, on a browser that does not block
     requests from public pages to private addresses. A browser sends the
     name the page was loaded from as the Host, so a Host that is not a
     loopback name is such a request, and nothing past this sees it. Every
