@@ -495,43 +495,6 @@ def test_a_hand_edited_row_reads_unverified_and_the_export_goes_on(
     assert kept["payload"] == edited[3].payload
 
 
-def test_a_payload_nested_past_the_bound_exports_as_text_on_every_version(
-    store: Store,
-) -> None:
-    """Every Python version parses a payload 300 levels deep, so the bound,
-    not the parser, decides: the row exports as its text, with bodies or
-    redacted, where with bodies 3.14 could parse a far deeper one and then
-    overflow the stack encoding it."""
-    store.record_event("show", session="sess_a", id="m0")
-    seq = store.log_rows()[-1].seq
-    depth = audit_export._MAX_PAYLOAD_DEPTH + 100
-    text = '{"a":' * depth + "1" + "}" * depth
-    outside = _outside(store)
-    outside.execute("UPDATE log SET payload = ? WHERE seq = ?", (text, seq))
-    outside.commit()
-    outside.close()
-    (with_bodies,) = export_lines(
-        store, since_seq=seq - 1, until_seq=seq, include_bodies=True
-    )
-    assert with_bodies["payload"] == text
-    assert with_bodies["record_ids"] == []
-    (redacted,) = export_lines(store, since_seq=seq - 1, until_seq=seq)
-    assert redacted["payload"] == redact_text(text)
-
-
-def test_a_payload_at_the_bound_still_reads_as_json(store: Store) -> None:
-    store.record_event("show", session="sess_a", id="m0")
-    seq = store.log_rows()[-1].seq
-    depth = audit_export._MAX_PAYLOAD_DEPTH
-    text = '{"a":' * depth + "1" + "}" * depth
-    outside = _outside(store)
-    outside.execute("UPDATE log SET payload = ? WHERE seq = ?", (text, seq))
-    outside.commit()
-    outside.close()
-    (line,) = export_lines(store, since_seq=seq - 1, until_seq=seq, include_bodies=True)
-    assert isinstance(line["payload"], dict)
-
-
 def test_a_seq_past_sqlites_range_is_refused(store: Store) -> None:
     with pytest.raises(ValueError, match="at most"):
         export_lines(store, until_seq=audit_export.MAX_SEQ + 1)
@@ -997,3 +960,41 @@ def test_out_never_replaces_the_store_or_a_key_file(
     assert "--out:" in err
     assert (out.read_bytes() if out.exists() else None) == before
     assert _run_cli(["log", "verify"], monkeypatch) == 0
+
+
+@pytest.mark.parametrize("include_bodies", [False, True])
+def test_a_payload_nested_past_the_bound_is_its_text_on_every_python(
+    store: Store, include_bodies: bool
+) -> None:
+    """A payload nested past `MAX_PAYLOAD_DEPTH` is exported as its text
+    whether or not this Python's parser reads it: Python 3.14 parses one
+    100,000 levels deep that 3.11 to 3.13 refuse, and encoding it (or an
+    `actor` block taken from it, which a redacted line carries too) then
+    overflowed the stack. One nested to the bound is still parsed."""
+    store.record_event("show", session="sess_a", id="m0")
+    store.record_event("show", session="sess_a", id="m1")
+    bound = audit_export.MAX_PAYLOAD_DEPTH
+    # The row's own dict is level 1, so `bound` dicts under it are one
+    # level past the bound and `bound - 1` reach it exactly.
+    deep_actor = '{"actor":' + '{"a":' * bound + "1" + "}" * (bound + 1)
+    at_bound = '{"actor":' + '{"a":' * (bound - 1) + "1" + "}" * bound
+    outside = _outside(store)
+    outside.execute("UPDATE log SET payload = ? WHERE seq = ?", (deep_actor, 1))
+    outside.execute("UPDATE log SET payload = ? WHERE seq = ?", (at_bound, 2))
+    outside.commit()
+    outside.close()
+    assert audit_export.nests_deeper_than(json.loads(deep_actor), bound)
+    assert not audit_export.nests_deeper_than(json.loads(at_bound), bound)
+
+    deep, shallow = export_lines(
+        store, since_seq=0, until_seq=2, include_bodies=include_bodies
+    )
+    expected = deep_actor if include_bodies else redact_text(deep_actor)
+    assert deep["payload"] == expected
+    assert deep["actor"] is None and deep["record_ids"] == []
+    assert deep["verified"] is False
+    assert isinstance(shallow["actor"], dict)
+    parsed = json.loads(at_bound)
+    assert shallow["payload"] == (
+        parsed if include_bodies else audit_export.redact_payload(parsed)
+    )
