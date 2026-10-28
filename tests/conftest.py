@@ -42,6 +42,7 @@ from bettermemory import _caches
 from bettermemory import _daemon_client
 from bettermemory import config as _config
 from bettermemory import log as _log
+from bettermemory import managed as _managed
 from bettermemory import review as _review
 from bettermemory.store import Store
 
@@ -297,6 +298,29 @@ def storage_dir(
         if state is not None:
             _daemon_client.shutdown_daemon(state, state_dir=state_dir, timeout=10.0)
         state_file.unlink(missing_ok=True)
+
+
+@pytest.fixture(autouse=True)
+def managed_config_path(storage_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """No test reads the machine's organisation-managed config.
+
+    `load_config` pins every key the managed file sets (`managed.py`),
+    and that file sits at a fixed system path no environment variable
+    may move. A suite run on a machine whose administrator deployed one
+    would otherwise load every config through it. `managed_config_path`
+    is the one seam: it is pointed at a path beside the test's own
+    config.toml (`storage_dir`'s directory), where no file exists until
+    a test writes one there (the managed-config tests write this
+    fixture's path).
+
+    In-process only, and deliberately so. A child process the test
+    spawns reads the real location, which on a developer machine or a CI
+    runner holds nothing: a variable that redirected the children would
+    be the very override the managed file must not have.
+    """
+    path = storage_dir.parent / _managed.MANAGED_FILENAME
+    monkeypatch.setattr(_managed, "managed_config_path", lambda: path)
+    return path
 
 
 def pytest_configure(config: pytest.Config) -> None:

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from .. import policy as _policy
 from .. import review as _review
 from .. import standing as _standing
 from .._response import isoformat
@@ -137,6 +138,20 @@ async def memory_update(
 ) -> dict[str, Any]:
     state = deps.sessions.for_request(ctx)
     _advance_turn(state, deps.recorder)
+    # `[policy]` (policy.py): a flag the install forbids refuses the whole
+    # call before anything is read or changed. memory_update has no
+    # `force`, so only `forbid_acknowledge` reaches it. A no-op with both
+    # switches off.
+    _policy.check_overrides(
+        deps.config,
+        "memory_update",
+        acknowledge={
+            "credential": acknowledge_credential,
+            "transient": acknowledge_transient,
+            "user_claim": acknowledge_user_claim,
+            "truncation": acknowledge_truncation,
+        },
+    )
     metadata_only = (
         content is None
         and scopes is None

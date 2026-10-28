@@ -72,6 +72,7 @@ from ..search import (
 )
 from .. import capture as _capture
 from .. import identity
+from .. import policy as _policy
 from .. import review as _review
 from .. import standing as _standing
 from .. import supersession as _supersession
@@ -1014,6 +1015,21 @@ async def memory_write(
             return refused
         force = acknowledge_transient = acknowledge_scope_mismatch = False
         acknowledge_credential = acknowledge_user_claim = False
+    # `[policy]` (policy.py): a flag the install forbids refuses the whole
+    # call, before anything is validated or written. Checked after the
+    # capture block, whose flags are already cleared, so a capture is
+    # unchanged by any policy. A no-op with both switches off.
+    _policy.check_overrides(
+        deps.config,
+        "memory_write",
+        force=force,
+        acknowledge={
+            "credential": acknowledge_credential,
+            "transient": acknowledge_transient,
+            "scope_mismatch": acknowledge_scope_mismatch,
+            "user_claim": acknowledge_user_claim,
+        },
+    )
     payload = _validate_write_payload(
         content=content,
         scopes=scopes,

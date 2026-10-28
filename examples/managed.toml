@@ -1,0 +1,61 @@
+# bettermemory organisation-managed config: an example to start from.
+#
+# Install it, as root or through MDM or configuration management, at the
+# fixed path for the platform. No environment variable moves it:
+#
+#   macOS    /Library/Application Support/bettermemory/managed.toml
+#   Linux    /etc/bettermemory/managed.toml (every other POSIX system too)
+#   Windows  %ProgramData%\bettermemory\managed.toml, the ProgramData folder
+#            the system registers, not the variable a user can set
+#
+# Make it readable by every account that runs bettermemory and writable only
+# by the administrator (root-owned, mode 0644, on POSIX).
+#
+# The file takes config.toml's own sections and keys. Every key set here is
+# pinned: a user's config.toml value for it is ignored, and bettermemory logs
+# one notice per such key naming this file. Keys left out stay the user's.
+# A list replaces the user's list whole; it is never merged with it.
+#
+# The file fails closed. If it exists but cannot be read, is not valid TOML,
+# or holds a value of the wrong type or an unknown policy name, loading the
+# config stops with an error naming this file (the daemon does not start),
+# rather than run without the pins.
+#
+# What it is and is not: it binds the user's config, so an agent that edits
+# config.toml cannot loosen these settings. It does not bind a process
+# running as the user, which can still set BETTERMEMORY_DIR, build its own
+# config in code, or open the store file directly. It is a policy, not a
+# boundary against the account.
+
+[storage]
+# Never let the working directory supply the store. Without this, a cloned
+# repository that commits a .claude-memory/ directory becomes the user's
+# store in that checkout: its memories reach the session brief and the
+# prompt recall, and the user's own writes land in its working tree.
+cwd_store = false
+# To pin the store's location too, set it here. BETTERMEMORY_DIR, when a
+# process sets it, still decides first.
+# directory = "~/.claude-memory"
+
+[security]
+# Rows signed under a key this machine does not hold read as unaccounted on
+# every read surface, so a store copied in from elsewhere (a repository, a
+# shared drive) cannot pass its memories off as written here.
+strict_provenance = true
+
+[policy]
+# The agent may not wave a secret past the credential gate. A memory_write
+# or memory_update that passes acknowledge_credential=true is refused, and
+# the refusal says the setting is managed.
+forbid_acknowledge = ["credential"]
+# Also refuse memory_write calls that pass force=true, which skip the
+# duplicate gates:
+# forbid_force = true
+
+[telemetry]
+# Telemetry is the store's own event log on this machine: one row per tool
+# call and hook delivery, never sent anywhere. Off keeps those rows out of
+# the log; the session brief and the prompt recall then deliver nothing,
+# since an unlogged delivery is refused. Pin it true instead where the
+# organisation reads the health report and the gates' override rates.
+enabled = false

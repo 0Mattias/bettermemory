@@ -6,11 +6,16 @@ Resolution order for the storage directory:
 2. `[storage] directory` in `config.toml`, if set.
 3. `./.claude-memory/` if it exists in the current working directory
    (project-scoped: write a memory while in that project, see it only
-   when you come back to that project).
+   when you come back to that project), unless `[storage] cwd_store` is
+   false.
 4. `~/.claude-memory/` (global fallback).
 
 A user-level config file lives at `~/.config/bettermemory/config.toml` (or the
 platform equivalent). It's created with defaults on first run.
+
+An organisation-managed file (`managed.py`, at a fixed system path) is read
+after it, and every key it sets is pinned: the user file's value for that
+key is ignored (`_apply_managed`).
 """
 
 from __future__ import annotations
@@ -18,12 +23,13 @@ from __future__ import annotations
 import os
 import sys
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any
 
 import platformdirs
 
+from . import managed as _managed
 from ._fsutil import atomic_write_bytes
 
 
@@ -50,6 +56,14 @@ DEFAULT_CONFIG = """\
 #   3. ./.claude-memory if cwd has one
 #   4. ~/.claude-memory
 # directory = "~/.claude-memory"
+
+# Rule 3 lets the directory a client starts in supply the store, and a
+# cloned repository that commits a .claude-memory/ directory then becomes
+# your store: its memories reach the session brief and the prompt recall,
+# and your own writes in that checkout land inside its working tree. Set
+# false to skip rule 3, so only $BETTERMEMORY_DIR, `directory` above or
+# ~/.claude-memory can be the store. Default true.
+# cwd_store = false
 
 [behavior]
 # Default cap on memory_search results. Clamped to 1..50 where it is read
@@ -225,6 +239,22 @@ allowed = []
 # flagged are simply inert.
 typo_exceptions = []
 
+[policy]
+# The write gates' escape hatches are parameters the agent sets itself:
+# `force` on memory_write skips the duplicate gates, and each
+# `acknowledge_*` flag passes one gate. These switches take them away. A
+# call that passes a forbidden flag as true is refused whole, naming the
+# switch, and writes nothing. Both are off by default.
+#
+# Refuse memory_write calls with force=true.
+# forbid_force = true
+#
+# Refuse calls that pass any of these acknowledge flags as true. Names:
+# credential, transient, scope_mismatch and user_claim (memory_write),
+# credential, transient, user_claim and truncation (memory_update). An
+# unknown name stops the config from loading.
+# forbid_acknowledge = ["credential"]
+
 [daemon]
 # The port the local daemon binds on 127.0.0.1. `bettermemory up` falls
 # back to an ephemeral port when this one is held by something else and
@@ -297,6 +327,13 @@ strict = false
 @dataclass
 class StorageConfig:
     directory: str | None = None  # if None, use resolution rule.
+    # Resolution rule 3, `./.claude-memory/` in the working directory.
+    # False skips it (`Config.resolved_directory`): the rule lets a cloned
+    # repository that commits that directory become the store, its rows
+    # reading with the labels they were stored under. Default true keeps
+    # the rule exactly; the key is the one an organisation pins false in
+    # the managed file (`managed.py`).
+    cwd_store: bool = True
 
 
 @dataclass
@@ -418,6 +455,38 @@ class ScopesConfig:
     typo_exceptions: list[str] = field(default_factory=list)
 
 
+#: The names `[policy] forbid_acknowledge` takes: each is an
+#: `acknowledge_<name>` parameter of memory_write or memory_update.
+#: memory_write has credential, transient, scope_mismatch and user_claim;
+#: memory_update has credential, transient, user_claim and truncation.
+#: Spelled here, beside the section that reads them, because the loader
+#: validates against them and `config` imports no handler module;
+#: `tests/test_policy.py` pins them to the two tools' served parameters.
+ACKNOWLEDGE_NAMES: tuple[str, ...] = (
+    "credential",
+    "transient",
+    "scope_mismatch",
+    "user_claim",
+    "truncation",
+)
+
+
+@dataclass
+class PolicyConfig:
+    """Switches that take the write gates' escape hatches away from the
+    agent (`policy.check_overrides`). Off by default, and then the two
+    tools behave exactly as they did before the section existed.
+
+    `forbid_force` refuses a memory_write that passes ``force=True``;
+    memory_update has no `force`. `forbid_acknowledge` names the
+    `acknowledge_<name>` flags (`ACKNOWLEDGE_NAMES`) a call may not pass
+    as true. A refusal is a tool error naming the switch and whether the
+    organisation's managed file pins it."""
+
+    forbid_force: bool = False
+    forbid_acknowledge: list[str] = field(default_factory=list)
+
+
 @dataclass
 class DaemonConfig:
     port: int = 7397
@@ -477,12 +546,21 @@ class Config:
     storage: StorageConfig = field(default_factory=StorageConfig)
     behavior: BehaviorConfig = field(default_factory=BehaviorConfig)
     scopes: ScopesConfig = field(default_factory=ScopesConfig)
+    policy: PolicyConfig = field(default_factory=PolicyConfig)
     telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
     capture: CaptureConfig = field(default_factory=CaptureConfig)
     membership: MembershipConfig = field(default_factory=MembershipConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)
     config_path: Path | None = None
+    # The organisation-managed file this config was overlaid with, None
+    # when the machine has none (`managed.py`), and the settings it
+    # pinned as "section.key" (`"policy.forbid_force"`). Only keys that
+    # name a setting of this config are listed; a key the loader does not
+    # read is ignored in the managed file as it is in config.toml. A
+    # surface that reports where a value came from labels these managed.
+    managed_path: Path | None = None
+    managed_keys: frozenset[str] = frozenset()
 
     # ---- methods ----------------------------------------------------------
 
@@ -498,6 +576,15 @@ class Config:
             resolved = Path(self.storage.directory).expanduser().resolve()
             _warn_on_system_dir("[storage] directory", resolved)
             return resolved
+
+        # `[storage] cwd_store = false` skips rule 3 whole: the working
+        # directory is not even looked at, so a repository's
+        # `.claude-memory/` can never be chosen, and the fall-through below
+        # is the home default. The hook client and the shim resolve through
+        # this method (`_daemon_client.resolved_store_path`, `shim.py`), so
+        # they follow the switch with no code of their own.
+        if not self.storage.cwd_store:
+            return (Path.home() / GLOBAL_DIR_NAME).resolve()
 
         # `Path.cwd()` raises FileNotFoundError when the process's working
         # directory has been deleted out from under it — a real failure mode
@@ -850,6 +937,54 @@ def _coerce_optional_str(
     raise ValueError(_malformed_config_msg(label, value, config_path, "a string path"))
 
 
+def _coerce_switch(
+    value: object, default: bool, *, label: str, config_path: Path | None
+) -> bool:
+    """`_coerce_bool` for a security switch: the same spellings, and a
+    located error for anything else instead of the default.
+
+    `_coerce_bool` falls back to the default on an unrecognised string,
+    which is right for a ranking knob and wrong for a switch whose default
+    is the loose side: `forbid_force = "ture"` would load cleanly and
+    forbid nothing, and the operator who pinned it would never learn.
+    The new `[policy]` switches and `[storage] cwd_store` read through
+    this; the older keys keep `_coerce_bool`, which a config written for
+    them may rely on."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in _TRUE_STRINGS:
+            return True
+        if token in _FALSE_STRINGS:
+            return False
+    raise ValueError(_malformed_config_msg(label, value, config_path, "true or false"))
+
+
+def _coerce_acknowledge_names(
+    value: object, *, label: str, config_path: Path | None
+) -> list[str]:
+    """`[policy] forbid_acknowledge`: a list of `ACKNOWLEDGE_NAMES`.
+
+    An unknown name is a located load error, not an inert entry: a
+    misspelt `"credentials"` would otherwise leave the flag it meant to
+    forbid open while the file reads as if it were closed. A name written
+    with the parameter's own prefix (`"acknowledge_credential"`) is
+    refused with the bare name it should be."""
+    names = _coerce_str_list(value, label=label, config_path=config_path)
+    for name in names:
+        if name in ACKNOWLEDGE_NAMES:
+            continue
+        expected = "one of " + ", ".join(ACKNOWLEDGE_NAMES)
+        bare = name.removeprefix("acknowledge_")
+        if bare != name and bare in ACKNOWLEDGE_NAMES:
+            expected += f' (write "{bare}", without the acknowledge_ prefix)'
+        raise ValueError(_malformed_config_msg(label, name, config_path, expected))
+    return names
+
+
 def default_config_path() -> Path:
     return Path(platformdirs.user_config_dir("bettermemory")) / CONFIG_FILENAME
 
@@ -1146,7 +1281,9 @@ def _apply_legacy_endorsement_debt_alias(
 
 
 def load_config(path: Path | None = None) -> Config:
-    """Load config from `path`, creating it with defaults if missing."""
+    """Load config from `path`, creating it with defaults if missing, and
+    pin every key the organisation-managed file sets, when the machine has
+    one (`managed.py`, `_apply_managed`)."""
     config_path = path or default_config_path()
     config_path.parent.mkdir(parents=True, exist_ok=True)
     if not config_path.exists():
@@ -1166,9 +1303,137 @@ def load_config(path: Path | None = None) -> Config:
     with config_path.open("rb") as f:
         data = tomllib.load(f)
 
+    # The organisation-managed file, looked up through the module so the
+    # suite's autouse fixture can point it at a scratch path. None (no
+    # file, every install that never deployed one) leaves the user's file
+    # the only source, and the result is what it was before managed files
+    # existed.
+    managed_path = _managed.managed_config_path()
+    managed_data = _managed.read_managed(managed_path)
+    if managed_data is None:
+        return _config_from_data(data, config_path)
+    return _apply_managed(
+        data,
+        config_path=config_path,
+        managed_data=managed_data,
+        managed_path=managed_path,
+    )
+
+
+def _apply_managed(
+    data: dict[str, Any],
+    *,
+    config_path: Path,
+    managed_data: dict[str, Any],
+    managed_path: Path,
+) -> Config:
+    """The user's config with every setting the managed file sets pinned.
+
+    The managed file is parsed first, alone and through the same code as
+    config.toml (`_config_from_data`), so its values get the loader's
+    located errors naming the managed file, its removed keys their
+    notices, and its legacy alias the translation; what is left in
+    `managed_data` afterwards names only settings that exist. A malformed
+    value there fails the load, as a malformed config.toml does: a pin
+    that cannot be read is never skipped.
+
+    Every remaining key that names a setting of `Config` is pinned. The
+    user's value for it is dropped BEFORE the user's file is parsed, so a
+    pinned key the user mistyped cannot fail the load: it is ignored, not
+    read. A user value that differs from the pinned one gets one notice
+    per key, naming both files (`_warn_pinned_key`). Lists are replaced
+    whole, never merged: a managed `[scopes] allowed` is the allowlist.
+
+    A key the loader does not read is ignored here as it is in
+    config.toml, and is not listed in `managed_keys`. The keys are found
+    by walking the dataclasses rather than a list kept here, so a section
+    a later release adds to `Config` is pinnable the moment it parses.
+
+    `BETTERMEMORY_DIR` still decides the store before `[storage]
+    directory` (resolution rule 1): the variable is the process's own
+    choice, and the managed file binds the user's config, not a process
+    running as the user.
+    """
+    pinned = _config_from_data(managed_data, managed_path)
+    keys: list[tuple[str, str]] = []
+    for section, section_raw in managed_data.items():
+        # A section is an attribute holding a dataclass INSTANCE; the
+        # class check keeps a table named after a dunder from reaching a
+        # class object.
+        target = getattr(pinned, section, None)
+        if (
+            not isinstance(section_raw, dict)
+            or not is_dataclass(target)
+            or isinstance(target, type)
+        ):
+            continue
+        known = {f.name for f in fields(target)}
+        keys.extend((section, key) for key in section_raw if key in known)
+
+    for section, key in keys:
+        user_section = data.get(section)
+        if isinstance(user_section, dict) and key in user_section:
+            user_value = user_section.pop(key)
+            if user_value != managed_data[section][key]:
+                _warn_pinned_key(
+                    section=section,
+                    key=key,
+                    config_path=config_path,
+                    managed_path=managed_path,
+                )
+
+    config = _config_from_data(data, config_path)
+    for section, key in keys:
+        setattr(getattr(config, section), key, getattr(getattr(pinned, section), key))
+    config.managed_path = managed_path
+    config.managed_keys = frozenset(f"{section}.{key}" for section, key in keys)
+    return config
+
+
+def _warn_pinned_key(
+    *, section: str, key: str, config_path: Path, managed_path: Path
+) -> None:
+    """One notice per (config, managed file, key) that the user's value
+    is ignored, on the log lane and with the one-shot guard the removed-key
+    notices use, so a daemon that rereads its config does not repeat it."""
+    resolved = _resolved_for_guard(config_path)
+    guard_key = (resolved, f"{section}.{key}+managed:{managed_path}")
+    if guard_key in _DEPRECATED_KEY_WARNED_PATHS:
+        return
+    _DEPRECATED_KEY_WARNED_PATHS.add(guard_key)
+    import logging
+
+    logging.getLogger("bettermemory.config").warning(
+        "bettermemory: TOML config at %s sets [%s] `%s`, which the managed "
+        "config at %s pins. The managed value is in force and this line is "
+        "ignored; delete it to silence this warning.",
+        resolved,
+        section,
+        key,
+        managed_path,
+    )
+
+
+def _config_from_data(data: dict[str, Any], config_path: Path) -> Config:
+    """Build a `Config` from one parsed TOML file.
+
+    `config_path` locates every error and notice: the user's config.toml,
+    or the managed file when `_apply_managed` parses that one. Mutates
+    `data` as it reads it: the legacy alias is translated and removed
+    keys and sections are dropped, so a caller reading `data` afterwards
+    sees only settings that still exist.
+    """
     storage_raw = data.get("storage", {})
     behavior_raw = data.get("behavior", {})
     scopes_raw = data.get("scopes", {})
+    # Not the silent `{}` fallback the sections below take: a `policy =
+    # ...` scalar where the table belongs would otherwise forbid nothing
+    # while the file reads as if it set a policy.
+    policy_raw = data.get("policy", {})
+    if not isinstance(policy_raw, dict):
+        raise ValueError(
+            _malformed_config_msg("[policy]", policy_raw, config_path, "a table")
+        )
     telemetry_raw = data.get("telemetry", {})
     daemon_raw = data.get("daemon", {})
     if not isinstance(daemon_raw, dict):
@@ -1216,7 +1481,13 @@ def load_config(path: Path | None = None) -> Config:
                 storage_raw.get("directory"),
                 label="[storage] directory",
                 config_path=config_path,
-            )
+            ),
+            cwd_store=_coerce_switch(
+                storage_raw.get("cwd_store"),
+                True,
+                label="[storage] cwd_store",
+                config_path=config_path,
+            ),
         ),
         behavior=BehaviorConfig(
             default_max_results=_coerce_int(
@@ -1300,6 +1571,19 @@ def load_config(path: Path | None = None) -> Config:
             typo_exceptions=_coerce_str_list(
                 scopes_raw.get("typo_exceptions"),
                 label="[scopes] typo_exceptions",
+                config_path=config_path,
+            ),
+        ),
+        policy=PolicyConfig(
+            forbid_force=_coerce_switch(
+                policy_raw.get("forbid_force"),
+                False,
+                label="[policy] forbid_force",
+                config_path=config_path,
+            ),
+            forbid_acknowledge=_coerce_acknowledge_names(
+                policy_raw.get("forbid_acknowledge"),
+                label="[policy] forbid_acknowledge",
                 config_path=config_path,
             ),
         ),
