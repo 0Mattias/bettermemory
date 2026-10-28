@@ -2197,6 +2197,12 @@ def _bound_store_check(store_id: str) -> tuple[Callable[[Path], bool], list[str]
 #: Keyed on both files, so a second copy, or the same copy once the ring
 #: is bound to a third file, still gets its own warning.
 _BOUND_ELSEWHERE_WARNED: set[tuple[Path, Path]] = set()
+#: Makes the guard's test and its add one step. The workers are the case
+#: the guard is for, and they can open at once: each worker thread reopens
+#: on its first job, and jobs that arrive together reach several workers
+#: together. A thread switch between one worker's test and its add would
+#: let another find the pair new too, and both would warn.
+_BOUND_ELSEWHERE_LOCK = threading.Lock()
 
 
 def _resolved_for_guard(path: Path) -> Path:
@@ -2221,11 +2227,10 @@ def _warn_bound_elsewhere(
     pair (`_BOUND_ELSEWHERE_WARNED`). Every open still reads the binding
     and still opens for reading only; only the repetition is quieter."""
     guard_key = (_resolved_for_guard(path), _resolved_for_guard(other))
-    if guard_key in _BOUND_ELSEWHERE_WARNED:
-        level = logging.DEBUG
-    else:
+    with _BOUND_ELSEWHERE_LOCK:
+        first = guard_key not in _BOUND_ELSEWHERE_WARNED
         _BOUND_ELSEWHERE_WARNED.add(guard_key)
-        level = logging.WARNING
+    level = logging.WARNING if first else logging.DEBUG
     holds = (
         f"which could not be read to tell whether it still holds that id ({unread[-1]})"
         if unread

@@ -15,13 +15,16 @@ WARNING for every worker. What is pinned here:
   repetition is quieter;
 * the guard keys on both files, resolved: another copy, or the same copy
   once the ring is bound to a third file, gets its own warning, and a
-  second spelling of the same copy does not.
+  second spelling of the same copy does not;
+* two threads opening the pair at once (the daemon's workers on jobs that
+  arrive together) still log one WARNING between them.
 """
 
 from __future__ import annotations
 
 import logging
 import shutil
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -174,6 +177,64 @@ def test_another_spelling_of_the_copy_shares_its_warning(
     with caplog.at_level(logging.DEBUG, logger="bettermemory.store"):
         Store.open_or_create(copy, keys_dir=keys).close()
         Store.open_or_create(spelled, keys_dir=keys).close()
+    assert len(_bound_lines(caplog, logging.WARNING)) == 1
+    assert len(_bound_lines(caplog, logging.DEBUG)) == 1
+
+
+class _MeetingSet(set[tuple[Path, Path]]):
+    """A guard set whose first membership test, once answered, waits a
+    short while for a second caller to ask too: a thread switch between
+    one opener's test and its add, made certain rather than left to the
+    scheduler. A guard whose test and add are one step keeps the second
+    caller out until the first has added, so the wait runs out alone."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._callers = 0
+        self._count_lock = threading.Lock()
+        self._second = threading.Event()
+
+    def __contains__(self, o: object) -> bool:
+        answer = super().__contains__(o)
+        with self._count_lock:
+            self._callers += 1
+            first = self._callers == 1
+        if first:
+            self._second.wait(timeout=0.5)
+        else:
+            self._second.set()
+        return answer
+
+
+def test_two_opens_at_once_log_one_warning(
+    home: tuple[Path, str],
+    keys: Path,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two reader's opens of the copy in two threads, as two of the
+    daemon's workers make on jobs that arrive together: one WARNING and
+    one DEBUG line between them, not two warnings."""
+    path, _store_id = home
+    copy = _copy(path, tmp_path / "repo" / STORE_FILENAME)
+    monkeypatch.setattr(store_module, "_BOUND_ELSEWHERE_WARNED", _MeetingSet())
+    failures: list[BaseException] = []
+
+    def open_copy() -> None:
+        try:
+            with Store.open(copy, keys_dir=keys, allow_rekey=False) as reader:
+                assert reader.has_key is False
+        except BaseException as exc:  # noqa: BLE001 - reported below
+            failures.append(exc)
+
+    with caplog.at_level(logging.DEBUG, logger="bettermemory.store"):
+        threads = [threading.Thread(target=open_copy) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+    assert failures == []
     assert len(_bound_lines(caplog, logging.WARNING)) == 1
     assert len(_bound_lines(caplog, logging.DEBUG)) == 1
 
