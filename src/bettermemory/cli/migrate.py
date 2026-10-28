@@ -98,11 +98,15 @@ def _cli_migrate_v8(
     1 when the store cannot be written, a store file inside a backup
     bundle among them, and a `--to` file with other names (hard links)
     (`backup.bundle_refusal`): the run opens and writes the store, which
-    would change a bundle's snapshot and fail its hash."""
+    would change a bundle's snapshot and fail its hash. A key file that is
+    there and cannot be read (`log.KeyUnreadableError`) is 1 too, in one
+    line made printable as the other owner's openers make theirs."""
     import json as _json
 
     from ..backup import bundle_refusal
     from ..config import load_config
+    from ..history import printable
+    from ..log import KeyUnreadableError
     from ..migrate_v8 import migrate
     from ..store import STORE_FILENAME
 
@@ -116,6 +120,15 @@ def _cli_migrate_v8(
         raise SystemExit(1)
     try:
         report = migrate(root, store_path, dry_run=dry_run)
+    except KeyUnreadableError as exc:
+        # The owner's open met a key file it cannot read and rekeyed
+        # nothing. Its reason can quote a symbolic link's target, a name
+        # whoever can write the keys directory chose: through
+        # `history.printable`, as `_common.key_unreadable_line` writes the
+        # other openers' line, a line break in it cannot make the one line
+        # two, nor an escape sequence reach the terminal.
+        sys.stderr.write(printable(f"migrate v8: {exc}") + "\n")
+        raise SystemExit(1) from None
     except (OSError, ValueError, sqlite3.Error) as exc:
         sys.stderr.write(f"migrate v8: {exc}\n")
         raise SystemExit(1) from None

@@ -352,6 +352,55 @@ def test_the_line_stays_one_line_whatever_the_reason_holds(tmp_path: Path) -> No
     assert line.startswith(f"bettermemory: the key file {tmp_path / 'k.key'} ")
 
 
+def test_migrate_v8_says_so_in_its_own_line(
+    unreadable: Unreadable,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`migrate v8` opens the store as its owner and keeps its own prefix:
+    one line after `migrate v8:`, exit 1, nothing rekeyed."""
+    source = tmp_path / "v8"
+    source.mkdir()
+    argv = ["migrate", "v8", "--from", str(source), "--to", str(unreadable.path)]
+    assert _run_cli(argv, monkeypatch) == 1
+    line = _assert_the_line(capsys.readouterr().err, unreadable)
+    assert line.startswith("migrate v8: the key file ")
+    unreadable.assert_nothing_rekeyed()
+
+
+def test_migrate_v8_keeps_its_line_one_line_whatever_the_reason_holds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The reason quotes a link's target there too: `migrate v8` prints a
+    line break or an escape sequence in it escaped, as the other openers'
+    line does, so its one line stays one and no escape reaches the
+    terminal."""
+    from bettermemory import migrate_v8
+
+    source = tmp_path / "v8"
+    source.mkdir()
+    key = tmp_path / "keys" / "s.key"
+
+    def unreadable(*_args: object, **_kwargs: object) -> None:
+        raise KeyUnreadableError(
+            key,
+            FileNotFoundError(2, "No such file or directory"),
+            reason="it is a symbolic link to /a\nb\x1b[2J, which is not there",
+        )
+
+    monkeypatch.setattr(migrate_v8, "migrate", unreadable)
+    assert _run_cli(["migrate", "v8", "--from", str(source)], monkeypatch) == 1
+    err = capsys.readouterr().err
+    assert err.endswith("\n")
+    assert err.count("\n") == 1, err
+    assert "\x1b" not in err
+    assert err.startswith(f"migrate v8: the key file {key} ")
+    assert "/a\\nb\\x1b[2J" in err
+
+
 def test_a_missing_key_is_still_replaced_as_it_was(
     tmp_path: Path, keys_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
