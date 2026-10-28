@@ -60,7 +60,6 @@ import contextlib
 import glob
 import hashlib
 import re
-import hmac
 import json
 import logging
 import math
@@ -105,6 +104,7 @@ from .log import (
     iter_rows,
     last_rekey_name,
     row_verifies,
+    same_mac,
     verify_chain,
 )
 from .models import (
@@ -2606,9 +2606,9 @@ class Store:
                 return
             verifies = row_verifies(held.key, held.first_row)
         except (sqlite3.Error, ValueError, TypeError) as exc:
-            # A row an editor left unreadable (a seq that is not a number,
-            # a MAC that is not ASCII, which `hmac.compare_digest` raises
-            # on): no anchor, and the open goes on.
+            # A row an editor left unreadable (a seq that is not a number;
+            # a MAC that is not ASCII reads as one that does not verify,
+            # below): no anchor, and the open goes on.
             log.warning(
                 "origin anchor for %s not written: the log could not be read (%s)",
                 self._path,
@@ -4151,7 +4151,7 @@ class Store:
                     payload=str(raw["payload"]),
                     prev_mac=str(raw["prev_mac"]),
                 )
-                verdict = hmac.compare_digest(expected, log_mac)
+                verdict = same_mac(expected, log_mac)
         self._pointer_cache[cache_key] = verdict
         return verdict
 

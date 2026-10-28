@@ -63,7 +63,6 @@ from __future__ import annotations
 
 import contextlib
 import difflib
-import hmac
 import json
 import sqlite3
 import unicodedata
@@ -71,7 +70,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from .log import CAPTURE_MEMBER, REKEY, LogRow, compute_mac
+from .log import CAPTURE_MEMBER, REKEY, LogRow, compute_mac, same_mac
 from .store import IMPORTED, LOCAL, UNACCOUNTED, Store
 
 FORMAT = "bettermemory-history"
@@ -314,7 +313,7 @@ class _RowVerifier:
             payload=row.payload,
             prev_mac=row.prev_mac,
         )
-        return hmac.compare_digest(expected, row.mac)
+        return same_mac(expected, row.mac)
 
 
 def _rows_naming(

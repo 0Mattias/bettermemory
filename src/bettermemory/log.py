@@ -568,14 +568,19 @@ def row_verifies(key: bytes, row: LogRow) -> bool:
         payload=row.payload,
         prev_mac=row.prev_mac,
     )
-    return hmac.compare_digest(expected, row.mac)
+    return same_mac(expected, row.mac)
 
 
-def _same_mac(stored: str, anchored: str) -> bool:
-    """Does the MAC column ``stored`` equal the anchor's ``anchored``? As
-    bytes: `hmac.compare_digest` raises TypeError on a str that is not
-    ASCII, and the column is whatever an editor wrote into it."""
-    return hmac.compare_digest(stored.encode("utf-8"), anchored.encode("utf-8"))
+def same_mac(a: str, b: str) -> bool:
+    """Do two MAC texts match, in constant time? Compared as UTF-8 bytes:
+    `hmac.compare_digest` raises TypeError on a str that is not ASCII, and
+    a MAC column, a record's pointer or a head checkpoint holds whatever
+    an editor wrote into it, which must read as a mismatch, not end the
+    open, the read or `log verify` in a traceback."""
+    return hmac.compare_digest(
+        a.encode("utf-8", errors="surrogatepass"),
+        b.encode("utf-8", errors="surrogatepass"),
+    )
 
 
 @dataclass(frozen=True)
@@ -646,7 +651,7 @@ def _check_origin(
         return OriginCheck(ORIGIN_ABSENT)
     if row is None:
         return OriginCheck(ORIGIN_MISMATCHED, origin.seq, "missing")
-    if not _same_mac(row.mac, origin.mac):
+    if not same_mac(row.mac, origin.mac):
         return OriginCheck(ORIGIN_MISMATCHED, origin.seq, "mac")
     tried = False
     for key in keys():
@@ -995,7 +1000,7 @@ def verify_chain(
     elif head.seq > last.seq:
         report.head = {"status": "tail_deleted", "seq": head.seq, "mac": head.mac}
     elif head.seq == last.seq:
-        matches = hmac.compare_digest(head.mac, last.mac)
+        matches = same_mac(head.mac, last.mac)
         report.head = {
             "status": "ok" if matches else "mismatch",
             "seq": head.seq,
@@ -1003,7 +1008,7 @@ def verify_chain(
         }
     else:
         named = next((r for r in rows if r.seq == head.seq), None)
-        matches = named is not None and hmac.compare_digest(head.mac, named.mac)
+        matches = named is not None and same_mac(head.mac, named.mac)
         report.head = {
             "status": "stale" if matches else "mismatch",
             "seq": head.seq,
@@ -1069,5 +1074,6 @@ __all__ = [
     "last_row",
     "parse_origin",
     "row_verifies",
+    "same_mac",
     "verify_chain",
 ]

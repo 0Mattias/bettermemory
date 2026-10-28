@@ -646,16 +646,15 @@ def test_a_snapshot_that_is_not_a_database_is_unreadable(bundle: Path) -> None:
         "CREATE TABLE log (seq, ts, session, kind, payload, prev_mac, mac); "
         "INSERT INTO log SELECT * FROM old; DROP TABLE old; "
         "UPDATE log SET seq = 'last' WHERE seq = 3",
-        "UPDATE log SET mac = 'é' WHERE seq = 1",
     ],
-    ids=["schema version", "seq", "row mac"],
+    ids=["schema version", "seq"],
 )
 def test_rows_that_do_not_read_as_a_stores_are_reported_not_crashed_on(
     bundle: Path, edit: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A snapshot edited so a number is not one, or a MAC is not a digest,
-    reads as ``snapshot_unreadable`` and the command exits 1, rather than
-    raising out of `verify_bundle`."""
+    """A snapshot edited so a number is not one reads as
+    ``snapshot_unreadable`` and the command exits 1, rather than raising
+    out of `verify_bundle`."""
     conn = sqlite3.connect(str(bundle / STORE_FILENAME))
     conn.executescript(edit)
     conn.commit()
@@ -666,6 +665,26 @@ def test_rows_that_do_not_read_as_a_stores_are_reported_not_crashed_on(
     report = verify_bundle(bundle)
     assert report["status"] == "mismatched"
     assert "snapshot_unreadable" in _problems(report)
+    assert _run_cli(["backup", "verify", str(bundle)], monkeypatch) == 1
+
+
+def test_a_row_mac_that_is_not_a_digest_reads_as_a_tampered_log(
+    bundle: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A MAC column holding non-ASCII text made `hmac.compare_digest`
+    raise, so the snapshot read as unreadable. It is compared as bytes
+    now: the row does not verify, and the log check says so."""
+    conn = sqlite3.connect(str(bundle / STORE_FILENAME))
+    conn.execute("UPDATE log SET mac = 'é' WHERE seq = 1")
+    conn.commit()
+    conn.close()
+    manifest = _manifest(bundle)
+    _rehash(bundle, manifest, STORE_FILENAME)
+    _write_manifest(bundle, manifest)
+    report = verify_bundle(bundle)
+    assert report["status"] == "mismatched"
+    assert "snapshot_unreadable" not in _problems(report)
+    assert report["log"]["status"] == "tampered"
     assert _run_cli(["backup", "verify", str(bundle)], monkeypatch) == 1
 
 

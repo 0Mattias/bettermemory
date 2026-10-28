@@ -905,10 +905,11 @@ def verify_bundle(bundle: Path, *, keys_dir: Path | None = None) -> dict[str, An
             finally:
                 opened.close()
         except (sqlite3.Error, ValueError, TypeError, OSError) as exc:
-            # A newer schema, a page the replay cannot read, or a row whose
-            # MAC is not a digest (`hmac.compare_digest` raises TypeError on
-            # a non-ASCII one): the bundle is not one this build can
-            # verify, whatever its hashes say.
+            # A newer schema, or a page or a row the replay cannot read (a
+            # seq that is not a number): the bundle is not one this build
+            # can verify, whatever its hashes say. A MAC that is not a
+            # digest reads as one that does not verify (`log.same_mac`),
+            # and the log check below reports it.
             problems.append({"problem": "snapshot_unreadable", "detail": str(exc)})
             report["status"] = _verdict(problems, None)
             return report

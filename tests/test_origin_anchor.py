@@ -1361,3 +1361,52 @@ def test_without_an_anchor_the_segment_map_is_the_rule_without_one(
         (1, False),
         (forgery.rekey_seq, True),
     ]
+
+
+# ---------------------------------------------------------------------------
+# A MAC column that is not ASCII
+# ---------------------------------------------------------------------------
+
+
+def test_a_first_row_mac_that_is_not_ascii_reads_as_a_mismatch(
+    owned: tuple[Path, Memory, str, str], keys: Path
+) -> None:
+    """`hmac.compare_digest` raises TypeError on a str that is not ASCII.
+    With meta pointed at a key nobody holds and seq 1's MAC column set to
+    non-ASCII text, the reader's first pointer check, `memory history`,
+    `log verify` and the owner's open (a daemon's start) all ended in
+    that TypeError. The row now reads as one that does not verify."""
+    from bettermemory.history import record_history
+
+    path, genuine, _fingerprint, _store_id = owned
+    other = chain.fingerprint(secrets.token_bytes(chain.KEY_BYTES))
+    _edit(path, "UPDATE meta SET value = ? WHERE key = 'key_fingerprint'", other)
+    _edit(path, "UPDATE log SET mac = ? WHERE seq = 1", "é" * 64)
+
+    with Store.open(path, keys_dir=keys, allow_rekey=False) as reader:
+        assert reader.provenance_for([genuine.id])[genuine.id] in (LOCAL, UNACCOUNTED)
+        assert record_history(reader, genuine.id).provenance in (LOCAL, UNACCOUNTED)
+        report = reader.log_verify()
+    assert report["status"] == "tampered"
+    assert _problems(report, "origin_mismatch")
+    with Store.open(path, keys_dir=keys) as owner:
+        assert owner.log_verify()["status"] == "tampered"
+
+
+def test_a_last_row_and_a_pointer_mac_that_are_not_ascii_read_as_mismatches(
+    owned: tuple[Path, Memory, str, str], keys: Path
+) -> None:
+    """The head checkpoint's MAC is compared with the last row's, and a
+    record's pointer with the row it names: an editor's non-ASCII text in
+    either column is a mismatch (`head` mismatch, the record
+    `unaccounted`), not a TypeError from `log verify` or from every read
+    that checks the pointer."""
+    path, genuine, _fingerprint, _store_id = owned
+    forged = "é" * 64
+    _edit(path, "UPDATE log SET mac = ? WHERE seq = (SELECT MAX(seq) FROM log)", forged)
+    _edit(path, "UPDATE memories SET log_mac = ? WHERE id = ?", forged, genuine.id)
+    with Store.open(path, keys_dir=keys, allow_rekey=False) as reader:
+        assert reader.provenance_for([genuine.id])[genuine.id] == UNACCOUNTED
+        report = reader.log_verify()
+    assert report["status"] == "tampered"
+    assert report["head"]["status"] == "mismatch"
