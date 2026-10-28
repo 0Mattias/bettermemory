@@ -5,8 +5,16 @@ and the session registry, serving the MCP surface over streamable HTTP at
 Binds 127.0.0.1 only. Every request except ``GET /health`` carries the
 bearer token the state file holds (`_daemon_client.write_state`); a
 process running as the user can read that file, which is the threat
-model of a localhost daemon. The SDK's DNS-rebinding protection stays on
-(Host and Origin restricted to localhost).
+model of a localhost daemon. Every HTTP request, ``/health`` and the hook
+and admin routes as well as ``/mcp``, must name a loopback host in its
+Host header and, when it carries one, a loopback ``http://`` Origin
+(`LocalHostMiddleware`): a page a browser loaded from an attacker's name
+rebound to 127.0.0.1 is refused before any route runs, as the SDK's own
+check (which stays on) refuses it at ``/mcp``. The hook and admin routes
+read at most `MAX_BODY_BYTES` of body (`BodyLimitMiddleware`), the SDK's
+cap at ``/mcp``. ``GET /health?nonce=`` answers a proof that the daemon
+holds the state file's token (`_daemon_client.health_proof`), so a
+client can tell its own daemon from another listener on the port.
 
 The MCP app is the one `builder.build_server` returns, served stateless
 with JSON responses for 2026-07-28 clients; per-client session state is
@@ -73,17 +81,21 @@ from typing import Any, Awaitable, Callable, Mapping, TypeVar, cast
 
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.responses import JSONResponse, PlainTextResponse, Response
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
+from starlette.websockets import WebSocketClose
 
 from ._daemon_client import (
     DAEMON_HELD_STATUS,
+    HEALTH_NONCE_PARAM,
     HOST,
     LOCK_WAIT_SECONDS,
     acquire_lock,
+    health_proof,
     lock_file_for,
     release_lock,
     remove_state,
+    valid_nonce,
     write_state,
 )
 from ._fsutil import ensure_owner_only_dir, fsync_dir, replace_atomic
@@ -96,10 +108,195 @@ log = logging.getLogger("bettermemory.daemon")
 
 OPEN_PATHS: frozenset[str] = frozenset({"/health"})
 
+#: The host names a request to the daemon may name, in its Host header and
+#: in an Origin: the loopback names a local client puts in a URL, the ones
+#: the SDK allows at ``/mcp`` (`mcp.server.lowlevel.server`, its default
+#: transport security for a localhost server).
+LOCAL_HOSTS: frozenset[str] = frozenset({"127.0.0.1", "localhost", "[::1]"})
+
+#: The largest body the hook and admin routes read: 4 MiB, the SDK's own
+#: cap at ``/mcp`` (`mcp.server.transport_security.
+#: DEFAULT_MAX_REQUEST_BODY_SIZE`), so one bound covers every route. A
+#: hook's body is far under it: the client reads at most 1 MiB of the
+#: harness's stdin (`_daemon_client._STDIN_CAP_BYTES`).
+MAX_BODY_BYTES = 4 * 1024 * 1024
+#: The routes `MAX_BODY_BYTES` covers: the hook routes and the shutdown
+#: route. ``/mcp`` has the SDK's cap and ``/health`` reads no body.
+CAPPED_PREFIX = "/api/v1/"
+
+
+def _host_port(text: str) -> tuple[str, str | None] | None:
+    """``host[:port]`` split into the host, lowercased, and the port text
+    (None when there is none); None when `text` has no such shape. An IPv6
+    literal keeps its brackets, the way a Host header and an Origin
+    spell it."""
+    text = text.lower()
+    if text.startswith("["):
+        close = text.find("]")
+        if close < 0:
+            return None
+        host, rest = text[: close + 1], text[close + 1 :]
+        if not rest:
+            return host, None
+        if not rest.startswith(":"):
+            return None
+        return host, rest[1:]
+    host, colon, port = text.rpartition(":")
+    if not colon:
+        return text, None
+    return host, port
+
+
+class LocalHostMiddleware:
+    """Pure ASGI, outermost: refuse every HTTP request that does not name
+    this daemon on a loopback host.
+
+    The Host header must be one of `LOCAL_HOSTS`, bare or with the
+    daemon's port (any port when `port` is None, as an app built for a
+    test is); otherwise 421, as the SDK answers at ``/mcp``. An Origin
+    header, when present, must be ``http://`` and one of the same, bare or
+    with the same port; otherwise 403. No Origin is fine: the CLI, the
+    hook client and the shim send none.
+
+    The SDK checks Host and Origin only inside its ``/mcp`` transport, so
+    before this ``/health``, the hook routes and the shutdown route took
+    any Host. A page a browser loaded from an attacker's name, rebound to
+    127.0.0.1 (DNS rebinding), could then read ``/health``, the store path
+    with the user's name in it among it, on a browser that does not block
+    requests from public pages to private addresses. A browser sends the
+    name the page was loaded from as the Host, so a Host that is not a
+    loopback name is such a request, and nothing past this sees it. Every
+    Host header and every Origin header a request carries is checked, so
+    a second header cannot carry what the first was refused for.
+
+    Other scope types pass: lifespan to the app, a websocket to
+    `BearerAuthMiddleware`, which refuses it."""
+
+    def __init__(self, app: ASGIApp, *, port: int | None = None) -> None:
+        self.app = app
+        self._port = None if port is None else str(port)
+
+    def _named_here(self, text: str) -> bool:
+        split = _host_port(text)
+        if split is None or split[0] not in LOCAL_HOSTS:
+            return False
+        port = split[1]
+        if port is None:
+            return True
+        if self._port is not None:
+            return port == self._port
+        return port.isascii() and port.isdigit()
+
+    def _origin_named_here(self, text: str) -> bool:
+        scheme = "http://"
+        return text.lower().startswith(scheme) and self._named_here(text[len(scheme) :])
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        hosts: list[str] = []
+        origins: list[str] = []
+        for name, value in scope.get("headers", []):
+            lowered = name.lower()
+            if lowered == b"host":
+                hosts.append(value.decode("latin-1"))
+            elif lowered == b"origin":
+                origins.append(value.decode("latin-1"))
+        refusal: Response | None = None
+        if not hosts or not all(self._named_here(host) for host in hosts):
+            refusal = PlainTextResponse("Invalid Host header", status_code=421)
+        elif not all(self._origin_named_here(origin) for origin in origins):
+            refusal = PlainTextResponse("Invalid Origin header", status_code=403)
+        if refusal is not None:
+            await refusal(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
+class BodyLimitMiddleware:
+    """Pure ASGI: 413 on a request under `prefix` whose body passes
+    `max_bytes`, before any route reads it.
+
+    A Content-Length over the cap is refused before a byte is read; a body
+    that comes without one, or with one that understates it, is read
+    chunk by chunk and refused as the chunk that passes the cap arrives.
+    A body under the cap is handed on whole, replayed to the route as one
+    message, so the route reads exactly what was sent. The SDK applies the
+    same discipline inside its ``/mcp`` transport only; the hook routes
+    read their bodies with `Request.json`, which reads to the end, so a
+    client holding the token could make the daemon hold any size in
+    memory."""
+
+    def __init__(self, app: ASGIApp, *, max_bytes: int, prefix: str) -> None:
+        self.app = app
+        self._max = max_bytes
+        self._prefix = prefix
+
+    async def _too_large(self, scope: Scope, receive: Receive, send: Send) -> None:
+        response = PlainTextResponse("Request body too large", status_code=413)
+        await response(scope, receive, send)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or not str(scope.get("path", "")).startswith(
+            self._prefix
+        ):
+            await self.app(scope, receive, send)
+            return
+        for name, value in scope.get("headers", []):
+            if name.lower() != b"content-length":
+                continue
+            try:
+                declared = int(value)
+            except ValueError:
+                continue
+            if declared > self._max:
+                await self._too_large(scope, receive, send)
+                return
+        body = bytearray()
+        received = complete = False
+        trailing: Message | None = None
+        while True:
+            message = await receive()
+            if message["type"] != "http.request":
+                # The client went away (``http.disconnect``): the route sees
+                # what came and then the disconnect, as it would have.
+                trailing = message
+                break
+            received = True
+            chunk = message.get("body", b"")
+            if len(body) + len(chunk) > self._max:
+                await self._too_large(scope, receive, send)
+                return
+            body.extend(chunk)
+            if not message.get("more_body", False):
+                complete = True
+                break
+        replay: list[Message] = []
+        if received:
+            replay.append(
+                {"type": "http.request", "body": bytes(body), "more_body": not complete}
+            )
+        if trailing is not None:
+            replay.append(trailing)
+
+        async def replayed() -> Message:
+            if replay:
+                return replay.pop(0)
+            return await receive()
+
+        await self.app(scope, replayed, send)
+
 
 class BearerAuthMiddleware:
     """Pure ASGI: 401 on every HTTP request without the daemon's token,
-    except the open paths."""
+    except the open paths.
+
+    Fails closed on every other scope type but lifespan: a websocket is
+    closed before it is accepted (policy violation, 1008), and a scope of
+    a type this does not know never reaches the app. The daemon serves no
+    websocket, and a check that passed what it did not understand would
+    let the first route that ever accepted one skip the token."""
 
     def __init__(self, app: ASGIApp, *, token: str, open_paths: frozenset[str]) -> None:
         self.app = app
@@ -107,7 +304,15 @@ class BearerAuthMiddleware:
         self._open_paths = open_paths
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or scope.get("path") in self._open_paths:
+        if scope["type"] == "lifespan":
+            await self.app(scope, receive, send)
+            return
+        if scope["type"] == "websocket":
+            await WebSocketClose(code=1008)(scope, receive, send)
+            return
+        if scope["type"] != "http":
+            return
+        if scope.get("path") in self._open_paths:
             await self.app(scope, receive, send)
             return
         supplied = b""
@@ -344,10 +549,20 @@ def build_app(
     token: str,
     shutdown: Callable[[], None],
     version: str | None = None,
+    port: int | None = None,
 ) -> Starlette:
     """The daemon's ASGI app: the MCP surface at ``/mcp``, the hook
     endpoints, ``/health`` and the shutdown endpoint, behind the bearer
-    check. `shutdown` is called by ``POST /api/v1/admin/shutdown``."""
+    check. `shutdown` is called by ``POST /api/v1/admin/shutdown``.
+
+    Three checks wrap every route, outermost first: the Host and Origin
+    check (`LocalHostMiddleware`, against `port`, the port the daemon
+    bound; `serve` always passes it, and an app built without it takes
+    any port on a loopback name), the bearer check (`BearerAuthMiddleware`)
+    and the body cap on the hook and admin routes (`BodyLimitMiddleware`).
+    A request with a rebinding Host is refused before the token is read,
+    and a body is read only once the token has been checked, so a client
+    without it cannot make the daemon hold a body at all."""
     from . import capture_hook as _capture_hook
     from . import hook as _hook
     from . import recall as _recall
@@ -366,17 +581,24 @@ def build_app(
             orphans = [str(path) for path in store.store_orphans()]
         except sqlite3.Error:
             orphans = []
-        return JSONResponse(
-            {
-                "status": "ok",
-                "version": served_version,
-                "store": str(store.path),
-                "pid": os.getpid(),
-                # The saved stores this one was created fresh after
-                # (`Store.store_orphans`), while any is still on disk.
-                "store_orphans": orphans,
-            }
-        )
+        answer: dict[str, Any] = {
+            "status": "ok",
+            "version": served_version,
+            "store": str(store.path),
+            "pid": os.getpid(),
+            # The saved stores this one was created fresh after
+            # (`Store.store_orphans`), while any is still on disk.
+            "store_orphans": orphans,
+        }
+        # The identity proof (`_daemon_client.identify`): the token's MAC
+        # over the client's nonce, which only the process holding the
+        # state file's token can answer. A request without a nonce, or
+        # with one of another shape, gets the reply it always got, byte
+        # for byte; the proof discloses nothing about the token.
+        nonce = request.query_params.get(HEALTH_NONCE_PARAM)
+        if valid_nonce(nonce):
+            answer["proof"] = health_proof(token, nonce)
+        return JSONResponse(answer)
 
     @_route(mcp, "/api/v1/hook/session-start", ["POST"])
     async def hook_session_start(request: Request) -> Response:
@@ -554,7 +776,12 @@ def build_app(
         json_response=True,
         host=HOST,
     )
+    # Starlette runs the middleware added last outermost.
+    app.add_middleware(
+        BodyLimitMiddleware, max_bytes=MAX_BODY_BYTES, prefix=CAPPED_PREFIX
+    )
     app.add_middleware(BearerAuthMiddleware, token=token, open_paths=OPEN_PATHS)
+    app.add_middleware(LocalHostMiddleware, port=port)
     served_lifespan = app.router.lifespan_context
 
     @asynccontextmanager
@@ -1105,7 +1332,9 @@ def _serve_locked(
             pass
 
     watch = _StoreWatch(Path(store.path), store_gone, interval=STORE_WATCH_SECONDS)
-    app = build_app(config=config, store=store, token=token, shutdown=shutdown)
+    app = build_app(
+        config=config, store=store, token=token, shutdown=shutdown, port=bound_port
+    )
     built_lifespan = app.router.lifespan_context
 
     @asynccontextmanager
@@ -1189,6 +1418,11 @@ def _serve_locked(
 
 __all__ = [
     "BearerAuthMiddleware",
+    "BodyLimitMiddleware",
+    "CAPPED_PREFIX",
+    "LOCAL_HOSTS",
+    "LocalHostMiddleware",
+    "MAX_BODY_BYTES",
     "OPEN_PATHS",
     "STORE_WATCH_SECONDS",
     "bind",

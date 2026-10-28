@@ -30,6 +30,7 @@ daemon it starts stays under its own directory.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -42,7 +43,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TypeGuard
 
 STATE_DIR_ENV = "BETTERMEMORY_STATE_DIR"
 #: The path variables a starting daemon resolves (`config.ENV_DIR_OVERRIDE`
@@ -57,6 +58,15 @@ HOST = "127.0.0.1"
 HEALTH_PATH = "/health"
 SHUTDOWN_PATH = "/api/v1/admin/shutdown"
 HOOK_PATH = "/api/v1/hook/"
+
+#: The query parameter ``GET /health`` reads a client's nonce from, and the
+#: nonces it answers a proof for: 32 to 128 hex digits, so a proof is never
+#: computed over a value short enough to have been seen before.
+HEALTH_NONCE_PARAM = "nonce"
+_NONCE = re.compile(r"[0-9a-fA-F]{32,128}")
+#: What the proof's MAC covers ahead of the nonce, so the token's MAC over
+#: a health nonce can never stand for its MAC over anything else.
+_PROOF_CONTEXT = b"bettermemory-health-v1:"
 
 #: The hook words `_entry.main` routes here. The three 8.x names are
 #: aliases of the events the daemon serves, so an installed hooks.json
@@ -296,6 +306,24 @@ def health(port: int, *, timeout: float = 1.0) -> dict[str, Any] | None:
     except (OSError, ValueError, urllib.error.URLError):
         return None
     return body if isinstance(body, dict) and body.get("status") == "ok" else None
+
+
+def valid_nonce(nonce: object) -> TypeGuard[str]:
+    """Whether `nonce` is one ``/health`` answers a proof for: 32 to 128
+    hex digits."""
+    return isinstance(nonce, str) and _NONCE.fullmatch(nonce) is not None
+
+
+def health_proof(token: str, nonce: str) -> str:
+    """The proof a daemon holding `token` answers ``/health?nonce=`` with:
+    hex(HMAC-SHA256(token, ``bettermemory-health-v1:`` + nonce)), the nonce
+    as the ASCII text it was sent as. The daemon computes it
+    (`daemon.build_app`), and a client that recomputes it from the state
+    file's token knows it reached the daemon that wrote the file. One
+    definition, so the two sides cannot drift."""
+    return hmac.new(
+        token.encode("utf-8"), _PROOF_CONTEXT + nonce.encode("ascii"), hashlib.sha256
+    ).hexdigest()
 
 
 def post(
@@ -1013,6 +1041,7 @@ __all__ = [
     "DAEMON_HELD_STATUS",
     "DEFAULT_PORT",
     "DaemonExited",
+    "HEALTH_NONCE_PARAM",
     "LOCK_WAIT_SECONDS",
     "HOOK_EVENTS",
     "HOOK_WORDS",
@@ -1026,6 +1055,7 @@ __all__ = [
     "enter_state_dir",
     "ensure_daemon",
     "health",
+    "health_proof",
     "hook_main",
     "lock_file_for",
     "log_file_for",
@@ -1043,6 +1073,7 @@ __all__ = [
     "start_daemon",
     "state_file_for",
     "try_lock",
+    "valid_nonce",
     "version_key",
     "wait_for_daemon",
     "write_state",
