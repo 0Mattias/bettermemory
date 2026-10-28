@@ -268,6 +268,41 @@ _READ_ONLY = [
 ]
 
 
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    _READ_ONLY,
+    ids=lambda value: "-".join(value) if isinstance(value, list) else str(value),
+)
+def test_a_store_in_a_directory_that_cannot_be_searched_is_reported(
+    store_with_a_record: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+    expected: int,
+) -> None:
+    """A store directory this account cannot search: `Path.is_file`
+    raised PermissionError on Python 3.11 to 3.13 (a traceback, exit 1)
+    and answered False on 3.14 ("no store", exit 2, and 2 for `log
+    verify`, whose code for a store it cannot read is 1). Every Python
+    now gives the reason and the command's code for an unreadable store."""
+    import os
+
+    if not hasattr(os, "geteuid"):
+        pytest.skip("POSIX directory modes")
+    if os.geteuid() == 0:
+        pytest.skip("root searches a directory whatever its mode")
+    directory = tmp_path / "store"
+    directory.chmod(0o600)
+    try:
+        assert _run_cli(argv, monkeypatch) == expected
+    finally:
+        directory.chmod(0o700)
+    err = capsys.readouterr().err
+    assert "cannot read the store at" in err
+    assert "Traceback" not in err
+
+
 @pytest.mark.parametrize("content", [b'{"a":1}', b""], ids=["not-sqlite", "empty"])
 @pytest.mark.parametrize(
     ("argv", "expected"),

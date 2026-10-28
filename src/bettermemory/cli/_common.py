@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sqlite3
+import stat
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -75,8 +76,12 @@ def open_read_only(
     a missing key is reported, never replaced, and no rekey row is
     written. No file at `path` is a usage error; a file that is not a
     store this build reads (not a database, no meta table, a store id or
-    schema it refuses) ends the command with the reason and `exit_code`
-    rather than a traceback.
+    schema it refuses), or one in a directory this account cannot search,
+    ends the command with the reason and `exit_code` rather than a
+    traceback. The file is looked up with `stat`, not `Path.is_file`,
+    which raises PermissionError there on Python 3.11 to 3.13 and answers
+    False on 3.14: the same store gave a traceback on one Python and "no
+    store" on the other.
 
     A file inside a backup bundle (`BETTERMEMORY_DIR` naming the bundle)
     is refused the same way: opening it switches its journal mode, which
@@ -84,7 +89,13 @@ def open_read_only(
     signed hash; `backup verify` checks a bundle on a copy."""
     from ..backup import bundle_manifest_beside
 
-    if not path.is_file():
+    try:
+        mode = path.stat().st_mode
+    except (FileNotFoundError, NotADirectoryError):
+        parser.error(f"no bettermemory 9 store at {path}")
+    except OSError as exc:
+        _refuse(parser, f"cannot read the store at {path}: {exc}", exit_code)
+    if not stat.S_ISREG(mode):
         parser.error(f"no bettermemory 9 store at {path}")
     manifest = bundle_manifest_beside(path)
     if manifest is not None:
