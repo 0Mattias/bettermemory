@@ -2050,12 +2050,15 @@ def configured_strict_provenance() -> bool:
     value an organisation pins in a managed config applies here too. A
     config that cannot be read reads as strict, with a warning: it is a
     switch that narrows what is trusted, and a broken file must not widen
-    trust by default."""
+    trust by default. Nor may it fail the read that asked: a daemon reads
+    this long after its own start, from a file edited since, and a
+    section of the wrong type makes `load_config` raise TypeError or
+    AttributeError, not only OSError or ValueError."""
     from .config import load_config
 
     try:
         return load_config().security.strict_provenance
-    except (OSError, ValueError) as exc:
+    except Exception as exc:  # noqa: BLE001 - a bad config must not fail a read
         log.warning(
             "[security] strict_provenance could not be read (%s); rows under a "
             "key this machine does not hold read unaccounted",

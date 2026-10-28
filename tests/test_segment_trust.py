@@ -776,6 +776,29 @@ def test_a_config_that_cannot_be_read_reads_as_strict(
     assert "malformed config" in caplog.text
 
 
+@pytest.mark.parametrize(
+    "text",
+    ["[security\n", "behavior = 1\n", "scopes = 1\n"],
+    ids=["toml-syntax", "section-type-error", "section-attribute-error"],
+)
+def test_a_config_edited_after_the_daemon_started_never_fails_a_read(
+    moved: tuple[Path, Path, Memory, str],
+    caplog: pytest.LogCaptureFixture,
+    text: str,
+) -> None:
+    """The store reads the switch the first time a row needs it, which in a
+    daemon is long after the daemon read the config. A file edited since
+    into something `load_config` raises on, whatever the exception, reads
+    as strict and labels the row; the read does not raise."""
+    path, keys_b, arrived, _fingerprint_a = moved
+    config_module.default_config_path().write_text(text, encoding="utf-8")
+    with caplog.at_level(logging.WARNING, logger="bettermemory.store"):
+        with Store.open_or_create(path, keys_dir=keys_b) as here:
+            assert here.provenance_for([arrived.id]) == {arrived.id: UNACCOUNTED}
+            assert here.strict_provenance is True
+    assert "strict_provenance could not be read" in caplog.text
+
+
 def test_reopen_and_the_constructor_carry_the_switch(tmp_path: Path) -> None:
     with Store(tmp_path, strict_provenance=True) as store:
         assert store.strict_provenance is True
