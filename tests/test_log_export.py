@@ -460,8 +460,9 @@ def test_a_hand_edited_row_reads_unverified_and_the_export_goes_on(
 ) -> None:
     """A row edited into a shape the store never writes is one unverified
     line, not the end of the export: a MAC column holding non-ASCII text,
-    a payload nested past what the parser recurses through, and one
-    nested past what the redaction walk does."""
+    a payload nested past what the parser recurses through (on 3.11 to
+    3.13; 3.14 may parse it), and one nested past what the redaction walk
+    does."""
     for n in range(4):
         store.record_event("show", session="sess_a", id=f"m{n}")
     rows = store.log_rows()
@@ -492,6 +493,43 @@ def test_a_hand_edited_row_reads_unverified_and_the_export_goes_on(
         assert lines[seq - 1]["record_ids"] == []
     (kept,) = export_lines(store, since_seq=2, until_seq=3, include_bodies=True)
     assert kept["payload"] == edited[3].payload
+
+
+def test_a_payload_nested_past_the_bound_exports_as_text_on_every_version(
+    store: Store,
+) -> None:
+    """Every Python version parses a payload 300 levels deep, so the bound,
+    not the parser, decides: the row exports as its text, with bodies or
+    redacted, where with bodies 3.14 could parse a far deeper one and then
+    overflow the stack encoding it."""
+    store.record_event("show", session="sess_a", id="m0")
+    seq = store.log_rows()[-1].seq
+    depth = audit_export._MAX_PAYLOAD_DEPTH + 100
+    text = '{"a":' * depth + "1" + "}" * depth
+    outside = _outside(store)
+    outside.execute("UPDATE log SET payload = ? WHERE seq = ?", (text, seq))
+    outside.commit()
+    outside.close()
+    (with_bodies,) = export_lines(
+        store, since_seq=seq - 1, until_seq=seq, include_bodies=True
+    )
+    assert with_bodies["payload"] == text
+    assert with_bodies["record_ids"] == []
+    (redacted,) = export_lines(store, since_seq=seq - 1, until_seq=seq)
+    assert redacted["payload"] == redact_text(text)
+
+
+def test_a_payload_at_the_bound_still_reads_as_json(store: Store) -> None:
+    store.record_event("show", session="sess_a", id="m0")
+    seq = store.log_rows()[-1].seq
+    depth = audit_export._MAX_PAYLOAD_DEPTH
+    text = '{"a":' * depth + "1" + "}" * depth
+    outside = _outside(store)
+    outside.execute("UPDATE log SET payload = ? WHERE seq = ?", (text, seq))
+    outside.commit()
+    outside.close()
+    (line,) = export_lines(store, since_seq=seq - 1, until_seq=seq, include_bodies=True)
+    assert isinstance(line["payload"], dict)
 
 
 def test_a_seq_past_sqlites_range_is_refused(store: Store) -> None:

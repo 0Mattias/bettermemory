@@ -86,7 +86,7 @@ import hashlib
 import hmac
 import json
 import sqlite3
-from collections.abc import Callable, Collection, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import timezone
 from pathlib import Path
@@ -397,6 +397,35 @@ class _RowVerifier:
         return name, same_mac(expected, mac)
 
 
+# The deepest payload `export` reads as JSON. The store writes payloads a
+# few levels deep. The bound is fixed rather than left to the parser: from
+# Python 3.14 json.loads is limited by the C stack instead of the recursion
+# limit, so on a host with a large stack it parses a hand-edited payload
+# nested 100,000 deep that 3.11 to 3.13 refuse, and encoding that payload
+# into the line then overflows the stack. With the bound, such a row
+# exports as its text on every version, and the redaction walk, which
+# recurses once per level, never meets the recursion limit.
+_MAX_PAYLOAD_DEPTH = 200
+
+
+def _nested_past(value: Any, limit: int) -> bool:
+    """Whether `value` holds a dict or list more than `limit` levels deep,
+    found without recursion, so a payload of any depth is measured."""
+    stack: list[tuple[Any, int]] = [(value, 1)]
+    while stack:
+        item, depth = stack.pop()
+        if isinstance(item, dict):
+            children: Iterable[Any] = item.values()
+        elif isinstance(item, list):
+            children = item
+        else:
+            continue
+        if depth > limit:
+            return True
+        stack.extend((child, depth + 1) for child in children)
+    return False
+
+
 def dumps_line(line: Mapping[str, Any]) -> str:
     """One export line's text, newline included: sorted keys, no
     whitespace, ASCII only (a terminal or pipe in any locale can carry
@@ -498,18 +527,20 @@ def _audit_lines(
             mac=mac,
         )
         # A payload the store wrote is canonical JSON a few levels deep.
-        # Text that is not JSON, or JSON nested past what the parser or
-        # the redaction walk recurses through, only a hand edit writes:
-        # it is exported as its text (redacted whole by default), so one
-        # edited row reads as one unverified line and never ends the
-        # export there, which would blind every run after it as well.
+        # Text that is not JSON, or JSON nested past `_MAX_PAYLOAD_DEPTH`,
+        # only a hand edit writes: it is exported as its text (redacted
+        # whole by default), so one edited row reads as one unverified
+        # line and never ends the export there, which would blind every
+        # run after it as well.
         try:
             payload: Any = json.loads(text)
         except (ValueError, RecursionError):
             payload = None
             parsed = False
         else:
-            parsed = True
+            parsed = not _nested_past(payload, _MAX_PAYLOAD_DEPTH)
+            if not parsed:
+                payload = None
         if include_bodies:
             exported: Any = payload if parsed else text
         elif isinstance(payload, dict):

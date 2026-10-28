@@ -577,6 +577,8 @@ def test_a_bundle_file_that_cannot_be_read_is_mismatched_not_raised(
     traceback."""
     import os
 
+    if not hasattr(os, "geteuid"):
+        pytest.skip("POSIX file modes")
     if os.geteuid() == 0:
         pytest.skip("root reads a file whatever its mode")
     if name == "head":
