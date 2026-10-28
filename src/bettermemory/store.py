@@ -2115,13 +2115,16 @@ def _store_id_at(path: Path) -> str | None:
     pass in a moment, or that SQLite meets before it reads a byte, says
     nothing about whether the file still holds a store, and the caller
     keeps the key ring bound to it (`_claim_key_ring`). A symbolic link
-    that loops is no file there, as `Path.is_file` reads it."""
+    that loops is no file there, as `Path.is_file` reads it: ELOOP, or on
+    Windows ERROR_CANT_RESOLVE_FILENAME (1921), the reparse-point cycle,
+    which CPython does not fold into ELOOP (`origin.py` reads it the
+    same way)."""
     try:
         status = path.stat()
     except (FileNotFoundError, NotADirectoryError, ValueError):
         return None
     except OSError as exc:
-        if exc.errno == errno.ELOOP:
+        if exc.errno == errno.ELOOP or getattr(exc, "winerror", None) == 1921:
             return None
         raise
     if not stat.S_ISREG(status.st_mode):

@@ -952,6 +952,30 @@ def test_the_bound_store_id_read_answers_what_a_file_is(tmp_path: Path) -> None:
         os.chmod(locked, 0o600)
 
 
+def test_a_windows_reparse_cycle_reads_as_no_file_there(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows reports a symbolic link that loops as
+    ERROR_CANT_RESOLVE_FILENAME (1921), not ELOOP: it is no file there,
+    as the loop is on POSIX; any other error still cannot tell."""
+    bound = tmp_path / "loop" / STORE_FILENAME
+    real_stat = Path.stat
+    code = 1921
+
+    def windows_stat(self: Path, *args: Any, **kwargs: Any) -> os.stat_result:
+        if self == bound:
+            exc = OSError(22, "The name of the file cannot be resolved by the system")
+            exc.winerror = code  # type: ignore[attr-defined,unused-ignore]
+            raise exc
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", windows_stat)
+    assert store_module._store_id_at(bound) is None
+    code = 21  # ERROR_NOT_READY: a volume not there now
+    with pytest.raises(OSError):
+        store_module._store_id_at(bound)
+
+
 def test_an_anchor_that_cannot_be_read_is_never_written_over(
     home: tuple[Path, Memory, str],
     keys: Path,
