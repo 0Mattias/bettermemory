@@ -20,10 +20,12 @@
 # (`uv sync --locked`). `versioning-strategy: lockfile-only` keeps the bot
 # to the lock. The ranges in pyproject.toml are deliberate, each with its
 # reason in a comment there (the mcp `<3.0.0` cap is an incident's lesson),
-# and only a person widens one. Minor and patch updates arrive grouped; a
-# major one inside a range comes as its own pull request, so it is read on
-# its own. The cooldown keeps a release out of the lock until it has been
-# public for a week; security updates are not held by it.
+# and only a person widens one. Minor and patch updates arrive in one
+# group (by pattern: GitHub documents a group's `dependency-type` for other
+# ecosystems, not for uv); a major one inside a range comes as its own pull
+# request, so it is read on its own. The cooldown keeps a release out of
+# the lock until it has been public for a week; security updates are not
+# held by it.
 # `tests/test_dependabot_config.py` pins all of this.
 
 version: 2
@@ -50,9 +52,6 @@ updates:
       prefix: "build(deps)"
       prefix-development: "chore(deps)"
     groups:
-      runtime:
-        dependency-type: "production"
-        update-types: ["minor", "patch"]
-      dev:
-        dependency-type: "development"
+      python:
+        patterns: ["*"]
         update-types: ["minor", "patch"]

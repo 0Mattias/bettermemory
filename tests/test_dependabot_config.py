@@ -75,4 +75,4 @@ def test_minor_and_patch_updates_arrive_grouped(
         assert groups, ecosystem
         for name, group in groups.items():
             assert group["update-types"] == ["minor", "patch"], f"{ecosystem}/{name}"
-    assert set(updaters["uv"]["groups"]) == {"runtime", "dev"}
+    assert set(updaters["uv"]["groups"]) == {"python"}
