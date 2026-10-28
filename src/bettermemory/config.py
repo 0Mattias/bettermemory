@@ -1309,8 +1309,8 @@ def load_config(path: Path | None = None) -> Config:
     # the only source, and the result is what it was before managed files
     # existed.
     managed_path = _managed.managed_config_path()
-    managed_data = _managed.read_managed(managed_path)
-    if managed_data is None:
+    managed_data = None if managed_path is None else _managed.read_managed(managed_path)
+    if managed_path is None or managed_data is None:
         return _config_from_data(data, config_path)
     return _apply_managed(
         data,

@@ -75,7 +75,15 @@ def test_the_suite_never_reads_the_machine_managed_file(
 
 
 def test_the_production_seam_answers_the_system_path() -> None:
-    assert _REAL_MANAGED_CONFIG_PATH() == _managed.system_path(sys.platform)
+    expected = None if sys.platform == "win32" else _managed.system_path(sys.platform)
+    assert _REAL_MANAGED_CONFIG_PATH() == expected
+
+
+def test_windows_reads_no_managed_file_yet(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A standard user can create folders under ProgramData, so a file
+    # there is not yet known to be an administrator's.
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert _REAL_MANAGED_CONFIG_PATH() is None
 
 
 @pytest.mark.parametrize(

@@ -23,6 +23,8 @@ Its location is fixed per OS and nothing in the environment moves it:
 - Windows: ``<ProgramData>\\bettermemory\\managed.toml``, the ProgramData
   folder read from the shell's known-folder API, not from the
   ``%ProgramData%`` variable a user can set.
+  Not read yet: `managed_config_path` answers None there until the
+  file's owner and ACL are checked (see its docstring).
 
 No environment variable may relocate, disable or loosen it, which rules
 out the obvious helpers: `platformdirs.site_config_dir` honours
@@ -103,10 +105,19 @@ def system_path(platform: str) -> Path:
     return _POSIX_DIR / MANAGED_FILENAME
 
 
-def managed_config_path() -> Path:
-    """Where this machine's managed file lives. `load_config` reads it
-    through this function, looked up on the module at call time, so the
-    test suite's autouse fixture can point it at a scratch path."""
+def managed_config_path() -> Path | None:
+    """Where this machine's managed file lives, or None where none is read.
+    `load_config` reads it through this function, looked up on the module
+    at call time, so the test suite's autouse fixture can point it at a
+    scratch path.
+
+    None on Windows. A standard user may create folders under ProgramData,
+    so until the file's owner and ACL are checked a file there could be
+    one account's, binding every other account on the machine (pinning
+    ``[storage] directory`` to a folder it reads, for one). The macOS and
+    POSIX locations need an administrator to create."""
+    if sys.platform == "win32":
+        return None
     return system_path(sys.platform)
 
 
