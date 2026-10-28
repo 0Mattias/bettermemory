@@ -399,6 +399,18 @@ def test_a_live_pid_that_does_not_hold_the_lock_is_stale(
     assert report["check"] == CHECK_NOT_RUNNING
     assert report["lock_held"] is False
     assert not path.exists()
+    # The lock file a daemon leaves behind (it is never removed), free:
+    # taken for an instant, given back, and the stale file still goes.
+    lock = lock_file_for(state_dir, store)
+    with _held(state_dir, store):
+        pass
+    assert lock.exists()
+    path = _stage(state_dir, store, pid=os.getpid(), port=_closed_port())
+    assert daemon_report(state_dir, store)["lock_held"] is False
+    assert not path.exists()
+    assert lock_held(lock) is False
+    with _held(state_dir, store):
+        assert lock_held(lock) is True
 
 
 def test_a_report_without_tidy_leaves_a_stale_file(where: tuple[Path, Path]) -> None:
