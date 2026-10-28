@@ -334,11 +334,15 @@ def render_restore(report: dict[str, Any]) -> str:
                 f"  current store {current}; the bundle is a different store, "
                 f"{plan['bundle_store_id']}"
             )
-        moves = report["moved_aside"] if status != "planned" else plan["move_aside"]
-        verb = "moved aside" if status != "planned" else "move aside"
+        # A plan says what would happen; a restore that ran, finished or
+        # not, says what did, so a failure part way never reads as a key
+        # installed or a head rewound that was not.
+        done = status != "planned"
+        moves = report["moved_aside"] if done else plan["move_aside"]
+        verb = "moved aside" if done else "move aside"
         for move in moves:
             lines.append(f"  {verb}: {move['from']} -> {move['to']}")
-        for action in plan["keys"]:
+        for action in report["keys_installed"] if done else plan["keys"]:
             what = (
                 "current key" if action["action"] == "make_current" else "retired key"
             )
@@ -346,14 +350,22 @@ def render_restore(report: dict[str, Any]) -> str:
                 f", retiring {action['retires'][:16]}" if action["retires"] else ""
             )
             lines.append(
-                f"  key {action['fingerprint'][:16]}: install as the {what} from "
+                f"  key {action['fingerprint'][:16]}: "
+                f"{'installed' if done else 'install'} as the {what} from "
                 f"the {action['source'].replace('_', ' ')}{retires}"
             )
-        head = report["head"] or plan["head"]
-        lines.append(
-            f"  head checkpoint: {_head_text(head['before'])} -> "
-            f"{_head_text(head['after'])}, recorded in {plan['record']}"
-        )
+        if done and report["head"] is None:
+            lines.append(
+                f"  head checkpoint: {_head_text(plan['head']['before'])}, not rewound"
+            )
+        else:
+            head = report["head"] or plan["head"]
+            record = report["record"] if done else plan["record"]
+            lines.append(
+                f"  head checkpoint: {_head_text(head['before'])} -> "
+                f"{_head_text(head['after'])}, "
+                + (f"recorded in {record}" if record else "the rewind not recorded")
+            )
     log = report["log"]
     if log is not None:
         lines.append(f"  log verify of the restored store: {log['status']}")

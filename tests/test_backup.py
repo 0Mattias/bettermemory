@@ -940,6 +940,30 @@ def test_a_failed_step_reports_where_the_files_are(
     out = capsys.readouterr().out
     assert "backup restore: failed" in out and "read-only" in out
     assert "moved aside:" in out
+    # The failure came before the rewind: the text says so, and does not
+    # print the plan's rewind as if it had happened.
+    assert "head checkpoint: seq 3, not rewound" in out
+    assert "recorded in" not in out
+
+
+def test_a_failed_record_write_says_the_rewind_is_not_recorded(
+    store_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    carried = Path(create_backup(store_file, include_key=True)["bundle"])
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(tmp_path / "new" / "store"))
+    monkeypatch.setenv(KEYS_DIR_ENV, str(tmp_path / "new" / "keys"))
+
+    def broken(*args: Any) -> None:
+        raise OSError("the keys directory is full")
+
+    monkeypatch.setattr(backup, "_append_record", broken)
+    assert _run_cli(["backup", "restore", str(carried), "--yes"], monkeypatch) == 1
+    out = capsys.readouterr().out
+    assert "installed as the current key from the bundle" in out
+    assert "head checkpoint: none -> seq 3, the rewind not recorded" in out
 
 
 def test_a_restored_store_that_does_not_verify_is_a_failure(
