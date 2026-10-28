@@ -355,6 +355,16 @@ def _modes(
         items.append(
             ("mode.origin", "origin anchor", keyring.origin_path(), False, False)
         )
+        # The store file the ring is bound to (`log.KeyRing.bind_store`),
+        # written 0o600 as the head and the anchor are. No secret either,
+        # but another account that can write it can name a file of its
+        # own as the ring's store: the owner's open of the real store then
+        # reads the binding as another file still holding the id, and
+        # opens for reading only, or, pointed at nothing, lets a copy
+        # claim the ring. Graded as the head and the anchor are.
+        items.append(
+            ("mode.binding", "key ring binding", keyring.binding_path(), False, False)
+        )
     items.extend(
         [
             ("mode.state_dir", "state directory", state_dir, True, False),
@@ -396,10 +406,10 @@ def mode_finding(
     Graded by what an extra bit lets another account do: write (replace a
     key, a state file, a store page) is high everywhere; read is high on a
     secret (the store's pages, a key, the token) and a warning elsewhere
-    (a directory listing, the head checkpoint, the origin anchor, the
-    daemon's log); any other group or other bit is a warning. An owner
-    other than this account is high: that account can rewrite the file
-    whatever its mode says."""
+    (a directory listing, the head checkpoint, the origin anchor, the key
+    ring binding, the daemon's log); any other group or other bit is a
+    warning. An owner other than this account is high: that account can
+    rewrite the file whatever its mode says."""
     try:
         st = os.stat(path)
     except FileNotFoundError:
