@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import secrets
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -152,23 +153,22 @@ def add_status(
 # ---------------------------------------------------------------------------
 
 
-def is_this_daemon(answer: dict[str, Any], state: dict[str, Any]) -> bool:
-    """Whether a /health `answer` comes from the daemon `state` names.
+def is_this_daemon(answer: dict[str, Any], state: dict[str, Any], nonce: str) -> bool:
+    """Whether a /health `answer` to `nonce` comes from the daemon `state`
+    names: `_daemon_client.proves`, the check every client makes before
+    it posts the token. A daemon from 9.0.0rc12 on answers the nonce with
+    the token's MAC over it, which only the process that wrote the state
+    file can produce. A listener that repeats the store and the pid an
+    earlier, open /health gave it is therefore not taken for this store's
+    daemon; that check alone holds only for a state file written by a
+    daemon from before the proof, which offers none."""
+    from .._daemon_client import proves
 
-    A daemon reports the store it serves and its own pid, and it wrote
-    both into its state file, so the two agree for the daemon that
-    wrote the file and for no other process: a daemon of another store
-    on a reused port reports that store, and a listener that is not a
-    bettermemory daemon at all reports neither. On the Windows launcher
-    path the state file holds the daemon's own pid, not the launcher's,
-    which is the pid /health reports. Every 9.x daemon reports both
-    fields; one that does not is not taken as this store's."""
-    same_store = answer.get("store") == state.get("store")
-    return same_store and answer.get("pid") == state.get("pid")
+    return proves(state, answer, nonce)
 
 
 def probe(
-    port: int, *, timeout: float = _HEALTH_TIMEOUT_SECONDS
+    port: int, *, timeout: float = _HEALTH_TIMEOUT_SECONDS, nonce: str | None = None
 ) -> tuple[dict[str, Any] | None, str | None]:
     """GET /health on `port`, read three ways: (the reply, None) when it
     is a daemon's (a JSON object with status ok, `_daemon_client.health`'s
@@ -188,14 +188,16 @@ def probe(
     One plain connection to the port, not `urllib`: a report asks the port
     itself, so no ``http_proxy`` in the environment is consulted (urllib
     sends even 127.0.0.1 through one unless ``no_proxy`` names it) and no
-    redirect is followed off the port."""
+    redirect is followed off the port. With `nonce`, the request asks the
+    daemon for its proof (`is_this_daemon` reads it)."""
     import http.client
 
-    from .._daemon_client import HEALTH_PATH, HOST
+    from .._daemon_client import HEALTH_NONCE_PARAM, HEALTH_PATH, HOST
 
+    query = f"?{HEALTH_NONCE_PARAM}={nonce}" if nonce else ""
     connection = http.client.HTTPConnection(HOST, port, timeout=timeout)
     try:
-        connection.request("GET", HEALTH_PATH)
+        connection.request("GET", HEALTH_PATH + query)
         response = connection.getresponse()
         status, raw = response.status, response.read()
     except OSError:
@@ -368,8 +370,9 @@ def daemon_report(
         version=state.get("version"),
         started=state.get("started"),
     )
-    answer, other = probe(state["port"])
-    if answer is not None and is_this_daemon(answer, state):
+    nonce = secrets.token_hex(16)
+    answer, other = probe(state["port"], nonce=nonce)
+    if answer is not None and is_this_daemon(answer, state, nonce):
         version = answer.get("version", state["version"])
         orphans = answer.get("store_orphans")
         report.update(
@@ -562,8 +565,11 @@ def run_down(args: argparse.Namespace) -> None:
         return
     pid, port = int(state["pid"]), int(state["port"])
     outcome.update(pid=pid, port=port)
-    answer, other = probe(port)
-    if other is not None or (answer is not None and not is_this_daemon(answer, state)):
+    nonce = secrets.token_hex(16)
+    answer, other = probe(port, nonce=nonce)
+    if other is not None or (
+        answer is not None and not is_this_daemon(answer, state, nonce)
+    ):
         # The port answers, but not as the daemon the file names: the token
         # is not posted to it and no pid is signalled on its say-so. The
         # daemon the file named is gone when its pid is, or when the

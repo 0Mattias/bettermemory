@@ -27,7 +27,9 @@ import pytest
 
 from bettermemory import __version__, _daemon_client
 from bettermemory._daemon_client import (
+    PROOF_STATE_KEY,
     DaemonExited,
+    health_proof,
     lock_file_for,
     read_state,
     release_lock,
@@ -213,11 +215,18 @@ def _replying(reply: bytes) -> Iterator[tuple[int, list[bytes]]]:
 
 
 def test_this_daemon_is_the_one_reporting_the_state_files_store_and_pid() -> None:
-    state = {"store": "/s/memory.sqlite", "pid": 7}
-    assert is_this_daemon({"store": "/s/memory.sqlite", "pid": 7}, state)
-    assert not is_this_daemon({"store": "/other/memory.sqlite", "pid": 7}, state)
-    assert not is_this_daemon({"store": "/s/memory.sqlite", "pid": 8}, state)
-    assert not is_this_daemon({"status": "ok"}, state)
+    # A state file from before the proof: the store and the pid decide.
+    nonce = "0" * 32
+    state = {"store": "/s/memory.sqlite", "pid": 7, "token": "t"}
+    assert is_this_daemon({"store": "/s/memory.sqlite", "pid": 7}, state, nonce)
+    assert not is_this_daemon({"store": "/other/memory.sqlite", "pid": 7}, state, nonce)
+    assert not is_this_daemon({"store": "/s/memory.sqlite", "pid": 8}, state, nonce)
+    assert not is_this_daemon({"status": "ok"}, state, nonce)
+    # A state file whose daemon proves: the store and the pid are not enough.
+    proving = {**state, PROOF_STATE_KEY: 1}
+    assert not is_this_daemon({"store": "/s/memory.sqlite", "pid": 7}, proving, nonce)
+    answer = {"store": "/s/memory.sqlite", "pid": 7, "proof": health_proof("t", nonce)}
+    assert is_this_daemon(answer, proving, nonce)
 
 
 def test_uptime_reads_the_state_files_timestamp() -> None:
@@ -719,7 +728,9 @@ def test_down_posts_nothing_to_a_listener_that_is_no_daemon(
         f"(pid {os.getpid()} is alive; its lock could not be checked)"
     ) in err
     assert path.exists()
-    assert asked and all(line.startswith(b"GET /health ") for line in asked)
+    assert asked and all(
+        line.split(b" ")[1].split(b"?")[0] == b"/health" for line in asked
+    )
 
 
 def test_down_says_why_it_kept_the_file_of_a_daemon_that_is_gone(

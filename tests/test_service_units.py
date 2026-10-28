@@ -12,7 +12,6 @@ and stops it with the supervisor's signal.
 
 from __future__ import annotations
 
-import http.client
 import json
 import os
 import plistlib
@@ -585,7 +584,11 @@ def test_install_hands_the_store_over_from_a_running_daemon(
     monkeypatch.setattr(
         _daemon_client,
         "health",
-        lambda port, timeout=1.0: {"status": "ok", "store": str(store), "pid": pid},
+        lambda port, timeout=1.0, nonce=None: {
+            "status": "ok",
+            "store": str(store),
+            "pid": pid,
+        },
     )
     monkeypatch.setattr(_daemon_client, "shutdown_daemon", stopped)
     supervisor = _Supervisor()
@@ -623,7 +626,11 @@ def test_install_reports_a_daemon_that_would_not_hand_over(
     monkeypatch.setattr(
         _daemon_client,
         "health",
-        lambda port, timeout=1.0: {"status": "ok", "store": str(store), "pid": pid},
+        lambda port, timeout=1.0, nonce=None: {
+            "status": "ok",
+            "store": str(store),
+            "pid": pid,
+        },
     )
     monkeypatch.setattr(_daemon_client, "shutdown_daemon", lambda state, **kw: False)
     monkeypatch.setattr(subprocess, "run", _Supervisor())
@@ -656,8 +663,9 @@ def test_install_passes_over_a_port_that_does_not_speak_http(
         },
     )
 
-    def not_http(port: int, timeout: float = 1.0) -> None:
-        raise http.client.BadStatusLine("SSH-2.0-OpenSSH_9.9")
+    def not_http(port: int, timeout: float = 1.0, nonce: str | None = None) -> None:
+        # What `health` makes of a reply that is not HTTP: nothing answered.
+        return None
 
     def never(state: dict[str, Any], **kw: Any) -> bool:
         raise AssertionError("shutdown_daemon reached a listener that is not ours")

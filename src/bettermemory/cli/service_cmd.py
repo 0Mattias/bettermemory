@@ -254,24 +254,16 @@ def _public(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _hand_over(state_dir: Path, store: Path) -> dict[str, Any] | None:
     """Stop a running daemon of `store` before the unit is loaded, so the
     unit's daemon takes the store's lock at once instead of exiting 75
-    and retrying. Only a daemon that answers as the one its state file
-    names (`daemon_cmd.is_this_daemon`) is asked; None when none runs.
-    A port held by a listener that does not speak HTTP, which `health`
-    lets escape as `http.client.HTTPException`, is passed over the same
-    way instead of ending the install with a traceback."""
-    import http.client
-
-    from .._daemon_client import health, read_state, remove_state, shutdown_daemon
-    from .daemon_cmd import is_this_daemon
+    and retrying. Only a daemon that proves it is the one its state file
+    names (`_daemon_client.identify`) is asked; None when none runs. A
+    port held by a listener that does not speak HTTP answers nothing to
+    `identify`, so the install passes over it too."""
+    from .._daemon_client import identify, read_state, remove_state, shutdown_daemon
 
     state = read_state(state_dir, store)
     if state is None:
         return None
-    try:
-        answer = health(state["port"], timeout=1.0)
-    except http.client.HTTPException:
-        return None
-    if answer is None or not is_this_daemon(answer, state):
+    if not identify(state, timeout=1.0).ours:
         return None
     stopped = shutdown_daemon(state, state_dir=state_dir)
     if stopped:

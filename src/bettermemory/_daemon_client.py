@@ -76,6 +76,14 @@ HEALTH_PATH = "/health"
 SHUTDOWN_PATH = "/api/v1/admin/shutdown"
 HOOK_PATH = "/api/v1/hook/"
 
+
+# The daemon is on 127.0.0.1, and nothing between this client and it may
+# see a request: `post` carries the bearer token and the hook payloads.
+# `urllib.request.urlopen` consults http_proxy (and its kin) even for a
+# loopback address unless no_proxy names it, so every request here goes
+# through an opener with no proxy handler at all.
+_LOOPBACK = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
 #: The query parameter ``GET /health`` reads a client's nonce from, and the
 #: nonces it answers a proof for: 32 to 128 hex digits, so a proof is never
 #: computed over a value short enough to have been seen before.
@@ -338,7 +346,7 @@ def health(
     stayed."""
     query = f"?{HEALTH_NONCE_PARAM}={nonce}" if nonce else ""
     try:
-        with urllib.request.urlopen(
+        with _LOOPBACK.open(
             f"http://{HOST}:{port}{HEALTH_PATH}{query}", timeout=timeout
         ) as response:
             body = json.loads(response.read().decode("utf-8"))
@@ -463,7 +471,7 @@ def post(
         },
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with _LOOPBACK.open(request, timeout=timeout) as response:
         body = json.loads(response.read().decode("utf-8"))
     return body if isinstance(body, dict) else {}
 

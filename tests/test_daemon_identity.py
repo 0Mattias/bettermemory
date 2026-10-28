@@ -44,6 +44,7 @@ from bettermemory._daemon_client import (
     identify,
     lock_file_for,
     package_version,
+    post,
     proves,
     read_state,
     release_lock,
@@ -899,3 +900,50 @@ def test_a_daemon_starts_beside_a_listener_on_the_stale_port(
     assert _cli(["down"], daemon_env).returncode == 0
     for started in spawned:
         started.child.wait(timeout=30)
+
+
+def test_a_configured_proxy_never_sees_a_request(
+    listeners: list[_Listener], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # urllib sends a request for 127.0.0.1 through http_proxy unless
+    # no_proxy names it; the token and the hook payloads must not go there.
+    proxy = _listen(listeners, _another_store())
+    daemon = _listen(listeners, _another_store())
+    for name in ("no_proxy", "NO_PROXY"):
+        monkeypatch.delenv(name, raising=False)
+    for name in ("http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"):
+        monkeypatch.setenv(name, f"http://127.0.0.1:{proxy.port}")
+    assert health(daemon.port) is not None
+    post(daemon.port, "token", "/api/v1/hook/stop", {"session_id": "s"}, timeout=2.0)
+    assert daemon.gets == ["/health"]
+    assert [path for path, _ in daemon.posts] == ["/api/v1/hook/stop"]
+    assert proxy.gets == [] and proxy.posts == []
+
+
+def test_status_takes_no_listener_repeating_a_proving_daemons_health(
+    tmp_path: Path, listeners: list[_Listener]
+) -> None:
+    """`status` asks for the proof the hooks ask for: a listener that
+    repeats the store and the pid an open ``/health`` gave it, without the
+    proof the state file says its daemon gives, is not reported running."""
+    from bettermemory.cli.daemon_cmd import NOT_OURS, RUNNING, daemon_report
+
+    store = tmp_path / "memory.sqlite"
+    listener = _listen(
+        listeners,
+        lambda nonce: {
+            "status": "ok",
+            "version": package_version(),
+            "store": str(store),
+            "pid": DEAD_PID,
+        },
+    )
+    state_dir = tmp_path / "state"
+    write_state(state_dir, {**_state(listener.port, store), PROOF_STATE_KEY: 1})
+    report = daemon_report(state_dir, store, tidy=False)
+    assert report["state"] == NOT_OURS
+    assert report["running"] is False
+
+    proving = _listen(listeners, _proving(TOKEN, store))
+    write_state(state_dir, {**_state(proving.port, store), PROOF_STATE_KEY: 1})
+    assert daemon_report(state_dir, store, tidy=False)["state"] == RUNNING
