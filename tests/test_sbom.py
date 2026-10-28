@@ -112,6 +112,38 @@ def test_two_runs_are_byte_identical(
     assert document["serialNumber"] != json.loads(first)["serialNumber"]
 
 
+def test_two_processes_with_different_hash_seeds_write_the_same_bytes(
+    tmp_path: Path,
+) -> None:
+    """The in-process runs above share one string-hash seed, so a set or
+    frozenset iterated into the output would still match itself there. Two
+    interpreters with different seeds, as two release jobs would be, must
+    write the same file."""
+    lock = _project(tmp_path)
+    written: list[bytes] = []
+    for seed in ("0", "1"):
+        out = tmp_path / f"seed-{seed}.cdx.json"
+        env = {**os.environ, "PYTHONHASHSEED": seed}
+        env.pop("SOURCE_DATE_EPOCH", None)
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(TOOLS / "sbom.py"),
+                "--lock",
+                str(lock),
+                "--out",
+                str(out),
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        written.append(out.read_bytes())
+    assert written[0] == written[1]
+
+
 def test_the_document_has_the_cyclonedx_shape(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
