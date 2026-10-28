@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import logging
 import os
+import unicodedata
 import weakref
 from collections.abc import Mapping
 from contextvars import ContextVar, Token
@@ -263,14 +264,42 @@ class Caller(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _clean(value: object) -> str | None:
+def _strip_format_characters(text: str) -> str:
+    """`text` without its Unicode format characters (category Cf): the
+    bidirectional controls (U+202A..U+202E, U+2066..U+2069, the LRM and
+    RLM marks), the zero-width space and joiners (U+200B..U+200D, the
+    word joiner U+2060), the byte-order mark U+FEFF, the soft hyphen and
+    the tag characters. None of them shows in running text as a glyph of
+    its own; each changes how the text around it renders, or hides that
+    two strings differ."""
+    return "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+
+
+def _clean(value: object, *, strip_format: bool = True) -> str | None:
     """A declared value, or None when it is not a usable identity: not a
     string, blank, control characters, or longer than `MAX_DECLARED_LEN`.
     Silently dropping a bad value is the right failure here — the fields
-    are evidence, and a mangled header is no evidence of anything."""
+    are evidence, and a mangled header is no evidence of anything.
+
+    Format characters are stripped first (`_strip_format_characters`).
+    A declared client or model name is printed in the health text, the
+    rollback output and every record's actor block, and a right-to-left
+    override or a zero-width space there makes one name read as another.
+    They are stripped rather than refused: a client that pads its name
+    with a byte-order mark keeps its attribution, under the name it
+    reads as. A value that was nothing but format characters is blank
+    and dropped.
+
+    `strip_format=False` keeps them for the two values whose exact code
+    points are their meaning, not a label: a declared workspace path,
+    which names a directory a zero-width joiner may be part of (emoji
+    names are spelled with it), and the attested principal, an identity
+    provider's subject that is never folded onto another (stripping
+    could make two distinct subjects one)."""
     if not isinstance(value, str):
         return None
-    text = value.strip()
+    text = _strip_format_characters(value) if strip_format else value
+    text = text.strip()
     if not text or len(text) > MAX_DECLARED_LEN:
         return None
     if any(ch.isspace() and ch != " " for ch in text) or any(
@@ -331,7 +360,7 @@ def _principal_of(request_context: Any) -> str | None:
     except ImportError:  # pragma: no cover — the SDK is a runtime dependency
         return None
     try:
-        return _clean(authenticated_principal(request_context))
+        return _clean(authenticated_principal(request_context), strip_format=False)
     except Exception as exc:  # noqa: BLE001 — a broken auth context is "not attested"
         log.debug("authenticated_principal raised %r; treating as unauthenticated", exc)
         return None
@@ -449,11 +478,11 @@ def resolve(
     )
 
     workspace = Workspace()
-    declared_path = _clean(headers.get(HEADER_WORKSPACE))
+    declared_path = _clean(headers.get(HEADER_WORKSPACE), strip_format=False)
     if declared_path is not None:
         workspace = Workspace(path=declared_path, source=SOURCE_HEADER)
     else:
-        declared_path = _clean(env.get(ENV_WORKSPACE))
+        declared_path = _clean(env.get(ENV_WORKSPACE), strip_format=False)
         if declared_path is not None:
             workspace = Workspace(path=declared_path, source=SOURCE_ENV)
         else:

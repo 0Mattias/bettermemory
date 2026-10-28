@@ -335,7 +335,7 @@ class Scene:
 
 @pytest.fixture
 def scene(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Scene]:
-    monkeypatch.setattr("getpass.getuser", lambda: "tester")
+    monkeypatch.setattr("bettermemory.cli.project_cmd.principal", lambda: "os:tester")
     made = Scene(tmp_path.resolve(), monkeypatch)
     yield made
     made.close()
@@ -1788,7 +1788,7 @@ def test_init_and_new_through_the_real_resolution(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr("getpass.getuser", lambda: "tester")
+    monkeypatch.setattr("bettermemory.cli.project_cmd.principal", lambda: "os:tester")
     root = tmp_path.resolve()
     monkeypatch.setenv("BETTERMEMORY_DIR", str(root / "store"))
     repo = root / "work" / "app"

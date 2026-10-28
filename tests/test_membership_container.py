@@ -666,7 +666,7 @@ def _project_init(monkeypatch: pytest.MonkeyPatch, repo: Path, name: str) -> Non
     `repo` (decision D6): the CLI in process, beside the daemon, on its
     store, the name typed to confirm."""
     monkeypatch.chdir(repo)
-    monkeypatch.setattr("getpass.getuser", lambda: "tester")
+    monkeypatch.setattr("bettermemory.cli.project_cmd.principal", lambda: "os:tester")
     monkeypatch.setattr(sys, "stdin", _Terminal(name + "\n"))
     monkeypatch.setattr(
         sys, "argv", ["bettermemory", "project", "init", "--name", name]

@@ -177,11 +177,29 @@ def refuse(line: str) -> NoReturn:
 
 
 def principal() -> str:
-    """The OS user a declaration is logged with."""
-    try:
-        user = getpass.getuser()
-    except (KeyError, OSError, ImportError):
-        user = "unknown"
+    """The OS user a declaration is logged with.
+
+    On POSIX, the password database's name for this process's real uid:
+    the account the OS says is running, which the caller cannot restate.
+    `getpass.getuser` reads LOGNAME, USER, LNAME and USERNAME before the
+    database, so any caller that sets USER chose the name the log kept.
+    A uid with no database entry (a container's arbitrary uid) logs as
+    ``uid:<n>``, still the OS's own answer. Where the platform has no
+    password database (Windows) getpass is the only source there is."""
+    user: str | None = None
+    if sys.platform != "win32":
+        import pwd
+
+        uid = os.getuid()
+        try:
+            user = pwd.getpwuid(uid).pw_name
+        except KeyError:
+            user = f"uid:{uid}"
+    if user is None:
+        try:
+            user = getpass.getuser()
+        except (KeyError, OSError, ImportError):
+            user = "unknown"
     return f"os:{user}"
 
 
