@@ -70,8 +70,8 @@ testing.
   every later open of the pair logs the same line at DEBUG, so a
   daemon's worker connections, each of which opens the store again, do
   not repeat it; a new pair warns again, and so does a spelling
-  `Path.resolve` does not fold into another (a case variant on macOS or
-  Windows). A bound file
+  `Path.resolve` does not fold into another (a case variant on macOS;
+  Windows's `resolve` reads the case on disk and folds it). A bound file
   that is gone, is not a store, holds another id or is a symbolic link
   loop releases the ring to the file being opened. A reader never
   writes the binding. A binding file that cannot be read is kept, with

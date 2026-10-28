@@ -334,8 +334,8 @@ bindings) or when the bound file no longer holds this store id; and
   pair, both resolved (`store._BOUND_ELSEWHERE_WARNED`, tested and added
   under one lock, since worker connections open at once), and later
   opens of the pair log the line at DEBUG; a spelling `resolve` does
-  not fold (a case variant on a case-insensitive file system) is a new
-  pair. A
+  not fold (a case variant on macOS, where `resolve` keeps the case it
+  is given; on Windows it reads the case on disk) is a new pair. A
   reader whose key matches asks the same (`KeyRing.bound_elsewhere`),
   since a reader with the key can write (the session-start hook records
   the brief it shows), and opens the same way.
@@ -365,7 +365,8 @@ daemon's line is the last of its log, which `up` and the hooks quote
 through `DaemonExited`. The shim opens its fallback's store
 (`cli.serve.open_for_serve`) before it warns that it falls back, so that
 line, a `SystemExit`, ends it alone; any other failure of that open
-logs the two warnings first. `_daemon_client.daemon_process_env` hands
+logs its warnings first (the daemon's failure, when there was one, and
+the fallback). `_daemon_client.daemon_process_env` hands
 a daemon it starts the keys directory resolved but for its last
 component (`_pin_keys_dir`), so a keys directory that is a symbolic
 link reaches the daemon as the link, as a service unit pins it, and a
