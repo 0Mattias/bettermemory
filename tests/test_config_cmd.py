@@ -1017,3 +1017,97 @@ def test_an_unreadable_config_file_is_unreadable_not_a_crash() -> None:
         path.chmod(0o600)
     assert finding["code"] == "unreadable"
     assert str(path) in finding["message"]
+
+
+def _locked_dir(tmp_path: Path) -> Path:
+    """A directory holding one file, made unsearchable, for a test that
+    restores its mode in a `finally`. Skips where modes do not bind."""
+    if sys.platform == "win32" or not hasattr(os, "geteuid"):
+        pytest.skip("POSIX file modes")
+    if os.geteuid() == 0:
+        pytest.skip("root searches a mode-000 directory")
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    return locked
+
+
+def test_a_managed_file_this_account_cannot_look_at_is_not_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`os.path.lexists` answers False for a file in a directory the
+    account may not search, so the reports said "none deployed: nothing is
+    pinned" while the loader refused the file. It is unreadable."""
+    locked = _locked_dir(tmp_path)
+    managed = locked / "managed.toml"
+    managed.write_text("[telemetry]\nenabled = false\n", encoding="utf-8")
+    monkeypatch.setattr(_managed, "managed_config_path", lambda: managed)
+    _write_user("")
+    locked.chmod(0)
+    try:
+        report = _check()
+        path_report = config_cmd.path_report()
+    finally:
+        locked.chmod(0o700)
+    finding = _only(report)
+    assert (finding["file"], finding["level"], finding["code"]) == (
+        "managed",
+        "error",
+        "unreadable",
+    )
+    assert "could not be read" in finding["message"]
+    assert report["files"][1]["exists"] is True
+    assert report["loads"] is False
+    assert path_report["managed"]["exists"] is True
+    assert "none deployed" not in config_cmd.render_path(path_report)
+
+
+def test_a_config_file_this_account_cannot_look_at_does_not_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``create=False`` reads only a missing file as the defaults. One in a
+    directory the account may not search raises, on every Python: the
+    first-run load fails on it, and on 3.14 `Path.exists` answers False
+    for it, which read it as the defaults and `config path` exit 0."""
+    locked = _locked_dir(tmp_path)
+    path = locked / "config.toml"
+    path.write_text("[telemetry]\nenabled = false\n", encoding="utf-8")
+    monkeypatch.setattr(_config, "default_config_path", lambda: path)
+    locked.chmod(0)
+    try:
+        with pytest.raises(PermissionError):
+            load_config(path, create=False)
+        report = config_cmd.path_report()
+        finding = _only(_check())
+        # What 3.14's `Path.exists` answers for it, on whichever Python
+        # runs the suite.
+        with monkeypatch.context() as patch:
+            patch.setattr(Path, "exists", lambda *_a, **_k: False)
+            with pytest.raises(PermissionError):
+                load_config(path, create=False)
+    finally:
+        locked.chmod(0o700)
+    assert report["config"]["exists"] is True
+    assert report["error"] is not None
+    assert (finding["file"], finding["code"]) == ("user", "unreadable")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows answers ENOENT here")
+def test_a_config_path_under_a_file_does_not_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file where the config directory belongs fails the first-run load
+    (the directory cannot be made), so the read-only one and the reports
+    do not read it as "not created yet: the defaults apply"."""
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("", encoding="utf-8")
+    path = blocker / "config.toml"
+    monkeypatch.setattr(_config, "default_config_path", lambda: path)
+    with pytest.raises(OSError):
+        load_config(path)
+    with pytest.raises(NotADirectoryError):
+        load_config(path, create=False)
+    report = config_cmd.path_report()
+    assert report["config"]["exists"] is True
+    assert report["error"] is not None
+    finding = _only(_check())
+    assert (finding["file"], finding["code"]) == ("user", "unreadable")

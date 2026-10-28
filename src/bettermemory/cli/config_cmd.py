@@ -229,11 +229,30 @@ class ConfigFile:
         }
 
 
+def _present(path: Path) -> bool:
+    """Whether anything is at `path`, a dangling symlink included.
+
+    Only FileNotFoundError reads as absent, as it does in both loaders. A
+    path this account cannot look at (in a directory it may not search,
+    or under a file where a directory belongs) is present: both loaders
+    fail on it (`managed.read_managed` refuses it, and `load_config`
+    raises on it), so the reports call it unreadable rather than "not
+    created yet" or "none deployed", which is what `os.path.lexists`
+    would make of it."""
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
 def _read(role: str, path: Path) -> ConfigFile:
     """Read and parse one file without loading it. A missing file is not
     an error (the defaults apply, or nothing is pinned); a file that is
     there and does not parse is, with the reason the loader would give."""
-    if not os.path.lexists(path):
+    if not _present(path):
         return ConfigFile(role, path, exists=False)
     try:
         data = _config.read_config_file(path)
@@ -334,7 +353,7 @@ def path_report() -> dict[str, Any]:
             error = str(exc)
     managed: dict[str, Any] = {
         "path": None if managed_path is None else str(managed_path),
-        "exists": managed_path is not None and os.path.lexists(managed_path),
+        "exists": managed_path is not None and _present(managed_path),
         "read": managed_path is not None,
         "pinned": None if config is None else sorted(config.managed_keys),
         "note": WINDOWS_MANAGED_NOTE if managed_path is None else None,
@@ -342,7 +361,7 @@ def path_report() -> dict[str, Any]:
     keys_dir = _store.resolve_keys_dir().expanduser()
     state_dir = _daemon_client.resolve_state_dir().expanduser()
     return {
-        "config": {"path": str(user_path), "exists": os.path.lexists(user_path)},
+        "config": {"path": str(user_path), "exists": _present(user_path)},
         "managed": managed,
         "store": _store_entry(config, error),
         "keys": {

@@ -1317,9 +1317,16 @@ def load_config(path: Path | None = None, *, create: bool = True) -> Config:
     the pins in force rather than the bare defaults."""
     config_path = path or default_config_path()
     if not create:
-        data: dict[str, Any] = (
-            read_config_file(config_path) if config_path.exists() else {}
-        )
+        # Missing means FileNotFoundError and nothing else. `Path.exists`
+        # answers False on 3.14 for a file in a directory this account
+        # cannot search (and raises on 3.11 to 3.13), and the first-run
+        # write below fails on that file; reading it as "no file, the
+        # defaults apply" would report a config the daemon cannot load as
+        # one that loads.
+        try:
+            data: dict[str, Any] = read_config_file(config_path)
+        except FileNotFoundError:
+            data = {}
         return _overlay_managed(data, config_path)
     config_path.parent.mkdir(parents=True, exist_ok=True)
     if not config_path.exists():
