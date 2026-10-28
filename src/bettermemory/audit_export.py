@@ -638,8 +638,11 @@ def rewinds_across(
     cursor inside a rewound range may predate the restore. It may also
     have been taken after it, in which case the rows were exported, and
     the caller's warning says so; only a cursor that carried the row's
-    MAC could tell the two apart. A record that is missing or does not
-    read is no rewind."""
+    MAC could tell the two apart. The log ended at the later of the head
+    the restore replaced (``head_before``) and the replaced store's last
+    log seq (``log_end_before``), so a head checkpoint that was missing or
+    behind the log does not hide the range. A record that is missing or
+    does not read, or an entry with neither end, is no rewind."""
     from .backup import restore_record_path
 
     path = restore_record_path(keys_dir, store_id)
@@ -652,12 +655,17 @@ def rewinds_across(
     for entry in restores if isinstance(restores, list) else []:
         if not isinstance(entry, dict):
             continue
-        before, after = entry.get("head_before"), entry.get("head_after")
-        if not isinstance(before, dict) or not isinstance(after, dict):
+        after = entry.get("head_after")
+        to_seq = after.get("seq") if isinstance(after, dict) else None
+        ends = [
+            end.get("seq")
+            for end in (entry.get("head_before"), entry.get("log_end_before"))
+            if isinstance(end, dict)
+        ]
+        known = [seq for seq in ends if type(seq) is int]
+        if type(to_seq) is not int or not known:
             continue
-        from_seq, to_seq = before.get("seq"), after.get("seq")
-        if type(from_seq) is not int or type(to_seq) is not int:
-            continue
+        from_seq = max(known)
         if to_seq < since_seq <= from_seq:
             found.append(
                 {

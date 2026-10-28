@@ -937,6 +937,37 @@ def _aside_base(store_file: Path, stamp: str) -> Path:
         counter += 1
 
 
+def _log_end(store_file: Path) -> int | None:
+    """The last seq of the log in the store file at `store_file`, read as
+    `_current_store_id` reads its id (``immutable=1``: no ``-wal`` or
+    ``-shm`` is created and no lock taken, and rows still only in a WAL a
+    crash left behind are not seen); None when there is no store, its log
+    is empty or it cannot be read that way.
+
+    Recorded beside the head checkpoint the restore replaced. A head that
+    was missing (deleted in the `origin_mismatch` recovery, or a keys
+    directory put back from a copy that held only the key) or behind the
+    log left the range the restore rewound unknown to
+    `audit_export.rewinds_across`, and an export cursor inside it was not
+    warned about."""
+    if not store_file.is_file():
+        return None
+    try:
+        conn = sqlite3.connect(
+            _read_only_uri(store_file, immutable=True), uri=True, isolation_level=None
+        )
+    except sqlite3.Error:
+        return None
+    try:
+        row = conn.execute("SELECT MAX(seq) FROM log").fetchone()
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+    value = None if row is None else row[0]
+    return value if type(value) is int else None
+
+
 def _current_store_id(store_file: Path) -> str | None:
     """The id of the store at `store_file`, read with ``immutable=1`` so the
     read creates no ``-wal`` or ``-shm`` and takes no lock; None when there
@@ -1253,11 +1284,14 @@ def restore_bundle(
         actions = _key_actions(live, bundle_ring, needed, final)
         aside = _aside_base(store_file, stamp)
         before = live.read_head()
+        current_store_id = _current_store_id(store_file)
+        # The replaced log's end counts only when it is this store's log.
+        log_end = _log_end(store_file) if current_store_id == store_id else None
         origin = parse_origin(verification["origin"])
         origin_before = live.read_origin()
         record = restore_record_path(keys_root, store_id)
         report["plan"] = {
-            "current_store_id": _current_store_id(store_file),
+            "current_store_id": current_store_id,
             "bundle_store_id": store_id,
             "move_aside": [
                 {"from": str(_sibling(store_file, s)), "to": str(_sibling(aside, s))}
@@ -1336,6 +1370,7 @@ def restore_bundle(
                     "replaced_store_id": report["plan"]["current_store_id"],
                     "head_before": report["head"]["before"],
                     "head_after": report["head"]["after"],
+                    "log_end_before": None if log_end is None else {"seq": log_end},
                     "origin_before": report["origin"]["before"],
                     "origin_after": report["origin"]["after"],
                     "moved_aside": report["moved_aside"],

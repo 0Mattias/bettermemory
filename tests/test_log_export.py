@@ -814,6 +814,88 @@ def test_cli_warns_when_a_restore_rewound_the_log_below_the_cursor(
         assert "rewound" not in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("head", ["missing", "stale"])
+def test_cli_warns_on_a_rewind_whose_head_checkpoint_was_missing_or_stale(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    head: str,
+) -> None:
+    """The record took where the log ended from the head checkpoint alone.
+    With the head deleted before the restore (the `origin_mismatch`
+    recovery, or a keys directory put back with only its key), or left
+    behind the log, it recorded no end or too early a one, and a cursor
+    inside the rewound range got no warning: exit 0, and the new rows
+    before the cursor never exported. The replaced store's own last seq
+    is recorded beside it now."""
+    from bettermemory.backup import create_backup, restore_bundle
+
+    directory = tmp_path / "store"
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(directory))
+    store_file = directory / STORE_FILENAME
+    with Store.create(store_file) as created:
+        created.put_memory(_memory("before the bundle"))
+    bundle = create_backup(store_file)["bundle"]
+    with Store.open(store_file) as opened:
+        rewound = opened.log_rows()[-1].seq
+        stale = opened.keyring.head_path().read_bytes()
+        for n in range(3):
+            opened.put_memory(_memory(f"after the bundle {n}"))
+        cursor = opened.log_rows()[-1].seq
+        head_path = opened.keyring.head_path()
+    if head == "missing":
+        head_path.unlink()
+    else:
+        head_path.write_bytes(stale)
+    report = restore_bundle(Path(bundle), store_file, apply=True)
+    assert report["status"] == "restored"
+    with Store.open(store_file) as opened:
+        for n in range(6):
+            opened.put_memory(_memory(f"the new history {n}"))
+        assert opened.log_rows()[-1].seq > cursor
+
+    argv = ["log", "export", "--since-seq", str(cursor)]
+    assert _run_cli(argv, monkeypatch) == 0
+    err = capsys.readouterr().err
+    assert f"rewound the log from seq {cursor} to seq {rewound}" in err
+    assert f"--since-seq {rewound}" in err
+
+
+def test_a_rewind_is_read_off_the_later_of_its_two_ends(tmp_path: Path) -> None:
+    from bettermemory.backup import restore_record_path
+
+    path = restore_record_path(tmp_path, "s" * 32)
+    path.write_text(
+        json.dumps(
+            {
+                "restores": [
+                    {
+                        "restored_at": "t",
+                        "head_before": None,
+                        "head_after": {"seq": 2},
+                        "log_end_before": {"seq": 7},
+                    },
+                    {
+                        "restored_at": "u",
+                        "head_before": {"seq": 4},
+                        "head_after": {"seq": 2},
+                        "log_end_before": {"seq": 9},
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert audit_export.rewinds_across(tmp_path, "s" * 32, 6) == [
+        {"restored_at": "t", "from_seq": 7, "to_seq": 2},
+        {"restored_at": "u", "from_seq": 9, "to_seq": 2},
+    ]
+    assert audit_export.rewinds_across(tmp_path, "s" * 32, 8) == [
+        {"restored_at": "u", "from_seq": 9, "to_seq": 2},
+    ]
+    assert audit_export.rewinds_across(tmp_path, "s" * 32, 2) == []
+
+
 @pytest.mark.parametrize(
     "record",
     [
