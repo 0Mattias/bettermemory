@@ -265,6 +265,9 @@ def test_project_store_is_named_and_noted(
     real = (project / ".claude-memory").resolve().as_posix()
     assert real in plan.settings["sandbox"]["filesystem"]["denyRead"]
     assert any("./.claude-memory in the working directory" in n for n in plan.notes)
+    # The sandbox lets commands write in the working directory, so the
+    # note on the project-relative gap names writing as well as reading.
+    assert any("and write it" in n for n in plan.notes)
 
 
 def test_store_rule_reads_home_cwd_as_the_default(linux: Path) -> None:

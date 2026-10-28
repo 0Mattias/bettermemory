@@ -443,6 +443,9 @@ def test_no_store_yet_is_information(
     monkeypatch.setenv(_config.ENV_DIR_OVERRIDE, str(tmp_path / "empty"))
     report = audit()
     assert _by_id(report, "key.match").status == "info"
+    git = _by_id(report, "store.git")
+    assert git.status == "ok"
+    assert git.summary == f"no store at {(tmp_path / 'empty').resolve()} yet"
     assert not (tmp_path / "empty").exists()
 
 

@@ -39,7 +39,9 @@ project-local store, the one the config's third rule picks, is then closed
 to Claude Code's own Read and Edit tools in every project. The sandbox's own
 ``denyRead`` has no spelling for a path relative to the session's working
 directory (a relative entry there is relative to the settings file), so a
-project-local store stays readable to the sandboxed shell; the notes say so.
+project-local store stays readable to the sandboxed shell, and writable,
+since the sandbox lets commands write in the working directory; the notes
+say so.
 
 The daemon's port is not a path and has no key of its own in the block. The
 network side of the promise is a list of things to leave out
@@ -481,8 +483,10 @@ def _notes(
         f"The rules for {PROJECT_DIR_NAME}/** keep Claude Code's own Read and "
         "Edit tools off a project-local store; the sandbox has no entry for a "
         "path relative to the session's working directory, so the sandboxed "
-        "shell can still read one there. A store named by BETTERMEMORY_DIR or "
-        "[storage] directory has no such gap."
+        "shell can still read one there, and write it, since the sandbox lets "
+        "commands write in the working directory. A store named by "
+        "BETTERMEMORY_DIR or [storage] directory outside the working "
+        "directory has no such gap."
     )
     store = found[0]
     if store.source == f"./{PROJECT_DIR_NAME}":

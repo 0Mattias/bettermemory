@@ -697,7 +697,7 @@ def git_finding(
     information for the store (``ignored_ok``) and a warning for the keys,
     which belong in no working tree at all."""
     if not os.path.isdir(directory):
-        return Finding(finding_id, "ok", f"no {label} directory yet")
+        return Finding(finding_id, "ok", f"no {label} at {directory} yet")
     top_run = run_git(["rev-parse", "--show-toplevel"], cwd=directory, timeout=2.0)
     if top_run is None:
         return Finding(finding_id, "skip", f"git could not run; {label} not checked")
