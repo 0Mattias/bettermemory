@@ -259,7 +259,10 @@ async def test_memory_update_takes_the_same_policy(make_world: Any) -> None:
         assert "Nothing was changed." in text
 
     assert world.store.load_one(written["id"]).body == before.body
-    assert [e for e in world.events("update") if e.get("status")] == []
+    # No update event at all: a committed update records one without a
+    # `status`, so filtering on the status would miss the very row a
+    # refusal must not leave.
+    assert world.events("update") == []
 
     # A flag the policy does not name passes, and the gate behind it runs.
     claimed = await world.call(

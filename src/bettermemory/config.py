@@ -1370,6 +1370,17 @@ def _apply_managed(
         known = {f.name for f in fields(target)}
         keys.extend((section, key) for key in section_raw if key in known)
 
+    # The user's legacy alias is translated before the pinned keys are
+    # dropped, as the managed file's was above: a user line spelled with
+    # the old name is then the successor's line, so a pinned successor
+    # drops it unread (a mistyped value cannot fail the load) and its
+    # notice fires. Left untranslated, `_config_from_data` below would
+    # move it under the successor and parse it. Idempotent, so the
+    # second call there finds nothing to do.
+    user_behavior = data.get("behavior")
+    if isinstance(user_behavior, dict):
+        _apply_legacy_endorsement_debt_alias(user_behavior, config_path)
+
     for section, key in keys:
         user_section = data.get(section)
         if isinstance(user_section, dict) and key in user_section:

@@ -115,7 +115,8 @@ def read_managed(path: Path) -> dict[str, dict[str, Any]] | None:
 
     Fails closed. A file that exists but cannot be read (its directory
     or the file not readable by this account, a directory where the file
-    should be), is not UTF-8, is not TOML, or holds a top-level value
+    should be, a symlink whose target is gone), is not UTF-8 (a leading
+    byte-order mark is allowed), is not TOML, or holds a top-level value
     that is not a section table, raises a ValueError naming the file:
     the same outcome a malformed config.toml has (the daemon does not
     start, the CLI reports the error). Skipping it would silently drop
@@ -129,7 +130,18 @@ def read_managed(path: Path) -> dict[str, dict[str, Any]] | None:
     """
     try:
         raw = path.read_bytes()
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        # A symlink whose target is gone answers FileNotFoundError too,
+        # yet the path exists: an administrator linked it to a file that
+        # configuration management keeps elsewhere, on a mount that is not
+        # up yet or a checkout mid-update. Reading that as "no managed
+        # config" would start without every pin, so it fails closed.
+        if path.is_symlink():
+            raise ValueError(
+                f"managed config {path} is a symlink to a file that does not "
+                "exist; bettermemory will not start without the settings it "
+                "pins. Restore its target, or remove the link."
+            ) from exc
         return None
     except OSError as exc:
         raise ValueError(
@@ -138,8 +150,14 @@ def read_managed(path: Path) -> dict[str, dict[str, Any]] | None:
             "the settings it pins. Make the file readable by every account "
             "that runs bettermemory, or remove it."
         ) from exc
+    # "utf-8-sig": a leading byte-order mark is dropped, not parsed.
+    # Windows PowerShell 5.1, which MDM and configuration-management
+    # scripts on Windows run under, writes one with `-Encoding UTF8`, and
+    # tomllib refuses it as an invalid statement at line 1, column 1,
+    # which would stop bettermemory over a file that reads as correct.
+    # Without a mark the decoding is plain UTF-8.
     try:
-        data = tomllib.loads(raw.decode("utf-8"))
+        data = tomllib.loads(raw.decode("utf-8-sig"))
     except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise ValueError(f"malformed managed config in {path}: {exc}") from exc
     sections: dict[str, dict[str, Any]] = {}

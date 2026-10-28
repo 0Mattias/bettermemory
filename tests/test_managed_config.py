@@ -331,6 +331,30 @@ def test_the_legacy_alias_pins_its_successor(
     )
 
 
+def test_a_users_legacy_alias_of_a_pinned_key_is_ignored_with_its_notice(
+    tmp_path: Path,
+    managed_config_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The user's file spells the pinned key by its pre-3.2 name. The
+    line is the successor's, so it is dropped unread like any pinned
+    line: a value that would not parse cannot fail the load, and the
+    pinned-key notice names the setting it lost to."""
+    managed_config_path.write_text(
+        "[behavior]\ncold_endorsement_ratio_threshold = 0.25\n", encoding="utf-8"
+    )
+    with caplog.at_level(logging.WARNING, logger="bettermemory.config"):
+        loaded = load_config(
+            _user_config(
+                tmp_path, '[behavior]\nendorsement_debt_ratio_threshold = "abc"\n'
+            )
+        )
+    assert loaded.behavior.cold_endorsement_ratio_threshold == 0.25
+    notices = [r.getMessage() for r in caplog.records if "pins" in r.getMessage()]
+    assert len(notices) == 1, notices
+    assert "[behavior] `cold_endorsement_ratio_threshold`" in notices[0]
+
+
 def test_the_shipped_example_loads_as_a_managed_file(
     tmp_path: Path, managed_config_path: Path
 ) -> None:
@@ -384,6 +408,32 @@ def test_a_managed_file_that_is_not_utf8_is_an_error_naming_it(
 ) -> None:
     managed_config_path.write_bytes(b"[telemetry]\nenabled = \xff\n")
     with pytest.raises(ValueError, match="malformed managed config") as excinfo:
+        load_config(_user_config(tmp_path, ""))
+    assert str(managed_config_path) in str(excinfo.value)
+
+
+def test_a_byte_order_mark_is_not_a_malformed_file(
+    tmp_path: Path, managed_config_path: Path
+) -> None:
+    """Windows PowerShell 5.1 writes UTF-8 with a byte-order mark, and a
+    managed file deployed through it must still load and pin."""
+    managed_config_path.write_bytes(b"\xef\xbb\xbf[policy]\nforbid_force = true\n")
+    loaded = load_config(_user_config(tmp_path, ""))
+    assert loaded.policy.forbid_force is True
+    assert loaded.managed_keys == frozenset({"policy.forbid_force"})
+
+
+def test_a_dangling_symlink_at_the_managed_path_fails_closed(
+    tmp_path: Path, managed_config_path: Path
+) -> None:
+    """The path exists, as a link to a file that is gone: the pins it
+    would carry are unknown, so the load stops rather than run without
+    them, as for any other unreadable managed file."""
+    try:
+        managed_config_path.symlink_to(tmp_path / "gone.toml")
+    except OSError:
+        pytest.skip("this account cannot create symlinks")
+    with pytest.raises(ValueError, match="symlink") as excinfo:
         load_config(_user_config(tmp_path, ""))
     assert str(managed_config_path) in str(excinfo.value)
 
