@@ -1127,9 +1127,22 @@ def _tell_successor(
 
 def bind(host: str, port: int) -> socket.socket:
     """A bound, non-listening socket on `host`: `port` when it is free,
-    else an ephemeral one. The caller reads the port it got."""
+    else an ephemeral one. The caller reads the port it got.
+
+    On POSIX, SO_REUSEADDR only lets the daemon rebind a port whose last
+    connections sit in TIME_WAIT. On Windows it also lets a socket bind a
+    port another socket holds, so a daemon started on the stale port of a
+    state file shared it with whatever held it (and a client reached that
+    listener instead), and another process could bind the daemon's own
+    port beside it. SO_EXCLUSIVEADDRUSE, where the platform has it, refuses
+    both: a held port fails to bind, and the daemon takes an ephemeral one
+    and records it in its state file."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+    if exclusive is not None:
+        sock.setsockopt(socket.SOL_SOCKET, exclusive, 1)
+    else:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         sock.bind((host, port))
     except OSError:

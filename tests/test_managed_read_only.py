@@ -93,7 +93,10 @@ def test_the_sandbox_denies_the_store_the_managed_file_pins(
     assert _run_cli(argv, monkeypatch) == 0
     plan: dict[str, Any] = json.loads(capsys.readouterr().out)
     deny = json.dumps(plan)
-    assert str(pinned_store) in deny
+    # A rule spells the path the way Claude Code matches it (`~/...`, or
+    # `//c/...` for a Windows drive: `sandbox_settings.rule_path`), so look
+    # for the pinned directory's name, which the default store never has.
+    assert pinned_store.name in deny
     assert not no_user_config.exists()
 
 

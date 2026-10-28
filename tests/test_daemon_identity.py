@@ -858,6 +858,56 @@ def test_a_listener_repeating_a_real_daemons_health_is_not_taken_for_it(
     assert _cli(["down"], daemon_env).returncode == 0
 
 
+def test_bind_takes_another_port_when_a_listener_holds_the_one_asked_for(
+    listeners: list[_Listener],
+) -> None:
+    """The listener sets SO_REUSEADDR, as http.server does. On Windows that
+    let the daemon's bind share its port, where it must take another."""
+    from bettermemory import daemon
+
+    listener = _listen(listeners, _another_store())
+    sock = daemon.bind("127.0.0.1", listener.port)
+    try:
+        assert sock.getsockname()[1] != listener.port
+    finally:
+        sock.close()
+
+
+class _RecordingSocket(socket.socket):
+    options: list[int] = []
+
+    def setsockopt(self, level: int, optname: int, value: Any, *rest: Any) -> None:
+        type(self).options.append(optname)
+        if optname == _FAKE_EXCLUSIVE:
+            return
+        super().setsockopt(level, optname, value, *rest)
+
+
+_FAKE_EXCLUSIVE = 0x7EEF
+
+
+@pytest.mark.parametrize("platform_has_it", [True, False])
+def test_bind_asks_for_exclusive_use_where_the_platform_offers_it(
+    monkeypatch: pytest.MonkeyPatch, platform_has_it: bool
+) -> None:
+    from bettermemory import daemon
+
+    if platform_has_it:
+        monkeypatch.setattr(
+            socket, "SO_EXCLUSIVEADDRUSE", _FAKE_EXCLUSIVE, raising=False
+        )
+    else:
+        monkeypatch.delattr(socket, "SO_EXCLUSIVEADDRUSE", raising=False)
+    monkeypatch.setattr(_RecordingSocket, "options", [])
+    monkeypatch.setattr(socket, "socket", _RecordingSocket)
+    sock = daemon.bind("127.0.0.1", 0)
+    sock.close()
+    if platform_has_it:
+        assert _RecordingSocket.options == [_FAKE_EXCLUSIVE]
+    else:
+        assert _RecordingSocket.options == [socket.SO_REUSEADDR]
+
+
 def test_a_daemon_starts_beside_a_listener_on_the_stale_port(
     tmp_path: Path,
     daemon_env: dict[str, str],
