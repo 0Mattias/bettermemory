@@ -12,6 +12,16 @@ Episode content is excluded from `memory_search`, `memory_health`,
 `memory_list` — the write here lands in a sibling subtree the memory
 iterators never see. `memory_health` reports the subtree's aggregate
 volume (`episode_volume`) and nothing else about it.
+
+The durability gate does not apply here; the credential gate does. An
+episode body and takeaway land in the store and in the signed log's
+`episode_put` row, which no path rewrites, and the handoff delivers them
+to the next session. A body or takeaway carrying a secret-shaped token
+(`credentials.find_credential_markers`) is refused before anything is
+written, in the shape memory_write's `credential_warning` takes. Unlike
+memory_write there is no `acknowledge_credential`: the episode tool takes
+no override, so the only way through is to write the episode without the
+value.
 """
 
 from __future__ import annotations
@@ -19,6 +29,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from .. import identity
+from ..credentials import find_credential_markers
 from ..events import HARNESS_SESSION_FIELD
 from ._shared import (
     Context,
@@ -29,6 +40,21 @@ from ._shared import (
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
+
+
+#: The refusal's hint. It names the one remedy there is: the episode tool
+#: has no acknowledge flag, so a caller that reads memory_write's hint and
+#: re-sends with `acknowledge_credential=True` would only meet the
+#: unknown-parameter error.
+_CREDENTIAL_HINT = (
+    "Not written: the episode carries a secret-shaped token (API key, "
+    "private-key PEM, JWT, or a `password=…`-style assignment), and an "
+    "episode lands in the signed log and the next session's handoff. "
+    "Episodes take no acknowledgement: remove the value and write the "
+    "episode again, describing the secret without embedding it (e.g. 'the "
+    "deploy uses an AWS key, stored in 1Password'). The value is redacted "
+    "from this warning and the event log."
+)
 
 
 DESC_EPISODE_WRITE = (
@@ -67,8 +93,46 @@ DESC_EPISODE_WRITE = (
     "Both caps guard one thing: takeaway and scopes serialise into "
     "the YAML frontmatter (64 KB ceiling), so an over-cap value "
     "corrupts the file and the episode vanishes from every read "
-    "surface despite the write returning `committed`."
+    "surface despite the write returning `committed`.\n\n"
+    "A body or takeaway carrying a secret-shaped token is not written: "
+    "the reply is `credential_warning` with the detector kinds and "
+    "redacted snippets, and there is no acknowledge flag to pass."
 )
+
+
+def _credential_refusal(
+    deps: ToolHandlers, body: str, takeaway: str | None
+) -> dict[str, Any] | None:
+    """The `credential_warning` refusal for a body or takeaway carrying a
+    secret-shaped token, or None when neither does.
+
+    Each field is scanned on its own, so a detector whose context reaches
+    across a line (the PEM header's key-material lookahead) reads the
+    field as written. Each marker is memory_write's (`kind` and a snippet
+    with every secret span redacted) plus the `field` it was found in,
+    since an episode has two. The event names the kinds and the fields,
+    never the value; it carries no harness session, so a refused write
+    does not count as the conversation having journaled
+    (`episode_handoff._quiet_session`)."""
+    markers: list[dict[str, Any]] = []
+    for field, text in (("body", body), ("takeaway", takeaway)):
+        if not text:
+            continue
+        for hit in find_credential_markers(text):
+            markers.append({**deps.responses.credential_to_dict(hit), "field": field})
+    if not markers:
+        return None
+    deps.recorder.record(
+        "episode_write",
+        status="credential_warning",
+        credential_kinds=list(dict.fromkeys(m["kind"] for m in markers)),
+        credential_fields=list(dict.fromkeys(m["field"] for m in markers)),
+    )
+    return {
+        "status": "credential_warning",
+        "markers": markers,
+        "hint": _CREDENTIAL_HINT,
+    }
 
 
 async def episode_write(
@@ -129,6 +193,12 @@ async def episode_write(
     # list is valid (handoff keys on session_id), so no min-count check.
     if scopes is not None:
         _validate_scope_count(scopes, deps.config.behavior.max_scopes_per_write)
+    # The credential gate, after the caps (a multi-MB body is refused by
+    # size before any detector reads it, as on memory_write) and before
+    # the origin is captured or anything reaches the store or the log.
+    refusal = _credential_refusal(deps, body, takeaway)
+    if refusal is not None:
+        return refusal
 
     origin = _h.capture_origin()
     # The request's session (the conversation's, under the daemon) is the

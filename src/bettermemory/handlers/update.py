@@ -316,8 +316,7 @@ async def memory_update(
                 "hint": (
                     "The updated body contains a secret-shaped token (API "
                     "key, private-key PEM, JWT, or a `password=…`-style "
-                    "assignment). This store is plain-text and `sync` pushes "
-                    "it across hosts via git — describe the secret without "
+                    "assignment). Describe the secret without "
                     "embedding it, or pass acknowledge_credential=True if the "
                     "value is a documented public/example credential. The "
                     "value is redacted from this warning and the event log "

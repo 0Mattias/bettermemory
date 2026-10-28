@@ -223,9 +223,9 @@ class CredentialGate(WriteGate):
     """Secret-shaped-token check — reject bodies that embed a credential
     unless `acknowledge_credential`.
 
-    Runs FIRST, before every other gate: the store is plain-text markdown
-    that syncs across hosts, so persisting a live secret leaks it to disk,
-    the audit log, and every clone — the highest-severity write to refuse,
+    Runs FIRST, before every other gate: the store is plain text whose
+    signed log keeps every body, so persisting a live secret leaks it to
+    disk, the audit log, and every copy — the highest-severity write to refuse,
     and refusing early means no later gate's event ever records body-derived
     data alongside the secret. The warning and the event log carry only the
     detector `kind` and a redacted snippet, never the value.
@@ -244,8 +244,7 @@ class CredentialGate(WriteGate):
                 "hint": (
                     "The body contains a secret-shaped token (API key, "
                     "private-key PEM, JWT, or a `password=…`-style "
-                    "assignment). This store is plain-text and `sync` "
-                    "pushes it across hosts via git — describe the secret "
+                    "assignment). Describe the secret "
                     "without embedding it (e.g. 'the deploy uses an AWS key, "
                     "stored in 1Password'), or pass "
                     "acknowledge_credential=True if the value is a "
