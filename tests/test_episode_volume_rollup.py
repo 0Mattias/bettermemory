@@ -333,10 +333,12 @@ def test_the_volume_gauge_has_exactly_one_call_site_in_the_package() -> None:
         if re.search(r"\.prunable_episode_sessions\(", text):
             predicate_callers.add(rel)
 
-    assert volume_callers == {"health.py"}, (
-        "Store.episode_volume() gained a call site outside health.py: "
-        f"{sorted(volume_callers)}. Every other surface pays this read "
-        "per turn; health does not."
+    # `bettermemory stats` (cli/stats_cmd.py) reads it once per run of the
+    # command, as health does: an on-demand report, not a per-turn read.
+    assert volume_callers == {"health.py", str(Path("cli") / "stats_cmd.py")}, (
+        "Store.episode_volume() gained a call site outside health.py and "
+        f"the stats command: {sorted(volume_callers)}. Every other surface "
+        "pays this read per turn; those two do not."
     )
     assert predicate_callers == {"store.py", str(Path("cli") / "episodes.py")}, (
         "the shared TTL predicate gained an unexpected caller: "

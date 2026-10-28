@@ -721,7 +721,16 @@ class TestFlockPosixWaitIsUnbounded:
             "package — either the variable was renamed (update the docstring "
             "in _fsutil.flock_excl too) or this extractor stopped matching."
         )
-        offenders = [site for site in sites if site[2] != "_flock_windows"]
+        # `service_units.PINNED_VARIABLES` names the variable among those a
+        # service unit copies from the installing shell into the daemon's
+        # environment, where `_flock_windows` is what reads it: a
+        # pass-through, not a lookup.
+        passed_through = {("service_units.py", "")}
+        offenders = [
+            site
+            for site in sites
+            if site[2] != "_flock_windows" and (site[0], site[2]) not in passed_through
+        ]
         assert not offenders, (
             "BETTERMEMORY_FLOCK_TIMEOUT is read outside `_flock_windows`:\n  "
             + "\n  ".join(

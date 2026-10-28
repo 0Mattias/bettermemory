@@ -370,7 +370,9 @@ async def test_force_is_ignored_and_a_duplicate_records_no_corroboration(
 
 # Each gate refusal a capture write can meet: the status, a body that
 # meets it, and what the store holds first. The sha256 prefix is the
-# general hint's text at 7c14b8b1, which an ordinary write still returns.
+# general hint's text at 7c14b8b1, which an ordinary write still returns;
+# the credential hint's moved in 9.0.0rc12, when its stale sentence about
+# the removed `sync` command came out.
 _SEEDED_PROJECT = (
     "The bettermemory daemon binds 127.0.0.1 only.",
     "projects:bettermemory",
@@ -380,7 +382,7 @@ _CAPTURE_REFUSALS: list[tuple[str, str, str, str]] = [
         "credential_warning",
         "The deploy key is AKIAIOSFODNN7EXAMPLE for the staging bucket.",
         "",
-        "2d09f667ccc9760b",
+        "e062fe76015b4184",
     ),
     (
         "transient_warning",
