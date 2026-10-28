@@ -50,6 +50,7 @@ from . import (
     rename_scope,
     review_cmd,
     rollback,
+    security_cmd,
     serve,
     service_cmd,
     session_start_cmd,
@@ -134,6 +135,7 @@ def _build_parser() -> tuple[
         "backup": backup_cmd.add_subparser(sub),
         "service": service_cmd.add_subparser(sub),
         "doctor": doctor_cmd.add_subparser(sub),
+        "security": security_cmd.add_subparser(sub),
         "up": daemon_cmd.add_up(sub),
         "down": daemon_cmd.add_down(sub),
         "status": daemon_cmd.add_status(sub),
@@ -281,6 +283,9 @@ def main() -> None:
         return
     if cmd == "doctor":
         doctor_cmd.run(args)
+        return
+    if cmd == "security":
+        security_cmd.run(args, sub_parser=subparsers["security"])
         return
 
     # argparse already rejects unknown subcommands; this is belt-and-
