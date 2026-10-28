@@ -284,7 +284,7 @@ git tag -af v<X.Y.Z> -m "v<X.Y.Z>"
 git push --force origin v<X.Y.Z>
 ```
 
-The forced push runs the workflow again.
+The forced push runs the workflow again. Only the owner can make it: the repository's tag ruleset "release tags" blocks deleting, updating or force-pushing any `refs/tags/v*` tag for everyone except repository admins, and the owner, an admin, bypasses it. Nobody else can move or delete a release tag once it is pushed: anyone else asks the owner to move it, or cuts the next version under a new tag, since creating a `v*` tag is not blocked.
 
 ### The `Attest build provenance` job failed
 
