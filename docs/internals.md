@@ -172,18 +172,117 @@ the owner's opener, which passes `allow_rekey=True`. A plain `Store.open`
 does not: since 9.0.0rc10 it leaves such a store readable and refuses the
 first write, naming the key directory, so a copy on another machine or a
 daemon under the wrong key directory never splits the chain by accident.
-Rows signed under a key this machine does not hold keep their stored
-labels, since their pointers cannot be checked, and stamps copied with
-the store read as this host's. `bettermemory log verify` is the whole-chain audit: it walks
-every row, checks every MAC and every link to the row before,
-compares the head checkpoint, and refolds the log to compare every
-table against it. It reports a rekeyed store `unverifiable`.
+`bettermemory log verify` is the whole-chain audit: it walks every row
+from seq 1, checks every MAC and every link to the row before, compares
+the head checkpoint and the origin anchor, and refolds the log to compare
+every table against it. A store whose meta carries a store id other than
+the 32 lowercase hex characters `create` writes is refused at open,
+since the key ring names its files after that id.
+
+**Segments.** The `rekey` rows split the log into segments, each signed
+by one key, and a segment is *held* when this machine's key ring has
+that key, current (`<store_id>.key`) or retired
+(`<store_id>.<first 16 hex of its fingerprint>.key`). A segment's key is
+named by the rekey rows, and the first segment's name is one its own key
+never signed (the first rekey row's `old_fingerprint`, or meta), so a
+first segment whose named key is not held is also tried against every
+key the ring holds, by its first row's MAC (`log.chain_segments`).
+
+- *Leading* segments come before this machine's history of the store
+  begins: a store copied here without its key, signed elsewhere. Their
+  records keep their stored labels, since their pointers cannot be
+  checked here, and stamps copied with the store read as this host's.
+  `log verify` reports them `unverifiable`.
+- A *foreign* segment is not held and comes after this machine's
+  history began: rows put into history this machine signed by a writer
+  without its key, who wrote a `rekey` row naming a key of their own.
+  Its records read `unaccounted` on every read surface and in the health
+  census, save a row this connection's own current key verifies (one a
+  daemon appended while the forged row went in), and `log verify`
+  reports `foreign_segment` with the segment's seq range: `tampered`.
+  The owner's opener keeps a key that signs a segment of the log current
+  whatever `meta.key_fingerprint` says, sets meta back, closes a foreign
+  tail with a genuine `rekey` row naming the true previous key, and logs
+  a WARNING on the `bettermemory.store` logger naming the segment.
+- `[security] strict_provenance = true` reads the records of every
+  segment that is not held `unaccounted`, leading ones included: only
+  what this machine's own keys verify is trusted. The store reads the
+  switch lazily, at most once per connection and only when a row in such
+  a segment is first labelled, so a store under one key never reads the
+  config; a config that cannot be read reads as true, with a warning. A
+  running daemon picks a change up on its next start.
+
+**The origin anchor** (9.0.0rc12). Where this machine's history begins
+is not taken from the log, whose every row an editor of the file can
+rewrite: the key ring keeps `<store_id>.origin` beside the key and the
+head, `{"seq": S, "mac": M}`, the seq and MAC column of the first row
+this machine's key ring signed for the store, written `0600` through a
+temporary file and a rename under the sidecar lock
+`<store_id>.origin.lock` (`log.KeyRing.write_origin`).
+
+- It is written by `Store.create` (seq 1), by the owner's opener when it
+  takes over a store copied here (its `rekey` row), and, on a store with
+  no anchor, at the first writing open: the first row of the earliest
+  segment this machine holds, current or retired, and only when that row
+  verifies under its segment's key. That last case is trust on first
+  use: an edit made before that open is not caught by the anchor. With
+  no held segment nothing is written.
+- No read-only opener writes it (`log verify`, `log export`, `export`,
+  `stats`, `memory history`, `doctor`, `backup create` and `verify`,
+  `security`), and no repair moves it, with one exception: when the
+  current key file is missing and no key the ring still holds verifies
+  the anchored row, whose MAC column is unchanged, the anchor moves to
+  the new key's `rekey` row and the store logs a WARNING naming both
+  seqs. Removing the key file needs write access to the keys directory,
+  which an editor of the store file does not have.
+- A file that does not parse (a seq that is not an integer from 1 to
+  2^63 - 1, a MAC that is not 64 lowercase hex characters) reads as no
+  anchor, and the next writing open replaces it.
+
+The reads check the anchor with the segment map, at each connection's
+first pointer check (`log.chain_trust`). The row at S must exist, carry
+M and verify under a held key:
+
+- `ok`: a segment that is not held is leading only when it ends before
+  S (the next segment starts at or before S); any other is foreign.
+- `mismatch`, reason `missing`, `mac` or `signature`: the history where
+  this machine's begins was rewritten, so which segments lead cannot be
+  read off the log. `log verify` reports `origin_mismatch` (`tampered`),
+  and every segment that is not held reads as foreign, leading ones
+  included; a held segment keeps its labels.
+- `unverifiable`: the ring holds no key at all to check the row with;
+  the status reads `unverifiable`, never `tampered`.
+- `absent`: no anchor (a store from before rc12, or one only read here
+  so far), which is no finding; the rules above apply without it.
+
+Rows below seq 1 are never trusted: the segment map and the opener read
+only seq 1 and up, the rows `log verify` walks, and a record whose log
+row sits below seq 1 reads `unaccounted`. No store writes such a row.
+
+**Moves.** A store moved from this host (A) to another (B) and back, or
+opened once under another `BETTERMEMORY_KEYS_DIR`, carries B's segment
+after A's anchored history: foreign, so B's rows read `unaccounted` and
+`log verify` exits 1. Filing B's key in A's keys directory as a retired
+key restores `ok`. A store file copied over this host's copy again from
+the machine it came from, with the same store id, changes the history at
+the anchor and reads `origin_mismatch`: `bettermemory backup restore` of
+a bundle, or deleting `<store_id>.origin` and `<store_id>.head`, accepts
+the replaced history and trusts the file again on purpose. A copied
+store's own history comes before its takeover row and keeps its labels.
+A lost key file leaves the rows it signed leading, `log verify`
+`unverifiable`, as before the anchor existed, since the anchor moves to
+the new key's `rekey` row.
 
 Cost: one indexed log lookup and one HMAC per row served, nothing per
-candidate. What it cannot see: an injection-driven legitimate write,
-which is `local` by every test here and truthfully so. Cause provenance
-(what was in context at write time) is a different question, and an
-open one.
+candidate; the segment map and the anchor add one file read, one row
+lookup and one HMAC at each connection's first pointer check. What it
+cannot see: an injection-driven legitimate write, which is `local` by
+every test here and truthfully so; an edit made before a store's anchor
+existed; and a store whose `meta.store_id` an editor replaced with a
+fresh id, which detaches it from this machine's key ring so that it
+opens as a store copied here, its earlier rows leading. `strict_provenance`
+reads the last two `unaccounted`. Cause provenance (what was in context
+at write time) is a different question, and an open one.
 
 ## Membership
 
@@ -637,8 +736,11 @@ real stdio MCP server whose `tools/list` and `tools/call` forward to
 the local daemon (`daemon.py`, one process per store on 127.0.0.1 that
 owns the store and serves the nine tools over streamable HTTP and the
 hook bodies under `/api/v1/hook/`), started on first use through the
-client in `_daemon_client.py`, which the hook command shares;
-`cli/daemon_cmd.py` is `up`, `down` and `status`. `cli/serve.py` is
+client in `_daemon_client.py`, which the hook command shares and which
+proves the daemon it reaches by the token before it sends anything;
+`cli/daemon_cmd.py` is `up`, `down` and `status`, and
+`cli/service_cmd.py` with `service_units.py` writes and loads the
+launchd or systemd unit that supervises the daemon. `cli/serve.py` is
 the in-process server the shim falls back to when no daemon can be
 reached or started; both hand off to `builder.build_server`, which
 instantiates the MCP SDK server and binds the nine tools. `server.py`
@@ -660,10 +762,12 @@ per-client `SessionState` for the request (disabled scopes, use
 tokens), keyed on that caller, and `_response.py` shapes what goes back
 on the wire. `_decorators.py` and `time_utils.py` are cross-cutting.
 
-**Write path.** `handlers/write.py` first checks declared claims
-against the worktree (`claims.py`) and any declared `supersedes`
-list. It then runs the gate chain: `credentials.py` (secret-shaped
-strings), the capture gates on a capture write (the rules in
+**Write path.** `handlers/write.py` first lets `policy.py` refuse a
+call that passes an escape hatch `[policy]` forbids, then checks
+declared claims against the worktree (`claims.py`) and any declared
+`supersedes` list. It then runs the gate chain: `credentials.py`
+(secret-shaped strings; its `secret_spans` is what the log's query
+redaction shares), the capture gates on a capture write (the rules in
 `durability.py`, and a body an undo reverted before), `durability.py`
 (structural durability), the user-claim check, `scope_match.py`
 (scope mismatch against the caller's repo), and duplicate and
@@ -769,8 +873,23 @@ back out as that directory, with `_frontmatter.py` as the markdown
 codec; `rollback.py` removes one actor's writes and leaves everyone
 else's; `init.py` and `_install_hints.py` are client onboarding.
 
+**Operations.** The commands an operator runs, every one of them
+read-only except a restore. `backup.py` is `bettermemory backup`
+(`cli/backup_cmd.py`): the bundle, its signed manifest, its verification
+on a private copy and the restore. `audit_export.py` and `anchor.py` are
+`log export` and `log anchor` and the anchors `log verify --anchor`
+checks (`cli/log_cmd.py`). `history.py` is `memory history`
+(`cli/memory_move_cmd.py`), and `cli/stats_cmd.py` the usage report.
+`doctor.py` is `bettermemory doctor` (`cli/doctor_cmd.py`). `posture.py`,
+`sandbox_settings.py` and `secret_scan.py` are `security audit`,
+`security sandbox` and `security scan` (`cli/security_cmd.py`).
+`cli/config_cmd.py` is `config path`, `show` and `check`, and
+`cli/completion_cmd.py` prints the shell completion it builds from the
+parser.
+
 **Leaves.** `models.py` (Pydantic models, enums, ULIDs), `config.py`
-(config loading and the store-directory rule), `prompts.py` (the
+(config loading and the store-directory rule), `managed.py` (the
+organisation-managed file's fixed path and its reader), `prompts.py` (the
 system-prompt addendum), `_fsutil.py` (atomic writes and owner-only
 directories), `githead.py` (HEAD and the ref it names, read from the
 repository files) and `_caches.py` (the cache registry). Nothing in this group imports a handler or the store, and
@@ -791,15 +910,19 @@ row too. A row of the log carries a sequence number, a timestamp, a
 kind, a session, a JSON payload and an HMAC-SHA256 over all of them plus
 the MAC of the row before it. The key is 32 random bytes under the user
 config directory (`keys/<store_id>.key`), never in the store; the store
-holds the key's fingerprint, and a head checkpoint beside the key
-records the last row written. Every record row carries the MAC of the
+holds the key's fingerprint, a head checkpoint beside the key
+(`<store_id>.head`) records the last row written, and the origin anchor
+(`<store_id>.origin`) the first row this machine signed (Provenance,
+above). Every record row carries the MAC of the
 log row that produced it, which is what the provenance label reads. The
 membership tables (the section above), the `standing` table among them,
 are folded by the same log.
 
 The store resolves to `$BETTERMEMORY_DIR` if set, else
 `[storage] directory` in `config.toml` if set, else `./.claude-memory/`
-if it exists, else `~/.claude-memory/`. An 8.x directory is read by
+if it exists (unless `[storage] cwd_store = false`), else
+`~/.claude-memory/`. `bettermemory config path` prints the directory and
+the rule that chose it. An 8.x directory is read by
 `bettermemory migrate v8` and written by `bettermemory export --mirror`;
 the running server never reads or writes markdown files.
 
@@ -839,7 +962,16 @@ bettermemory rollback --by-actor X # remove one actor's writes
 bettermemory episodes list         # the journal; prune
 bettermemory export                # JSON, or --mirror DIR for 8.x files
 bettermemory migrate v8            # import an 8.x directory
-bettermemory log verify            # audit the hash chain
+bettermemory log verify            # audit the hash chain; --anchor FILE
+bettermemory log export            # the log as JSON Lines for a SIEM
+bettermemory log anchor            # an anchor to keep off this host
+bettermemory backup create         # a verified backup bundle; verify, restore
+bettermemory stats                 # usage and growth, read-only
+bettermemory memory history ID     # every log row behind one record
+bettermemory doctor                # read-only self-check of the install
+bettermemory security audit        # file modes, key, sandbox; sandbox, scan
+bettermemory config check          # the config's lines; path, show
+bettermemory completion bash       # a completion script; zsh, fish
 bettermemory eval                  # the three metrics, with CIs
 bettermemory review samples        # grade reviewed writes; review grade
 bettermemory recall review         # grade what the hooks showed; recall grade
@@ -848,8 +980,15 @@ bettermemory project list          # projects; show, why, pending, join, new, in
 bettermemory memory move ID --project P  # re-home one record
 bettermemory membership migrate    # build the membership tables; export, import
 bettermemory up                    # the local daemon; down, status
+bettermemory service install       # a launchd or systemd unit; uninstall, status, print
 bettermemory serve                 # the MCP server over stdio, in this process
 ```
+
+The commands an operator runs (`log export` and `anchor`, `backup`,
+`stats`, `memory history`, `doctor`, `security`, `config`, `status
+--check`) are read-only, save `backup restore`; each takes `--json` and
+documents its exit codes in its `--help`. [api.md](api.md#cli) lists
+their flags, and [operations.md](operations.md) is the runbook.
 
 `bettermemory <command> --help` for flags. `hook session-start|stop|prompt`
 is the hook command the plugin wires; it posts the hook's payload to the
@@ -869,14 +1008,57 @@ the knobs (`default_max_results`, `recency_boost_half_life_days`,
 `max_takeaway_bytes` and `max_scopes_per_write`, and the floor
 `min_content_tokens`),
 `[scopes]` the allowed list and typo exceptions, `[telemetry]` the one
-switch, `enabled`, `[daemon]` the port (7397 by default), and
+switch, `enabled` (false switches telemetry off; the audit rows, a
+`standing_guard` row and a write or update that used `force` or an
+acknowledge flag, are still recorded), `[daemon]` the port (7397 by
+default), and
 `[capture]` session capture's switch and bounds (`stop_checkpoint`,
 `checkpoint_tokens`, `daily_cap`), and `[membership]` the token's
-policy switch and the strict switch (`write_token`, `strict`). A removed
-key or section
+policy switch and the strict switch (`write_token`, `strict`). Since
+9.0.0rc12:
+
+- `[storage] cwd_store = true`: false skips the store-directory rule's
+  third step, `./.claude-memory/` in the working directory.
+- `[policy] forbid_force = false` and `forbid_acknowledge = []`: true
+  refuses a `memory_write` with `force=true`; the list names acknowledge
+  flags (`credential`, `transient`, `scope_mismatch`, `user_claim`,
+  `truncation`) whose `acknowledge_<name>=true` refuses the call. The
+  refusal starts `policy_refused:` and says whether the switch is
+  managed. These three switches take only a boolean spelling, and the
+  list only known names: anything else stops the load.
+- `[security] strict_provenance = false`: true reads every row in a log
+  segment whose key this machine does not hold `unaccounted`
+  (Provenance, above).
+
+A removed key or section
 (`full_tool_surface`, `[consolidate]`, `[proposals]` and the rest
 `config.py` lists) loads with one logged warning that names it, the
-release that removed it and why. It is then ignored.
+release that removed it and why. It is then ignored. A section written
+as anything but a table, a TOML syntax error, or a file that is not
+UTF-8 stops the load with a `ValueError` that names the file (`malformed
+config in <path>: ...`); a leading byte-order mark is accepted. A
+misspelled section or key is ignored without a word, and a switch
+written as anything but a TOML boolean or one of the strings `"true"`,
+`"false"`, `"yes"`, `"no"`, `"on"`, `"off"`, `"1"` and `"0"` falls back
+to its default the same way (an unknown `search_mode` or `prompt_recall`
+and a clamped `checkpoint_tokens` log a notice):
+`bettermemory config check` reports each, with a did-you-mean, and
+`config show` prints every setting in force and where it came from.
+
+**The managed file.** An organisation pins settings in a managed file
+with the same sections and keys, at
+`/Library/Application Support/bettermemory/managed.toml` on macOS and
+`/etc/bettermemory/managed.toml` on Linux and every other POSIX system
+(`managed.py`); no environment variable moves it, and none is read on
+Windows in this release. It is read after the user's file, and every
+key it sets is pinned: the user's value is ignored, with one logged
+notice per key whose raw value differs, and a list replaces the user's
+whole. Unknown sections and keys in it are ignored, as in config.toml,
+but a top-level value outside a section is an error. It fails closed: a
+file that exists but cannot be read, does not parse or holds an invalid
+value stops the load with an error naming it. `Config.managed_keys`
+records the pinned `section.key` names, which `config show` labels
+`managed`. A running daemon reads both files at its start only.
 
 ## Limitations
 
@@ -887,8 +1069,17 @@ release that removed it and why. It is then ignored.
   is detected, not stopped. `SECURITY.md` draws the line.
 - One host per store. The cross-host lane is not in 9.0. A store
   copied to another machine without its key is rekeyed there: its rows
-  keep the labels they arrived with, and `log verify` reports it
-  `unverifiable`.
+  keep the labels they arrived with unless `[security]
+  strict_provenance` is on, and `log verify` reports it `unverifiable`.
+  Moving it back, or copying the file over again, reads as tampering
+  (Provenance, above).
+- The origin anchor is trust on first use for a store made before
+  9.0.0rc12: an edit made before its first writing open under rc12 is
+  not caught by the anchor.
+- No managed file on Windows in 9.0.0rc12, until its owner and ACL are
+  checked.
+- A restore is guarded against the daemon and the spawn lock only;
+  close every session before `backup restore --yes`.
 - One writer at a time. SQLite serialises writers; a second server
   process on the same store waits on the busy timeout rather than
   interleaving.

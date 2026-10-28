@@ -54,8 +54,9 @@ start beside the old files and says why.
   its claims no longer holds.
 - The store is one SQLite file built from a hash-chained log, each row
   signed with a key kept outside the store. A record planted or forged
-  outside the tool reads `unaccounted` on the next search;
-  `bettermemory log verify` audits the whole chain.
+  outside the tool reads `unaccounted` on the next search, short of the
+  cases [SECURITY][security] lists under "When a planted row is
+  detected"; `bettermemory log verify` audits the whole chain.
 - Memory reaches the model through tool calls. On Claude Code the hooks
   add pointers, never bodies: when a session opens, the project's
   standing memories in force and the memories the conversation so far
@@ -116,7 +117,9 @@ long-form policy in your system prompt: `bettermemory init
 Mechanics, storage format, the full tool surface, CLI, configuration
 and limitations are in [internals][internals]; per-client setup in
 [clients][clients] and [installation][installation]; eval methodology
-in [eval][eval]; the threat model in [SECURITY][security]; postmortems
+in [eval][eval]; running it for a team (service, monitoring, backups,
+the audit export, the managed config) in [operations][operations]; the
+threat model in [SECURITY][security]; postmortems
 in [incidents][incidents]; release history in [CHANGELOG][changelog];
 dev setup and the compatibility contract in
 [CONTRIBUTING][contributing].
@@ -134,4 +137,5 @@ MIT licensed. See [LICENSE][license].
 [installation]: https://github.com/0Mattias/bettermemory/blob/v9/docs/installation.md
 [internals]: https://github.com/0Mattias/bettermemory/blob/v9/docs/internals.md
 [license]: https://github.com/0Mattias/bettermemory/blob/v9/LICENSE
+[operations]: https://github.com/0Mattias/bettermemory/blob/v9/docs/operations.md
 [security]: https://github.com/0Mattias/bettermemory/blob/v9/SECURITY.md

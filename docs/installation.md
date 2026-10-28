@@ -58,9 +58,20 @@ Then, in a session, ask the model *"what memory tools do you have?"*.
 You should see the nine tools: `memory_search`, `memory_show`,
 `memory_write`, `memory_update`, `memory_remove`, `memory_verify`,
 `memory_record_use`, `episode` and `memory_admin`. If not, the server
-failed to start: run `bettermemory status`, then
+failed to start: run `bettermemory doctor`, then
 `bettermemory up --foreground`, which logs the store it opens and
 prints any start error.
+
+```sh
+bettermemory doctor        # the install, config, store, key, daemon, client wiring and disk
+bettermemory config path   # which config, store, keys and state directories are in use
+```
+
+`doctor` is read-only and grades each check ok, warn or fail with a
+one-line fix; it exits 0 when every check is ok, 1 on any failure and 2
+on warnings only. `config path` prints the config file, the
+organisation's managed file, the store directory with the rule that
+chose it, and the keys and state directories.
 
 The `bettermemory` command your client spawns is a stdio shim in front
 of one local daemon per store, started on first use and shared by every
@@ -110,9 +121,23 @@ and the log out of the agent's reach, but the agent's account would
 still hold the token the hook and the shim need, and with it the words
 channel.
 
-The settings under which the promise holds, delivered as managed
+The settings under which the promise holds are delivered as managed
 settings on macOS and Linux (the sandbox does not run on native
-Windows):
+Windows). Generate them on the host, or on one with the same layout:
+
+```sh
+bettermemory security sandbox --format managed > managed-settings.json
+```
+
+The block goes to stdout and the notes to stderr; nothing is written.
+The notes name the file to install: `/Library/Application
+Support/ClaudeCode/managed-settings.json` on macOS and
+`/etc/claude-code/managed-settings.json` on Linux, or a file in the
+`managed-settings.d/` directory beside it. Placing it needs
+administrator rights, and nothing in a user's or a project's settings
+overrides it. Without `--format managed` the same block is printed for
+`~/.claude/settings.json`, which the user, and an agent with a shell,
+can still edit. On Linux, with the default locations, the block is:
 
 ```json
 {
@@ -135,22 +160,35 @@ Windows):
       "Read(~/.config/bettermemory/**)",
       "Edit(~/.config/bettermemory/**)",
       "Read(~/.local/state/bettermemory/**)",
-      "Edit(~/.local/state/bettermemory/**)"
+      "Edit(~/.local/state/bettermemory/**)",
+      "Read(.claude-memory/**)",
+      "Edit(.claude-memory/**)"
     ]
   }
 }
 ```
 
-The three directories are the store directory (`bettermemory status`
-prints it; `~/.claude-memory` unless `BETTERMEMORY_DIR` or `[storage]
-directory` names another), the user config directory that holds the
-keys (or `BETTERMEMORY_KEYS_DIR`), and the user state directory that
-holds the daemon's state file with its token (or
+The three directories are the store directory (`bettermemory config
+path` prints it; `~/.claude-memory` unless `BETTERMEMORY_DIR` or
+`[storage] directory` names another), the user config directory that
+holds the keys (or `BETTERMEMORY_KEYS_DIR`), and the user state
+directory that holds the daemon's state file with its token (or
 `BETTERMEMORY_STATE_DIR`). On Linux the last two are
 `~/.config/bettermemory` and `~/.local/state/bettermemory`, as above;
-on macOS both are `~/Library/Application Support/bettermemory`. The
-store directory is in the list so that memories reach the agent only
-through the tools, under the caller's admission. The `denyRead` entries
+on macOS both are `~/Library/Application Support/bettermemory`, and the
+macOS block names that one directory in place of the two. The command
+applies any `BETTERMEMORY_*` override and spells a path under the home
+directory with `~/`, so one block serves every account that keeps the
+default locations; on a fleet where those variables or `[storage]
+directory` differ between accounts, generate it per layout. The store
+directory is in the list so that memories reach the agent only through
+the tools, under the caller's admission. The two `.claude-memory/**`
+rules keep Claude Code's Read and Edit tools off a project's own store;
+the sandbox has no entry for a path relative to the session's working
+directory, so a sandboxed command can still read and write a
+`./.claude-memory` there. Set `[storage] cwd_store = false` in the
+managed config (below) to keep a repository from choosing the store at
+all. The `denyRead` entries
 hold for every process a sandboxed command starts; the
 `permissions.deny` rules cover Claude Code's own Read, Edit and Write
 tools, which run outside the sandbox. Beside them: no `localhost`,
@@ -170,6 +208,42 @@ What the sandbox does not cover: native Windows; a command the user
 types at the `!` shell-mode prompt, which runs as the user; and MCP
 clients other than Claude Code, which have no hooks, so there the words
 are taken as given and the log row says so.
+
+`bettermemory security audit` compares the settings Claude Code reads
+on the host with this block and reports the gaps, beside the modes of
+the store, the keys and the daemon's files. It reads the file-based
+settings only (the managed file, its `managed-settings.d/` drop-ins and
+the user's settings), not settings an MDM profile or a server delivers.
+
+### The managed config
+
+bettermemory has a managed file of its own, which pins settings the
+user's `config.toml` cannot loosen: `/Library/Application
+Support/bettermemory/managed.toml` on macOS and
+`/etc/bettermemory/managed.toml` on Linux, written by an administrator.
+No environment variable moves it, and no managed file is read on Windows
+in this release. It takes `config.toml`'s sections and keys, and every
+key it sets is pinned. `examples/managed.toml` is the starting point:
+
+```toml
+[storage]
+cwd_store = false
+
+[security]
+strict_provenance = true
+
+[policy]
+forbid_acknowledge = ["credential"]
+```
+
+A managed file that cannot be read or does not load stops the config
+from loading, so the daemon does not start: check it with `bettermemory
+config check`, which grades the user's file and the managed file and
+exits 0 clean, 1 on an error and 2 on warnings only, and read what is in
+force with `bettermemory config show`, which labels each setting
+`default`, `user` or `managed`. A daemon reads the file when it starts:
+run `bettermemory down` after a change. [operations.md](operations.md#the-managed-config)
+has the rollout, and SECURITY.md what the file does and does not bind.
 
 ## 6. Coming from 8.x
 
@@ -193,14 +267,52 @@ registrations do not change: the server key, the binary and the
 `instructions` block are served as before, and the plugin's hooks find
 the migrated store on their own.
 
+## 7. Optional: run the daemon as a service
+
+The daemon starts on first use and needs no service. To have it
+supervised, started at login and again after a crash:
+
+```sh
+bettermemory service install     # a LaunchAgent on macOS, a systemd user unit on Linux
+bettermemory service status      # installed, current, loaded, and the daemon's state
+bettermemory service uninstall
+```
+
+`service print` shows the unit without writing it. Run `install` as the
+user, never under `sudo`, from the install the clients run: it refuses
+an interpreter in a package manager's cache, which rules out the
+plugin's `uvx` launcher, so install the tool first (section 1). Other
+platforms get the command to supervise yourself and exit 2.
+[operations.md](operations.md#running-it-as-a-service) has what the unit
+pins and the caveats.
+
+## 8. Optional: shell completion
+
+`bettermemory completion bash|zsh|fish` prints a completion script
+generated from the installed version's own parser; regenerate it after
+an upgrade.
+
+```sh
+eval "$(bettermemory completion bash)"     # in ~/.bashrc
+eval "$(bettermemory completion zsh)"      # in ~/.zshrc, after compinit
+bettermemory completion fish > ~/.config/fish/completions/bettermemory.fish
+```
+
 ## Troubleshooting
+
+Start with `bettermemory doctor`: each check it fails or warns on names
+its fix.
 
 - **`bettermemory` not found** when the client starts the server: use
   the absolute path (`bettermemory init --client X` does this).
-- **Memories not found by `memory_search`**: check `BETTERMEMORY_DIR`,
-  `[storage] directory` in `config.toml`, and the store path
-  `bettermemory status` prints. A project-scoped `./.claude-memory/`
-  overrides the global `~/.claude-memory/`.
+- **Memories not found by `memory_search`**: `bettermemory config path`
+  prints the store directory and the rule that chose it
+  (`BETTERMEMORY_DIR`, `[storage] directory`, a project's
+  `./.claude-memory/`, or the default `~/.claude-memory/`). A project-scoped
+  `./.claude-memory/` overrides the global one unless `[storage]
+  cwd_store = false`.
+- **The daemon does not start after a config change**: the config does
+  not load. `bettermemory config check` names the file and the line.
 - **The server refuses to start, naming `bettermemory migrate v8`**: the
   store directory holds an 8.x store (memory files, event shards or a
   tombstone directory) and no `memory.sqlite`. Run the migration once
@@ -211,12 +323,26 @@ the migrated store on their own.
   `BETTERMEMORY_KEYS_DIR` when that is set), never in the store. The
   server wrote a new key and appended a `rekey` row. Rows signed under
   the old key keep the labels they arrived with, because their
-  pointers cannot be checked here, and `bettermemory log verify`
-  reports the store `unverifiable`.
+  pointers cannot be checked here (under `[security] strict_provenance
+  = true` they read `unaccounted` instead), and `bettermemory log
+  verify` reports the store `unverifiable`. If the old key turns up,
+  file it in the keys directory as
+  `<store_id>.<first 16 hex characters of its fingerprint>.key`.
 - **`bettermemory log verify` reports `tampered`**: a log row fails its
   MAC, the chain is broken, or a table holds a row no log row produced.
   `--json` names the rows. Nothing repairs a tampered store in place;
   the rows it names are the ones to look at.
+- **`log verify` reports `foreign_segment`**: rows signed under a key
+  this machine does not hold come after its own history. Either
+  something wrote into the store file without the key, or the store was
+  moved away and back, or opened once under another
+  `BETTERMEMORY_KEYS_DIR`; in those two cases, filing the other key in
+  the keys directory restores `ok`
+  ([operations.md](operations.md#monitoring) has the file name).
+- **`log verify` reports `origin_mismatch`**: the row where this
+  machine's history of the store begins is gone or changed. A store file
+  copied over the existing one from another machine reads this too; the
+  recovery is in [operations.md](operations.md#monitoring).
 - **Model over-calling `memory_search`**: verify the client surfaces
   the server's `instructions` block; if not, paste
   [system_prompt.md](system_prompt.md) into `CLAUDE.md`.

@@ -27,7 +27,7 @@ Patches `~/.claude.json` (user scope). For project scope, point at the repo's `.
 bettermemory init --client claude-code --config-path .mcp.json
 ```
 
-Claude Code uses the project entry when both are present. Which store the server opens is decided separately: `$BETTERMEMORY_DIR`, then `[storage] directory`, then `./.claude-memory/` in the working directory, then `~/.claude-memory/`.
+Claude Code uses the project entry when both are present. Which store the server opens is decided separately: `$BETTERMEMORY_DIR`, then `[storage] directory`, then `./.claude-memory/` in the working directory unless `[storage] cwd_store = false`, then `~/.claude-memory/`. `bettermemory config path` prints the one in use and the rule that chose it.
 
 The manual path doesn't include the system-prompt skill the plugin ships. For the long-form policy with a manual install, paste [`system_prompt.md`](system_prompt.md) into your `CLAUDE.md`, or `bettermemory init --with-addendum` to print it.
 
@@ -148,7 +148,7 @@ bettermemory try
 
 The offline demo writes a memory citing a file into a throwaway store, deletes the file, and shows the next search flagging it; it needs no client and touches no real store.
 
-In the host itself, ask the model *"what memory tools do you have?"*. If the nine tools are not listed, the server failed to start. `bettermemory status` names the store, and `bettermemory up --foreground` logs the store it opens and any config problem.
+In the host itself, ask the model *"what memory tools do you have?"*. If the nine tools are not listed, the server failed to start. `bettermemory doctor` checks the install, the config, the store, the daemon and the client registrations `init` writes, and names a fix for each failure; `bettermemory status` names the store, and `bettermemory up --foreground` logs the store it opens and any config problem.
 
 After a few sessions, the health report (`bettermemory health`, or `memory_admin(action="health")`) says whether the Stop hook is wired: `telemetry_coverage.covered` is true when Stop-hook settlement telemetry is landing, and the dead-weight and cold-endorsement verdicts are suppressed, with the reason, when it is not.
 

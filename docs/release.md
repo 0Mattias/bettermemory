@@ -1,6 +1,6 @@
 # Release process
 
-Releases are cut by pushing an annotated `v<X.Y.Z>` tag. The `Release` workflow (`.github/workflows/release.yml`) handles the rest: build, full gating suite, PyPI publish, and GitHub release. No tokens; no manual `twine upload` step.
+Releases are cut by pushing an annotated `v<X.Y.Z>` tag. The `Release` workflow (`.github/workflows/release.yml`) handles the rest: build, full gating suite, PyPI publish, build provenance, and GitHub release. No tokens; no manual `twine upload` step.
 
 ## One-time setup: PyPI trusted publishing
 
@@ -105,7 +105,8 @@ git push origin v<X.Y.Z>
 The tag push triggers the `Release` workflow. Watch it from the Actions tab. On success:
 
 - `bettermemory==<X.Y.Z>` is on PyPI.
-- A GitHub release appears on the Releases page, with the sdist and wheel attached as assets. Its notes are the version's CHANGELOG section (`tools/changelog_section.py` prints it in the `github-release` job; the `build` job runs it first and fails when the tag's version has no section, so nothing reaches PyPI for such a tag), followed by GitHub's generated compare link (`generate_release_notes` in `release.yml`; merged pull requests would be listed there too, but this repository lands commits directly). For a stable tag the section is the summary under the `## <X.Y.Z> - <date>` heading, above the first candidate's subsection.
+- The wheel and the sdist carry a signed build-provenance attestation in GitHub's attestation store (the `provenance` job).
+- A GitHub release appears on the Releases page, with the sdist and wheel attached as assets, beside `SHA256SUMS` and the SBOM `bettermemory.cdx.json` ([Verifying a release](#verifying-a-release)). Its notes are the version's CHANGELOG section (`tools/changelog_section.py` prints it in the `github-release` job; the `build` job runs it first and fails when the tag's version has no section, so nothing reaches PyPI for such a tag), followed by GitHub's generated compare link (`generate_release_notes` in `release.yml`; merged pull requests would be listed there too, but this repository lands commits directly). For a stable tag the section is the summary under the `## <X.Y.Z> - <date>` heading, above the first candidate's subsection.
 - For a stable tag, `publish-mcp.yml` lists the version in the MCP registry once the Release run succeeds.
 
 ## Pre-release tags
@@ -117,6 +118,57 @@ A tag whose version carries any letter (`v9.0.0rc1`, `v9.0.0b1`, `v9.0.0.dev1`) 
 - The MCP registry listing is skipped (`publish-mcp.yml`): the registry carries one version per server and a listing is what registry clients install by default. The stable tag that follows lists as usual.
 
 A pre-release keeps the CHANGELOG heading as `## <X.Y.Z> - Unreleased`; the stable tag dates it.
+
+## Verifying a release
+
+From 9.0.0rc12 every tag run publishes three things beside the files: a
+`SHA256SUMS` file, a signed SLSA build-provenance attestation for the
+wheel and the sdist, and a CycloneDX 1.5 SBOM of the locked dependency
+set. Earlier releases have none of them.
+
+1. **The checksums.** Download the wheel, the sdist and `SHA256SUMS`
+   from the GitHub release into one directory, then run
+   `sha256sum -c SHA256SUMS` (on macOS, `shasum -a 256 -c SHA256SUMS`).
+   The build job wrote the file over exactly the files `uv build`
+   produced, the bytes PyPI received from the same artifact, so a wheel
+   downloaded from PyPI matches its line too.
+2. **The provenance.** With the GitHub CLI:
+
+   ```sh
+   gh attestation verify bettermemory-<X.Y.Z>-py3-none-any.whl -R 0Mattias/bettermemory
+   ```
+
+   It checks the file's digest against an attestation signed for this
+   repository. To also require that the release workflow built it from
+   the tag, add
+   `--signer-workflow 0Mattias/bettermemory/.github/workflows/release.yml --source-ref refs/tags/v<X.Y.Z>`.
+   The sdist verifies the same way.
+3. **The SBOM.** `bettermemory.cdx.json` lists every package `uv.lock`
+   pins, with the SHA-256 the lock holds for each sdist and wheel, the
+   runtime closure scoped `required` and the `dev` extra `optional`. It
+   is a function of the lock and `pyproject.toml` alone, so it can be
+   rebuilt and compared rather than taken on trust: at the tag, with
+   `SOURCE_DATE_EPOCH` unset, `python3 tools/sbom.py --lock uv.lock --out
+   rebuilt.cdx.json` writes the same bytes (`cmp` them).
+
+How the workflow produces them: the `build` job writes `SHA256SUMS`
+into a `dist-extra` artifact of its own, never into `dist/`, since the
+publish jobs upload every file in `dist/` to PyPI. The `provenance` job
+waits for the same gates as the publish jobs, checks the files against
+`SHA256SUMS`, and attests them with `actions/attest-build-provenance`
+(v4.2.2); nothing on the PyPI path depends on it. The `github-release`
+job checks the files against `SHA256SUMS` again, writes the SBOM with
+`tools/sbom.py` after the publish, and attaches `dist/*` and
+`dist-extra/*`. A manual dispatch attests its TestPyPI build too, which
+is how the job is exercised ahead of a tag.
+
+What the build pins, so that the files are reproducible from the tag:
+the build backend is `hatchling==1.32.4` in `pyproject.toml`
+(`uv build` resolves it afresh under build isolation, and `uv.lock`'s
+hashes do not cover it; bump it on purpose, rebuild a tagged release with
+the new version and compare the files), and the `build` job restores no
+uv cache (`enable-cache: false`), so nothing an earlier run wrote reaches
+the environment that builds what PyPI receives.
 
 ## Dry run via TestPyPI
 
@@ -173,6 +225,22 @@ No secret is involved. Authentication is GitHub OIDC (`id-token: write`), and
 the token's repository-owner claim is what authorises the
 `io.github.0Mattias/*` namespace.
 
+The publisher is pinned: `MCP_PUBLISHER_VERSION` (`1.8.6`) names the
+upstream release, and `MCP_PUBLISHER_CHECKSUMS_SHA256` the SHA-256 of that
+release's `registry_<version>_checksums.txt`. The step holds the
+checksums file to that digest, then the archive to its line in the file,
+and stops before unpacking anything on a mismatch. The registry is in
+preview and its API moves with the tool, so a stale pin can fail against
+the live service; the failure is loud and leaves the release unlisted
+until a dispatch lists it. To move the pin, set both values; the digest
+is the asset's `digest` the release API reports, after its `sha256:`
+prefix:
+
+```sh
+gh api repos/modelcontextprotocol/registry/releases/tags/v<version> \
+  --jq '.assets[] | select(.name | endswith("_checksums.txt")) | .digest'
+```
+
 Two things the registry checks that are easy to break silently, both asserted
 by the workflow before it calls the publisher so the log names which one
 failed:
@@ -217,3 +285,29 @@ git push --force origin v<X.Y.Z>
 ```
 
 The forced push runs the workflow again.
+
+### The `Attest build provenance` job failed
+
+The files are on PyPI and the GitHub release is out: neither waits for
+the job. The run is red, so `publish-mcp.yml` lists nothing for a stable
+tag. Re-run the failed job (`gh run rerun <run-id> --failed`), which
+attests the same artifact and lets the listing follow; or, when the
+attestation can wait, list the version with a dispatch of "Publish to MCP
+Registry".
+
+### The `Write the SBOM` step failed
+
+The step runs in `github-release` after the PyPI publish and before the
+release is created, so the version is on PyPI with no GitHub release.
+Re-run the failed job, or create the release by hand from the run's
+artifacts at the tag:
+
+```sh
+gh run download <run-id> -n dist -D dist
+gh run download <run-id> -n dist-extra -D dist-extra
+python3 tools/sbom.py --lock uv.lock --out dist-extra/bettermemory.cdx.json
+python3 tools/changelog_section.py CHANGELOG.md <X.Y.Z> > release-notes.md
+gh release create v<X.Y.Z> dist/* dist-extra/* --notes-file release-notes.md --generate-notes
+```
+
+Add `--prerelease` for a pre-release tag.
