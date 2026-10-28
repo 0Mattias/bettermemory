@@ -551,6 +551,29 @@ def test_capture_rows_are_control_rows_with_their_own_writer(tmp_path: Path) -> 
     assert not store.refold()["problems"]
 
 
+def test_a_stored_token_an_editor_made_non_ascii_is_unknown(tmp_path: Path) -> None:
+    """The batch token is read off the log, which an editor of the store
+    file can rewrite. Compared as text, a non-ASCII one ended `capture
+    review` and `undo` in a TypeError; it reads as no match."""
+    import json
+    import sqlite3
+
+    store = Store(tmp_path / "store")
+    batch = capture.open_batch(
+        store, session_id=STOP_SESSION, transcript_bytes=10, offset=0
+    )
+    row = next(store.capture_rows({CAPTURE_OPEN}))
+    payload = json.loads(row.payload)
+    payload["token"] = "\u00e9" * 16
+    outside = sqlite3.connect(store.path)
+    outside.execute(
+        "UPDATE log SET payload = ? WHERE seq = ?", (json.dumps(payload), row.seq)
+    )
+    outside.commit()
+    outside.close()
+    assert capture.batch_for_token(store, batch.token) == (None, capture.TOKEN_UNKNOWN)
+
+
 def test_opening_is_atomic_per_session(tmp_path: Path) -> None:
     path = tmp_path / "store"
     store = Store(path)

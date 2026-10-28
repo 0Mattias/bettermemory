@@ -440,8 +440,19 @@ def batch_for_token(
     constant-time, and a token of the wrong shape is unknown."""
     if not _TOKEN_RE.fullmatch(token):
         return None, TOKEN_UNKNOWN
+    # Compared as bytes: a stored token is whatever the log row says, and
+    # `secrets.compare_digest` raises TypeError on a str that is not ASCII,
+    # so one an editor of the store file rewrote must read as no match.
+    given = token.encode("utf-8", errors="surrogatepass")
     found = next(
-        (b for b in batches(store) if secrets.compare_digest(b.token, token)), None
+        (
+            b
+            for b in batches(store)
+            if secrets.compare_digest(
+                b.token.encode("utf-8", errors="surrogatepass"), given
+            )
+        ),
+        None,
     )
     if found is None:
         return None, TOKEN_UNKNOWN

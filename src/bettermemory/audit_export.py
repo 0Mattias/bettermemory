@@ -104,7 +104,8 @@ AUDIT_SCHEMA = "bettermemory.audit/1"
 MAX_SEQ = 2**63 - 1
 
 # The deepest nesting a payload is exported as parsed JSON: a dict or a
-# list inside 128 others. The store writes a few levels; deeper text only
+# list inside 127 others (the outermost is level 1, as `nests_deeper_than`
+# counts). The store writes a few levels; deeper text only
 # a hand edit writes, and it is exported as its text. The bound is the
 # export's own, not the parser's: Python 3.14's parser limits recursion by
 # stack use rather than by a count, so it parses a payload 100,000 levels
