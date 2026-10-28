@@ -15,9 +15,10 @@ platform equivalent). It's created on first run with every setting commented
 out (`DEFAULT_CONFIG`), so the code's defaults apply until a line is
 uncommented; a file that exists is never rewritten.
 
-An organisation-managed file (`managed.py`, at a fixed system path) is read
-after it, and every key it sets is pinned: the user file's value for that
-key is ignored (`_apply_managed`).
+An organisation-managed config (`managed.py`: a file at a fixed system
+path, on Windows a registry value under HKEY_LOCAL_MACHINE) is read after
+it, and every key it sets is pinned: the user file's value for that key is
+ignored (`_apply_managed`).
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ import sys
 import tomllib
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeAlias
 
 import platformdirs
 
@@ -45,6 +46,11 @@ ENV_DIR_OVERRIDE = "BETTERMEMORY_DIR"
 KEYS_DIR_ENV = "BETTERMEMORY_KEYS_DIR"
 #: The store file inside the resolved directory (`store.py` re-exports it).
 STORE_FILENAME = "memory.sqlite"
+
+#: Where one parsed config came from, as the loader names it in its errors
+#: and notices: a file, or the registry value that holds the managed config
+#: on Windows (`managed.RegistryValue`), which has no path.
+ConfigSource: TypeAlias = Path | _managed.RegistryValue
 
 DEFAULT_CONFIG = """\
 # bettermemory config
@@ -564,13 +570,14 @@ class Config:
     membership: MembershipConfig = field(default_factory=MembershipConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)
     config_path: Path | None = None
-    # The organisation-managed file this config was overlaid with, None
-    # when the machine has none (`managed.py`), and the settings it
-    # pinned as "section.key" (`"policy.forbid_force"`). Only keys that
-    # name a setting of this config are listed; a key the loader does not
-    # read is ignored in the managed file as it is in config.toml. A
-    # surface that reports where a value came from labels these managed.
-    managed_path: Path | None = None
+    # The organisation-managed config this config was overlaid with (its
+    # file, or on Windows its registry value), None when the machine has
+    # none (`managed.py`), and the settings it pinned as "section.key"
+    # (`"policy.forbid_force"`). Only keys that name a setting of this
+    # config are listed; a key the loader does not read is ignored in the
+    # managed config as it is in config.toml. A surface that reports where
+    # a value came from labels these managed.
+    managed_path: _managed.ManagedSource | None = None
     managed_keys: frozenset[str] = frozenset()
 
     # ---- methods ----------------------------------------------------------
@@ -725,7 +732,7 @@ def _coerce_bool(value: object, default: bool) -> bool:
 
 
 def _malformed_config_msg(
-    label: str, value: object, config_path: Path | None, expected: str
+    label: str, value: object, config_path: ConfigSource | None, expected: str
 ) -> str:
     """Clear, located error for a mistyped config value — names the
     section/key, the offending value, and the file, so a bad TOML entry
@@ -738,7 +745,7 @@ def _malformed_config_msg(
 
 
 def _coerce_int(
-    value: object, default: int, *, label: str, config_path: Path | None
+    value: object, default: int, *, label: str, config_path: ConfigSource | None
 ) -> int:
     """Coerce a TOML value to ``int``, raising a located ValueError on a
     non-numeric value rather than letting a bare ``int(...)`` escape
@@ -770,7 +777,7 @@ def _coerce_int(
 MIN_CHECKPOINT_TOKENS = 500
 
 
-def _clamp_checkpoint_tokens(value: int, *, config_path: Path | None) -> int:
+def _clamp_checkpoint_tokens(value: int, *, config_path: ConfigSource | None) -> int:
     """Raise `[capture] checkpoint_tokens` to `MIN_CHECKPOINT_TOKENS`,
     loudly, rather than reject it: by `default_max_results`' rule a bad
     value in one knob must not take the server down."""
@@ -795,7 +802,7 @@ def _clamp_checkpoint_tokens(value: int, *, config_path: Path | None) -> int:
 _SEARCH_MODES = ("keyword", "bm25", "hybrid")
 
 
-def _coerce_search_mode(value: object, *, config_path: Path | None) -> str:
+def _coerce_search_mode(value: object, *, config_path: ConfigSource | None) -> str:
     """Normalise `[behavior] search_mode`, falling back to `hybrid`.
 
     Unlike the scalars above this does NOT raise, and unlike the old bare
@@ -845,7 +852,7 @@ def _coerce_search_mode(value: object, *, config_path: Path | None) -> str:
 PROMPT_RECALL_MODES: tuple[str, ...] = ("project", "everywhere", "off")
 
 
-def _coerce_prompt_recall(value: object, *, config_path: Path | None) -> str:
+def _coerce_prompt_recall(value: object, *, config_path: ConfigSource | None) -> str:
     """Normalise `[behavior] prompt_recall` to one of `PROMPT_RECALL_MODES`.
 
     A config written before the recall surface took a mode carries a
@@ -879,7 +886,7 @@ def _coerce_prompt_recall(value: object, *, config_path: Path | None) -> str:
 
 
 def _coerce_float(
-    value: object, default: float, *, label: str, config_path: Path | None
+    value: object, default: float, *, label: str, config_path: ConfigSource | None
 ) -> float:
     """Coerce a TOML value to ``float``, raising a located ValueError on a
     non-numeric value (cf. ``_coerce_int``). Valid-input behaviour matches
@@ -901,7 +908,7 @@ def _coerce_float(
 
 
 def _coerce_str_list(
-    value: object, *, label: str, config_path: Path | None
+    value: object, *, label: str, config_path: ConfigSource | None
 ) -> list[str]:
     """Coerce a TOML list-of-strings, REJECTING a bare string scalar.
 
@@ -928,7 +935,7 @@ def _coerce_str_list(
 
 
 def _coerce_optional_str(
-    value: object, *, label: str, config_path: Path | None
+    value: object, *, label: str, config_path: ConfigSource | None
 ) -> str | None:
     """Require a TOML value to be a string when present (cf. ``_coerce_int``).
 
@@ -949,7 +956,7 @@ def _coerce_optional_str(
 
 
 def _coerce_switch(
-    value: object, default: bool, *, label: str, config_path: Path | None
+    value: object, default: bool, *, label: str, config_path: ConfigSource | None
 ) -> bool:
     """`_coerce_bool` for a security switch: the same spellings, and a
     located error for anything else instead of the default.
@@ -975,7 +982,7 @@ def _coerce_switch(
 
 
 def _coerce_acknowledge_names(
-    value: object, *, label: str, config_path: Path | None
+    value: object, *, label: str, config_path: ConfigSource | None
 ) -> list[str]:
     """`[policy] forbid_acknowledge`: a list of `ACKNOWLEDGE_NAMES`.
 
@@ -1012,7 +1019,7 @@ def default_config_path() -> Path:
 # warning. Drop this shim no earlier than 3.4.x — long enough that any
 # 3.1.x user has seen the deprecation warning at least once. The
 # removed-key notice below shares the set, keyed `<key>+removed`.
-_DEPRECATED_KEY_WARNED_PATHS: set[tuple[Path, str]] = set()
+_DEPRECATED_KEY_WARNED_PATHS: set[tuple[ConfigSource, str]] = set()
 
 
 # [behavior] keys a major release removed after a deprecation cycle:
@@ -1119,11 +1126,14 @@ _REMOVED_SECTIONS: dict[str, tuple[str, str]] = {
 }
 
 
-def _resolved_for_guard(config_path: Path) -> Path:
+def _resolved_for_guard(config_path: ConfigSource) -> ConfigSource:
     """The path the one-shot warning guards key on: resolved so two
     `load_config` calls naming the same file via different paths share
     one warning, or the path as given when it cannot be resolved (deleted
-    out from under us between the `open()` and here)."""
+    out from under us between the `open()` and here). A registry value has
+    one name and nothing to resolve."""
+    if isinstance(config_path, _managed.RegistryValue):
+        return config_path
     try:
         return config_path.resolve()
     except OSError:
@@ -1131,7 +1141,7 @@ def _resolved_for_guard(config_path: Path) -> Path:
 
 
 def _warn_removed_key(
-    *, section: str, key: str, removed_in: str, why: str, resolved: Path
+    *, section: str, key: str, removed_in: str, why: str, resolved: ConfigSource
 ) -> None:
     """One notice per (config, section, key), on the log lane.
 
@@ -1169,7 +1179,7 @@ def _drop_removed_keys(
     *,
     section: str,
     registry: dict[str, tuple[str, str]],
-    config_path: Path,
+    config_path: ConfigSource,
 ) -> None:
     """Drop every removed key of one section, warning once per (config, key).
 
@@ -1191,7 +1201,7 @@ def _drop_removed_keys(
         )
 
 
-def _drop_removed_sections(data: dict[str, Any], config_path: Path) -> None:
+def _drop_removed_sections(data: dict[str, Any], config_path: ConfigSource) -> None:
     """Warn once per key of every removed section a config still carries.
 
     A removed section is never an error: the loader reads nothing from
@@ -1213,7 +1223,7 @@ def _drop_removed_sections(data: dict[str, Any], config_path: Path) -> None:
 
 
 def _apply_legacy_endorsement_debt_alias(
-    behavior_raw: dict[str, object], config_path: Path
+    behavior_raw: dict[str, object], config_path: ConfigSource
 ) -> None:
     """Translate the pre-3.2 `endorsement_debt_ratio_threshold` key to
     its 3.2 successor `cold_endorsement_ratio_threshold` in place.
@@ -1231,22 +1241,18 @@ def _apply_legacy_endorsement_debt_alias(
     The (config_path, key) key on the warned-set lets a process serving
     multiple memory directories surface each config's drift separately,
     matching the `_DIVERGENCE_WARNED_ROOTS` discipline in store.py.
-    Best-effort key resolution: `config_path.resolve()` collapses
+    Best-effort key resolution (`_resolved_for_guard`): resolving collapses
     symlinks so two `load_config` calls naming the same file via
-    different paths share one warning.
+    different paths share one warning; a path that cannot be resolved
+    (deleted out from under us between the `open()` and here) keys the
+    guard as given, so the one-shot guard still works for the common case.
     """
     old_key = "endorsement_debt_ratio_threshold"
     new_key = "cold_endorsement_ratio_threshold"
     if old_key not in behavior_raw:
         return
 
-    try:
-        resolved = config_path.resolve()
-    except OSError:
-        # If the path can't be resolved (deleted out from under us between
-        # the `open()` and here), fall back to the unresolved path so the
-        # one-shot guard still works for the common case.
-        resolved = config_path
+    resolved = _resolved_for_guard(config_path)
 
     import logging
 
@@ -1365,16 +1371,16 @@ def load_config(path: Path | None = None, *, create: bool = True) -> Config:
 
 
 def _overlay_managed(data: dict[str, Any], config_path: Path) -> Config:
-    """The `Config` for one parsed user file, with the managed file's pins
-    applied when the machine has one."""
-    # The organisation-managed file, looked up through the module so the
-    # suite's autouse fixture can point it at a scratch path. None (no
-    # file, every install that never deployed one) leaves the user's file
-    # the only source, and the result is what it was before managed files
-    # existed.
-    managed_path = _managed.managed_config_path()
-    managed_data = None if managed_path is None else _managed.read_managed(managed_path)
-    if managed_path is None or managed_data is None:
+    """The `Config` for one parsed user file, with the managed config's
+    pins applied when the machine has one."""
+    # The organisation-managed config, a file or on Windows a registry
+    # value, looked up through the module so the suite's autouse fixture
+    # can point it at a scratch path. None (no file, no value: every
+    # install that never deployed one) leaves the user's file the only
+    # source, and the result is what it was before managed configs existed.
+    managed_path = _managed.managed_config_source()
+    managed_data = _managed.read_managed_source(managed_path)
+    if managed_data is None:
         return _config_from_data(data, config_path)
     return _apply_managed(
         data,
@@ -1389,7 +1395,7 @@ def _apply_managed(
     *,
     config_path: Path,
     managed_data: dict[str, Any],
-    managed_path: Path,
+    managed_path: _managed.ManagedSource,
 ) -> Config:
     """The user's config with every setting the managed file sets pinned.
 
@@ -1491,7 +1497,7 @@ def _restates_default(raw: object, default: object) -> bool:
 
 
 def _warn_pinned_key(
-    *, section: str, key: str, config_path: Path, managed_path: Path
+    *, section: str, key: str, config_path: Path, managed_path: _managed.ManagedSource
 ) -> None:
     """One notice per (config, managed file, key) that the user's value
     is ignored, on the log lane and with the one-shot guard the removed-key
@@ -1522,7 +1528,7 @@ _SCALAR_TOLERATED_SECTIONS = frozenset({"daemon", "capture", "membership"})
 
 
 def _section_table(
-    data: dict[str, Any], name: str, config_path: Path
+    data: dict[str, Any], name: str, config_path: ConfigSource
 ) -> dict[str, Any]:
     """The `[name]` table of one parsed file: ``{}`` when the file has no
     such section, the table itself (mutated in place by the steps below)
@@ -1569,7 +1575,7 @@ def _section_table(
     return {}
 
 
-def _config_from_data(data: dict[str, Any], config_path: Path) -> Config:
+def _config_from_data(data: dict[str, Any], config_path: ConfigSource) -> Config:
     """Build a `Config` from one parsed TOML file.
 
     `config_path` locates every error and notice: the user's config.toml,
@@ -1765,5 +1771,7 @@ def _config_from_data(data: dict[str, Any], config_path: Path) -> Config:
                 security_raw.get("strict_provenance"), False
             ),
         ),
-        config_path=config_path,
+        # The managed config's own parse (`_apply_managed`) can name a
+        # registry value, which is no file's path.
+        config_path=config_path if isinstance(config_path, Path) else None,
     )

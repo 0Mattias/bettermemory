@@ -10,15 +10,16 @@ not take the daemon down. For a ranking knob that is the right trade. For
 a security switch it is not, and the person who wrote the line has no way
 to learn that it is inert: the daemon starts, the hooks answer, and the
 setting they meant to change is the setting they had. The organisation's
-managed file (`managed.py`) adds a second source, and nothing showed which
-of the two decided a value.
+managed config (`managed.py`: a file, on Windows a registry value) adds a
+second source, and nothing showed which of the two decided a value.
 
 Three subcommands, each with ``--json``:
 
-- ``path``: the config file, the managed file (none is read on Windows in
-  this release, and the command says so rather than print a path nothing
-  reads), the store directory with the rule that chose it, and the keys and
-  state directories with what chose them.
+- ``path``: the config file, the managed file (on Windows the registry
+  value that holds the managed config, named
+  ``registry HKLM\\SOFTWARE\\Policies\\bettermemory\\ManagedConfig``), the
+  store directory with the rule that chose it, and the keys and state
+  directories with what chose them.
 - ``show``: every setting the loader reads, with its value in force and
   where it came from: ``default``, ``user`` (the user's config.toml) or
   ``managed``. A managed setting the user's file sets differently shows the
@@ -94,14 +95,6 @@ EXIT_WARNING = 2
 DEFAULT = "default"
 USER = "user"
 MANAGED = "managed"
-
-#: Said where the managed file would be, on the platform where none is
-#: read (`managed.managed_config_path` answers None there).
-WINDOWS_MANAGED_NOTE = (
-    "no managed file is read on Windows in this release: a standard account "
-    "can create the folder under ProgramData, so a file there is not trusted "
-    "until its owner is checked"
-)
 
 #: The legacy spellings the loader still reads, as (section, old) -> new
 #: (`config._apply_legacy_endorsement_debt_alias`).
@@ -205,28 +198,30 @@ def _held_notices() -> Iterator[list[str]]:
 
 @dataclass(frozen=True)
 class ConfigFile:
-    """One of the two files the config is built from.
+    """One of the two sources the config is built from.
 
-    `role` is ``user`` (config.toml) or ``managed``. `path` is None only
-    for the managed file on a platform where none is read, and `note` then
-    says why. `data` is the parsed file, None when it is missing or does
-    not parse, and `error` then says why it does not."""
+    `role` is ``user`` (config.toml) or ``managed``. `path` is the file,
+    or for the managed config on Windows the registry value that holds it
+    (`managed.RegistryValue`, printed as ``registry HKLM\\...``). `data` is
+    the parsed text, None when it is missing or does not parse, and
+    `error` then says why it does not."""
 
     role: str
-    path: Path | None
+    path: _config.ConfigSource
     exists: bool
     data: dict[str, Any] | None = None
     error: str | None = None
-    note: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
             "role": self.role,
-            "path": None if self.path is None else str(self.path),
+            "path": str(self.path),
             "exists": self.exists,
             "parses": self.data is not None,
             "error": self.error,
-            "note": self.note,
+            # rc12's shape: a note said why no managed file was read on
+            # Windows. A managed config is read on every platform now.
+            "note": None,
         }
 
 
@@ -269,17 +264,35 @@ def _read(role: str, path: Path) -> ConfigFile:
     return ConfigFile(role, path, exists=True, data=data)
 
 
+def _read_registry(role: str, location: _managed.RegistryValue) -> ConfigFile:
+    """`_read` for the registry value that holds the managed config on
+    Windows, through the managed loader's own reader and parse: an absent
+    key or value is no managed config, and a value that cannot be read or
+    does not parse is there, with the reason the loader would give."""
+    try:
+        text = _managed.read_registry_text(location)
+        if text is None:
+            return ConfigFile(role, location, exists=False)
+        data = _managed.parse_managed_text(text, location)
+    except ValueError as exc:
+        return ConfigFile(role, location, exists=True, error=str(exc))
+    return ConfigFile(role, location, exists=True, data=data)
+
+
+def _read_managed() -> ConfigFile:
+    """The managed config, read from wherever this machine keeps it
+    (`managed.managed_config_source`, looked up at call time)."""
+    source = _managed.managed_config_source()
+    if isinstance(source, _managed.RegistryValue):
+        return _read_registry(MANAGED, source)
+    return _read(MANAGED, source)
+
+
 def read_files() -> tuple[ConfigFile, ConfigFile]:
-    """The user's config.toml and the managed file, each read through the
-    module that owns its location, looked up at call time (the test suite
-    points both at scratch paths)."""
-    user = _read(USER, _config.default_config_path())
-    managed_path = _managed.managed_config_path()
-    if managed_path is None:
-        managed = ConfigFile(MANAGED, None, exists=False, note=WINDOWS_MANAGED_NOTE)
-    else:
-        managed = _read(MANAGED, managed_path)
-    return user, managed
+    """The user's config.toml and the managed config, each read through
+    the module that owns its location, looked up at call time (the test
+    suite points both at scratch paths)."""
+    return _read(USER, _config.default_config_path()), _read_managed()
 
 
 def _load() -> _config.Config:
@@ -344,7 +357,7 @@ def path_report() -> dict[str, Any]:
     from .. import store as _store
 
     user_path = _config.default_config_path()
-    managed_path = _managed.managed_config_path()
+    managed_source = _read_managed()
     config: _config.Config | None = None
     error: str | None = None
     with _held_notices():
@@ -353,11 +366,13 @@ def path_report() -> dict[str, Any]:
         except (ValueError, OSError) as exc:
             error = str(exc)
     managed: dict[str, Any] = {
-        "path": None if managed_path is None else str(managed_path),
-        "exists": managed_path is not None and _present(managed_path),
-        "read": managed_path is not None,
+        "path": str(managed_source.path),
+        "exists": managed_source.exists,
+        # rc12's shape: `read` was false, and `note` said why, on Windows,
+        # where no managed file was read. The registry value is read now.
+        "read": True,
         "pinned": None if config is None else sorted(config.managed_keys),
-        "note": WINDOWS_MANAGED_NOTE if managed_path is None else None,
+        "note": None,
     }
     keys_dir = _store.resolve_keys_dir().expanduser()
     state_dir = _daemon_client.resolve_state_dir().expanduser()
@@ -401,9 +416,7 @@ def render_path(report: Mapping[str, Any]) -> str:
         + ("" if config["exists"] else " (not created yet: the defaults apply)"),
     )
     managed = report["managed"]
-    if managed["path"] is None:
-        row("managed file", f"none ({managed['note']})")
-    elif not managed["exists"]:
+    if not managed["exists"]:
         row("managed file", f"{managed['path']} (none deployed: nothing is pinned)")
     else:
         pinned = managed["pinned"]
@@ -513,10 +526,9 @@ def render_show(report: Mapping[str, Any]) -> str:
 
 
 def _file_line(entry: Mapping[str, Any]) -> str:
-    """One file as the reports name it: its path and, when it is not
-    there, what that means for its role."""
-    if entry["path"] is None:
-        return f"none ({entry['note']})"
+    """One file as the reports name it: its path (the registry value, for
+    the managed config on Windows) and, when it is not there, what that
+    means for its role."""
     if not entry["exists"]:
         if entry["role"] == USER:
             return f"{entry['path']} (not created yet: the defaults apply)"
@@ -666,15 +678,15 @@ def _not_a_table(role: str, name: str, value: object) -> Finding:
     )
 
 
-def _strip_location(message: str, path: Path | None) -> str:
+def _strip_location(message: str, path: _config.ConfigSource) -> str:
     """The loader's located error without its file prefix: the report
     groups findings under their file already."""
-    if path is not None:
-        message = message.removeprefix(f"malformed config in {path}: ")
-    return message
+    return message.removeprefix(f"malformed config in {path}: ")
 
 
-def _parse_one(section: str, key: str, value: object, path: Path) -> Any:
+def _parse_one(
+    section: str, key: str, value: object, path: _config.ConfigSource
+) -> Any:
     """`value` as the loader reads `[section] key`, parsed on its own by
     the loader's own code, so the check and a load cannot disagree.
     Raises the loader's located ValueError when it refuses the value."""
@@ -796,7 +808,7 @@ def _is_str_list(value: object) -> TypeGuard[list[str]]:
 
 
 def _value_findings(
-    role: str, path: Path, section: str, key: str, value: object
+    role: str, path: _config.ConfigSource, section: str, key: str, value: object
 ) -> list[Finding]:
     """What is wrong with one value the loader reads, if anything."""
     label = f"[{section}] {key}"
@@ -939,7 +951,7 @@ def _port_findings(role: str, port: int) -> list[Finding]:
 
 def _section_findings(
     file: ConfigFile,
-    path: Path,
+    path: _config.ConfigSource,
     section: str,
     table: Mapping[str, Any],
     *,
@@ -1028,7 +1040,7 @@ def _file_findings(
     user's file an unknown one is ignored like any unknown key."""
     if file.error is not None:
         return [Finding(ERROR, "unreadable", file.role, None, None, file.error)]
-    if file.data is None or file.path is None:
+    if file.data is None:
         return []
     catalogue = settings_catalogue()
     removed_sections = _config._REMOVED_SECTIONS
@@ -1202,9 +1214,10 @@ def add_subparser(
     config_sub = parser.add_subparsers(dest="config_cmd")
 
     path_text = (
-        "Print the config file, the organisation's managed file (none is read "
-        "on Windows in this release), the store directory with the rule that "
-        "chose it, and the keys and state directories. Exit 0, or 1 when the "
+        "Print the config file, the organisation's managed file (on Windows the "
+        "registry value HKLM\\SOFTWARE\\Policies\\bettermemory\\ManagedConfig), "
+        "the store directory with the rule that chose it, and the keys and "
+        "state directories. Exit 0, or 1 when the "
         "config does not load (the store is then resolved only from "
         "BETTERMEMORY_DIR)."
     )

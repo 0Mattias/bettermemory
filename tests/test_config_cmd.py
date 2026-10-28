@@ -10,8 +10,8 @@ Four contracts, each pinned with the behaviour it promises:
    error, and a file that is not UTF-8, name the file. A byte-order mark
    is dropped, as the managed loader drops it. ``create=False`` writes
    nothing and still applies the managed file.
-2. **`config path`** names every location and what chose it, says so on
-   Windows instead of printing a managed path nothing reads, and resolves
+2. **`config path`** names every location and what chose it (the
+   registry value on Windows: tests/test_managed_windows.py), and resolves
    the store from ``BETTERMEMORY_DIR`` alone when the config does not load.
 3. **`config show`** labels every setting default, user or managed, and
    names a user value a managed pin overrides.
@@ -396,18 +396,6 @@ def test_path_names_every_location_and_what_chose_it(
     assert "(none deployed: nothing is pinned)" in text
     assert f"{store_dir.resolve()}  (BETTERMEMORY_DIR)" in text
     assert "  (BETTERMEMORY_KEYS_DIR; not created yet)" in text
-
-
-def test_path_says_no_managed_file_is_read_on_windows(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    monkeypatch.setattr(_managed, "managed_config_path", lambda: None)
-    report = config_cmd.path_report()
-    assert report["managed"]["path"] is None
-    assert report["managed"]["read"] is False
-    assert "Windows" in report["managed"]["note"]
-    text = config_cmd.render_path(report)
-    assert "managed file  none (no managed file is read on Windows" in text
 
 
 def test_path_reports_a_managed_file_and_its_pins(managed_config_path: Path) -> None:
@@ -1058,18 +1046,6 @@ def test_a_load_failure_no_finding_explains_is_a_finding_itself(
     )
     assert "TypeError: an unmodelled failure" in finding["message"]
     assert "the config as a whole" in config_cmd.render_check(report)
-
-
-def test_the_check_on_windows_names_why_no_managed_file_is_read(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(_managed, "managed_config_path", lambda: None)
-    report = _check(DEFAULT_CONFIG)
-    assert report["files"][1]["path"] is None
-    assert "Windows" in report["files"][1]["note"]
-    assert "managed file: none (no managed file is read on Windows" in (
-        config_cmd.render_check(report)
-    )
 
 
 def test_text_output_cannot_write_control_characters(

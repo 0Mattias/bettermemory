@@ -1,16 +1,31 @@
 # bettermemory organisation-managed config: an example to start from.
 #
 # Install it, as root or through MDM or configuration management, at the
-# fixed path for the platform. No environment variable moves it:
+# fixed location for the platform. No environment variable moves it:
 #
 #   macOS    /Library/Application Support/bettermemory/managed.toml
 #   Linux    /etc/bettermemory/managed.toml (every other POSIX system too)
-#   Windows  none in this release: no managed file is read on Windows until
-#            its owner and ACL are checked, since a standard account can
-#            create folders under ProgramData. A file placed there is ignored.
+#   Windows  no file: this text is the registry value ManagedConfig under
+#            HKEY_LOCAL_MACHINE\SOFTWARE\Policies\bettermemory, a REG_SZ, or
+#            a REG_MULTI_SZ with one string per line, read through the
+#            64-bit registry view. Nothing under ProgramData is read.
+#
+# On Windows, from an elevated prompt (REG_MULTI_SZ: each \0 starts a line,
+# and /reg:64 writes the 64-bit view, the one bettermemory reads):
+#
+#   reg add "HKLM\SOFTWARE\Policies\bettermemory" /v ManagedConfig /t REG_MULTI_SZ /reg:64 /f /d "[storage]\0cwd_store = false\0[policy]\0forbid_acknowledge = ['credential']"
+#
+# Group Policy deploys the same value with a Registry preference item under
+# Computer Configuration, and Intune with a PowerShell script run as SYSTEM
+# in 64-bit PowerShell, for this whole file:
+#
+#   New-Item -Path 'HKLM:\SOFTWARE\Policies\bettermemory' -Force | Out-Null
+#   New-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\bettermemory' -Name ManagedConfig -PropertyType String -Value (Get-Content -Raw -Encoding UTF8 managed.toml) -Force
 #
 # Make it readable by every account that runs bettermemory and writable only
-# by the administrator (root-owned, mode 0644, on POSIX).
+# by the administrator (root-owned, mode 0644, on POSIX; the key's default
+# access on Windows, where only administrators can write under
+# SOFTWARE\Policies).
 #
 # The file takes config.toml's own sections and keys. Every key set here is
 # pinned: a user's config.toml value for it is ignored, and bettermemory logs
@@ -20,7 +35,9 @@
 # The file fails closed. If it exists but cannot be read, is not valid TOML,
 # or holds a value of the wrong type or an unknown policy name, loading the
 # config stops with an error naming this file (the daemon does not start),
-# rather than run without the pins.
+# rather than run without the pins. The registry value fails closed the same
+# way, and also when it is of any type but REG_SZ or REG_MULTI_SZ. Only an
+# absent file, key or value means there is no managed config.
 #
 # What it is and is not: it binds the user's config, so an agent that edits
 # config.toml cannot loosen these settings. It does not bind a process

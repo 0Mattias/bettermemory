@@ -79,27 +79,6 @@ def test_the_production_seam_answers_the_system_path() -> None:
     assert _REAL_MANAGED_CONFIG_PATH() == expected
 
 
-def test_windows_reads_no_managed_file_yet(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A standard user can create folders under ProgramData, so a file
-    # there is not yet known to be an administrator's.
-    monkeypatch.setattr(sys, "platform", "win32")
-    assert _REAL_MANAGED_CONFIG_PATH() is None
-
-
-def test_the_example_sends_no_windows_admin_to_a_path_never_read(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The example's install table is what an administrator follows. While
-    no managed file is read on Windows, its Windows line says so, rather
-    than name a path whose pins would be ignored without a word."""
-    monkeypatch.setattr(sys, "platform", "win32")
-    assert _REAL_MANAGED_CONFIG_PATH() is None
-    header = _EXAMPLE.read_text(encoding="utf-8").split("[storage]")[0]
-    [windows] = [line for line in header.splitlines() if "Windows" in line]
-    assert "none in this release" in windows
-    assert "managed.toml" not in windows
-
-
 @pytest.mark.parametrize(
     ("platform", "expected"),
     [
@@ -112,25 +91,15 @@ def test_the_location_is_fixed_per_platform(platform: str, expected: Path) -> No
     assert _managed.system_path(platform) == expected
 
 
-def test_windows_reads_program_data_from_the_shell(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    program_data = tmp_path / "ProgramData"
-    monkeypatch.setattr(_managed, "_windows_program_data", lambda: program_data)
-    assert _managed.system_path("win32") == (
-        program_data / "bettermemory" / "managed.toml"
-    )
-
-
 def test_no_environment_variable_moves_the_managed_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """`platformdirs.site_config_dir` honours `$XDG_CONFIG_DIRS` and a
     Windows lookup by variable honours `%ProgramData%`; both are the
     user's to set, so neither may move the file. Nor may the variables
-    that move the store, the keys or the user config."""
+    that move the store, the keys or the user config. (Windows reads the
+    registry instead: tests/test_managed_windows.py.)"""
     before = _managed.system_path(sys.platform)
-    program_data_before = _managed._windows_program_data()
     for name in (
         "XDG_CONFIG_DIRS",
         "XDG_CONFIG_HOME",
@@ -143,14 +112,6 @@ def test_no_environment_variable_moves_the_managed_file(
         monkeypatch.setenv(name, str(tmp_path / name))
     _set_fake_home(monkeypatch, tmp_path / "home")
     assert _managed.system_path(sys.platform) == before
-    assert _managed._windows_program_data() == program_data_before
-    assert tmp_path not in _managed._windows_program_data().parents
-
-
-def test_off_windows_program_data_is_the_fixed_fallback() -> None:
-    if sys.platform == "win32":
-        pytest.skip("the shell answers on Windows")
-    assert _managed._windows_program_data() == Path("C:\\ProgramData")
 
 
 # ---------------------------------------------------------------------------
