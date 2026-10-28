@@ -261,9 +261,21 @@ def restore_record_path(keys_dir: Path, store_id: str) -> Path:
 def manifest_mac(key: bytes, manifest: Mapping[str, Any]) -> str:
     """The manifest's signature: HMAC-SHA256 under the store's key over the
     context string and the canonical JSON (`log.canonical_payload`) of every
-    field but ``mac`` itself."""
+    field but ``mac`` itself.
+
+    Encoded with ``surrogatepass``, as `log.same_mac` compares: a manifest
+    is whatever a writer of the bundle put there, and JSON spells a lone
+    surrogate (``"\\ud800"``) that plain UTF-8 refuses to encode, so a
+    field holding one reached `verify_bundle` as a UnicodeEncodeError
+    instead of a MAC that does not match. The store path a manifest
+    records (``source``) can hold one too: a POSIX directory name that is
+    not UTF-8 decodes with ``surrogateescape``. The encoding of every
+    other string is unchanged, so every bundle signed before reads the
+    same MAC."""
     body = {name: value for name, value in manifest.items() if name != "mac"}
-    message = _MANIFEST_MAC_CONTEXT + canonical_payload(body).encode("utf-8")
+    message = _MANIFEST_MAC_CONTEXT + canonical_payload(body).encode(
+        "utf-8", errors="surrogatepass"
+    )
     return hmac.new(key, message, hashlib.sha256).hexdigest()
 
 

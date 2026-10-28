@@ -74,6 +74,52 @@ def test_a_manifest_digest_and_mac_that_are_not_ascii_read_as_mismatched(
     assert "manifest_mac_mismatch" in problems
 
 
+def test_a_manifest_field_utf8_cannot_encode_reads_as_a_mac_mismatch(
+    tmp_path: Path, keys_dir: Path
+) -> None:
+    """The manifest MAC is computed over the manifest as read, and JSON
+    spells a lone surrogate (``"\\ud800"``) in any field the shape check
+    does not hold to hex: an edited ``created_at`` or an added field. The
+    comparison must see a MAC that does not match, and `backup verify`
+    report it, rather than end in UnicodeEncodeError before comparing."""
+    path = tmp_path / "store" / STORE_FILENAME
+    with Store.create(path, keys_dir=keys_dir):
+        pass
+    bundle = Path(create_backup(path, out_dir=tmp_path / "bundles")["bundle"])
+    manifest_path = bundle / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["note"] = "\ud800"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    report = verify_bundle(bundle)
+
+    assert report["manifest_mac"] == "mismatch"
+    assert report["status"] == "mismatched"
+    assert {"problem": "manifest_mac_mismatch"} in report["problems"]
+
+
+def test_a_manifest_mac_is_unchanged_for_text_utf8_encodes(keys_dir: Path) -> None:
+    """``surrogatepass`` changes nothing for a string UTF-8 encodes, so a
+    bundle signed before verifies the same: the MAC over a manifest with
+    non-ASCII text is the one plain UTF-8 gives, and one holding a lone
+    surrogate (a POSIX store path that is not UTF-8) has a MAC at all."""
+    import hashlib
+    import hmac
+
+    from bettermemory.log import canonical_payload
+
+    key = b"k" * 32
+    body = {"source": "/home/é/store"}
+    plain = hmac.new(
+        key,
+        backup._MANIFEST_MAC_CONTEXT + canonical_payload(body).encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    assert backup.manifest_mac(key, {**body, "mac": "x"}) == plain
+    escaped = backup.manifest_mac(key, {"source": "/home/\udce9/store"})
+    assert len(escaped) == 64
+
+
 def test_a_state_file_token_utf8_cannot_encode_is_not_ours() -> None:
     """JSON spells a lone surrogate that UTF-8 refuses to encode: a state
     file holding one gives a proof no daemon answers with, so the reply
