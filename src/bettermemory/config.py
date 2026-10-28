@@ -1471,6 +1471,13 @@ def _warn_pinned_key(
     )
 
 
+# Sections rc11 read as their defaults when the file wrote them as a scalar
+# (`daemon = 5`). They still do, with a warning, so a config that ran the
+# hooks under rc11 still runs them; every other section refuses the line
+# (`_section_table`).
+_SCALAR_TOLERATED_SECTIONS = frozenset({"daemon", "capture", "membership"})
+
+
 def _section_table(
     data: dict[str, Any], name: str, config_path: Path
 ) -> dict[str, Any]:
@@ -1484,21 +1491,39 @@ def _section_table(
     `[behavior]` and `[telemetry]` with a TypeError, which the commands
     that catch a bad config as ``(ValueError, OSError)`` (`security
     audit`, `security sandbox`) let through as a traceback.
-    `[daemon]`, `[capture]`, `[membership]` and `[security]` read as
-    their defaults without a word, so ``security = true``, written by
-    someone who meant to switch a protection on, left it off. Only
-    `[policy]` refused. Now every section refuses, as `[policy]` did and
-    as the managed file refuses any top-level value that is not a table
-    (`managed.read_managed`): a section the file names but cannot be
-    read as one is a malformed file, the same as a malformed value in it.
-    `bettermemory config check` reports the same line before a daemon
-    tries to start on it."""
+    `[daemon]`, `[capture]` and `[membership]` read as their defaults
+    without a word. Those three still read as their defaults, so a config
+    the hooks ran on before still runs them, and now log a warning that
+    names the file and the section. Every other section refuses, as the
+    managed file refuses any top-level value that is not a table
+    (`managed.read_managed`): `[security]` and `[policy]` are new, and
+    ``security = true``, written by someone who meant to switch a
+    protection on, must not leave it off. `bettermemory config check`
+    reports every such line as an error before a daemon starts on it."""
     raw = data.get(name, {})
-    if not isinstance(raw, dict):
+    if isinstance(raw, dict):
+        return raw
+    if name not in _SCALAR_TOLERATED_SECTIONS:
         raise ValueError(
             _malformed_config_msg(f"[{name}]", raw, config_path, "a table")
         )
-    return raw
+    resolved = _resolved_for_guard(config_path)
+    guard_key = (resolved, f"[{name}] scalar")
+    if guard_key not in _DEPRECATED_KEY_WARNED_PATHS:
+        _DEPRECATED_KEY_WARNED_PATHS.add(guard_key)
+        import logging
+
+        logging.getLogger("bettermemory.config").warning(
+            "bettermemory: TOML config at %s writes `%s = %r` where a [%s] "
+            "section belongs. The line is ignored and the section's defaults "
+            "are in force; write its settings under a [%s] header.",
+            resolved,
+            name,
+            raw,
+            name,
+            name,
+        )
+    return {}
 
 
 def _config_from_data(data: dict[str, Any], config_path: Path) -> Config:

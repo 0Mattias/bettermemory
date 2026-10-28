@@ -647,6 +647,13 @@ def _unknown_key(
 
 
 def _not_a_table(role: str, name: str, value: object) -> Finding:
+    """An error either way: the line never takes effect. In the user's file
+    the three sections rc11 read as their defaults still load that way
+    (`config._SCALAR_TOLERATED_SECTIONS`); anything else stops the load."""
+    if role == USER and name in _config._SCALAR_TOLERATED_SECTIONS:
+        outcome = "the line is ignored and the section's defaults are in force."
+    else:
+        outcome = "the config does not load."
     return Finding(
         ERROR,
         "not_a_table",
@@ -654,7 +661,7 @@ def _not_a_table(role: str, name: str, value: object) -> Finding:
         name,
         None,
         f"`{_name(name)}` = {_shown(value)} must be a [{_name(name)}] section "
-        "table; the config does not load.",
+        f"table; {outcome}",
         f"write the settings under a [{_name(name)}] header, one per line",
     )
 

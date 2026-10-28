@@ -120,13 +120,22 @@ _SECTIONS = (
 )
 
 
-@pytest.mark.parametrize("section", _SECTIONS)
+# The sections rc11 read as their defaults when written as a scalar; they
+# still do, with a warning (`config._SCALAR_TOLERATED_SECTIONS`).
+_TOLERATED = ("daemon", "capture", "membership")
+
+
+def test_only_the_sections_rc11_read_as_defaults_tolerate_a_scalar() -> None:
+    assert _config._SCALAR_TOLERATED_SECTIONS == frozenset(_TOLERATED)
+
+
+@pytest.mark.parametrize("section", [s for s in _SECTIONS if s not in _TOLERATED])
 def test_a_section_that_is_not_a_table_is_a_located_value_error(
     tmp_path: Path, section: str
 ) -> None:
-    """Every section the loader reads refuses a scalar where its table
-    belongs with a ValueError, never an AttributeError and never a silent
-    default, and the message names the file and the section."""
+    """Every other section the loader reads refuses a scalar where its
+    table belongs with a ValueError, never an AttributeError and never a
+    silent default, and the message names the file and the section."""
     path = tmp_path / "config.toml"
     path.write_text(f"{section} = 5\n", encoding="utf-8")
     with pytest.raises(ValueError) as excinfo:
@@ -134,6 +143,38 @@ def test_a_section_that_is_not_a_table_is_a_located_value_error(
     message = str(excinfo.value)
     assert str(path) in message
     assert f"[{section}] = 5 must be a table" in message
+
+
+@pytest.mark.parametrize("section", _TOLERATED)
+def test_a_tolerated_section_written_as_a_scalar_loads_its_defaults_and_warns(
+    tmp_path: Path, section: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A config the hooks ran on under rc11 still loads, and the warning
+    names the file and the line, once per file."""
+    path = tmp_path / "config.toml"
+    path.write_text(f"{section} = 5\n", encoding="utf-8")
+    with caplog.at_level("WARNING", logger="bettermemory.config"):
+        loaded = load_config(path)
+        load_config(path)
+    assert getattr(loaded, section) == getattr(Config(), section)
+    warnings = [
+        r.getMessage() for r in caplog.records if f"`{section} = 5`" in r.getMessage()
+    ]
+    assert len(warnings) == 1
+    assert str(path.resolve()) in warnings[0]
+
+
+def test_a_tolerated_scalar_is_still_an_error_in_the_check() -> None:
+    report = _check("daemon = 5\n")
+    finding = _only(report)
+    assert (finding["level"], finding["code"], finding["section"]) == (
+        "error",
+        "not_a_table",
+        "daemon",
+    )
+    assert "defaults are in force" in finding["message"]
+    assert report["loads"] is True
+    assert report["exit_code"] == 1
 
 
 def test_the_section_list_covers_every_section_config_reads() -> None:

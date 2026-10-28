@@ -33,6 +33,7 @@ from bettermemory.config import (
     ENV_DIR_OVERRIDE,
     BehaviorConfig,
     Config,
+    MembershipConfig,
     StorageConfig,
     _SEARCH_MODES,
     load_config,
@@ -1602,14 +1603,12 @@ def test_membership_keys_go_through_the_bool_coercion(
     assert (membership.write_token, membership.strict) == (write_token, strict)
 
 
-def test_a_membership_value_that_is_not_a_table_is_a_located_error(
+def test_a_membership_value_that_is_not_a_table_reads_as_its_defaults(
     tmp_path: Path,
 ) -> None:
-    """Every section refuses a value that is not a table, naming the file
-    and the section (`config._section_table`); this one used to read as
-    its defaults without a word."""
+    """rc11 read it as the section's defaults, and so does this release, so
+    the hooks keep running on such a config; the loader now warns
+    (`config._section_table`)."""
     config_path = tmp_path / "config.toml"
     config_path.write_text("membership = 3\n", encoding="utf-8")
-    with pytest.raises(ValueError, match=r"\[membership\] = 3 must be a table") as exc:
-        load_config(config_path)
-    assert str(config_path) in str(exc.value)
+    assert load_config(config_path).membership == MembershipConfig()

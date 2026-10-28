@@ -368,19 +368,18 @@ stable 9.0.0 follows the candidates' testing.
   from its source machine over this host's copy again, with the same
   store id, then reads `origin_mismatch` (Known limitations has the
   recovery).
-- **A config section written as a scalar stops the load.** In rc11 a
-  config.toml with `[daemon]`, `[capture]` or `[membership]` written as
-  a scalar (`daemon = 5`) loaded that section's defaults without a word,
-  and the daemon and the hooks ran; one with `[storage]` or `[scopes]` as
-  a scalar crashed with AttributeError, and one with `[behavior]` or
-  `[telemetry]` with TypeError. Each, and the new `[security]` and
-  `[policy]` (which rc11 did not read, so a scalar there was ignored),
-  now raises `ValueError: malformed config in <path>: [<section>] =
-  <value> must be a table`, as the managed file already did: the daemon
-  does not start, the hook client prints the error and exits 0, and the
-  store's `strict_provenance` lookup reads as strict. For `[daemon]`,
-  `[capture]` and `[membership]` that is the change: memory ran on those
-  sections' defaults and is now off until the line is fixed. A TOML syntax error or a
+- **A config section written as a scalar names its file.** In rc11 a
+  config.toml with `[storage]` or `[scopes]` written as a scalar
+  (`storage = 5`) crashed with AttributeError, and one with
+  `[behavior]` or `[telemetry]` with TypeError. Each, and the new
+  `[security]` and `[policy]`, now raises `ValueError: malformed config
+  in <path>: [<section>] = <value> must be a table`, as the managed file
+  already did: the daemon does not start, the hook client prints the
+  error and exits 0, and the store's `strict_provenance` lookup reads as
+  strict. `[daemon]`, `[capture]` and `[membership]` written as a scalar
+  still load that section's defaults, as in rc11, so the hooks keep
+  running, and now log a warning that names the file and the line;
+  `config check` reports the line as an error. A TOML syntax error or a
   config.toml that is not UTF-8 raises `malformed config in <path>:
   ...`, naming the file. A config.toml that starts with a UTF-8
   byte-order mark now loads, and `doctor` reads it as the loader does.
