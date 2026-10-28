@@ -839,6 +839,53 @@ def test_a_rekey_this_host_wrote_is_not_foreign(tmp_path: Path, keys: Path) -> N
 
 
 # ---------------------------------------------------------------------------
+# The store id the key ring is looked up by
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("allow_rekey", [False, True], ids=["reader", "owner"])
+def test_a_store_id_that_names_a_path_is_refused(
+    owned: tuple[Path, Memory, str], keys: Path, allow_rekey: bool
+) -> None:
+    """The key ring names its files after meta's store id. An id holding a
+    path would have it read a key the writer put beside the store, and
+    every row that writer signed would verify. The opener refuses any id
+    `Store.create` never writes, and no key is read or written for it."""
+    path, _genuine, _own = owned
+    planted_key = secrets.token_bytes(chain.KEY_BYTES)
+    (path.parent / "planted.key").write_bytes(planted_key)
+    traversal = str(Path("..") / path.parent.name / "planted")
+    conn = _outside(path)
+    conn.execute("UPDATE meta SET value = ? WHERE key = 'store_id'", (traversal,))
+    conn.execute(
+        "UPDATE meta SET value = ? WHERE key = 'key_fingerprint'",
+        (chain.fingerprint(planted_key),),
+    )
+    conn.commit()
+    conn.close()
+    keys_before = sorted(p.name for p in keys.iterdir())
+    with pytest.raises(ValueError, match="store id this build never writes"):
+        Store.open(path, keys_dir=keys, allow_rekey=allow_rekey)
+    assert sorted(p.name for p in keys.iterdir()) == keys_before
+    assert not (path.parent / "planted.head").exists()
+
+
+@pytest.mark.parametrize(
+    "store_id", ["A" * 32, "a" * 31, "a" * 33, "g" * 32, "a" * 31 + "/"]
+)
+def test_only_the_shape_create_writes_is_a_store_id(
+    owned: tuple[Path, Memory, str], keys: Path, store_id: str
+) -> None:
+    path, _genuine, _own = owned
+    conn = _outside(path)
+    conn.execute("UPDATE meta SET value = ? WHERE key = 'store_id'", (store_id,))
+    conn.commit()
+    conn.close()
+    with pytest.raises(ValueError, match="store id"):
+        Store.open(path, keys_dir=keys)
+
+
+# ---------------------------------------------------------------------------
 # The pieces
 # ---------------------------------------------------------------------------
 

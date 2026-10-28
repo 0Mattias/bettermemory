@@ -125,6 +125,15 @@ SCHEMA_VERSION = 1
 # both sizes beside the parity).
 PAGE_SIZE = 8192
 
+# What `Store.create` writes as meta's `store_id`: 16 random bytes, hex.
+# The key ring names its files after it (`<store_id>.key`, the retired
+# keys, the head), and meta is only what the file says, so `open` refuses
+# any other shape: an id holding a path would have the ring read a key and
+# a head from wherever the path points, the store directory included,
+# which a writer holding the store file but not the key can fill with a
+# key of its own, and every row it signed would then verify.
+_STORE_ID_PATTERN = re.compile(r"[0-9a-f]{32}")
+
 # A daemon whose store path was removed or replaced saves the store it
 # had open beside the path as `<store>.orphaned-<UTC stamp>.sqlite`
 # (`daemon.save_orphan`). A store created while one or more sit beside it
@@ -2252,6 +2261,12 @@ class Store:
             expected = meta.get("key_fingerprint")
             if not store_id or not expected:
                 raise ValueError(f"{path} carries no store id or key fingerprint")
+            if not _STORE_ID_PATTERN.fullmatch(store_id):
+                raise ValueError(
+                    f"{path} carries a store id this build never writes "
+                    f"({store_id[:40]!r}); the key directory is searched by it, "
+                    f"so the store is not opened"
+                )
             schema = int(meta.get("schema_version", "0"))
             if schema > SCHEMA_VERSION:
                 raise ValueError(
