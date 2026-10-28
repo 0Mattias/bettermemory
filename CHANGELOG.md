@@ -25,6 +25,218 @@ bettermemory` and the plugin's `uvx bettermemory` keep resolving 8.0.0
 until the stable `9.0.0` is tagged. Ask for a candidate by version
 (`uvx bettermemory==9.0.0rc1`) to run it.
 
+### 9.0.0rc13
+
+The thirteenth candidate closes three of rc12's known limitations: a
+second store file that carries a store's id can no longer take over
+that store's bound key ring, Windows reads an organisation's managed config,
+and every command that opens a store refuses a backup bundle's. An origin
+anchor now stays where it was written, and a key file that cannot be
+read is never replaced. Two defaults change, each named under Changed:
+the config.toml a first run writes pins nothing, and no second daemon
+is started while one holds the store's lock. The store's schema does
+not move; the keys directory gains one file per store. It is a release
+candidate like the twelfth; the stable 9.0.0 follows the candidates'
+testing.
+
+#### Security
+
+- **The key ring is bound to the one store file it belongs to.** The
+  key, the head checkpoint and the origin anchor were found by
+  `meta.store_id` alone, so a second file with the same id shared all
+  three. A repository's store that borrowed a known id, with a key of
+  its own and a high seq, made the owner's opener retire the home
+  store's key and push the head past the home log, which then read
+  `tampered` (`tail_deleted`) for good; a verbatim copy in another
+  directory signed its writes with the home key and moved the home
+  head. The keys directory now holds `<store_id>.path`, `{"path":
+  "<the resolved store file>"}`, written `0600` and atomically under
+  `<store_id>.path.lock` by `Store.create`, by the first owner's open of
+  a ring that has none, and by `backup restore`. When it names another
+  file that still holds this store id, or one that cannot be read to
+  tell (a permission, an I/O error, any SQLite error but `SQLITE_ERROR`,
+  `SQLITE_CORRUPT` and `SQLITE_NOTADB`), and that is not this file
+  under another name (`os.path.samefile`), the owner's open writes
+  nothing: no key retired or written, no meta, no row, no head, no
+  anchor. So does a reader's open whose key matches, since a reader with
+  the key writes too (the session-start hook, a worker connection). The
+  store opens for reading, every write is refused, and a WARNING names
+  both files and the remedy: move or remove one of the two stores, or
+  delete `<store_id>.path` to bind the ring to this one. A bound file
+  that is gone, is not a store, holds another id or is a symbolic link
+  loop releases the ring to the file being opened. A reader never
+  writes the binding. A binding file that cannot be read is kept, with
+  a warning, and the open goes on as it did before rings were bound; one
+  that holds a relative path or does not parse is replaced. Every open
+  after the first costs one small file read and no lock.
+  (`src/bettermemory/log.py`, `src/bettermemory/store.py`,
+  `tests/test_keyring_binding.py`)
+- **An origin anchor is never moved, and a key that cannot be read is
+  never replaced.** The owner's opener moved the anchor to its new
+  `rekey` row when the current key file was missing and no held key
+  verified the anchored row, so an edit made to that row before the key
+  went was accepted for good, and a key file that only failed to read
+  counted as missing. The anchor now stays where it was written and
+  names the key that signed its row, `{"seq", "mac",
+  "key_fingerprint"}`. When that key is held and does not verify the
+  row, the row was rewritten: `origin_mismatch`, as before. When it is
+  not held, the origin reads `unverifiable`, `log verify` reads at most
+  `unverifiable` (exit 1), and the segments split as they do without an
+  anchor; filing the key back as `<store_id>.<first 16 hex of its
+  fingerprint>.key` makes the anchor hold again. An anchor written
+  before rc13 names no key and reads as it did, until a writing open
+  that sees its row verify adds the name without moving it. A key file
+  that is there and cannot be read, or a key file or keys directory
+  that is a symbolic link to nothing (a volume not mounted yet), raises
+  `KeyUnreadableError` naming the file: the owner's open fails instead
+  of writing a new key and a `rekey` row, a reader opens without the key
+  and logs why, `doctor` fails its key check, `security audit` reports
+  it high, and `backup restore` refuses before it changes anything. An
+  anchor file that cannot be read is never written over. A bundle's
+  signed manifest carries the anchor's key. (`src/bettermemory/log.py`,
+  `src/bettermemory/store.py`, `src/bettermemory/backup.py`,
+  `src/bettermemory/doctor.py`, `src/bettermemory/posture.py`,
+  `tests/test_origin_anchor.py`)
+- **Every command that opens a store refuses a backup bundle's.** `export`,
+  `doctor` and `membership export` opened a bundle's snapshot in place,
+  which switches it to WAL and fails the bundle's signed hash; the
+  writing openers (the commands that open through `cli_context`, `up
+  --foreground`, `serve`, the shim, `membership migrate` and `migrate
+  v8`) also wrote rows into it, the in-process hook commands opened it,
+  and `backup restore` replaced it. Each now refuses a store file with a
+  bundle's `manifest.json` beside it before opening it, through a
+  symbolic link too, with one message: `<path> is in a backup bundle
+  (<manifest> is beside it), and opening it would change it and fail the
+  bundle's hash: copy memory.sqlite out of the bundle to a directory of
+  its own first and point the command at the copy`. A file named by
+  `export --mirror --store`, `migrate v8 --to` or `security scan --store`
+  that has other names (hard links) is refused too. The refusal exits 2
+  from `export`, `membership export` and `membership migrate`, `stats`,
+  `log export` and `anchor`, `memory history` and `security scan`; 1 from
+  `log verify`, `health` and the other commands that open through
+  `cli_context`, `serve`, the shim, `up`, `migrate v8`, `backup restore`
+  and `doctor` (its store check fails); and 0 from the hooks, which
+  print it. A `manifest.json` now counts only when it names the format
+  `bettermemory.backup` or does not parse, so another tool's file of
+  that name beside a store no longer stops `log`, `stats` or `security
+  scan`. `backup create` and `security audit` read a bundle's file
+  without changing it, as before. (`src/bettermemory/backup.py`,
+  `src/bettermemory/cli/_common.py`,
+  `tests/test_bundle_guard.py`)
+- **Windows reads an organisation's managed config from the
+  registry.** rc12 read none on Windows, since a standard account can
+  create folders under ProgramData. The managed TOML is now the
+  `ManagedConfig` value under
+  `HKEY_LOCAL_MACHINE\SOFTWARE\Policies\bettermemory`, which only
+  administrators can write by default and where Group Policy and Intune
+  deploy policy: a REG_SZ holding the whole text, or a REG_MULTI_SZ
+  holding one line per string, read through the registry's 64-bit view
+  (WOW64 shares `SOFTWARE\Policies` between the views, so a 32-bit and
+  a 64-bit writer reach the same key). The text goes through the
+  managed file's own parse, pins and refusals, a leading byte-order mark
+  dropped. An absent key or value is no managed config; anything else
+  that keeps the value from loading fails closed, as an unreadable file
+  does: a key this account cannot open, a value of another type (a
+  REG_EXPAND_SZ is refused, never expanded), text that is not TOML, an
+  invalid setting, or text holding an unpaired surrogate, which the file
+  refuses as bytes that are not UTF-8. Nothing under `%ProgramData%` is
+  read. The loader's errors and notices and `config path|show|check`
+  name the source `registry
+  HKLM\SOFTWARE\Policies\bettermemory\ManagedConfig`, and `config path
+  --json` reports `managed.read` true and `managed.note` null on every
+  platform. `examples/managed.toml` gives the `reg add`, Group Policy
+  and Intune deployments. POSIX is unchanged.
+  (`src/bettermemory/managed.py`, `src/bettermemory/config.py`,
+  `src/bettermemory/cli/config_cmd.py`, `tests/test_managed_windows.py`)
+
+#### Changed
+
+- **The config.toml a first run writes pins nothing.** It spelled every
+  key at its default, so a fresh install pinned the defaults of the
+  release that wrote it, a later release's changed default never reached
+  it, and under a managed file every process, each hook among them,
+  warned about lines the user never chose. Every setting is now
+  commented out (`# key = value`) under its section header, with its
+  prose, so loading the file gives exactly the code's defaults; remove
+  the `# ` to set one. Most lines show the default; `[storage]
+  directory`, `cwd_store = false`, `[policy] forbid_force = true`,
+  `forbid_acknowledge = ["credential"]` and `[security]
+  strict_provenance = true` show a value that changes it. A config.toml
+  that exists is never rewritten, so one an earlier release wrote keeps
+  every value it spells. (`src/bettermemory/config.py`)
+- **A line that restates the default draws no pinned-key warning.** A
+  user's value for a key the managed config pins is still ignored, and
+  `config check` (a note) and `config show` still report it; the
+  warning that names both files is now logged only when the value
+  differs from the pinned one and from the code's default for that key.
+  The lines an earlier release's config.toml spelled, `[telemetry]
+  enabled = true` among them, draw none. Compared as written: `30`
+  restates `30.0` and `[]` an empty list, `"true"` does not restate
+  `true`, and a boolean restates only a boolean.
+  (`src/bettermemory/config.py`)
+- **No second daemon is started while one holds the store's lock.** A
+  hook, `up`, the shim's start and its reconnect started a daemon
+  whenever none answered, even while another process held the store's
+  lock: a daemon still starting, one busy past the health probe, or one
+  whose state file was gone. The new one waited for the lock and
+  exited, a process and a daemon-log line spent on every attempt. While
+  the lock is held they now start none and wait for the holder to answer
+  and prove itself, and return it when it does; they give up at the same
+  timeout as before (8 s), or start one if the lock comes free first.
+  With the lock free nothing changes, the hook's fast path included.
+  rc12's note that a hook still starts a daemon beside a hung one no
+  longer holds. A shim reconnect that times out with the lock still held
+  answers `a process holds the store's lock (a daemon starting, busy or
+  hung) and none answered within 8 s`, where it named a start that never
+  happened. (`src/bettermemory/_daemon_client.py`,
+  `src/bettermemory/shim.py`, `tests/test_followup_defaults.py`)
+- **A restore binds the key ring to the restored file.** `backup
+  restore` makes the ring's keys, head and anchor the restored file's,
+  and now its binding too, so a store restored into another directory
+  while the old one is still there opens for writing; the old one then
+  opens for reading only until it is moved or removed. The plan and the
+  `--json` report gain `binding: {before, after}`, and the restore record
+  `binding_before` and `binding_after`. (`src/bettermemory/backup.py`)
+
+#### Fixed
+
+- **Digests in bundles and anchors are compared as bytes.**
+  `hmac.compare_digest` raises TypeError on a str that is not ASCII. A
+  bundle manifest's file hashes and MAC and an anchor's chain digest now
+  go through `log.same_mac`, as the log's own comparisons do, so a
+  value that is not ASCII reads as a mismatch, not a traceback. The
+  health proof encodes a state file's token with `surrogatepass`, so a
+  token holding a lone surrogate reads as a proof that does not match.
+  (`src/bettermemory/backup.py`, `src/bettermemory/anchor.py`,
+  `src/bettermemory/_daemon_client.py`)
+- **A manifest field UTF-8 cannot encode reads as a mismatch.** A
+  bundle manifest holding a lone surrogate (`"\ud800"`) in a field the
+  shape check does not hold to hex ended `backup verify` and `backup
+  restore` in a UnicodeEncodeError traceback. The manifest MAC is now
+  computed with `surrogatepass`, so such a bundle reads
+  `manifest_mac_mismatch`; every bundle signed before verifies the same.
+  (`src/bettermemory/backup.py`)
+- **`log verify --help` names the origin check; the scan says to rotate
+  first.** The help names the origin anchor beside the MACs, the chain,
+  the head and the fold, its two outcomes (`origin_mismatch`,
+  `unverifiable`) and the files whose removal accepts a replaced
+  history. Every `security scan` remediation starts `Rotate the
+  credential at its issuer: that is the fix`, since the log keeps every
+  earlier version after an edit, a removal and a prune.
+  (`src/bettermemory/cli/log_cmd.py`, `src/bettermemory/secret_scan.py`)
+
+#### Known limitations
+
+- **The key ring's binding is trust on first use on upgrade.** A ring
+  from before rc13 has no `<store_id>.path`, and the first owner's open
+  after the upgrade binds it to the file it opens. When that is a file
+  that borrowed the store's id (a repository's `./.claude-memory/`
+  opened before the home store), it takes the ring as in rc12: the home
+  store's key is retired, the head moves past the home log, which reads
+  `tampered` (`tail_deleted`), and the home store opens for reading
+  only. `[storage] cwd_store = false` closes the repository route, and
+  a ring already bound is not taken this way.
+
 ### 9.0.0rc12
 
 The twelfth candidate closes the provenance gap an editor of the store
@@ -506,7 +718,8 @@ stable 9.0.0 follows the candidates' testing.
   folders under ProgramData, so a file there could be one user's,
   binding every other account. `managed_config_path()` answers None on
   Windows until the file's owner and ACL are checked, and `config path`
-  says so.
+  says so. 9.0.0rc13 reads it from the registry instead, a key only
+  administrators can write, and reads nothing under ProgramData (above).
 - **The origin anchor is trust on first use on upgrade.** An edit made
   to a store before its first writing open under rc12 is not caught by
   the anchor. The plain forged-segment recipe is still caught by the
@@ -522,7 +735,9 @@ stable 9.0.0 follows the candidates' testing.
   at its first writing open here, and a high seq in it pushes the shared
   head past that store's log, which then reads `tampered`
   (`tail_deleted`). `[storage] cwd_store = false` closes the repository
-  route.
+  route. 9.0.0rc13 binds the key ring to one store file, and a second
+  file with its id opens for reading only and writes nothing; a ring
+  from before rc13 is bound by its first owner's open (above).
 - **A store file copied over again reads `origin_mismatch`.** Copying
   the store file from its source machine over this host's store again,
   with the same store id, changes the history at the anchor. The
@@ -542,7 +757,9 @@ stable 9.0.0 follows the candidates' testing.
   `--store` file with hard links; `export`, `doctor` and `membership
   export` do not check, nor does anything check a hard link named through
   `BETTERMEMORY_DIR`. Copy a bundle's `memory.sqlite` to a directory of
-  its own before pointing a command at it.
+  its own before pointing a command at it. 9.0.0rc13 refuses a bundle's
+  file in every command that opens a store (above); a hard link named through
+  `BETTERMEMORY_DIR` is still not checked.
 - **SIEM rules should alert on `verified: null` as well as `false`.** An
   editor without the key can make later rows of `log export` read
   `verified: null` (a key not held) by editing `meta.key_fingerprint` or
