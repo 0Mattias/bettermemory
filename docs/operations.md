@@ -19,26 +19,41 @@ nothing. `bettermemory security audit` grades the modes and owners.
 | --- | --- | --- | --- |
 | The store directory | `~/.claude-memory` | `BETTERMEMORY_DIR`, then `[storage] directory`, then `./.claude-memory` in the working directory unless `[storage] cwd_store = false` | `0700` |
 | `memory.sqlite`, `-wal`, `-shm` | the store directory | | `0600` |
-| `config.toml` | `~/Library/Application Support/bettermemory/` on macOS, `~/.config/bettermemory/` on Linux | the platform's config directory | written once with defaults by the first command that loads it |
+| `config.toml` | `~/Library/Application Support/bettermemory/` on macOS, `~/.config/bettermemory/` on Linux | the platform's config directory | written once by the first command that loads it, every setting commented out; never rewritten |
 | The keys directory | `keys/` under the config directory | `BETTERMEMORY_KEYS_DIR` | `0700` |
 | `<store_id>.key` | the keys directory | | `0600` |
 | `<store_id>.<16 hex>.key` | the keys directory: a retired key, by its fingerprint's prefix | | `0600` |
 | `<store_id>.head` | the keys directory: the last row's seq and MAC | | `0600` |
-| `<store_id>.origin` | the keys directory: where this host's history of the store begins | | `0600` |
+| `<store_id>.origin` | the keys directory: where this host's history of the store begins, and the key that signed that row | | `0600` |
+| `<store_id>.path` | the keys directory: the one store file this key ring belongs to | | `0600` |
 | `<store_id>.backup_restore.json` | the keys directory: one entry per `backup restore` | | `0600` |
 | The state directory | `~/Library/Application Support/bettermemory/` on macOS, `~/.local/state/bettermemory/` on Linux | `BETTERMEMORY_STATE_DIR` | `0700` |
 | `daemon-<hash>.json` | the state directory: the daemon's port, pid, version, store and bearer token | | `0600` |
 | `daemon-<hash>.log` | the state directory: the daemon's output | | `0600` |
 | `daemon-<hash>.lock`, `.spawn.lock` | the state directory: held by the daemon for its life, and by whoever is starting one | | empty |
-| The managed file | `/Library/Application Support/bettermemory/managed.toml` on macOS, `/etc/bettermemory/managed.toml` on Linux and other POSIX systems; none on Windows in this release | nothing | root-owned `0644` (the administrator's to write) |
+| The managed config | `/Library/Application Support/bettermemory/managed.toml` on macOS, `/etc/bettermemory/managed.toml` on Linux and other POSIX systems; on Windows no file, the registry value `HKLM\SOFTWARE\Policies\bettermemory\ManagedConfig` | nothing | root-owned `0644`; on Windows the key's default access, which only administrators can write |
 | Backup bundles | `backups/<UTC stamp>/` in the store directory | `backup create --out DIR` | directory `0700`, files `0600` |
 
 `<hash>` is derived from the store's path, so each store has its own
 daemon and files. The key, the head and the origin anchor are what make
 the store's provenance checkable: keep the keys directory out of the
 store directory, out of git working trees and out of synced folders, and
-back it up on its own (below). The `.head.lock` and `.origin.lock` beside
-them are empty sidecar locks.
+back it up on its own (below). The `.head.lock`, `.origin.lock` and
+`.path.lock` beside them are empty sidecar locks.
+
+The key ring is bound to one store file, `<store_id>.path`, written by
+the store's creation, by the first owner's open of a ring that has none
+(a ring from before 9.0.0rc13), and by `backup restore`. A second file
+with the same store id, a copy of the store in another directory say,
+opens for reading only while the bound file still holds that id (or
+cannot be read to tell): it writes nothing to the key ring, refuses
+every write, and logs a warning
+naming both files. To move a store, move the file; the next owner's
+open of it rebinds the ring, since the old path no longer holds the
+store. Two files with one store id cannot both be written on one host:
+to hand the ring to the other one, move or remove the bound file, or
+delete `<store_id>.path` so that the next owner's open binds the ring to
+the file it opens.
 
 ## The daemon
 
@@ -46,8 +61,12 @@ One daemon per store, on 127.0.0.1, owns the store and serves every
 session and hook. The first hook or MCP client that finds none starts
 it, detached, in the state directory; a client of a newer version
 replaces an older daemon, and an older client leaves a newer one alone.
-A daemon reads the config and the managed file at its start, so a
-config change takes effect after `bettermemory down` and the next start.
+While another process holds the store's lock (a daemon still starting,
+or one busy or hung), a client starts none: it waits up to 8 s for that
+daemon to answer and prove itself, and starts one only if the lock comes
+free first. A daemon reads the config and the managed config at its
+start, so a config change takes effect after `bettermemory down` and the
+next start.
 
 ```sh
 bettermemory up            # start one, or report the one running
@@ -133,7 +152,7 @@ client wiring, and the disk, each `ok`, `warn` or `fail` with a one-line
 fix. `security audit` covers what `doctor` leaves out: file modes and
 owners, the key against the store, git working trees and synced folders,
 and Claude Code's sandbox settings. `config check` grades the contents
-of `config.toml` and the managed file: a typo `doctor` cannot see, such
+of `config.toml` and the managed config: a typo `doctor` cannot see, such
 as `[behaviour]`, `enabeld` or `"flase"`, is a warning there. `log verify`
 is the one that reads every row; it costs a pass over the whole log.
 Exit 2 is also argparse's code for a usage error, for each of them.
@@ -154,10 +173,30 @@ What the daemon's log and the clients say when something is wrong:
   A stale state file, and another process on its port. The client starts
   a fresh daemon on another port; find what holds the port with
   `lsof -iTCP:<port>`.
+- **"a process holds the store's lock (a daemon starting, busy or hung)
+  and none answered within 8 s".** A shim found no daemon answering, and
+  started none, since another process holds the store's lock: no second
+  daemon is started beside one that holds it. A daemon still starting
+  answers within moments. `bettermemory status` reports a state file
+  whose daemon holds the lock but does not answer, and `bettermemory
+  down` stops it; `lsof` on `daemon-<hash>.lock` in the state directory
+  finds a holder with no state file. A hook in the same case starts
+  none either and gives up after the same wait.
 - **"store ... was opened without its key; a new key ... was written and
   the log rekeyed".** This host did not hold the store's key: a store
   copied in, or a keys directory that moved. See
   [installation.md](installation.md#troubleshooting).
+- **"the key file ... is there and cannot be read ...; the store is not
+  rekeyed over it".** The key file, or a link to it, cannot be read: a
+  permission, an I/O error, a volume not mounted. The daemon and every
+  writing command fail until it can be read, and nothing is rekeyed;
+  `doctor` fails its key check and `security audit` reports it high.
+  Make it readable to this account again (`0600`), or mount the volume.
+- **"store ... carries store id ..., and the key ring under ... belongs
+  to the store at ...; this one opens for reading only".** Two store
+  files carry one store id, and the key ring is bound to the other one
+  (Files and modes, above). Move or remove one of them, or delete the
+  `<store_id>.path` the message names.
 - **`log verify` reports `foreign_segment`.** Rows signed by a key this
   host does not hold come after its own. Either someone wrote into the
   store file without the key, or the store was moved away and back, or
@@ -166,12 +205,19 @@ What the daemon's log and the clients say when something is wrong:
   `<store_id>.<first 16 hex characters of its fingerprint>.key` restores
   `ok`.
 - **`log verify` reports `origin_mismatch`.** The row where this host's
-  history of the store begins is gone, carries another MAC or verifies
-  under no key this host holds. Either the history was rewritten, or the
-  store file was copied over this host's copy again from the machine it
-  came from. In the second case, restoring a bundle or deleting
+  history of the store begins is gone, carries another MAC or does not
+  verify under the key that signed it, which this host still holds.
+  Either the history was rewritten, or the store file was copied over
+  this host's copy again from the machine it came from. In the second
+  case, restoring a bundle or deleting
   `<store_id>.origin` and `<store_id>.head` accepts the replaced history,
   and trusts the file again on purpose.
+- **`log verify` reports `origin unverifiable`.** The key that signed
+  the row where this host's history begins is no longer in the keys
+  directory: its key file was lost, and the store was rekeyed since. The
+  anchor stays where it was; filing the old key in the keys directory as
+  `<store_id>.<first 16 hex characters of its fingerprint>.key` makes it
+  hold again, and `log verify` reads `ok`.
 
 ## Backup and restore
 
@@ -210,11 +256,17 @@ under a key the keys directory holds). A bundle whose log goes on from a
 segment under a key the keys directory holds into one under a key only
 the bundle carries, which is this host's snapshot rekeyed by whoever
 wrote the bundle, reads `tampered` (`foreign_segment`), as the live store
-reads that shape, and nothing restores it. Do not point another command at a
-bundle's `memory.sqlite`: opening a store switches its journal mode,
-which changes the file's bytes, and the bundle then fails its hash.
-Copy the file to a directory of its own first, as for the secret scan
-below.
+reads that shape, and nothing restores it. Every command that would open
+a bundle's `memory.sqlite` as a store refuses it, since opening a store
+switches its journal mode, which changes the file's bytes, and the
+bundle would then fail its hash (`backup create` and `security audit`
+read it without changing it): a store file with a bundle's
+`manifest.json` beside it, through a symbolic link too, is refused
+before it is opened, with a message that says to copy `memory.sqlite`
+out of the bundle to a directory of its own first and point the command
+at the copy. A `manifest.json` counts when it names the format
+`bettermemory.backup` or does not parse, so another tool's file of that
+name beside a store changes nothing.
 
 **Keep the keys apart from the bundles.** Without `--include-key` a
 bundle holds no key, and verifies and restores only where the keys
@@ -244,9 +296,15 @@ To restore:
    (never deleted), copies the bundle's database in and checks it against
    the signed hash, installs the keys the bundle needs (a key that was
    current is retired, not deleted), installs the bundle's origin anchor
-   or removes a stale one, rewinds the head checkpoint, appends the
-   rewind to `<store_id>.backup_restore.json`, and runs `log verify` on
-   the result. Exit 0 only when that verifies.
+   or removes a stale one, rewinds the head checkpoint, binds the key
+   ring to the restored file, appends the rewind and the binding before
+   and after to `<store_id>.backup_restore.json`, and runs `log verify`
+   on the result. Exit 0 only when that verifies.
+
+A restore into another store directory, while the store the bundle was
+taken from is still there, moves the key ring's binding to the restored
+file: the old store then opens for reading only and says why, until it
+is moved or removed.
 
 The head checkpoint only moves forward in normal use, which is how a
 deleted tail is caught; restore is the one path that rewinds it, and it
@@ -359,11 +417,10 @@ the write was acknowledged, and never the value. Exit 0 clean, 1 found, 2
 no store it can read. `--store PATH` scans another store, a directory
 holding `memory.sqlite` or the file itself; to scan a backup bundle, copy
 its `memory.sqlite` into a directory of its own first, since opening it
-in place breaks the bundle's hash (the scan refuses a file that has a
-bundle's `manifest.json` beside it, through a symlink too, and a
-`--store` file with other names, since a hard link to a bundle's file
-has no manifest beside it; `log verify`, `log export`, `log anchor`,
-`stats` and `memory history` refuse a store directory that is a bundle).
+in place breaks the bundle's hash (the scan, as every command that opens
+a store, refuses a file that has a bundle's `manifest.json` beside it,
+and refuses a `--store` file with other names, since a hard link to a
+bundle's file has no manifest beside it).
 
 When something is found: rotate the credential at its issuer first,
 because the log keeps every version of every record and no command
@@ -376,7 +433,7 @@ saved orphans, backups or exports: a clean scan is not a clean file.
 
 ## The managed config
 
-An organisation pins settings with a managed file, which takes
+An organisation pins settings with a managed config, which takes
 config.toml's sections and keys; every key it sets is pinned, so the
 user's own config cannot loosen it. `examples/managed.toml` is the
 starting point:
@@ -392,36 +449,67 @@ strict_provenance = true
 forbid_acknowledge = ["credential"]
 ```
 
-Deploy it as root, through MDM or configuration management, at
-`/Library/Application Support/bettermemory/managed.toml` on macOS or
-`/etc/bettermemory/managed.toml` on Linux, root-owned, mode `0644`. No
-environment variable moves it, and no managed file is read on Windows in
-this release. Then restart the daemons: each reads the file at its start.
+On macOS and Linux it is a file. Deploy it as root, through MDM or
+configuration management, at `/Library/Application
+Support/bettermemory/managed.toml` on macOS or
+`/etc/bettermemory/managed.toml` on Linux, root-owned, mode `0644`.
 
-The file fails closed. One that exists but cannot be read, is not TOML,
-writes a top-level value outside a section, or holds an invalid value
-stops the config from loading, and the daemon does not start; the hooks
-then print the error and change nothing. Check it on one machine before
-the fleet: `bettermemory config check` grades both files and names the
-error, and `bettermemory config show` labels each setting `managed`,
-`user` or `default`. `config check` reads only the fixed path, so a
-candidate file is checked where it is deployed.
+On Windows it is no file: the managed TOML is the `ManagedConfig` value
+under `HKEY_LOCAL_MACHINE\SOFTWARE\Policies\bettermemory`, a REG_SZ
+holding the whole text or a REG_MULTI_SZ holding one line per string,
+read through the registry's 64-bit view. Only administrators can write
+under `SOFTWARE\Policies` by default, and nothing under `%ProgramData%`
+is read, since a standard account can create folders there. WOW64 shares
+`SOFTWARE\Policies` between the 32-bit and 64-bit views, so a 32-bit
+and a 64-bit writer reach the same key. From an elevated prompt:
 
-A user's config.toml line that a pin overrides with a different value
-gets one warning per process naming both files, on stderr for a hook.
-The config.toml a first run writes sets these lines itself, and one an
-earlier release wrote sets those of them it knew: fifteen `[behavior]`
-keys, `[scopes] allowed` and `typo_exceptions`, `[daemon] port`,
-`[telemetry] enabled`, the three `[capture]` keys, and `[membership]
-write_token` and `strict`. A managed file that pins one of them to
-another value makes each process warn about that line until it is
-deleted from config.toml; of the example's pins only `[telemetry]
-enabled = false` does. The keys this release adds are commented out in
-the file a first run writes, so a pin of one draws no warning.
+```bat
+reg add "HKLM\SOFTWARE\Policies\bettermemory" /v ManagedConfig /t REG_MULTI_SZ /reg:64 /f /d "[storage]\0cwd_store = false\0[policy]\0forbid_acknowledge = ['credential']"
+```
 
-The file binds the user's config, not the account: a process running as
-the user can still set `BETTERMEMORY_DIR`, which decides the store ahead
-of a pinned `[storage] directory`. SECURITY.md has the rest.
+Group Policy deploys the same value with a Registry preference item
+under Computer Configuration (action Update, hive `HKEY_LOCAL_MACHINE`,
+key path `SOFTWARE\Policies\bettermemory`, value name `ManagedConfig`,
+type `REG_SZ` or `REG_MULTI_SZ`), and Intune with a PowerShell script
+run as SYSTEM in 64-bit PowerShell; `examples/managed.toml` has the
+script. A leading byte-order mark, which text taken from a file Windows
+PowerShell 5.1 saved can carry, is dropped. A REG_EXPAND_SZ or any type
+but the two above is refused, never expanded, and so is text holding an
+unpaired surrogate, which the file would refuse as bytes that are not
+UTF-8. Reports name the source `registry
+HKLM\SOFTWARE\Policies\bettermemory\ManagedConfig`.
+
+No environment variable moves either source. Then restart the daemons:
+each reads the managed config at its start. The hooks read it at each
+config load when `BETTERMEMORY_DIR` is unset, to resolve the store.
+
+It fails closed. A file or value that exists but cannot be read, is not
+TOML, writes a top-level value outside a section, or holds an invalid
+value stops the config from loading, and the daemon does not start; the
+hooks then print the error and change nothing. Only an absent file, key
+or value means there is no managed config. Check it on one machine
+before the fleet: `bettermemory config check` grades both sources and
+names the error, and `bettermemory config show` labels each setting
+`managed`, `user` or `default`. `config check` reads only the fixed
+location, so a candidate is checked where it is deployed.
+
+A user's config.toml line for a pinned key is ignored. When its value
+differs from the pinned value and from the code's own default for that
+key, each process logs one warning naming both sources, on stderr for a
+hook, until the line is deleted. A line that restates the default draws
+none. The config.toml a first run writes sets nothing: every setting is
+commented out, so the code's defaults apply and a pin finds no line. One
+an earlier release wrote spells every key it knew at that release's
+default; a line that is still today's default, `[telemetry] enabled =
+true` among them, draws no warning when a pin overrides it. `config
+check` still reports every ignored line as a note, and `config show`
+names it. Such a file also keeps those values for the user where
+nothing pins them: delete the lines nobody chose, and a later release's
+changed default reaches the account.
+
+The managed config binds the user's config, not the account: a process
+running as the user can still set `BETTERMEMORY_DIR`, which decides the
+store ahead of a pinned `[storage] directory`. SECURITY.md has the rest.
 
 ## Enterprise deployment checklist
 
@@ -431,8 +519,9 @@ of a pinned `[storage] directory`. SECURITY.md has the rest.
    tool (`uv tool install bettermemory==<version>`), the same install the
    clients and any service unit run. Register clients with `bettermemory
    init --client <client>`.
-2. **Deploy the managed file** with at least `[storage] cwd_store =
-   false` and `[security] strict_provenance = true`, plus the `[policy]`
+2. **Deploy the managed config** (the file, or on Windows the registry
+   value) with at least `[storage] cwd_store = false` and `[security]
+   strict_provenance = true`, plus the `[policy]`
    switches your rules call for. Decide telemetry on purpose: with
    `[telemetry] enabled = false` the session brief and the prompt recall
    deliver nothing, while the audit rows are kept either way.

@@ -215,9 +215,10 @@ key the ring holds, by its first row's MAC (`log.chain_segments`).
 **The origin anchor** (9.0.0rc12). Where this machine's history begins
 is not taken from the log, whose every row an editor of the file can
 rewrite: the key ring keeps `<store_id>.origin` beside the key and the
-head, `{"seq": S, "mac": M}`, the seq and MAC column of the first row
-this machine's key ring signed for the store, written `0600` through a
-temporary file and a rename under the sidecar lock
+head, `{"seq": S, "mac": M, "key_fingerprint": F}`, the seq and MAC
+column of the first row this machine's key ring signed for the store
+and, since 9.0.0rc13, the fingerprint of the key that signed it, written
+`0600` through a temporary file and a rename under the sidecar lock
 `<store_id>.origin.lock` (`log.KeyRing.write_origin`).
 
 - It is written by `Store.create` (seq 1), by the owner's opener when it
@@ -229,15 +230,17 @@ temporary file and a rename under the sidecar lock
   no held segment nothing is written.
 - No read-only opener writes it (`log verify`, `log export`, `export`,
   `stats`, `memory history`, `doctor`, `backup create` and `verify`,
-  `security`), and no repair moves it, with one exception: when the
-  current key file is missing and no key the ring still holds verifies
-  the anchored row, whose MAC column is unchanged, the anchor moves to
-  the new key's `rekey` row and the store logs a WARNING naming both
-  seqs. Removing the key file needs write access to the keys directory,
-  which an editor of the store file does not have.
+  `security`), and nothing moves it once written, a lost key included:
+  only `backup restore` replaces it, on the record
+  (`KeyRing.replace_origin`). An anchor written before rc13 names no
+  key; the first writing open that sees a held key verify its row adds
+  that key's name, and changes neither the seq nor the MAC
+  (`KeyRing.name_origin_key`).
 - A file that does not parse (a seq that is not an integer from 1 to
   2^63 - 1, a MAC that is not 64 lowercase hex characters) reads as no
-  anchor, and the next writing open replaces it.
+  anchor, and the next writing open replaces it. A file that is there
+  and cannot be read is never written over: the open logs a warning and
+  goes on. A `key_fingerprint` of any other shape reads as no name.
 
 The reads check the anchor with the segment map, at each connection's
 first pointer check (`log.chain_trust`). The row at S must exist, carry
@@ -247,11 +250,18 @@ M and verify under a held key:
   S (the next segment starts at or before S); any other is foreign.
 - `mismatch`, reason `missing`, `mac` or `signature`: the history where
   this machine's begins was rewritten, so which segments lead cannot be
-  read off the log. `log verify` reports `origin_mismatch` (`tampered`),
-  and every segment that is not held reads as foreign, leading ones
-  included; a held segment keeps its labels.
-- `unverifiable`: the ring holds no key at all to check the row with;
-  the status reads `unverifiable`, never `tampered`.
+  read off the log. `signature` means the key the anchor names is held
+  and does not verify the row (for an anchor that names no key, no held
+  key does): a row rewritten under its own MAC column. `log verify`
+  reports `origin_mismatch` (`tampered`), and every segment that is not
+  held reads as foreign, leading ones included; a held segment keeps its
+  labels.
+- `unverifiable`: the ring holds no key at all to check the row with,
+  or the key the anchor names is no longer held (its key file was lost)
+  and no held key verifies the row, so nothing here can tell a rewrite
+  from the lost key. The status reads `unverifiable`, never `tampered`,
+  and the segments split as they do without an anchor; filing the key
+  back makes the anchor hold again.
 - `absent`: no anchor (a store from before rc12, or one only read here
   so far), which is no finding; the rules above apply without it.
 
@@ -269,9 +279,59 @@ the anchor and reads `origin_mismatch`: `bettermemory backup restore` of
 a bundle, or deleting `<store_id>.origin` and `<store_id>.head`, accepts
 the replaced history and trusts the file again on purpose. A copied
 store's own history comes before its takeover row and keeps its labels.
-A lost key file leaves the rows it signed leading, `log verify`
-`unverifiable`, as before the anchor existed, since the anchor moves to
-the new key's `rekey` row.
+A lost key file leaves the rows it signed leading and the origin
+`unverifiable`, so `log verify` reads `unverifiable`; the anchor stays
+on its row, and filing the old key back as a retired key reads `ok`
+again.
+
+**The key ring's binding** (9.0.0rc13). The key ring is found by the
+store id in `meta`, which any file can carry, so it is also bound to one
+store file: `<store_id>.path`, `{"path": "<resolved store file>"}`,
+written `0600` and atomically under `<store_id>.path.lock`
+(`log.KeyRing.bind_store`). `Store.create` writes it; the owner's opener
+(`allow_rekey=True`) claims it before any rekey decision, writing it
+when the ring has none (trust on first use, for a ring from before
+bindings) or when the bound file no longer holds this store id; and
+`backup restore` rebinds it to the file it restores
+(`KeyRing.rebind_store`), on the record. A reader never writes it.
+
+- The bound file's id is read without opening it as a store
+  (`store._store_id_at`): `immutable=1`, or `mode=ro` first when its
+  `-wal` and `-shm` are present, so a store a running daemon just
+  created, whose tables are still only in its WAL, is seen. No file
+  there, a file that is no store (SQLite answers `SQLITE_ERROR`, such as
+  no `meta` table, `SQLITE_CORRUPT` or `SQLITE_NOTADB`), one with
+  another id, or a symbolic link loop is no store there, and the ring is
+  rebound to the file being opened. Any other failure (a permission, a directory that cannot
+  be searched, an I/O error, another SQLite error) cannot tell, and
+  keeps the binding.
+- When the binding names another file that still holds the id, or
+  cannot be read to tell, and that is not this file under another
+  spelling (`os.path.samefile`), the owner's open retires no key,
+  writes no key, sets no meta, appends nothing, moves no head and
+  writes no anchor. It opens as a reader with writes refused, even when
+  its key matches, and so do its worker connections (`reopen`); a
+  WARNING on the `bettermemory.store` logger names both files and the
+  remedy (move or remove one store, or delete `<store_id>.path`). A
+  reader whose key matches asks the same (`KeyRing.bound_elsewhere`),
+  since a reader with the key can write (the session-start hook records
+  the brief it shows), and opens the same way.
+- A binding file that cannot be read raises, and the owner's open logs
+  a warning and goes on as before rings were bound, the file kept. One
+  that does not parse, or holds a relative path, is no binding and is
+  replaced.
+- Cost: every open after the first reads one small file and takes no
+  lock.
+
+**A key that cannot be read** (9.0.0rc13). `KeyRing.load_current`
+answers None only when the key file is not there. A file that is there
+and cannot be read, or a key file or keys directory that is a symbolic
+link to nothing (a volume not mounted yet), raises `KeyUnreadableError`
+(`.path`, `.reason`). The owner's open fails with it rather than write a
+new key and a `rekey` row over a failure that may pass; a reader opens
+without the key and logs why; `held_keys` skips the file; `doctor`
+fails its key check, `security audit` reports it high, and `backup
+restore` refuses before it changes anything.
 
 Cost: one indexed log lookup and one HMAC per row served, nothing per
 candidate; the segment map and the anchor add one file read, one row
@@ -737,7 +797,9 @@ the local daemon (`daemon.py`, one process per store on 127.0.0.1 that
 owns the store and serves the nine tools over streamable HTTP and the
 hook bodies under `/api/v1/hook/`), started on first use through the
 client in `_daemon_client.py`, which the hook command shares and which
-proves the daemon it reaches by the token before it sends anything;
+proves the daemon it reaches by the token before it sends anything,
+and which starts none while another process holds the store's lock,
+waiting for that one instead (`start_and_wait`);
 `cli/daemon_cmd.py` is `up`, `down` and `status`, and
 `cli/service_cmd.py` with `service_units.py` writes and loads the
 launchd or systemd unit that supervises the daemon. `cli/serve.py` is
@@ -889,7 +951,8 @@ parser.
 
 **Leaves.** `models.py` (Pydantic models, enums, ULIDs), `config.py`
 (config loading and the store-directory rule), `managed.py` (the
-organisation-managed file's fixed path and its reader), `prompts.py` (the
+organisation-managed config's fixed location, a file or on Windows a
+registry value, and its reader), `prompts.py` (the
 system-prompt addendum), `_fsutil.py` (atomic writes and owner-only
 directories), `githead.py` (HEAD and the ref it names, read from the
 repository files) and `_caches.py` (the cache registry). Nothing in this group imports a handler or the store, and
@@ -911,9 +974,10 @@ kind, a session, a JSON payload and an HMAC-SHA256 over all of them plus
 the MAC of the row before it. The key is 32 random bytes under the user
 config directory (`keys/<store_id>.key`), never in the store; the store
 holds the key's fingerprint, a head checkpoint beside the key
-(`<store_id>.head`) records the last row written, and the origin anchor
-(`<store_id>.origin`) the first row this machine signed (Provenance,
-above). Every record row carries the MAC of the
+(`<store_id>.head`) records the last row written, the origin anchor
+(`<store_id>.origin`) the first row this machine signed, and the binding
+(`<store_id>.path`) the one store file the key ring belongs to
+(Provenance, above). Every record row carries the MAC of the
 log row that produced it, which is what the provenance label reads. The
 membership tables (the section above), the `standing` table among them,
 are folded by the same log.
@@ -999,7 +1063,11 @@ local daemon (`bettermemory up`, `down`, `status`), which is also what
 
 `config.toml` lives under platformdirs (`~/Library/Application
 Support/bettermemory/` on macOS, `~/.config/bettermemory/` on Linux).
-Most installs never edit it. `[behavior]` holds
+Most installs never edit it. The first command that loads the config
+writes it with every setting commented out (`# key = value` under its
+`[section]`, `config.DEFAULT_CONFIG`), so the code's defaults apply,
+a later release's changed default included, until a line is
+uncommented; a file that exists is never rewritten. `[behavior]` holds
 the knobs (`default_max_results`, `recency_boost_half_life_days`,
 `search_mode`, `conversational`, `write_supersession`, `prompt_recall`,
 `session_brief`, `heavily_used_min_applied`,
@@ -1045,15 +1113,26 @@ and a clamped `checkpoint_tokens` log a notice):
 `bettermemory config check` reports each, with a did-you-mean, and
 `config show` prints every setting in force and where it came from.
 
-**The managed file.** An organisation pins settings in a managed file
-with the same sections and keys, at
+**The managed config.** An organisation pins settings in a managed
+config with the same sections and keys (`managed.py`): the file
 `/Library/Application Support/bettermemory/managed.toml` on macOS and
-`/etc/bettermemory/managed.toml` on Linux and every other POSIX system
-(`managed.py`); no environment variable moves it, and none is read on
-Windows in this release. It is read after the user's file, and every
-key it sets is pinned: the user's value is ignored, with one logged
-notice per key whose raw value differs, and a list replaces the user's
-whole. Unknown sections and keys in it are ignored, as in config.toml,
+`/etc/bettermemory/managed.toml` on Linux and every other POSIX system,
+and on Windows, since 9.0.0rc13, the `ManagedConfig` value under
+`HKEY_LOCAL_MACHINE\SOFTWARE\Policies\bettermemory`
+(`managed.MANAGED_REGISTRY`), read through the 64-bit view: a REG_SZ is
+the text, a REG_MULTI_SZ its lines joined with newlines, and any other
+type, a REG_EXPAND_SZ included, is refused. Nothing under
+`%ProgramData%` is read, and no environment variable moves either
+source. The registry text goes through the file's own parse and
+refusals, a leading byte-order mark dropped and text holding an
+unpaired surrogate refused as the file refuses bytes that are not UTF-8;
+errors and reports name it `registry
+HKLM\SOFTWARE\Policies\bettermemory\ManagedConfig`. It is read after the
+user's file, and every key it sets is pinned: the user's value is
+ignored, with one logged notice per key whose raw value differs from
+the pinned one and is not the code's own default for the key
+(`config._restates_default`: compared as written, a boolean restating
+only a boolean), and a list replaces the user's whole. Unknown sections and keys in it are ignored, as in config.toml,
 but a top-level value outside a section is an error. It fails closed: a
 file that exists but cannot be read, does not parse or holds an invalid
 value stops the load with an error naming it. `Config.managed_keys`
@@ -1076,8 +1155,10 @@ records the pinned `section.key` names, which `config show` labels
 - The origin anchor is trust on first use for a store made before
   9.0.0rc12: an edit made before its first writing open under rc12 is
   not caught by the anchor.
-- No managed file on Windows in 9.0.0rc12, until its owner and ACL are
-  checked.
+- The key ring's binding is trust on first use for a ring from before
+  9.0.0rc13: the first owner's open after the upgrade binds it to the
+  file it opens, which may be a second file that borrowed the store's
+  id (Provenance, above).
 - A restore is guarded against the daemon and the spawn lock only;
   close every session before `backup restore --yes`.
 - One writer at a time. SQLite serialises writers; a second server

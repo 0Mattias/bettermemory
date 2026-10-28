@@ -217,13 +217,17 @@ the user's settings), not settings an MDM profile or a server delivers.
 
 ### The managed config
 
-bettermemory has a managed file of its own, which pins settings the
-user's `config.toml` cannot loosen: `/Library/Application
-Support/bettermemory/managed.toml` on macOS and
-`/etc/bettermemory/managed.toml` on Linux, written by an administrator.
-No environment variable moves it, and no managed file is read on Windows
-in this release. It takes `config.toml`'s sections and keys, and every
-key it sets is pinned. `examples/managed.toml` is the starting point:
+bettermemory has a managed config of its own, which pins settings the
+user's `config.toml` cannot loosen, written by an administrator: the
+file `/Library/Application Support/bettermemory/managed.toml` on macOS
+and `/etc/bettermemory/managed.toml` on Linux, and on Windows the
+registry value `ManagedConfig` under
+`HKEY_LOCAL_MACHINE\SOFTWARE\Policies\bettermemory` (a REG_SZ, or a
+REG_MULTI_SZ with one line per string), which Group Policy or Intune can
+deploy. No environment variable moves it, and nothing under
+`%ProgramData%` is read. It takes `config.toml`'s sections and keys, and
+every key it sets is pinned. `examples/managed.toml` is the starting
+point, with the `reg add` command for Windows:
 
 ```toml
 [storage]
@@ -236,9 +240,9 @@ strict_provenance = true
 forbid_acknowledge = ["credential"]
 ```
 
-A managed file that cannot be read or does not load stops the config
+A managed config that cannot be read or does not load stops the config
 from loading, so the daemon does not start: check it with `bettermemory
-config check`, which grades the user's file and the managed file and
+config check`, which grades the user's file and the managed config and
 exits 0 clean, 1 on an error and 2 on warnings only, and read what is in
 force with `bettermemory config show`, which labels each setting
 `default`, `user` or `managed`. A daemon reads the file when it starts:
@@ -328,6 +332,19 @@ its fix.
   verify` reports the store `unverifiable`. If the old key turns up,
   file it in the keys directory as
   `<store_id>.<first 16 hex characters of its fingerprint>.key`.
+- **The daemon does not start, and its log says the key file "is there
+  and cannot be read"**: the key file, or a symbolic link to it or to
+  the keys directory, cannot be read (a permission, a volume not
+  mounted). Nothing is rekeyed over it; every writing open fails until
+  the file can be read again, owner-only (`0600`).
+- **A store "opens for reading only" because "the key ring ... belongs
+  to the store at" another path**: two store files carry one store id (a
+  copy of the store in another directory, say), and the key ring is
+  bound to the other one, whose key, head and anchor it keeps. Move or
+  remove one of the two, or delete the `<store_id>.path` file the
+  message names, so that the next writing open binds the key ring to
+  the file it opens. [operations.md](operations.md#files-and-modes) has
+  the binding.
 - **`bettermemory log verify` reports `tampered`**: a log row fails its
   MAC, the chain is broken, or a table holds a row no log row produced.
   `--json` names the rows. Nothing repairs a tampered store in place;

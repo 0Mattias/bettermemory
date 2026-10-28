@@ -16,8 +16,8 @@
 #   reg add "HKLM\SOFTWARE\Policies\bettermemory" /v ManagedConfig /t REG_MULTI_SZ /reg:64 /f /d "[storage]\0cwd_store = false\0[policy]\0forbid_acknowledge = ['credential']"
 #
 # Group Policy deploys the same value with a Registry preference item under
-# Computer Configuration, and Intune with a PowerShell script run as SYSTEM
-# in 64-bit PowerShell, for this whole file:
+# Computer Configuration (action Update), and Intune with a PowerShell script
+# run as SYSTEM in 64-bit PowerShell, for this whole file:
 #
 #   New-Item -Path 'HKLM:\SOFTWARE\Policies\bettermemory' -Force | Out-Null
 #   New-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\bettermemory' -Name ManagedConfig -PropertyType String -Value (Get-Content -Raw -Encoding UTF8 managed.toml) -Force
@@ -29,8 +29,10 @@
 #
 # The file takes config.toml's own sections and keys. Every key set here is
 # pinned: a user's config.toml value for it is ignored, and bettermemory logs
-# one notice per such key naming this file. Keys left out stay the user's.
-# A list replaces the user's list whole; it is never merged with it.
+# one notice per such key naming this file, unless the user's value is the
+# built-in default for that key (`bettermemory config check` still lists the
+# line). Keys left out stay the user's. A list replaces the user's list
+# whole; it is never merged with it.
 #
 # The file fails closed. If it exists but cannot be read, is not valid TOML,
 # or holds a value of the wrong type or an unknown policy name, loading the
