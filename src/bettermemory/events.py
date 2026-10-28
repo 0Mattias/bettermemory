@@ -164,12 +164,24 @@ def _strip_known_secrets(text: str) -> str:
     existed. A legacy marker alone does not read as a secret to the
     second pass: the markers carry no digit, which the generic
     assignment rule needs, and no vendor prefix.
+
+    The second pass joins the pieces once rather than splicing each span
+    into a fresh copy of the text: a query is as long as the transport
+    lets it be, and a copy per span made a 4 MB query of tokens cost
+    seconds.
     """
     for pattern, replacement in _SECRET_PATTERNS:
         text = pattern.sub(replacement, text)
-    for start, end, kind in reversed(secret_spans(text)):
-        text = f"{text[:start]}{_DETECTOR_MARKER.format(kind=kind)}{text[end:]}"
-    return text
+    spans = secret_spans(text)
+    if not spans:
+        return text
+    pieces: list[str] = []
+    cursor = 0
+    for start, end, kind in spans:
+        pieces += (text[cursor:start], _DETECTOR_MARKER.format(kind=kind))
+        cursor = end
+    pieces.append(text[cursor:])
+    return "".join(pieces)
 
 
 def redact_query(text: str) -> dict[str, Any]:

@@ -141,6 +141,18 @@ def test_a_shape_the_legacy_patterns_missed_leaves_no_trace_in_the_preview(
     assert redacted["hash"] == digest[:16]
 
 
+def test_many_spans_are_spliced_as_one_at_a_time_would_splice_them() -> None:
+    """The second pass joins its pieces once; the text is what splicing
+    each span right to left into a fresh copy gives."""
+    text = " ".join([_GHO, "and", _STRIPE, "then", _ASSIGNMENT, _SLACK, "."] * 40)
+    spans = secret_spans(text)
+    assert len(spans) == 160
+    expected = text
+    for start, end, kind in reversed(spans):
+        expected = f"{expected[:start]}[REDACTED:{kind}]{expected[end:]}"
+    assert events._strip_known_secrets(text) == expected
+
+
 def test_two_secrets_of_one_shape_hash_alike() -> None:
     other = _shaped("gho_", "zyxwvu9876543210ZYXWVU9876543210zyxw")
     assert (
