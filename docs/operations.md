@@ -211,7 +211,11 @@ What the daemon's log and the clients say when something is wrong:
   this host's copy again from the machine it came from. In the second
   case, restoring a bundle or deleting
   `<store_id>.origin` and `<store_id>.head` accepts the replaced history,
-  and trusts the file again on purpose.
+  and trusts the file again on purpose. One more cause reads the same,
+  reason `signature`: an anchor written before 9.0.0rc13 names no key,
+  and when that key file was lost before a 9.0.0rc13 writing open could
+  name it, the loss cannot be told from a rewrite. Filing the old key
+  back, as below, makes it hold again.
 - **`log verify` reports `origin unverifiable`.** The key that signed
   the row where this host's history begins is no longer in the keys
   directory: its key file was lost, and the store was rekeyed since. The

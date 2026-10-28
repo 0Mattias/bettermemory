@@ -282,7 +282,13 @@ store's own history comes before its takeover row and keeps its labels.
 A lost key file leaves the rows it signed leading and the origin
 `unverifiable`, so `log verify` reads `unverifiable`; the anchor stays
 on its row, and filing the old key back as a retired key reads `ok`
-again.
+again. The exception is an anchor written before rc13 whose key was
+lost before a writing open could name it: it names no key, so the loss
+reads as the rewrite (`mismatch`, reason `signature`), `log verify`
+reads `tampered` and every segment that is not held reads as foreign.
+Filing the old key back makes it hold and the next writing open names
+it; without the key, deleting `<store_id>.origin` and `<store_id>.head`
+accepts the history on purpose.
 
 **The key ring's binding** (9.0.0rc13). The key ring is found by the
 store id in `meta`, which any file can carry, so it is also bound to one
@@ -299,12 +305,14 @@ bindings) or when the bound file no longer holds this store id; and
   (`store._store_id_at`): `immutable=1`, or `mode=ro` first when its
   `-wal` and `-shm` are present, so a store a running daemon just
   created, whose tables are still only in its WAL, is seen. No file
-  there, a file that is no store (SQLite answers `SQLITE_ERROR`, such as
-  no `meta` table, `SQLITE_CORRUPT` or `SQLITE_NOTADB`), one with
+  there, a file that is no store (SQLite's query answers `SQLITE_ERROR`,
+  such as no `meta` table, `SQLITE_CORRUPT` or `SQLITE_NOTADB`), one with
   another id, or a symbolic link loop is no store there, and the ring is
-  rebound to the file being opened. Any other failure (a permission, a directory that cannot
-  be searched, an I/O error, another SQLite error) cannot tell, and
-  keeps the binding.
+  rebound to the file being opened. Any other failure (a permission, a
+  directory that cannot be searched, an I/O error, another SQLite error,
+  and any failure of SQLite's open itself, such as the `SQLITE_ERROR` it
+  gives the URI of a Windows UNC path) cannot tell, and keeps the
+  binding.
 - When the binding names another file that still holds the id, or
   cannot be read to tell, and that is not this file under another
   spelling (`os.path.samefile`), the owner's open retires no key,

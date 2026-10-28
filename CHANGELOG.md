@@ -54,9 +54,11 @@ testing.
   `<store_id>.path.lock` by `Store.create`, by the first owner's open of
   a ring that has none, and by `backup restore`. When it names another
   file that still holds this store id, or one that cannot be read to
-  tell (a permission, an I/O error, any SQLite error but `SQLITE_ERROR`,
-  `SQLITE_CORRUPT` and `SQLITE_NOTADB`), and that is not this file
-  under another name (`os.path.samefile`), the owner's open writes
+  tell (a permission, an I/O error, any failure of SQLite's open, a
+  Windows UNC path's URI included, and any error of its query but
+  `SQLITE_ERROR`, `SQLITE_CORRUPT` and `SQLITE_NOTADB`), and that is
+  not this file under another name (`os.path.samefile`), the owner's
+  open writes
   nothing: no key retired or written, no meta, no row, no head, no
   anchor. So does a reader's open whose key matches, since a reader with
   the key writes too (the session-start hook, a worker connection). The
@@ -84,8 +86,9 @@ testing.
   `unverifiable` (exit 1), and the segments split as they do without an
   anchor; filing the key back as `<store_id>.<first 16 hex of its
   fingerprint>.key` makes the anchor hold again. An anchor written
-  before rc13 names no key and reads as it did, until a writing open
-  that sees its row verify adds the name without moving it. A key file
+  before rc13 names no key, and a row no held key verifies reads as a
+  rewrite, until a writing open that sees its row verify adds the name
+  without moving it (Known limitations, below). A key file
   that is there and cannot be read, or a key file or keys directory
   that is a symbolic link to nothing (a volume not mounted yet), raises
   `KeyUnreadableError` naming the file: the owner's open fails instead
@@ -236,6 +239,17 @@ testing.
   `tampered` (`tail_deleted`), and the home store opens for reading
   only. `[storage] cwd_store = false` closes the repository route, and
   a ring already bound is not taken this way.
+- **An rc12 anchor whose key is lost before rc13 names it reads
+  tampered.** An origin anchor written before rc13 names no key, and the
+  first writing open that sees a held key verify its row names it. When
+  the key that signed the row was lost before that open, nothing tells
+  the loss from a rewrite: the origin reads `origin_mismatch` (reason
+  `signature`), `log verify` reads `tampered`, and every segment whose key
+  is not held reads `unaccounted`, where rc12 moved the anchor to the
+  `rekey` row. Filing the old key back as `<store_id>.<first 16 hex of its
+  fingerprint>.key` makes the anchor hold and be named; without the key,
+  deleting `<store_id>.origin` and `<store_id>.head` accepts the history
+  on purpose.
 
 ### 9.0.0rc12
 
