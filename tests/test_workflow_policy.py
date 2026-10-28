@@ -797,5 +797,11 @@ def test_mcp_publisher_is_pinned_and_checked_before_it_is_unpacked() -> None:
     ]
     assert len(checks) == 2
     assert max(checks) < script.index("tar xzf") < script.index("./mcp-publisher")
+    # The two pins are what the checks stand on: the first check holds the
+    # checksums file to the pinned digest, not to a value fetched beside it,
+    # and both downloads come from the pinned version's release.
+    first_check_line = script[: min(checks)].rsplit("\n", 1)[-1]
+    assert "${MCP_PUBLISHER_CHECKSUMS_SHA256}" in first_check_line
+    assert "/releases/download/v${MCP_PUBLISHER_VERSION}" in script
     assert _write_scopes(doc["permissions"]) == set()
     assert _write_scopes(job["permissions"]) == {"id-token"}
