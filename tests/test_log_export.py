@@ -14,7 +14,6 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-
 import sqlite3
 import stat
 import sys
@@ -25,6 +24,7 @@ from typing import Any
 import pytest
 
 from bettermemory import audit_export
+from bettermemory.audit import MissHit
 from bettermemory.audit_export import (
     AUDIT_SCHEMA,
     REDACTED_FIELDS,
@@ -347,6 +347,49 @@ def test_bodies_and_free_text_are_redacted_by_default(store: Store) -> None:
     # Queries are redacted in the log itself and pass through as stored.
     search = next(line for line in lines if line["kind"] == "search")
     assert set(search["payload"]["query"]) == {"hash", "preview", "len"}
+
+
+def test_body_and_reply_text_in_telemetry_rows_is_redacted_by_default(
+    store: Store,
+) -> None:
+    """The telemetry rows carry pieces of bodies and replies under names
+    of their own: the body window of each recall or miss hit, the reply
+    sentence a use names, the body phrases a refused write quotes. Each
+    is free text and leaves the host only as its hash."""
+    snippet = "the staging ledger listens on 6543 behind the bastion"
+    excerpt = "so I routed the ledger through the bastion as agreed"
+    phrase = "I prefer the ledger on 6543"
+    hit = MissHit(
+        id="m1", score=1.0, relevance="high", scopes=("tools",), snippet=snippet
+    )
+    for kind in ("prompt_recall", "recall_held", "search_miss"):
+        store.record_event(kind, session="sess_a", top_hits=[hit.to_dict()])
+    store.record_event("use", session="sess_a", ids=["m1"], claim_excerpts=[excerpt])
+    store.record_event(
+        "update", session="sess_a", id="m1", claim_phrases=[phrase, phrase]
+    )
+    lines = export_lines(store)
+    text = _all_text(lines)
+    for secret in (snippet, excerpt, phrase):
+        assert secret not in text, secret
+    recall = next(line for line in lines if line["kind"] == "prompt_recall")
+    (shown,) = recall["payload"]["top_hits"]
+    assert shown["snippet"] == redact_text(snippet)
+    assert (shown["id"], shown["relevance"]) == ("m1", "high")
+    use = next(line for line in lines if line["kind"] == "use")
+    assert use["payload"]["claim_excerpts"] == [redact_text(excerpt)]
+    assert use["payload"]["ids"] == ["m1"]
+    update = next(line for line in lines if line["kind"] == "update")
+    assert update["payload"]["claim_phrases"] == [redact_text(phrase)] * 2
+    kept = _all_text(export_lines(store, include_bodies=True))
+    for secret in (snippet, excerpt, phrase):
+        assert secret in kept, secret
+
+
+def test_a_query_still_in_text_is_redacted_and_its_stand_in_passes() -> None:
+    stand_in = {"hash": "ab" * 8, "preview": "ledger", "len": 6}
+    out = redact_payload({"query": "ledger port", "probe_query": stand_in})
+    assert out == {"query": redact_text("ledger port"), "probe_query": stand_in}
 
 
 def test_include_bodies_keeps_every_payload_as_the_log_holds_it(store: Store) -> None:

@@ -47,15 +47,20 @@ verdict; the export is the trail.
 
 Redaction. By default every string under a free-text field name
 (`REDACTED_FIELDS`: bodies, takeaways, removal reasons, notes, the
-user's quoted words, conflict summaries and claims), at any depth of the
-payload, becomes ``{"sha256": <hex of its UTF-8>, "len": <characters>}``.
+user's quoted words, conflict summaries and claims, and the pieces of
+bodies and replies the telemetry rows carry: a recall's or a miss's hit
+snippets, a use's claim excerpts, a refused write's claim phrases), at
+any depth of the payload, becomes
+``{"sha256": <hex of its UTF-8>, "len": <characters>}``.
 A list of strings under such a name becomes a list of those. The hash
 lets a consumer see that two rows carry the same text, and a body it
 already holds be matched, without the text leaving the host. Ids,
 scopes, timestamps, provenance, paths, repository and branch names stay
 as they are: they are what an audit is about. Queries are redacted in
-the log itself (`events.redact_query`) and pass through as stored. A
-payload that is not a JSON object is redacted whole. With
+the log itself (`events.redact_query`) and that stand-in passes through
+as stored; a query that is still text (a row written some other way) is
+redacted here like a body. A payload that is not a JSON object is
+redacted whole. With
 ``include_bodies`` every payload is exported as the log holds it, every
 version of every body included, which makes the output as sensitive as
 the store file.
@@ -98,19 +103,33 @@ AUDIT_SCHEMA = "bettermemory.audit/1"
 # rows' `reason`), what a verifier or a conflict verdict noted (`note`),
 # the first lines of two conflicting bodies (`summary_a`, `summary_b`)
 # and the user's words a change rests on (`said`; a boolean `said`, as
-# the capture rows carry it, is not text and passes through). Matched
+# the capture rows carry it, is not text and passes through). The
+# telemetry rows carry pieces of the same text: the body window each
+# hit of a `prompt_recall`, `recall_held` or `search_miss` row shows
+# (`top_hits[].snippet`), the reply sentence a `use` row says a memory
+# shaped (`claim_excerpts`) and the body phrases a refused `write` or
+# `update` quotes (`claim_phrases`). `query` and `probe_query` are
+# listed for a query that is still text: the store redacts both before
+# a row is signed, and that stand-in (a dict of hash, preview and
+# length) holds no listed name, so it passes through as stored. Matched
 # by name at any depth, so a field nested in a review's answers is
 # caught where it sits. A `reason` that is a code (`cap`) is hashed
 # too: a name-based rule cannot tell a code from a sentence, and a
-# hash of a code still groups.
+# hash of a code still groups. A free-text field a later row kind
+# adds must be named here, or it is exported as it stands.
 REDACTED_FIELDS = frozenset(
     {
         "body",
+        "claim_excerpts",
+        "claim_phrases",
         "claims",
         "note",
+        "probe_query",
+        "query",
         "reason",
         "removed_reason",
         "said",
+        "snippet",
         "summary_a",
         "summary_b",
         "takeaway",
