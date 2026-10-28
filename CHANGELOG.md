@@ -25,6 +25,414 @@ bettermemory` and the plugin's `uvx bettermemory` keep resolving 8.0.0
 until the stable `9.0.0` is tagged. Ask for a candidate by version
 (`uvx bettermemory==9.0.0rc1`) to run it.
 
+### 9.0.0rc12
+
+The twelfth candidate closes the provenance gap an editor of the store
+file could use to pass forged rows off as a copied store's, hardens the
+daemon's HTTP surface and the client's trust in what answers on its
+port, and adds the commands an operator needs to run bettermemory on a
+team's machines: verified backups, an audit export with external
+anchors, a scriptable daemon and a service unit, a self-check, a posture
+audit, a secret scan, a usage report, a record's history and a config
+report. The store's schema does not move. The new commands and keys are
+opt-in; the security fixes change behaviour in the case each one
+closes, and Changed below names every default that moved, with its
+trigger. `docs/operations.md` is the operator's runbook for all of
+it. It is a release candidate like the eleventh; the
+stable 9.0.0 follows the candidates' testing.
+
+#### Security
+
+- **A forged log segment after this host's own reads `unaccounted`.** A
+  writer who held the store file but not the key could append a `rekey`
+  row naming a key nobody holds, a `memory_put` after it and the record
+  it puts, and edit `meta.key_fingerprint`: after the owner's next open
+  the planted memory read `local`, the health census missed it and `log
+  verify` said only `unverifiable`. A segment of the log whose key this
+  host's key ring does not hold, coming after one it does hold, is now
+  foreign: its records read `unaccounted` on search, show, the recall
+  pointer, the episode handoff and the health census, and `log verify`
+  reports `foreign_segment` with its seq range, so the status is
+  `tampered` and the exit code 1. A row this host's own current key
+  signed into such a segment (a daemon that had the store open while the
+  forged row went in) still reads `local`. The owner's opener no longer
+  takes the old fingerprint from `meta`: a key that signs a segment of
+  the log stays current, `meta` is set back, the foreign tail is closed
+  with a genuine `rekey` row and a WARNING on the `bettermemory.store`
+  logger names the segment. The leading segments, those before the first
+  held one, are the documented case of a store copied here without its
+  key, and keep their labels unless `[security] strict_provenance` is
+  set (Added). (`src/bettermemory/store.py`,
+  `src/bettermemory/log.py`, `tests/test_segment_trust.py`)
+- **Where this host's history begins is anchored outside the store.**
+  The rule above read the start of this host's history off the log, so
+  one more edit (rewriting seq 1, or this host's first `rekey` row, so
+  that no held key verifies it) made this host's rows and the forged
+  segment after them all look like a copied store's, and the planted
+  memory read `local` again. The key ring now holds
+  `<store_id>.origin` beside the key and the head: the seq and the MAC
+  column of the first row this host's key ring signed, written 0600
+  under a sidecar lock. `Store.create` anchors seq 1; the owner's opener
+  anchors the `rekey` row it writes when it takes over a store copied
+  here; a store from before the anchor gets one at its first writing
+  open (below). Every read checks the anchor with the segment map: the
+  row at its seq must exist, carry its MAC and verify under a held key.
+  When it holds, an unheld segment is leading only if it ends before the
+  anchor. When it does not, `log verify` reports `origin_mismatch` (exit
+  1, reason `missing`, `mac` or `signature`) and every segment whose key
+  is not held reads `unaccounted`, leading ones included. The cost is
+  one file read, one indexed row lookup and one HMAC per connection's
+  first pointer check. (`src/bettermemory/log.py`,
+  `src/bettermemory/store.py`, `tests/test_origin_anchor.py`)
+- **Rows below seq 1 are never trusted.** The segment map and the
+  opener's last-rekey lookup read the log at any seq, while `log verify`
+  walks only seq 1 and up, so rows an editor inserted at seq 0 and below
+  could form a segment that ended before the anchor and read as copied
+  history. Both now read only seq 1 and up, and a record whose log row
+  sits below seq 1 reads `unaccounted` on every read surface. No store
+  writes such a row. (`src/bettermemory/log.py`,
+  `src/bettermemory/store.py`)
+- **A store id is the shape `create` writes, or the store is refused.**
+  The key ring joins `meta.store_id` onto the keys directory, so a store
+  file whose id was a relative path could bind a key planted beside it
+  as the store's own. A store whose id is not 32 lowercase hex
+  characters is now refused at open with a ValueError ("carries a store
+  id this build never writes"). (`src/bettermemory/store.py`)
+- **Every daemon route checks Host and Origin.** Only `/mcp` had the
+  SDK's DNS-rebinding protection, so a page in a browser could read
+  `/health` (the store path among it) through a rebound name. A
+  middleware in front of every route now answers 421 unless the Host is
+  `127.0.0.1`, `localhost` or `[::1]`, bare or with the daemon's own
+  port, and 403 for an Origin, when one is sent, that is not `http://`
+  plus one of those; an empty Origin is refused. Bodies under
+  `/api/v1/` are capped at 4 MiB, the SDK's `/mcp` cap (413). A
+  websocket upgrade is closed with 1008. (`src/bettermemory/daemon.py`)
+- **A client trusts only a daemon that proves its token.** The hook
+  client, the shim, `up`, `down`, `status` and `ensure_daemon` took any
+  `{"status": "ok"}` on the state file's port as the daemon, so after a
+  crash another account's listener on that port received the hook
+  payloads and the token. `GET /health?nonce=<32 to 128 hex>` now adds
+  `proof`, `hex(HMAC-SHA256(token, "bettermemory-health-v1:" + nonce))`;
+  every client sends a fresh nonce on the health request it already
+  made and compares the proof. A daemon writes `"health_proof": 1` into
+  its state file; at the port of such a file a reply without a proof is
+  never ours, and gets nothing: no payload, no token, no shutdown, no
+  signal. A state file without the key, written by a daemon before
+  rc12, is accepted only when the reply repeats its pid and store, so an
+  rc11 daemon is still replaced as before. `shutdown_daemon` signals a
+  pid only when the daemon proved itself or the pid is alive while the
+  store's lock is held, never on a stale state file alone. The state
+  directory is made 0700 before the daemon log is opened in it, and the
+  log is created 0600. A hook to its own daemon is still one GET and one
+  POST.
+  (`src/bettermemory/_daemon_client.py`, `src/bettermemory/daemon.py`,
+  `src/bettermemory/shim.py`, `src/bettermemory/cli/daemon_cmd.py`)
+- **Nothing for the daemon goes through a proxy.** The client's
+  `health()` and `post()` used urllib, which sends a request for
+  `127.0.0.1` through `http_proxy` unless `no_proxy` names it, so a
+  configured proxy received the bearer token and the hook payloads. Both
+  now use an opener with no proxy handler. This was true of every
+  release before rc12. (`src/bettermemory/_daemon_client.py`)
+- **An episode carrying a secret is refused.** `episode(action="write")`
+  skipped the credential gate. It now runs the write gate's detectors
+  over the body and the takeaway and, on a hit, writes nothing and
+  answers `{status: "credential_warning", markers: [{kind, snippet,
+  field}], hint}`; episodes take no acknowledge flag, so the value has
+  to be removed. The refusal's event row records only the detector kinds
+  and the fields. (`src/bettermemory/handlers/episode_write.py`)
+- **The log's query previews are redacted with every detector.** The
+  `query` and `probe_query` previews in the signed log were redacted
+  with five token shapes against the write gate's fourteen, so a `gho_`,
+  `sk-proj-`, `sk_live_`, `xoxb-` or `AIza` token reached the 32-character
+  preview. The previews now pass through the gate's own detector spans
+  (`credentials.secret_spans`) after the five legacy patterns, whose
+  `[REDACTED:...]` markers are kept; a new span reads
+  `[REDACTED:<detector kind>]`. A query with none of the shapes is
+  byte-for-byte unchanged. Rows already in a log are not rewritten;
+  `bettermemory security scan --log` finds a token left in one. Four
+  detectors that took time quadratic in a run of their own prefix
+  (`sk-`, `xox?-`, `xapp-`, `eyJ`) now match in linear time with the same
+  results, since this path runs them on every search query.
+  (`src/bettermemory/events.py`, `src/bettermemory/credentials.py`)
+- **Audit rows are recorded with telemetry off.** With `[telemetry]
+  enabled = false` the standing guard's rows and the override evidence
+  on write and update events were dropped with the telemetry. A
+  `standing_guard` row, and a `write` or `update` row with `forced=true`
+  or a true `*_acknowledged` field, is now recorded whatever the switch
+  says; every other row stays off. (`src/bettermemory/events.py`)
+- **Declared identity loses its format characters; the CLI's user is
+  the real uid's.** Declared values (client, version, model, session
+  ids, `clientInfo`, the Stop hook's transcript actor) are stripped of
+  Unicode format characters (bidi controls, zero-width characters)
+  before validation, not refused; the workspace path and the attested
+  principal keep theirs. The CLI's declaration principal is
+  `os:<password-database name of the real uid>` on POSIX, or
+  `os:uid:<n>` without an entry, where `$USER` chose it before; Windows
+  still asks `getpass`. (`src/bettermemory/identity.py`,
+  `src/bettermemory/cli/project_cmd.py`)
+- **An organisation can pin settings the user's config cannot loosen.**
+  A managed file with config.toml's own sections and keys, at
+  `/Library/Application Support/bettermemory/managed.toml` on macOS and
+  `/etc/bettermemory/managed.toml` on Linux and other POSIX systems, is
+  read after the user's file; every key it sets is pinned, a user value
+  that differs gets one warning naming both files, and a list replaces
+  the user's whole. No environment variable moves it. It fails closed:
+  a file that exists but cannot be read, is not TOML or holds an invalid
+  value stops the load with an error naming it. It binds the user's
+  config, not a process running as the user, which can still set
+  `BETTERMEMORY_DIR` or open the store file. No managed file is read on
+  Windows in this release (Known limitations). `examples/managed.toml`
+  is a starting point. (`src/bettermemory/managed.py`,
+  `src/bettermemory/config.py`)
+
+#### Added
+
+- **`[security] strict_provenance`** (default false). True reads every
+  row in a segment whose key this host does not hold as `unaccounted`,
+  the leading segments of a copied store included: only what this
+  host's own keys verify is trusted. The store reads it lazily, once per
+  connection, and only when a row in such a segment is first labelled;
+  a config that cannot be read reads as true, with a warning. It is the
+  switch to pin in a managed file. (`src/bettermemory/config.py`,
+  `src/bettermemory/store.py`)
+- **`[policy] forbid_force` and `forbid_acknowledge`** (default off and
+  `[]`). The first refuses a `memory_write` with `force=true`
+  (`memory_update` has no `force`); the second names acknowledge flags
+  (`credential`, `transient`, `scope_mismatch`, `user_claim`,
+  `truncation`) whose `acknowledge_<name>=true` refuses the call, even
+  where its gate would not have fired. A refused call writes nothing and
+  records no event; its error starts `policy_refused:` and says whether
+  the switch is managed. An unknown name, or a value that is not a
+  boolean spelling, stops the config from loading.
+  (`src/bettermemory/policy.py`)
+- **`[storage] cwd_store`** (default true). False skips the
+  store-directory rule's third step, `./.claude-memory/` in the working
+  directory, so a cloned repository that commits that directory never
+  becomes the store. The hook client and the shim follow it. A value
+  that is not a boolean spelling stops the config from loading.
+- **`bettermemory backup create|verify|restore`.** `create` writes a
+  bundle (`<store dir>/backups/<UTC stamp>/` by default, `--out DIR`
+  otherwise; directory 0700, files 0600): an online snapshot of
+  `memory.sqlite` that is safe while the daemon writes, the head
+  checkpoint at the snapshot and a manifest signed with the store's key
+  (store id, key fingerprints, head, origin anchor, row counts, every
+  file's SHA-256). Keys stay out unless `--include-key`. `verify` checks
+  the hashes, the signature, the manifest's claims and then the whole
+  log on a private copy, never in place (exit 0 ok, 1 mismatched or
+  tampered, 2 unverifiable). `restore` refuses while the daemon or
+  spawn lock is held, refuses a bundle that does not verify, plans
+  without `--yes` (exit 3), moves the current files aside as
+  `<store>.pre-restore-<stamp>` and never deletes them, installs the
+  keys and the anchor the bundle needs, rewinds the head checkpoint on
+  the record (`<store_id>.backup_restore.json`) and runs `log verify` on
+  the result. (`src/bettermemory/backup.py`,
+  `src/bettermemory/cli/backup_cmd.py`)
+- **`bettermemory log export` and `log anchor`, and `log verify
+  --anchor`.** `export` writes the log as JSON Lines
+  (`bettermemory.audit/1`, one object per row) for a SIEM: seq, ts,
+  kind, class, actor, record ids, the payload with bodies and other free
+  text replaced by `{sha256, len}` unless `--include-bodies`, the MAC and
+  its link, the segment's key fingerprint and `verified`.
+  `--since-seq`/`--until-seq` make it incremental, `--kinds` filters, and
+  `--out` writes 0600 atomically and reports the cursor to pass next.
+  `anchor` takes `{store_id, seq, mac, chain_sha256, created_at}` of the
+  log's last row, to keep off the host; `log verify --anchor FILE`
+  (repeatable) reports `anchor_mismatch` when history up to an anchored
+  seq was rewritten, even by a process that holds the key.
+  (`src/bettermemory/audit_export.py`, `src/bettermemory/anchor.py`,
+  `src/bettermemory/cli/log_cmd.py`)
+- **`log verify` reports the origin anchor.** `--json` gains `origin`
+  (`{status, seq?, reason?}`, status `ok`, `absent`, `mismatch` or
+  `unverifiable`) after `head`, and the text report one line, `origin
+  ok at seq 1`. `absent` is no finding.
+- **Scriptable `up`, `down` and `status`.** `status --check` exits 0
+  running and answering as this store's daemon, 1 not running, 2 a state
+  file whose daemon does not answer but may be alive, 3 the port
+  answers but not as this store's daemon. `status --json`, `up --json`
+  and `down --json` print one object each, never the token.
+  (`src/bettermemory/cli/daemon_cmd.py`)
+- **`bettermemory service install|uninstall|status|print`.** A launchd
+  LaunchAgent on macOS (`io.github.0mattias.bettermemory`) or a systemd
+  user unit on Linux (`bettermemory.service`) that runs `<this
+  interpreter> -m bettermemory up --foreground` in the state directory,
+  restarts it after a failure (not after a clean exit), and pins the
+  store, keys and state variables the installing shell sets. `print`
+  writes nothing; other platforms get the command to supervise and exit
+  2.
+  (`src/bettermemory/service_units.py`,
+  `src/bettermemory/cli/service_cmd.py`)
+- **`bettermemory doctor`.** A read-only self-check of the install, the
+  config, the store's location, the store and its key, the daemon, the
+  Claude Code and other client wiring and the disk, each `ok`, `warn` or
+  `fail` with a one-line fix; `--json`; exit 0, 1 on any failure, 2 on
+  warnings only. (`src/bettermemory/doctor.py`)
+- **`bettermemory security audit`, `security sandbox` and `security
+  scan`.** `audit` grades the modes and owners of the store, its WAL
+  files, the keys, the head and origin files, the state directory, state
+  file and daemon log; the key against the store; the store and keys
+  outside git working trees and synced folders; a store chosen by
+  `./.claude-memory`; and Claude Code's sandbox settings. It never
+  chmods or writes (exit 0, 1 on a high finding, 2 on warnings).
+  `sandbox` prints the Claude Code sandbox block for this host's real
+  paths (`--format settings|managed`). `scan` finds where a secret-shaped
+  string persists in memories, tombstones, episodes and conflicts, and
+  with `--log` in every log payload, and never prints the value.
+  (`src/bettermemory/posture.py`, `src/bettermemory/sandbox_settings.py`,
+  `src/bettermemory/secret_scan.py`, `src/bettermemory/cli/security_cmd.py`)
+- **`bettermemory stats`, `memory history ID` and `completion
+  bash|zsh|fish`.** `stats` is a read-only usage and growth report from
+  aggregate SQL (no MAC is checked). `memory history` lists every log
+  row that made, changed, verified, removed or restored one record, each
+  with its MAC checked, and `--diff` adds the body diffs. `completion`
+  prints a script generated from the parser itself.
+  (`src/bettermemory/cli/stats_cmd.py`, `src/bettermemory/history.py`,
+  `src/bettermemory/cli/completion_cmd.py`)
+- **`bettermemory config path|show|check`.** `path` prints the config
+  file, the managed file, the store directory with the rule that chose
+  it, and the keys and state directories. `show` prints every setting in
+  force labelled `default`, `user` or `managed`, and names a value of
+  the user's that a pin or the loader ignored. `check` reports unknown
+  sections and keys with a did-you-mean, removed and renamed keys,
+  values that fall back to the default, `[scopes] allowed` entries
+  outside the scope grammar, unknown `forbid_acknowledge` names and the
+  port range (exit 0, 1 on an error, 2 on warnings only). It never
+  creates the config file, the store or the keys.
+  (`src/bettermemory/cli/config_cmd.py`)
+- **Release provenance.** A tag's GitHub release carries `SHA256SUMS`
+  over the wheel and the sdist and a CycloneDX SBOM of the lock
+  (`bettermemory.cdx.json`), and every run that passes the gates signs a
+  GitHub build-provenance attestation for the files it built
+  (`docs/release.md`, "Verifying a release").
+  (`.github/workflows/release.yml`)
+- **Supply-chain checks.** CodeQL over Python and the workflows, OpenSSF
+  Scorecard, a daily audit of `uv.lock` against OSV
+  (`tools/audit_lock.py`, with dated exceptions in
+  `tools/audit-ignore.toml`) and a license check of the runtime closure
+  against `tools/license-policy.toml` (`tools/sbom.py --licenses`); none
+  gates a release. `tests/test_workflow_policy.py` holds every workflow
+  to actions pinned by commit, read-only top-level permissions with
+  write scopes granted per job from an allowlist, checkouts that keep no
+  token and no untrusted expression inside a `run:` script.
+  (`.github/workflows/`, `tools/`)
+
+#### Changed
+
+- **A store moved away and back reads `tampered`.** A store moved from
+  this host to another and back, or opened once under another
+  `BETTERMEMORY_KEYS_DIR` (which rekeys it), carries a segment signed by
+  a key this host does not hold after this host's own, which is the
+  foreign shape: the other key's rows read `unaccounted` and `log
+  verify` exits 1, where it read `unverifiable` with the labels kept.
+  Filing the other key in this host's keys directory as
+  `<store_id>.<first 16 hex of its fingerprint>.key` restores `ok`.
+- **A store gets an origin anchor at its first writing open.** On a
+  store from before rc12, the first open through the owner's opener
+  (the daemon, `serve`, and the CLI commands that open through
+  `open_or_create`) writes `<store_id>.origin` in the keys directory, at
+  the first row of the earliest segment this host holds when that row
+  verifies. A read-only command (`log verify`, `log export`, `export`,
+  `stats`, `memory history`, `doctor`, `backup create` and `verify`,
+  `security`) writes nothing. Copying a store file
+  from its source machine over this host's copy again, with the same
+  store id, then reads `origin_mismatch` (Known limitations has the
+  recovery).
+- **A config section written as a scalar stops the load.** A config.toml
+  with `[daemon]`, `[capture]`, `[membership]` or `[security]` written
+  as a scalar (`security = true`) loaded that section's defaults without
+  a word; one with `[storage]`, `[behavior]`, `[scopes]`, `[policy]` or
+  `[telemetry]` as a scalar crashed with AttributeError, and `security
+  audit` and `security sandbox` printed a traceback. Each now raises
+  `ValueError: malformed config in <path>: [<section>] = <value> must be
+  a table`, as the managed file already did: the daemon does not start,
+  the hook client prints the error and exits 0, and the store's
+  `strict_provenance` lookup reads as strict. A TOML syntax error or a
+  config.toml that is not UTF-8 raises `malformed config in <path>:
+  ...`, naming the file. A config.toml that starts with a UTF-8
+  byte-order mark now loads, and `doctor` reads it as the loader does.
+  (`src/bettermemory/config.py`, `src/bettermemory/doctor.py`)
+- **`status` and `down` keep a live daemon's state file.** Both removed
+  a state file whose daemon did not answer, so a starting, busy or hung
+  daemon disappeared from view and hooks spawned daemons that waited 8 s
+  on its lock. A state file is now removed only when its pid is gone or
+  the store's lock can be taken; otherwise `status` reports the state as
+  present and not answering. A port that answers with something other
+  than a daemon's `/health` reads as not ours instead of a traceback.
+  The default text and exit codes of `status` are otherwise unchanged.
+- **The daemon's Host check pins its own port.** `/mcp` accepted any
+  loopback port in the Host header, as the SDK does; every route now
+  requires the daemon's bound port or none, so a client reaching the
+  daemon through a local port-forward (`ssh -L 9000:127.0.0.1:7397`) or a
+  browser inspector on another localhost port gets 421 or 403.
+- **The query hash changes for a prompt with a newly covered secret.**
+  Its preview and hash now carry the new marker, so the Stop hook's
+  re-audit dedup, the recall review's probe digest and a re-run of
+  `migrate v8` across the upgrade do not match a row written before
+  rc12 for such a prompt: one extra audit row, review candidate or
+  imported event at most.
+- **The workflows and the build.** Dependabot's Python updater moves
+  from `pip` to `uv` with `lockfile-only` and a seven-day cooldown, and
+  groups minor and patch updates only. The build backend is pinned to
+  `hatchling==1.32.4`, which also ships in the sdist. The release build
+  no longer uses the uv cache, and no checkout keeps its token.
+  `publish-mcp.yml` pins `mcp-publisher` 1.8.6 and checks it against
+  its release's checksums before unpacking it.
+  (`.github/dependabot.yml`, `pyproject.toml`, `.github/workflows/`)
+
+#### Fixed
+
+- **A listener that does not speak HTTP is no daemon.** `health()` let
+  `http.client.HTTPException` escape, so a stale port held by another
+  protocol made every hook fail and `down` end in a traceback. It now
+  reads as nothing answering: the hook starts a daemon beside it and
+  `down` reports no daemon. (`src/bettermemory/_daemon_client.py`)
+- **The help says what `export` and `tombstones prune` are.** `export`
+  was described as round-trippable and meant for backup; it leaves out
+  the log, episodes and most tables, and nothing restores a store from
+  it, so its help now points at `backup create`. `tombstones prune`
+  said it hard-deletes; it removes the tombstone rows, and the log keeps
+  every earlier version of the record. (`src/bettermemory/cli/export.py`,
+  `src/bettermemory/cli/tombstones.py`)
+- **The credential hints no longer mention the removed sync lane.**
+  (`src/bettermemory/handlers/write.py`,
+  `src/bettermemory/handlers/update.py`)
+
+#### Known limitations
+
+- **No managed file on Windows yet.** A standard account can create
+  folders under ProgramData, so a file there could be one user's,
+  binding every other account. `managed_config_path()` answers None on
+  Windows until the file's owner and ACL are checked, and `config path`
+  says so.
+- **The origin anchor is trust on first use on upgrade.** An edit made
+  to a store before its first writing open under rc12 is not caught by
+  the anchor. The plain forged-segment recipe is still caught by the
+  segment rule, and `strict_provenance = true` catches the rest. An
+  editor who sets `meta.store_id` to a fresh id detaches the store from
+  this host's key ring, so it opens as a store copied here, and only
+  `strict_provenance` reads its earlier rows `unaccounted`.
+- **A store file copied over again reads `origin_mismatch`.** Copying
+  the store file from its source machine over this host's store again,
+  with the same store id, changes the history at the anchor. The
+  recovery is `bettermemory backup restore` of a bundle, or deleting
+  `<store_id>.origin` and `<store_id>.head` in the keys directory to
+  accept the replaced history, which trusts the file again on purpose.
+- **A restore is guarded only against the daemon and spawn locks.**
+  `serve`, the shim's in-process fallback and the writing CLI commands
+  open the store without those locks; close every session before `backup
+  restore --yes`. Its text output does not show the origin anchor it
+  replaces; `--json` and the restore record carry it.
+- **SIEM rules should alert on `verified: null` as well as `false`.** An
+  editor without the key can make later rows of `log export` read
+  `verified: null` (a key not held) by editing `meta.key_fingerprint` or
+  inserting a `rekey` row; `log verify` reports that store unverifiable
+  or tampered.
+- **The posture audit reads file-based Claude Code managed settings
+  only.** `security audit` reads `managed-settings.json`, its
+  `managed-settings.d/` drop-ins and the user's settings; server-managed
+  settings and MDM sources (a macOS profile, the Windows registry), which
+  Claude Code ranks above those files, are not read, so the audit can
+  describe a policy that is not in force there.
+
 ### 9.0.0rc11
 
 The eleventh candidate carries the tenth's changes with the two items
