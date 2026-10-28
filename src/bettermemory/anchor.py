@@ -61,7 +61,7 @@ from pathlib import Path
 from typing import Any
 
 from ._fsutil import bounded_read
-from .audit_export import read_snapshot
+from .audit_export import MAX_SEQ, read_snapshot, same_mac
 from .log import last_row
 from .store import Store
 from .time_utils import isoformat_utc
@@ -177,8 +177,10 @@ def parse_anchor(raw: Any, *, where: str) -> Anchor:
     created = raw.get("created_at")
     if not isinstance(store_id, str) or not store_id:
         raise AnchorFileError(f"{where}: store_id must be non-empty text")
-    if isinstance(seq, bool) or not isinstance(seq, int) or seq < 1:
-        raise AnchorFileError(f"{where}: seq must be a whole number of 1 or more")
+    if isinstance(seq, bool) or not isinstance(seq, int) or not 1 <= seq <= MAX_SEQ:
+        raise AnchorFileError(
+            f"{where}: seq must be a whole number from 1 to {MAX_SEQ}"
+        )
     if not isinstance(mac, str) or not _HEX64.match(mac):
         raise AnchorFileError(f"{where}: mac must be 64 lowercase hex characters")
     if not isinstance(digest, str) or not _HEX64.match(digest):
@@ -260,7 +262,7 @@ def check_anchors(
             reason: str | None = None
             if row is None:
                 reason = REASON_MISSING
-            elif not hmac.compare_digest(str(row[0]), anchor.mac):
+            elif not same_mac(anchor.mac, str(row[0])):
                 reason = REASON_MAC
             elif not hmac.compare_digest(digests[anchor.seq], anchor.chain_sha256):
                 reason = REASON_DIGEST

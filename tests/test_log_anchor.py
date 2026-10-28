@@ -390,6 +390,20 @@ def test_a_lower_mac_changed_under_a_kept_anchor_row_reads_digest(
     assert (result["status"], result["reason"]) == ("mismatch", "digest")
 
 
+def test_a_non_ascii_mac_at_the_anchored_row_reads_mac(cli_store: Store) -> None:
+    """A hand-edited MAC column with a character `hmac.compare_digest`
+    refuses as text is a mismatch, not an error."""
+    anchor = take(cli_store)
+    outside = sqlite3.connect(str(cli_store.path))
+    outside.execute("UPDATE log SET mac = ? WHERE seq = ?", ("é" * 64, anchor.seq))
+    outside.commit()
+    outside.close()
+    (result,) = check_anchors(
+        cli_store.conn, cli_store.store_id, [("anchor.json", anchor)]
+    )
+    assert (result["status"], result["reason"]) == ("mismatch", "mac")
+
+
 def test_another_stores_anchor_is_listed_and_changes_nothing(
     cli_store: Store,
     tmp_path: Path,
@@ -485,6 +499,7 @@ def _good() -> dict[str, Any]:
         ({"seq": 0}, "seq"),
         ({"seq": True}, "seq"),
         ({"seq": "3"}, "seq"),
+        ({"seq": 2**63}, "seq"),
         ({"mac": "AB" * 32}, "mac"),
         ({"mac": "ab"}, "mac"),
         ({"chain_sha256": None}, "chain_sha256"),

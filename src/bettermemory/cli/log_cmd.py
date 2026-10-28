@@ -320,7 +320,7 @@ def _blackhole_stdout() -> None:
 def _cli_log_export(
     args: argparse.Namespace, *, parser: argparse.ArgumentParser
 ) -> None:
-    from ..audit_export import export
+    from ..audit_export import MAX_SEQ, export
 
     since = int(args.since_seq)
     until = None if args.until_seq is None else int(args.until_seq)
@@ -328,6 +328,8 @@ def _cli_log_export(
         parser.error("--since-seq must be 0 or more")
     if until is not None and until < since:
         parser.error("--until-seq must be at least --since-seq")
+    if max(since, until or 0) > MAX_SEQ:
+        parser.error(f"--since-seq and --until-seq are at most {MAX_SEQ}")
     kinds = _parse_kinds(parser, args.kinds)
     out = None if args.out is None else _output_path(parser, args.out)
     if args.include_bodies:

@@ -454,6 +454,53 @@ def test_an_edited_row_exports_as_not_verified(store: Store) -> None:
     assert verified == {1: True, 2: True, 3: False}
 
 
+def test_a_hand_edited_row_reads_unverified_and_the_export_goes_on(
+    store: Store,
+) -> None:
+    """A row edited into a shape the store never writes is one unverified
+    line, not the end of the export: a MAC column holding non-ASCII text,
+    a payload nested past what the parser recurses through, and one
+    nested past what the redaction walk does."""
+    for n in range(4):
+        store.record_event("show", session="sess_a", id=f"m{n}")
+    rows = store.log_rows()
+    deep = 100_000
+    walk_deep = sys.getrecursionlimit()
+    outside = _outside(store)
+    outside.execute("UPDATE log SET mac = ? WHERE seq = ?", ("é" * 64, 2))
+    outside.execute(
+        "UPDATE log SET payload = ? WHERE seq = ?",
+        ('{"a":' * deep + "1" + "}" * deep, 3),
+    )
+    outside.execute(
+        "UPDATE log SET payload = ? WHERE seq = ?",
+        ('{"a":' * walk_deep + "1" + "}" * walk_deep, 4),
+    )
+    outside.commit()
+    outside.close()
+    edited = {row.seq: row for row in store.log_rows()}
+
+    lines = export_lines(store)
+    assert [line["seq"] for line in lines] == [row.seq for row in rows]
+    verified = {line["seq"]: line["verified"] for line in lines}
+    assert verified[2] is False and verified[3] is False and verified[4] is False
+    assert all(verified[row.seq] for row in rows if row.seq not in (2, 3, 4))
+    assert lines[1]["mac"] == "é" * 64
+    for seq in (3, 4):
+        assert lines[seq - 1]["payload"] == redact_text(edited[seq].payload)
+        assert lines[seq - 1]["record_ids"] == []
+    (kept,) = export_lines(store, since_seq=2, until_seq=3, include_bodies=True)
+    assert kept["payload"] == edited[3].payload
+
+
+def test_a_seq_past_sqlites_range_is_refused(store: Store) -> None:
+    with pytest.raises(ValueError, match="at most"):
+        export_lines(store, until_seq=audit_export.MAX_SEQ + 1)
+    with pytest.raises(ValueError, match="at most"):
+        export_lines(store, since_seq=audit_export.MAX_SEQ + 1)
+    assert export_lines(store, since_seq=audit_export.MAX_SEQ) == []
+
+
 def test_a_rekeyed_log_names_each_segment_and_verifies_with_retired_keys(
     store: Store, keys_dir: Path
 ) -> None:
@@ -705,6 +752,8 @@ def test_cli_warns_when_the_cursor_is_past_the_log(
         (["--kinds", " , "], "--kinds"),
         (["--out", "missing-dir/audit.jsonl"], "no directory"),
         (["--out", "."], "is a directory"),
+        (["--until-seq", str(2**63)], "at most"),
+        (["--since-seq", str(2**63)], "at most"),
     ],
 )
 def test_cli_refuses_bad_arguments(

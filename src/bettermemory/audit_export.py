@@ -97,6 +97,11 @@ from .time_utils import isoformat_utc, parse_event_ts
 
 AUDIT_SCHEMA = "bettermemory.audit/1"
 
+# The largest seq a range or an anchor can name: SQLite's largest
+# INTEGER. A larger Python int cannot be bound to a statement at all
+# (OverflowError), so it is refused as an argument instead.
+MAX_SEQ = 2**63 - 1
+
 # The payload fields that hold free text: what a memory, a tombstone or
 # an episode says (`body`, `takeaway`, `claims`, the links' `note`), why
 # a record was removed (`removed_reason`, the `remove` and `miss_ack`
@@ -299,6 +304,17 @@ def _rekey_names(payload: str) -> tuple[str, str] | None:
     return old, new
 
 
+def same_mac(expected: str, found: str) -> bool:
+    """Whether a MAC column holds ``expected``, in constant time. Compared
+    as UTF-8 bytes: `hmac.compare_digest` refuses a str with a non-ASCII
+    character, and a hand-edited column can hold one, which must read as
+    a mismatch, not stop the export or the anchor check at that row."""
+    return hmac.compare_digest(
+        expected.encode("utf-8", errors="surrogatepass"),
+        found.encode("utf-8", errors="surrogatepass"),
+    )
+
+
 @dataclass(frozen=True)
 class Segments:
     """Which key signed which rows: ``starts[i]`` is the seq of the
@@ -374,7 +390,7 @@ class _RowVerifier:
             payload=payload,
             prev_mac=prev_mac,
         )
-        return name, hmac.compare_digest(expected, mac)
+        return name, same_mac(expected, mac)
 
 
 def dumps_line(line: Mapping[str, Any]) -> str:
@@ -477,9 +493,15 @@ def _audit_lines(
             prev_mac=prev_mac,
             mac=mac,
         )
+        # A payload the store wrote is canonical JSON a few levels deep.
+        # Text that is not JSON, or JSON nested past what the parser or
+        # the redaction walk recurses through, only a hand edit writes:
+        # it is exported as its text (redacted whole by default), so one
+        # edited row reads as one unverified line and never ends the
+        # export there, which would blind every run after it as well.
         try:
             payload: Any = json.loads(text)
-        except ValueError:
+        except (ValueError, RecursionError):
             payload = None
             parsed = False
         else:
@@ -487,7 +509,10 @@ def _audit_lines(
         if include_bodies:
             exported: Any = payload if parsed else text
         elif isinstance(payload, dict):
-            exported = redact_payload(payload)
+            try:
+                exported = redact_payload(payload)
+            except RecursionError:
+                exported = redact_text(text)
         else:
             exported = redact_text(text)
         yield {
@@ -526,6 +551,8 @@ def export(
         raise ValueError("since_seq must be 0 or more")
     if until_seq is not None and until_seq < since_seq:
         raise ValueError("until_seq must be at least since_seq")
+    if max(since_seq, until_seq or 0) > MAX_SEQ:
+        raise ValueError(f"a seq is at most {MAX_SEQ}")
     rows = 0
     first_seq: int | None = None
     last_seq: int | None = None
@@ -587,6 +614,7 @@ __all__ = [
     "CLASS_MEMBERSHIP",
     "CLASS_MUTATION",
     "CLASS_TELEMETRY",
+    "MAX_SEQ",
     "REDACTED_FIELDS",
     "ExportSummary",
     "Segments",
@@ -600,6 +628,7 @@ __all__ = [
     "redact_text",
     "row_actor",
     "row_class",
+    "same_mac",
     "segment_map",
     "utc_ts",
 ]
