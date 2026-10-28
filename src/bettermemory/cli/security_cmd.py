@@ -5,13 +5,10 @@ file registers and dispatches to: `security audit` (`posture`), the
 read-only check of modes, owners, the key, where the store lives, the
 daemon's address and Claude Code's sandbox settings; and `security sandbox`
 (`sandbox_settings`), which prints the Claude Code sandbox block for this
-host's real paths. Neither writes anything, and neither opens the store
-through `cli_context` or `Store.open_or_create`, which create and rekey.
-
-The group keeps one slot open: `security scan`, the secret scan over
-stored bodies, episodes and the signed log, registers beside the other two
-(`secret_scan.add_scan_parser`, `secret_scan.run_scan`). Adding it is the
-registration line in `add_subparser` and one entry in `_RUNNERS`.
+host's real paths; and `security scan` (`secret_scan`), the secret scan
+over stored bodies, episodes and the signed log. None writes anything,
+and none opens the store through `cli_context` or `Store.open_or_create`,
+which create and rekey.
 """
 
 from __future__ import annotations
@@ -22,6 +19,7 @@ import sys
 from collections.abc import Callable
 
 from ..sandbox_settings import FORMATS, SandboxPlan
+from ..secret_scan import add_scan_parser, run_scan
 
 
 def add_subparser(
@@ -32,7 +30,8 @@ def add_subparser(
         "Security checks for this install. `security audit` reports whether "
         "the store, the key and the daemon's files are as SECURITY.md assumes; "
         "`security sandbox` prints Claude Code sandbox settings for this "
-        "host's paths. Neither writes anything."
+        "host's paths; `security scan` finds credentials kept in the store. None "
+        "writes anything."
     )
     parser = sub.add_parser("security", help=help_text, description=help_text)
     security_sub = parser.add_subparsers(dest="security_cmd")
@@ -86,7 +85,7 @@ def add_subparser(
             "directories it was built from, the daemon's port and the notes."
         ),
     )
-    # `security scan` registers here: secret_scan.add_scan_parser(security_sub)
+    add_scan_parser(security_sub)
     return parser
 
 
@@ -150,4 +149,5 @@ def render_notes(plan: SandboxPlan) -> str:
 _RUNNERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "audit": _run_audit,
     "sandbox": _run_sandbox,
+    "scan": run_scan,
 }
