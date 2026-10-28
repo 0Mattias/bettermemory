@@ -115,9 +115,13 @@ def _fail(line: str) -> NoReturn:
 
 def _export(output: str | None) -> None:
     """Read-only, as `bettermemory export` is: no store is created and a
-    store whose key is absent is read without rekeying it."""
+    store whose key is absent is read without rekeying it. A store file
+    inside a backup bundle is refused with exit 2, this command's code for
+    a store it cannot read (`backup.bundle_refusal`): even this open would
+    change the bundle's snapshot and fail its hash."""
     from .._fsutil import atomic_write_bytes
     from .._response import isoformat
+    from ..backup import bundle_refusal
     from ..config import load_config
     from ..membership import EXPORT_FORMAT, EXPORT_FORMAT_VERSION, portable_export
     from ..models import utcnow
@@ -126,6 +130,9 @@ def _export(output: str | None) -> None:
     path = load_config().resolved_directory() / STORE_FILENAME
     if not path.is_file():
         _fail(f"no bettermemory 9 store at {path}")
+    refusal = bundle_refusal(path)
+    if refusal is not None:
+        _fail(refusal)
     store = Store.open(path, allow_rekey=False)
     try:
         body = portable_export(store)

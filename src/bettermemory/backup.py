@@ -66,11 +66,12 @@ Restore. Putting an older copy back by hand leaves `log verify` reading
 ``tampered`` for good: `KeyRing.write_head` only moves forward, so the head
 names a row the restored log does not hold (``tail_deleted``) and, once new
 rows pass it, a row whose MAC differs (``mismatch``). `restore_bundle`
-rewinds the head to the bundle's on the record instead. In order: it takes
-the store's daemon lock and the spawn lock (`_daemon_client.lock_file_for`
-and `spawn_lock_file_for`), refusing while anything holds either, so no
-daemon serves mid-restore and no hook, `up` or newly started shim spawns
-one (each spawns through `ensure_daemon`, under the spawn lock); it
+rewinds the head to the bundle's on the record instead. In order: it
+refuses a store file that is itself inside a bundle (its snapshot would be
+replaced); it takes the store's daemon lock and the spawn lock
+(`_daemon_client.lock_file_for` and `spawn_lock_file_for`), refusing while
+anything holds either, so no daemon serves mid-restore and no hook, `up` or
+newly started shim spawns one (each spawns through `ensure_daemon`, under the spawn lock); it
 verifies the bundle and refuses one that does not verify, save a
 ``self_signed`` one the caller said to trust (``trust_bundle_key``);
 without ``apply`` it stops there with the plan.
@@ -636,17 +637,82 @@ def bundle_manifest_beside(path: Path) -> Path | None:
     through a symlink to the bundle directory, is caught. A hard link is
     another name for the file in a directory of its own, which no path
     check sees; a caller that opens a file it was handed checks the link
-    count for that."""
+    count for that (`bundle_refusal` with ``named``).
+
+    ``manifest.json`` is a common name, and the writing openers refuse on
+    this too (`cli._common.cli_context`, the daemon, `serve`), so a store
+    directory that holds another tool's file of that name must not read
+    as a bundle: the file counts when it is a JSON object naming this
+    format, or when it cannot be read or parsed at all (a bundle whose
+    manifest broke is still a bundle, and its snapshot still must not be
+    opened in place). A JSON document of another shape is not a bundle's."""
     candidates = [path]
     with contextlib.suppress(OSError, RuntimeError):
         candidates.append(path.resolve())
     for candidate in candidates:
         manifest = candidate.parent / MANIFEST_NAME
         try:
-            if manifest.is_file():
+            if manifest.is_file() and _may_be_bundle_manifest(manifest):
                 return manifest
         except OSError:
             continue
+    return None
+
+
+def _may_be_bundle_manifest(manifest: Path) -> bool:
+    """Whether the file at `manifest` may be a bundle's: anything but a
+    JSON document that is not an object naming `BUNDLE_FORMAT`. Read with
+    the manifest reader's cap; a file past it, or one that does not read
+    or parse, counts, since refusing a store is recoverable (copy it out)
+    and opening a bundle's snapshot in place is not."""
+    try:
+        document = json.loads(bounded_read(manifest, _MANIFEST_CAP_BYTES))
+    except (OSError, ValueError, RecursionError):
+        return True
+    return isinstance(document, dict) and document.get("format") == BUNDLE_FORMAT
+
+
+def has_other_names(path: Path) -> bool:
+    """Whether the file at `path` has more than one name (hard links). A
+    store file has one unless it was linked; a hard link to a bundle's
+    snapshot is that snapshot under a name no manifest sits beside."""
+    try:
+        return path.stat().st_nlink > 1
+    except OSError:
+        return False
+
+
+def bundle_refusal(path: Path, *, named: bool = False) -> str | None:
+    """Why a command must not open the store file at `path`, or None.
+
+    The one refusal every CLI path that opens a store a user can point at
+    gives before it opens it (`BETTERMEMORY_DIR` or the config naming a
+    bundle directory, a ``--store``-like flag naming a bundle's file),
+    each with its own exit code for a store it cannot read: opening the
+    file, even read-only through `Store.open`, switches the snapshot to
+    WAL and the bundle then fails its signed hash, and a writing opener
+    would also add rows to it. `named` is for a file the user named on
+    the command line: one with other names (hard links) is refused too,
+    since it may be a bundle's snapshot under a name no manifest sits
+    beside (`has_other_names`). Each message says to copy the file out
+    first: a copy has one name and no manifest beside it, and opening it
+    changes nothing in the bundle."""
+    manifest = bundle_manifest_beside(path)
+    if manifest is not None:
+        return (
+            f"{path} is in a backup bundle ({manifest} is beside it), and "
+            "opening it would change it and fail the bundle's hash: copy "
+            f"{path.name} out of the bundle to a directory of its own first and "
+            "point the command at the copy (`bettermemory backup verify` checks "
+            "a bundle where it is)"
+        )
+    if named and has_other_names(path):
+        return (
+            f"{path} has other names (hard links), and opening it would change "
+            "the file under each of them, a backup bundle's snapshot among "
+            f"them: copy {path.name} to a directory of its own first and point "
+            "the command at the copy"
+        )
     return None
 
 
@@ -1297,6 +1363,17 @@ def restore_bundle(
         "record": None,
         "log": None,
     }
+    # A store resolved inside a bundle (`BETTERMEMORY_DIR` naming one) is
+    # that bundle's snapshot: the restore would move it aside and copy
+    # another bundle's database over it, and the bundle would be gone.
+    within = bundle_manifest_beside(store_file)
+    if within is not None:
+        report["detail"] = (
+            f"the store {store_file} is in a backup bundle ({within} is beside "
+            "it), and a restore would replace that bundle's snapshot: restore "
+            "into a store directory outside every bundle"
+        )
+        return report
     with _daemon_locks(state_root, store_file) as reason:
         if reason is not None:
             report["detail"] = reason
@@ -1483,8 +1560,10 @@ __all__ = [
     "BackupError",
     "SnapshotFacts",
     "bundle_manifest_beside",
+    "bundle_refusal",
     "create_backup",
     "default_backups_dir",
+    "has_other_names",
     "manifest_mac",
     "read_manifest",
     "restore_bundle",

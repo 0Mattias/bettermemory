@@ -60,8 +60,13 @@ def add_subparser(
 
 
 def run(args: argparse.Namespace) -> None:
-    """Dispatch handler for ``bettermemory audit-turn``."""
+    """Dispatch handler for ``bettermemory audit-turn``. A store file
+    inside a backup bundle is not opened: a stderr line and exit 0, the
+    hook's code for a store it cannot read."""
     from ..hook import main as _hook_main
+    from ._common import exit_if_bundle_store
+
+    exit_if_bundle_store(prefix="[bettermemory] audit-turn")
 
     raise SystemExit(
         _hook_main(

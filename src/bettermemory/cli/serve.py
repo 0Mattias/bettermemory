@@ -20,7 +20,7 @@ from ..store import (
     UnmigratedV8DirectoryError,
     refuse_unmigrated_v8,
 )
-from ._common import migration_line, run_migration_at_open
+from ._common import exit_if_bundle_file, migration_line, run_migration_at_open
 
 
 log = logging.getLogger("bettermemory")
@@ -64,6 +64,9 @@ def run_serve() -> None:
     config = load_config()
     directory = config.resolved_directory()
     exit_if_unmigrated_v8(directory / STORE_FILENAME)
+    # A store directory that is a backup bundle: serving it would write
+    # into the bundle's snapshot and fail its hash. One line, exit 1.
+    exit_if_bundle_file(directory / STORE_FILENAME)
     store = Store.open_or_create(directory / STORE_FILENAME)
     # The migration's run at open (design 8.6), logged rather than printed
     # apart: this process's stderr is the server's log.

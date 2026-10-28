@@ -49,8 +49,13 @@ def add_subparser(
 
 
 def run(args: argparse.Namespace) -> None:
-    """Dispatch handler for ``bettermemory prompt-recall``."""
+    """Dispatch handler for ``bettermemory prompt-recall``. A store file
+    inside a backup bundle is not opened: a stderr line and exit 0, the
+    hook's code for a store it cannot read."""
     from ..hook import prompt_main as _prompt_main
+    from ._common import exit_if_bundle_store
+
+    exit_if_bundle_store(prefix="[bettermemory] prompt-recall")
 
     raise SystemExit(
         _prompt_main(

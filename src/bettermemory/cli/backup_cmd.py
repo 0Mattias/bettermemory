@@ -109,7 +109,8 @@ def add_subparser(
     text = (
         "Restore a bundle over the store this command resolves. Refuses "
         "while a daemon holds the store (close every session, run "
-        "`bettermemory down`) and refuses a bundle that does not verify, "
+        "`bettermemory down`), refuses a store that is itself inside a "
+        "backup bundle, and refuses a bundle that does not verify, "
         "including one signed only by a key it carries unless "
         "--trust-bundle-key. "
         "Moves the current store file and its -wal and -shm aside as "

@@ -320,6 +320,12 @@ def run_shim() -> None:
         from .cli.serve import exit_if_unmigrated_v8
 
         exit_if_unmigrated_v8(store_path)
+    from .cli._common import exit_if_bundle_file
+
+    # A store directory that is a backup bundle: the daemon and the
+    # in-process fallback both refuse it, so refuse it here, in one line,
+    # before a daemon is spawned only to exit.
+    exit_if_bundle_file(store_path)
     env = daemon_env_for(store_path)
     try:
         state = ensure_daemon(

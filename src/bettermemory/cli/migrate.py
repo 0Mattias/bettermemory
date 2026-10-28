@@ -44,7 +44,8 @@ def add_subparser(
         metavar="FILE",
         help=(
             "The store file to create or open. Default: memory.sqlite inside "
-            "the v8 directory."
+            "the v8 directory. A file inside a backup bundle, or one with "
+            "other names (hard links), is refused (exit 1)."
         ),
     )
     v8_parser.add_argument(
@@ -94,9 +95,13 @@ def _cli_migrate_v8(
 ) -> None:
     """`bettermemory migrate v8` — a v8 directory into a bettermemory 9
     store. Exit 0 with the report; 2 on a source that is not a directory;
-    1 when the store cannot be written."""
+    1 when the store cannot be written, a store file inside a backup
+    bundle among them, and a `--to` file with other names (hard links)
+    (`backup.bundle_refusal`): the run opens and writes the store, which
+    would change a bundle's snapshot and fail its hash."""
     import json as _json
 
+    from ..backup import bundle_refusal
     from ..config import load_config
     from ..migrate_v8 import migrate
     from ..store import STORE_FILENAME
@@ -105,6 +110,10 @@ def _cli_migrate_v8(
     if not root.is_dir():
         parser.error(f"--from: no v8 store directory at {root}")
     store_path = Path(target).expanduser() if target else root / STORE_FILENAME
+    refusal = bundle_refusal(store_path, named=target is not None)
+    if refusal is not None:
+        sys.stderr.write(f"migrate v8: {refusal}\n")
+        raise SystemExit(1)
     try:
         report = migrate(root, store_path, dry_run=dry_run)
     except (OSError, ValueError, sqlite3.Error) as exc:

@@ -17,7 +17,9 @@ would hide the fault it was run for, so this module reads only:
   never reached for a missing one (it would write the default);
 - the store opens with `Store.open(..., allow_rekey=False)`, as
   `log verify` and `export` open it: a store without its key is reported,
-  never rekeyed, and no store is created where none exists;
+  never rekeyed, and no store is created where none exists; a store file
+  inside a backup bundle is not opened at all (its open would change the
+  snapshot and fail the bundle's hash) and fails the `store` check;
 - the daemon is asked `GET /health` and nothing else; its state file is
   read, never removed, and no daemon is started or stopped;
 - client and Claude Code settings files are read, never patched.
@@ -703,6 +705,35 @@ def _head_finding(
     return None
 
 
+def _bundle_check(path: Path, details: dict[str, Any]) -> list[Check] | None:
+    """The `store` failure for a store file inside a backup bundle (the
+    config or `BETTERMEMORY_DIR` naming a bundle directory), or None.
+    Doctor does not open it: even its read-only open switches the
+    snapshot to WAL, which rewrites the header, and the bundle would then
+    fail its signed hash (`backup.bundle_manifest_beside`). It reads as a
+    store that does not open, `fail` and exit 1, with the key unchecked."""
+    from .backup import bundle_manifest_beside
+
+    manifest = bundle_manifest_beside(path)
+    if manifest is None:
+        return None
+    details["bundle_manifest"] = str(manifest)
+    return [
+        Check(
+            "store",
+            FAIL,
+            f"{path} is in a backup bundle ({manifest} is beside it); doctor "
+            "does not open it, since opening it would change it and fail the "
+            "bundle's hash",
+            f"copy {path.name} out of the bundle to a directory of its own first "
+            "and point the store directory at the copy; `bettermemory backup "
+            "verify` checks a bundle where it is",
+            details,
+        ),
+        _not_checked("key", "the store is a backup bundle's file", "copy it out first"),
+    ]
+
+
 def check_store(ctx: _Context) -> list[Check]:
     """The store file (`store`) and its key (`key`), from one read-only
     open. A missing store is the first-run state, not a fault: the first
@@ -756,6 +787,9 @@ def check_store(ctx: _Context) -> list[Check]:
             ),
             Check("key", OK, "no store yet; its key is written with it"),
         ]
+    bundle = _bundle_check(path, details)
+    if bundle is not None:
+        return bundle
     try:
         store = Store.open(path, allow_rekey=False)
     except (ValueError, sqlite3.Error, OSError) as exc:

@@ -352,15 +352,22 @@ def run_command(*, dry_run: bool) -> None:
     """`bettermemory membership migrate [--dry-run]`: the run over this
     process's store and machine, its report printed. The store is opened
     directly, not through the CLI's context, so a dry run is never
-    preceded by the run at open. Exits 2 when there is no store."""
+    preceded by the run at open. Exits 2 when there is no store, and when
+    the store file is inside a backup bundle (`backup.bundle_refusal`):
+    the run writes, and would change the bundle's snapshot."""
     import sys
 
+    from .backup import bundle_refusal
     from .config import STORE_FILENAME, load_config
 
     config = load_config()
     path = config.resolved_directory() / STORE_FILENAME
     if not path.is_file():
         sys.stderr.write(f"bettermemory: no bettermemory 9 store at {path}\n")
+        raise SystemExit(2)
+    refusal = bundle_refusal(path)
+    if refusal is not None:
+        sys.stderr.write(f"bettermemory: {refusal}\n")
         raise SystemExit(2)
     # The migration writes, from the owner's process: a store whose key
     # moved is rekeyed here as `open_or_create` would.

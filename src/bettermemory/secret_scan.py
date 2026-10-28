@@ -750,14 +750,6 @@ def _fail(message: str) -> NoReturn:
     raise SystemExit(2)
 
 
-def _other_names(path: Path) -> bool:
-    """Whether the file at `path` has more than one name (hard links)."""
-    try:
-        return path.stat().st_nlink > 1
-    except OSError:
-        return False
-
-
 def run_scan(args: argparse.Namespace) -> None:
     """Dispatch handler for ``bettermemory security scan``. Always exits:
     0 clean, 1 with findings, 2 when there is no store it can read."""
@@ -786,29 +778,18 @@ def run_scan(args: argparse.Namespace) -> None:
                 f"to {STORE_FILENAME} in a directory of its own and scan that"
             )
         _fail(f"no bettermemory 9 store at {path}")
-    from .backup import bundle_manifest_beside
+    from .backup import bundle_refusal
 
     # Opening a store switches its journal mode to WAL, which rewrites the
     # header of a file saved in rollback mode: a bundle's snapshot would
     # then fail its signed hash, and `backup verify` and `backup restore`
-    # would refuse the bundle. Checked through a symlink too.
-    manifest = bundle_manifest_beside(path)
-    if manifest is not None:
-        _fail(
-            f"{path} is in a backup bundle ({manifest} is beside it), and "
-            "opening it would change it and fail the bundle's hash: copy "
-            f"{path.name} to a directory of its own and scan the copy"
-        )
-    if store_arg is not None and _other_names(path):
-        # A hard link to a bundle's snapshot is the snapshot under a name
-        # no manifest sits beside. A store file has one name unless it was
-        # linked, and the scan's open would change the file under every
-        # name it has; a copy has one.
-        _fail(
-            f"{path} has other names (hard links), and opening it would change "
-            "the file under each of them, a backup bundle's snapshot among "
-            f"them: copy {path.name} to a directory of its own and scan the copy"
-        )
+    # would refuse the bundle. Checked through a symlink too, and, for a
+    # `--store` file, through a hard link: a hard link to a bundle's
+    # snapshot is the snapshot under a name no manifest sits beside, and
+    # the scan's open would change the file under every name it has.
+    refusal = bundle_refusal(path, named=store_arg is not None)
+    if refusal is not None:
+        _fail(refusal)
     # `allow_rekey=False`: a scan reads; it must not write a rekey row
     # into the log it is scanning, nor a key beside a copied store.
     try:

@@ -98,7 +98,9 @@ def add_subparser(
         metavar="FILE",
         help=(
             "With --mirror: the store file to read. Default: memory.sqlite in "
-            "the resolved store directory."
+            "the resolved store directory. A file inside a backup bundle, or "
+            "one with other names (hard links), is refused: opening it would "
+            "change it and fail the bundle's hash, so copy it out first."
         ),
     )
     return parser
@@ -144,9 +146,14 @@ def _cli_export_mirror(
 ) -> None:
     """`bettermemory export --mirror DIR` — the store as a v8 directory.
     The store is opened without its key when the key is absent: an
-    export reads and never rekeys."""
+    export reads and never rekeys. A store file inside a backup bundle,
+    and a `--store` file with other names (hard links), is refused with
+    exit 2, the code for a store this command cannot read
+    (`backup.bundle_refusal`): opening it would change the bundle's
+    snapshot and fail its hash."""
     from pathlib import Path as _Path
 
+    from ..backup import bundle_refusal
     from ..config import load_config as _load_config
     from ..mirror import MirrorRefused, write_mirror
     from ..store import STORE_FILENAME, Store
@@ -158,6 +165,9 @@ def _cli_export_mirror(
     )
     if not store_path.is_file():
         parser.error(f"no bettermemory 9 store at {store_path} ({STORE_FILENAME})")
+    refusal = bundle_refusal(store_path, named=bool(store))
+    if refusal is not None:
+        parser.error(refusal)
     with Store.open(store_path, allow_rekey=False) as opened:
         try:
             report = write_mirror(opened, _Path(mirror))
@@ -274,6 +284,7 @@ def _cli_export(
     # Lazy import keeps the module-import cost of ``bettermemory.cli``
     # off the hot path; ``load_config`` reads TOML and only matters when
     # ``export`` actually runs.
+    from ..backup import bundle_refusal
     from ..config import load_config as _load_config
 
     config = _load_config()
@@ -286,6 +297,14 @@ def _cli_export(
         if parser is not None:
             parser.error(msg)
         raise FileNotFoundError(msg)
+    # A store directory that is a backup bundle: even this read-only open
+    # switches the snapshot to WAL, and the bundle then fails its hash.
+    # Exit 2, the code this command gives for a store it cannot read.
+    refusal = bundle_refusal(path)
+    if refusal is not None:
+        if parser is not None:
+            parser.error(refusal)
+        raise ValueError(refusal)
     store = Store.open(path, allow_rekey=False)
 
     if scopes:

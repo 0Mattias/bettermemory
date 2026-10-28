@@ -84,10 +84,11 @@ def open_read_only(
     store" on the other.
 
     A file inside a backup bundle (`BETTERMEMORY_DIR` naming the bundle)
-    is refused the same way: opening it switches its journal mode, which
+    is refused the same way (`backup.bundle_refusal`, which says to copy
+    the file out first): opening it switches its journal mode, which
     rewrites the snapshot's header, and the bundle would then fail its
     signed hash; `backup verify` checks a bundle on a copy."""
-    from ..backup import bundle_manifest_beside
+    from ..backup import bundle_refusal
 
     try:
         mode = path.stat().st_mode
@@ -97,19 +98,46 @@ def open_read_only(
         _refuse(parser, f"cannot read the store at {path}: {exc}", exit_code)
     if not stat.S_ISREG(mode):
         parser.error(f"no bettermemory 9 store at {path}")
-    manifest = bundle_manifest_beside(path)
-    if manifest is not None:
-        _refuse(
-            parser,
-            f"{path} is in a backup bundle ({manifest} is beside it), and "
-            "opening it would change it and fail the bundle's hash: `bettermemory "
-            "backup verify` checks a bundle without opening it in place",
-            exit_code,
-        )
+    refusal = bundle_refusal(path)
+    if refusal is not None:
+        _refuse(parser, refusal, exit_code)
     try:
         return Store.open(path, allow_rekey=False)
     except (ValueError, sqlite3.DatabaseError) as exc:
         _refuse(parser, f"cannot read the store at {path}: {exc}", exit_code)
+
+
+def exit_if_bundle_file(
+    path: Path, *, exit_code: int = 1, prefix: str = "bettermemory"
+) -> None:
+    """End the command, before anything opens `path`, when it is a file of
+    a backup bundle (`backup.bundle_refusal`): the refusal on stderr after
+    `prefix`, and `exit_code`. For the paths with no parser to report
+    through: the CLI's writing commands (`cli_context`), `serve`, the
+    shim, and the in-process hook commands, which pass 0 since a hook
+    must never fail its turn. The default, 1, is the code a writing
+    command gives for a store it cannot open, as `exit_if_unmigrated_v8`
+    gives for a directory it must not create one in."""
+    from ..backup import bundle_refusal
+
+    refusal = bundle_refusal(path)
+    if refusal is None:
+        return
+    sys.stderr.write(f"{prefix}: {refusal}\n")
+    raise SystemExit(exit_code)
+
+
+def exit_if_bundle_store(*, prefix: str, exit_code: int = 0) -> None:
+    """`exit_if_bundle_file` for the store the config resolves, for the
+    in-process hook commands (`session-start`, `prompt-recall`,
+    `audit-turn`), which must never raise: exit 0 by default, and a
+    config that does not load is left to the command, which reports it
+    its own way."""
+    try:
+        path = load_config().resolved_directory() / STORE_FILENAME
+    except Exception:  # noqa: BLE001 - the hook command reports its own config
+        return
+    exit_if_bundle_file(path, exit_code=exit_code, prefix=prefix)
 
 
 @dataclass(frozen=True)
@@ -141,9 +169,16 @@ def cli_context(*, migrate: bool = True) -> CliContext:
     has no home (`migrate_at_open`). `bettermemory membership import`
     passes False and runs it after its own homing, so the records its
     document names are homed by the document first.
+
+    A store directory that is a backup bundle (`BETTERMEMORY_DIR` naming
+    one) ends the command with exit 1 before the store is opened
+    (`exit_if_bundle_file`): this opener rekeys and writes, so it would
+    change the bundle's snapshot and fail its hash. `up --foreground`
+    comes here too, so no daemon serves a bundle.
     """
     config = load_config()
     directory = config.resolved_directory()
+    exit_if_bundle_file(directory / STORE_FILENAME)
     # Entry point for every CLI command routed through here: provision
     # and run the startup checks. `bettermemory doctor` builds its own
     # Stores with the pure constructor instead, so inspecting a store

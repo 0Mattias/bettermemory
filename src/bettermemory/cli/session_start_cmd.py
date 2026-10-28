@@ -223,6 +223,7 @@ def _build_context_block(
     import sys
     from pathlib import Path
 
+    from ..backup import bundle_refusal
     from ..config import load_config
     from ..recall import session_brief
     from ..store import STORE_FILENAME, Store
@@ -232,6 +233,12 @@ def _build_context_block(
     directory = config.resolved_directory()
     store_path = directory / STORE_FILENAME
     if not store_path.is_file():
+        return None
+    # A store directory that is a backup bundle: even this open without a
+    # rekey switches the snapshot to WAL and the bundle fails its hash.
+    refusal = bundle_refusal(store_path)
+    if refusal is not None:
+        print(f"[bettermemory] session-start: {refusal}", file=sys.stderr)
         return None
 
     def text(name: str) -> str | None:
