@@ -32,7 +32,10 @@ naming the key directory, unless the caller opens with
 migrations, do), when the key is retired, a fresh one written, and a
 ``rekey`` row appended. Meta's fingerprint is only what the file says:
 a key that signs a segment of the log is this store's own whatever meta
-names, and stays (`Store.open`).
+names, and stays (`Store.open`). The key ring is bound to one store file
+(``<store_id>.path``, `log.KeyRing.bind_store`): the owner's opener of a
+second file with the same store id, while the bound file still holds it,
+writes nothing and refuses writes.
 
 Foreign segments. A segment of the log whose key this machine does not
 hold, after one whose key it does, is rows a writer without the key put
@@ -2060,6 +2063,100 @@ def _signs_a_segment(segments: Sequence[Segment], key: bytes) -> bool:
     )
 
 
+def _store_id_at(path: Path) -> str | None:
+    """The store id meta records in the store file at ``path``, read
+    without opening it as a store (`Store.open` runs the additive schema
+    step and sets WAL mode, which would write to it): ``immutable=1``, no
+    lock and no ``-wal`` or ``-shm`` created, or, when a ``-wal`` and its
+    ``-shm`` are beside the file (a daemon has it open, or crashed with
+    it open), ``mode=ro`` first, so the read sees a store whose meta is
+    still only in its WAL, as a store a running daemon just created is.
+    None when there is no file there or it does not read as a store."""
+    try:
+        if not path.is_file():
+            return None
+        resolved = path.resolve()
+    except (OSError, ValueError):
+        return None
+    wal = resolved.with_name(resolved.name + "-wal")
+    shm = resolved.with_name(resolved.name + "-shm")
+    queries = ["mode=ro&immutable=1"]
+    if wal.exists() and shm.exists():
+        queries.insert(0, "mode=ro")
+    for query in queries:
+        try:
+            conn = sqlite3.connect(
+                f"{resolved.as_uri()}?{query}",
+                uri=True,
+                timeout=2.0,
+                isolation_level=None,
+            )
+        except sqlite3.Error:
+            continue
+        try:
+            row = conn.execute(
+                "SELECT value FROM meta WHERE key = 'store_id'"
+            ).fetchone()
+        except sqlite3.Error:
+            continue
+        finally:
+            conn.close()
+        if row is not None:
+            return str(row[0])
+    return None
+
+
+def _claim_key_ring(keyring: KeyRing, path: Path, store_id: str) -> Path | None:
+    """Claim the key ring for the store file ``path``, the owner's opener's
+    first step (`open`): bind the ring to it when it is bound to no file,
+    or to one that no longer holds this store id (moved, deleted, another
+    store there), and return None; return the other store file when the
+    ring is bound to one that still does, and is not this file under
+    another spelling (`log.KeyRing.bind_store`). That file is the ring's
+    store: its key, head and anchor are that file's, and an open of a
+    second file with its id (a copy in another directory, or a file made
+    to borrow a known id) must not retire the key, write a new one, set
+    meta, move the head or write the anchor, all of which the owner's
+    opener would otherwise do. A ring that cannot be written is said in
+    the log and the open goes on, as it did before rings were bound."""
+    try:
+        binding = keyring.bind_store(
+            path, holds_store=lambda other: _store_id_at(other) == store_id
+        )
+    except OSError as exc:
+        log.warning(
+            "store %s: the key ring under %s could not be bound to it (%s)",
+            path,
+            keyring.keys_dir,
+            exc,
+        )
+        return None
+    if binding.elsewhere:
+        assert binding.previous is not None
+        log.warning(
+            "store %s carries store id %s, and the key ring under %s belongs to "
+            "the store at %s, which still holds that id; this one opens for "
+            "reading only, and nothing is rekeyed or written. Move or remove one "
+            "of the two stores, or delete %s to bind the key ring to this one",
+            path,
+            store_id,
+            keyring.keys_dir,
+            binding.previous,
+            keyring.binding_path(),
+        )
+        return binding.previous
+    if binding.written and binding.previous is not None:
+        log.info(
+            "store %s: the key ring under %s was bound to %s, which no longer "
+            "holds store id %s; it is bound to this file now",
+            path,
+            keyring.keys_dir,
+            binding.previous,
+            store_id,
+        )
+    return None
+
+
 def configured_strict_provenance() -> bool:
     """``[security] strict_provenance`` as `load_config` reads it, so a
     value an organisation pins in a managed config applies here too. A
@@ -2104,9 +2201,14 @@ class Store:
     # A reader's key for checking, never for signing: the key ring's
     # current key, bound by a read-only open whose meta names another key
     # when the key ring holds the store's origin anchor or that key signs
-    # a segment of the log (`open`). None otherwise; `_key` is the one key
-    # a mutation signs with.
+    # a segment of the log (`open`), or by an owner's open refused because
+    # the key ring belongs to another store file (`_bound_elsewhere`).
+    # None otherwise; `_key` is the one key a mutation signs with.
     _read_key: bytes | None
+    # The store file the key ring is bound to when it is not this one and
+    # still holds this store id (`_claim_key_ring`): this connection then
+    # writes nothing, and says why. None otherwise.
+    _bound_elsewhere: Path | None
     _store_id: str
     _last_appended: LogRow | None
     _in_batch: bool
@@ -2146,6 +2248,7 @@ class Store:
             strict_provenance=opened._strict_provenance,
         )
         self._read_key = opened._read_key
+        self._bound_elsewhere = opened._bound_elsewhere
 
     def _adopt(
         self,
@@ -2162,6 +2265,7 @@ class Store:
         self._keyring = keyring
         self._key = key
         self._read_key = None
+        self._bound_elsewhere = None
         self._store_id = store_id
         self._last_appended = None
         self._in_batch = False
@@ -2198,8 +2302,9 @@ class Store:
     ) -> Store:
         """A new store at ``path`` with a fresh key. Refuses an existing file.
         Its ``store_created`` row, seq 1, is where this machine's history
-        of it begins, and the origin anchor names it. ``strict_provenance``
-        is `open`'s."""
+        of it begins, and the origin anchor names it; the key ring is bound
+        to this file (`log.KeyRing.bind_store`). ``strict_provenance`` is
+        `open`'s."""
         path = store_path(path)
         if path.exists():
             raise FileExistsError(f"a store already exists at {path}")
@@ -2249,6 +2354,9 @@ class Store:
                     session=None,
                 )
             store._record_origin(first)
+            # The new store's id is fresh, so the key ring was bound to no
+            # file: this one is the file it belongs to.
+            _claim_key_ring(keyring, path, store_id)
             with contextlib.suppress(OSError):
                 os.chmod(path, 0o600)
             return store
@@ -2295,6 +2403,16 @@ class Store:
         (`_settle_origin`). No repair moves an anchor that exists. A
         reader never writes one.
 
+        Before any of that, the owner's opener claims the key ring for this
+        file (`_claim_key_ring`): the ring is found by the store id the
+        file carries, so a second file with the same id (a copy in another
+        directory, or one made to borrow a known id) would otherwise retire
+        the first one's key, or sign with it, and move its head. When the
+        ring is bound to another file that still holds this store id, this
+        open writes nothing and opens as a reader does, refusing writes
+        even when its key matches, with a warning naming both files. A
+        reader never binds the ring.
+
         ``strict_provenance`` is ``[security] strict_provenance`` for this
         connection; None (the default) reads it from the config the first
         time a row needs it (`strict_provenance`)."""
@@ -2328,7 +2446,15 @@ class Store:
                 store_id,
             )
             key = keyring.load_current()
-            if key is not None and fingerprint(key) == expected:
+            # The owner's opener first claims the key ring for this file
+            # (`_claim_key_ring`): one that is bound to another file still
+            # holding this store id is that file's, and this open writes
+            # nothing to it or with it.
+            elsewhere = (
+                _claim_key_ring(keyring, path, store_id) if allow_rekey else None
+            )
+            matches = key is not None and fingerprint(key) == expected
+            if matches and elsewhere is None:
                 store = cls._bind(
                     path,
                     conn,
@@ -2341,7 +2467,7 @@ class Store:
                     store._close_foreign_tail()
                     store._settle_origin()
                 return store
-            if not allow_rekey:
+            if not allow_rekey or elsewhere is not None:
                 reader = cls._bind(
                     path,
                     conn,
@@ -2350,6 +2476,7 @@ class Store:
                     store_id,
                     strict_provenance=strict_provenance,
                 )
+                reader._bound_elsewhere = elsewhere
                 # Meta's fingerprint is only what the file says. When this
                 # machine has a history of the store (its key ring holds
                 # an origin anchor for it, or its key signs a segment of
@@ -2360,9 +2487,12 @@ class Store:
                 # tampered. The key is bound for checking pointers, never
                 # for writing, and nothing is written to set meta back.
                 # Binding it can only take a stored label away: a row
-                # still verifies under its own segment's key.
+                # still verifies under its own segment's key. An owner's
+                # open refused for a key ring bound elsewhere checks under
+                # a key meta names too, as the bound store's reads would.
                 if key is not None and (
-                    keyring.read_origin() is not None
+                    matches
+                    or keyring.read_origin() is not None
                     or _signs_a_segment(
                         chain_segments(
                             conn,
@@ -2842,6 +2972,15 @@ class Store:
         ts: str | None = None,
     ) -> LogRow:
         if self._key is None:
+            if self._bound_elsewhere is not None:
+                raise RuntimeError(
+                    f"store {self._path} is open for reading only: the key ring "
+                    f"under {self._keyring.keys_dir} belongs to the store at "
+                    f"{self._bound_elsewhere}, which still holds store id "
+                    f"{self._store_id}. Move or remove one of the two stores, or "
+                    f"delete {self._keyring.binding_path()} to bind the key ring "
+                    f"to this one."
+                )
             raise RuntimeError(
                 f"store {self._path} is open for reading only: no key under "
                 f"{self._keyring.keys_dir} matches its fingerprint. Put the "
@@ -5060,7 +5199,8 @@ class Store:
         binds a connection to the thread that opened it, so a worker
         thread reads and records through its own. The same key directory,
         and never a rekey: a store this process opened without its key
-        stays unable to mutate on the new connection too. The set of
+        stays unable to mutate on the new connection too, and so does one
+        whose key ring belongs to another store file. The set of
         memory ids a refold found unaccounted is shared, not copied, so a
         refold on either connection reaches the other, and so is
         ``strict_provenance``: a value the opener passed, or one this
@@ -5072,6 +5212,13 @@ class Store:
             strict_provenance=self._strict_provenance,
         )
         other._unaccounted_memory_ids = self._unaccounted_memory_ids
+        if self._bound_elsewhere is not None:
+            # The owner's open found the key ring bound to another store
+            # file; a reader's open does not look, and would bind a key
+            # meta names for writing. Keep it for checking only.
+            if other._key is not None:
+                other._read_key, other._key = other._key, None
+            other._bound_elsewhere = self._bound_elsewhere
         return other
 
     def links_with_status(

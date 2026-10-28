@@ -52,9 +52,11 @@ URL4 = "example.invalid/acme/four"
 class Side:
     """A second store with a machine of its own."""
 
-    def __init__(self, path: Path, machine: str) -> None:
+    def __init__(
+        self, path: Path, machine: str, *, keys_dir: Path | None = None
+    ) -> None:
         self.path = path
-        self.store = Store(path)
+        self.store = Store(path, keys_dir=keys_dir)
         self.machine = machine
 
     @property
@@ -282,11 +284,16 @@ def test_i37a_a_store_cloned_whole_forks_at_import(
     scene.write(first)
     checkouts = scene.store.membership_rows("checkouts")
     store_dir = scene.root / "store"
+    keys = scene.store.keys_dir
     scene.store.close()
     image = tmp_path.resolve() / "booted-twice"
     shutil.copytree(store_dir, image)
+    # The image carries its key ring too, bound on its own machine to its
+    # own copy of the store: one key ring is never two stores' to write.
+    image_keys = tmp_path.resolve() / "booted-twice-keys"
+    shutil.copytree(keys, image_keys, ignore=shutil.ignore_patterns("*.path*"))
     scene.store = Store(store_dir)
-    twin = Side(image, scene.machine)
+    twin = Side(image, scene.machine, keys_dir=image_keys)
     try:
         assert twin.store.membership_store_id == scene.store.membership_store_id
         elsewhere = make_repo(scene.root / "twin" / "work")

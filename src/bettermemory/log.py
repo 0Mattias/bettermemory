@@ -74,6 +74,14 @@ anchor and reads as ``origin_mismatch`` too: deleting
 ``<store_id>.origin`` and ``<store_id>.head`` accepts the replaced history,
 and trusts the file again on purpose.
 
+The store binding. The key ring is found by the store id, a value the
+store file carries, so two store files with one id (a copy of the store
+in another directory, or a file made to borrow a known id) share one key
+ring, one head and one anchor. ``<store_id>.path`` names the one store
+file the ring belongs to (`KeyRing.bind_store`), and the owner's opener
+neither rekeys nor writes for a second file while the bound one is still
+there holding that id (`Store.open`).
+
 Not defended: an attacker holding the user's own key and config
 directory. The design keeps the two apart from the store file so that
 copying, syncing or editing the store never carries the key with it.
@@ -88,6 +96,7 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import re
 import secrets
 import sqlite3
@@ -280,14 +289,40 @@ def parse_origin(raw: Any) -> HistoryOrigin | None:
     return HistoryOrigin(seq=seq, mac=mac)
 
 
+class StoreBinding(NamedTuple):
+    """What binding a key ring to a store file found (`KeyRing.bind_store`).
+    ``previous`` is the store file the ring was bound to before, None when
+    it was bound to none (or its binding did not read as one); ``elsewhere``
+    is true when ``previous`` is another file that still holds the store,
+    and nothing was written; ``written`` is true when the binding now names
+    the file asked, written by this call."""
+
+    previous: Path | None
+    elsewhere: bool
+    written: bool
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    """Do two paths name one file: the same spelling, or `os.path.samefile`
+    (a symlink, a case spelling on a filesystem that ignores case)? A path
+    that cannot be looked up names no file this one is."""
+    if a == b:
+        return True
+    try:
+        return os.path.samefile(a, b)
+    except (OSError, ValueError):
+        return False
+
+
 @dataclass
 class KeyRing:
     """One store's keys, head checkpoint and origin anchor under
     ``keys_dir``.
 
     Files: ``<store_id>.key`` (the current key), ``<store_id>.<prefix>.key``
-    (a retired key, by fingerprint prefix), ``<store_id>.head`` and
-    ``<store_id>.origin``.
+    (a retired key, by fingerprint prefix), ``<store_id>.head``,
+    ``<store_id>.origin`` and ``<store_id>.path`` (the store file the ring
+    is bound to).
     """
 
     keys_dir: Path
@@ -320,6 +355,9 @@ class KeyRing:
         key = secrets.token_bytes(KEY_BYTES)
         atomic_write_bytes(self.current_path(), key, mode_before_rename=0o600)
         return key
+
+    def binding_path(self) -> Path:
+        return self.keys_dir / f"{self.store_id}.path"
 
     def load_current(self) -> bytes | None:
         try:
@@ -444,6 +482,62 @@ class KeyRing:
     def _write_origin_file(self, origin: HistoryOrigin) -> None:
         payload = json.dumps(origin.to_dict()).encode("utf-8")
         atomic_write_bytes(self.origin_path(), payload, mode_before_rename=0o600)
+
+    def read_binding(self) -> Path | None:
+        """The store file this ring is bound to, or None when there is no
+        binding or the file does not read as one (an object with a
+        non-empty string ``path``), as an unreadable head reads as none."""
+        try:
+            raw = json.loads(self.binding_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        value = raw.get("path") if isinstance(raw, dict) else None
+        if not isinstance(value, str) or not value or "\x00" in value:
+            return None
+        return Path(value)
+
+    def bind_store(
+        self, store_file: Path, *, holds_store: Callable[[Path], bool]
+    ) -> StoreBinding:
+        """Bind this ring to the store file ``store_file`` (resolved), the
+        owner's opener's claim that the key, the head and the anchor under
+        this store id are that file's (the module docstring).
+
+        No binding, or one that does not read: write this file's (trust on
+        first use, for a ring from before bindings existed). A binding that
+        names this file, in any spelling (`_same_file`): nothing written,
+        and nothing locked, which is every open after the first. One that
+        names another file: when ``holds_store`` says that file still holds
+        this store (the caller reads its id), nothing is written and
+        ``elsewhere`` is true, so the caller opens this file without
+        writing; otherwise the bound store was moved, deleted or replaced,
+        and the binding moves to this file. A write happens under the
+        binding's own lock, after the same reading again, so two openers of
+        two files with one id cannot both bind; atomic and owner-only, as
+        the head is. Raises OSError when the ring cannot be written."""
+        resolved = Path(store_file).resolve()
+
+        def found(previous: Path | None) -> StoreBinding | None:
+            if previous is None:
+                return None
+            if _same_file(previous, resolved):
+                return StoreBinding(previous, False, False)
+            if holds_store(previous):
+                return StoreBinding(previous, True, False)
+            return None
+
+        settled = found(self.read_binding())
+        if settled is not None:
+            return settled
+        self.ensure_dir()
+        with flock_excl(self.binding_path()):
+            previous = self.read_binding()
+            settled = found(previous)
+            if settled is not None:
+                return settled
+            payload = json.dumps({"path": str(resolved)}).encode("utf-8")
+            atomic_write_bytes(self.binding_path(), payload, mode_before_rename=0o600)
+        return StoreBinding(previous, False, True)
 
 
 class LogRow(NamedTuple):
@@ -1061,6 +1155,7 @@ __all__ = [
     "LogRow",
     "OriginCheck",
     "Segment",
+    "StoreBinding",
     "append_row",
     "canonical_payload",
     "chain_segments",

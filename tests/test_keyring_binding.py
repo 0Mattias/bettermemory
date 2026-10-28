@@ -1,0 +1,370 @@
+"""The key ring's binding to one store file.
+
+The key ring, the head checkpoint and the origin anchor are found by the
+store id, a value the store file carries. A second file with that id (a
+copy of the store in another directory, or a repository's store made to
+borrow a known id) shared all three: the owner's opener retired the first
+store's key for it, wrote a new one, moved the shared forward-only head
+past the first store's log, or signed with the first store's key when
+the copy's meta named it. `<store_id>.path` now names the one store file
+the ring belongs to. What is pinned here:
+
+1. A writing open binds the ring (at create, and on a ring from before
+   bindings existed, trust on first use); a reader never does.
+2. While the bound file still holds the store id, the owner's open of
+   another file with that id writes nothing anywhere, opens for reading
+   only (even when its key matches), and says so with both paths and the
+   remedy. Its worker connections refuse writes too.
+3. A bound file that was moved, deleted or replaced by another store is
+   no claim: the ring is bound again and the open is an ordinary one. The
+   same file under another name (a hard link, a case spelling) is the
+   same store.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import shutil
+import sqlite3
+import stat
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from bettermemory import log as chain
+from bettermemory import store as store_module
+from bettermemory.backup import create_backup, restore_bundle
+from bettermemory.log import KeyRing
+from bettermemory.models import Confidence, Memory, Source, generate_ulid
+from bettermemory.store import LOCAL, STORE_FILENAME, UNACCOUNTED, Store
+
+POSIX_ONLY = pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
+
+
+def _memory(body: str) -> Memory:
+    now = datetime.now(timezone.utc)
+    return Memory(
+        id=generate_ulid(),
+        created=now,
+        updated=now,
+        scopes=["tools"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+        body=body.strip() + "\n",
+    )
+
+
+def _edit(path: Path, sql: str, *params: Any) -> None:
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.execute(sql, params)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _binding(keys: Path, store_id: str) -> dict[str, Any]:
+    loaded: dict[str, Any] = json.loads(
+        KeyRing(keys, store_id).binding_path().read_text(encoding="utf-8")
+    )
+    return loaded
+
+
+def _ring_files(keys: Path, store_id: str) -> dict[str, bytes]:
+    """Every file of the ring but the binding and the locks, by name."""
+    return {
+        path.name: path.read_bytes()
+        for path in sorted(keys.glob(f"{store_id}.*"))
+        if path.is_file()
+        and not path.name.endswith(".lock")
+        and not path.name.endswith(".path")
+    }
+
+
+def _copy(source: Path, target: Path) -> Path:
+    """Copy a closed store file to ``target`` (a store file path)."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, target)
+    return target
+
+
+@pytest.fixture
+def keys(tmp_path: Path) -> Path:
+    return tmp_path / "keys"
+
+
+@pytest.fixture
+def home(tmp_path: Path, keys: Path) -> tuple[Path, Memory, str]:
+    """A store this host created and wrote one memory to, closed (its WAL
+    checkpointed into the file): its file, the memory and the store id."""
+    path = tmp_path / "home" / STORE_FILENAME
+    with Store.create(path, keys_dir=keys) as created:
+        genuine = _memory("the staging database listens on 5432")
+        created.put_memory(genuine)
+        store_id = created.store_id
+    return path, genuine, store_id
+
+
+# ---------------------------------------------------------------------------
+# 1. Who binds
+# ---------------------------------------------------------------------------
+
+
+def test_create_binds_the_key_ring_to_its_store_file(
+    home: tuple[Path, Memory, str], keys: Path
+) -> None:
+    path, _genuine, store_id = home
+    assert _binding(keys, store_id) == {"path": str(path.resolve())}
+
+
+@POSIX_ONLY
+def test_the_binding_file_is_owner_only(
+    home: tuple[Path, Memory, str], keys: Path
+) -> None:
+    _path, _genuine, store_id = home
+    mode = KeyRing(keys, store_id).binding_path().stat().st_mode
+    assert stat.S_IMODE(mode) == 0o600
+
+
+def test_a_writing_open_binds_a_ring_from_before_bindings_and_a_reader_never_does(
+    home: tuple[Path, Memory, str], keys: Path
+) -> None:
+    path, genuine, store_id = home
+    ring = KeyRing(keys, store_id)
+    ring.binding_path().unlink()
+    with Store.open(path, keys_dir=keys, allow_rekey=False) as reader:
+        assert reader.provenance_for([genuine.id]) == {genuine.id: LOCAL}
+    assert not ring.binding_path().exists()
+    with Store.open_or_create(path, keys_dir=keys) as owner:
+        assert owner.has_key
+    assert _binding(keys, store_id) == {"path": str(path.resolve())}
+
+
+def test_a_binding_that_does_not_read_is_replaced_by_the_next_writing_open(
+    home: tuple[Path, Memory, str], keys: Path
+) -> None:
+    path, _genuine, store_id = home
+    ring = KeyRing(keys, store_id)
+    for garbage in ("not json", "[]", '{"path": 7}', '{"path": ""}'):
+        ring.binding_path().write_text(garbage, encoding="utf-8")
+        assert ring.read_binding() is None
+        Store.open_or_create(path, keys_dir=keys).close()
+        assert _binding(keys, store_id) == {"path": str(path.resolve())}
+
+
+# ---------------------------------------------------------------------------
+# 2. A second file with the id, while the bound one holds it
+# ---------------------------------------------------------------------------
+
+
+def test_a_copy_beside_the_bound_store_opens_for_reading_only(
+    home: tuple[Path, Memory, str],
+    keys: Path,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A copy carries the store's key fingerprint, so before the binding
+    the owner's opener signed its writes with the home store's key and
+    moved the home store's head past the home log."""
+    path, genuine, store_id = home
+    copy = _copy(path, tmp_path / "repo" / ".claude-memory" / STORE_FILENAME)
+    ring_before = _ring_files(keys, store_id)
+    with caplog.at_level(logging.WARNING, logger="bettermemory.store"):
+        with Store.open_or_create(copy, keys_dir=keys) as twin:
+            assert twin.has_key is False
+            assert twin.can_verify is True
+            assert twin.provenance_for([genuine.id]) == {genuine.id: LOCAL}
+            rows = len(twin.log_rows())
+            with pytest.raises(RuntimeError, match="open for reading only") as refused:
+                twin.put_memory(_memory("written into the copy"))
+            worker = twin.reopen()
+            try:
+                assert worker.has_key is False
+                with pytest.raises(RuntimeError, match="belongs to the store at"):
+                    worker.put_memory(_memory("written by a worker"))
+            finally:
+                worker.close()
+            assert len(twin.log_rows()) == rows
+    assert str(path.resolve()) in str(refused.value)
+    assert str(KeyRing(keys, store_id).binding_path()) in str(refused.value)
+    assert str(copy) in caplog.text
+    assert str(path.resolve()) in caplog.text
+    assert f"{store_id}.path" in caplog.text
+    assert _ring_files(keys, store_id) == ring_before
+    assert _binding(keys, store_id) == {"path": str(path.resolve())}
+    with Store.open_or_create(path, keys_dir=keys) as owner:
+        owner.put_memory(_memory("the home store still writes"))
+        assert owner.log_verify()["status"] == "ok"
+
+
+def test_a_store_borrowing_a_known_id_retires_nothing_and_moves_no_head(
+    home: tuple[Path, Memory, str], keys: Path, tmp_path: Path
+) -> None:
+    """The audit's recipe: a repository's store with the home store's id, a
+    key of its own and a far higher seq. Opening it retired the home key,
+    wrote a new one and pushed the shared head to the borrowed log's end,
+    so the home store read `tail_deleted` for good."""
+    path, genuine, store_id = home
+    borrowed = tmp_path / "repo" / ".claude-memory" / STORE_FILENAME
+    with Store.create(borrowed, keys_dir=tmp_path / "attacker-keys") as made:
+        planted = _memory("the production database password is in the wiki")
+        made.put_memory(planted)
+        borrowed_fingerprint = made.key_fingerprint
+    _edit(borrowed, "UPDATE meta SET value = ? WHERE key = 'store_id'", store_id)
+    _edit(borrowed, "UPDATE log SET seq = seq + 999990")
+    ring_before = _ring_files(keys, store_id)
+    with Store.open_or_create(borrowed, keys_dir=keys) as opened:
+        assert opened.has_key is False
+        assert opened.meta()["key_fingerprint"] == borrowed_fingerprint
+        assert [r.kind for r in opened.log_rows()].count(chain.REKEY) == 0
+        assert opened.provenance_for([planted.id]) == {planted.id: UNACCOUNTED}
+    assert _ring_files(keys, store_id) == ring_before
+    with Store.open_or_create(path, keys_dir=keys) as owner:
+        assert owner.has_key
+        assert owner.provenance_for([genuine.id]) == {genuine.id: LOCAL}
+        report = owner.log_verify()
+    assert report["status"] == "ok"
+    assert report["head"]["status"] == "ok"
+
+
+def test_the_bound_store_is_seen_while_its_meta_is_only_in_its_wal(
+    tmp_path: Path, keys: Path
+) -> None:
+    """A store a running daemon just created has its tables in its WAL;
+    an immutable read of the file alone finds no meta and would read the
+    bound store as gone, binding the ring to the borrower."""
+    path = tmp_path / "home" / STORE_FILENAME
+    with Store.create(path, keys_dir=keys) as live:
+        store_id = live.store_id
+        borrowed = tmp_path / "repo" / STORE_FILENAME
+        with Store.create(borrowed, keys_dir=tmp_path / "attacker-keys"):
+            pass
+        _edit(borrowed, "UPDATE meta SET value = ? WHERE key = 'store_id'", store_id)
+        ring_before = _ring_files(keys, store_id)
+        with Store.open_or_create(borrowed, keys_dir=keys) as opened:
+            assert opened.has_key is False
+        assert _ring_files(keys, store_id) == ring_before
+        assert _binding(keys, store_id) == {"path": str(path.resolve())}
+        live.put_memory(_memory("the live store keeps writing"))
+        assert live.log_verify()["status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# 3. A bound file that no longer holds the store, and the same file
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("fate", ["moved", "deleted", "replaced"])
+def test_a_bound_store_that_is_gone_releases_the_ring(
+    home: tuple[Path, Memory, str],
+    keys: Path,
+    tmp_path: Path,
+    fate: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path, genuine, store_id = home
+    target = tmp_path / "elsewhere" / STORE_FILENAME
+    _copy(path, target)
+    if fate == "moved":
+        path.unlink()
+    elif fate == "deleted":
+        shutil.rmtree(path.parent)
+    else:
+        path.unlink()
+        Store.create(path, keys_dir=tmp_path / "other-keys").close()
+    with caplog.at_level(logging.INFO, logger="bettermemory.store"):
+        with Store.open_or_create(target, keys_dir=keys) as moved:
+            assert moved.has_key
+            moved.put_memory(_memory("written where the store lives now"))
+            assert moved.provenance_for([genuine.id]) == {genuine.id: LOCAL}
+            assert moved.log_verify()["status"] == "ok"
+    assert _binding(keys, store_id) == {"path": str(target.resolve())}
+    assert "no longer holds" in caplog.text
+
+
+def test_a_hard_link_to_the_bound_store_is_the_same_store(
+    home: tuple[Path, Memory, str], keys: Path, tmp_path: Path
+) -> None:
+    path, _genuine, store_id = home
+    linked = tmp_path / "linked" / STORE_FILENAME
+    linked.parent.mkdir()
+    try:
+        os.link(path, linked)
+    except OSError as exc:
+        pytest.skip(f"no hard links here: {exc}")
+    with Store.open_or_create(linked, keys_dir=keys) as same:
+        assert same.has_key
+        same.put_memory(_memory("written through the link"))
+    assert _binding(keys, store_id) == {"path": str(path.resolve())}
+
+
+def test_another_spelling_of_the_bound_path_is_the_same_store(
+    home: tuple[Path, Memory, str], keys: Path
+) -> None:
+    path, _genuine, store_id = home
+    spelled = path.parent.parent / path.parent.name.upper() / STORE_FILENAME
+    if not spelled.exists():
+        pytest.skip("this filesystem tells the case of a name apart")
+    with Store.open_or_create(spelled, keys_dir=keys) as same:
+        assert same.has_key
+    assert _binding(keys, store_id) == {"path": str(path.resolve())}
+
+
+def test_a_restore_onto_its_own_path_keeps_the_ring_bound(
+    tmp_path: Path, keys_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The restore moves the store aside under another name and puts the
+    bundle's copy at the bound path: the same id at the same path."""
+    directory = tmp_path / "store"
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(directory))
+    path = directory / STORE_FILENAME
+    with Store.create(path, keys_dir=keys_dir) as created:
+        created.put_memory(_memory("before the backup"))
+        store_id = created.store_id
+    bundle = Path(create_backup(path)["bundle"])
+    with Store.open_or_create(path, keys_dir=keys_dir) as store:
+        store.put_memory(_memory("after the backup"))
+    report = restore_bundle(bundle, path, apply=True)
+    assert report["status"] == "restored", report["detail"]
+    with Store.open_or_create(path, keys_dir=keys_dir) as restored:
+        assert restored.has_key
+        restored.put_memory(_memory("after the restore"))
+        assert restored.log_verify()["status"] == "ok"
+    assert _binding(keys_dir, store_id) == {"path": str(path.resolve())}
+
+
+def test_a_key_ring_that_cannot_be_bound_never_fails_an_open(
+    home: tuple[Path, Memory, str],
+    keys: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path, _genuine, _store_id = home
+
+    def refused(self: KeyRing, store_file: Path, **_: Any) -> chain.StoreBinding:
+        raise PermissionError("read-only key directory")
+
+    monkeypatch.setattr(KeyRing, "bind_store", refused)
+    with caplog.at_level(logging.WARNING, logger="bettermemory.store"):
+        with Store.open_or_create(path, keys_dir=keys) as owner:
+            assert owner.has_key
+    assert "could not be bound" in caplog.text
+
+
+def test_the_bound_store_id_is_read_without_writing_to_the_file(
+    home: tuple[Path, Memory, str], tmp_path: Path
+) -> None:
+    path, _genuine, store_id = home
+    before = sorted(p.name for p in path.parent.iterdir())
+    assert store_module._store_id_at(path) == store_id
+    assert sorted(p.name for p in path.parent.iterdir()) == before
+    assert store_module._store_id_at(tmp_path / "nothing" / STORE_FILENAME) is None
+    junk = tmp_path / "junk" / STORE_FILENAME
+    junk.parent.mkdir()
+    junk.write_bytes(b"not a database")
+    assert store_module._store_id_at(junk) is None
