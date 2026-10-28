@@ -348,6 +348,12 @@ def _modes(
         items.append(
             ("mode.head", "head checkpoint", keyring.head_path(), False, False)
         )
+        # Where this host's history of the store begins (`log.KeyRing`):
+        # no secret, as the head is none, but another account that can
+        # write it can move the anchor.
+        items.append(
+            ("mode.origin", "origin anchor", keyring.origin_path(), False, False)
+        )
     items.extend(
         [
             ("mode.state_dir", "state directory", state_dir, True, False),
@@ -389,7 +395,8 @@ def mode_finding(
     Graded by what an extra bit lets another account do: write (replace a
     key, a state file, a store page) is high everywhere; read is high on a
     secret (the store's pages, a key, the token) and a warning elsewhere
-    (a directory listing, the head checkpoint, the daemon's log); any other
+    (a directory listing, the head checkpoint, the origin anchor, the
+    daemon's log); any other
     group or other bit is a warning. An owner other than this account is
     high: that account can rewrite the file whatever its mode says."""
     try:

@@ -42,6 +42,16 @@ save a row this machine's own key signed into it (a daemon that had the
 store open while the forged row went in); the leading segments of a
 store copied here keep their labels unless ``[security]
 strict_provenance`` is set.
+
+The origin anchor. Where this machine's history of the store begins is
+kept in the key ring, outside the file (`log.KeyRing.write_origin`):
+`create` anchors seq 1, the owner's opener anchors the ``rekey`` row it
+writes when it takes over a store copied here, and on a store from before
+the anchor existed it anchors the earliest segment this machine holds,
+once (`_settle_origin`). The reads check it with the segment map
+(`log.chain_trust`). An anchor the log no longer matches means the
+history was rewritten where this machine's begins, so every segment whose
+key is not held reads as foreign, leading ones included.
 """
 
 from __future__ import annotations
@@ -77,14 +87,19 @@ from .log import (
     CAPTURE_KINDS,
     CONTROL_KINDS,
     MIGRATE_V8,
+    ORIGIN_MISMATCHED,
     REKEY,
     STORE_CREATED,
+    HistoryOrigin,
     KeyRing,
     LogRow,
+    OriginCheck,
     Segment,
     append_row,
     canonical_payload,
     chain_segments,
+    chain_trust,
+    check_origin,
     compute_mac,
     fingerprint,
     iter_rows,
@@ -2089,6 +2104,9 @@ class Store:
     # this machine holds it and whether it is foreign: read off the rekey
     # rows once per connection, on the first pointer that needs it.
     _segments: list[Segment] | None
+    # The check of the origin anchor the segment map was read under
+    # (`log.chain_trust`); None while `_segments` is.
+    _origin: OriginCheck | None
     # `[security] strict_provenance` for this connection: None until the
     # first row in a segment whose key is not held needs it, then read
     # once through `load_config` (`strict_provenance`). An opener that
@@ -2134,6 +2152,7 @@ class Store:
         self._unaccounted_memory_ids = set()
         self._pointer_cache = {}
         self._segments = None
+        self._origin = None
         self._strict_provenance = strict_provenance
 
     @classmethod
@@ -2162,7 +2181,9 @@ class Store:
         strict_provenance: bool | None = None,
     ) -> Store:
         """A new store at ``path`` with a fresh key. Refuses an existing file.
-        ``strict_provenance`` is `open`'s."""
+        Its ``store_created`` row, seq 1, is where this machine's history
+        of it begins, and the origin anchor names it. ``strict_provenance``
+        is `open`'s."""
         path = store_path(path)
         if path.exists():
             raise FileExistsError(f"a store already exists at {path}")
@@ -2199,7 +2220,7 @@ class Store:
                 tx.executemany(
                     "INSERT INTO meta(key, value) VALUES (?, ?)", list(meta.items())
                 )
-                store._append(
+                first = store._append(
                     tx,
                     STORE_CREATED,
                     {
@@ -2211,6 +2232,7 @@ class Store:
                     },
                     session=None,
                 )
+            store._record_origin(first)
             with contextlib.suppress(OSError):
                 os.chmod(path, 0o600)
             return store
@@ -2249,6 +2271,13 @@ class Store:
         a ``rekey`` row it did not write named (`_close_foreign_tail`),
         so its own rows after that segment verify. Neither repair can
         fail the open: a store that cannot be written logs why and opens.
+
+        The owner's opener also keeps the origin anchor (the module
+        docstring): the ``rekey`` row it writes for a store copied here is
+        where this machine's history of it begins (`_take_over_origin`),
+        and on any other writing open a store with no anchor gets one
+        (`_settle_origin`). No repair moves an anchor that exists. A
+        reader never writes one.
 
         ``strict_provenance`` is ``[security] strict_provenance`` for this
         connection; None (the default) reads it from the config the first
@@ -2294,6 +2323,7 @@ class Store:
                 )
                 if allow_rekey:
                     store._close_foreign_tail()
+                    store._settle_origin()
                 return store
             if not allow_rekey:
                 return cls._bind(
@@ -2317,11 +2347,13 @@ class Store:
                     strict_provenance=strict_provenance,
                 )
                 store._reclaim(segments, meta_fingerprint=expected)
+                store._settle_origin()
                 return store
             # The key that signed the chain's last segment, as the log
             # names it: the rekey row records what it replaced, and meta
             # is only what the file says.
             previous = segments[-1].key_fingerprint if segments else expected
+            key_lost = key is None
             if key is not None:
                 keyring.retire_current()
             key = keyring.create_key()
@@ -2333,7 +2365,7 @@ class Store:
                     "UPDATE meta SET value = ? WHERE key = 'key_fingerprint'",
                     (fingerprint(key),),
                 )
-                store._append(
+                rekeyed = store._append(
                     tx,
                     REKEY,
                     {"old_fingerprint": previous, "new_fingerprint": fingerprint(key)},
@@ -2346,6 +2378,7 @@ class Store:
                 previous[:16],
                 fingerprint(key)[:16],
             )
+            store._take_over_origin(rekeyed, key_lost=key_lost)
             return store
         except Exception:
             conn.close()
@@ -2418,7 +2451,7 @@ class Store:
             return
         if row is None or named is None:
             return
-        self._segments = None
+        self._forget_segments()
         log.warning(
             "store %s: the log's last segment, opened by a rekey row this host "
             "did not write, is under key %s; its rows read unaccounted and a "
@@ -2476,7 +2509,7 @@ class Store:
                 exc,
             )
             return
-        self._segments = None
+        self._forget_segments()
         closing = (
             "meta is set back to it"
             if appended is None
@@ -2492,6 +2525,120 @@ class Store:
             own[:16],
             closing,
             foreign or "none",
+        )
+
+    def _forget_segments(self) -> None:
+        """Drop this connection's segment map and the anchor check it was
+        read under, so the next pointer check reads both again: after a
+        repair appended a ``rekey`` row, or an anchor was written."""
+        self._segments = None
+        self._origin = None
+
+    def _record_origin(self, row: LogRow) -> None:
+        """Anchor this machine's history of the store at ``row``, unless an
+        anchor is already there (`log.KeyRing.write_origin`). A key ring
+        that cannot be written logs why, as the head does: the store opens,
+        and a later writing open anchors it (`_settle_origin`)."""
+        try:
+            written = self._keyring.write_origin(seq=row.seq, mac=row.mac)
+        except OSError as exc:
+            log.warning("origin anchor for %s not written: %s", self._path, exc)
+            return
+        if written:
+            self._forget_segments()
+
+    def _settle_origin(self) -> None:
+        """The owner's opener, on a store with no origin anchor: a store
+        from before the anchor existed, or one only read here so far. The
+        anchor goes on the first row of the earliest segment whose key this
+        machine holds, current or retired, and only when that row verifies
+        under the key its segment is held by; with no such segment nothing
+        is written. Trust on first use: whatever was done to the file
+        before this open is taken as it stands, so a history rewritten
+        before it is not caught by the anchor (the rule without one still
+        is). Costs one file read on a store that has an anchor, and never
+        fails the open."""
+        assert self._key is not None
+        if self._keyring.read_origin() is not None:
+            return
+        try:
+            segments = chain_segments(
+                self._conn,
+                keyring=self._keyring,
+                current_fingerprint=fingerprint(self._key),
+                current_key=self._key,
+            )
+            held = next((segment for segment in segments if segment.held), None)
+            if held is None or held.key is None or held.first_row is None:
+                return
+            verifies = row_verifies(held.key, held.first_row)
+        except (sqlite3.Error, ValueError, TypeError) as exc:
+            # A row an editor left unreadable (a seq that is not a number,
+            # a MAC that is not ASCII, which `hmac.compare_digest` raises
+            # on): no anchor, and the open goes on.
+            log.warning(
+                "origin anchor for %s not written: the log could not be read (%s)",
+                self._path,
+                exc,
+            )
+            return
+        if not verifies:
+            log.warning(
+                "store %s: the first row of the earliest segment this host holds "
+                "(seq %d) does not verify under its key; no origin anchor is "
+                "written. `bettermemory log verify` reports the row",
+                self._path,
+                held.first_seq,
+            )
+            return
+        self._record_origin(held.first_row)
+
+    def _take_over_origin(self, row: LogRow, *, key_lost: bool) -> None:
+        """The owner's opener wrote a new key and the ``rekey`` row ``row``
+        for a store whose key it did not hold: where this machine's history
+        of the store begins, when no anchor names an earlier row.
+
+        An anchor that exists stays, with one exception: when this machine's
+        current key was missing (``key_lost``), and the anchored row is
+        still the one anchored (its MAC column unchanged) but no key the
+        ring now holds verifies it, the key that signed it is gone with the
+        key file, and the anchor would read as a rewritten history on every
+        read from now on. It moves to ``row``, with a warning, and the rows
+        before read as a copied store's. Removing the key file takes write
+        access to the key directory, which an editor of the store file does
+        not have, so this is never theirs to trigger. An anchor whose row
+        is gone or carries another MAC stays, and reads ``origin_mismatch``."""
+        if self._keyring.read_origin() is None:
+            self._record_origin(row)
+            return
+        if not key_lost:
+            return
+        check = check_origin(self._conn, keyring=self._keyring, current_key=self._key)
+        if check.status != ORIGIN_MISMATCHED or check.reason != "signature":
+            return
+        try:
+            before = self._keyring.replace_origin(
+                HistoryOrigin(seq=row.seq, mac=row.mac)
+            )
+        except OSError as exc:
+            log.warning(
+                "store %s: the origin anchor at seq %s names a row no key on this "
+                "host verifies, and it could not be moved to seq %d (%s)",
+                self._path,
+                check.seq,
+                row.seq,
+                exc,
+            )
+            return
+        self._forget_segments()
+        log.warning(
+            "store %s: this host's key for it was missing, and no key it still "
+            "holds verifies the row at seq %s where its history of the store "
+            "began; the origin anchor moves to the rekey row at seq %d, and the "
+            "rows before it read as a store copied here",
+            self._path,
+            None if before is None else before.seq,
+            row.seq,
         )
 
     def close(self) -> None:
@@ -3823,9 +3970,10 @@ class Store:
         names no row, names a row that put a different record, names a row
         whose MAC does not verify under the segment's key, or names a row
         in a foreign segment (one whose key this machine does not hold,
-        after one whose key it does), or, with ``strict_provenance``, in
-        any segment whose key is not held, that this machine's own key
-        did not sign either. Such a row reads
+        after one whose key it does, or at or after the origin anchor),
+        or, with ``strict_provenance`` or an origin anchor the log no
+        longer matches, in any segment whose key is not held, that this
+        machine's own key did not sign either. Such a row reads
         ``unaccounted``, as does one the last ``refold`` in this process
         found so. A row in a leading segment whose key is not held (a
         store copied here without its key) keeps its label. A store
@@ -3862,20 +4010,28 @@ class Store:
         row costs this walk over a handful of segments and nothing more.
         A connection that was open before a rekey row was appended keeps
         its map, and verifies a later row under the last segment it knows,
-        which a row signed by another key fails."""
+        which a row signed by another key fails. The origin anchor is
+        checked with it (`log.chain_trust`): one more row and one HMAC."""
         if self._segments is None:
-            self._segments = chain_segments(
+            trust = chain_trust(
                 self._conn,
                 keyring=self._keyring,
                 current_fingerprint=self.key_fingerprint,
                 current_key=self._key,
             )
+            self._segments, self._origin = trust.segments, trust.origin
         found: Segment | None = None
         for segment in self._segments:
             if found is not None and seq < segment.first_seq:
                 break
             found = segment
         return found
+
+    def _origin_broken(self) -> bool:
+        """Does the origin anchor this connection's segment map was read
+        under no longer match the log (`log.OriginCheck.broken`)? False
+        before the map is read, and for a store with no anchor."""
+        return self._origin is not None and self._origin.broken
 
     def _pointer_verified(self, record_id: str, kind: str, log_mac: Any) -> bool | None:
         """Does the record's ``log_mac`` name a log row of ``kind`` that
@@ -3885,9 +4041,10 @@ class Store:
         segment's: it verifies only when this machine appended it, and
         anything else is False. A row in a leading segment whose key is
         not held answers None (its label stands), or is checked the same
-        way under ``strict_provenance``. None too when the store was
-        opened without its key. The True and False answers are cached per
-        (id, mac)."""
+        way under ``strict_provenance`` or when the origin anchor no
+        longer matches the log, since which segments lead is then not
+        known. None too when the store was opened without its key. The
+        True and False answers are cached per (id, mac)."""
         own_key = self._key
         if own_key is None:
             return None
@@ -3916,7 +4073,11 @@ class Store:
                     return None
                 key = segment.key
                 if key is None:
-                    if not segment.foreign and not self.strict_provenance:
+                    if (
+                        not segment.foreign
+                        and not self._origin_broken()
+                        and not self.strict_provenance
+                    ):
                         # A leading segment: signed elsewhere, before this
                         # machine first signed the store. Its label stands.
                         return None
@@ -5299,8 +5460,10 @@ class Store:
     def log_verify(self) -> dict[str, Any]:
         """The chain report merged with the fold: ``tampered`` when a row
         fails its MAC, the chain breaks, the head names a row the log no
-        longer has, or a table differs from the fold; ``unverifiable``
-        when a segment's key or the head is absent; ``ok`` otherwise."""
+        longer has, the origin anchor no longer matches it, or a table
+        differs from the fold; ``unverifiable`` when a segment's key or
+        the head is absent; ``ok`` otherwise. ``origin`` is the anchor
+        check (`log.OriginCheck.to_dict`)."""
         chain = verify_chain(
             self._conn, keyring=self._keyring, current_fingerprint=self.key_fingerprint
         ).to_dict()
@@ -5318,6 +5481,7 @@ class Store:
             "rows": chain["rows"],
             "segments": chain["segments"],
             "head": chain["head"],
+            "origin": chain["origin"],
             "problems": problems,
             "fold": {
                 "status": fold["status"],

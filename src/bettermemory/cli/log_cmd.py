@@ -446,6 +446,16 @@ def render_report(report: dict[str, Any]) -> str:
         f"  id {report['store_id']}",
         f"  rows {report['rows']} in {len(report['segments'])} segment(s), head {head_text}",
     ]
+    # The origin anchor: where this host's history of the store begins
+    # (`log.check_origin`). A report from before it existed has none.
+    origin = report.get("origin")
+    if origin is not None:
+        origin_text = origin["status"]
+        if "seq" in origin:
+            origin_text += f" at seq {origin['seq']}"
+        if "reason" in origin:
+            origin_text += f" ({origin['reason']})"
+        lines.append(f"  origin {origin_text}")
     for segment in report["segments"]:
         lines.append(
             f"  segment seq {segment['first_seq']} to {segment['last_seq']}: "

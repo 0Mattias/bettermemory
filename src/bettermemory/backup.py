@@ -38,16 +38,21 @@ needed to put the store back and to prove it is the store that was saved.
   restores the separation: an editor who truncates the snapshot's log and
   rewrites the head and the hashes to match cannot re-sign the manifest. A
   bundle written where the store's key is not held carries no signature and
-  verifies as ``unverifiable`` at best.
+  verifies as ``unverifiable`` at best. When this host's key ring holds an
+  origin anchor for the store (where its history of the store begins,
+  `log.KeyRing.read_origin`) and the snapshot reaches it, the manifest
+  records it as ``origin``, so the signature covers it as it covers the
+  head.
 
 Verification never opens a bundle's file in place. `Store.open` runs the
 additive schema step and sets WAL mode on the file it opens, so verifying a
 backup where it lies would change it. `verify_bundle` checks every file
 against the manifest, checks the signature, then copies the snapshot into a
 private temporary directory beside a temporary key ring (the keys from the
-bundle first, then from the keys directory, and the head from the signed
-manifest) and runs the store's own `log_verify` there: MACs, chain,
-segments, head and the fold, with no change to `bettermemory.log`.
+bundle first, then from the keys directory, and the head and the origin
+anchor from the signed manifest) and runs the store's own `log_verify`
+there: MACs, chain, segments, head, origin and the fold, with no change to
+`bettermemory.log`.
 
 Restore. Putting an older copy back by hand leaves `log verify` reading
 ``tampered`` for good: `KeyRing.write_head` only moves forward, so the head
@@ -65,9 +70,12 @@ the store file and its ``-wal`` and ``-shm`` aside as
 ``<store>.pre-restore-<UTC stamp>`` (with ``-wal`` and ``-shm`` suffixes,
 so SQLite pairs them again on open; nothing is deleted), renames the copy
 into place, installs any key the restored log needs that the keys directory
-lacks, rewinds the head under the head's own lock, records the rewind in
-``<store_id>.backup_restore.json`` beside the head, and runs `log_verify`
-on the restored store, which must read ``ok``.
+lacks, rewinds the head under the head's own lock, installs the bundle's
+origin anchor or removes the one the keys directory holds when the bundle
+records none (a restored store is never judged against an anchor of a
+history it does not hold; the next writing open anchors it again), records
+the rewind in ``<store_id>.backup_restore.json`` beside the head, and runs
+`log_verify` on the restored store, which must read ``ok``.
 
 The order is chosen for what a failure leaves. The file swap is the step
 most likely to fail (Windows refuses to rename a file another process has
@@ -114,7 +122,16 @@ from ._fsutil import (
     replace_atomic,
 )
 from .config import STORE_FILENAME
-from .log import REKEY, Head, KeyRing, canonical_payload, fingerprint, last_row
+from .log import (
+    REKEY,
+    Head,
+    HistoryOrigin,
+    KeyRing,
+    canonical_payload,
+    fingerprint,
+    last_row,
+    parse_origin,
+)
 from .time_utils import isoformat_utc
 
 #: The manifest's ``format`` and the highest ``format_version`` this build
@@ -517,6 +534,20 @@ def create_backup(
             "counts": facts.counts,
             "files": files,
         }
+        # The origin anchor, as the head is recorded: what a restore puts
+        # back so the restored store is checked against where this host's
+        # history of it begins. An anchor past the snapshot's last row was
+        # written after the snapshot began (the takeover that wrote it
+        # committed meanwhile) and names a row the bundle does not hold.
+        origin = live.read_origin()
+        if origin is not None and origin.seq <= facts.head.seq:
+            manifest["origin"] = origin.to_dict()
+        elif origin is not None:
+            warnings.append(
+                f"the origin anchor at seq {origin.seq} is past the snapshot's "
+                f"last row (seq {facts.head.seq}); the bundle records no anchor, "
+                "and a restore of it leaves the next writing open to anchor one"
+            )
         if current_key is not None:
             manifest["mac"] = manifest_mac(current_key, manifest)
         else:
@@ -611,6 +642,10 @@ def read_manifest(bundle: Path) -> dict[str, Any]:
         raise _ManifestProblem(
             "manifest_invalid", "key_fingerprint, head mac or mac is not a hex digest"
         )
+    if "origin" in manifest and parse_origin(manifest["origin"]) is None:
+        raise _ManifestProblem(
+            "manifest_invalid", "origin is not a seq and a hex digest MAC"
+        )
     for name, entry in files.items():
         if (
             not _plain_name(name)
@@ -659,6 +694,7 @@ def verify_bundle(bundle: Path, *, keys_dir: Path | None = None) -> dict[str, An
         "created_at": None,
         "bettermemory_version": None,
         "head": None,
+        "origin": None,
         "key_included": None,
         "files": [],
         "manifest_mac": None,
@@ -672,11 +708,13 @@ def verify_bundle(bundle: Path, *, keys_dir: Path | None = None) -> dict[str, An
         problems.append(exc.problem)
         return report
     store_id = str(manifest["store_id"])
+    origin = parse_origin(manifest.get("origin"))
     report.update(
         store_id=store_id,
         created_at=manifest.get("created_at"),
         bettermemory_version=manifest.get("bettermemory_version"),
         head=dict(manifest["head"]),
+        origin=None if origin is None else origin.to_dict(),
         key_included=manifest.get("key_included"),
     )
     for name, entry in sorted(manifest["files"].items()):
@@ -785,6 +823,10 @@ def verify_bundle(bundle: Path, *, keys_dir: Path | None = None) -> dict[str, An
             report["manifest_mac"] = "mismatch"
             problems.append({"problem": "manifest_mac_mismatch"})
         _write_private(scratch_ring.head_path(), _head_bytes(head))
+        # The anchor the signed manifest records, so `log_verify` checks the
+        # snapshot against where the host's history of the store begins.
+        if origin is not None:
+            scratch_ring.write_origin(seq=origin.seq, mac=origin.mac)
         try:
             opened = _store.Store.open(
                 copy, keys_dir=scratch_ring.keys_dir, allow_rekey=False
@@ -912,6 +954,11 @@ def _rewind_head(ring: KeyRing, head: Head) -> Head | None:
         before = ring.read_head()
         _write_private(ring.head_path(), _head_bytes(head))
     return before
+
+
+def _origin_dict(origin: HistoryOrigin | None) -> dict[str, Any] | None:
+    """An origin anchor as a report and the rewind record carry it."""
+    return None if origin is None else origin.to_dict()
 
 
 def _append_record(path: Path, entry: Mapping[str, Any], stamp: str) -> None:
@@ -1056,6 +1103,7 @@ def restore_bundle(
         "moved_aside": [],
         "keys_installed": [],
         "head": None,
+        "origin": None,
         "record": None,
         "log": None,
     }
@@ -1084,6 +1132,8 @@ def restore_bundle(
         actions = _key_actions(live, bundle_ring, needed, final)
         aside = _aside_base(store_file, stamp)
         before = live.read_head()
+        origin = parse_origin(verification["origin"])
+        origin_before = live.read_origin()
         record = restore_record_path(keys_root, store_id)
         report["plan"] = {
             "current_store_id": _current_store_id(store_file),
@@ -1099,6 +1149,10 @@ def restore_bundle(
                 if before is None
                 else {"seq": before.seq, "mac": before.mac},
                 "after": {"seq": head.seq, "mac": head.mac},
+            },
+            "origin": {
+                "before": _origin_dict(origin_before),
+                "after": _origin_dict(origin),
             },
             "record": str(record),
         }
@@ -1145,6 +1199,10 @@ def restore_bundle(
                 else {"seq": replaced.seq, "mac": replaced.mac},
                 "after": {"seq": head.seq, "mac": head.mac},
             }
+            report["origin"] = {
+                "before": _origin_dict(live.replace_origin(origin)),
+                "after": _origin_dict(origin),
+            }
             _append_record(
                 record,
                 {
@@ -1156,6 +1214,8 @@ def restore_bundle(
                     "replaced_store_id": report["plan"]["current_store_id"],
                     "head_before": report["head"]["before"],
                     "head_after": report["head"]["after"],
+                    "origin_before": report["origin"]["before"],
+                    "origin_after": report["origin"]["after"],
                     "moved_aside": report["moved_aside"],
                     "keys_installed": [a["fingerprint"] for a in actions],
                 },
