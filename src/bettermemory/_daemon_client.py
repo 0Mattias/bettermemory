@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import http.client
 import json
 import os
 import re
@@ -326,14 +327,22 @@ def health(
     With `nonce`, the request asks the daemon to prove it holds its token
     (`health_proof`); whatever answers decides whether a ``proof`` comes
     back, so the reply says nothing about who answered until `proves`
-    has read it."""
+    has read it.
+
+    A listener that does not speak HTTP answers nothing either: its reply
+    fails as `http.client.HTTPException` (a status line that is not one, a
+    header line past the limit), which is neither an OSError nor a
+    ValueError, and escaped this before 9.0.0rc12. A client that met one on
+    a crashed daemon's port then raised where it should start a daemon
+    beside it (`ensure_daemon`), and every hook failed while the listener
+    stayed."""
     query = f"?{HEALTH_NONCE_PARAM}={nonce}" if nonce else ""
     try:
         with urllib.request.urlopen(
             f"http://{HOST}:{port}{HEALTH_PATH}{query}", timeout=timeout
         ) as response:
             body = json.loads(response.read().decode("utf-8"))
-    except (OSError, ValueError, urllib.error.URLError):
+    except (OSError, ValueError, urllib.error.URLError, http.client.HTTPException):
         return None
     return body if isinstance(body, dict) and body.get("status") == "ok" else None
 

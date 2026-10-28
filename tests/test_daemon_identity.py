@@ -19,6 +19,7 @@ import logging
 import os
 import signal
 import socket
+import socketserver
 import stat
 import subprocess
 import sys
@@ -260,6 +261,34 @@ def _closed_port() -> int:
         return int(sock.getsockname()[1])
 
 
+class _BannerHandler(socketserver.BaseRequestHandler):
+    def handle(self) -> None:
+        self.request.recv(4096)
+        self.request.sendall(b"SSH-2.0-OpenSSH_9.6\r\n")
+
+
+@pytest.fixture
+def stranger() -> Iterator[int]:
+    """The port of a listener that does not speak HTTP: it answers any
+    request with another protocol's banner and closes. Its reply fails in
+    `http.client` as a status line that is not one."""
+    server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _BannerHandler)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield int(server.server_address[1])
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_a_listener_that_does_not_speak_http_answers_nothing(stranger: int) -> None:
+    """Not a daemon's reply, and no exception out of discovery either: the
+    client goes on to start a daemon beside it, as for a silent port."""
+    assert health(stranger) is None
+    assert identify(_state(stranger, "/x/memory.sqlite")) == Identified(None, False)
+
+
 def test_identify_takes_a_daemon_that_proves_the_token(
     tmp_path: Path, listeners: list[_Listener]
 ) -> None:
@@ -461,6 +490,29 @@ def test_a_hook_posts_nothing_to_a_listener_repeating_a_proving_daemons_health(
     assert len(listener.gets) >= 1
 
 
+def test_a_hook_starts_a_daemon_beside_a_listener_that_does_not_speak_http(
+    tmp_path: Path,
+    stranger: int,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The stale state file's port is held by another protocol. The hook
+    reads that as no daemon and goes on to start one (refused here, so it
+    reports the start), where its discovery once raised on the reply and
+    no daemon was ever started while the listener stayed."""
+    write_state(tmp_path / "state", _state(stranger, tmp_path / "memory.sqlite"))
+    code, out, err = _hook(
+        monkeypatch,
+        capsys,
+        tmp_path,
+        {"session_id": "s", "prompt": "hello", "cwd": str(tmp_path)},
+    )
+    assert code == 0
+    assert out == ""
+    assert "no daemon could be reached or started" in err
+    assert "BadStatusLine" not in err
+
+
 def test_a_hook_posts_to_a_pre_rc12_daemon_of_its_store(
     tmp_path: Path,
     listeners: list[_Listener],
@@ -576,6 +628,15 @@ def test_a_listener_that_is_not_ours_gets_no_shutdown_and_its_pid_no_signal(
     assert time.monotonic() - started < 3.0
     assert process.signals == []
     assert listener.posts == []
+
+
+def test_down_reads_a_listener_that_does_not_speak_http_as_no_daemon(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stranger: int
+) -> None:
+    process = _Process(monkeypatch)
+    state = _state(stranger, tmp_path / "memory.sqlite")
+    assert shutdown_daemon(state, state_dir=tmp_path / "state", timeout=5.0)
+    assert process.signals == []
 
 
 def test_a_pid_that_holds_the_lock_is_signalled_without_a_proof(
