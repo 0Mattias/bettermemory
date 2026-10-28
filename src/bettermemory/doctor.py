@@ -449,7 +449,21 @@ def check_config(ctx: _Context) -> Check:
     path = _config.default_config_path()
     details: dict[str, Any] = {"path": str(path), "exists": path.is_file()}
     if not path.exists():
-        ctx.config = _config.Config()
+        # The defaults, with the organisation-managed file over them, as
+        # the daemon loads them: a freshly provisioned account has a
+        # managed file and no config.toml yet, and its store is the one
+        # the managed file pins. Nothing is written (`create=False`).
+        try:
+            ctx.config = _config.load_config(path, create=False)
+        except Exception as exc:  # noqa: BLE001 - every load error is the report
+            ctx.config_failed = True
+            return Check(
+                "config",
+                FAIL,
+                f"no config file at {path}, and the defaults do not load: {exc}",
+                "fix the file the error names: no daemon starts until it loads",
+                details,
+            )
         return Check(
             "config",
             OK,

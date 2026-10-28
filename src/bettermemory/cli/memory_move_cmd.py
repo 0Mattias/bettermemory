@@ -48,7 +48,8 @@ def add_subparser(
         "conflicts from other records that name it are listed as references. "
         "Read-only. Exit 0 when the history reads clean, 1 when a row fails "
         "its MAC or the live record has no log row that put it as it stands, "
-        "2 when no store or no record by that id is found."
+        "2 when no store or no record by that id is found, or the config or "
+        "the store file cannot be read."
     )
     history = memory_sub.add_parser(
         "history", help=history_text, description=history_text
@@ -119,23 +120,22 @@ def _move(record_id: str, project_id: str) -> None:
 def _history(
     record_id: str, *, diff: bool, json_out: bool, parser: argparse.ArgumentParser
 ) -> None:
-    from ..config import load_config
     from ..history import record_history, render_json, render_text
     from ..models import is_valid_ulid
-    from ..store import STORE_FILENAME, Store
+    from ._common import open_read_only, read_only_store_path
 
     # A record id is a ULID. Anything else is refused before the log is
     # scanned: the scan is a substring test, and a short or empty needle
     # would match rows that have nothing to do with any one record.
     if not is_valid_ulid(record_id):
         parser.error(f"{record_id!r} is not a record id (a 26-character ULID)")
-    path = load_config().resolved_directory() / STORE_FILENAME
-    if not path.is_file():
-        parser.error(f"no bettermemory 9 store at {path}")
-    # `allow_rekey=False`: reading a history must not write a rekey row,
-    # as `log verify` must not. Without the key the rows are listed and
-    # their MACs reported as unverifiable.
-    store = Store.open(path, allow_rekey=False)
+    # The config without its first-run write. `allow_rekey=False`: reading
+    # a history must not write a rekey row, as `log verify` must not.
+    # Without the key the rows are listed and their MACs reported as
+    # unverifiable. A config or a store file that cannot be read exits 2,
+    # never 1, which is a finding here.
+    path = read_only_store_path(parser)
+    store = open_read_only(parser, path)
     try:
         history = record_history(store, record_id)
     finally:

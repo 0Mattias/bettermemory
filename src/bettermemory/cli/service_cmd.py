@@ -153,15 +153,15 @@ class _Context(NamedTuple):
 def _service_store(pinned: dict[str, str], state_dir: Path) -> Path:
     """The store a daemon started in `state_dir` with `pinned` resolves:
     the config's own rule, read from the state directory. The config is
-    loaded only when its file exists, since `load_config` creates a
-    default one otherwise and `print` and `status` write nothing; an
-    absent file is the defaults."""
-    from ..config import STORE_FILENAME, Config, default_config_path, load_config
+    loaded without its first-run write (``create=False``), since `print`
+    and `status` write nothing: an absent file is the defaults, with the
+    organisation-managed file's pins over them, as the daemon reads it."""
+    from ..config import STORE_FILENAME, load_config
 
     named = pinned.get("BETTERMEMORY_DIR")
     if named:
         return Path(named).resolve() / STORE_FILENAME
-    config = load_config() if default_config_path().exists() else Config()
+    config = load_config(create=False)
     return config.resolved_directory(cwd=state_dir) / STORE_FILENAME
 
 

@@ -392,6 +392,23 @@ stable 9.0.0 follows the candidates' testing.
 
 #### Fixed
 
+- **The read-only commands write no config and read the managed file.**
+  `log verify`, `log export`, `log anchor`, `stats`, `memory history`,
+  `security scan` and `backup create` and `restore` (its plan included)
+  wrote a default config.toml on an account that had none, and `security
+  sandbox`, `security audit`, `doctor` and `service print|status` read
+  the bare defaults there, without the managed file's pins, so on a
+  freshly provisioned account they named the home store where the
+  daemon serves the pinned one. Each now reads the config without the
+  first-run write and with the managed file applied. A config or a store
+  file these commands cannot read ends them with the reason on stderr
+  and exit 2 (`log verify`: 1, a log that cannot be verified), not a
+  traceback, and `backup verify` reads a bundle file it cannot read as
+  `file_unreadable` (mismatched). `log export --out` and `log anchor
+  --out` refuse the store file, its `-wal` and `-shm`, and any path in
+  the keys directory, which they would have replaced.
+  (`src/bettermemory/cli/_common.py`, `src/bettermemory/sandbox_settings.py`,
+  `src/bettermemory/doctor.py`, `src/bettermemory/cli/log_cmd.py`)
 - **A listener that does not speak HTTP is no daemon.** `health()` let
   `http.client.HTTPException` escape, so a stale port held by another
   protocol made every hook fail and `down` end in a traceback. It now

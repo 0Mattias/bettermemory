@@ -563,6 +563,40 @@ def test_a_bundle_that_does_not_match_its_manifest_is_mismatched(
     assert backup.VERIFY_EXIT[report["status"]] == 1
 
 
+@POSIX_ONLY
+@pytest.mark.parametrize("name", [STORE_FILENAME, "head"])
+def test_a_bundle_file_that_cannot_be_read_is_mismatched_not_raised(
+    bundle: Path,
+    store_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    name: str,
+) -> None:
+    """A file this account cannot read is reported as `file_unreadable`,
+    and verify and restore say so, where both ended in a PermissionError
+    traceback."""
+    import os
+
+    if os.geteuid() == 0:
+        pytest.skip("root reads a file whatever its mode")
+    if name == "head":
+        name = f"{_manifest(bundle)['store_id']}.head"
+    target = bundle / name
+    target.chmod(0)
+    try:
+        report = verify_bundle(bundle)
+        assert report["status"] == "mismatched"
+        assert {"file_unreadable"} <= _problems(report)
+        assert {f["name"]: f["status"] for f in report["files"]}[name] == "unreadable"
+        assert _run_cli(["backup", "verify", str(bundle)], monkeypatch) == 1
+        assert _run_cli(["backup", "restore", str(bundle)], monkeypatch) == 1
+    finally:
+        target.chmod(0o600)
+    out = capsys.readouterr().out
+    assert f"{name} unreadable" in out
+    assert "does not verify (mismatched)" in out
+
+
 def test_a_snapshot_that_is_not_a_database_is_unreadable(bundle: Path) -> None:
     manifest = _manifest(bundle)
     (bundle / STORE_FILENAME).write_bytes(b"not a database" * 100)

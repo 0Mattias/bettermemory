@@ -736,7 +736,13 @@ def run_scan(args: argparse.Namespace) -> None:
     if store_arg is not None:
         path = store_path(store_arg)
     else:
-        path = store_path(load_config().resolved_directory())
+        # Without the first-run write: a scan writes nothing, a default
+        # config.toml included, and the managed file's pins still apply.
+        try:
+            config = load_config(create=False)
+        except (ValueError, OSError) as exc:
+            _fail(f"the config does not load: {exc}")
+        path = store_path(config.resolved_directory())
     if not path.is_file():
         named = None if store_arg is None else Path(store_arg).expanduser()
         if named is not None and named.is_file():

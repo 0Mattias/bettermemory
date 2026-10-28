@@ -13,12 +13,14 @@ extras imports) that doesn't belong here.
 
 from __future__ import annotations
 
+import argparse
 import logging
+import sqlite3
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 from ..config import Config, load_config
 from ..store import STORE_FILENAME, Store
@@ -28,6 +30,59 @@ if TYPE_CHECKING:
     from ..membership_migrate import MigrationReport
 
 log = logging.getLogger("bettermemory.membership")
+
+
+# ---------------------------------------------------------------------------
+# The read-only commands' store
+# ---------------------------------------------------------------------------
+
+
+def _refuse(parser: argparse.ArgumentParser, message: str, exit_code: int) -> NoReturn:
+    """End the command with `message` on stderr and `exit_code`: a usage
+    error (`parser.error`, which prints the usage line and exits 2) when
+    the code is 2, else the message alone."""
+    if exit_code == 2:
+        parser.error(message)
+    sys.stderr.write(f"{parser.prog}: error: {message}\n")
+    raise SystemExit(exit_code)
+
+
+def read_only_store_path(
+    parser: argparse.ArgumentParser, *, exit_code: int = 2
+) -> Path:
+    """The store file a read-only command reads, resolved from the config
+    the daemon loads, without its first-run write.
+
+    `load_config` creates a default config.toml where none exists, which a
+    command documented as read-only must not do; ``create=False`` reads a
+    missing file as the defaults and still applies the organisation-managed
+    file's pins, so the store named is the one the daemon serves. A config
+    that does not load ends the command with the loader's message, which
+    names the file, and `exit_code` (2 by default, the code these commands
+    give for "no store"), not with a traceback whose exit 1 each of them
+    documents as something else."""
+    try:
+        config = load_config(create=False)
+    except (ValueError, OSError) as exc:
+        _refuse(parser, f"the config does not load: {exc}", exit_code)
+    return config.resolved_directory() / STORE_FILENAME
+
+
+def open_read_only(
+    parser: argparse.ArgumentParser, path: Path, *, exit_code: int = 2
+) -> Store:
+    """The store at `path`, opened for reading: ``allow_rekey=False``, so
+    a missing key is reported, never replaced, and no rekey row is
+    written. No file at `path` is a usage error; a file that is not a
+    store this build reads (not a database, no meta table, a store id or
+    schema it refuses) ends the command with the reason and `exit_code`
+    rather than a traceback."""
+    if not path.is_file():
+        parser.error(f"no bettermemory 9 store at {path}")
+    try:
+        return Store.open(path, allow_rekey=False)
+    except (ValueError, sqlite3.DatabaseError) as exc:
+        _refuse(parser, f"cannot read the store at {path}: {exc}", exit_code)
 
 
 @dataclass(frozen=True)

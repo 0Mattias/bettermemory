@@ -884,7 +884,7 @@ def test_default_store_is_the_configured_one(
         storage=StorageConfig(directory=str(store.path.parent)),
         behavior=BehaviorConfig(),
     )
-    monkeypatch.setattr("bettermemory.config.load_config", lambda: config)
+    monkeypatch.setattr("bettermemory.config.load_config", lambda create=True: config)
 
     code, out, _ = _run(capsys)
     assert code == 1

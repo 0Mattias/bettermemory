@@ -860,3 +860,38 @@ def test_log_help_lists_the_new_commands(
     for flag in ("--since-seq", "--until-seq", "--kinds", "--include-bodies", "--out"):
         assert flag in help_text
     assert "Exit 0" in help_text
+
+
+@pytest.mark.parametrize("command", ["export", "anchor"])
+@pytest.mark.parametrize("target", ["store", "wal", "relative", "keys"])
+def test_out_never_replaces_the_store_or_a_key_file(
+    cli_store: Store,
+    keys_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+    target: str,
+) -> None:
+    """`--out` replaces its path atomically. Pointed at the store file
+    (or its -wal, or by a relative path), a read-only command would put
+    JSON where the store was; pointed into the keys directory, it would
+    replace a key or the head checkpoint. Both are refused, and nothing
+    is written."""
+    cli_store.put_memory(_memory("kept"))
+    store_file = cli_store.path
+    if target == "store":
+        out = store_file
+    elif target == "wal":
+        out = store_file.with_name(store_file.name + "-wal")
+    elif target == "relative":
+        monkeypatch.chdir(store_file.parent)
+        out = Path(store_file.name)
+    else:
+        out = keys_dir / f"{cli_store.store_id}.head"
+    before = out.read_bytes() if out.exists() else None
+    code = _run_cli(["log", command, "--out", str(out)], monkeypatch)
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "--out:" in err
+    assert (out.read_bytes() if out.exists() else None) == before
+    assert _run_cli(["log", "verify"], monkeypatch) == 0

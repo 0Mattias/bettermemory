@@ -36,9 +36,10 @@ What the audit is not:
   records the port and the pid but no address, so a recorded ``host``
   (should a later build write one) is checked and its absence reads as the
   fixed address.
-* **Not a writer of anything else.** The config is read only where the file
-  exists (`sandbox_settings.load_config_read_only`), so a fresh account does
-  not get a default config.toml from an audit. Claude Code's settings files
+* **Not a writer of anything else.** The config is read without the
+  first-run write (`sandbox_settings.load_config_read_only`), so a fresh
+  account does not get a default config.toml from an audit, and the
+  managed file's pins apply whether or not the user's file exists. Claude Code's settings files
   are read, never written. ``git`` runs through `_git.run_git`, with its
   hooks and fsmonitor pinned off and optional locks disabled.
 

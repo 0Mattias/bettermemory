@@ -159,10 +159,13 @@ def run(args: argparse.Namespace, *, sub_parser: argparse.ArgumentParser) -> Non
         sub_parser.error(f"unknown backup command: {command!r}")
 
 
-def _store_file() -> Path:
-    from ..config import STORE_FILENAME, load_config
+def _store_file(parser: argparse.ArgumentParser) -> Path:
+    """The store this CLI resolves, from the config read without its
+    first-run write (a plan changes nothing, a default config.toml
+    included); a config that does not load exits 2 with its message."""
+    from ._common import read_only_store_path
 
-    return load_config().resolved_directory() / STORE_FILENAME
+    return read_only_store_path(parser)
 
 
 def _bundle_dir(value: str, parser: argparse.ArgumentParser) -> Path:
@@ -195,7 +198,7 @@ def _text(lines: list[str]) -> str:
 def _create(args: argparse.Namespace, *, parser: argparse.ArgumentParser) -> None:
     from ..backup import BackupError, create_backup
 
-    store_file = _store_file()
+    store_file = _store_file(parser)
     if not store_file.is_file():
         parser.error(f"no bettermemory 9 store at {store_file}")
     out = Path(args.out).expanduser() if args.out else None
@@ -328,7 +331,7 @@ def _restore(args: argparse.Namespace, *, parser: argparse.ArgumentParser) -> No
     bundle = _bundle_dir(args.bundle, parser)
     report = restore_bundle(
         bundle,
-        _store_file(),
+        _store_file(parser),
         apply=args.yes,
         trust_bundle_key=args.trust_bundle_key,
     )

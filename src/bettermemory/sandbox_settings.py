@@ -64,7 +64,8 @@ do, which is the administrator's decision, not this command's.
 Read-only and print-only. Nothing here writes a settings file, creates a
 directory or loads the config through `config.load_config`'s first-run path
 (which writes a default config.toml): `load_config_read_only` reads the
-config only where the file exists. The audit (`posture`) builds the same plan
+user's file where it exists and the managed file either way, and writes
+neither. The audit (`posture`) builds the same plan
 and compares the settings files it can read against it.
 """
 
@@ -173,12 +174,13 @@ def load_config_read_only(path: Path | None = None) -> Config:
     `load_config` creates a default config.toml where none exists and says
     so on stderr. A command that promises to write nothing cannot call it on
     a fresh account, so a missing file reads as the defaults it would have
-    written. A malformed file still raises, exactly as `load_config` does:
+    written (``create=False``), with the organisation-managed file still
+    applied over them: a freshly provisioned account, a managed file and no
+    config.toml yet, reports the store the daemon serves, not the home
+    default. A malformed file still raises, exactly as `load_config` does:
     the caller decides whether that is an error or a finding."""
     config_path = path or _config.default_config_path()
-    if not config_path.is_file():
-        return Config()
-    return load_config(config_path)
+    return load_config(config_path, create=False)
 
 
 # ---------------------------------------------------------------------------

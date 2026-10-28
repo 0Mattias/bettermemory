@@ -193,6 +193,7 @@ MISMATCH_PROBLEMS = frozenset(
         "manifest_invalid",
         "format_unsupported",
         "file_missing",
+        "file_unreadable",
         "size_mismatch",
         "sha256_mismatch",
         "snapshot_unreadable",
@@ -732,6 +733,7 @@ def verify_bundle(bundle: Path, *, keys_dir: Path | None = None) -> dict[str, An
         origin=None if origin is None else origin.to_dict(),
         key_included=manifest.get("key_included"),
     )
+    snapshot_unreadable = False
     for name, entry in sorted(manifest["files"].items()):
         path = bundle / name
         result: dict[str, Any] = {
@@ -744,7 +746,19 @@ def verify_bundle(bundle: Path, *, keys_dir: Path | None = None) -> dict[str, An
             result["status"] = "missing"
             problems.append({"problem": "file_missing", "file": name})
         else:
-            digest, size = _file_digest(path)
+            try:
+                digest, size = _file_digest(path)
+            except OSError as exc:
+                # A file this account cannot read (its mode, a lock, a
+                # read error) proves nothing either way about what the
+                # manifest says of it.
+                result["status"] = "unreadable"
+                problems.append(
+                    {"problem": "file_unreadable", "file": name, "detail": str(exc)}
+                )
+                report["files"].append(result)
+                snapshot_unreadable = snapshot_unreadable or name == SNAPSHOT_NAME
+                continue
             if size != entry["size"]:
                 result["status"] = "size_mismatch"
                 problems.append({"problem": "size_mismatch", "file": name})
@@ -753,7 +767,7 @@ def verify_bundle(bundle: Path, *, keys_dir: Path | None = None) -> dict[str, An
                 problems.append({"problem": "sha256_mismatch", "file": name})
         report["files"].append(result)
     snapshot = bundle / SNAPSHOT_NAME
-    if not snapshot.is_file():
+    if not snapshot.is_file() or snapshot_unreadable:
         return report
     bundle_ring = KeyRing(bundle, store_id)
     live_ring = KeyRing(keys_root, store_id)

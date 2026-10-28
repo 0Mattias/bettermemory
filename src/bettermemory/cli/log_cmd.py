@@ -76,9 +76,10 @@ def add_subparser(
         "other free text are replaced by their sha256 and length unless "
         "--include-bodies. Read-only and deterministic: the same log gives "
         "the same bytes. Exit 0 when the export is written, 1 when the "
-        "output closed before it was, 2 when there is no store, an "
-        "argument is wrong or --out cannot be written. The export is a "
-        "trail, not a verdict: run `log verify` for that."
+        "output closed before it was, 2 when there is no store it can read, "
+        "an argument is wrong or --out cannot be written (or names the "
+        "store's own files or the keys directory). The export is a trail, "
+        "not a verdict: run `log verify` for that."
     )
     export = log_sub.add_parser("export", help=export_text, description=export_text)
     export.add_argument(
@@ -144,8 +145,9 @@ def add_subparser(
         "verify --anchor FILE` then shows whether history up to that seq "
         "was rewritten since, even by a process that holds the key. Prints "
         "the anchor as one JSON line, or writes it to --out. Exit 0 when "
-        "the anchor is taken, 2 when there is no store, its log is empty or "
-        "--out cannot be written."
+        "the anchor is taken, 2 when there is no store it can read, its log "
+        "is empty or --out cannot be written (or names the store's own files "
+        "or the keys directory)."
     )
     anchor = log_sub.add_parser("anchor", help=anchor_text, description=anchor_text)
     anchor.add_argument(
@@ -191,18 +193,17 @@ def run(
     sub_parser.error(f"unknown log subcommand: {args.log_cmd!r}")
 
 
-def _open_read_only(parser: argparse.ArgumentParser) -> Store:
+def _open_read_only(parser: argparse.ArgumentParser, *, exit_code: int = 2) -> Store:
     """The resolved store, opened for reading. `allow_rekey=False`: a
     command that reads the log must not write a rekey row into it. A
-    missing key is then reported, not fixed."""
-    from ..config import load_config
-    from ..store import STORE_FILENAME, Store
+    missing key is then reported, not fixed. The config is read without
+    its first-run write, and a config or a store file that cannot be read
+    ends the command with the reason and `exit_code`
+    (`_common.read_only_store_path`, `_common.open_read_only`)."""
+    from ._common import open_read_only, read_only_store_path
 
-    directory = load_config().resolved_directory()
-    path = directory / STORE_FILENAME
-    if not path.is_file():
-        parser.error(f"no bettermemory 9 store at {path}")
-    return Store.open(path, allow_rekey=False)
+    path = read_only_store_path(parser, exit_code=exit_code)
+    return open_read_only(parser, path, exit_code=exit_code)
 
 
 def _cli_log_verify(
@@ -227,7 +228,9 @@ def _cli_log_verify(
             anchors.extend((name, anchor) for anchor in load_anchors(name))
         except AnchorFileError as exc:
             parser.error(str(exc))
-    store = _open_read_only(parser)
+    # A config or store file that cannot be read is a log that cannot be
+    # verified: exit 1, as before, with the reason instead of a traceback.
+    store = _open_read_only(parser, exit_code=1)
     try:
         report = store.log_verify()
         if anchor_files:
@@ -252,6 +255,29 @@ def _output_path(parser: argparse.ArgumentParser, name: str) -> Path:
     if path.is_dir():
         parser.error(f"--out: {path} is a directory")
     return path
+
+
+def _refuse_store_files(
+    parser: argparse.ArgumentParser, out: Path, store: Store
+) -> None:
+    """Refuse an ``--out`` that names the store file, its ``-wal`` or
+    ``-shm``, or a path in the keys directory. The output replaces its
+    path atomically: a read-only command must not put JSON where the
+    store was (a daemon still serving it would go on writing to the
+    unlinked file), nor a file among the keys and the head checkpoint.
+    Compared resolved, so a symlink or a relative path to them is caught
+    too. Called with the store open, before anything is written."""
+    target = out.expanduser().resolve()
+    store_file = store.path.resolve()
+    keys_dir = store.keys_dir.expanduser().resolve()
+    if target in {
+        store_file.with_name(store_file.name + s) for s in ("", "-wal", "-shm")
+    }:
+        store.close()
+        parser.error(f"--out: {out} is the store's own file")
+    if target == keys_dir or keys_dir in target.parents:
+        store.close()
+        parser.error(f"--out: {out} is in the keys directory {keys_dir}")
 
 
 @contextlib.contextmanager
@@ -340,6 +366,8 @@ def _cli_log_export(
             "file\n"
         )
     store = _open_read_only(parser)
+    if out is not None:
+        _refuse_store_files(parser, out, store)
     try:
         if out is None:
             try:
@@ -407,6 +435,8 @@ def _cli_log_anchor(
 
     out = None if args.out is None else _output_path(parser, args.out)
     store = _open_read_only(parser)
+    if out is not None:
+        _refuse_store_files(parser, out, store)
     try:
         anchor = take(store)
     except ValueError as exc:

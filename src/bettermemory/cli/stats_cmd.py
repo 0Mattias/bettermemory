@@ -82,7 +82,8 @@ def add_subparser(
         "created and removed and log rows written per day over the last DAYS "
         "days, tombstones, episodes, log rows by kind, and the oldest and "
         "newest records. Aggregate SQL only: no MAC is checked (`log verify` "
-        "does that). Exit 0 with the report, 2 when no store is found."
+        "does that). Exit 0 with the report, 2 when no store is found or "
+        "the config or the store file cannot be read."
     )
     parser = sub.add_parser("stats", help=help_text, description=help_text)
     parser.add_argument(
@@ -105,15 +106,14 @@ def add_subparser(
 
 def run(args: argparse.Namespace, *, sub_parser: argparse.ArgumentParser) -> None:
     """Dispatch handler for ``bettermemory stats``."""
-    from ..config import load_config
-    from ..store import STORE_FILENAME, Store
+    from ._common import open_read_only, read_only_store_path
 
-    path = load_config().resolved_directory() / STORE_FILENAME
-    if not path.is_file():
-        sub_parser.error(f"no bettermemory 9 store at {path}")
-    # `allow_rekey=False`: a report must not write a rekey row. Without
-    # the key every count is still read; only `key_present` says so.
-    store = Store.open(path, allow_rekey=False)
+    # The config without its first-run write; `allow_rekey=False`: a
+    # report must not write a rekey row. Without the key every count is
+    # still read; only `key_present` says so. A config or a store file
+    # that cannot be read exits 2 with the reason.
+    path = read_only_store_path(sub_parser)
+    store = open_read_only(sub_parser, path)
     try:
         report = collect(store, days=args.since)
     finally:
