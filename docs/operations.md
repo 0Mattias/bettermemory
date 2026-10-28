@@ -345,7 +345,8 @@ the write was acknowledged, and never the value. Exit 0 clean, 1 found, 2
 no store it can read. `--store PATH` scans another store, a directory
 holding `memory.sqlite` or the file itself; to scan a backup bundle, copy
 its `memory.sqlite` into a directory of its own first, since opening it
-in place breaks the bundle's hash.
+in place breaks the bundle's hash (the scan refuses a file that has a
+bundle's `manifest.json` beside it).
 
 When something is found: rotate the credential at its issuer first,
 because the log keeps every version of every record and no command

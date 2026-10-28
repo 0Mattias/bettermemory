@@ -79,7 +79,12 @@ an episode, a conflict row) is `null`: the log cannot say.
 Read-only. The CLI opens the store with `Store.open(...,
 allow_rekey=False)`, as `log verify` and `export` do: a scan must never
 write a rekey row into the log it is reading, and a store copied from
-another machine scans without its key. Nothing here writes.
+another machine scans without its key. Nothing here writes a row, a key
+or a record. Opening a store file does what every opener does to it: a
+file saved in rollback-journal mode (a backup bundle's snapshot) is
+switched to WAL, which changes its bytes, so a file inside a backup
+bundle is refused with the instruction to scan a copy, and a bundle
+stays one `backup verify` passes.
 
 Not covered, and said in every report: freed pages and earlier page
 images in the file and its WAL, the full-text index's token pages, saved
@@ -677,8 +682,11 @@ _SCAN_HELP = (
     "log seq, the record, the field, the detector kind, the record's state "
     "and whether the write was acknowledged; it never prints the value, "
     "only an offset into the field. Read-only: the store is opened without "
-    "rekeying and nothing is written. Exit 0 when nothing is found, 1 when "
-    "anything is, 2 on a usage error or when there is no store it can read."
+    "rekeying and no row, record or key is written; opening a store file "
+    "does switch one saved in rollback-journal mode to WAL, so a backup "
+    "bundle's own file is refused (scan a copy of it). Exit 0 when nothing "
+    "is found, 1 when anything is, 2 on a usage error or when there is no "
+    "store it can read."
 )
 
 
@@ -708,9 +716,12 @@ def add_scan_parser(
         metavar="PATH",
         help=(
             "The store to scan instead of the configured one: a directory "
-            "holding memory.sqlite, or that file itself, such as a restored "
-            "backup or a copy from another machine (it needs no key). "
-            "Default: memory.sqlite in the resolved store directory."
+            "holding memory.sqlite, or that file itself, such as a copy of a "
+            "backup bundle's memory.sqlite in a directory of its own or a "
+            "copy from another machine (it needs no key). A file inside a "
+            "backup bundle is refused: opening it would change it and fail "
+            "the bundle's hash. Default: memory.sqlite in the resolved store "
+            "directory."
         ),
     )
     parser.add_argument(
@@ -755,6 +766,18 @@ def run_scan(args: argparse.Namespace) -> None:
                 f"to {STORE_FILENAME} in a directory of its own and scan that"
             )
         _fail(f"no bettermemory 9 store at {path}")
+    from .backup import MANIFEST_NAME
+
+    if (path.parent / MANIFEST_NAME).is_file():
+        # Opening a store switches its journal mode to WAL, which rewrites
+        # the header of a file saved in rollback mode: a bundle's snapshot
+        # would then fail its signed hash, and `backup verify` and
+        # `backup restore` would refuse the bundle.
+        _fail(
+            f"{path} is in a backup bundle ({path.parent / MANIFEST_NAME} is "
+            "beside it), and opening it would change it and fail the bundle's "
+            f"hash: copy {path.name} to a directory of its own and scan the copy"
+        )
     # `allow_rekey=False`: a scan reads; it must not write a rekey row
     # into the log it is scanning, nor a key beside a copied store.
     try:

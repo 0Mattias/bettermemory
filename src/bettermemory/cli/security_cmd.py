@@ -6,9 +6,11 @@ read-only check of modes, owners, the key, where the store lives, the
 daemon's address and Claude Code's sandbox settings; and `security sandbox`
 (`sandbox_settings`), which prints the Claude Code sandbox block for this
 host's real paths; and `security scan` (`secret_scan`), the secret scan
-over stored bodies, episodes and the signed log. None writes anything,
-and none opens the store through `cli_context` or `Store.open_or_create`,
-which create and rekey.
+over stored bodies, episodes and the signed log. None writes a row, a
+key or a file of its own (the scan's open switches a store file saved in
+rollback-journal mode to WAL, as every opener does, and so refuses a
+backup bundle's file), and none opens the store through `cli_context` or
+`Store.open_or_create`, which create and rekey.
 """
 
 from __future__ import annotations
@@ -31,7 +33,7 @@ def add_subparser(
         "the store, the key and the daemon's files are as SECURITY.md assumes; "
         "`security sandbox` prints Claude Code sandbox settings for this "
         "host's paths; `security scan` finds credentials kept in the store. None "
-        "writes anything."
+        "writes a row, a key or a file of its own."
     )
     parser = sub.add_parser("security", help=help_text, description=help_text)
     security_sub = parser.add_subparsers(dest="security_cmd")

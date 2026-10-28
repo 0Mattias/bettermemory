@@ -900,6 +900,27 @@ def test_store_flag_takes_the_file_itself(
     assert _run(capsys, "--store", str(store.path.parent))[0] == 1
 
 
+@pytest.mark.parametrize("name", ["directory", "file"])
+def test_a_backup_bundle_is_refused_not_opened_in_place(
+    store: Store, capsys: pytest.CaptureFixture[str], name: str
+) -> None:
+    """Opening a store switches its journal mode, which changes the bytes
+    of a bundle's snapshot and fails its hash: `backup verify` would read
+    the bundle mismatched and `backup restore` refuse it. The scan says to
+    copy the file out instead, and leaves the bundle as it was."""
+    from bettermemory.backup import create_backup, verify_bundle
+
+    store.write(content=f"deploy uses {_AWS}", scopes=["x"])
+    bundle = Path(create_backup(store.path)["bundle"])
+    before = {p.name: p.read_bytes() for p in bundle.iterdir()}
+    target = bundle if name == "directory" else bundle / "memory.sqlite"
+    code, _out, err = _run(capsys, "--store", str(target))
+    assert code == 2
+    assert "backup bundle" in err and "copy" in err
+    assert {p.name: p.read_bytes() for p in bundle.iterdir()} == before
+    assert verify_bundle(bundle)["status"] == "ok"
+
+
 def test_text_report_groups_findings_with_their_remediation(store: Store) -> None:
     live = store.write(content=f"deploy uses {_AWS}", scopes=["x"])
     gone = store.write(content=f"ci token {_GITHUB}", scopes=["x"])
