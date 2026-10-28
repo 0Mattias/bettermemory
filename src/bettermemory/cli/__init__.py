@@ -31,6 +31,7 @@ import argparse
 
 from . import (
     audit_turn_cmd,
+    backup_cmd,
     capture_cmd,
     daemon_cmd,
     episodes,
@@ -128,6 +129,7 @@ def _build_parser() -> tuple[
         "recall": recall_cmd.add_subparser(sub),
         "rename-scope": rename_scope.add_subparser(sub),
         "try": try_cmd.add_subparser(sub),
+        "backup": backup_cmd.add_subparser(sub),
         "up": daemon_cmd.add_up(sub),
         "down": daemon_cmd.add_down(sub),
         "status": daemon_cmd.add_status(sub),
@@ -266,6 +268,9 @@ def main() -> None:
         return
     if cmd == "try":
         try_cmd.run(args)
+        return
+    if cmd == "backup":
+        backup_cmd.run(args, sub_parser=subparsers["backup"])
         return
 
     # argparse already rejects unknown subcommands; this is belt-and-
