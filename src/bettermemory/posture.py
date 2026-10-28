@@ -62,6 +62,7 @@ print for this host.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import shlex
@@ -103,12 +104,21 @@ _OVERRIDES: tuple[str, ...] = (
 )
 
 #: Hosts whose portless entry in ``sandbox.network.allowedDomains`` opens
-#: the daemon's port to the sandboxed shell. ``*`` opens every host.
+#: the daemon's port to the sandboxed shell. ``*`` opens every host; a
+#: connection to the unspecified address (``0.0.0.0``, ``[::]``) reaches
+#: the host's own listeners on macOS and Linux.
 _LOOPBACK_HOSTS = frozenset(
-    {"localhost", "*.localhost", "127.0.0.1", "::1", "[::1]", "*"}
+    {
+        "localhost",
+        "*.localhost",
+        "127.0.0.1",
+        "::1",
+        "[::1]",
+        "0.0.0.0",
+        "[::]",
+        "*",
+    }
 )
-#: The addresses a daemon may listen on and still be local-only.
-_LOOPBACK_BINDS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 _geteuid = getattr(os, "geteuid", None)
 
@@ -444,17 +454,47 @@ def mode_finding(
 # ---------------------------------------------------------------------------
 
 
+def _presence(path: Path) -> tuple[bool, str | None]:
+    """Whether `path` exists, from one ``os.stat``: ``(True, None)`` when it
+    does, ``(False, None)`` when it does not, ``(False, why)`` when this
+    account cannot tell. `Path.exists` and `Path.is_file` re-raise EACCES
+    on Python 3.11 to 3.13 (and answer False on 3.14), so a store, keys or
+    state directory this account cannot search, one another account owns
+    among them, would end the audit in a traceback, or read as no store at
+    all, exactly where it has a finding to make."""
+    try:
+        os.stat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return False, None
+    except OSError as exc:
+        return False, exc.strerror or str(exc)
+    return True, None
+
+
 def read_meta(store_file: Path) -> dict[str, str]:
     """The store's meta table, read without writing a byte.
 
     ``immutable=1`` when the store has no ``-wal`` file: every committed page
     is then in the main file, and an immutable open creates no ``-wal`` or
     ``-shm`` beside it (a plain read-only open of a WAL-mode file does, and
-    leaves them). ``mode=ro`` when a ``-wal`` exists, as it does under a
-    running daemon, so the read sees the pages still in the WAL. Raises
-    ``sqlite3.Error`` on a file that is not a store."""
+    leaves them). ``mode=ro`` when a ``-wal`` exists with its ``-shm``, as
+    under a running daemon or after one crashed, so the read sees the pages
+    still in the WAL. A ``-wal`` without its ``-shm`` (a copy that brought
+    the one and not the other) is refused: a read-only open there creates
+    the ``-shm``, and an immutable one would miss the WAL's pages, a rekey's
+    new fingerprint among them. Raises ``sqlite3.Error`` on a file that is
+    not a store, and on that refusal."""
     resolved = store_file.resolve()
-    query = "mode=ro" if _sibling(resolved, "-wal").exists() else "immutable=1"
+    wal, shm = _sibling(resolved, "-wal"), _sibling(resolved, "-shm")
+    if not os.path.exists(wal):
+        query = "immutable=1"
+    elif os.path.exists(shm):
+        query = "mode=ro"
+    else:
+        raise sqlite3.OperationalError(
+            f"{wal.name} is there without {shm.name}, and reading it read-only "
+            f"would create {shm.name}"
+        )
     conn = sqlite3.connect(f"{resolved.as_uri()}?{query}", uri=True, timeout=5.0)
     try:
         rows = conn.execute("SELECT key, value FROM meta").fetchall()
@@ -464,7 +504,10 @@ def read_meta(store_file: Path) -> dict[str, str]:
 
 
 def _meta_or_error(store_file: Path) -> tuple[dict[str, str] | None, str | None]:
-    if not store_file.is_file():
+    present, unreachable = _presence(store_file)
+    if unreachable is not None:
+        return None, f"{store_file} cannot be reached: {unreachable}"
+    if not present:
         return None, None
     try:
         return read_meta(store_file), None
@@ -481,7 +524,8 @@ def _key(
 ) -> Finding:
     """The key is present under the keys directory and its fingerprint is
     the one the store records."""
-    if not store_file.is_file():
+    present, unreachable = _presence(store_file)
+    if not present and unreachable is None:
         return Finding(
             "key.match",
             "info",
@@ -511,11 +555,13 @@ def _key(
         "rekeys the log, and the rows signed before it stay unverifiable for good"
     )
     key = keyring.load_current()
-    if key is None and key_path.exists():
+    key_present, key_unreachable = _presence(key_path)
+    if key is None and (key_present or key_unreachable is not None):
+        where = "exists" if key_present else f"cannot be looked for ({key_unreachable})"
         return Finding(
             "key.match",
             "high",
-            f"the key at {key_path} exists but this account cannot read it: "
+            f"the key at {key_path} {where} and this account cannot read it: "
             f"the log cannot be verified here, and {lost}",
             path=str(key_path),
             fix="make it readable to this account again (owner-only, 0600)",
@@ -601,7 +647,7 @@ def _placement(store_dir: Path, keys_dir: Path) -> Finding:
 
 
 def _where(store_dir: Path, store_file: Path, keys_dir: Path) -> Iterator[Finding]:
-    store_probe = store_file if store_file.exists() else store_dir
+    store_probe = store_file if _presence(store_file)[0] else store_dir
     yield git_finding("store.git", "store", store_dir, store_probe, ignored_ok=True)
     yield git_finding(
         "keys.git", "keys directory", keys_dir, keys_dir, ignored_ok=False
@@ -650,7 +696,7 @@ def git_finding(
     goes. Not ignored is a warning: one ``git add -A`` away. Ignored is
     information for the store (``ignored_ok``) and a warning for the keys,
     which belong in no working tree at all."""
-    if not directory.is_dir():
+    if not os.path.isdir(directory):
         return Finding(finding_id, "ok", f"no {label} directory yet")
     top_run = run_git(["rev-parse", "--show-toplevel"], cwd=directory, timeout=2.0)
     if top_run is None:
@@ -740,9 +786,35 @@ def synced_root(path: Path) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def _loopback_bind(host: str) -> bool:
+    """Whether a recorded listening address is local-only: ``localhost``,
+    or an address in the loopback block (``127.0.0.0/8``, ``::1``). Parsed
+    as an address, so a name that merely starts with ``127.`` is not
+    taken for one."""
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return False
+
+
 def _daemon(state_dir: Path, store_file: Path) -> Iterator[Finding]:
     state_file = _daemon_client.state_file_for(state_dir, store_file)
-    if not state_file.exists():
+    present, unreachable = _presence(state_file)
+    if unreachable is not None:
+        yield Finding(
+            "daemon.bind",
+            "warn",
+            f"the daemon state file {state_file} cannot be reached: {unreachable}",
+            path=str(state_file),
+            fix=(
+                "the state directory must be this account's own (owner-only, 0700); "
+                "the hooks and the CLI read the daemon's port and token there"
+            ),
+        )
+        return
+    if not present:
         yield Finding(
             "daemon.bind",
             "info",
@@ -769,7 +841,7 @@ def _daemon(state_dir: Path, store_file: Path) -> Iterator[Finding]:
         "pid": state["pid"],
         "version": state.get("version"),
     }
-    if host in _LOOPBACK_BINDS or host.startswith("127."):
+    if _loopback_bind(host):
         yield Finding(
             "daemon.bind",
             "ok",
@@ -905,15 +977,20 @@ def _strings(value: Any) -> list[str]:
 
 
 def _settings_paths(platform: str) -> list[tuple[str, Path]]:
-    """The settings files the audit reads, managed first: the managed file,
-    its drop-in directory's files in name order, the user's file. A
-    project's own settings depend on where Claude Code starts, and are not
-    read."""
+    """The settings files the audit reads, in the order Claude Code merges
+    them: the managed file, then its drop-in directory's ``*.json`` files in
+    name order (hidden ones skipped, as Claude Code skips them), then the
+    user's file. A project's own settings depend on where Claude Code
+    starts, and are not read."""
     managed = sandbox_settings.claude_managed_settings_path(platform)
     paths: list[tuple[str, Path]] = [("managed", managed)]
     drop_ins = managed.parent / "managed-settings.d"
     try:
-        paths.extend(("managed", path) for path in sorted(drop_ins.glob("*.json")))
+        paths.extend(
+            ("managed", path)
+            for path in sorted(drop_ins.glob("*.json"))
+            if not path.name.startswith(".")
+        )
     except OSError:
         pass
     paths.append(("user", sandbox_settings.claude_user_settings_path()))
@@ -933,15 +1010,76 @@ def _expand(entry: str, home: Path | None) -> Path | None:
     return None
 
 
-def _covers(base: Path | None, target: Path) -> bool:
-    if base is None:
-        return False
-    candidates = {base}
+def _spellings(path: Path) -> set[Path]:
+    """`path` as written and as resolved: a settings entry names the path
+    the user typed, the plan the real one (macOS's ``/tmp`` is
+    ``/private/tmp``)."""
+    found = {path}
     try:
-        candidates.add(base.resolve())
+        found.add(path.resolve())
     except OSError:
         pass
-    return any(c == target or c in target.parents for c in candidates)
+    return found
+
+
+def _levels_above(base: Path | None, target: Path) -> int | None:
+    """How many directories `base` sits above `target`: 0 for `target`
+    itself, None when it is neither `target` nor a directory above it."""
+    if base is None:
+        return None
+    levels = [
+        len(target.parts) - len(candidate.parts)
+        for candidate in _spellings(base)
+        if candidate == target or candidate in target.parents
+    ]
+    return min(levels) if levels else None
+
+
+def _covers(base: Path | None, target: Path) -> bool:
+    return _levels_above(base, target) is not None
+
+
+def _literal_prefix(entry: str) -> str:
+    """`entry` up to the directory before its first wildcard, the directory
+    a glob entry can match under; `entry` itself when it has none."""
+    for index, char in enumerate(entry):
+        if char in "*?[":
+            return entry[: entry.rfind("/", 0, index) + 1]
+    return entry
+
+
+def _reopened(
+    target: Path, deny_read: list[str], allow_read: list[str], home: Path | None
+) -> list[str]:
+    """The ``allowRead`` entries that open `target`, or part of it, to the
+    sandboxed shell again. Where read rules overlap, the narrower path wins
+    (Claude Code's sandboxing documentation): an entry inside `target`
+    re-opens that part of it, and one between `target` and the narrowest
+    ``denyRead`` entry above it re-opens all of it. An entry at that deny's
+    own path counts too, since neither is narrower. A wildcard entry is
+    read up to the directory before its first wildcard; a relative entry
+    is not read. Empty when no ``denyRead`` entry covers `target`, which
+    the deny check reports on its own."""
+    nearest = min(
+        (
+            levels
+            for levels in (_levels_above(_expand(e, home), target) for e in deny_read)
+            if levels is not None
+        ),
+        default=None,
+    )
+    if nearest is None:
+        return []
+    found: list[str] = []
+    for entry in allow_read:
+        base = _expand(_literal_prefix(entry), home)
+        if base is None:
+            continue
+        above = _levels_above(base, target)
+        inside = any(_levels_above(target, real) for real in _spellings(base))
+        if (above is not None and above <= nearest) or inside:
+            found.append(entry)
+    return found
 
 
 def _rule_covers(rules: list[str], tool: str, target: Path, home: Path | None) -> bool:
@@ -995,10 +1133,18 @@ def _claude(config: Config, *, cwd: Path | None, platform: str) -> Iterator[Find
     """Claude Code's sandbox settings in the managed and user files against
     the block `bettermemory security sandbox` prints for this host. Scalar
     keys take the managed value where one is set (managed settings sit
-    above every other level); list keys merge, as Claude Code merges them.
-    No sandbox at all is information: the shell-holding agent is outside
-    the guard by design (SECURITY.md), and docs/installation.md section 5
-    is opt-in. A sandbox that is on with a gap in it is a warning."""
+    above every other level), and among the managed files the last one
+    merged: Claude Code merges managed-settings.json first and the drop-ins
+    after it in name order, a later file's value replacing an earlier one's.
+    List keys merge, as Claude Code merges them, except where a managed
+    lock (``allowManagedReadPathsOnly``, ``allowManagedDomainsOnly``, on
+    when any managed file sets it) leaves the managed entries alone.
+    Beyond the keys the block sets, the audit reads the two that undo it:
+    ``sandbox.filesystem.disabled``, and ``allowRead`` entries that open a
+    denied directory again. No sandbox at all is information: the
+    shell-holding agent is outside the guard by design (SECURITY.md), and
+    docs/installation.md section 5 is opt-in. A sandbox that is on with a
+    gap in it is a warning."""
     if platform == "win32":
         yield Finding(
             "claude.sandbox",
@@ -1024,18 +1170,31 @@ def _claude(config: Config, *, cwd: Path | None, platform: str) -> Iterator[Find
         elif document is not None:
             documents.append((level, path, document))
     read = [str(path) for _, path, _ in documents]
+    # Highest precedence first: the managed files, the last merged first,
+    # then the user's.
+    ranked = [doc for doc in reversed(documents) if doc[0] == "managed"] + [
+        doc for doc in documents if doc[0] == "user"
+    ]
 
     def scalar(*keys: str) -> tuple[Any, str | None]:
-        for level, _, document in documents:
+        for level, _, document in ranked:
             value = _dig(document, *keys)
             if value is not None:
                 return value, level
         return None, None
 
-    def merged(*keys: str) -> list[str]:
+    def locked(*keys: str) -> bool:
+        return any(
+            _dig(document, *keys) is True
+            for level, _, document in documents
+            if level == "managed"
+        )
+
+    def merged(*keys: str, managed_only: bool = False) -> list[str]:
         out: list[str] = []
-        for _, _, document in documents:
-            out.extend(_strings(_dig(document, *keys)))
+        for level, _, document in documents:
+            if level == "managed" or not managed_only:
+                out.extend(_strings(_dig(document, *keys)))
         return out
 
     enabled, enabled_level = scalar("sandbox", "enabled")
@@ -1074,6 +1233,16 @@ def _claude(config: Config, *, cwd: Path | None, platform: str) -> Iterator[Find
             "sandbox stops can be retried outside it",
             fix='set "allowUnsandboxedCommands": false under "sandbox"',
         )
+    filesystem_off, _ = scalar("sandbox", "filesystem", "disabled")
+    if filesystem_off is True:
+        gaps += 1
+        yield Finding(
+            "claude.sandbox.filesystem_disabled",
+            "warn",
+            "sandbox.filesystem.disabled is true: sandboxed commands run without "
+            "filesystem isolation, so denyRead holds nothing back",
+            fix='remove "disabled" from "sandbox.filesystem"',
+        )
     deny_read = merged("sandbox", "filesystem", "denyRead")
     open_dirs = [
         loc
@@ -1090,6 +1259,30 @@ def _claude(config: Config, *, cwd: Path | None, platform: str) -> Iterator[Find
             f"shell: {', '.join(missing)}",
             fix="add them to denyRead; `bettermemory security sandbox` prints the list",
             details={"missing": missing},
+        )
+    allow_read = merged(
+        "sandbox",
+        "filesystem",
+        "allowRead",
+        managed_only=locked("sandbox", "filesystem", "allowManagedReadPathsOnly"),
+    )
+    reopened: dict[str, list[str]] = {}
+    for loc in plan.denied:
+        entries = _reopened(loc.path, deny_read, allow_read, home)
+        if entries:
+            reopened[sandbox_settings.sandbox_path(loc.path, home)] = entries
+    if reopened:
+        gaps += 1
+        listed = "; ".join(
+            f"{path} (by {', '.join(entries)})" for path, entries in reopened.items()
+        )
+        yield Finding(
+            "claude.sandbox.allow_read",
+            "warn",
+            "sandbox.filesystem.allowRead opens these to the sandboxed shell "
+            f"again, the narrower path winning over denyRead: {listed}",
+            fix="drop those allowRead entries, or narrow them to paths outside these",
+            details={"reopened": reopened},
         )
     rules = merged("permissions", "deny")
     missing_rules = [
@@ -1121,7 +1314,12 @@ def _claude(config: Config, *, cwd: Path | None, platform: str) -> Iterator[Find
             f"{', '.join(project_missing)} would keep Claude Code's tools off one",
             details={"missing": project_missing},
         )
-    domains = merged("sandbox", "network", "allowedDomains")
+    domains = merged(
+        "sandbox",
+        "network",
+        "allowedDomains",
+        managed_only=locked("sandbox", "network", "allowManagedDomainsOnly"),
+    )
     flagged = _loopback_entries(domains, plan.ports)
     if flagged:
         gaps += 1

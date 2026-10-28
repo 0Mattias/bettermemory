@@ -221,11 +221,18 @@ def test_overrides_reach_both_grammars(
     deny_read = plan.settings["sandbox"]["filesystem"]["denyRead"]
     rules = plan.settings["permissions"]["deny"]
     for directory in (store, keys, state):
-        real = directory.resolve().as_posix()
+        resolved = directory.resolve()
+        real = resolved.as_posix()
         assert real in deny_read
-        assert f"Read(/{real}/**)" in rules
-        assert f"Edit(/{real}/**)" in rules
-        assert real.startswith("/")
+        # A rule spells a Windows drive in POSIX form, ``C:\x`` as ``//c/x``.
+        spelled = (
+            f"//{resolved.drive[0].lower()}{real[len(resolved.drive) :]}"
+            if resolved.drive
+            else f"/{real}"
+        )
+        assert spelled.startswith("//")
+        assert f"Read({spelled}/**)" in rules
+        assert f"Edit({spelled}/**)" in rules
     assert "~/.claude-memory" in deny_read
     assert "~/.config/bettermemory" in deny_read
 

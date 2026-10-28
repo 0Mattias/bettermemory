@@ -25,6 +25,7 @@ import hashlib
 import json
 import os
 import shutil
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -166,7 +167,9 @@ def test_healthy_store_is_clean_and_untouched(layout: Layout) -> None:
     assert _by_id(report, "store.git").status == "ok"
     assert _by_id(report, "store.synced").status == "ok"
     assert _by_id(report, "daemon.bind").status == "info"
-    assert _by_id(report, "claude.sandbox").status == "info"
+    # Native Windows has no Claude Code sandbox, and the audit says so.
+    sandbox = "skip" if sys.platform == "win32" else "info"
+    assert _by_id(report, "claude.sandbox").status == sandbox
     if sys.platform != "win32":
         for finding_id in (
             "mode.store_dir",
@@ -217,6 +220,57 @@ def test_meta_read_without_wal_creates_nothing(layout: Layout) -> None:
     names = sorted(p.name for p in layout.store_dir.iterdir())
     assert posture.read_meta(layout.store_file)["store_id"] == layout.store_id
     assert sorted(p.name for p in layout.store_dir.iterdir()) == names
+
+
+def test_meta_read_refuses_a_wal_without_its_shm(layout: Layout) -> None:
+    """A ``-wal`` that arrived without its ``-shm`` (a copy that brought one
+    and not the other): a read-only open would create the ``-shm``, and an
+    immutable one would miss the WAL's pages, so the read is refused and
+    the audit says why instead of writing a file."""
+    wal = layout.store_dir / (STORE_FILENAME + "-wal")
+    wal.write_bytes(b"\0" * 32)
+    names = sorted(p.name for p in layout.store_dir.iterdir())
+    with pytest.raises(sqlite3.Error, match="without"):
+        posture.read_meta(layout.store_file)
+    finding = _by_id(audit(), "key.match")
+    assert finding.status == "warn"
+    assert "-shm" in finding.summary
+    assert sorted(p.name for p in layout.store_dir.iterdir()) == names
+
+
+@posix_only
+@pytest.mark.parametrize(
+    ("which", "finding_id", "status"),
+    [
+        ("store", "key.match", "warn"),
+        ("keys", "key.match", "high"),
+        ("state", "daemon.bind", "warn"),
+    ],
+)
+def test_unsearchable_directory_is_a_finding_not_a_crash(
+    layout: Layout, which: str, finding_id: str, status: str
+) -> None:
+    """A store, keys or state directory this account cannot search, as one
+    another account owns would be: `Path.exists` raises EACCES there on
+    3.11 to 3.13, which ended the audit in a traceback. Each now reads as
+    a finding about the path it could not reach."""
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root searches a 0o000 directory")
+    _write_state(layout)
+    directory = {
+        "store": layout.store_dir,
+        "keys": layout.keys_dir,
+        "state": layout.state_dir,
+    }[which]
+    os.chmod(directory, 0o000)
+    try:
+        report = audit()
+    finally:
+        os.chmod(directory, 0o700)
+    finding = _by_id(report, finding_id)
+    assert finding.status == status, finding.to_json()
+    assert "cannot be" in finding.summary
+    assert report.exit_code == (1 if status == "high" else 2)
 
 
 # ---------------------------------------------------------------------------
@@ -511,6 +565,27 @@ def test_daemon_recorded_on_another_address_is_high(layout: Layout) -> None:
     assert "0.0.0.0:7397" in finding.summary
 
 
+@pytest.mark.parametrize(
+    ("host", "status"),
+    [
+        ("127.0.0.2", "ok"),
+        ("::1", "ok"),
+        ("[::1]", "ok"),
+        ("LOCALHOST", "ok"),
+        ("127.example.com", "high"),
+        ("::", "high"),
+        ("192.168.1.5", "high"),
+    ],
+)
+def test_recorded_host_is_parsed_as_an_address(
+    layout: Layout, host: str, status: str
+) -> None:
+    """Loopback is the address block, not a prefix: a name that starts
+    with ``127.`` is not one."""
+    _write_state(layout, host=host)
+    assert _by_id(audit(), "daemon.bind").status == status
+
+
 def test_stale_and_malformed_state(
     layout: Layout, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -675,6 +750,106 @@ def test_broad_denies_cover_everything(layout: Layout) -> None:
     report = audit(platform="linux")
     assert _by_id(report, "claude.sandbox").status == "ok"
     assert _by_id(report, "claude.sandbox.project_rules").status == "info"
+
+
+@posix_only
+def test_drop_ins_override_the_managed_file_in_name_order(layout: Layout) -> None:
+    """Claude Code merges managed-settings.json first and the drop-ins
+    after it in name order, a later file's value replacing an earlier
+    one's; a hidden file in the directory is skipped."""
+    _write_json(layout.managed, _block())
+    drop_ins = layout.managed.parent / "managed-settings.d"
+    _write_json(
+        drop_ins / "20-loosen.json", {"sandbox": {"allowUnsandboxedCommands": True}}
+    )
+    report = audit(platform="linux")
+    assert _by_id(report, "claude.sandbox.unsandboxed_commands").status == "warn"
+
+    _write_json(
+        drop_ins / "30-tighten.json", {"sandbox": {"allowUnsandboxedCommands": False}}
+    )
+    _write_json(drop_ins / ".00-off.json", {"sandbox": {"enabled": False}})
+    report = audit(platform="linux")
+    assert "claude.sandbox.unsandboxed_commands" not in _ids(report)
+    assert _by_id(report, "claude.sandbox").status == "ok"
+    assert (
+        str(drop_ins / ".00-off.json")
+        not in (_by_id(report, "claude.sandbox").details["read"])
+    )
+
+
+@posix_only
+def test_filesystem_isolation_switched_off_is_a_gap(layout: Layout) -> None:
+    block = _block()
+    _write_json(layout.managed, block)
+    _write_json(
+        layout.home / ".claude" / "settings.json",
+        {"sandbox": {"filesystem": {"disabled": True}}},
+    )
+    report = audit(platform="linux")
+    assert _by_id(report, "claude.sandbox.filesystem_disabled").status == "warn"
+    assert "claude.sandbox" not in _ids(report)
+    assert report.exit_code == 2
+
+
+@posix_only
+def test_allow_read_that_reopens_a_directory_is_a_gap(
+    tmp_path: Path, layout: Layout
+) -> None:
+    """Where read rules overlap the narrower path wins, so an allowRead
+    entry inside a denied directory, or between it and the deny above it,
+    opens it again; a broader one does not. A managed
+    allowManagedReadPathsOnly leaves the user's entries out."""
+    block = _block()
+    _write_json(layout.managed, block)
+    user = layout.home / ".claude" / "settings.json"
+
+    _write_json(user, {"sandbox": {"filesystem": {"allowRead": ["~/"]}}})
+    assert _by_id(audit(platform="linux"), "claude.sandbox").status == "ok"
+
+    _write_json(
+        user,
+        {"sandbox": {"filesystem": {"allowRead": ["~/.claude-memory/exports"]}}},
+    )
+    finding = _by_id(audit(platform="linux"), "claude.sandbox.allow_read")
+    assert finding.status == "warn"
+    assert finding.details["reopened"] == {
+        "~/.claude-memory": ["~/.claude-memory/exports"]
+    }
+
+    wide = json.loads(json.dumps(block))
+    wide["sandbox"]["filesystem"]["denyRead"] = ["/"]
+    _write_json(layout.managed, wide)
+    _write_json(user, {"sandbox": {"filesystem": {"allowRead": [str(tmp_path)]}}})
+    reopened = _by_id(audit(platform="linux"), "claude.sandbox.allow_read")
+    home = sandbox_settings.home_dir()
+    assert (
+        sandbox_settings.sandbox_path(layout.store_dir, home)
+        in (reopened.details["reopened"])
+    )
+
+    wide["sandbox"]["filesystem"]["allowManagedReadPathsOnly"] = True
+    _write_json(layout.managed, wide)
+    assert _by_id(audit(platform="linux"), "claude.sandbox").status == "ok"
+
+
+@posix_only
+def test_unspecified_address_and_the_domains_lock(layout: Layout) -> None:
+    """``0.0.0.0`` without a port reaches the daemon like 127.0.0.1 does;
+    under a managed allowManagedDomainsOnly the user's entries do not
+    apply."""
+    block = _block()
+    _write_json(layout.managed, block)
+    user = layout.home / ".claude" / "settings.json"
+    _write_json(
+        user, {"sandbox": {"network": {"allowedDomains": ["0.0.0.0", "localhost"]}}}
+    )
+    finding = _by_id(audit(platform="linux"), "claude.sandbox.network")
+    assert finding.details["entries"] == ["0.0.0.0", "localhost"]
+
+    block["sandbox"]["network"] = {"allowManagedDomainsOnly": True}
+    _write_json(layout.managed, block)
+    assert "claude.sandbox.network" not in _ids(audit(platform="linux"))
 
 
 @posix_only
