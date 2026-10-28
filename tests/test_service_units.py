@@ -184,12 +184,15 @@ def test_the_systemd_unit(tmp_path: Path) -> None:
     assert lines[1] == "[Unit]"
     log = str(spec.log_path)
     state_dir = str(tmp_path / "state")
+    # Inside the quotes systemd unescapes C-style, so a Windows runner's
+    # temporary path has its backslashes doubled there, and only there.
+    quoted_state_dir = state_dir.replace("\\", "\\\\")
     expected = [
         "[Service]",
         "Type=simple",
         f'ExecStart="{_EXE}" "-m" "bettermemory" "up" "--foreground"',
         f"WorkingDirectory={state_dir}",
-        f'Environment="BETTERMEMORY_STATE_DIR={state_dir}"',
+        f'Environment="BETTERMEMORY_STATE_DIR={quoted_state_dir}"',
         'Environment="PATH=/usr/bin:/bin"',
         "Restart=on-failure",
         f"RestartSec={units.RESTART_SECONDS}",
