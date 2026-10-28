@@ -353,6 +353,51 @@ def test_a_check_that_raises_fails_alone(
     assert checks["store"].status == "ok"
 
 
+def test_a_check_the_filesystem_refuses_names_the_path_not_a_bug(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`Path.exists` re-raises EACCES on 3.11 to 3.13: a store under a
+    directory this user cannot search is the machine's answer, reported
+    with the path, not as a fault of doctor's."""
+    refused = env.tmp / "unsearchable" / "store"
+
+    def denied(ctx: object) -> doctor.Check:
+        raise PermissionError(13, "Permission denied", str(refused))
+
+    monkeypatch.setattr(doctor, "check_disk", denied)
+    check = env.checks()["disk"]
+    assert check.status == "fail"
+    assert f"could not read {refused}" in check.summary
+    assert "bug" not in (check.remedy or "")
+    assert "readable by this user" in (check.remedy or "")
+
+    def unnamed(ctx: object) -> doctor.Check:
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(doctor, "check_disk", unnamed)
+    check = env.checks()["disk"]
+    assert check.status == "fail"
+    assert check.summary.startswith("the check could not read what it needs")
+    assert "bug" not in (check.remedy or "")
+
+
+def test_a_check_an_install_cannot_import_for_says_reinstall(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dependency the install lost fails the checks that import it with
+    the install check's remedy, not as a fault of doctor's."""
+
+    def lost(ctx: object) -> doctor.Check:
+        raise ModuleNotFoundError("No module named 'platformdirs'", name="platformdirs")
+
+    monkeypatch.setattr(doctor, "check_config", lost)
+    check = env.checks()["config"]
+    assert check.status == "fail"
+    assert "could not import platformdirs" in check.summary
+    assert "bug" not in (check.remedy or "")
+    assert (check.remedy or "").startswith("reinstall bettermemory")
+
+
 def test_the_text_lists_every_raised_finding_of_a_check() -> None:
     check = doctor.Check(
         "clients",
@@ -749,6 +794,35 @@ def test_a_store_of_another_schema_warns(env: Env) -> None:
     check = env.checks()["store"]
     assert check.status == "warn"
     assert "is schema 0" in check.summary
+    # Older than any release writes: upgrading would not help.
+    assert "upgrade" not in (check.remedy or "")
+    assert "bettermemory log verify" in (check.remedy or "")
+
+
+@pytest.mark.parametrize(
+    ("error", "restore"),
+    [
+        (sqlite3.OperationalError("database is locked"), False),
+        (PermissionError(13, "Permission denied"), False),
+        (sqlite3.DatabaseError("file is not a database"), True),
+        (ValueError("x carries no store id or key fingerprint"), True),
+    ],
+)
+def test_the_open_remedy_restores_only_a_damaged_store(
+    env: Env, monkeypatch: pytest.MonkeyPatch, error: Exception, restore: bool
+) -> None:
+    """Restoring a copy over a sound store loses every write since the
+    copy: a busy or unreadable store is not told to."""
+    env.make_store()
+
+    def refuse(*args: Any, **kwargs: Any) -> Store:
+        raise error
+
+    monkeypatch.setattr(Store, "open", refuse)
+    check = env.checks()["store"]
+    assert check.status == "fail"
+    assert ("restore the store from a copy" in (check.remedy or "")) is restore
+    assert "doctor leaves the file as it is" in (check.remedy or "")
 
 
 def test_a_healthy_store_and_key(env: Env) -> None:

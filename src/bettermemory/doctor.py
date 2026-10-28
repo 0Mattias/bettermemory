@@ -22,10 +22,14 @@ would hide the fault it was run for, so this module reads only:
   read, never removed, and no daemon is started or stopped;
 - client and Claude Code settings files are read, never patched.
 
-Two side effects are inherent to reading a SQLite store in WAL mode and
-are the same ones `log verify` has: the open creates the `-wal` and
-`-shm` siblings and the close removes them again, and `_connect` keeps
-the store file owner-only. No file's contents change.
+The side effects that remain come with `Store.open` and SQLite's WAL
+mode, and `log verify` has the same ones: the open creates the `-wal`
+and `-shm` siblings and the last close removes them again, checkpointing
+any WAL a crashed writer left into the store file as it goes; `_connect`
+keeps the store file owner-only; and a store an earlier 9.0 build
+created gains the membership tables `Store.open` adds at every open (the
+daemon's first open adds them too). None of them changes what the store
+holds.
 
 Each check answers `ok`, `warn` or `fail` with a one-line summary, a
 one-line remedy when it is not `ok`, and a details mapping for `--json`.
@@ -126,6 +130,10 @@ _HOOKS_COPY = (
 _BUG_REMEDY = (
     "this is a bug in doctor; report it with this output at "
     "https://github.com/0Mattias/bettermemory/issues"
+)
+_REINSTALL_REMEDY = (
+    "reinstall bettermemory (`uv tool install --reinstall bettermemory`, or "
+    "the installer you used)"
 )
 
 
@@ -323,8 +331,7 @@ def check_install() -> Check:
                 FAIL,
                 f"this install cannot import {', '.join(missing)}: the daemon "
                 "and the MCP server cannot start",
-                "reinstall bettermemory (`uv tool install --reinstall "
-                "bettermemory`, or the installer you used)",
+                _REINSTALL_REMEDY,
             )
         )
     if __version__ == "0+unknown":
@@ -620,6 +627,23 @@ def _key_remedy(key_path: Path) -> str:
     )
 
 
+def _open_remedy(path: Path, exc: Exception) -> str:
+    """The fix for a store `Store.open` refused, by what refused it. Only
+    a file SQLite cannot read as a database, or one without its identity,
+    is damaged; a lock held past the busy timeout, a file or directory
+    this user cannot open, and an I/O error are not, and restoring a copy
+    over a sound store would lose every write since the copy."""
+    if "this build reads up to" in str(exc):
+        return "upgrade bettermemory: a newer release wrote this store"
+    if isinstance(exc, (sqlite3.OperationalError, OSError)):
+        return (
+            f"check that {path} and its directory are readable and writable by "
+            "this user and that no process holds the store locked, then run "
+            "doctor again; doctor leaves the file as it is"
+        )
+    return "restore the store from a copy; doctor leaves the file as it is"
+
+
 def _head_finding(
     *,
     head_seq: int | None,
@@ -715,14 +739,14 @@ def check_store(ctx: _Context) -> list[Check]:
     try:
         store = Store.open(path, allow_rekey=False)
     except (ValueError, sqlite3.Error, OSError) as exc:
-        newer = "this build reads up to" in str(exc)
-        remedy = (
-            "upgrade bettermemory: a newer release wrote this store"
-            if newer
-            else "restore the store from a copy; doctor leaves the file as it is"
-        )
         return [
-            Check("store", FAIL, f"{path} does not open: {exc}", remedy, details),
+            Check(
+                "store",
+                FAIL,
+                f"{path} does not open: {exc}",
+                _open_remedy(path, exc),
+                details,
+            ),
             _not_checked("key", "the store does not open", "fix the store first"),
         ]
     with store:
@@ -753,12 +777,15 @@ def check_store(ctx: _Context) -> list[Check]:
     )
     findings: list[Finding] = []
     if status["schema_version"] != SCHEMA_VERSION:
+        # `Store.open` refused a newer schema above, so this one is older
+        # than any release writes: upgrading would not help.
         findings.append(
             Finding(
                 WARN,
                 f"{path} is schema {status['schema_version']}; this build "
                 f"writes schema {SCHEMA_VERSION}",
-                "upgrade bettermemory",
+                f"no release writes schema {status['schema_version']}: run "
+                "`bettermemory log verify` to check the store",
             )
         )
     if orphans:
@@ -1457,9 +1484,45 @@ def check_security() -> Check:
 
 def _guarded(check_ids: Sequence[str], run: Callable[[], list[Check]]) -> list[Check]:
     """`run`'s checks, or one failure per id when it raised: a doctor that
-    stopped at the first unexpected state would hide every later check."""
+    stopped at the first unexpected state would hide every later check.
+    Two kinds are the machine's answer, not doctor's fault, and are named
+    as such: an OSError (`Path.exists` and `is_file` re-raise EACCES on
+    3.11 to 3.13, so a store under a directory this user cannot search
+    lands here) and an ImportError (an install that lost a dependency,
+    which the install check reports too)."""
     try:
         return run()
+    except OSError as exc:
+        if exc.filename:
+            summary = f"the check could not read {exc.filename}"
+            remedy = (
+                "make that path readable by this user, or point bettermemory "
+                "at one that is"
+            )
+        else:
+            summary = "the check could not read what it needs"
+            remedy = (
+                "check that this user can read the store, keys and state directories"
+            )
+        return [
+            Check(
+                check_id,
+                FAIL,
+                f"{summary}: {type(exc).__name__}: {exc}",
+                remedy,
+            )
+            for check_id in check_ids
+        ]
+    except ImportError as exc:
+        return [
+            Check(
+                check_id,
+                FAIL,
+                f"the check could not import {exc.name or 'a module'}: {exc}",
+                _REINSTALL_REMEDY,
+            )
+            for check_id in check_ids
+        ]
     except Exception as exc:  # noqa: BLE001 - the report is the error path
         return [
             Check(
@@ -1481,8 +1544,11 @@ def _safe_cwd() -> Path | None:
 
 def run_checks(*, cwd: Path | None = None) -> list[Check]:
     """Every check, in `CHECK_IDS` order. `cwd` is the directory the store
-    rule and the project-scoped client files are read from (default: this
-    process's)."""
+    rule and Claude Code's project files (`.claude/settings*.json`,
+    `.mcp.json`, the local scope in `~/.claude.json`) are read from
+    (default: this process's). The `clients` check reads the paths
+    `init.KNOWN_CLIENTS` names, whose project-scoped ones `init` places at
+    the process's own cwd."""
     ctx = _Context(cwd=_safe_cwd() if cwd is None else cwd)
     checks: list[Check] = []
     checks += _guarded(("install",), lambda: [check_install()])
