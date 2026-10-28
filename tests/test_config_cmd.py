@@ -499,6 +499,26 @@ def test_show_lists_every_setting_config_reads() -> None:
     ), "the shipped default config sets these keys itself"
 
 
+def test_show_labels_a_value_the_loader_could_not_read_as_the_default() -> None:
+    """``strict_provenance = "ture"`` reads as the default, false. Labelled
+    ``user``, the line read as the user's own choice of false; it is the
+    default, with the ignored value named, as a pinned one is."""
+    _write_user('[security]\nstrict_provenance = "ture"\n[telemetry]\nenabled = "no"\n')
+    report = config_cmd.show_report()
+    assert report["settings"]["security"]["strict_provenance"] == {
+        "value": False,
+        "source": "default",
+        "user_value": "ture",
+    }
+    # A spelling the loader reads is the user's, with nothing to name.
+    assert report["settings"]["telemetry"]["enabled"] == {
+        "value": False,
+        "source": "user",
+    }
+    text = config_cmd.render_show(report)
+    assert '# default (your config\'s "ture" is ignored)' in text
+
+
 def test_show_counts_a_legacy_spelling_as_the_users(tmp_path: Path) -> None:
     _write_user("[behavior]\nendorsement_debt_ratio_threshold = 0.25\n")
     entry = config_cmd.show_report()["settings"]["behavior"][
@@ -861,6 +881,29 @@ def test_the_managed_file_is_checked_too(managed_config_path: Path) -> None:
         "not_a_table",
     )
     assert report["loads"] is False
+
+
+def test_a_removed_section_written_as_a_scalar_stops_the_managed_file(
+    managed_config_path: Path,
+) -> None:
+    """The managed loader refuses a top-level scalar before it reads any
+    section, a removed one's too, so the line is the error, not a removed
+    section "ignored" beside a load failure no finding explains."""
+    _write_user("")
+    managed_config_path.write_text("consolidate = 1\n", encoding="utf-8")
+    report = _check()
+    finding = _only(report)
+    assert (finding["file"], finding["level"], finding["code"]) == (
+        "managed",
+        "error",
+        "not_a_table",
+    )
+    assert report["loads"] is False
+    # In the user's file the loader drops it with a notice: a warning.
+    managed_config_path.unlink()
+    _write_user("consolidate = 1\n")
+    finding = _only(_check())
+    assert (finding["level"], finding["code"]) == ("warning", "removed")
 
 
 def test_a_managed_file_that_is_not_utf8_is_unreadable(

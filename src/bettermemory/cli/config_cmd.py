@@ -22,7 +22,8 @@ Three subcommands, each with ``--json``:
 - ``show``: every setting the loader reads, with its value in force and
   where it came from: ``default``, ``user`` (the user's config.toml) or
   ``managed``. A managed setting the user's file sets differently shows the
-  managed value and names the user's, which is ignored.
+  managed value and names the user's, which is ignored; so does a user
+  value the loader could not read, labelled ``default``.
 - ``check``: the lines that do not do what they say, each an error, a
   warning or a note. Errors are what stop the config from loading (a file
   that is not TOML, a section that is not a table, a value the loader
@@ -433,6 +434,11 @@ def render_path(report: Mapping[str, Any]) -> str:
 def show_report() -> dict[str, Any]:
     """The effective config, every setting labelled with its source.
 
+    A user line the loader could not read, and so read as the default
+    (`_fell_back`), is labelled ``default`` and its value named, as a
+    pinned one is: labelled ``user``, ``strict_provenance = "ture"`` would
+    show ``false # user``, which reads as the setting the line chose.
+
     Raises what `load_config` raises when the config does not load: there
     is no effective config to show then, and `check` says why."""
     user, managed = read_files()
@@ -454,7 +460,12 @@ def show_report() -> dict[str, Any]:
                 if where in user_raw and user_raw[where] != managed_raw.get(where):
                     entry["user_value"] = user_raw[where]
             elif (section, key) in user_raw:
-                entry["source"] = USER
+                written = user_raw[(section, key)]
+                if _fell_back(section, key, written):
+                    entry["source"] = DEFAULT
+                    entry["user_value"] = written
+                else:
+                    entry["source"] = USER
             else:
                 entry["source"] = DEFAULT
             table[key] = entry
@@ -1005,7 +1016,8 @@ def _file_findings(
 ) -> list[Finding]:
     """Every finding in one parsed file. The managed loader refuses any
     top-level value that is not a table (`managed.read_managed`), so in
-    the managed file such a line is an error whatever its name; in the
+    the managed file such a line is an error whatever its name, a removed
+    section's included (it is refused before any section is read); in the
     user's file an unknown one is ignored like any unknown key."""
     if file.error is not None:
         return [Finding(ERROR, "unreadable", file.role, None, None, file.error)]
@@ -1015,7 +1027,9 @@ def _file_findings(
     removed_sections = _config._REMOVED_SECTIONS
     findings: list[Finding] = []
     for name, value in file.data.items():
-        if name in removed_sections:
+        if file.role == MANAGED and not isinstance(value, dict):
+            findings.append(_not_a_table(file.role, name, value))
+        elif name in removed_sections:
             removed_in, why = removed_sections[name]
             findings.append(
                 Finding(
@@ -1035,9 +1049,7 @@ def _file_findings(
                     file, file.path, name, value, catalogue=catalogue, pinned=pinned
                 )
             )
-        elif name in catalogue or (
-            file.role == MANAGED and not isinstance(value, dict)
-        ):
+        elif name in catalogue:
             findings.append(_not_a_table(file.role, name, value))
         elif isinstance(value, dict):
             findings.append(_unknown_section(file.role, name, catalogue))
@@ -1199,8 +1211,9 @@ def add_subparser(
     show_text = (
         "Print every setting in force, each labelled default, user (your "
         "config.toml) or managed (pinned by the managed file, which your "
-        "config cannot change; a value of yours it overrides is named). Exit "
-        "0, or 1 when the config does not load (`config check` says why)."
+        "config cannot change; a value of yours it overrides is named, as is "
+        "one the loader could not read and took the default for). Exit 0, or "
+        "1 when the config does not load (`config check` says why)."
     )
     show = config_sub.add_parser("show", help=show_text, description=show_text)
     show.add_argument(
