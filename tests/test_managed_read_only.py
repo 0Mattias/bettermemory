@@ -92,11 +92,13 @@ def test_the_sandbox_denies_the_store_the_managed_file_pins(
     argv = ["security", "sandbox", "--format", "managed", "--json"]
     assert _run_cli(argv, monkeypatch) == 0
     plan: dict[str, Any] = json.loads(capsys.readouterr().out)
-    deny = json.dumps(plan)
-    # A rule spells the path the way Claude Code matches it (`~/...`, or
-    # `//c/...` for a Windows drive: `sandbox_settings.rule_path`), so look
-    # for the pinned directory's name, which the default store never has.
-    assert pinned_store.name in deny
+    # Compared as paths, not as a substring of the JSON text: on Windows
+    # the text escapes every backslash of `str(path)`, and the plan's other
+    # spellings of the directory are POSIX forms.
+    assert any(
+        loc["role"] == "store" and loc["denied"] and Path(loc["path"]) == pinned_store
+        for loc in plan["locations"]
+    )
     assert not no_user_config.exists()
 
 
