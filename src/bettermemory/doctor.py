@@ -60,6 +60,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from . import _install_hints
+
 if TYPE_CHECKING:
     from .config import Config
 
@@ -132,8 +134,8 @@ _BUG_REMEDY = (
     "https://github.com/0Mattias/bettermemory/issues"
 )
 _REINSTALL_REMEDY = (
-    "reinstall bettermemory (`uv tool install --reinstall bettermemory`, or "
-    "the installer you used)"
+    f"reinstall bettermemory (`{_install_hints.tool_reinstall_package()}`, "
+    "or the installer you used)"
 )
 
 

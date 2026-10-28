@@ -37,6 +37,10 @@ removals, so they are the shape held for the next extra rather than a
 live spelling.
 """
 
+#: The leading command, shared by `tool_reinstall` and
+#: `tool_reinstall_package` so its spelling has one home.
+_TOOL_REINSTALL = "uv tool install --reinstall"
+
 
 def extras_spec(extra: str) -> str:
     """The quoted package-plus-extra spec, e.g. ``'bettermemory[ui]'``.
@@ -56,7 +60,15 @@ def tool_reinstall(extra: str) -> str:
     one — which is why it leads everywhere and the variants below only
     follow (the environment argument in the module docstring).
     """
-    return f"uv tool install --reinstall {extras_spec(extra)}"
+    return f"{_TOOL_REINSTALL} {extras_spec(extra)}"
+
+
+def tool_reinstall_package() -> str:
+    """The ``uv tool`` reinstall of the package alone, with no extra: the
+    remedy `doctor` names for an install whose own files are missing or
+    broken. The same leading form as `tool_reinstall`, from the same
+    atom."""
+    return f"{_TOOL_REINSTALL} bettermemory"
 
 
 def pipx_force(extra: str) -> str:
