@@ -1,0 +1,26 @@
+# Advisories tools/audit_lock.py accepts, each for a stated reason and until
+# a stated date. The audit (.github/workflows/audit.yml) fails on any OSV
+# advisory against a version uv.lock pins unless an entry here names it.
+#
+# An entry is an acceptance with an end, not a mute button:
+#
+# - `id` is the advisory's OSV id or any of its aliases (a GHSA, PYSEC or
+#   CVE id). `package` is optional and narrows the entry to one package.
+# - `reason` says why the advisory does not reach bettermemory, or why the
+#   fix cannot land yet: the code path that is never called, the upstream
+#   release being waited for. Enough for a reviewer to check the claim.
+# - `expires` is a date (YYYY-MM-DD). The entry holds through that day. From
+#   the next day the audit fails on the entry itself, whether or not the
+#   advisory is still reported, so the acceptance is re-decided (a new date
+#   with a fresh reason) or the entry removed. Keep it close: weeks, not
+#   years.
+#
+# An entry missing any of the three is an error (exit 2), never ignored.
+#
+# Example:
+#
+# [[ignore]]
+# id = "GHSA-xxxx-xxxx-xxxx"
+# package = "example"
+# reason = "Only the X parser is affected; bettermemory never calls it. Fixed upstream in 1.2.3, which needs Python 3.12."
+# expires = 2026-12-31

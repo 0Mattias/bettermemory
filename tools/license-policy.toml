@@ -1,0 +1,55 @@
+# The license policy `tools/sbom.py --licenses` holds every locked package to.
+# `.github/workflows/audit.yml` (the licenses job) runs it over the runtime
+# closure, the packages a `pip install bettermemory` brings in, after
+# `uv sync --locked`. `--scope all` adds the dev extra's packages.
+#
+# A package passes when its declared license (License-Expression, else a
+# recognised License field, else its license classifiers) is on `allow`.
+# An expression `A OR B` passes when either side does; `A AND B` needs both.
+# A license in a `deny` family fails as denied. Anything else, a license on
+# neither list or a package that declares none, fails as unknown: a new
+# license is a decision for a person, not a default.
+
+[policy]
+# SPDX identifiers, matched without regard to case.
+allow = [
+    "MIT",
+    "MIT-0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "0BSD",
+    "Apache-2.0",
+    "ISC",
+    "PSF-2.0",
+    "Python-2.0",
+    "MPL-2.0",
+    # Not an SPDX identifier: what a package that names only the family
+    # ("License: BSD", the "BSD License" classifier) reads as, since it does
+    # not say which clause count it means. Every BSD variant is permissive.
+    "BSD",
+]
+# Families matched as the name itself or any `<family>-` identifier, so
+# "GPL" covers GPL-3.0-only, GPL-2.0-or-later and the deprecated GPL-2.0+.
+deny = ["GPL", "LGPL", "AGPL"]
+
+# Per-package entries, each with a `reason`:
+#
+# - `license` records a package's license for when this environment cannot
+#   read it: the package is installed only on another platform, or its
+#   metadata names nothing recognised. Metadata that names a license this
+#   policy recognises always decides instead, so a release that changes its
+#   license is still caught.
+# - `accept = true` passes the package whatever it declares: an exception a
+#   person decided, never a default.
+
+[packages.pywin32]
+license = "PSF-2.0"
+reason = "Windows only (sys_platform == 'win32', through mcp), so the Linux runner never installs it. pywin32 312 declares License: PSF and the Python Software Foundation License classifier on PyPI."
+
+[packages.httpx2-jsfetch]
+license = "BSD-3-Clause"
+reason = "Emscripten only (sys_platform == 'emscripten', through httpx2), so no runner installs it. httpx2-jsfetch 1.0 declares License-Expression: BSD-3-Clause on PyPI."
+
+[packages.colorama]
+license = "BSD"
+reason = "Dev scope (checked with --scope all), Windows only (sys_platform == 'win32', through pytest), so the Linux runner never installs it. colorama 0.4.6 declares only the BSD License classifier on PyPI."

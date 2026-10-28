@@ -1,0 +1,111 @@
+{
+  "_comment": "OSV's answers for tests/fixtures/osv/lock.toml, served by tools/audit_lock.py --offline. `results` maps <name>@<version> to one querybatch result and `vulns` maps an id to its /v1/vulns/{id} document, both in OSV's response shape. Every advisory is fictional (TEST- ids, CVE-0000 aliases).",
+  "results": {
+    "webframe@2.0.0": {
+      "vulns": [
+        {"id": "PYSEC-0000-1", "modified": "2026-10-01T00:00:00Z"},
+        {"id": "GHSA-test-0001-aaaa", "modified": "2026-10-01T00:00:00Z"}
+      ]
+    },
+    "testrunner@8.0.0": {
+      "vulns": [{"id": "TEST-DEV-1", "modified": "2026-10-02T00:00:00Z"}]
+    },
+    "cryptokit@42.0.0": {
+      "vulns": [{"id": "TEST-IGNORED-1", "modified": "2026-10-03T00:00:00Z"}]
+    },
+    "parser@1.0.0": {
+      "vulns": [{"id": "TEST-EXPIRED-1", "modified": "2026-10-04T00:00:00Z"}]
+    },
+    "lintkit@0.5.0": {
+      "vulns": [{"id": "TEST-WITHDRAWN-1", "modified": "2026-10-05T00:00:00Z"}]
+    }
+  },
+  "vulns": {
+    "GHSA-test-0001-aaaa": {
+      "schema_version": "1.6.0",
+      "id": "GHSA-test-0001-aaaa",
+      "modified": "2026-10-01T00:00:00Z",
+      "published": "2026-09-30T00:00:00Z",
+      "aliases": ["CVE-0000-0001", "PYSEC-0000-1"],
+      "summary": "webframe reads an unbounded multipart body into memory",
+      "details": "A longer description that the report does not show when a summary exists.",
+      "affected": [
+        {
+          "package": {"ecosystem": "PyPI", "name": "WebFrame", "purl": "pkg:pypi/webframe"},
+          "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "2.0.1"}]}],
+          "versions": ["1.0.0", "2.0.0"]
+        },
+        {
+          "package": {"ecosystem": "npm", "name": "webframe"},
+          "ranges": [{"type": "SEMVER", "events": [{"introduced": "0"}, {"fixed": "9.9.9"}]}]
+        }
+      ],
+      "severity": [{"type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"}],
+      "database_specific": {"severity": "HIGH", "github_reviewed": true, "cwe_ids": ["CWE-400"]}
+    },
+    "PYSEC-0000-1": {
+      "id": "PYSEC-0000-1",
+      "modified": "2026-10-01T00:00:00Z",
+      "aliases": ["CVE-0000-0001", "GHSA-test-0001-aaaa"],
+      "details": "The same vulnerability as PyPA records it, with a later fix listed.",
+      "affected": [
+        {
+          "package": {"ecosystem": "PyPI", "name": "webframe"},
+          "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "2.0.1"}, {"introduced": "3.0.0"}, {"fixed": "3.0.2"}]}]
+        }
+      ],
+      "severity": [{"type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"}]
+    },
+    "TEST-DEV-1": {
+      "id": "TEST-DEV-1",
+      "modified": "2026-10-02T00:00:00Z",
+      "aliases": ["CVE-0000-0002"],
+      "summary": "testrunner writes its cache with world-readable modes",
+      "affected": [
+        {
+          "package": {"ecosystem": "PyPI", "name": "testrunner"},
+          "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}]}]
+        }
+      ],
+      "severity": [{"type": "CVSS_V3", "score": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:L/I:N/A:N"}]
+    },
+    "TEST-IGNORED-1": {
+      "id": "TEST-IGNORED-1",
+      "modified": "2026-10-03T00:00:00Z",
+      "aliases": ["CVE-0000-0003"],
+      "summary": "cryptokit's legacy cipher mode is malleable",
+      "affected": [
+        {
+          "package": {"ecosystem": "PyPI", "name": "cryptokit"},
+          "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "43.0.0"}]}]
+        }
+      ],
+      "database_specific": {"severity": "MODERATE"}
+    },
+    "TEST-EXPIRED-1": {
+      "id": "TEST-EXPIRED-1",
+      "modified": "2026-10-04T00:00:00Z",
+      "aliases": [],
+      "summary": "parser recursion is unbounded on nested input",
+      "affected": [
+        {
+          "package": {"ecosystem": "PyPI", "name": "parser"},
+          "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "1.0.1"}]}]
+        }
+      ],
+      "database_specific": {"severity": "LOW"}
+    },
+    "TEST-WITHDRAWN-1": {
+      "id": "TEST-WITHDRAWN-1",
+      "modified": "2026-10-05T00:00:00Z",
+      "withdrawn": "2026-10-06T00:00:00Z",
+      "summary": "lintkit advisory published in error",
+      "affected": [
+        {
+          "package": {"ecosystem": "PyPI", "name": "lintkit"},
+          "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}]}]
+        }
+      ]
+    }
+  }
+}

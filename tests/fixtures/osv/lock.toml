@@ -1,0 +1,134 @@
+# A synthetic uv.lock for tests/test_audit_lock.py and tests/test_sbom.py.
+# Named lock.toml, not uv.lock, so no dependency scanner reads its fictional
+# pins as this repository's. Every shape the reader handles appears once:
+#
+# - demo, the project (editable): dependencies, a `dev` extra, a `lint`
+#   dependency group.
+# - jwtlib asked for with extra "crypto", which adds cryptokit only to the
+#   runtime set.
+# - winshim behind a Windows marker (in the runtime set anyway: markers are
+#   taken as satisfiable), wheels only.
+# - vendored from git: in the runtime set, never audited, no purl.
+# - internal-lib from a second index: a purl with repository_url.
+# - parser forked into two versions, each edge naming its version.
+# - orphan, which no edge reaches: dev, listed anyway.
+version = 1
+revision = 3
+requires-python = ">=3.11"
+
+[[package]]
+name = "colorlib"
+version = "0.4.6"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.example.invalid/colorlib-0.4.6-py3-none-any.whl", hash = "sha256:1111111111111111111111111111111111111111111111111111111111111111", size = 10 },
+]
+
+[[package]]
+name = "cryptokit"
+version = "42.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.example.invalid/cryptokit-42.0.0.tar.gz", hash = "sha256:2222222222222222222222222222222222222222222222222222222222222222", size = 10 }
+
+[[package]]
+name = "demo"
+version = "1.0.0"
+source = { editable = "." }
+dependencies = [
+    { name = "jwtlib", extra = ["crypto"] },
+    { name = "vendored" },
+    { name = "webframe" },
+    { name = "winshim", marker = "sys_platform == 'win32'" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "testrunner" },
+]
+
+[package.dev-dependencies]
+lint = [
+    { name = "lintkit" },
+]
+
+[[package]]
+name = "internal-lib"
+version = "1.2.0"
+source = { registry = "https://pkgs.example.invalid/simple" }
+sdist = { url = "https://pkgs.example.invalid/files/internal-lib-1.2.0.tar.gz", hash = "sha256:3333333333333333333333333333333333333333333333333333333333333333", size = 10 }
+
+[[package]]
+name = "jwtlib"
+version = "3.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.example.invalid/jwtlib-3.1.0.tar.gz", hash = "sha256:4444444444444444444444444444444444444444444444444444444444444444", size = 10 }
+wheels = [
+    { url = "https://files.example.invalid/jwtlib-3.1.0-py3-none-any.whl", hash = "sha256:5555555555555555555555555555555555555555555555555555555555555555", size = 10 },
+]
+
+[package.optional-dependencies]
+crypto = [
+    { name = "cryptokit" },
+]
+
+[[package]]
+name = "lintkit"
+version = "0.5.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.example.invalid/lintkit-0.5.0-py3-none-any.whl", hash = "sha256:6666666666666666666666666666666666666666666666666666666666666666", size = 10 },
+]
+
+[[package]]
+name = "orphan"
+version = "0.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.example.invalid/orphan-0.0.1.tar.gz", hash = "sha256:7777777777777777777777777777777777777777777777777777777777777777", size = 10 }
+
+[[package]]
+name = "parser"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.example.invalid/parser-1.0.0.tar.gz", hash = "sha256:8888888888888888888888888888888888888888888888888888888888888888", size = 10 }
+
+[[package]]
+name = "parser"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.example.invalid/parser-2.0.0.tar.gz", hash = "sha256:9999999999999999999999999999999999999999999999999999999999999999", size = 10 }
+
+[[package]]
+name = "testrunner"
+version = "8.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "colorlib", marker = "sys_platform == 'win32'" },
+    { name = "parser", version = "2.0.0", source = { registry = "https://pypi.org/simple" } },
+]
+sdist = { url = "https://files.example.invalid/testrunner-8.0.0.tar.gz", hash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", size = 10 }
+
+[[package]]
+name = "vendored"
+version = "0.1.0"
+source = { git = "https://git.example.invalid/vendored.git?rev=main#0123456789abcdef0123456789abcdef01234567" }
+
+[[package]]
+name = "webframe"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "internal-lib" },
+    { name = "parser", version = "1.0.0", source = { registry = "https://pypi.org/simple" } },
+]
+sdist = { url = "https://files.example.invalid/webframe-2.0.0.tar.gz", hash = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", size = 10 }
+wheels = [
+    { url = "https://files.example.invalid/webframe-2.0.0-py3-none-any.whl", hash = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", size = 10 },
+]
+
+[[package]]
+name = "winshim"
+version = "306"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.example.invalid/winshim-306-cp313-cp313-win_amd64.whl", hash = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", size = 10 },
+]

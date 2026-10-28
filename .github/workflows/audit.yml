@@ -1,0 +1,77 @@
+name: Audit
+
+# The lock's two standing checks, neither a release gate (release.yml
+# neither calls this workflow nor needs it):
+#
+# - `vulnerabilities`: tools/audit_lock.py asks OSV about every package
+#   uv.lock pins, runtime and dev, and fails on an advisory that
+#   tools/audit-ignore.toml does not accept with a reason and an unexpired
+#   date. Stdlib only, on the runner's own python3, so nothing is installed
+#   for it and nothing a dependency ships runs here.
+# - `licenses`: tools/sbom.py --licenses installs the runtime closure from
+#   the lock and holds each package's declared license to
+#   tools/license-policy.toml.
+#
+# Daily, because a new advisory against an unchanged lock is the case this
+# exists for; on pushes, and on pull requests that change the lock, the
+# project's declared dependencies or the checks themselves.
+
+on:
+  push:
+    branches: [main, v9, rs-f7-phase1]
+  pull_request:
+    paths:
+      - uv.lock
+      - pyproject.toml
+      - tools/_uvlock.py
+      - tools/audit_lock.py
+      - tools/audit-ignore.toml
+      - tools/sbom.py
+      - tools/license-policy.toml
+      - .github/workflows/audit.yml
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  vulnerabilities:
+    name: lock audit (OSV)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Audit uv.lock against OSV
+        run: python3 tools/audit_lock.py --lock uv.lock --ignore-file tools/audit-ignore.toml
+
+  licenses:
+    name: license policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # No cache: the job's verdict is about what the lock installs, so it
+      # reads nothing another run wrote.
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: false
+
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+
+      # The runtime closure only: `dev` is an extra, and without --extra
+      # the sync installs the project and what it runs with.
+      - name: Install the locked runtime dependencies
+        run: uv sync --locked --python 3.13
+
+      - name: Check licenses against the policy
+        run: .venv/bin/python tools/sbom.py --licenses --lock uv.lock --policy tools/license-policy.toml
