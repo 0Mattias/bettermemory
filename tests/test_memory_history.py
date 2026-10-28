@@ -245,6 +245,35 @@ def test_links_from_other_records_are_references_reported_once(
     assert [row.action for row in history.rows if row.role == RECORD] == ["created"]
 
 
+def test_a_link_goes_when_the_record_carrying_it_is_pruned(store: Store) -> None:
+    """Removing the linking record keeps the link on its tombstone, and a
+    restore brings it back: neither is the link going. Pruning the
+    tombstone is, though no row of it names the linked record."""
+    old = store.write(content="Paging goes through PagerDuty.", scopes=["ops"])
+    new = store.write(
+        content="Paging moved to Opsgenie.",
+        scopes=["ops"],
+        links=[MemoryLink(type=LinkType.SUPERSEDES, target_id=old.id)],
+    )
+    store.tombstone(new.id, "wrong")
+    store.restore(new.id)
+    store.tombstone(new.id, "wrong again")
+    assert [row.action for row in record_history(store, old.id).rows] == [
+        "created",
+        "superseded_by",
+    ]
+    store.prune_tombstones(timedelta(0), now=utcnow() + timedelta(days=1))
+    references = [
+        (row.kind, row.action, row.detail)
+        for row in record_history(store, old.id).rows
+        if row.role == REFERENCE
+    ]
+    assert references == [
+        ("memory_put", "superseded_by", {"source": new.id, "type": "supersedes"}),
+        ("tombstone_delete", "unlinked", {"source": new.id, "type": "supersedes"}),
+    ]
+
+
 def test_a_conflict_filed_against_the_record_is_a_reference(store: Store) -> None:
     a = store.write(content="The port is 8443.", scopes=["ops"])
     b = store.write(content="The port is 9443.", scopes=["ops"])

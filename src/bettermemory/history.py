@@ -44,8 +44,8 @@ Cost: one scan of the log's payload column for the id (the id is a
 ULID, so a substring test finds every row that names it and the payload
 check below drops any that only contain it by accident), one more scan
 per other record that ever linked to it (a version that drops the link
-no longer names the id, so only that record's own versions show the
-link going), one query for the rekey rows, and one HMAC per row
+no longer names the id, so only that record's own versions and deletes
+show the link going), one query for the rekey rows, and one HMAC per row
 reported. A history is read
 interactively, so the scan is affordable; nothing here runs on a hook
 path. The store is opened read-only by the caller
@@ -99,6 +99,10 @@ _VERSION_KINDS = frozenset({"memory_put", "tombstone_put", "episode_put"})
 _RECORD_DELETES = frozenset({"memory_delete", "tombstone_delete", "episode_delete"})
 # The versions that carry links: a memory's own, a tombstone's beside it.
 _LINKING_KINDS = frozenset({"memory_put", "tombstone_put"})
+# The deletes of a record that links, each with the put that carries its
+# links on when it comes right after: a removal's tombstone, a restore's
+# memory. A delete without it (a pruned tombstone) takes the links away.
+_LINK_CARRIED_BY = {"memory_delete": "tombstone_put", "tombstone_delete": "memory_put"}
 
 # Fields a version compares on to say what changed. Identity and the
 # timestamps every put moves are left out, as are the removal fields,
@@ -332,13 +336,16 @@ def _rows_naming(
 def _with_linking_versions(
     store: Store, record_id: str, rows: list[LogRow]
 ) -> tuple[list[tuple[LogRow, dict[str, Any] | None]], set[str]]:
-    """`rows` parsed, with every version of each other record that ever
-    linked to `record_id` merged in, in log order; and those records.
+    """`rows` parsed, with every version and delete of each other record
+    that ever linked to `record_id` merged in, in log order; and those
+    records.
 
-    A version that drops a link no longer names the record, so the scan
-    for the record's id cannot see it go. One more scan per linking
-    record (there are seldom more than one or two) reads that record's
-    versions, so a link is reported when it appears and when it goes."""
+    A version that drops a link no longer names the record, and neither
+    does the delete that prunes the linking record's tombstone, so the
+    scan for the record's id cannot see the link go. One more scan per
+    linking record (there are seldom more than one or two) reads that
+    record's versions and deletes, so a link is reported when it appears
+    and when it goes."""
     parsed = {row.seq: (row, _payload(row)) for row in rows}
     sources: set[str] = set()
     for row, payload in parsed.values():
@@ -348,8 +355,9 @@ def _with_linking_versions(
         if subject is not None and subject != record_id:
             if _link_types(row.kind, payload, record_id):
                 sources.add(subject)
+    kinds = tuple(sorted(_LINKING_KINDS | set(_LINK_CARRIED_BY)))
     for source in sorted(sources):
-        for row in _rows_naming(store, source, kinds=tuple(sorted(_LINKING_KINDS))):
+        for row in _rows_naming(store, source, kinds=kinds):
             if row.seq not in parsed:
                 parsed[row.seq] = (row, _payload(row))
     return [parsed[seq] for seq in sorted(parsed)], sources
@@ -479,16 +487,18 @@ def _read_history(store: Store, record_id: str) -> RecordHistory:
         store, record_id, _rows_naming(store, record_id)
     )
 
-    def adjacent(index: int, step: int) -> tuple[str, dict[str, Any]] | None:
+    def adjacent(
+        index: int, step: int, subject: str = record_id
+    ) -> tuple[str, dict[str, Any]] | None:
         """The row right before or after `found[index]` in the log (seq
-        one apart), as (kind, payload), when it is one of this record's."""
+        one apart), as (kind, payload), when it is one of `subject`'s."""
         other = index + step
         if not 0 <= other < len(found):
             return None
         row, payload = found[other]
         if payload is None or row.seq != found[index][0].seq + step:
             return None
-        if _subject(row.kind, payload) != record_id:
+        if _subject(row.kind, payload) != subject:
             return None
         return row.kind, payload
 
@@ -643,6 +653,25 @@ def _read_history(store: Store, record_id: str) -> RecordHistory:
                     detail=_event_detail(payload),
                 )
             )
+            continue
+        if row.kind in _LINK_CARRIED_BY and subject in linking:
+            # A delete of a record that links here. Its links go with it
+            # unless the put right after carries them on (the tombstone
+            # of a removal, the memory of a restore); a pruned tombstone
+            # takes them away for good.
+            assert subject is not None
+            following = adjacent(index, 1, subject)
+            if following is None or following[0] != _LINK_CARRIED_BY[row.kind]:
+                for link_type in sorted(links_by_source.pop(subject, set())):
+                    rows.append(
+                        HistoryRow(
+                            **base,
+                            role=REFERENCE,
+                            action="unlinked",
+                            verified=verifier.verified(row),
+                            detail={"source": subject, "type": link_type},
+                        )
+                    )
             continue
         if row.kind in _LINKING_KINDS and subject in linking:
             # A version of a record that links here: report the links to
