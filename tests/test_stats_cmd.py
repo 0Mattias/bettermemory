@@ -299,6 +299,33 @@ def test_store_text_is_made_printable(store: Store, store_dir: Path) -> None:
     assert "engine 9�31m" in text
 
 
+def test_a_write_committed_mid_report_does_not_split_the_counts(
+    store: Store, store_dir: Path, keys_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The daemon writes while the report is read. A homed record written
+    between the totals and the per-project split must not read as a
+    negative count of unhomed ones: the whole report is one snapshot."""
+    _put(store, "tools", days_ago=0)
+    status = store.status
+
+    def status_then_write() -> dict[str, Any]:
+        report = status()
+        daemon = Store.open(store_dir / STORE_FILENAME, keys_dir=keys_dir)
+        try:
+            _put(daemon, "tools", days_ago=0, project="P001")
+        finally:
+            daemon.close()
+        return report
+
+    monkeypatch.setattr(store, "status", status_then_write)
+    memories = collect(store, days=1, now=_NOW)["memories"]
+    assert memories["by_project"] == [
+        {"project": None, "name": None, "memories": 1, "episodes": 0}
+    ]
+    assert memories["total"] == 1
+    assert not store.conn.in_transaction
+
+
 def test_cli_json_and_text(
     store: Store,
     monkeypatch: pytest.MonkeyPatch,

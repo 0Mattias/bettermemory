@@ -24,6 +24,11 @@ grouping needs no parsing. The log's per-day counts read the ``log_by_ts``
 index for the window's range; ``created`` and ``removed`` read the record
 tables (``tombstones_by_removed`` for the removals).
 
+Every query runs in one read transaction (`history.read_snapshot`): the
+daemon writes while the report is read, and the totals, the per-project
+split and the table counts must describe the same store, or a record
+written in between reads as a negative count of unhomed ones.
+
 JSON: ``{"format": "bettermemory-stats", "version": 1, ...}``, every
 section the text shows, and a zero-filled ``activity.days`` series with
 one entry per day of the window, oldest first.
@@ -247,7 +252,15 @@ def _log_class(kind: str) -> str:
 
 
 def collect(store: Store, *, days: int, now: datetime | None = None) -> dict[str, Any]:
-    """The report for `store` over the last `days` UTC days up to `now`."""
+    """The report for `store` over the last `days` UTC days up to `now`,
+    read in one snapshot (module docstring)."""
+    from ..history import read_snapshot
+
+    with read_snapshot(store.conn):
+        return _collect(store, days=days, now=now)
+
+
+def _collect(store: Store, *, days: int, now: datetime | None) -> dict[str, Any]:
     from ..store import FOLDED_TABLES, MEMBERSHIP_TABLES
     from ..time_utils import isoformat_utc
 

@@ -504,6 +504,37 @@ def test_the_header_is_made_printable_too(store: Store, store_dir: Path) -> None
     assert "  provenance local�]0;title�\n" in text
 
 
+def test_a_prune_committed_mid_read_does_not_read_as_tampering(
+    store: Store, store_dir: Path, keys_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The daemon writes while a history is read. An episode pruned
+    between the log scan and the table lookup must not read as a record
+    the log puts and no table holds: the whole read is one snapshot."""
+    import bettermemory.history as history_module
+
+    episode = store.write_episode(session_id="s-9", body="tried the fold first")
+    scan = history_module._rows_naming
+
+    def scan_then_prune(
+        s: Store, record_id: str, *, kinds: tuple[str, ...] = ()
+    ) -> list[Any]:
+        rows = scan(s, record_id, kinds=kinds)
+        daemon = Store.open(store_dir / STORE_FILENAME, keys_dir=keys_dir)
+        try:
+            daemon.prune_episode_sessions(ttl_days=1, now=utcnow() + timedelta(days=3))
+        finally:
+            daemon.close()
+        return rows
+
+    monkeypatch.setattr(history_module, "_rows_naming", scan_then_prune)
+    raced = record_history(store, episode.id)
+    assert (raced.state, raced.exit_code) == ("active", 0)
+    monkeypatch.setattr(history_module, "_rows_naming", scan)
+    # Read again, after the prune committed: it shows.
+    assert record_history(store, episode.id).state == "pruned"
+    assert not store.conn.in_transaction
+
+
 # ---------------------------------------------------------------------------
 # The CLI
 # ---------------------------------------------------------------------------

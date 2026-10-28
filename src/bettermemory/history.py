@@ -50,15 +50,23 @@ reported. A history is read
 interactively, so the scan is affordable; nothing here runs on a hook
 path. The store is opened read-only by the caller
 (``Store.open(..., allow_rekey=False)``) and nothing here writes.
+
+Every query runs inside one read transaction (`read_snapshot`). The
+daemon keeps writing while a history is read, and the scans and the
+table lookups are separate statements: without the snapshot, an episode
+pruned between the log scan and the table lookup reads as ``missing``,
+a tamper finding about a store nobody tampered with.
 """
 
 from __future__ import annotations
 
+import contextlib
 import difflib
 import hmac
 import json
+import sqlite3
 import unicodedata
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -122,6 +130,23 @@ def printable(text: str) -> str:
         "�" if ch != "\t" and unicodedata.category(ch) in ("Cc", "Cf", "Cs") else ch
         for ch in text
     )
+
+
+@contextlib.contextmanager
+def read_snapshot(conn: sqlite3.Connection) -> Iterator[None]:
+    """One read transaction around a report's queries, so every one of
+    them sees the store as of the same commit while the daemon writes
+    beside it (WAL: a reader holds its snapshot and never blocks a
+    writer). Rolled back at the end: nothing was written. A caller that
+    already holds a transaction (a ``Store.batch``) keeps its own."""
+    if conn.in_transaction:
+        yield
+        return
+    conn.execute("BEGIN")
+    try:
+        yield
+    finally:
+        conn.execute("ROLLBACK")
 
 
 @dataclass(frozen=True)
@@ -442,7 +467,13 @@ def _event_detail(payload: Mapping[str, Any]) -> dict[str, Any]:
 def record_history(store: Store, record_id: str) -> RecordHistory:
     """Every log row that made, changed, verified, removed or restored
     `record_id`, or names it from another record, in log order, with what
-    each did and whether its MAC checks (module docstring)."""
+    each did and whether its MAC checks (module docstring). The log and
+    the tables are read in one snapshot (`read_snapshot`)."""
+    with read_snapshot(store.conn):
+        return _read_history(store, record_id)
+
+
+def _read_history(store: Store, record_id: str) -> RecordHistory:
     verifier = _RowVerifier(store)
     found, linking = _with_linking_versions(
         store, record_id, _rows_naming(store, record_id)
@@ -785,6 +816,7 @@ __all__ = [
     "HistoryRow",
     "RecordHistory",
     "printable",
+    "read_snapshot",
     "record_history",
     "render_json",
     "render_text",
