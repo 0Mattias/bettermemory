@@ -85,7 +85,7 @@ from .config import (
     STORE_FILENAME,
     Config,
 )
-from .log import KeyRing, fingerprint
+from .log import KeyRing, KeyUnreadableError, fingerprint
 
 #: Every status a finding can carry, mildest first.
 STATUSES: tuple[str, ...] = ("ok", "info", "skip", "warn", "high")
@@ -562,22 +562,34 @@ def _key(
         "the next owner open (the daemon, a hook, the CLI) writes a new key and "
         "rekeys the log, and the rows signed before it stay unverifiable for good"
     )
+    unreadable: KeyUnreadableError | None = None
     try:
         key = keyring.load_current()
-    except OSError:
-        # There and unreadable (`log.KeyUnreadableError`): the branch below
-        # names it, from the presence check.
-        key = None
+    except KeyUnreadableError as exc:
+        # There and unreadable, a symbolic link to nothing among them: the
+        # owner's opener fails on it rather than rekey (`log.load_current`).
+        key, unreadable = None, exc
     key_present, key_unreachable = _presence(key_path)
-    if key is None and (key_present or key_unreachable is not None):
-        where = "exists" if key_present else f"cannot be looked for ({key_unreachable})"
+    if key is None and (
+        unreadable is not None or key_present or key_unreachable is not None
+    ):
+        if unreadable is not None:
+            where = f"is there ({unreadable.reason})"
+        elif key_present:
+            where = "exists"
+        else:
+            where = f"cannot be looked for ({key_unreachable})"
         return Finding(
             "key.match",
             "high",
             f"the key at {key_path} {where} and this account cannot read it: "
-            f"the log cannot be verified here, and {lost}",
+            "the log cannot be verified here, and every owner open (the daemon, "
+            "a hook, the CLI) fails until it can; nothing is rekeyed over it",
             path=str(key_path),
-            fix="make it readable to this account again (owner-only, 0600)",
+            fix=(
+                "make it readable to this account again (owner-only, 0600), "
+                "and the volume a link to it points into mounted"
+            ),
             details=details,
         )
     if key is None:

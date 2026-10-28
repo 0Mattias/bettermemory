@@ -91,9 +91,11 @@ The store binding. The key ring is found by the store id, a value the
 store file carries, so two store files with one id (a copy of the store
 in another directory, or a file made to borrow a known id) share one key
 ring, one head and one anchor. ``<store_id>.path`` names the one store
-file the ring belongs to (`KeyRing.bind_store`), and the owner's opener
-neither rekeys nor writes for a second file while the bound one is still
-there holding that id (`Store.open`).
+file the ring belongs to (`KeyRing.bind_store`), and no opener rekeys or
+writes for a second file while the bound one is still there holding that
+id, or cannot be read to tell (`Store.open`). Only a restore binds the
+ring to the file it restored whatever the binding said, on the record, as
+it puts back the head and the anchor (`KeyRing.rebind_store`).
 
 Not defended: an attacker holding the user's own key and config
 directory. The design keeps the two apart from the store file so that
@@ -327,14 +329,18 @@ def parse_origin(raw: Any) -> HistoryOrigin | None:
 
 class KeyUnreadableError(OSError):
     """The current key file is there and cannot be read (a permission, a
-    directory where the file should be, an I/O error). Never read as a
-    missing key: the owner's opener replaces a missing key and rekeys the
-    log, which a failure that passes in a moment must not lead to
-    (`KeyRing.load_current`). ``path`` is the key file and ``reason`` what
-    the read said."""
+    directory where the file should be, an I/O error, a symbolic link to a
+    file that is not there). Never read as a missing key: the owner's
+    opener replaces a missing key and rekeys the log, which a failure that
+    passes in a moment must not lead to (`KeyRing.load_current`). ``path``
+    is the key file and ``reason`` what the read said, or ``reason`` when
+    the caller knows better."""
 
-    def __init__(self, path: Path, cause: OSError) -> None:
-        reason = cause.strerror or str(cause) or type(cause).__name__
+    def __init__(
+        self, path: Path, cause: OSError, *, reason: str | None = None
+    ) -> None:
+        if reason is None:
+            reason = cause.strerror or str(cause) or type(cause).__name__
         self.message = (
             f"the key file {path} is there and cannot be read ({reason}); "
             "the store is not rekeyed over it"
@@ -358,6 +364,19 @@ class StoreBinding(NamedTuple):
     previous: Path | None
     elsewhere: bool
     written: bool
+
+
+def _dangling_link(path: Path) -> str | None:
+    """Why ``path`` is there and cannot be read when it is a symbolic link
+    to nothing (a key or a key directory kept on a volume that is not
+    mounted right now), else None."""
+    try:
+        if not os.path.islink(path) or os.path.exists(path):
+            return None
+        target = os.readlink(path)
+    except (OSError, ValueError):
+        return None
+    return f"it is a symbolic link to {target}, which is not there"
 
 
 def _same_file(a: Path, b: Path) -> bool:
@@ -423,12 +442,21 @@ class KeyRing:
         names it: read as missing, it would have the owner's opener retire
         nothing, write a new key over the store's and rekey the log, for a
         failure (a permission, an I/O error, a network home) that may pass
-        in a moment. A caller that only reports on the key catches it."""
+        in a moment. A caller that only reports on the key catches it.
+
+        Only no entry at all is a missing key. A key file, or a key
+        directory, that is a symbolic link to nothing reads as not found
+        too, and is the same failure that passes: a key kept on a volume
+        that is not mounted yet. Read as missing, the new key would be
+        written over the link itself."""
         path = self.current_path()
         try:
             return path.read_bytes()
-        except FileNotFoundError:
-            return None
+        except FileNotFoundError as exc:
+            dangling = _dangling_link(path) or _dangling_link(self.keys_dir)
+            if dangling is None:
+                return None
+            raise KeyUnreadableError(path, exc, reason=dangling) from exc
         except OSError as exc:
             raise KeyUnreadableError(path, exc) from exc
 
@@ -526,12 +554,19 @@ class KeyRing:
         row (`HistoryOrigin`). Under the anchor's own lock, so two openers
         taking over one store write one anchor; atomic and owner-only from
         the moment it is visible, as the head is. True when written. A
-        file that does not read as an anchor is replaced, as an unreadable
-        head is: it anchors nothing."""
+        file that does not parse as an anchor is replaced, as a head that
+        does not parse is: it anchors nothing. A file that is there and
+        cannot be read raises OSError and stays: read as none, it would be
+        written over and the anchor moved, for a failure that may pass in a
+        moment (an anchor never moves, the module docstring)."""
         self.ensure_dir()
         with flock_excl(self.origin_path()):
             if self.read_origin() is not None:
                 return False
+            try:
+                self.origin_path().read_bytes()
+            except FileNotFoundError:
+                pass
             self._write_origin_file(
                 HistoryOrigin(seq=seq, mac=mac, key_fingerprint=key_fingerprint)
             )
@@ -582,15 +617,43 @@ class KeyRing:
     def read_binding(self) -> Path | None:
         """The store file this ring is bound to, or None when there is no
         binding or the file does not read as one (an object with a
-        non-empty string ``path``), as an unreadable head reads as none."""
+        non-empty string ``path`` that is absolute), as a head that does
+        not parse reads as none.
+
+        A binding file that is there and cannot be read raises OSError:
+        read as none, the next writing open would bind the ring to its own
+        file over it, for a failure that may pass in a moment, as a key
+        file that cannot be read is not a missing key (`load_current`)."""
         try:
             raw = json.loads(self.binding_path().read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except FileNotFoundError:
+            return None
+        except ValueError:
+            # Not UTF-8, or not JSON: what is there is no binding.
             return None
         value = raw.get("path") if isinstance(raw, dict) else None
         if not isinstance(value, str) or not value or "\x00" in value:
             return None
-        return Path(value)
+        # Only an absolute path is one: `bind_store` writes it resolved, and
+        # a relative one would name a file under whatever directory the
+        # opener runs in (a hook runs in the session's project).
+        bound = Path(value)
+        return bound if bound.is_absolute() else None
+
+    @staticmethod
+    def _bound(
+        previous: Path | None, resolved: Path, holds_store: Callable[[Path], bool]
+    ) -> StoreBinding | None:
+        """What a binding to ``previous`` says for the store file
+        ``resolved``: None when it is no claim (no binding, or a file that
+        no longer holds the store), else the `StoreBinding` it settles."""
+        if previous is None:
+            return None
+        if _same_file(previous, resolved):
+            return StoreBinding(previous, False, False)
+        if holds_store(previous):
+            return StoreBinding(previous, True, False)
+        return None
 
     def bind_store(
         self, store_file: Path, *, holds_store: Callable[[Path], bool]
@@ -610,30 +673,55 @@ class KeyRing:
         and the binding moves to this file. A write happens under the
         binding's own lock, after the same reading again, so two openers of
         two files with one id cannot both bind; atomic and owner-only, as
-        the head is. Raises OSError when the ring cannot be written."""
+        the head is. Raises OSError when the binding cannot be read
+        (`read_binding`) or the ring cannot be written."""
         resolved = Path(store_file).resolve()
-
-        def found(previous: Path | None) -> StoreBinding | None:
-            if previous is None:
-                return None
-            if _same_file(previous, resolved):
-                return StoreBinding(previous, False, False)
-            if holds_store(previous):
-                return StoreBinding(previous, True, False)
-            return None
-
-        settled = found(self.read_binding())
+        settled = self._bound(self.read_binding(), resolved, holds_store)
         if settled is not None:
             return settled
         self.ensure_dir()
         with flock_excl(self.binding_path()):
             previous = self.read_binding()
-            settled = found(previous)
+            settled = self._bound(previous, resolved, holds_store)
             if settled is not None:
                 return settled
-            payload = json.dumps({"path": str(resolved)}).encode("utf-8")
-            atomic_write_bytes(self.binding_path(), payload, mode_before_rename=0o600)
+            self._write_binding(resolved)
         return StoreBinding(previous, False, True)
+
+    def bound_elsewhere(
+        self, store_file: Path, *, holds_store: Callable[[Path], bool]
+    ) -> Path | None:
+        """The store file this ring is bound to when that is another file
+        than ``store_file`` and ``holds_store`` says it still holds the
+        store (`bind_store`'s ``elsewhere``), else None. Reads only, and
+        writes no binding: what a reader's open asks before it signs with a
+        key that matches (`Store.open`). Raises OSError as `read_binding`."""
+        settled = self._bound(
+            self.read_binding(), Path(store_file).resolve(), holds_store
+        )
+        return settled.previous if settled is not None and settled.elsewhere else None
+
+    def rebind_store(self, store_file: Path) -> Path | None:
+        """Bind this ring to ``store_file`` (resolved) whatever it is bound
+        to now, and return the file it was bound to before (None when it
+        was bound to none). One caller, on the record: a restore, which has
+        just made the ring's keys, head and anchor the restored file's
+        (`backup.restore_bundle`). Under the binding's lock; raises OSError
+        when the ring cannot be written."""
+        resolved = Path(store_file).resolve()
+        self.ensure_dir()
+        with flock_excl(self.binding_path()):
+            try:
+                previous = self.read_binding()
+            except OSError:
+                previous = None
+            if previous != resolved:
+                self._write_binding(resolved)
+        return previous
+
+    def _write_binding(self, resolved: Path) -> None:
+        payload = json.dumps({"path": str(resolved)}).encode("utf-8")
+        atomic_write_bytes(self.binding_path(), payload, mode_before_rename=0o600)
 
 
 class LogRow(NamedTuple):

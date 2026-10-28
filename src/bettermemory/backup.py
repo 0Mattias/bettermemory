@@ -82,8 +82,11 @@ into place, installs any key the restored log needs that the keys directory
 lacks, rewinds the head under the head's own lock, installs the bundle's
 origin anchor or removes the one the keys directory holds when the bundle
 records none (a restored store is never judged against an anchor of a
-history it does not hold; the next writing open anchors it again), records
-the rewind in ``<store_id>.backup_restore.json`` beside the head, and runs
+history it does not hold; the next writing open anchors it again), binds
+the key ring to the restored file (`KeyRing.rebind_store`: its keys, head
+and anchor are now that file's, and a ring left bound to a store file
+elsewhere would open the restored one for reading only), records the
+rewind in ``<store_id>.backup_restore.json`` beside the head, and runs
 `log_verify` on the restored store, which must read ``ok``.
 
 The order is chosen for what a failure leaves. The file swap is the step
@@ -1091,6 +1094,11 @@ def _origin_dict(origin: HistoryOrigin | None) -> dict[str, Any] | None:
     return None if origin is None else origin.to_dict()
 
 
+def _path_str(path: Path | None) -> str | None:
+    """A key ring's binding as a report and the rewind record carry it."""
+    return None if path is None else str(path)
+
+
 def _append_record(path: Path, entry: Mapping[str, Any], stamp: str) -> None:
     """Add `entry` to the rewind record at `path`. A record that does not
     parse is moved aside, not overwritten, and a new one started."""
@@ -1283,6 +1291,7 @@ def restore_bundle(
         "keys_installed": [],
         "head": None,
         "origin": None,
+        "binding": None,
         "record": None,
         "log": None,
     }
@@ -1328,6 +1337,11 @@ def restore_bundle(
         log_end = _log_end(store_file) if current_store_id == store_id else None
         origin = parse_origin(verification["origin"])
         origin_before = live.read_origin()
+        try:
+            binding_before = _path_str(live.read_binding())
+        except OSError:
+            binding_before = None
+        binding_after = str(store_file.resolve())
         record = restore_record_path(keys_root, store_id)
         report["plan"] = {
             "current_store_id": current_store_id,
@@ -1348,6 +1362,7 @@ def restore_bundle(
                 "before": _origin_dict(origin_before),
                 "after": _origin_dict(origin),
             },
+            "binding": {"before": binding_before, "after": binding_after},
             "record": str(record),
             "trusted_bundle_key": trusted_key,
         }
@@ -1398,6 +1413,13 @@ def restore_bundle(
                 "before": _origin_dict(live.replace_origin(origin)),
                 "after": _origin_dict(origin),
             }
+            # The ring's keys, head and anchor are the restored file's now;
+            # a binding left on another file that holds the store id would
+            # open this one for reading only (`store._claim_key_ring`).
+            report["binding"] = {
+                "before": _path_str(live.rebind_store(store_file)),
+                "after": binding_after,
+            }
             _append_record(
                 record,
                 {
@@ -1412,6 +1434,8 @@ def restore_bundle(
                     "log_end_before": None if log_end is None else {"seq": log_end},
                     "origin_before": report["origin"]["before"],
                     "origin_after": report["origin"]["after"],
+                    "binding_before": report["binding"]["before"],
+                    "binding_after": report["binding"]["after"],
                     "moved_aside": report["moved_aside"],
                     "keys_installed": [a["fingerprint"] for a in actions],
                     "trusted_bundle_key": trusted_key,

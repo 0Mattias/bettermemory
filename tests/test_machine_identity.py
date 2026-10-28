@@ -116,7 +116,7 @@ def test_another_hardware_id_mints_a_new_id_and_the_row_comes_first(
     )
     assert carried.recorded == first.facts
     seq = store.log_rows()[-1].seq
-    model = Membership.open(store, carried, liveness=lambda k, v: "live")
+    model = Membership.open(store, carried, liveness=lambda checkout, view: "live")
     model.resolve(
         Location(
             machine=carried.id,
@@ -333,7 +333,10 @@ def test_i37a_a_block_clone_keeps_one_machine_id_and_an_import_forks(
     created = Store.create(image / "store" / "memory.sqlite", keys_dir=image / "keys")
     created.close()
     clone = tmp_path / "clone"
-    shutil.copytree(image, clone)
+    # A block clone's key ring names its own store at the same absolute
+    # path; here, on another root of one filesystem, the binding would name
+    # the image's store, whose key ring it is not, so it is left behind.
+    shutil.copytree(image, clone, ignore=shutil.ignore_patterns("*.path"))
     a = Store.open(image / "store" / "memory.sqlite", keys_dir=image / "keys")
     b = Store.open(clone / "store" / "memory.sqlite", keys_dir=clone / "keys")
     try:

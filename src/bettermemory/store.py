@@ -34,9 +34,10 @@ migrations, do), when the key is retired, a fresh one written, and a
 a key that signs a segment of the log is this store's own whatever meta
 names, and stays (`Store.open`). A key file that cannot be read is not a
 missing one, and is never replaced. The key ring is bound to one store
-file (``<store_id>.path``, `log.KeyRing.bind_store`): the owner's opener
-of a second file with the same store id, while the bound file still
-holds it, writes nothing and refuses writes.
+file (``<store_id>.path``, `log.KeyRing.bind_store`): an opener of a
+second file with the same store id, while the bound file still holds it
+(or cannot be read to tell), writes nothing and refuses writes, the
+owner's and a reader whose key matches alike.
 
 Foreign segments. A segment of the log whose key this machine does not
 hold, after one whose key it does, is rows a writer without the key put
@@ -64,6 +65,7 @@ anchor until the key is back.
 from __future__ import annotations
 
 import contextlib
+import errno
 import glob
 import hashlib
 import re
@@ -73,6 +75,7 @@ import math
 import os
 import secrets
 import sqlite3
+import stat
 import threading
 from collections import OrderedDict
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
@@ -2083,6 +2086,14 @@ def _current_key(keyring: KeyRing, path: Path, *, writing: bool) -> bytes | None
         return None
 
 
+# SQLite's primary result codes that answer what a file is rather than
+# fail to read it: SQLITE_ERROR (here, no ``meta`` table: a database that
+# is no store), SQLITE_CORRUPT and SQLITE_NOTADB. Any other (SQLITE_CANTOPEN,
+# SQLITE_IOERR, SQLITE_BUSY, SQLITE_PERM, ...) is a read that failed, which
+# may pass in a moment (`_store_id_at`).
+_NOT_A_STORE_CODES = frozenset({1, 11, 26})
+
+
 def _store_id_at(path: Path) -> str | None:
     """The store id meta records in the store file at ``path``, read
     without opening it as a store (`Store.open` runs the additive schema
@@ -2091,18 +2102,32 @@ def _store_id_at(path: Path) -> str | None:
     ``-shm`` are beside the file (a daemon has it open, or crashed with
     it open), ``mode=ro`` first, so the read sees a store whose meta is
     still only in its WAL, as a store a running daemon just created is.
-    None when there is no file there or it does not read as a store."""
+
+    None when there is no file there or it does not read as a store (no
+    database, or one with no store id). OSError when it cannot be read to
+    tell (a directory on the way that cannot be searched, a file that
+    cannot be opened, an I/O error, a store whose meta is only in its WAL
+    and whose lock is held): a failure that may pass in a moment says
+    nothing about whether the file still holds a store, and the caller
+    keeps the key ring bound to it (`_claim_key_ring`). A symbolic link
+    that loops is no file there, as `Path.is_file` reads it."""
     try:
-        if not path.is_file():
-            return None
-        resolved = path.resolve()
-    except (OSError, ValueError):
+        status = path.stat()
+    except (FileNotFoundError, NotADirectoryError, ValueError):
         return None
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            return None
+        raise
+    if not stat.S_ISREG(status.st_mode):
+        return None
+    resolved = path.resolve()
     wal = resolved.with_name(resolved.name + "-wal")
     shm = resolved.with_name(resolved.name + "-shm")
     queries = ["mode=ro&immutable=1"]
     if wal.exists() and shm.exists():
         queries.insert(0, "mode=ro")
+    failed: sqlite3.Error | None = None
     for query in queries:
         try:
             conn = sqlite3.connect(
@@ -2111,19 +2136,84 @@ def _store_id_at(path: Path) -> str | None:
                 timeout=2.0,
                 isolation_level=None,
             )
-        except sqlite3.Error:
+            try:
+                row = conn.execute(
+                    "SELECT value FROM meta WHERE key = 'store_id'"
+                ).fetchone()
+            finally:
+                conn.close()
+        except sqlite3.Error as exc:
+            if getattr(exc, "sqlite_errorcode", 0) & 0xFF not in _NOT_A_STORE_CODES:
+                failed = exc
             continue
-        try:
-            row = conn.execute(
-                "SELECT value FROM meta WHERE key = 'store_id'"
-            ).fetchone()
-        except sqlite3.Error:
-            continue
-        finally:
-            conn.close()
         if row is not None:
             return str(row[0])
+    if failed is not None:
+        raise OSError(f"{path} could not be read ({failed})")
     return None
+
+
+def _bound_store_check(store_id: str) -> tuple[Callable[[Path], bool], list[str]]:
+    """The ``holds_store`` answer `log.KeyRing.bind_store` asks for, for a
+    store with id ``store_id``, and the list it fills with why a bound
+    file could not be read. A bound file that cannot be read to tell
+    (`_store_id_at` raises) is taken to hold the store still: binding the
+    ring to this file instead, for a failure that may pass in a moment,
+    would let this file sign for the bound store and move its head, and
+    leave the bound store opening for reading only once it is back."""
+    unread: list[str] = []
+
+    def holds(other: Path) -> bool:
+        try:
+            return _store_id_at(other) == store_id
+        except OSError as exc:
+            unread.append(str(exc))
+            return True
+
+    return holds, unread
+
+
+def _warn_bound_elsewhere(
+    keyring: KeyRing, path: Path, store_id: str, other: Path, unread: Sequence[str]
+) -> None:
+    """Say in the log that the key ring is another store file's, naming both
+    files and the remedy (`_claim_key_ring`, `_key_ring_elsewhere`)."""
+    holds = (
+        f"which could not be read to tell whether it still holds that id ({unread[-1]})"
+        if unread
+        else "which still holds that id"
+    )
+    log.warning(
+        "store %s carries store id %s, and the key ring under %s belongs to "
+        "the store at %s, %s; this one opens for reading only, and nothing is "
+        "rekeyed or written. Move or remove one of the two stores, or delete %s "
+        "to bind the key ring to this one",
+        path,
+        store_id,
+        keyring.keys_dir,
+        other,
+        holds,
+        keyring.binding_path(),
+    )
+
+
+def _key_ring_elsewhere(keyring: KeyRing, path: Path, store_id: str) -> Path | None:
+    """The other store file the key ring is bound to when it still holds
+    this store id, for a reader's open whose key matches (`open`), else
+    None; reads the binding and writes nothing. A reader's open with the
+    key can write (the session-start hook records the brief it shows, and
+    a worker connection writes as its owner does), so on a second file
+    with the bound store's id it would sign rows with that store's key and
+    move its head past that store's log. A binding that cannot be read is
+    none, as it was before rings were bound."""
+    holds, unread = _bound_store_check(store_id)
+    try:
+        other = keyring.bound_elsewhere(path, holds_store=holds)
+    except OSError:
+        return None
+    if other is not None:
+        _warn_bound_elsewhere(keyring, path, store_id, other, unread)
+    return other
 
 
 def _claim_key_ring(keyring: KeyRing, path: Path, store_id: str) -> Path | None:
@@ -2131,18 +2221,18 @@ def _claim_key_ring(keyring: KeyRing, path: Path, store_id: str) -> Path | None:
     first step (`open`): bind the ring to it when it is bound to no file,
     or to one that no longer holds this store id (moved, deleted, another
     store there), and return None; return the other store file when the
-    ring is bound to one that still does, and is not this file under
-    another spelling (`log.KeyRing.bind_store`). That file is the ring's
-    store: its key, head and anchor are that file's, and an open of a
-    second file with its id (a copy in another directory, or a file made
-    to borrow a known id) must not retire the key, write a new one, set
-    meta, move the head or write the anchor, all of which the owner's
-    opener would otherwise do. A ring that cannot be written is said in
-    the log and the open goes on, as it did before rings were bound."""
+    ring is bound to one that still does, or that cannot be read to tell,
+    and is not this file under another spelling (`log.KeyRing.bind_store`).
+    That file is the ring's store: its key, head and anchor are that
+    file's, and an open of a second file with its id (a copy in another
+    directory, or a file made to borrow a known id) must not retire the
+    key, write a new one, set meta, move the head or write the anchor, all
+    of which the owner's opener would otherwise do. A ring whose binding
+    cannot be read or written is said in the log and the open goes on, as
+    it did before rings were bound; the binding is left as it is."""
+    holds, unread = _bound_store_check(store_id)
     try:
-        binding = keyring.bind_store(
-            path, holds_store=lambda other: _store_id_at(other) == store_id
-        )
+        binding = keyring.bind_store(path, holds_store=holds)
     except OSError as exc:
         log.warning(
             "store %s: the key ring under %s could not be bound to it (%s)",
@@ -2153,17 +2243,7 @@ def _claim_key_ring(keyring: KeyRing, path: Path, store_id: str) -> Path | None:
         return None
     if binding.elsewhere:
         assert binding.previous is not None
-        log.warning(
-            "store %s carries store id %s, and the key ring under %s belongs to "
-            "the store at %s, which still holds that id; this one opens for "
-            "reading only, and nothing is rekeyed or written. Move or remove one "
-            "of the two stores, or delete %s to bind the key ring to this one",
-            path,
-            store_id,
-            keyring.keys_dir,
-            binding.previous,
-            keyring.binding_path(),
-        )
+        _warn_bound_elsewhere(keyring, path, store_id, binding.previous, unread)
         return binding.previous
     if binding.written and binding.previous is not None:
         log.info(
@@ -2428,10 +2508,12 @@ class Store:
         file carries, so a second file with the same id (a copy in another
         directory, or one made to borrow a known id) would otherwise retire
         the first one's key, or sign with it, and move its head. When the
-        ring is bound to another file that still holds this store id, this
-        open writes nothing and opens as a reader does, refusing writes
-        even when its key matches, with a warning naming both files. A
-        reader never binds the ring.
+        ring is bound to another file that still holds this store id (or
+        that cannot be read to tell), this open writes nothing and opens as
+        a reader does, refusing writes even when its key matches, with a
+        warning naming both files. A reader never binds the ring; a reader
+        whose key matches reads the binding, and on such a second file
+        opens the same way, since a reader with the key can write.
 
         A key file that is there and cannot be read fails the owner's open
         (`log.KeyUnreadableError`) instead of being replaced; a reader
@@ -2470,14 +2552,19 @@ class Store:
                 store_id,
             )
             key = _current_key(keyring, path, writing=allow_rekey)
+            matches = key is not None and fingerprint(key) == expected
             # The owner's opener first claims the key ring for this file
             # (`_claim_key_ring`): one that is bound to another file still
             # holding this store id is that file's, and this open writes
-            # nothing to it or with it.
-            elsewhere = (
-                _claim_key_ring(keyring, path, store_id) if allow_rekey else None
-            )
-            matches = key is not None and fingerprint(key) == expected
+            # nothing to it or with it. A reader whose key matches would
+            # sign with it too, and asks the same, writing no binding
+            # (`_key_ring_elsewhere`); one without the key writes nothing.
+            if allow_rekey:
+                elsewhere = _claim_key_ring(keyring, path, store_id)
+            elif matches:
+                elsewhere = _key_ring_elsewhere(keyring, path, store_id)
+            else:
+                elsewhere = None
             if matches and elsewhere is None:
                 store = cls._bind(
                     path,
@@ -5247,8 +5334,10 @@ class Store:
         other._unaccounted_memory_ids = self._unaccounted_memory_ids
         if self._bound_elsewhere is not None:
             # The owner's open found the key ring bound to another store
-            # file; a reader's open does not look, and would bind a key
-            # meta names for writing. Keep it for checking only.
+            # file. A reader's open looks too, but reads the binding again,
+            # and what it finds now (the bound file gone a moment, say) is
+            # not this connection's owner's answer. Keep the key for
+            # checking only, as the owner's connection does.
             if other._key is not None:
                 other._read_key, other._key = other._key, None
             other._bound_elsewhere = self._bound_elsewhere
