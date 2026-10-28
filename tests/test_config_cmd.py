@@ -168,6 +168,22 @@ def test_a_byte_order_mark_is_dropped_as_the_managed_loader_drops_it(
     assert load_config(path).security.strict_provenance is True
 
 
+def test_doctor_reads_a_byte_order_mark_as_the_loader_does(tmp_path: Path) -> None:
+    """`bettermemory doctor` parses config.toml itself before it loads it.
+    Decoded as plain UTF-8 it called a file with a byte-order mark one that
+    "does not parse" and no daemon would start on, while the loader, and
+    so the daemon, load it."""
+    from bettermemory import doctor
+
+    path = _write_user("﻿[security]\nstrict_provenance = true\n")
+    assert path.read_bytes().startswith(b"\xef\xbb\xbf")
+    ctx = doctor._Context(cwd=tmp_path)
+    check = doctor.check_config(ctx)
+    assert check.status == doctor.OK, check.summary
+    assert ctx.config is not None
+    assert ctx.config.security.strict_provenance is True
+
+
 def test_the_two_loaders_agree_on_a_section_that_is_not_a_table(
     tmp_path: Path, managed_config_path: Path
 ) -> None:

@@ -470,7 +470,10 @@ def check_config(ctx: _Context) -> Check:
             details,
         )
     try:
-        data = tomllib.loads(raw.decode("utf-8"))
+        # "utf-8-sig", as the loader decodes it (`config.read_config_file`):
+        # a byte-order mark is dropped, so a file the daemon loads is not
+        # reported here as one that does not parse.
+        data = tomllib.loads(raw.decode("utf-8-sig"))
     except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         ctx.config_failed = True
         return Check(
