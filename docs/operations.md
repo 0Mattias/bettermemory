@@ -405,12 +405,15 @@ candidate file is checked where it is deployed.
 
 A user's config.toml line that a pin overrides with a different value
 gets one warning per process naming both files, on stderr for a hook.
-The config.toml a first run writes sets one such line itself,
-`[telemetry] enabled = true`, and every config.toml written before this
-release has it: where the managed file pins `[telemetry] enabled =
-false`, as the example does, each process warns about it until the line
-is deleted from config.toml. The keys this release adds are commented
-out in the file a first run writes, so they draw no warning.
+The config.toml a first run writes sets these lines itself, and one an
+earlier release wrote sets those of them it knew: fifteen `[behavior]`
+keys, `[scopes] allowed` and `typo_exceptions`, `[daemon] port`,
+`[telemetry] enabled`, the three `[capture]` keys, and `[membership]
+write_token` and `strict`. A managed file that pins one of them to
+another value makes each process warn about that line until it is
+deleted from config.toml; of the example's pins only `[telemetry]
+enabled = false` does. The keys this release adds are commented out in
+the file a first run writes, so a pin of one draws no warning.
 
 The file binds the user's config, not the account: a process running as
 the user can still set `BETTERMEMORY_DIR`, which decides the store ahead

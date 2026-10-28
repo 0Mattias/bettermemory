@@ -92,17 +92,17 @@ stable 9.0.0 follows the candidates' testing.
   sits below seq 1 reads `unaccounted` on every read surface. No store
   writes such a row. (`src/bettermemory/log.py`,
   `src/bettermemory/store.py`)
-- **The read-only commands check pointers when `meta` names another
-  key.** A read-only open bound the key `meta.key_fingerprint` names,
-  and none when this host does not hold it, so after the forged-segment
-  edit above `memory history`, `export`, `stats` and `session-start`
-  checked no pointer: `memory history` printed the planted record as
-  `local (unverified: no key)` and exited 0 while `log verify` read the
-  store tampered. When this host's key ring holds the store's origin anchor,
-  or its current key signs a segment of the log, a read-only open now
-  checks pointers under that key, writing nothing and still refusing
-  every write, so the planted record reads `unaccounted` and `memory
-  history` exits 1. (`src/bettermemory/store.py`,
+- **A read-only open checks pointers when `meta` names another key.**
+  A read-only open bound the key `meta.key_fingerprint` names, and none
+  when this host does not hold it, so after the forged-segment edit
+  above it checked no pointer: `memory history` printed the planted
+  record as `local (unverified: no key)` and exited 0 while `log verify`
+  read the store tampered. When this host's key ring holds the store's
+  origin anchor, or its current key signs a segment of the log, a
+  read-only open now checks pointers under that key, writing nothing and
+  still refusing every write, so `memory history` reads the planted
+  record `unaccounted` and exits 1. `stats` and `export` check no
+  pointer and print no label, as before. (`src/bettermemory/store.py`,
   `src/bettermemory/history.py`, `tests/test_memory_history.py`)
 - **A store id is the shape `create` writes, or the store is refused.**
   The key ring joins `meta.store_id` onto the keys directory, so a store
@@ -143,7 +143,8 @@ stable 9.0.0 follows the candidates' testing.
   `doctor`, `log verify`, `backup verify|restore` and `backup create`'s
   warnings and errors with each control and format character written as
   its ASCII escape (`\x1b`), as `stats` and `memory history` print stored
-  text, so the text encodes in any code page.
+  text; unlike the U+FFFD it replaces, the escape encodes in every code
+  page, cp1252 included.
   (`src/bettermemory/_daemon_client.py`, `src/bettermemory/daemon.py`,
   `src/bettermemory/shim.py`, `src/bettermemory/cli/daemon_cmd.py`)
 - **Nothing for the daemon goes through a proxy.** The client's
@@ -214,10 +215,11 @@ stable 9.0.0 follows the candidates' testing.
   a config that cannot be read reads as true, with a warning. It is the
   switch to pin in a managed file, and it is commented out in the
   config.toml a first run writes, as `[policy]`'s keys are, so a pin
-  draws no warning about a line the user never wrote. (`[telemetry]
-  enabled = true` is in that file and in every one written before, and
-  draws one where a managed file pins it off; `docs/operations.md`
-  says so.) (`src/bettermemory/config.py`,
+  draws no warning about a line the user never wrote. (The keys of
+  earlier releases that file sets, `[telemetry] enabled = true` among
+  them, are in the files those releases wrote too, and each draws one
+  where a managed file pins it to another value; `docs/operations.md`
+  lists them.) (`src/bettermemory/config.py`,
   `src/bettermemory/store.py`)
 - **`[policy] forbid_force` and `forbid_acknowledge`** (default off and
   `[]`). The first refuses a `memory_write` with `force=true`
@@ -397,7 +399,10 @@ stable 9.0.0 follows the candidates' testing.
   lock but does not answer, `status` now prints `state present, daemon
   not answering (pid N holds the lock); the state file ... is kept`
   where it printed `not running for <store> (stale state file for pid N
-  removed)`, and `down` stops that daemon once it answers again. A hook
+  removed)`, and `down` still finds it: after its wait (30 s) it sends
+  SIGTERM to the pid that holds the store's lock, and the daemon stops
+  once its event loop can act on the signal (`down` exits 1 and keeps
+  the file when that takes longer than its second wait). A hook
   still starts a daemon beside a hung one, which finds the lock taken
   and exits, and the hook gives up after the same wait as before (8 to
   9 s); this entry changes what `status` and `down` see, not that. A
@@ -500,6 +505,15 @@ stable 9.0.0 follows the candidates' testing.
   open the store without those locks; close every session before `backup
   restore --yes`. Its text output does not show the origin anchor it
   replaces; `--json` and the restore record carry it.
+- **Only some readers refuse a backup bundle's file.** Opening a
+  bundle's snapshot as a store rewrites its header, and the bundle then
+  fails its hash. `security scan`, `log verify`, `log export`, `log
+  anchor`, `stats` and `memory history` refuse a file with a bundle's
+  manifest beside it, through a symlink too, and the scan refuses a
+  `--store` file with hard links; `export`, `doctor` and `membership
+  export` do not check, nor does anything check a hard link named through
+  `BETTERMEMORY_DIR`. Copy a bundle's `memory.sqlite` to a directory of
+  its own before pointing a command at it.
 - **SIEM rules should alert on `verified: null` as well as `false`.** An
   editor without the key can make later rows of `log export` read
   `verified: null` (a key not held) by editing `meta.key_fingerprint` or
