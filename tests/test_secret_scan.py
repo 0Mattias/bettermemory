@@ -27,6 +27,7 @@ from typing import Any
 
 import pytest
 
+from bettermemory import secret_scan
 from bettermemory.config import BehaviorConfig, Config, StorageConfig
 from bettermemory.credentials import find_credential_markers
 from bettermemory.log import iter_rows
@@ -690,6 +691,70 @@ def test_scan_writes_nothing_and_never_rekeys(
     assert json.loads(out)["counts"]["memories"] == 1
     assert not elsewhere.exists()
     assert len(store.log_rows()) == rows
+
+
+def test_the_scan_reads_one_snapshot(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The daemon writes while a scan runs. A restore landing between the
+    memories and the tombstones pass would take the record out of the
+    tombstones before that pass and into the memories after it, hiding
+    it from both; one read transaction keeps the scan on the store as it
+    was when the scan began."""
+    memory = store.write(content=f"ci token {_GITHUB}", scopes=["x"])
+    store.tombstone(memory.id, reason="leaked")
+    daemon = store.reopen()
+    scan_table = secret_scan._scan_table
+
+    def restore_after_memories(
+        scanned: Store, table: str, acks: Any
+    ) -> tuple[int, list[SecretFinding]]:
+        out = scan_table(scanned, table, acks)
+        if table == "memories":
+            daemon.restore(memory.id)
+        return out
+
+    monkeypatch.setattr(secret_scan, "_scan_table", restore_after_memories)
+    try:
+        report = scan_store(store, include_log=True)
+    finally:
+        daemon.close()
+    assert store.count_memories() == 1
+    assert [(f.location, f.record_state) for f in report.findings] == [
+        ("tombstones", TOMBSTONED),
+        ("log", TOMBSTONED),
+        ("log", TOMBSTONED),
+    ]
+    assert not store.conn.in_transaction
+    # A caller already in a transaction keeps it: the scan neither nests
+    # a BEGIN nor ends the caller's snapshot.
+    monkeypatch.undo()
+    store.conn.execute("BEGIN")
+    try:
+        assert len(scan_store(store).findings) == 1
+        assert store.conn.in_transaction
+    finally:
+        store.conn.execute("ROLLBACK")
+
+
+def test_a_store_that_fails_mid_scan_exits_two(
+    store: Store,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A store whose header opens but whose pages do not read (a damaged
+    copy) is a store the scan cannot read: exit 2 with a message, not a
+    traceback whose exit status 1 a CI gate would take for a finding."""
+
+    def damaged(scanned: Store, *, include_log: bool = False) -> None:
+        raise sqlite3.DatabaseError("database disk image is malformed")
+
+    monkeypatch.setattr(secret_scan, "scan_store", damaged)
+    code, out, err = _run(capsys, "--store", str(store.path))
+    assert code == 2
+    assert out == ""
+    assert "cannot read the store at" in err
+    assert "malformed" in err
 
 
 def test_no_store_exits_two_and_creates_none(

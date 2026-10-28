@@ -530,21 +530,41 @@ def scan_store(store: Store, *, include_log: bool = False) -> ScanReport:
     Reads only: the table pass is plain SELECTs, the log pass walks
     `log.iter_rows`, and the acknowledgements come from
     `Store.events_of_kinds`. The findings are in table order, then log
-    order."""
+    order.
+
+    Every pass reads one snapshot. The daemon writes while a scan runs,
+    and in autocommit each SELECT sees the store as it was when that
+    SELECT began: a restore landing between the memories and the
+    tombstones pass moves the record into a table already read and out
+    of one not yet read, so neither pass sees it, and a write landing
+    after the log pass took the live ids reads as pruned. One read
+    transaction pins the snapshot the first SELECT takes; under WAL a
+    reader never blocks a writer. A caller already in a transaction
+    keeps its own."""
     report = ScanReport(
         path=str(store.path),
         log_scanned=include_log,
         orphans=[p.name for p in orphans_beside(store.path)],
     )
-    acks = _acknowledgements(store)
-    for table in TABLES:
-        rows, findings = _scan_table(store, table, acks)
-        report.scanned[table] = rows
-        report.findings.extend(findings)
-    if include_log:
-        rows, findings = _scan_log(store, acks)
-        report.scanned[LOG] = rows
-        report.findings.extend(findings)
+    conn = store.conn
+    snapshot = not conn.in_transaction
+    if snapshot:
+        conn.execute("BEGIN")
+    try:
+        acks = _acknowledgements(store)
+        for table in TABLES:
+            rows, findings = _scan_table(store, table, acks)
+            report.scanned[table] = rows
+            report.findings.extend(findings)
+        if include_log:
+            rows, findings = _scan_log(store, acks)
+            report.scanned[LOG] = rows
+            report.findings.extend(findings)
+    finally:
+        # An I/O error can end the transaction itself; ROLLBACK then has
+        # nothing to end and would raise over the error that ended it.
+        if snapshot and conn.in_transaction:
+            conn.execute("ROLLBACK")
     return report
 
 
@@ -703,8 +723,13 @@ def run_scan(args: argparse.Namespace) -> None:
         store = Store.open(path, allow_rekey=False)
     except (ValueError, sqlite3.DatabaseError) as exc:
         _fail(f"cannot read the store at {path}: {exc}")
+    # A store whose header opens can still fail on a page the scan reads
+    # (a damaged copy). That is a store the scan cannot read, exit 2: an
+    # uncaught traceback exits 1, which a CI gate would take for a finding.
     try:
         report = scan_store(store, include_log=bool(getattr(args, "scan_log", False)))
+    except sqlite3.DatabaseError as exc:
+        _fail(f"cannot read the store at {path}: {exc}")
     finally:
         store.close()
     if getattr(args, "scan_json", False):
