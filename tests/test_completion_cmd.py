@@ -14,6 +14,7 @@ no compinit is needed). The shell runs are skipped on Windows, where a
 from __future__ import annotations
 
 import argparse
+import shlex
 import shutil
 import subprocess
 import sys
@@ -53,27 +54,78 @@ def _option_spelling(shell: str, string: str) -> str:
     return f"-s {string[1:]}"
 
 
+def _expected(parser: argparse.ArgumentParser) -> set[str]:
+    """What should complete right after `parser`'s command: its
+    subcommands, its visible option strings and its positional choices."""
+    words: set[str] = set()
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            words.update(action.choices)
+        elif action.help != argparse.SUPPRESS:
+            words.update(action.option_strings)
+            if not action.option_strings and action.choices is not None:
+                words.update(str(choice) for choice in action.choices)
+    return words
+
+
+def _offered(shell: str, script: str, path: str) -> set[str]:
+    """The words `script` offers right after the command at `path`, read
+    off that path's own arm of the script, so a word another command
+    offers does not count for this one."""
+    lines = script.splitlines()
+    if shell == "bash":
+        arm = f"'{path}') COMPREPLY=($(compgen -W '"
+        line = next(line.strip() for line in lines if line.strip().startswith(arm))
+        return set(line[len(arm) :].split("' --", 1)[0].split())
+    if shell == "zsh":
+        at = next(i for i, line in enumerate(lines) if line.strip() == f"('{path}')")
+        words: set[str] = set()
+        for line in lines[at + 1 : at + 3]:
+            listed = line.strip().split("=(", 1)[1][:-1]
+            words.update(entry.split(":", 1)[0] for entry in shlex.split(listed))
+        return words
+    words = set()
+    condition = f"-n '__bettermemory_at \"{path}\"' "
+    for line in lines:
+        if condition not in line:
+            continue
+        # The description is quoted for fish, not for shlex: drop it.
+        tokens = shlex.split(line.split(condition, 1)[1].split(" -d '", 1)[0])
+        for flag, value in zip(tokens, tokens[1:]):
+            if flag == "-a":
+                words.update(value.split())
+            elif flag == "-l":
+                words.add(f"--{value}")
+            elif flag in ("-s", "-o"):
+                words.add(f"-{value}")
+    return words
+
+
 @pytest.mark.parametrize("shell", SHELLS)
 def test_every_subcommand_and_option_of_every_parser_is_in_the_script(
     shell: str,
 ) -> None:
     script = render(shell, _root())
     _, registry = _build_parser()
-    for name in registry:
-        assert name in script, f"{shell}: subcommand {name!r} missing"
+    assert set(registry) <= _offered(shell, script, "")
     seen_paths = 0
     for path, parser in _tree(_root()):
         seen_paths += 1
         if path:
             # Every command path is one the script can reach.
-            assert f"'{path}'" in script or f'"{path}"' in script, (shell, path)
-        for action in parser._actions:
-            if action.help == argparse.SUPPRESS:
-                continue
-            for string in action.option_strings:
-                spelled = _option_spelling(shell, string)
-                assert spelled in script, f"{shell}: {path} {string} missing"
+            assert f"'{path}'" in script, (shell, path)
+        missing = _expected(parser) - _offered(shell, script, path)
+        assert not missing, f"{shell}: {path or '(root)'} lacks {sorted(missing)}"
     assert seen_paths == len(command_tree(_root()))
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_a_word_dropped_from_one_command_fails_the_coverage_check(shell: str) -> None:
+    """The check above reads each command's own arm: `--json` offered by
+    a dozen other commands does not hide its absence from `stats`."""
+    script = render(shell, _root())
+    assert "--json" in _offered(shell, script, "stats")
+    assert "--json" not in _offered(shell, script, "completion")
 
 
 @pytest.mark.parametrize("shell", SHELLS)
