@@ -26,6 +26,7 @@ from __future__ import annotations
 import os
 import sys
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any, TypeAlias
@@ -852,6 +853,27 @@ def _coerce_search_mode(value: object, *, config_path: ConfigSource | None) -> s
 PROMPT_RECALL_MODES: tuple[str, ...] = ("project", "everywhere", "off")
 
 
+def _prompt_recall_spelling(value: object) -> str | None:
+    """The mode a `[behavior] prompt_recall` value spells, or None when it
+    spells none: a mode in any case and with any surrounding whitespace,
+    or the legacy boolean (``true`` is ``"project"``, ``false`` ``"off"``),
+    as a TOML boolean or one of the spellings `_coerce_bool` accepts in a
+    string. Logs nothing: `_coerce_prompt_recall` warns about a value this
+    reads as None, and the pinned-key notice (`_apply_managed`) asks what
+    a user line it ignores unread would have said."""
+    if isinstance(value, bool):
+        return "project" if value else "off"
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in PROMPT_RECALL_MODES:
+            return token
+        if token in _TRUE_STRINGS:
+            return "project"
+        if token in _FALSE_STRINGS:
+            return "off"
+    return None
+
+
 def _coerce_prompt_recall(value: object, *, config_path: ConfigSource | None) -> str:
     """Normalise `[behavior] prompt_recall` to one of `PROMPT_RECALL_MODES`.
 
@@ -864,16 +886,9 @@ def _coerce_prompt_recall(value: object, *, config_path: ConfigSource | None) ->
     fallback is loud."""
     if value is None:
         return "project"
-    if isinstance(value, bool):
-        return "project" if value else "off"
-    if isinstance(value, str):
-        token = value.strip().lower()
-        if token in PROMPT_RECALL_MODES:
-            return token
-        if token in _TRUE_STRINGS:
-            return "project"
-        if token in _FALSE_STRINGS:
-            return "off"
+    mode = _prompt_recall_spelling(value)
+    if mode is not None:
+        return mode
     import logging
 
     logging.getLogger("bettermemory.config").warning(
@@ -1412,14 +1427,16 @@ def _apply_managed(
     pinned key the user mistyped cannot fail the load: it is ignored, not
     read. A user value that differs from the pinned one gets one notice
     per key, naming both files (`_warn_pinned_key`), unless it is the
-    code's own default for the key (`_restates_default`): such a line
-    restates the default and expresses no choice the pin overrides, and a
-    config.toml an earlier release wrote spelled every key at its default,
-    so every process, every hook among them, would warn about a line the
-    user never chose. `bettermemory config check` and `config show` still
-    report the line, from the files themselves rather than this log.
-    Lists are replaced whole, never merged: a managed `[scopes] allowed`
-    is the allowlist.
+    code's own default for the key (`_restates_pin_or_default`): such a
+    line restates the default and expresses no choice the pin overrides,
+    and a config.toml an earlier release wrote spelled every key at its
+    default, so every process, every hook among them, would warn about a
+    line the user never chose. A key that release spelled in a form the
+    loader now translates (``prompt_recall = true``) is compared as the
+    loader reads it (`_LEGACY_SPELLINGS`). `bettermemory config check`
+    and `config show` still report the line, from the files themselves
+    rather than this log. Lists are replaced whole, never merged: a
+    managed `[scopes] allowed` is the allowlist.
 
     A key the loader does not read is ignored here as it is in
     config.toml, and is not listed in `managed_keys`. The keys are found
@@ -1463,8 +1480,13 @@ def _apply_managed(
         user_section = data.get(section)
         if isinstance(user_section, dict) and key in user_section:
             user_value = user_section.pop(key)
-            if user_value != managed_data[section][key] and not _restates_default(
-                user_value, getattr(getattr(defaults, section), key)
+            if not _restates_pin_or_default(
+                section,
+                key,
+                user_value,
+                managed_raw=managed_data[section][key],
+                pinned=getattr(getattr(pinned, section), key),
+                default=getattr(getattr(defaults, section), key),
             ):
                 _warn_pinned_key(
                     section=section,
@@ -1481,16 +1503,71 @@ def _apply_managed(
     return config
 
 
+#: The keys whose loader reads an earlier release's spelling as a current
+#: value, each with what a raw value spells: the value the loader reads it
+#: as, or None for one it does not recognise (which the loader replaces
+#: with the default and warns about). `_restates_pin_or_default` compares
+#: a pinned user line for such a key as read, not as written.
+#:
+#: Found by loading every release's `DEFAULT_CONFIG`, v1.4.1 to 9.0.0rc12,
+#: against `Config()`, and reading each normalisation `_config_from_data`
+#: applies. `prompt_recall` is the one key a shipped config.toml spelled in
+#: a form the loader now translates: v3.41.0 to v8.0.0 wrote ``true``, which
+#: reads as ``"project"``, the default. Not here, on purpose:
+#: `endorsement_debt_ratio_threshold` is a renamed key, translated to its
+#: successor before the comparison, its value unchanged; a pre-4.0
+#: ``search_mode = "semantic"`` named a mode 4.0 removed, which the loader
+#: replaces with the default through the fallback a typo takes, so it
+#: spells no current value; ``search_mode = "keyword"``, which 2.x wrote,
+#: is a mode of its own; and a boolean's string spellings (``"true"``) are
+#: a coercion the user chose, compared as written as before.
+_LEGACY_SPELLINGS: dict[tuple[str, str], Callable[[object], object | None]] = {
+    ("behavior", "prompt_recall"): _prompt_recall_spelling,
+}
+
+
+def _restates_pin_or_default(
+    section: str,
+    key: str,
+    raw: object,
+    *,
+    managed_raw: object,
+    pinned: object,
+    default: object,
+) -> bool:
+    """Whether a user's line for a pinned key expresses no choice the pin
+    overrides: it is the managed file's own line (`managed_raw`), or the
+    code's default (`_restates_default`).
+
+    A key with a legacy spelling (`_LEGACY_SPELLINGS`) is compared as the
+    loader reads it, against the pinned value as loaded (`pinned`) and the
+    default: ``prompt_recall = true``, in every config.toml v3.41.0 to
+    v8.0.0 wrote, reads as ``"project"`` and restates the default, and
+    ``false`` under a pin of ``"off"`` restates the pin. A spelling that
+    reads as another value is a choice, and so is one the reader does not
+    recognise: the line is dropped unread, so the notice is the only word
+    a mistyped value gets. The reader logs nothing, so the coercion's own
+    fallback warning is not raised for a line that is never read."""
+    if raw == managed_raw:
+        return True
+    spelling = _LEGACY_SPELLINGS.get((section, key))
+    if spelling is not None:
+        read = spelling(raw)
+        return read is not None and (read == pinned or read == default)
+    return _restates_default(raw, default)
+
+
 def _restates_default(raw: object, default: object) -> bool:
     """Whether `raw`, a user's line for a pinned key as TOML parsed it, is
     the code's default for that key (`default`, the field of `Config()`).
 
-    Compared as written, before any coercion: ``30`` restates a default
-    of ``30.0`` and ``[]`` an empty list, but ``"true"`` does not restate
-    ``True``, since the loader would read that spelling through a coercion
-    the user chose. A boolean only restates a boolean: Python takes
-    ``False == 0``, but ``tombstone_retention_days = false`` restates no
-    default of 0."""
+    Compared as written, before any coercion, for every key without a
+    legacy spelling (`_restates_pin_or_default` reads those first):
+    ``30`` restates a default of ``30.0`` and ``[]`` an empty list, but
+    ``"true"`` does not restate ``True``, since the loader would read that
+    spelling through a coercion the user chose. A boolean only restates a
+    boolean: Python takes ``False == 0``, but
+    ``tombstone_retention_days = false`` restates no default of 0."""
     if isinstance(raw, bool) or isinstance(default, bool):
         return type(raw) is type(default) and raw == default
     return raw == default

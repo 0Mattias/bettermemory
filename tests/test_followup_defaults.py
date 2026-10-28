@@ -116,10 +116,12 @@ def test_a_pinned_line_choosing_another_value_still_draws_the_notice(
         ),
         # A spelling the loader would coerce is the user's choice of it.
         ("[telemetry]\nenabled = false\n", '[telemetry]\nenabled = "true"\n', True),
-        # The legacy prompt_recall boolean is not the default's spelling.
+        # The legacy prompt_recall boolean is read as the loader reads it
+        # (tests/test_pinned_legacy_spelling.py): `false` is "off", a mode
+        # other than the default and the pin, so a choice.
         (
-            '[behavior]\nprompt_recall = "off"\n',
-            "[behavior]\nprompt_recall = true\n",
+            '[behavior]\nprompt_recall = "everywhere"\n',
+            "[behavior]\nprompt_recall = false\n",
             True,
         ),
     ],
