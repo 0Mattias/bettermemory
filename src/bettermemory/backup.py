@@ -94,6 +94,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import shutil
 import sqlite3
 import tempfile
@@ -136,6 +137,13 @@ _MANIFEST_MAC_CONTEXT = b"bettermemory-backup-manifest-v1\x00"
 #: A manifest is a few kilobytes; anything past this is not one.
 _MANIFEST_CAP_BYTES = 1 << 20
 _DIGEST_CHUNK = 1 << 20
+#: A store id: `Store.create` makes 32 hex digits, and this takes any name
+#: of letters, digits, ``_`` and ``-``. The id names the files of the key
+#: ring (`log.KeyRing`), in the bundle and in the keys directory, so an id
+#: carrying a separator or ``..`` would steer create's key and head writes
+#: out of the bundle and restore's out of the keys directory. A snapshot
+#: or a manifest that names any other id is not a bundle this reads.
+_STORE_ID_RE = re.compile(r"[0-9A-Za-z_-]{1,128}")
 
 # Verification verdicts, and the exit status each maps to.
 OK = "ok"
@@ -352,6 +360,10 @@ def _snapshot_facts(path: Path) -> SnapshotFacts:
         final = meta.get("key_fingerprint")
         if not store_id or not final:
             raise BackupError(f"{path} carries no store id or key fingerprint")
+        if not _STORE_ID_RE.fullmatch(store_id):
+            raise BackupError(
+                f"{path} carries a store id that is not one: {store_id!r}"
+            )
         row = last_row(conn)
         if row is None:
             raise BackupError(f"{path} has an empty log")
@@ -569,6 +581,10 @@ def read_manifest(bundle: Path) -> dict[str, Any]:
     ):
         raise _ManifestProblem(
             "manifest_invalid", "store_id, key_fingerprint, head or files malformed"
+        )
+    if not _STORE_ID_RE.fullmatch(manifest["store_id"]):
+        raise _ManifestProblem(
+            "manifest_invalid", f"store_id {manifest['store_id']!r} is not a store id"
         )
     for name, entry in files.items():
         if (

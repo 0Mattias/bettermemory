@@ -554,6 +554,59 @@ def test_a_snapshot_from_another_store_contradicts_the_manifest(
     assert {"store_id", "key_fingerprint", "head"} <= fields
 
 
+def test_a_store_id_that_names_a_path_is_refused_everywhere(
+    bundle: Path, store_file: Path, keys_dir: Path, tmp_path: Path
+) -> None:
+    """The store id names the key ring's files, in the bundle and in the
+    keys directory (`log.KeyRing`). Here a holder of the key builds a
+    bundle whose snapshot and signed manifest agree on an id carrying
+    ``..``, with the key ring laid out where that id points: restoring it
+    would write the key, the head and the record outside the keys
+    directory. Verify reads the manifest as invalid and restore refuses
+    it, and create refuses a live store whose meta names such an id
+    rather than write its head outside the bundle."""
+    escape = "../planted"
+    manifest = _manifest(bundle)
+    store_id = manifest["store_id"]
+    key = _key(keys_dir, store_id)
+    conn = sqlite3.connect(str(bundle / STORE_FILENAME))
+    conn.execute("UPDATE meta SET value = ? WHERE key = 'store_id'", (escape,))
+    conn.commit()
+    conn.close()
+    ring = KeyRing(bundle, escape)
+    assert ring.current_path().parent.resolve() == bundle.parent.resolve()
+    head = bundle / f"{store_id}.head"
+    ring.head_path().write_bytes(head.read_bytes())
+    head.rename(bundle / ring.head_path().name)
+    ring.current_path().write_bytes(key)
+    laid = {ring.current_path().resolve(), ring.head_path().resolve()}
+    manifest["store_id"] = escape
+    del manifest["files"][head.name]
+    _rehash(bundle, manifest, STORE_FILENAME, ring.head_path().name)
+    manifest["mac"] = manifest_mac(key, manifest)
+    _write_manifest(bundle, manifest)
+
+    report = verify_bundle(bundle)
+    assert report["status"] == "mismatched"
+    assert "manifest_invalid" in _problems(report)
+
+    victim = tmp_path / "victim"
+    report = restore_bundle(
+        bundle, victim / "store" / STORE_FILENAME, apply=True, keys_dir=victim / "keys"
+    )
+    assert report["status"] == "refused"
+    assert not list(victim.rglob("planted*"))
+
+    conn = sqlite3.connect(str(store_file))
+    conn.execute("UPDATE meta SET value = ? WHERE key = 'store_id'", (escape,))
+    conn.commit()
+    conn.close()
+    with pytest.raises(BackupError, match="not one"):
+        create_backup(store_file)
+    found = {p.resolve() for p in tmp_path.rglob("planted*")}
+    assert found - {(bundle / ring.head_path().name).resolve()} == laid
+
+
 # ---------------------------------------------------------------------------
 # restore
 # ---------------------------------------------------------------------------
