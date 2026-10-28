@@ -5,6 +5,9 @@
   `xoxb-` or `AIza` token no longer survives in a log preview, the five
   legacy patterns keep their markers, and a query with no secret shape is
   byte-for-byte what it was.
+- The detectors stay linear in their input, now that every query and
+  every prompt the recall hook redacts runs through them, and report
+  exactly what their plain patterns did.
 - The standing guard's row and the override evidence on a write or an
   update are audit rows: recorded with `[telemetry] enabled = false`,
   while telemetry proper stays off.
@@ -20,6 +23,9 @@ import dataclasses
 import hashlib
 import itertools
 import json
+import random
+import re
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -232,6 +238,129 @@ def test_a_signed_row_carries_no_new_shape_secret(store: Store) -> None:
     assert payload["query"]["preview"].startswith("[REDACTED:github-token]")
     assert payload["probe_query"]["preview"].startswith("[REDACTED:stripe-key]")
     assert store.log_verify()["status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# The detectors stay linear, and report what their plain patterns did
+# ---------------------------------------------------------------------------
+
+# The four detectors whose body runs on through their prefix's characters,
+# spelled as they were before the `spent` alternative (credentials.py):
+# the reference both match sites are checked against, keyed by the start
+# of the pattern that replaced each.
+_PLAIN_PATTERNS: dict[str, re.Pattern[str]] = {
+    r"\bsk-": re.compile(
+        r"\bsk-(?:ant-|proj-)?"
+        r"(?=[A-Za-z0-9_-]*[A-Z])(?=[A-Za-z0-9_-]*[0-9])"
+        r"[A-Za-z0-9_-]{20,}\b"
+    ),
+    r"\bxox": re.compile(r"\bxox[abceprs]-(?=[0-9A-Za-z-]*[0-9])[0-9A-Za-z-]{10,}\b"),
+    r"\bxapp": re.compile(r"\bxapp-(?=[0-9A-Za-z-]*[0-9])[0-9A-Za-z-]{10,}\b"),
+    r"\beyJ": re.compile(
+        r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"
+    ),
+}
+
+# What the fuzz below strings together: whole tokens of the four shapes,
+# their bare prefixes, the edges of the body classes (`_`, `-`, an
+# uppercase letter, a digit), what ends a run (a dot, a space, a newline)
+# and a non-ASCII word character, which ends a run without making a word
+# boundary.
+_FRAGMENTS: tuple[str, ...] = (
+    _shaped("sk-", "Abcd1234efgh5678ijkl"),
+    _shaped("sk-", "proj-", "Q7", "abcdefghijklmnopqrstu"),
+    _shaped("xoxb-", "1234567890-abcdef"),
+    _shaped("xapp-", "1-A0B1C2D3E4"),
+    _shaped("eyJ", "hbGciOiJI.Abcd1234efgh.sig_Abcd1234"),
+    # A body too short after the `ant-` prefix and long enough without it.
+    _shaped("sk-", "ant-", "Abcd1234efgh5678"),
+    "sk-",
+    "ant-",
+    "proj-",
+    "xoxp-",
+    "xapp-",
+    "eyJ",
+    "abcdefgh",
+    "Abcd1234",
+    ".",
+    "-",
+    "_",
+    " ",
+    "\n",
+    "A",
+    "7",
+    "z",
+    "é",
+)
+
+
+def _plain_detectors() -> tuple[tuple[str, re.Pattern[str]], ...]:
+    """`credentials._PREFIXED_DETECTORS` with every detector that carries
+    a `spent` alternative put back to its plain pattern."""
+    plain: list[tuple[str, re.Pattern[str]]] = []
+    for kind, regex in credentials._PREFIXED_DETECTORS:
+        if "spent" in regex.groupindex:
+            (start,) = [s for s in _PLAIN_PATTERNS if regex.pattern.startswith(s)]
+            regex = _PLAIN_PATTERNS[start]
+        plain.append((kind, regex))
+    return tuple(plain)
+
+
+def test_the_spent_alternative_changes_no_span_and_no_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both match sites (`secret_spans`, `find_credential_markers`), over
+    strings built at random from every prefix, whole tokens and the edges
+    of every body class, report the same spans, kinds and snippets as the
+    plain patterns do."""
+    plain = _plain_detectors()
+    swapped = [
+        kind
+        for (kind, now), (_, was) in zip(
+            credentials._PREFIXED_DETECTORS, plain, strict=True
+        )
+        if now is not was
+    ]
+    assert sorted(swapped) == [
+        "jwt",
+        "openai-anthropic-key",
+        "slack-token",
+        "slack-token",
+    ]
+    rng = random.Random(20261028)
+    texts = [
+        "".join(rng.choices(_FRAGMENTS, k=rng.randint(1, 30))) for _ in range(3000)
+    ]
+
+    def scan() -> list[tuple[Any, Any]]:
+        return [
+            (secret_spans(t), credentials.find_credential_markers(t)) for t in texts
+        ]
+
+    linear = scan()
+    monkeypatch.setattr(credentials, "_PREFIXED_DETECTORS", plain)
+    assert linear == scan()
+    # Not vacuous: the fuzz finds each changed shape many times, and
+    # misses it many times too.
+    found = [kind for spans, _ in linear for _, _, kind in spans]
+    for kind in ("jwt", "openai-anthropic-key", "slack-token"):
+        assert found.count(kind) > 100, kind
+    assert sum(1 for spans, _ in linear if not spans) > 100
+
+
+@pytest.mark.parametrize("unit", ["sk-", "sk-ant-", "xoxb-", "xapp-", "eyJ-"])
+def test_a_run_of_prefixes_is_read_in_linear_time(unit: str) -> None:
+    """300 KB of one prefix over and over: through the plain `sk-` pattern
+    this took over a minute (each prefix's failed attempt read to the end
+    of the run), and a search query or a prompt the recall hook redacts
+    can be that long. The bound is generous for a slow runner and far
+    below the quadratic cost."""
+    text = unit * (300_000 // len(unit))
+    started = time.perf_counter()
+    assert secret_spans(text) == []
+    assert credentials.find_credential_markers(text) == []
+    assert redact_query(text)["len"] == len(text)
+    assert time.perf_counter() - started < 5.0
 
 
 # ---------------------------------------------------------------------------

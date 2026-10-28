@@ -63,6 +63,24 @@ from dataclasses import dataclass
 # unambiguous; resist adding a shapeless "long random string" rule, which
 # would fire on hashes, ULIDs, and base64 blobs that are perfectly fine to
 # remember.
+#
+# Linear time. Four shapes (`sk-`, `xox?-`, `xapp-`, `eyJ`) have a body
+# that runs on through the characters their prefix is made of, so a run of
+# nothing but prefixes (`sk-sk-sk-…`) offers a fresh start at every prefix,
+# and each failed attempt reads to the end of the run: the lookaheads scan
+# it for an uppercase letter or a digit, the JWT body backtracks through it
+# for its dot. The cost is the square of the run: 300 KB of `sk-` took over
+# a minute, well inside the size of a memory body, an episode, a search
+# query or the prompt the recall hook redacts (`events.redact_query`). So
+# each of the four ends in a second alternative, `(?P<spent>…)`, which the
+# regex takes only after the token alternative failed at that start: it
+# consumes the rest of the run, the scan resumes past it, and both match
+# sites drop it (`_is_spent_run`). What the detectors report is unchanged.
+# A later prefix in the same run sees a suffix of what the earlier one saw,
+# so once the first attempt in a run fails every later one fails too; and
+# a token match ends where no later prefix can start, so the alternative
+# is never reached after one. tests/test_hygiene_log.py checks both match
+# sites against the plain patterns.
 
 _PREFIXED_DETECTORS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # AWS access key id (AKIA) / temporary (ASIA): 4-char prefix + 16 base32.
@@ -77,13 +95,15 @@ _PREFIXED_DETECTORS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # avoid firing on lowercase kebab identifiers ("sk-image-processing-
     # toolkit-v3") the two lookaheads require the body to carry BOTH an
     # uppercase letter and a digit — a high-entropy real key reliably has
-    # both; a dictionary-word kebab string does not.
+    # both; a dictionary-word kebab string does not. `spent`: see above.
     (
         "openai-anthropic-key",
         re.compile(
-            r"\bsk-(?:ant-|proj-)?"
+            r"\bsk-(?:"
+            r"(?:ant-|proj-)?"
             r"(?=[A-Za-z0-9_-]*[A-Z])(?=[A-Za-z0-9_-]*[0-9])"
             r"[A-Za-z0-9_-]{20,}\b"
+            r"|(?P<spent>[A-Za-z0-9_-]*))"
         ),
     ),
     # Stripe secret / restricted key: sk_live_ / rk_test_ + 24+ alnum.
@@ -105,12 +125,18 @@ _PREFIXED_DETECTORS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # same way the sk- lookaheads above reject kebab identifiers.
     (
         "slack-token",
-        re.compile(r"\bxox[abceprs]-(?=[0-9A-Za-z-]*[0-9])[0-9A-Za-z-]{10,}\b"),
+        re.compile(
+            r"\bxox[abceprs]-(?:(?=[0-9A-Za-z-]*[0-9])[0-9A-Za-z-]{10,}\b"
+            r"|(?P<spent>[0-9A-Za-z-]*))"
+        ),
     ),
     # Slack app-level token.
     (
         "slack-token",
-        re.compile(r"\bxapp-(?=[0-9A-Za-z-]*[0-9])[0-9A-Za-z-]{10,}\b"),
+        re.compile(
+            r"\bxapp-(?:(?=[0-9A-Za-z-]*[0-9])[0-9A-Za-z-]{10,}\b"
+            r"|(?P<spent>[0-9A-Za-z-]*))"
+        ),
     ),
     # Google API key: AIza + 35.
     ("google-api-key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
@@ -141,7 +167,10 @@ _PREFIXED_DETECTORS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # JSON Web Token: header.payload.signature, header base64url-starts eyJ.
     (
         "jwt",
-        re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"),
+        re.compile(
+            r"\beyJ(?:[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"
+            r"|(?P<spent>[A-Za-z0-9_-]*))"
+        ),
     ),
 )
 
@@ -158,6 +187,14 @@ _MIN_BODY_DIVERSITY = 5
 def _is_masked_token(match: re.Match[str]) -> bool:
     body = match.groupdict().get("body")
     return body is not None and len(set(body)) < _MIN_BODY_DIVERSITY
+
+
+def _is_spent_run(match: re.Match[str]) -> bool:
+    """Whether `match` is a detector's `spent` alternative: the rest of a
+    run after a prefix that started no token, consumed only so the scan
+    does not start again at every prefix inside it (see the comment above
+    `_PREFIXED_DETECTORS`). Never a hit; both match sites skip it."""
+    return match.groupdict().get("spent") is not None
 
 
 # ---------------------------------------------------------------------------
@@ -440,7 +477,7 @@ def _merged_secret_spans(text: str) -> list[tuple[int, int, str]]:
     spans: list[tuple[int, int, str]] = []
     for kind, regex in _PREFIXED_DETECTORS:
         for m in regex.finditer(text):
-            if _is_masked_token(m):
+            if _is_spent_run(m) or _is_masked_token(m):
                 continue
             spans.append((m.start(), m.end(), kind))
     for m in _GENERIC_KEYWORD_RE.finditer(text):
@@ -546,9 +583,10 @@ def find_credential_markers(content: str) -> list[CredentialMatch]:
 
     for kind, regex in _PREFIXED_DETECTORS:
         # First NON-MASK hit per detector: an x-run or all-X mask is an
-        # already-redacted shape, not a secret (see _is_masked_token).
+        # already-redacted shape, not a secret (see _is_masked_token), and
+        # a spent run is no token at all (see _is_spent_run).
         for match in regex.finditer(content):
-            if _is_masked_token(match):
+            if _is_spent_run(match) or _is_masked_token(match):
                 continue
             _add(kind, match.start(), match.end())
             break
