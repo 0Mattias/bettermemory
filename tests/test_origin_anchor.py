@@ -293,39 +293,59 @@ def test_the_bypass_on_a_store_copied_in_is_caught_at_its_rekey_row(
     }
 
 
+def _insert_row(
+    conn: sqlite3.Connection,
+    *,
+    key: bytes,
+    seq: int,
+    kind: str,
+    payload: dict[str, Any],
+    prev_mac: str,
+) -> str:
+    """Insert a row at `seq`, MAC'd under `key`: the editor picks the seq,
+    where `log.append_row` only ever appends. Returns the row's MAC."""
+    text = chain.canonical_payload(payload)
+    ts = "2026-01-01T00:00:00Z"
+    mac = chain.compute_mac(
+        key, seq=seq, ts=ts, session=None, kind=kind, payload=text, prev_mac=prev_mac
+    )
+    conn.execute(
+        "INSERT INTO log(seq, ts, session, kind, payload, prev_mac, mac) "
+        "VALUES (?, ?, NULL, ?, ?, ?, ?)",
+        (seq, ts, kind, text, prev_mac, mac),
+    )
+    return mac
+
+
+def _put_payload(memory: Memory) -> dict[str, Any]:
+    return {
+        "memory": memory.model_dump(mode="json"),
+        "provenance": LOCAL,
+        "filename": None,
+    }
+
+
 def test_a_row_put_before_seq_one_cannot_pass_as_copied_history(
     owned: tuple[Path, Memory, str, str], keys: Path
 ) -> None:
     """Without touching the anchored row, an editor can still open the log
-    with a row of its own ahead of seq 1 and rename the leading segment:
-    that segment's first row then verifies under no key here, so it reads
-    as a copied store's. It holds the anchored row, though, so it does not
-    end before the anchor: it is foreign."""
+    with a row of its own ahead of seq 1 and rename the leading segment.
+    No store writes a row below seq 1, so the segment map starts at seq 1
+    as `log verify` does, and a record such a row put reads `unaccounted`,
+    with the anchor or without it."""
     path, genuine, _own, _store_id = owned
     forged_key = secrets.token_bytes(chain.KEY_BYTES)
     planted = _memory("planted at seq zero")
-    payload: dict[str, Any] = {
-        "memory": planted.model_dump(mode="json"),
-        "provenance": LOCAL,
-        "filename": None,
-    }
-    text = chain.canonical_payload(payload)
-    ts = "2026-01-01T00:00:00Z"
-    mac = chain.compute_mac(
-        forged_key,
-        seq=0,
-        ts=ts,
-        session=None,
-        kind="memory_put",
-        payload=text,
-        prev_mac=chain.GENESIS_MAC,
-    )
+    payload = _put_payload(planted)
     conn = _outside(path)
     try:
-        conn.execute(
-            "INSERT INTO log(seq, ts, session, kind, payload, prev_mac, mac) "
-            "VALUES (0, ?, NULL, 'memory_put', ?, ?, ?)",
-            (ts, text, chain.GENESIS_MAC, mac),
+        mac = _insert_row(
+            conn,
+            key=forged_key,
+            seq=0,
+            kind="memory_put",
+            payload=payload,
+            prev_mac=chain.GENESIS_MAC,
         )
         store_module._apply_mutation(conn, "memory_put", payload, log_mac=mac)
         conn.commit()
@@ -344,10 +364,156 @@ def test_a_row_put_before_seq_one_cannot_pass_as_copied_history(
     assert report["status"] == "tampered"
     assert planted.id in report["unaccounted_ids"]
 
-    # Without the anchor, the leading segment's labels would stand.
     KeyRing(keys, _store_id).origin_path().unlink()
     with Store.open(path, keys_dir=keys) as reader:
-        assert reader.provenance_for([planted.id]) == {planted.id: LOCAL}
+        assert reader.provenance_for([planted.id]) == {planted.id: UNACCOUNTED}
+
+
+@pytest.mark.parametrize("opener", ["owner", "reader"])
+def test_a_segment_put_below_seq_one_never_reads_as_history_before_the_anchor(
+    owned: tuple[Path, Memory, str, str], keys: Path, opener: str
+) -> None:
+    """The editor's rows below seq 1 as a segment of their own: a first row,
+    a `rekey` row naming a key nobody holds, the planted put, and a second
+    `rekey` row at seq 0 naming this host's key, so the segment this host's
+    history sits in starts before the anchor. Read off those rows, the
+    planted segment would end before the anchor at seq 1 and lead, and its
+    label would stand. The segment map starts at seq 1, so it is no
+    segment, and the planted record reads `unaccounted`."""
+    path, genuine, own, store_id = owned
+    forged_key = secrets.token_bytes(chain.KEY_BYTES)
+    forged = chain.fingerprint(forged_key)
+    planted = _memory("planted in a segment of its own below seq one")
+    payload = _put_payload(planted)
+    conn = _outside(path)
+    try:
+        prev = _insert_row(
+            conn,
+            key=forged_key,
+            seq=-3,
+            kind=chain.STORE_CREATED,
+            payload={"store_id": store_id},
+            prev_mac=chain.GENESIS_MAC,
+        )
+        prev = _insert_row(
+            conn,
+            key=forged_key,
+            seq=-2,
+            kind=chain.REKEY,
+            payload={
+                "old_fingerprint": secrets.token_hex(32),
+                "new_fingerprint": forged,
+            },
+            prev_mac=prev,
+        )
+        put = _insert_row(
+            conn,
+            key=forged_key,
+            seq=-1,
+            kind="memory_put",
+            payload=payload,
+            prev_mac=prev,
+        )
+        store_module._apply_mutation(conn, "memory_put", payload, log_mac=put)
+        _insert_row(
+            conn,
+            key=forged_key,
+            seq=0,
+            kind=chain.REKEY,
+            payload={"old_fingerprint": forged, "new_fingerprint": own},
+            prev_mac=put,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    with (
+        Store.open_or_create(path, keys_dir=keys, strict_provenance=False)
+        if opener == "owner"
+        else Store.open(path, keys_dir=keys, strict_provenance=False)
+    ) as store:
+        assert store.provenance_for([genuine.id, planted.id]) == {
+            genuine.id: LOCAL,
+            planted.id: UNACCOUNTED,
+        }
+        assert store.trust_rows([planted.id]) == {planted.id: (UNACCOUNTED, None)}
+        trust = chain.chain_trust(
+            store.conn,
+            keyring=store.keyring,
+            current_fingerprint=own,
+            current_key=None,
+        )
+        report = store.log_verify()
+    assert [s.first_seq for s in trust.segments] == [1]
+    assert trust.origin.holds
+    assert report["status"] == "tampered"
+    assert planted.id in report["unaccounted_ids"]
+
+
+def test_a_row_below_seq_one_on_a_store_copied_in_is_not_its_history(
+    copied: tuple[Path, Path, Memory, Memory, int, str],
+) -> None:
+    """On a store copied here, the history before the takeover leads and
+    keeps its labels. A row below seq 1 is none of it: no store wrote it,
+    so the record it put reads `unaccounted` though the segment it would
+    fall in leads."""
+    path, keys_b, arrived, _written, _rekey_seq, _store_id = copied
+    planted = _memory("planted under the copied history")
+    payload = _put_payload(planted)
+    conn = _outside(path)
+    try:
+        mac = _insert_row(
+            conn,
+            key=secrets.token_bytes(chain.KEY_BYTES),
+            seq=0,
+            kind="memory_put",
+            payload=payload,
+            prev_mac=chain.GENESIS_MAC,
+        )
+        store_module._apply_mutation(conn, "memory_put", payload, log_mac=mac)
+        conn.commit()
+    finally:
+        conn.close()
+    with Store.open_or_create(path, keys_dir=keys_b, strict_provenance=False) as here:
+        assert here.provenance_for([arrived.id, planted.id]) == {
+            arrived.id: LOCAL,
+            planted.id: UNACCOUNTED,
+        }
+
+
+def test_a_row_below_seq_one_never_makes_the_opener_retire_its_key(
+    owned: tuple[Path, Memory, str, str], keys: Path
+) -> None:
+    """One row at seq 0 and a meta edit: read off that row, the leading
+    segment's first row verified under no key here, so the opener found
+    its key signing none of the log, retired it and rekeyed, and this
+    host's own records read `unaccounted` under the anchor. From seq 1 on,
+    the key signs the log and stays."""
+    path, genuine, own, store_id = owned
+    conn = _outside(path)
+    try:
+        _insert_row(
+            conn,
+            key=secrets.token_bytes(chain.KEY_BYTES),
+            seq=0,
+            kind="note",
+            payload={"note": "ahead of the store's first row"},
+            prev_mac=chain.GENESIS_MAC,
+        )
+        conn.execute(
+            "UPDATE meta SET value = ? WHERE key = 'key_fingerprint'",
+            (secrets.token_hex(32),),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    with Store.open_or_create(path, keys_dir=keys, strict_provenance=False) as owner:
+        assert owner.key_fingerprint == own
+        assert all(row.kind != chain.REKEY for row in owner.log_rows())
+        assert owner.provenance_for([genuine.id]) == {genuine.id: LOCAL}
+        report = owner.log_verify()
+    assert report["status"] == "ok"
+    assert report["origin"] == {"status": "ok", "seq": 1}
+    assert list(keys.glob(f"{store_id}.*.key")) == []
 
 
 # ---------------------------------------------------------------------------

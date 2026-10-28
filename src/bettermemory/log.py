@@ -815,12 +815,21 @@ def chain_trust(
     the anchor, never a scan of the log. ``current_fingerprint`` names the
     leading segment when the log has no ``rekey`` row (the store's meta);
     ``current_key``, the key the caller already holds, is used without
-    reading its file again."""
+    reading its file again.
+
+    Only the rows from seq 1 on are read, the rows `verify_chain` walks
+    (`iter_rows`). No store writes a row below seq 1 (`append_row`), so
+    one there is an editor's, and a map read from it would let that
+    editor open the log with a segment of its own: ending it with a
+    ``rekey`` row that names this machine's key puts it before an anchor
+    at seq 1, where it would read as a copied store's history."""
     origin = check_origin(conn, keyring=keyring, current_key=current_key)
-    first = conn.execute(f"{_SELECT} ORDER BY seq LIMIT 1").fetchone()
+    first = conn.execute(f"{_SELECT} WHERE seq > 0 ORDER BY seq LIMIT 1").fetchone()
     rekeys = [
         _row(raw)
-        for raw in conn.execute(f"{_SELECT} WHERE kind = ? ORDER BY seq", (REKEY,))
+        for raw in conn.execute(
+            f"{_SELECT} WHERE kind = ? AND seq > 0 ORDER BY seq", (REKEY,)
+        )
     ]
     segments = _segments_from(
         None if first is None else _row(first),
@@ -853,9 +862,10 @@ def chain_segments(
 def last_rekey_name(conn: sqlite3.Connection) -> str | None:
     """The fingerprint the log's last ``rekey`` row names as the new key
     (the empty string when its payload names none), or None when the log
-    has no ``rekey`` row. One indexed lookup."""
+    has no ``rekey`` row. One indexed lookup, over the rows `chain_trust`
+    reads (seq 1 on)."""
     raw = conn.execute(
-        f"{_SELECT} WHERE kind = ? ORDER BY seq DESC LIMIT 1", (REKEY,)
+        f"{_SELECT} WHERE kind = ? AND seq > 0 ORDER BY seq DESC LIMIT 1", (REKEY,)
     ).fetchone()
     if raw is None:
         return None

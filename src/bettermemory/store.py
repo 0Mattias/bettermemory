@@ -4043,8 +4043,9 @@ class Store:
         not held answers None (its label stands), or is checked the same
         way under ``strict_provenance`` or when the origin anchor no
         longer matches the log, since which segments lead is then not
-        known. None too when the store was opened without its key. The
-        True and False answers are cached per (id, mac)."""
+        known. A row below seq 1 is False whatever its segment. None too
+        when the store was opened without its key. The True and False
+        answers are cached per (id, mac)."""
         own_key = self._key
         if own_key is None:
             return None
@@ -4067,7 +4068,10 @@ class Store:
                 named = str(record["id"])
             except (ValueError, KeyError, TypeError):
                 named = ""
-            if named == record_id:
+            # No store writes a row below seq 1 (`log.append_row`), and no
+            # segment holds one (`log.chain_trust`): a record that names
+            # one was put by an editor of the file, whatever its label.
+            if named == record_id and int(raw["seq"]) > 0:
                 segment = self._segment_for(int(raw["seq"]))
                 if segment is None:
                     return None
