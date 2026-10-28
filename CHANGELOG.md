@@ -434,7 +434,9 @@ stable 9.0.0 follows the candidates' testing.
   traceback, and `backup verify` reads a bundle file it cannot read as
   `file_unreadable` (mismatched). `log export --out` and `log anchor
   --out` refuse the store file, its `-wal` and `-shm`, and any path in
-  the keys directory, which they would have replaced.
+  the keys directory, which they would have replaced, compared by file
+  identity, so a symlink, a firmlink or a spelling in another case on a
+  volume that folds case is refused too.
   (`src/bettermemory/cli/_common.py`, `src/bettermemory/sandbox_settings.py`,
   `src/bettermemory/doctor.py`, `src/bettermemory/cli/log_cmd.py`)
 - **A listener that does not speak HTTP is no daemon.** `health()` let

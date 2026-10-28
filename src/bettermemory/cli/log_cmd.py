@@ -257,6 +257,16 @@ def _output_path(parser: argparse.ArgumentParser, name: str) -> Path:
     return path
 
 
+def _same_file(a: Path, b: Path) -> bool:
+    """Whether ``a`` and ``b`` are one file or directory to the operating
+    system (`os.path.samefile`); False when either does not exist or
+    cannot be read."""
+    try:
+        return os.path.samefile(a, b)
+    except (OSError, ValueError):
+        return False
+
+
 def _refuse_store_files(
     parser: argparse.ArgumentParser, out: Path, store: Store
 ) -> None:
@@ -265,17 +275,37 @@ def _refuse_store_files(
     path atomically: a read-only command must not put JSON where the
     store was (a daemon still serving it would go on writing to the
     unlinked file), nor a file among the keys and the head checkpoint.
-    Compared resolved, so a symlink or a relative path to them is caught
-    too. Called with the store open, before anything is written."""
-    target = out.expanduser().resolve()
-    store_file = store.path.resolve()
-    keys_dir = store.keys_dir.expanduser().resolve()
-    if target in {
-        store_file.with_name(store_file.name + s) for s in ("", "-wal", "-shm")
-    }:
+
+    Compared by identity, not by spelling: a symlink, a relative path, a
+    macOS firmlink, or a spelling that differs only in case on a volume
+    that folds case (macOS's and Windows' default) names the same file,
+    and `Path.resolve` puts none of the last two right. A ``-wal`` or
+    ``-shm`` that does not exist yet is caught by its name in the store's
+    directory, compared folded when the store's volume folds case. Called
+    with the store open, before anything is written."""
+    target = out.expanduser().absolute()
+    resolved = target.resolve()
+    store_file = store.path
+    keys_dir = store.keys_dir.expanduser()
+    own = [store_file.with_name(store_file.name + s) for s in ("", "-wal", "-shm")]
+    # The store file exists while it is open, so its case-flipped
+    # spelling resolving to it says whether this volume folds case.
+    folds = _same_file(store_file, store_file.with_name(store_file.name.swapcase()))
+
+    def fold(name: str) -> str:
+        return name.casefold() if folds else name
+
+    own_names = {fold(path.name) for path in own}
+    if any(_same_file(target, path) for path in own) or any(
+        _same_file(path.parent, store_file.parent) and fold(path.name) in own_names
+        for path in (target, resolved)
+    ):
         store.close()
         parser.error(f"--out: {out} is the store's own file")
-    if target == keys_dir or keys_dir in target.parents:
+    if any(
+        _same_file(directory, keys_dir)
+        for directory in (target, resolved, *target.parents, *resolved.parents)
+    ):
         store.close()
         parser.error(f"--out: {out} is in the keys directory {keys_dir}")
 

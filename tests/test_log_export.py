@@ -998,3 +998,84 @@ def test_a_payload_nested_past_the_bound_is_its_text_on_every_python(
     assert shallow["payload"] == (
         parsed if include_bodies else audit_export.redact_payload(parsed)
     )
+
+
+def _folds_case(path: Path) -> bool:
+    """Whether the volume holding the existing file ``path`` folds case."""
+    import os
+
+    try:
+        return os.path.samefile(path, path.with_name(path.name.swapcase()))
+    except OSError:
+        return False
+
+
+@pytest.mark.parametrize("command", ["export", "anchor"])
+@pytest.mark.parametrize("target", ["store", "shm", "store_dir", "key", "keys_dir"])
+def test_out_spelled_in_another_case_is_refused_where_the_volume_folds_case(
+    cli_store: Store,
+    keys_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+    target: str,
+) -> None:
+    """On a volume that folds case (macOS's and Windows' default), a
+    spelling of the store file, of a `-shm` that does not exist yet, or
+    of the keys directory that differs only in case names the same file.
+    `Path.resolve` leaves the case as typed, so a guard comparing
+    spellings let `MEMORY.SQLITE` through and the atomic replace put JSON
+    where the store was, or where its key was."""
+    cli_store.put_memory(_memory("kept"))
+    store_file = cli_store.path
+    key_file = keys_dir / f"{cli_store.store_id}.key"
+    if not (_folds_case(store_file) and _folds_case(keys_dir)):
+        pytest.skip("this volume does not fold case")
+    if target == "store":
+        out = store_file.with_name(store_file.name.upper())
+    elif target == "shm":
+        shm = store_file.with_name(store_file.name + "-shm")
+        shm.unlink(missing_ok=True)
+        out = shm.with_name(shm.name.upper())
+    elif target == "store_dir":
+        out = store_file.parent.with_name(store_file.parent.name.upper())
+        out = out / store_file.name
+    elif target == "key":
+        out = key_file.with_name(key_file.name.upper())
+    else:
+        out = keys_dir.with_name(keys_dir.name.upper()) / key_file.name
+    protected = {path: path.read_bytes() for path in (store_file, key_file)}
+    code = _run_cli(["log", command, "--out", str(out)], monkeypatch)
+    assert code == 2
+    assert "--out:" in capsys.readouterr().err
+    assert {path: path.read_bytes() for path in protected} == protected
+    assert _run_cli(["log", "verify"], monkeypatch) == 0
+
+
+@pytest.mark.parametrize("command", ["export", "anchor"])
+def test_out_through_a_linked_directory_is_refused(
+    cli_store: Store,
+    keys_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+) -> None:
+    """A directory that is the store's or the keys directory under
+    another name (a symlink here; a firmlink on macOS reads the same to
+    `samefile`) is caught by identity."""
+    store_link = tmp_path / "store-link"
+    keys_link = tmp_path / "keys-link"
+    try:
+        store_link.symlink_to(cli_store.path.parent, target_is_directory=True)
+        keys_link.symlink_to(keys_dir, target_is_directory=True)
+    except OSError:
+        pytest.skip("this account cannot create symlinks")
+    for out in (
+        store_link / cli_store.path.name,
+        store_link / (cli_store.path.name + "-shm"),
+        keys_link / f"{cli_store.store_id}.head",
+    ):
+        assert _run_cli(["log", command, "--out", str(out)], monkeypatch) == 2
+        assert "--out:" in capsys.readouterr().err
+    assert _run_cli(["log", "verify"], monkeypatch) == 0
