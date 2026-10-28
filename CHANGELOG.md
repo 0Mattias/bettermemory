@@ -468,6 +468,15 @@ stable 9.0.0 follows the candidates' testing.
   editor who sets `meta.store_id` to a fresh id detaches the store from
   this host's key ring, so it opens as a store copied here, and only
   `strict_provenance` reads its earlier rows `unaccounted`.
+- **A store file that carries another store's id binds its key ring.**
+  The key, the head checkpoint and the origin anchor are named after
+  `meta.store_id` alone, an id `log export`, `log anchor` and bundle
+  manifests carry. A store file with the id of a store on this host,
+  such as a repository's `./.claude-memory/`, retires that store's key
+  at its first writing open here, and a high seq in it pushes the shared
+  head past that store's log, which then reads `tampered`
+  (`tail_deleted`). `[storage] cwd_store = false` closes the repository
+  route.
 - **A store file copied over again reads `origin_mismatch`.** Copying
   the store file from its source machine over this host's store again,
   with the same store id, changes the history at the anchor. The
