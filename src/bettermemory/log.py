@@ -30,6 +30,24 @@ at those rows and verifies each segment with the key its fingerprint
 names, current or retired; a segment whose key is absent is reported as
 unverifiable, never guessed at.
 
+Held and foreign segments. A segment is *held* when this machine's key
+ring has its key. The segments before the first held one are the
+documented case of a store copied here without its key: their rows were
+signed somewhere else, before this machine first signed the store. A
+segment whose key is not held and that comes AFTER a held one is
+*foreign*: a ``rekey`` row nobody here wrote, appended to history this
+machine signed. Writing one needs only the store file, never the key,
+so its existence is evidence of tampering, and ``verify_chain`` reports
+it as ``foreign_segment`` (``chain_segments`` gives the store the same
+map for its reads). The names a ``rekey`` row carries are not
+authenticated until the row's own MAC is checked, and the leading
+segment's name is one its own key never signed: the first ``rekey``
+row's ``old_fingerprint`` (MAC'd, if at all, by the next segment's key)
+or the store's meta. So a leading segment whose named key is not held is
+also tried against every key the ring holds, by its first row's MAC: a
+forged first ``rekey`` row cannot rename this machine's own history into
+the copied-store case.
+
 Not defended: an attacker holding the user's own key and config
 directory. The design keeps the two apart from the store file so that
 copying, syncing or editing the store never carries the key with it.
@@ -37,13 +55,14 @@ copying, syncing or editing the store never carries the key with it.
 
 from __future__ import annotations
 
+import glob
 import hashlib
 import hmac
 import json
 import logging
 import secrets
 import sqlite3
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -96,11 +115,16 @@ CONTROL_KINDS = frozenset({STORE_CREATED, REKEY, MIGRATE_V8}) | CAPTURE_KINDS
 # A retired key is filed under the first characters of its fingerprint.
 _RETIRED_PREFIX_CHARS = 16
 
+# A segment whose key this machine does not hold, after one whose key it
+# does (see the module docstring): rows appended without the key to
+# history this machine signed.
+FOREIGN_SEGMENT = "foreign_segment"
+
 # Problems that mean the log was changed by something other than the
 # store. Anything else in a report is a warning or a gap in what can be
 # checked, never a verdict.
 TAMPER_PROBLEMS = frozenset(
-    {"mac_mismatch", "chain_break", "seq_gap", "final_key_mismatch"}
+    {"mac_mismatch", "chain_break", "seq_gap", "final_key_mismatch", FOREIGN_SEGMENT}
 )
 
 
@@ -231,6 +255,29 @@ class KeyRing:
                 return key
         return None
 
+    def held_keys(self) -> list[bytes]:
+        """Every key the ring holds for this store: the current one first,
+        then the retired ones in file-name order. What a segment whose
+        name the log may give wrongly is tried against (`chain_segments`);
+        a key file that cannot be read is skipped."""
+        keys: list[bytes] = []
+        current = self.load_current()
+        if current is not None:
+            keys.append(current)
+        pattern = f"{glob.escape(self.store_id)}.*.key"
+        try:
+            retired = sorted(self.keys_dir.glob(pattern))
+        except OSError:
+            retired = []
+        for path in retired:
+            try:
+                key = path.read_bytes()
+            except OSError:
+                continue
+            if key not in keys:
+                keys.append(key)
+        return keys
+
     def read_head(self) -> Head | None:
         try:
             raw = json.loads(self.head_path().read_text(encoding="utf-8"))
@@ -328,9 +375,10 @@ def append_row(
 class ChainReport:
     """What verifying the chain found. ``status`` is ``tampered`` when a
     row fails its MAC, the chain breaks, a seq is skipped, the final
-    segment's key is not the store's, or the head names a row the log no
-    longer holds; ``unverifiable`` when a segment's key is absent or there
-    is no head; ``ok`` otherwise."""
+    segment's key is not the store's, a segment whose key is absent
+    follows one whose key is held (``foreign_segment``), or the head names
+    a row the log no longer holds; ``unverifiable`` when a leading
+    segment's key is absent or there is no head; ``ok`` otherwise."""
 
     rows: int
     segments: list[dict[str, Any]] = field(default_factory=list)
@@ -360,11 +408,158 @@ def _rekey_fingerprints(row: LogRow) -> tuple[str, str] | None:
     return old, new
 
 
+def row_verifies(key: bytes, row: LogRow) -> bool:
+    """Does ``row``'s MAC verify under ``key``?"""
+    expected = compute_mac(
+        key,
+        seq=row.seq,
+        ts=row.ts,
+        session=row.session,
+        kind=row.kind,
+        payload=row.payload,
+        prev_mac=row.prev_mac,
+    )
+    return hmac.compare_digest(expected, row.mac)
+
+
+@dataclass(frozen=True)
+class Segment:
+    """One run of the chain under one key: from ``first_row`` (the log's
+    first row, or a ``rekey`` row) to the row before the next ``rekey``.
+
+    ``key_fingerprint`` is the key the log names for it, or, for a leading
+    segment whose named key is not held, the held key its first row's MAC
+    verifies under. ``key`` is that key when this machine holds it and
+    None otherwise. ``foreign`` marks a segment whose key is not held and
+    that comes after a segment whose key is: rows appended without the
+    key to history this machine signed (the module docstring)."""
+
+    first_seq: int
+    key_fingerprint: str
+    key: bytes | None = field(default=None, repr=False, compare=False)
+    foreign: bool = False
+    first_row: LogRow | None = field(default=None, repr=False, compare=False)
+
+    @property
+    def held(self) -> bool:
+        return self.key is not None
+
+
+def _leading_key(
+    keyring: KeyRing,
+    named: str,
+    first_row: LogRow,
+    current_key: bytes | None,
+) -> tuple[str, bytes | None]:
+    """The leading segment's fingerprint and key. Its own key never signed
+    its name (the first ``rekey`` row's ``old_fingerprint``, or the
+    store's meta when no ``rekey`` row exists), so when the named key is
+    not held the first row is tried against every key the ring holds: a
+    writer without the key who renames this machine's own history must
+    not turn it into the copied-store case, whose rows keep their labels.
+    A key that verifies the first row is the key that signed it."""
+    if current_key is not None and fingerprint(current_key) == named:
+        return named, current_key
+    key = keyring.key_for_fingerprint(named) if named else None
+    if key is not None:
+        return named, key
+    candidates = keyring.held_keys()
+    if current_key is not None and current_key not in candidates:
+        candidates.insert(0, current_key)
+    for candidate in candidates:
+        if row_verifies(candidate, first_row):
+            return fingerprint(candidate), candidate
+    return named, None
+
+
+def _segments_from(
+    first_row: LogRow | None,
+    rekey_rows: Iterable[LogRow],
+    *,
+    keyring: KeyRing,
+    current_fingerprint: str,
+    current_key: bytes | None,
+) -> list[Segment]:
+    """The segment map from the log's first row and its ``rekey`` rows in
+    seq order: the one definition `verify_chain` and the store's reads
+    share. A ``rekey`` row whose payload names no fingerprints opens a
+    segment under the empty name, which no key holds."""
+    if first_row is None:
+        return []
+    starts: list[tuple[LogRow, str]] = []
+    leading_name = current_fingerprint
+    for position, row in enumerate(rekey_rows):
+        names = _rekey_fingerprints(row)
+        if position == 0 and names is not None:
+            leading_name = names[0]
+        starts.append((row, "" if names is None else names[1]))
+    segments: list[Segment] = []
+    held_seen = False
+    if not starts or starts[0][0].seq != first_row.seq:
+        name, key = _leading_key(keyring, leading_name, first_row, current_key)
+        segments.append(Segment(first_row.seq, name, key, False, first_row))
+        held_seen = key is not None
+    keys: dict[str, bytes | None] = {}
+    if current_key is not None:
+        keys[fingerprint(current_key)] = current_key
+    for row, name in starts:
+        if name not in keys:
+            keys[name] = keyring.key_for_fingerprint(name) if name else None
+        key = keys[name]
+        segments.append(Segment(row.seq, name, key, key is None and held_seen, row))
+        held_seen = held_seen or key is not None
+    return segments
+
+
+def chain_segments(
+    conn: sqlite3.Connection,
+    *,
+    keyring: KeyRing,
+    current_fingerprint: str,
+    current_key: bytes | None = None,
+) -> list[Segment]:
+    """The chain's segments, in seq order, each with the key that verifies
+    it when this machine holds one and whether it is foreign. Reads the
+    ``rekey`` rows through the ``log_by_kind`` index and the first row by
+    its primary key, so it costs a few rows, never a scan of the log.
+    ``current_fingerprint`` names the leading segment when the log has no
+    ``rekey`` row (the store's meta); ``current_key``, the key the caller
+    already holds, is used without reading its file again."""
+    first = conn.execute(f"{_SELECT} ORDER BY seq LIMIT 1").fetchone()
+    rekeys = [
+        _row(raw)
+        for raw in conn.execute(f"{_SELECT} WHERE kind = ? ORDER BY seq", (REKEY,))
+    ]
+    return _segments_from(
+        None if first is None else _row(first),
+        rekeys,
+        keyring=keyring,
+        current_fingerprint=current_fingerprint,
+        current_key=current_key,
+    )
+
+
+def last_rekey_name(conn: sqlite3.Connection) -> str | None:
+    """The fingerprint the log's last ``rekey`` row names as the new key
+    (the empty string when its payload names none), or None when the log
+    has no ``rekey`` row. One indexed lookup."""
+    raw = conn.execute(
+        f"{_SELECT} WHERE kind = ? ORDER BY seq DESC LIMIT 1", (REKEY,)
+    ).fetchone()
+    if raw is None:
+        return None
+    names = _rekey_fingerprints(_row(raw))
+    return "" if names is None else names[1]
+
+
 def verify_chain(
     conn: sqlite3.Connection, *, keyring: KeyRing, current_fingerprint: str
 ) -> ChainReport:
     """Walk every row in seq order, checking contiguity, linkage and the
-    MAC under the segment's key; then the head against the last row."""
+    MAC under the segment's key; then the head against the last row. A
+    segment is verified under the key `chain_segments` would give it, so
+    the audit and the store's reads agree on which rows a key covers, and
+    a foreign segment is reported as ``foreign_segment`` with its range."""
     rows = list(iter_rows(conn))
     report = ChainReport(rows=len(rows))
     problems = report.problems
@@ -372,45 +567,46 @@ def verify_chain(
     def problem(row: LogRow, name: str, **detail: Any) -> None:
         problems.append({"seq": row.seq, "kind": row.kind, "problem": name, **detail})
 
-    # The first segment's key: the earliest rekey row says which key it
-    # replaced; with no rekey rows the store's current key signed it all.
-    first_fingerprint = current_fingerprint
-    for row in rows:
-        if row.kind == REKEY:
-            names = _rekey_fingerprints(row)
-            if names is not None:
-                first_fingerprint = names[0]
-            break
+    # The leading segment's name is the earliest rekey row's
+    # `old_fingerprint`; with no rekey rows the store's current key
+    # signed it all. `_segments_from` checks the name against the first
+    # row's MAC when the named key is not held here.
+    segments = _segments_from(
+        rows[0] if rows else None,
+        [row for row in rows if row.kind == REKEY],
+        keyring=keyring,
+        current_fingerprint=current_fingerprint,
+        current_key=None,
+    )
+    starts = {s.first_seq: s for s in segments}
 
     segment: dict[str, Any] | None = None
     key: bytes | None = None
     expected_seq = 1
     previous: LogRow | None = None
+    foreign: list[dict[str, Any]] = []
 
-    def open_segment(row: LogRow, key_fingerprint: str) -> None:
+    def open_segment(row: LogRow, named: Segment) -> None:
         nonlocal segment, key
-        key = keyring.key_for_fingerprint(key_fingerprint)
+        key = named.key
         segment = {
             "first_seq": row.seq,
             "last_seq": row.seq,
-            "key_fingerprint": key_fingerprint,
+            "key_fingerprint": named.key_fingerprint,
             "status": "ok" if key is not None else "unverifiable",
             "rows": 0,
         }
         report.segments.append(segment)
+        if named.foreign:
+            foreign.append(segment)
 
     for row in rows:
-        if row.kind == REKEY:
-            names = _rekey_fingerprints(row)
-            if names is None:
-                problem(row, "payload_invalid")
-                # The chain continues under a key nothing names; every
-                # following row is unverifiable until the next rekey.
-                open_segment(row, "")
-            else:
-                open_segment(row, names[1])
-        elif segment is None:
-            open_segment(row, first_fingerprint)
+        if row.kind == REKEY and _rekey_fingerprints(row) is None:
+            # The chain continues under a key nothing names; every
+            # following row is unverifiable until the next rekey.
+            problem(row, "payload_invalid")
+        if row.seq in starts:
+            open_segment(row, starts[row.seq])
         assert segment is not None
         segment["last_seq"] = row.seq
         segment["rows"] += 1
@@ -421,20 +617,22 @@ def verify_chain(
         linked_to = GENESIS_MAC if previous is None else previous.mac
         if row.prev_mac != linked_to:
             problem(row, "chain_break")
-        if key is not None:
-            expected_mac = compute_mac(
-                key,
-                seq=row.seq,
-                ts=row.ts,
-                session=row.session,
-                kind=row.kind,
-                payload=row.payload,
-                prev_mac=row.prev_mac,
-            )
-            if not hmac.compare_digest(expected_mac, row.mac):
-                problem(row, "mac_mismatch")
-                segment["status"] = "tampered"
+        if key is not None and not row_verifies(key, row):
+            problem(row, "mac_mismatch")
+            segment["status"] = "tampered"
         previous = row
+
+    for stray in foreign:
+        problems.append(
+            {
+                "seq": stray["first_seq"],
+                "kind": REKEY,
+                "problem": FOREIGN_SEGMENT,
+                "first_seq": stray["first_seq"],
+                "last_seq": stray["last_seq"],
+                "key_fingerprint": stray["key_fingerprint"],
+            }
+        )
 
     if segment is not None and segment["key_fingerprint"] != current_fingerprint:
         problems.append(
@@ -494,6 +692,7 @@ __all__ = [
     "CAPTURE_RELATIONS",
     "CAPTURE_UNDO",
     "CONTROL_KINDS",
+    "FOREIGN_SEGMENT",
     "GENESIS_MAC",
     "KEY_BYTES",
     "MIGRATE_V8",
@@ -504,12 +703,16 @@ __all__ = [
     "Head",
     "KeyRing",
     "LogRow",
+    "Segment",
     "append_row",
     "canonical_payload",
+    "chain_segments",
     "compute_mac",
     "default_keys_dir",
     "fingerprint",
     "iter_rows",
+    "last_rekey_name",
     "last_row",
+    "row_verifies",
     "verify_chain",
 ]

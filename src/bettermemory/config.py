@@ -242,6 +242,20 @@ port = 7397
 # since an off-the-books delivery is refused.
 enabled = true
 
+[security]
+# Which rows of the signed log this machine trusts. A record reads
+# `unaccounted` when the log row behind it does not verify under a key
+# this machine holds. Rows added to the log after this machine's own
+# under a key it never held always read `unaccounted`: only someone
+# writing into the file without the key leaves that shape, and
+# `bettermemory log verify` reports it as tampering. Rows from before
+# this machine first signed the store (a store copied here from another
+# machine without its key) keep the labels they arrived with. With
+# `strict_provenance = true` those read `unaccounted` too, and only what
+# this machine's own keys verify is trusted: the setting for a managed
+# deployment, or wherever a store may arrive from somewhere else.
+strict_provenance = false
+
 [capture]
 # Session capture at a turn end, Claude Code only, and off by default.
 # With `stop_checkpoint = true`, once the conversation since the last
@@ -414,6 +428,23 @@ class TelemetryConfig:
 
 
 @dataclass
+class SecurityConfig:
+    """How far the store trusts rows its own keys do not verify.
+
+    `strict_provenance` widens the read-time provenance check: rows in a
+    segment of the signed log whose key this machine does not hold read
+    `unaccounted` wherever that segment sits. Off, only a segment after
+    one this machine signed reads so (a foreign segment, always), and the
+    leading segments of a store copied here without its key keep their
+    labels. The store reads the switch through `load_config` the first
+    time a row in such a leading segment is labelled
+    (`Store.strict_provenance`), so a store with one key throughout never
+    reads it. See DEFAULT_CONFIG for prose."""
+
+    strict_provenance: bool = False
+
+
+@dataclass
 class CaptureConfig:
     """The turn-end capture checkpoint: at a Stop the daemon may ask the
     chat model to save the stretch since its last capture. Off unless
@@ -447,6 +478,7 @@ class Config:
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
     capture: CaptureConfig = field(default_factory=CaptureConfig)
     membership: MembershipConfig = field(default_factory=MembershipConfig)
+    security: SecurityConfig = field(default_factory=SecurityConfig)
     config_path: Path | None = None
 
     # ---- methods ----------------------------------------------------------
@@ -1144,6 +1176,9 @@ def load_config(path: Path | None = None) -> Config:
     membership_raw = data.get("membership", {})
     if not isinstance(membership_raw, dict):
         membership_raw = {}
+    security_raw = data.get("security", {})
+    if not isinstance(security_raw, dict):
+        security_raw = {}
 
     # T9: back-compat for the 3.1.x -> 3.2.0 TOML key rename. Mutates
     # `behavior_raw` so the downstream `behavior_raw.get(...)` lookups
@@ -1297,6 +1332,11 @@ def load_config(path: Path | None = None) -> Config:
         membership=MembershipConfig(
             write_token=_coerce_bool(membership_raw.get("write_token"), True),
             strict=_coerce_bool(membership_raw.get("strict"), False),
+        ),
+        security=SecurityConfig(
+            strict_provenance=_coerce_bool(
+                security_raw.get("strict_provenance"), False
+            ),
         ),
         config_path=config_path,
     )

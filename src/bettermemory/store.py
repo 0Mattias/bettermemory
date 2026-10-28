@@ -30,7 +30,16 @@ missing or foreign key leaves the store readable and refuses mutations,
 naming the key directory, unless the caller opens with
 ``allow_rekey=True`` (the owner's openers, `open_or_create` and the
 migrations, do), when the key is retired, a fresh one written, and a
-``rekey`` row appended.
+``rekey`` row appended. Meta's fingerprint is only what the file says:
+a key that signs a segment of the log is this store's own whatever meta
+names, and stays (`Store.open`).
+
+Foreign segments. A segment of the log whose key this machine does not
+hold, after one whose key it does, is rows a writer without the key put
+into history this machine signed (`log.chain_segments`). Every read
+labels its records ``unaccounted``, as it labels a row whose MAC fails;
+the leading segments of a store copied here keep their labels unless
+``[security] strict_provenance`` is set.
 """
 
 from __future__ import annotations
@@ -70,11 +79,15 @@ from .log import (
     STORE_CREATED,
     KeyRing,
     LogRow,
+    Segment,
     append_row,
     canonical_payload,
+    chain_segments,
     compute_mac,
     fingerprint,
     iter_rows,
+    last_rekey_name,
+    row_verifies,
     verify_chain,
 )
 from .models import (
@@ -2005,6 +2018,41 @@ def _add_membership_tables(
     meta[MEMBERSHIP_STORE_ID] = str(row[0])
 
 
+def _signs_a_segment(segments: Sequence[Segment], key: bytes) -> bool:
+    """Does ``key`` sign a segment of the log: is a segment under its
+    fingerprint, and does that segment's first row verify under it? The
+    MAC is the evidence. A fingerprint is public (meta and every rekey row
+    carry it), so a rekey row naming this key proves nothing until the
+    key verifies it; the leading segment's first row is the store's own
+    ``store_created`` row."""
+    own = fingerprint(key)
+    return any(
+        segment.key_fingerprint == own
+        and segment.first_row is not None
+        and row_verifies(key, segment.first_row)
+        for segment in segments
+    )
+
+
+def configured_strict_provenance() -> bool:
+    """``[security] strict_provenance`` as `load_config` reads it, so a
+    value an organisation pins in a managed config applies here too. A
+    config that cannot be read reads as strict, with a warning: it is a
+    switch that narrows what is trusted, and a broken file must not widen
+    trust by default."""
+    from .config import load_config
+
+    try:
+        return load_config().security.strict_provenance
+    except (OSError, ValueError) as exc:
+        log.warning(
+            "[security] strict_provenance could not be read (%s); rows under a "
+            "key this machine does not hold read unaccounted",
+            exc,
+        )
+        return True
+
+
 class Store:
     """One store, one file, one connection. ``Store(directory)`` opens the
     store in the directory, creating it on first use, which is what every
@@ -2023,15 +2071,33 @@ class Store:
     # (id, log_mac) pairs whose pointer into the log verified; a row gets
     # a new MAC on every mutation, so a stale entry never matches.
     _pointer_cache: dict[tuple[str, str], bool]
-    # The chain's segments as (first seq, key fingerprint), read from the
-    # rekey rows once; the keys themselves by fingerprint.
-    _segments: list[tuple[int, str]] | None
-    _keys_by_fingerprint: dict[str, bytes | None]
+    # The chain's segments (`log.chain_segments`), each with its key when
+    # this machine holds it and whether it is foreign: read off the rekey
+    # rows once per connection, on the first pointer that needs it.
+    _segments: list[Segment] | None
+    # `[security] strict_provenance` for this connection: None until the
+    # first row in a segment whose key is not held needs it, then read
+    # once through `load_config` (`strict_provenance`). An opener that
+    # passes it explicitly sets it here and nothing is read.
+    _strict_provenance: bool | None
 
-    def __init__(self, path: Path | str, *, keys_dir: Path | str | None = None) -> None:
-        opened = self.open_or_create(path, keys_dir=keys_dir)
+    def __init__(
+        self,
+        path: Path | str,
+        *,
+        keys_dir: Path | str | None = None,
+        strict_provenance: bool | None = None,
+    ) -> None:
+        opened = self.open_or_create(
+            path, keys_dir=keys_dir, strict_provenance=strict_provenance
+        )
         self._adopt(
-            opened._path, opened._conn, opened._keyring, opened._key, opened._store_id
+            opened._path,
+            opened._conn,
+            opened._keyring,
+            opened._key,
+            opened._store_id,
+            strict_provenance=opened._strict_provenance,
         )
 
     def _adopt(
@@ -2041,6 +2107,8 @@ class Store:
         keyring: KeyRing,
         key: bytes | None,
         store_id: str,
+        *,
+        strict_provenance: bool | None = None,
     ) -> None:
         self._path = path
         self._conn = conn
@@ -2052,7 +2120,7 @@ class Store:
         self._unaccounted_memory_ids = set()
         self._pointer_cache = {}
         self._segments = None
-        self._keys_by_fingerprint = {}
+        self._strict_provenance = strict_provenance
 
     @classmethod
     def _bind(
@@ -2062,14 +2130,25 @@ class Store:
         keyring: KeyRing,
         key: bytes | None,
         store_id: str,
+        *,
+        strict_provenance: bool | None = None,
     ) -> Store:
         self = cls.__new__(cls)
-        self._adopt(path, conn, keyring, key, store_id)
+        self._adopt(
+            path, conn, keyring, key, store_id, strict_provenance=strict_provenance
+        )
         return self
 
     @classmethod
-    def create(cls, path: Path | str, *, keys_dir: Path | str | None = None) -> Store:
-        """A new store at ``path`` with a fresh key. Refuses an existing file."""
+    def create(
+        cls,
+        path: Path | str,
+        *,
+        keys_dir: Path | str | None = None,
+        strict_provenance: bool | None = None,
+    ) -> Store:
+        """A new store at ``path`` with a fresh key. Refuses an existing file.
+        ``strict_provenance`` is `open`'s."""
         path = store_path(path)
         if path.exists():
             raise FileExistsError(f"a store already exists at {path}")
@@ -2099,7 +2178,9 @@ class Store:
             }
             if orphans:
                 meta[CREATED_AFTER_ORPHANS] = json.dumps([p.name for p in orphans])
-            store = cls._bind(path, conn, keyring, key, store_id)
+            store = cls._bind(
+                path, conn, keyring, key, store_id, strict_provenance=strict_provenance
+            )
             with store._transaction() as tx:
                 tx.executemany(
                     "INSERT INTO meta(key, value) VALUES (?, ?)", list(meta.items())
@@ -2130,6 +2211,7 @@ class Store:
         *,
         keys_dir: Path | str | None = None,
         allow_rekey: bool = False,
+        strict_provenance: bool | None = None,
     ) -> Store:
         """An existing store. Without ``allow_rekey`` (the default) a store
         whose key under the key directory is missing or foreign opens for
@@ -2138,7 +2220,25 @@ class Store:
         chain. The owner's own openers pass it (`open_or_create`, which
         the hooks, the daemon and the CLI open through, and the
         migrations); a reader, a copy on another machine or a daemon
-        under the wrong key directory never rekeys by accident."""
+        under the wrong key directory never rekeys by accident.
+
+        Meta's ``key_fingerprint`` is not authenticated: anyone with the
+        file can change it. So the owner's opener does not take a
+        mismatch at its word. When the key under the key directory signs
+        a segment of this log (`_signs_a_segment`), the store is this
+        machine's own with rows in it that it did not sign: the key stays
+        current, meta is set back to it, and a ``rekey`` row closes the
+        chain's last segment when that segment is not the key's
+        (`_reclaim`). Only a key that signs none of the log is retired
+        and replaced, as for a store copied here without its key. With
+        the key in place, the owner's opener still closes a last segment
+        a ``rekey`` row it did not write named (`_close_foreign_tail`),
+        so its own rows after that segment verify. Neither repair can
+        fail the open: a store that cannot be written logs why and opens.
+
+        ``strict_provenance`` is ``[security] strict_provenance`` for this
+        connection; None (the default) reads it from the config the first
+        time a row needs it (`strict_provenance`)."""
         path = store_path(path)
         if not path.is_file():
             raise FileNotFoundError(f"no store at {path}")
@@ -2164,13 +2264,50 @@ class Store:
             )
             key = keyring.load_current()
             if key is not None and fingerprint(key) == expected:
-                return cls._bind(path, conn, keyring, key, store_id)
+                store = cls._bind(
+                    path,
+                    conn,
+                    keyring,
+                    key,
+                    store_id,
+                    strict_provenance=strict_provenance,
+                )
+                if allow_rekey:
+                    store._close_foreign_tail()
+                return store
             if not allow_rekey:
-                return cls._bind(path, conn, keyring, None, store_id)
+                return cls._bind(
+                    path,
+                    conn,
+                    keyring,
+                    None,
+                    store_id,
+                    strict_provenance=strict_provenance,
+                )
+            segments = chain_segments(
+                conn, keyring=keyring, current_fingerprint=expected, current_key=key
+            )
+            if key is not None and _signs_a_segment(segments, key):
+                store = cls._bind(
+                    path,
+                    conn,
+                    keyring,
+                    key,
+                    store_id,
+                    strict_provenance=strict_provenance,
+                )
+                store._reclaim(segments, meta_fingerprint=expected)
+                return store
+            # The key that signed the chain's last segment, as the log
+            # names it: the rekey row records what it replaced, and meta
+            # is only what the file says.
+            previous = segments[-1].key_fingerprint if segments else expected
             if key is not None:
                 keyring.retire_current()
             key = keyring.create_key()
-            store = cls._bind(path, conn, keyring, key, store_id)
+            store = cls._bind(
+                path, conn, keyring, key, store_id, strict_provenance=strict_provenance
+            )
             with store._transaction() as tx:
                 tx.execute(
                     "UPDATE meta SET value = ? WHERE key = 'key_fingerprint'",
@@ -2179,14 +2316,14 @@ class Store:
                 store._append(
                     tx,
                     REKEY,
-                    {"old_fingerprint": expected, "new_fingerprint": fingerprint(key)},
+                    {"old_fingerprint": previous, "new_fingerprint": fingerprint(key)},
                     session=None,
                 )
             log.warning(
                 "store %s was opened without its key (fingerprint %s); a new key "
                 "%s was written and the log rekeyed",
                 path,
-                expected[:16],
+                previous[:16],
                 fingerprint(key)[:16],
             )
             return store
@@ -2196,20 +2333,144 @@ class Store:
 
     @classmethod
     def open_or_create(
-        cls, path: Path | str, *, keys_dir: Path | str | None = None
+        cls,
+        path: Path | str,
+        *,
+        keys_dir: Path | str | None = None,
+        strict_provenance: bool | None = None,
     ) -> Store:
         """Open the store at `path`, or create one. Refuses to create one
         in a directory that holds an un-migrated bettermemory 8 store: a
         server pointed at such a directory would otherwise serve an empty
         store and say nothing, and `bettermemory migrate v8` is the
-        answer. `create` itself is unchanged."""
+        answer. `create` itself is unchanged. ``strict_provenance`` is
+        `open`'s."""
         path = store_path(path)
         if path.is_file():
             # The owner-process opener: a store this machine writes to
             # whose key moved is its owner's to rekey.
-            return cls.open(path, keys_dir=keys_dir, allow_rekey=True)
+            return cls.open(
+                path,
+                keys_dir=keys_dir,
+                allow_rekey=True,
+                strict_provenance=strict_provenance,
+            )
         refuse_unmigrated_v8(path)
-        return cls.create(path, keys_dir=keys_dir)
+        return cls.create(path, keys_dir=keys_dir, strict_provenance=strict_provenance)
+
+    def _close_foreign_tail(self) -> None:
+        """Close the chain's last segment when a ``rekey`` row this key did
+        not write named it: the owner's opener, with meta and the key in
+        agreement. Rows this store appends after a forged ``rekey`` row
+        would otherwise sit in the segment that row opened, under a key
+        nobody here holds, and never verify. One indexed lookup when there
+        is nothing to close; the write lock only when there is."""
+        assert self._key is not None
+        own = fingerprint(self._key)
+        named = last_rekey_name(self._conn)
+        if named is None or named == own:
+            return
+        row: LogRow | None = None
+        try:
+            with self._transaction() as tx:
+                # Another opener may have closed it while this one waited
+                # for the lock.
+                named = last_rekey_name(tx)
+                if named is not None and named != own:
+                    row = self._append(
+                        tx,
+                        REKEY,
+                        {"old_fingerprint": named, "new_fingerprint": own},
+                        session=None,
+                    )
+        except (sqlite3.Error, OSError) as exc:
+            log.warning(
+                "store %s: the log's last segment is under key %s, not this "
+                "store's key %s, and it could not be closed (%s); rows written "
+                "here will not verify until it is",
+                self._path,
+                (named or "")[:16],
+                own[:16],
+                exc,
+            )
+            return
+        if row is None or named is None:
+            return
+        self._segments = None
+        log.warning(
+            "store %s: the log's last segment, opened by a rekey row this host "
+            "did not write, is under key %s; its rows read unaccounted and a "
+            "rekey row at seq %d returns the chain to this store's key %s. "
+            "`bettermemory log verify` reports the segment",
+            self._path,
+            named[:16],
+            row.seq,
+            own[:16],
+        )
+
+    def _reclaim(self, segments: Sequence[Segment], *, meta_fingerprint: str) -> None:
+        """Keep this machine's key for a store whose meta names another key
+        although that key signs a segment of the log (`open`): set meta back
+        to the key and, when the chain's last segment is not the key's,
+        append the ``rekey`` row that returns the chain to it, naming that
+        segment's key as the log gives it, never meta's. The foreign
+        segments stay in the log, where every read labels their rows
+        ``unaccounted`` and `log verify` reports them."""
+        assert self._key is not None
+        own = fingerprint(self._key)
+        tail = segments[-1].key_fingerprint if segments else own
+        foreign = ", ".join(
+            f"seq {segment.first_seq} under key {segment.key_fingerprint[:16]}"
+            for segment in segments
+            if segment.foreign
+        )
+        appended: LogRow | None = None
+        try:
+            with self._transaction() as tx:
+                tx.execute(
+                    "UPDATE meta SET value = ? WHERE key = 'key_fingerprint'", (own,)
+                )
+                # The last rekey row names the tail when there is one: read
+                # under the lock, so a rekey row another opener appended
+                # while this one waited (closing the same segment) counts.
+                named = last_rekey_name(tx)
+                if named is not None:
+                    tail = named
+                if tail != own:
+                    appended = self._append(
+                        tx,
+                        REKEY,
+                        {"old_fingerprint": tail, "new_fingerprint": own},
+                        session=None,
+                    )
+        except (sqlite3.Error, OSError) as exc:
+            log.warning(
+                "store %s: meta names key %s but this host's key %s signs the "
+                "log; the store opens with that key, and meta could not be "
+                "set back (%s)",
+                self._path,
+                meta_fingerprint[:16],
+                own[:16],
+                exc,
+            )
+            return
+        self._segments = None
+        closing = (
+            "meta is set back to it"
+            if appended is None
+            else f"a rekey row at seq {appended.seq} returns the chain to it"
+        )
+        log.warning(
+            "store %s: meta named key %s, but this host's key %s signs the log, "
+            "so it stays the store's key and no new key is written; %s. Rows no "
+            "key on this host signed, after rows it did: %s. They read "
+            "unaccounted, and `bettermemory log verify` reports them",
+            self._path,
+            meta_fingerprint[:16],
+            own[:16],
+            closing,
+            foreign or "none",
+        )
 
     def close(self) -> None:
         self._conn.close()
@@ -2249,6 +2510,17 @@ class Store:
     @property
     def has_key(self) -> bool:
         return self._key is not None
+
+    @property
+    def strict_provenance(self) -> bool:
+        """``[security] strict_provenance`` for this connection: as the
+        opener passed it, or read once through the config the first time a
+        row in a segment whose key is not held is labelled. A store under
+        one key throughout never reads it."""
+        strict = self._strict_provenance
+        if strict is None:
+            strict = self._strict_provenance = configured_strict_provenance()
+        return strict
 
     def meta(self) -> dict[str, str]:
         return {
@@ -3526,12 +3798,16 @@ class Store:
     def provenance_for(self, memory_ids: Sequence[str]) -> dict[str, str]:
         """``{id: label}`` for the active records asked. The label is the
         row's, unless the row's pointer into the log fails: the ``log_mac``
-        names no row, names a row that put a different record, or names a
-        row whose MAC does not verify under the segment's key. Such a row
-        reads ``unaccounted``, as does one the last ``refold`` in this
-        process found so. A store opened without its key cannot verify
-        pointers and returns the row labels as stored; ``trust_rows`` says
-        when that is the case."""
+        names no row, names a row that put a different record, names a row
+        whose MAC does not verify under the segment's key, or names a row
+        in a foreign segment (one whose key this machine does not hold,
+        after one whose key it does), or, with ``strict_provenance``, in
+        any segment whose key is not held. Such a row reads
+        ``unaccounted``, as does one the last ``refold`` in this process
+        found so. A row in a leading segment whose key is not held (a
+        store copied here without its key) keeps its label. A store
+        opened without its key cannot verify pointers and returns the row
+        labels as stored; ``trust_rows`` says when that is the case."""
         ids = list(dict.fromkeys(memory_ids))
         if not ids:
             return {}
@@ -3556,44 +3832,37 @@ class Store:
                 out[memory_id] = label
         return out
 
-    def _segment_key(self, seq: int) -> bytes | None:
-        """The key that signed the row at ``seq``: the segment's, read
-        off the rekey rows. None when that key is not on this machine."""
+    def _segment_for(self, seq: int) -> Segment | None:
+        """The segment that holds the row at ``seq``, with its key when
+        this machine holds it and whether it is foreign. The map is read
+        off the rekey rows once per connection (`log.chain_segments`), so a
+        row costs this walk over a handful of segments and nothing more.
+        A connection that was open before a rekey row was appended keeps
+        its map, and verifies a later row under the last segment it knows,
+        which a row signed by another key fails."""
         if self._segments is None:
-            segments: list[tuple[int, str]] = []
-            first = self.key_fingerprint
-            for row in self._conn.execute(
-                "SELECT seq, payload FROM log WHERE kind = ? ORDER BY seq", (REKEY,)
-            ):
-                try:
-                    names = json.loads(row["payload"])
-                    old, new = (
-                        str(names["old_fingerprint"]),
-                        str(names["new_fingerprint"]),
-                    )
-                except (ValueError, KeyError, TypeError):
-                    continue
-                if not segments:
-                    first = old
-                segments.append((int(row["seq"]), new))
-            self._segments = [(1, first)] + segments
-        segments_known = self._segments
-        fingerprint_for_seq = segments_known[0][1]
-        for first_seq, name in segments_known:
-            if seq >= first_seq:
-                fingerprint_for_seq = name
-        if fingerprint_for_seq not in self._keys_by_fingerprint:
-            key = self._key if fingerprint_for_seq == self.key_fingerprint else None
-            if key is None:
-                key = self._keyring.key_for_fingerprint(fingerprint_for_seq)
-            self._keys_by_fingerprint[fingerprint_for_seq] = key
-        return self._keys_by_fingerprint[fingerprint_for_seq]
+            self._segments = chain_segments(
+                self._conn,
+                keyring=self._keyring,
+                current_fingerprint=self.key_fingerprint,
+                current_key=self._key,
+            )
+        found: Segment | None = None
+        for segment in self._segments:
+            if found is not None and seq < segment.first_seq:
+                break
+            found = segment
+        return found
 
     def _pointer_verified(self, record_id: str, kind: str, log_mac: Any) -> bool | None:
         """Does the record's ``log_mac`` name a log row of ``kind`` that
         put this very record, and does that row's MAC verify under its
-        segment's key? None when the key is not on this machine; the
-        other two answers are cached per (id, mac)."""
+        segment's key? A row in a foreign segment is not verified (False):
+        its key is one nobody here holds, after rows this machine signed.
+        A row in a leading segment whose key is not held answers None (its
+        label stands), or False under ``strict_provenance``. None too when
+        the store was opened without its key. The True and False answers
+        are cached per (id, mac)."""
         if self._key is None:
             return None
         if not isinstance(log_mac, str) or not log_mac:
@@ -3616,19 +3885,24 @@ class Store:
             except (ValueError, KeyError, TypeError):
                 named = ""
             if named == record_id:
-                key = self._segment_key(int(raw["seq"]))
-                if key is None:
+                segment = self._segment_for(int(raw["seq"]))
+                if segment is None:
                     return None
-                expected = compute_mac(
-                    key,
-                    seq=int(raw["seq"]),
-                    ts=str(raw["ts"]),
-                    session=None if raw["session"] is None else str(raw["session"]),
-                    kind=str(raw["kind"]),
-                    payload=str(raw["payload"]),
-                    prev_mac=str(raw["prev_mac"]),
-                )
-                verdict = hmac.compare_digest(expected, log_mac)
+                if segment.key is not None:
+                    expected = compute_mac(
+                        segment.key,
+                        seq=int(raw["seq"]),
+                        ts=str(raw["ts"]),
+                        session=None if raw["session"] is None else str(raw["session"]),
+                        kind=str(raw["kind"]),
+                        payload=str(raw["payload"]),
+                        prev_mac=str(raw["prev_mac"]),
+                    )
+                    verdict = hmac.compare_digest(expected, log_mac)
+                elif not segment.foreign and not self.strict_provenance:
+                    # A leading segment: signed elsewhere, before this
+                    # machine first signed the store. Its label stands.
+                    return None
         self._pointer_cache[cache_key] = verdict
         return verdict
 
@@ -4531,9 +4805,14 @@ class Store:
         and never a rekey: a store this process opened without its key
         stays unable to mutate on the new connection too. The set of
         memory ids a refold found unaccounted is shared, not copied, so a
-        refold on either connection reaches the other."""
+        refold on either connection reaches the other, and so is
+        ``strict_provenance``: a value the opener passed, or one this
+        connection already read, is the new one's too."""
         other = Store.open(
-            self._path, keys_dir=self._keyring.keys_dir, allow_rekey=False
+            self._path,
+            keys_dir=self._keyring.keys_dir,
+            allow_rekey=False,
+            strict_provenance=self._strict_provenance,
         )
         other._unaccounted_memory_ids = self._unaccounted_memory_ids
         return other
@@ -4851,8 +5130,10 @@ class Store:
     def episode_provenance(self, episode_ids: Sequence[str]) -> dict[str, str]:
         """``{id: label}`` for the episodes asked: ``local`` when the row's
         pointer into the log verifies, ``unaccounted`` when it does not
-        (the planted shape), the row's label as stored when the key is not
-        on this machine. Unknown ids are omitted."""
+        (the planted shape, a row in a foreign segment, or one in any
+        segment whose key is not held under ``strict_provenance``), the
+        row's label as stored when the key is not on this machine. Unknown
+        ids are omitted."""
         ids = list(dict.fromkeys(episode_ids))
         if not ids:
             return {}
