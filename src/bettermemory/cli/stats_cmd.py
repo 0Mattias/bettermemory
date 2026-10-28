@@ -18,11 +18,13 @@ HMAC per row. Provenance is therefore not here; `log verify` and the
 health report's census answer that question at that price.
 
 The window: ``--since DAYS`` is the last DAYS UTC days, today included.
-A day is the first ten characters of a stored timestamp, which every
-writer stores in UTC (``isoformat_utc`` and the store's ``_iso``), so the
-grouping needs no parsing. The log's per-day counts read the ``log_by_ts``
-index for the window's range; ``created`` and ``removed`` read the record
-tables (``tombstones_by_removed`` for the removals).
+A log row's day is the first ten characters of its ``ts``, which the log
+writes in UTC (``isoformat_utc``), so that grouping needs no parsing and
+the window's range reads the ``log_by_ts`` index. A record's ``created``
+and a tombstone's ``removed`` are the record's own stamps, which keep the
+offset they were written with (a v8 file's frontmatter can carry a local
+one), so their day is SQLite's ``date()``, which converts the offset to
+UTC first.
 
 Every query runs in one read transaction (`history.read_snapshot`): the
 daemon writes while the report is read, and the totals, the per-project
@@ -381,8 +383,9 @@ _DAY_COLUMNS = ("created", "removed", "memory_puts", "episode_puts", "log_rows")
 
 def _activity(conn: sqlite3.Connection, *, start: date, end: date) -> dict[str, Any]:
     """Per day of [start, end): records created (active and tombstoned,
-    by ``created``), memories removed (tombstones by ``removed``), and log
-    rows written: ``memory_put`` rows (every write, edit, verification and
+    by ``created``), memories removed (tombstones by ``removed``), both
+    by the UTC day ``date()`` reads off the stamp, and log rows written:
+    ``memory_put`` rows (every write, edit, verification and
     corroboration), ``episode_put`` rows, and every row."""
     low, high = start.isoformat(), end.isoformat()
     series: dict[str, dict[str, int]] = {}
@@ -400,13 +403,13 @@ def _activity(conn: sqlite3.Connection, *, start: date, end: date) -> dict[str, 
     for table in ("memories", "tombstones"):
         add(
             "created",
-            f"SELECT substr(created, 1, 10) AS day, COUNT(*) FROM {table} "
-            "WHERE created >= ? AND created < ? GROUP BY day",
+            f"SELECT date(created) AS day, COUNT(*) FROM {table} "
+            "WHERE date(created) >= ? AND date(created) < ? GROUP BY day",
         )
     add(
         "removed",
-        "SELECT substr(removed, 1, 10) AS day, COUNT(*) FROM tombstones "
-        "WHERE removed >= ? AND removed < ? GROUP BY day",
+        "SELECT date(removed) AS day, COUNT(*) FROM tombstones "
+        "WHERE date(removed) >= ? AND date(removed) < ? GROUP BY day",
     )
     for row in conn.execute(
         "SELECT substr(ts, 1, 10) AS day, kind, COUNT(*) FROM log "

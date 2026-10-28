@@ -299,6 +299,29 @@ def test_store_text_is_made_printable(store: Store, store_dir: Path) -> None:
     assert "engine 9�31m" in text
 
 
+def test_a_record_s_day_is_its_utc_day(store: Store) -> None:
+    """A v8 file's frontmatter can carry a local offset, which the record
+    keeps: 01:00 at +02:00 on the 27th is the 26th in UTC."""
+    stamp = datetime(2026, 10, 27, 1, 0, tzinfo=timezone(timedelta(hours=2)))
+    memory = Memory(
+        id=generate_ulid(),
+        created=stamp,
+        updated=stamp,
+        scopes=["tools"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+        body="Imported with its offset.\n",
+    )
+    store.put_memory(memory, provenance="imported")
+    stored = str(store.conn.execute("SELECT created FROM memories").fetchone()[0])
+    assert stored.endswith("+02:00")
+    days = {
+        entry["day"]: entry["created"]
+        for entry in collect(store, days=7, now=_NOW)["activity"]["days"]
+    }
+    assert (days["2026-10-26"], days["2026-10-27"]) == (1, 0)
+
+
 def test_a_write_committed_mid_report_does_not_split_the_counts(
     store: Store, store_dir: Path, keys_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
