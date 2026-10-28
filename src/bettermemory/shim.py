@@ -24,7 +24,15 @@ the daemon refuses with 401, or one that finds no daemon listening,
 makes the shim read the state file again (starting a daemon only when
 none answers, and never stopping one) and send the same request once
 more. Both failures happen before the daemon runs anything, so the
-resend cannot apply a call twice. Any other failure between the shim
+resend cannot apply a call twice. The daemon found again must prove
+itself the one its state file names (`_daemon_client.identify`, through
+`_answering` and `wait_for_daemon`), at start as at a reconnect: a
+listener another account left on a crashed daemon's port, which refuses
+the token, is not taken for the daemon, and the resend goes to a daemon
+started beside it on another port. The proof is checked where the shim
+finds its daemon, not on every call; a call sent to the remembered port
+in the moment between a crash and that port's capture still reaches
+whatever answers there. Any other failure between the shim
 and the daemon answers the call that met it and leaves the shim up: the
 SDK's transport would otherwise let the exception end its task group
 and the process with it.
@@ -341,8 +349,9 @@ def run_shim() -> None:
     def find() -> tuple[dict[str, Any] | None, str | None]:
         # Not ensure_daemon: a reconnect finds the daemon again, it does
         # not upgrade it, so an older daemon that came up meanwhile is not
-        # replaced here either. Whatever daemon answers serves; one is
-        # started only when none does.
+        # replaced here either. Whatever daemon answers and proves itself
+        # the state file's (`_answering`) serves; one is started only when
+        # none does, and another listener on the port counts as none.
         found = _answering(state_dir, store_path)
         if found is not None:
             return found, None

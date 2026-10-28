@@ -474,10 +474,17 @@ def test_prompt_recall_with_a_daemon_opens_no_store_before_it_posts(
             "started": _NOW.isoformat().replace("+00:00", "Z"),
         },
     )
+    # A daemon from before 9.0.0rc12 as the state file names it: its pid
+    # and store, and no proof (`_daemon_client.proves`).
     monkeypatch.setattr(
         _daemon_client,
         "health",
-        lambda port, timeout=1.0: {"status": "ok", "version": __version__},
+        lambda port, timeout=1.0, nonce=None: {
+            "status": "ok",
+            "version": __version__,
+            "pid": os.getpid(),
+            "store": str(store_path),
+        },
     )
     opened = _count_opens(monkeypatch)
     posted: list[tuple[str, list[str]]] = []

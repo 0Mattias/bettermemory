@@ -17,6 +17,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
@@ -27,7 +28,7 @@ from mcp.client.stdio import stdio_client
 from mcp.shared.exceptions import MCPError
 
 from bettermemory import __version__
-from bettermemory._daemon_client import health, read_state, write_state
+from bettermemory._daemon_client import health, health_proof, read_state, write_state
 from bettermemory.builder import INSTRUCTIONS
 from bettermemory.config import Config, StorageConfig
 from bettermemory.location import resolve_caller
@@ -169,16 +170,22 @@ def _text(result: Any) -> str:
 
 
 class _FakeDaemon(http.server.ThreadingHTTPServer):
+    """A daemon from before 9.0.0rc12: /health reports the pid and store
+    the test's state file names, with no proof."""
+
     shutdown_calls = 0
+    pid = 2**22 + 4321
+    store = ""
 
 
 class _FakeHandler(http.server.BaseHTTPRequestHandler):
-    def log_message(self, *args: object) -> None:  # noqa: D401
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002, D401
         return
 
     def do_GET(self) -> None:  # noqa: N802
+        fake = cast(_FakeDaemon, self.server)
         body = json.dumps(
-            {"status": "ok", "version": "0.0.1", "store": "x", "pid": 1}
+            {"status": "ok", "version": "0.0.1", "store": fake.store, "pid": fake.pid}
         ).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -198,6 +205,7 @@ async def test_shim_replaces_a_daemon_of_an_older_version(
     tmp_path: Path, daemon_env: dict[str, str]
 ) -> None:
     fake = _FakeDaemon(("127.0.0.1", 0), _FakeHandler)
+    fake.store = str(tmp_path / "store" / "memory.sqlite")
     thread = threading.Thread(target=fake.serve_forever, daemon=True)
     thread.start()
     state_dir = tmp_path / "state"
@@ -205,11 +213,11 @@ async def test_shim_replaces_a_daemon_of_an_older_version(
         write_state(
             state_dir,
             {
-                "pid": 2**22 + 4321,
+                "pid": fake.pid,
                 "port": fake.server_address[1],
                 "token": "t" * 64,
                 "version": "0.0.1",
-                "store": str(tmp_path / "store" / "memory.sqlite"),
+                "store": fake.store,
                 "started": "2026-01-01T00:00:00Z",
             },
         )
@@ -389,13 +397,18 @@ async def test_shim_answers_an_error_and_stays_up_when_no_daemon_can_start(
 
 class _FakeMcpDaemon(http.server.ThreadingHTTPServer):
     """A daemon's HTTP surface, enough for a shim: /health, the shutdown
-    endpoint and a stateless /mcp whose tools/call does what `mode` says."""
+    endpoint and a stateless /mcp whose tools/call does what `mode` says.
+    /health proves the token as a daemon does (`health_proof`), so the
+    shim takes it for the daemon its state file names."""
+
+    pid = 2**22 + 4322
 
     def __init__(self, *, version: str, token: str, mode: str = "answer") -> None:
         super().__init__(("127.0.0.1", 0), _FakeMcpHandler)
         self.version = version
         self.token = token
         self.mode = mode
+        self.store = ""
         self.calls = 0
         self.shutdown_calls = 0
         threading.Thread(target=self.serve_forever, daemon=True).start()
@@ -405,12 +418,13 @@ class _FakeMcpDaemon(http.server.ThreadingHTTPServer):
         return int(self.server_address[1])
 
     def state(self, store: Path) -> dict[str, Any]:
+        self.store = str(store)
         return {
-            "pid": 2**22 + 4322,
+            "pid": self.pid,
             "port": self.port,
             "token": self.token,
             "version": self.version,
-            "store": str(store),
+            "store": self.store,
             "started": "2026-01-01T00:00:00Z",
         }
 
@@ -436,12 +450,20 @@ class _FakeMcpHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:  # noqa: N802
-        if self.path != "/health":
+        path, _, query = self.path.partition("?")
+        if path != "/health":
             self._json(405, {})
             return
-        self._json(
-            200, {"status": "ok", "version": self.fake.version, "store": "x", "pid": 1}
-        )
+        answer: dict[str, Any] = {
+            "status": "ok",
+            "version": self.fake.version,
+            "store": self.fake.store,
+            "pid": self.fake.pid,
+        }
+        nonce = urllib.parse.parse_qs(query).get("nonce")
+        if nonce:
+            answer["proof"] = health_proof(self.fake.token, nonce[0])
+        self._json(200, answer)
 
     def do_POST(self) -> None:  # noqa: N802
         body = self.rfile.read(int(self.headers.get("Content-Length") or 0))

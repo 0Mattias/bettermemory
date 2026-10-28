@@ -25,6 +25,20 @@ the shim and the hooks all find the one that serves the store they
 resolved. The state directory is `BETTERMEMORY_STATE_DIR` when set, else
 the user's state directory; every test and bench sets the variable so a
 daemon it starts stays under its own directory.
+
+A client trusts no listener for answering on the state file's port. The
+file outlives a daemon killed or crashed (only a clean stop removes it),
+127.0.0.1 ports are shared by every account on the host, and a hook
+posts the user's prompt, cwd and transcript path to whatever answers
+there and prints its reply into the model's context. So wherever a
+client decides that a daemon answers, before it posts a payload or
+signals a pid, it sends ``/health`` a fresh nonce and checks the reply's
+proof against the token in the state file (`identify`): only the daemon
+that wrote the file holds that token. A daemon from before 9.0.0rc12
+offers no proof and is taken as ours only when it reports the state
+file's store and pid. Anything else answering there is someone else's:
+nothing is posted to it, its pid is never signalled, and a daemon is
+started beside it, which binds another port when that one is held.
 """
 
 from __future__ import annotations
@@ -34,6 +48,7 @@ import hmac
 import json
 import os
 import re
+import secrets
 import signal
 import socket
 import subprocess
@@ -157,13 +172,13 @@ def read_state_file(path: Path) -> dict[str, Any] | None:
 
 
 def write_state(state_dir: Path, state: dict[str, Any]) -> Path:
-    """Write the state file for `state["store"]`, owner-only, atomically."""
+    """Write the state file for `state["store"]`, owner-only, atomically,
+    in a state directory made or healed owner-only first
+    (`_fsutil.ensure_owner_only_dir`)."""
+    from ._fsutil import ensure_owner_only_dir, replace_atomic
+
     state_dir = Path(state_dir)
-    state_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        os.chmod(state_dir, 0o700)
-    except OSError:
-        pass
+    ensure_owner_only_dir(state_dir, parents=True)
     path = state_file_for(state_dir, state["store"])
     tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
     fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -175,8 +190,6 @@ def write_state(state_dir: Path, state: dict[str, Any]) -> Path:
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
-    from ._fsutil import replace_atomic
-
     replace_atomic(tmp, path)
     return path
 
@@ -296,11 +309,18 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
-def health(port: int, *, timeout: float = 1.0) -> dict[str, Any] | None:
-    """GET /health on the daemon at `port`, or None when nothing answers."""
+def health(
+    port: int, *, timeout: float = 1.0, nonce: str | None = None
+) -> dict[str, Any] | None:
+    """GET /health on the daemon at `port`, or None when nothing answers.
+    With `nonce`, the request asks the daemon to prove it holds its token
+    (`health_proof`); whatever answers decides whether a ``proof`` comes
+    back, so the reply says nothing about who answered until `proves`
+    has read it."""
+    query = f"?{HEALTH_NONCE_PARAM}={nonce}" if nonce else ""
     try:
         with urllib.request.urlopen(
-            f"http://{HOST}:{port}{HEALTH_PATH}", timeout=timeout
+            f"http://{HOST}:{port}{HEALTH_PATH}{query}", timeout=timeout
         ) as response:
             body = json.loads(response.read().decode("utf-8"))
     except (OSError, ValueError, urllib.error.URLError):
@@ -324,6 +344,82 @@ def health_proof(token: str, nonce: str) -> str:
     return hmac.new(
         token.encode("utf-8"), _PROOF_CONTEXT + nonce.encode("ascii"), hashlib.sha256
     ).hexdigest()
+
+
+def proves(state: Mapping[str, Any], answer: Mapping[str, Any], nonce: str) -> bool:
+    """Whether `answer`, the ``/health`` reply to `nonce`, comes from the
+    daemon `state` names.
+
+    A reply that carries a ``proof`` is decided by the proof alone: the
+    token's MAC over the nonce, compared in constant time, which only the
+    process that wrote the state file can produce. A reply without one is
+    a daemon from before 9.0.0rc12, which offers none; it is taken as ours
+    only when it reports the state file's store and the state file's pid.
+    The state file is the one named after the caller's store
+    (`state_file_for`), so its ``store`` is the caller's store path. A
+    listener another account left on a crashed daemon's port, or another
+    store's daemon that came up on it, fails either way."""
+    if "proof" in answer:
+        proof = answer["proof"]
+        if not isinstance(proof, str):
+            return False
+        expected = health_proof(str(state["token"]), nonce)
+        # Bytes, not str: compare_digest refuses a str that is not ASCII,
+        # and the proof is whatever the listener chose to send.
+        return hmac.compare_digest(
+            proof.encode("utf-8", errors="replace"), expected.encode("ascii")
+        )
+    pid = answer.get("pid")
+    return (
+        type(pid) is int
+        and pid == state["pid"]
+        and answer.get("store") == state["store"]
+    )
+
+
+class Identified(NamedTuple):
+    """What answered ``/health`` at a state file's port: `answer`, its reply
+    (None when nothing answered), and `ours`, whether that reply proved it
+    the daemon the state file names (`proves`)."""
+
+    answer: dict[str, Any] | None
+    ours: bool
+
+    @property
+    def foreign(self) -> bool:
+        """Something answers at the port, and it is not our daemon."""
+        return self.answer is not None and not self.ours
+
+
+def identify(state: Mapping[str, Any], *, timeout: float = 0.5) -> Identified:
+    """GET ``/health`` at the port `state` names with a fresh nonce
+    (`secrets.token_hex(16)`), and whether what answers is the daemon that
+    wrote `state`. One request, the one a client's discovery made before
+    the proof existed, so the hook's fast path grows no round trip."""
+    nonce = secrets.token_hex(16)
+    answer = health(int(state["port"]), timeout=timeout, nonce=nonce)
+    if answer is None:
+        return Identified(None, False)
+    return Identified(answer, proves(state, answer, nonce))
+
+
+def _warn_foreign(state: Mapping[str, Any]) -> None:
+    """One warning that the listener at `state`'s port is not the daemon
+    the state file names. `logging` is imported here, as in `_keeps`: only
+    this case pays for it. On the hook path, which configures no logging,
+    the last-resort handler prints the line on stderr, beside the hook's
+    own failure lines. Nothing the listener sent is quoted: the line names
+    only what the state file holds."""
+    import logging
+
+    logging.getLogger(__name__).warning(
+        "the process answering at %s:%s is not the bettermemory daemon its "
+        "state file names (pid %s, store %s): nothing is sent to it",
+        HOST,
+        state["port"],
+        state["pid"],
+        state["store"],
+    )
 
 
 def post(
@@ -448,9 +544,13 @@ def enter_state_dir(state_dir: Path, store_path: Path | str) -> Path:
     variables are pinned in this environment first (`daemon_process_env`),
     since they must be made absolute before the process moves. A spawned
     daemon arrives here already pinned and already in its state directory,
-    so for it nothing changes."""
+    so for it nothing changes. The directory is made or healed owner-only
+    (`_fsutil.ensure_owner_only_dir`) before the daemon opens its lock in
+    it, as `_spawn` does before it opens the log."""
+    from ._fsutil import ensure_owner_only_dir
+
     state_dir = Path(state_dir).expanduser().resolve()
-    state_dir.mkdir(parents=True, exist_ok=True)
+    ensure_owner_only_dir(state_dir, parents=True)
     os.environ.update(
         daemon_process_env(os.environ, state_dir=state_dir, store_path=store_path)
     )
@@ -480,9 +580,19 @@ def _spawn(
     what a relative value meant. The
     store's directory is pinned the same way when `env` names none
     (`daemon_env_for` does), since a daemon left to resolve its store
-    where it runs would open one under the state directory."""
+    where it runs would open one under the state directory.
+
+    The state directory is made or healed owner-only first
+    (`_fsutil.ensure_owner_only_dir`, every ancestor it creates too), and
+    the log is opened owner-only (`_open_log`): the daemon tightened the
+    directory only when it wrote its state file, so a daemon that exited
+    before that left a directory and a log, which holds the store's path
+    and every start's errors, at the umask, typically readable by every
+    account on the host."""
+    from ._fsutil import ensure_owner_only_dir
+
     state_dir = Path(state_dir).expanduser().resolve()
-    state_dir.mkdir(parents=True, exist_ok=True)
+    ensure_owner_only_dir(state_dir, parents=True)
     child_env = daemon_process_env(
         os.environ if env is None else env, state_dir=state_dir, store_path=store_path
     )
@@ -490,7 +600,7 @@ def _spawn(
     if port is not None:
         command += ["--port", str(port)]
     log_path = log_file_for(state_dir, store_path)
-    log_handle = open(log_path, "ab")  # noqa: SIM115 - handed to the child
+    log_handle = _open_log(log_path)
     try:
         offset = os.fstat(log_handle.fileno()).st_size
         kwargs: dict[str, Any] = {
@@ -513,10 +623,31 @@ def _spawn(
     return Started(child=child, log=log_path, log_offset=offset)
 
 
+def _open_log(path: Path) -> Any:
+    """The daemon's log at `path`, opened for append and owner-only: made
+    with mode 0o600, and an existing log this account owns that still
+    carries group or other bits (one an earlier release made at the umask)
+    is narrowed to 0o600 through the open descriptor. A log another
+    account owns is left as it is; its owner chose its mode. POSIX modes
+    mean nothing on Windows, where only the open is done."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_BINARY", 0)
+    fd = os.open(str(path), flags, 0o600)
+    if sys.platform != "win32":
+        try:
+            found = os.fstat(fd)
+            if found.st_uid == os.getuid() and found.st_mode & 0o077:
+                os.fchmod(fd, 0o600)
+        except OSError:
+            pass
+    return os.fdopen(fd, "ab")
+
+
 def _answering(state_dir: Path, store_path: Path | str) -> dict[str, Any] | None:
-    """The state of a daemon for `store_path` that answers /health."""
+    """The state of a daemon for `store_path` that answers /health and
+    proves itself the daemon its state file names (`identify`); None when
+    nothing answers there, or something else does."""
     state = read_state(state_dir, store_path)
-    if state is not None and health(state["port"], timeout=0.5) is not None:
+    if state is not None and identify(state, timeout=0.5).ours:
         return state
     return None
 
@@ -571,21 +702,54 @@ def shutdown_daemon(
     shutdown endpoint is the mechanism; a signal is the fallback. Stopped
     means the store is released, not only the port closed (`_stopped`);
     `state_dir` is where the daemon's lock lives, the last thing it gives
-    back."""
-    try:
-        post(state["port"], state["token"], SHUTDOWN_PATH, {}, timeout=2.0)
-    except (OSError, ValueError, urllib.error.URLError):
-        pass
+    back.
+
+    What answers at the state file's port must prove itself first
+    (`identify`). Only a daemon that did is posted the shutdown, which
+    carries the token, and only its port counts as the daemon's. A
+    listener that is not ours gets nothing, and its port says nothing
+    about our daemon, which is then stopped when its pid is gone or the
+    store's lock is free.
+
+    The signal goes to the state file's pid only when the daemon at the
+    port proved itself, or when that pid is alive while the store's lock
+    is held (`_holds_lock`): never on a state file alone. A daemon killed
+    or crashed leaves its state file behind, and once the OS hands its pid
+    to another process, a signal on the file's word alone would stop that
+    process instead."""
     pid = int(state["pid"])
     port = int(state["port"])
     lock_path = lock_file_for(state_dir, state["store"])
-    if _wait_stopped(pid, port, lock_path, timeout):
+    ours = identify(state, timeout=1.0).ours
+    watched = port if ours else None
+    if ours:
+        try:
+            post(port, state["token"], SHUTDOWN_PATH, {}, timeout=2.0)
+        except (OSError, ValueError, urllib.error.URLError):
+            pass
+    if _wait_stopped(pid, watched, lock_path, timeout):
         return True
+    if not ours and not _holds_lock(pid, lock_path):
+        return _stopped(pid, watched, lock_path)
     try:
         os.kill(pid, signal.SIGTERM)
     except OSError:
-        return _stopped(pid, port, lock_path)
-    return _wait_stopped(pid, port, lock_path, timeout)
+        return _stopped(pid, watched, lock_path)
+    return _wait_stopped(pid, watched, lock_path, timeout)
+
+
+def _holds_lock(pid: int, lock_path: Path) -> bool:
+    """Whether `pid` may be taken for the process holding the store's lock:
+    it is alive, and the lock is held. An advisory lock does not name its
+    holder (`flock` and `msvcrt.locking` both keep that to the kernel), so
+    this is the closest a client can read "the daemon still holds the
+    lock": a daemon holds it from its start to its exit, and the OS drops
+    it with the process, so a held lock means a daemon of this store is
+    alive. The one case it misreads needs three things at once: the state
+    file's daemon gone, its pid reused by another process of this account,
+    and a new daemon of the same store holding the lock in the moment
+    before it writes its own state file."""
+    return pid_alive(pid) and not _lock_free(lock_path)
 
 
 def _port_open(port: int) -> bool:
@@ -611,9 +775,11 @@ def _lock_free(path: Path) -> bool:
     return True
 
 
-def _stopped(pid: int, port: int, lock_path: Path) -> bool:
+def _stopped(pid: int, port: int | None, lock_path: Path) -> bool:
     """A daemon is stopped when its process is gone, or when it holds
-    neither its port nor the store's lock. The lock (`lock_file_for`) is
+    neither its port nor the store's lock; with `port` None (what answers
+    at the state file's port did not prove itself ours, `shutdown_daemon`),
+    when its process is gone or the lock is free. The lock (`lock_file_for`) is
     the last thing a daemon gives back: `daemon.serve` closes the store
     and removes the state file before it, so a free lock means no handle
     of the daemon is open on the store's files, and the store can be
@@ -626,10 +792,12 @@ def _stopped(pid: int, port: int, lock_path: Path) -> bool:
     handles."""
     if not pid_alive(pid):
         return True
-    return not _port_open(port) and _lock_free(lock_path)
+    if port is not None and _port_open(port):
+        return False
+    return _lock_free(lock_path)
 
 
-def _wait_stopped(pid: int, port: int, lock_path: Path, timeout: float) -> bool:
+def _wait_stopped(pid: int, port: int | None, lock_path: Path, timeout: float) -> bool:
     deadline = time.monotonic() + timeout
     while not _stopped(pid, port, lock_path):
         if time.monotonic() >= deadline:
@@ -724,15 +892,24 @@ def ensure_daemon(
     store; the client side only keeps concurrent clients from each
     spawning one: whoever takes the spawn lock spawns and waits, and the
     others wait for the lock or for a daemon to answer, whichever comes
-    first."""
+    first.
+
+    A daemon answers only when it proves itself the one the state file
+    names (`identify`). Something else answering at that port, a listener
+    on a crashed daemon's port or another store's daemon, is logged once
+    and left alone: it is neither kept, nor asked to stop, nor signalled,
+    and the daemon started next binds another port (`daemon.bind`) and
+    rewrites the state file."""
     state = read_state(state_dir, store_path)
     if state is not None:
-        answer = health(state["port"], timeout=0.5)
-        if answer is not None:
-            if _keeps(state, answer.get("version"), version):
+        found = identify(state, timeout=0.5)
+        if found.ours and found.answer is not None:
+            if _keeps(state, found.answer.get("version"), version):
                 return state
             shutdown_daemon(state, state_dir=state_dir)
             remove_state(state_dir, store_path, pid=int(state["pid"]))
+        elif found.foreign:
+            _warn_foreign(state)
     if not start:
         return None
     deadline = time.monotonic() + timeout
@@ -1046,6 +1223,7 @@ __all__ = [
     "HOOK_EVENTS",
     "HOOK_WORDS",
     "HOST",
+    "Identified",
     "STATE_DIR_ENV",
     "STORE_FILENAME",
     "Started",
@@ -1057,11 +1235,13 @@ __all__ = [
     "health",
     "health_proof",
     "hook_main",
+    "identify",
     "lock_file_for",
     "log_file_for",
     "package_version",
     "pid_alive",
     "post",
+    "proves",
     "read_state",
     "read_state_file",
     "release_lock",

@@ -359,11 +359,17 @@ def test_a_malformed_config_does_not_stop_a_hook_that_names_its_store(
 class _StaleDaemon(http.server.ThreadingHTTPServer):
     """A daemon's HTTP surface, enough for a hook: /health answers
     `version`, a shutdown request is counted, and a hook post is counted
-    and answered with nothing to print."""
+    and answered with nothing to print. /health reports the pid and the
+    store of the state file `state` wrote and offers no proof, the shape
+    of a daemon from before 9.0.0rc12, which a client takes as the state
+    file's own (`_daemon_client.proves`)."""
+
+    pid = 2**22 + 4321
 
     def __init__(self, version: str) -> None:
         super().__init__(("127.0.0.1", 0), _StaleHandler)
         self.version = version
+        self.store = ""
         self.shutdown_calls = 0
         self.hook_calls = 0
         threading.Thread(target=self.serve_forever, daemon=True).start()
@@ -373,8 +379,9 @@ class _StaleDaemon(http.server.ThreadingHTTPServer):
         return int(self.server_address[1])
 
     def state(self, store: Path) -> dict[str, Any]:
+        self.store = str(store)
         return {
-            "pid": 2**22 + 4321,
+            "pid": self.pid,
             "port": self.port,
             "token": "t" * 64,
             "version": self.version,
@@ -392,12 +399,17 @@ class _StaleHandler(http.server.BaseHTTPRequestHandler):
     def fake(self) -> _StaleDaemon:
         return cast(_StaleDaemon, self.server)
 
-    def log_message(self, *args: object) -> None:
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         return
 
     def do_GET(self) -> None:  # noqa: N802
         body = json.dumps(
-            {"status": "ok", "version": self.fake.version, "store": "x", "pid": 1}
+            {
+                "status": "ok",
+                "version": self.fake.version,
+                "store": self.fake.store,
+                "pid": self.fake.pid,
+            }
         ).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -723,7 +735,9 @@ def test_the_wait_returns_a_daemon_that_answers_though_the_child_exited(
 
     state_dir = tmp_path / "state"
     store_path = tmp_path / "store" / "memory.sqlite"
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _AnsweringHandler)
+    server = http.server.ThreadingHTTPServer(
+        ("127.0.0.1", 0), _answering_handler(str(store_path))
+    )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     state = {
@@ -763,25 +777,30 @@ def test_the_wait_returns_a_daemon_that_answers_though_the_child_exited(
         server.server_close()
 
 
-class _AnsweringHandler(http.server.BaseHTTPRequestHandler):
-    """A daemon of this package's version that answers /health."""
+def _answering_handler(store: str) -> type[http.server.BaseHTTPRequestHandler]:
+    """A daemon of this package's version for `store` that answers /health
+    in this process: this process's pid and `store`, no proof, which a
+    client takes as the daemon a state file naming both describes."""
 
-    def log_message(self, *args: object) -> None:
-        return
+    class _AnsweringHandler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+            return
 
-    def do_GET(self) -> None:  # noqa: N802
-        body = json.dumps(
-            {
-                "status": "ok",
-                "version": _daemon_client.package_version(),
-                "store": "x",
-                "pid": 1,
-            }
-        ).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(body)
+        def do_GET(self) -> None:  # noqa: N802
+            body = json.dumps(
+                {
+                    "status": "ok",
+                    "version": _daemon_client.package_version(),
+                    "store": store,
+                    "pid": os.getpid(),
+                }
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+
+    return _AnsweringHandler
 
 
 # ---------------------------------------------------------------------------
