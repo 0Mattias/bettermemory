@@ -816,6 +816,30 @@ def _held_elsewhere(lock_path: Path) -> bool:
     return not _lock_free(lock_path)
 
 
+def held_lock_reason(
+    state_dir: Path, store_path: Path | str, *, timeout: float
+) -> str | None:
+    """Why no daemon answered within `timeout`, when the reason is a
+    process holding the store's lock (`lock_file_for`); None when the
+    lock is free at this instant (or cannot be opened, as `_held_elsewhere`
+    reads it).
+
+    For the callers of `ensure_daemon` and `start_and_wait` that got None
+    and say why: the shim's reconnect and `bettermemory up`. A lock still
+    held after the wait is a daemon that is starting, busy or hung, beside
+    which `start_and_wait` starts none, so "no daemon could be started"
+    alone would send the reader looking for a failed start that did not
+    happen. Probed after the fact, taken and given back at once when it
+    is free, never held: `ensure_daemon` keeps its return, and the hook's
+    path, which does not ask why, pays nothing for it."""
+    if not _held_elsewhere(lock_file_for(state_dir, store_path)):
+        return None
+    return (
+        "a process holds the store's lock (a daemon starting, busy or hung) "
+        f"and none answered within {timeout:g} s"
+    )
+
+
 def shutdown_daemon(
     state: dict[str, Any],
     *,
@@ -1364,6 +1388,7 @@ __all__ = [
     "ensure_daemon",
     "health",
     "health_proof",
+    "held_lock_reason",
     "hook_main",
     "identify",
     "lock_file_for",

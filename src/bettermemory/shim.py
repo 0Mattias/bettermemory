@@ -296,10 +296,9 @@ def run_shim() -> None:
         START_TIMEOUT_SECONDS,
         DaemonExited,
         _answering,
-        _held_elsewhere,
         daemon_env_for,
         ensure_daemon,
-        lock_file_for,
+        held_lock_reason,
         package_version,
         resolve_state_dir,
         resolved_store_path,
@@ -387,12 +386,13 @@ def run_shim() -> None:
         if found is None:
             # With the store's lock still held the wait may have started
             # nothing (`start_and_wait` starts none beside a holder), so
-            # the reason names the held lock rather than a start.
-            if _held_elsewhere(lock_file_for(state_dir, store_path)):
-                return None, (
-                    "a process holds the store's lock (a daemon starting, busy "
-                    f"or hung) and none answered within {START_TIMEOUT_SECONDS:g} s"
-                )
+            # the reason names the held lock rather than a start, in the
+            # words `up` uses too (`held_lock_reason`).
+            held = held_lock_reason(
+                state_dir, store_path, timeout=START_TIMEOUT_SECONDS
+            )
+            if held is not None:
+                return None, held
             return None, f"none answered within {START_TIMEOUT_SECONDS:g} s of a start"
         return found, None
 

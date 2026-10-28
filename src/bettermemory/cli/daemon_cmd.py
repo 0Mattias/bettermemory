@@ -458,10 +458,20 @@ def _emit(
 
 
 def run_up(args: argparse.Namespace) -> None:
+    """`up`: the detached daemon, or `--foreground` in this process.
+
+    When no daemon answers, the failure says why when it can: a daemon that
+    exited at start is quoted (`DaemonExited`), and a store whose lock
+    another process still holds after the wait (a daemon starting, busy or
+    hung, beside which none is started) is named in the shim's words
+    (`_daemon_client.held_lock_reason`), in the text and in ``--json``'s
+    ``error``. The lock is probed once the wait is over, never held."""
     from .._daemon_client import (
+        START_TIMEOUT_SECONDS,
         DaemonExited,
         daemon_env_for,
         ensure_daemon,
+        held_lock_reason,
         log_file_for,
         package_version,
         read_state,
@@ -496,6 +506,7 @@ def run_up(args: argparse.Namespace) -> None:
             store_path,
             version=package_version(),
             port=args.port,
+            timeout=START_TIMEOUT_SECONDS,
             env=daemon_env_for(store_path),
         )
     except DaemonExited as exc:
@@ -504,6 +515,9 @@ def run_up(args: argparse.Namespace) -> None:
         raise SystemExit(1) from None
     if state is None:
         message = f"bettermemory: no daemon could be started for {store_path}"
+        held = held_lock_reason(state_dir, store_path, timeout=START_TIMEOUT_SECONDS)
+        if held is not None:
+            message = f"{message}: {held}"
         failure["error"] = message
         _emit(failure, json_out=json_out, text=message, err=True)
         raise SystemExit(1)
