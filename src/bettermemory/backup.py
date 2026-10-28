@@ -144,6 +144,7 @@ from .log import (
     fingerprint,
     last_row,
     parse_origin,
+    same_mac,
 )
 from .time_utils import isoformat_utc
 
@@ -176,7 +177,10 @@ _DIGEST_CHUNK = 1 << 20
 _STORE_ID_RE = re.compile(r"[0-9A-Za-z_-]{1,128}")
 #: A SHA-256 or HMAC-SHA256 hex digest: every file hash, key fingerprint
 #: and MAC a manifest holds. Each is held to this shape before anything
-#: compares it, since `hmac.compare_digest` raises on a non-ASCII string.
+#: compares it, and compared as bytes (`log.same_mac`) as well, so a value
+#: that reaches a comparison some other way reads as a mismatch: the
+#: manifest is whatever a writer of the bundle put there, and
+#: `hmac.compare_digest` raises TypeError on a str that is not ASCII.
 _HEX_DIGEST_RE = re.compile(r"[0-9a-f]{64}")
 
 # Verification verdicts, and the exit status each maps to.
@@ -798,7 +802,7 @@ def verify_bundle(bundle: Path, *, keys_dir: Path | None = None) -> dict[str, An
             if size != entry["size"]:
                 result["status"] = "size_mismatch"
                 problems.append({"problem": "size_mismatch", "file": name})
-            elif not hmac.compare_digest(digest, entry["sha256"]):
+            elif not same_mac(digest, str(entry["sha256"])):
                 result["status"] = "sha256_mismatch"
                 problems.append({"problem": "sha256_mismatch", "file": name})
         report["files"].append(result)
@@ -902,9 +906,7 @@ def verify_bundle(bundle: Path, *, keys_dir: Path | None = None) -> dict[str, An
             problems.append({"problem": "manifest_unsigned"})
         elif signing is None:
             report["manifest_mac"] = UNVERIFIABLE
-        elif not hmac.compare_digest(
-            manifest_mac(signing[0], manifest), str(manifest["mac"])
-        ):
+        elif not same_mac(manifest_mac(signing[0], manifest), str(manifest["mac"])):
             report["manifest_mac"] = "mismatch"
             problems.append({"problem": "manifest_mac_mismatch"})
         elif signing[1] == "bundle":

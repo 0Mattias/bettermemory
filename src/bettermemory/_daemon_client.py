@@ -367,9 +367,17 @@ def health_proof(token: str, nonce: str) -> str:
     as the ASCII text it was sent as. The daemon computes it
     (`daemon.build_app`), and a client that recomputes it from the state
     file's token knows it reached the daemon that wrote the file. One
-    definition, so the two sides cannot drift."""
+    definition, so the two sides cannot drift.
+
+    The token is encoded with ``surrogatepass``: a daemon's own token is
+    ASCII, but the client reads it off a state file, where JSON can spell
+    a lone surrogate that plain UTF-8 refuses to encode. Such a token then
+    yields a proof no daemon answers with, and the reply reads as not
+    ours (`proves`), rather than ending the hook in UnicodeEncodeError."""
     return hmac.new(
-        token.encode("utf-8"), _PROOF_CONTEXT + nonce.encode("ascii"), hashlib.sha256
+        token.encode("utf-8", errors="surrogatepass"),
+        _PROOF_CONTEXT + nonce.encode("ascii"),
+        hashlib.sha256,
     ).hexdigest()
 
 

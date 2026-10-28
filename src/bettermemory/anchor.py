@@ -50,7 +50,6 @@ reader without the key.
 from __future__ import annotations
 
 import hashlib
-import hmac
 import json
 import re
 import sqlite3
@@ -268,7 +267,11 @@ def check_anchors(
                 reason = REASON_MISSING
             elif not same_mac(anchor.mac, str(row[0])):
                 reason = REASON_MAC
-            elif not hmac.compare_digest(digests[anchor.seq], anchor.chain_sha256):
+            elif not same_mac(digests[anchor.seq], anchor.chain_sha256):
+                # As bytes, as the MAC above: `parse_anchor` holds a file's
+                # digest to 64 hex characters, but `check_anchors` takes
+                # any `Anchor`, and one not read through it can carry a
+                # character `hmac.compare_digest` raises TypeError on.
                 reason = REASON_DIGEST
             if reason is None:
                 entry["status"] = STATUS_OK
