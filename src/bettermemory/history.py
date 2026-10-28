@@ -36,9 +36,10 @@ chain segment it sits in (the segments are read off the ``rekey`` rows
 the way ``log.verify_chain`` reads them): true when the MAC checks,
 false when it does not, null when this host does not hold that key. It
 is the same flag `log export` writes per row. A false flag, a live
-record whose pointer into the log fails (``provenance`` ``unaccounted``)
-and a record the log says should exist but whose table lacks it
-(``missing``) are the findings: the command exits 1 on any of them.
+record whose pointer into the log fails or a tombstone the log never put
+(``provenance`` ``unaccounted``), and a record the log says should exist
+but whose table lacks it (``missing``) are the findings: the command
+exits 1 on any of them.
 
 Cost: one scan of the log's payload column for the id (the id is a
 ULID, so a substring test finds every row that names it and the payload
@@ -200,8 +201,10 @@ class RecordHistory:
     tombstoning it, ``missing`` when the log's last word puts it but no table
     holds it (deleted outside the store), ``unknown`` when neither the log
     nor any table names it. ``provenance`` is the verified provenance
-    label of an active record (None otherwise); without the key it is the
-    stored label, unverified, and ``key_present`` says so."""
+    label of an active record; without the key it is the stored label,
+    unverified, and ``key_present`` says so. A tombstone's is None, or
+    ``unaccounted`` when the log's last word on the record is not the
+    ``tombstone_put`` that wrote it; None for every other state."""
 
     record_id: str
     record_kind: str | None
@@ -224,8 +227,8 @@ class RecordHistory:
         ]
         if self.provenance == UNACCOUNTED:
             out.append(
-                "the live record reads unaccounted: no log row this store "
-                "signed put it as it stands"
+                f"the {self.state} record reads unaccounted: no log row this "
+                "store signed put it as it stands"
             )
         if self.state == "missing":
             out.append(
@@ -759,6 +762,13 @@ def _state(
     if conn.execute("SELECT 1 FROM episodes WHERE id = ?", (record_id,)).fetchone():
         return "active", store.episode_provenance([record_id]).get(record_id)
     if conn.execute("SELECT 1 FROM tombstones WHERE id = ?", (record_id,)).fetchone():
+        # The store checks no tombstone's pointer into the log, but every
+        # tombstone it holds was written by a `tombstone_put`, and nothing
+        # after that row has touched it. A tombstone the log never put,
+        # or put and then pruned or restored, was written outside the
+        # store. A structural fact, so it holds without the key too.
+        if last_record_kind != "tombstone_put":
+            return "tombstoned", UNACCOUNTED
         return "tombstoned", None
     if last_record_kind is None:
         return "unknown", None
@@ -804,7 +814,10 @@ def render_text(history: RecordHistory, *, diff: bool = False) -> str:
         f"{history.state}, {count} row{'' if count == 1 else 's'}"
     ]
     if history.provenance is not None:
-        checked = "" if history.key_present else " (unverified: no key)"
+        # Only an active record's label rests on the key; a tombstone's
+        # `unaccounted` is read off the log's shape.
+        keyed = history.state == "active" and not history.key_present
+        checked = " (unverified: no key)" if keyed else ""
         lines.append(f"  provenance {history.provenance}{checked}")
     if not history.key_present:
         lines.append("  key not held here: row MACs cannot be checked")

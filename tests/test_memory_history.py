@@ -386,6 +386,44 @@ def test_a_record_no_log_row_ever_named_is_found_in_its_table(
     assert "unaccounted" in render_text(history)
 
 
+def test_a_tombstone_the_log_never_put_reads_unaccounted(
+    store: Store, store_dir: Path, keys_dir: Path
+) -> None:
+    """The planted shape for a tombstone: a row copied in with sqlite3
+    under a fresh id. No pointer of a tombstone's is checked, but the
+    log's last word on a real one is the `tombstone_put` that wrote it,
+    with the key or without it."""
+    memory = store.write(content="A record to remove and copy.", scopes=["tools"])
+    store.tombstone(memory.id, "wrong")
+    planted = generate_ulid()
+    outside = sqlite3.connect(str(store_dir / STORE_FILENAME))
+    columns = [row[1] for row in outside.execute("PRAGMA table_info(tombstones)")]
+    copied = [c for c in columns if c != "id"]
+    outside.execute(
+        f"INSERT INTO tombstones(id, {', '.join(copied)}) "
+        f"SELECT ?, {', '.join(copied)} FROM tombstones WHERE id = ?",
+        (planted, memory.id),
+    )
+    outside.commit()
+    outside.close()
+    real = record_history(store, memory.id)
+    assert (real.state, real.provenance, real.exit_code) == ("tombstoned", None, 0)
+    history = record_history(store, planted)
+    assert (history.state, history.record_kind) == ("tombstoned", "memory")
+    assert (history.provenance, history.exit_code) == ("unaccounted", 1)
+    assert "the tombstoned record reads unaccounted" in render_text(history)
+    store.close()
+    for key in keys_dir.glob("*.key"):
+        key.unlink()
+    keyless = Store.open(store_dir / STORE_FILENAME, keys_dir=keys_dir)
+    try:
+        history = record_history(keyless, planted)
+        assert (history.provenance, history.exit_code) == ("unaccounted", 1)
+        assert "  provenance unaccounted\n" in render_text(history)
+    finally:
+        keyless.close()
+
+
 def test_the_rows_beside_a_record_are_its_history_too(store: Store) -> None:
     """Its home moving, its standing answer, this host's stamp going, the
     capture batch that wrote it and the v8 file it came from."""
