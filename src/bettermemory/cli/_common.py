@@ -14,16 +14,19 @@ extras imports) that doesn't belong here.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import logging
 import sqlite3
 import stat
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 
 from ..config import Config, load_config
+from ..log import KeyUnreadableError
 from ..store import STORE_FILENAME, Store
 
 if TYPE_CHECKING:
@@ -127,6 +130,51 @@ def exit_if_bundle_file(
     raise SystemExit(exit_code)
 
 
+def key_unreadable_line(exc: KeyUnreadableError, *, prefix: str) -> str:
+    """The one line an owner's open that met a key file it cannot read
+    ends a command with: the key file, what reading it said, that the
+    store was not rekeyed over it, and what to do. It goes through
+    `history.printable`: the reason quotes the target of a symbolic link,
+    a name anyone who can write the keys directory chose, and a line
+    break in it must not make the one line two."""
+    from ..history import printable
+
+    return printable(f"{prefix}: {exc}; make it readable and run the command again")
+
+
+@contextlib.contextmanager
+def exit_if_key_unreadable(
+    *, exit_code: int = 1, prefix: str = "bettermemory"
+) -> Iterator[None]:
+    """End the command when the owner's open inside the block finds the
+    store's key file there and unreadable (`log.KeyUnreadableError`: a
+    permission, an I/O error, a symbolic link to a key or a key directory
+    on a volume that is not mounted): `key_unreadable_line` on stderr and
+    `exit_code`, not a traceback. The opener has rekeyed nothing by then;
+    a missing key is not this error and is replaced as it always was.
+
+    For the openers that rekey (`cli_context`, `open_owner_store`, which
+    `serve`, the shim's in-process fallback and `up --foreground` reach,
+    and `membership migrate`), each with its command's code for a store it
+    cannot open: 1 by default, the code `cli_context` gives a bundle's
+    store. The in-process hook commands never come here: a hook never
+    fails its turn, and they report and exit 0 as they always did."""
+    try:
+        yield
+    except KeyUnreadableError as exc:
+        sys.stderr.write(key_unreadable_line(exc, prefix=prefix) + "\n")
+        raise SystemExit(exit_code) from None
+
+
+def open_owner_store(path: Path) -> Store:
+    """`Store.open_or_create` at `path`, as the owner's process opens it
+    for writing, with a key file it cannot read ending the command in one
+    line and exit 1 (`exit_if_key_unreadable`) rather than a traceback.
+    The opener `cli_context` and `serve` share."""
+    with exit_if_key_unreadable():
+        return Store.open_or_create(path)
+
+
 def exit_if_bundle_store(*, prefix: str, exit_code: int = 0) -> None:
     """`exit_if_bundle_file` for the store the config resolves, for the
     in-process hook commands (`session-start`, `prompt-recall`,
@@ -175,6 +223,13 @@ def cli_context(*, migrate: bool = True) -> CliContext:
     (`exit_if_bundle_file`): this opener rekeys and writes, so it would
     change the bundle's snapshot and fail its hash. `up --foreground`
     comes here too, so no daemon serves a bundle.
+
+    A store whose key file is there and cannot be read ends the command
+    the same way, in one line naming the file and why, with exit 1
+    (`open_owner_store`): the opener refuses to rekey over it, and every
+    command that comes here, the daemon among them, says so instead of
+    printing a traceback. The daemon's line is the last of its log, which
+    `up` and the hooks quote when it exits before answering.
     """
     config = load_config()
     directory = config.resolved_directory()
@@ -183,7 +238,7 @@ def cli_context(*, migrate: bool = True) -> CliContext:
     # and run the startup checks. `bettermemory doctor` builds its own
     # Stores with the pure constructor instead, so inspecting a store
     # cannot rebuild the index it was asked to inspect.
-    store = Store.open_or_create(directory / STORE_FILENAME)
+    store = open_owner_store(directory / STORE_FILENAME)
     if migrate:
         try:
             migrate_at_open(store, config)

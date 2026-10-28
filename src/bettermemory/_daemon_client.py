@@ -565,16 +565,37 @@ def daemon_process_env(
     `Config.resolved_directory` reads the store directory on every call,
     so a relative value left in place would resolve against the state
     directory once the process has moved there. The state directory is
-    set to `state_dir`, resolved."""
+    set to `state_dir`, resolved.
+
+    The keys directory is resolved but for its last component
+    (`_pin_keys_dir`): a keys directory that is a symbolic link reaches
+    the daemon as the link. Resolved through, a link to a volume that is
+    not mounted named the directory it points at, where the daemon found
+    no key, wrote a new one and rekeyed the store, the very failure the
+    owner's opener refuses for a link it can see (`log.KeyRing.load_current`
+    reads it as a key it cannot read, and the daemon exits saying so)."""
     pinned = dict(env)
     if not pinned.get(_STORE_DIR_ENV):
         pinned[_STORE_DIR_ENV] = str(Path(store_path).parent)
     for name in _PATH_ENVS:
         value = pinned.get(name)
-        if value:
+        if value and name == _KEYS_DIR_ENV:
+            pinned[name] = _pin_keys_dir(value)
+        elif value:
             pinned[name] = str(Path(value).expanduser().resolve())
     pinned[STATE_DIR_ENV] = str(Path(state_dir).expanduser().resolve())
     return pinned
+
+
+def _pin_keys_dir(value: str) -> str:
+    """`value`, the keys directory, absolute with every component but the
+    last resolved, so the directory itself, when it is a symbolic link,
+    stays one (`daemon_process_env`). A value whose last component names
+    no directory entry (``.``, ``..``, a root) is resolved whole."""
+    path = Path(value).expanduser().absolute()
+    if path.name in ("", ".", ".."):
+        return str(path.resolve())
+    return str(path.parent.resolve() / path.name)
 
 
 def enter_state_dir(state_dir: Path, store_path: Path | str) -> Path:

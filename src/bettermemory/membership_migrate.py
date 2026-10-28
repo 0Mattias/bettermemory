@@ -352,12 +352,16 @@ def run_command(*, dry_run: bool) -> None:
     """`bettermemory membership migrate [--dry-run]`: the run over this
     process's store and machine, its report printed. The store is opened
     directly, not through the CLI's context, so a dry run is never
-    preceded by the run at open. Exits 2 when there is no store, and when
+    preceded by the run at open. Exits 2 when there is no store, when
     the store file is inside a backup bundle (`backup.bundle_refusal`):
-    the run writes, and would change the bundle's snapshot."""
+    the run writes, and would change the bundle's snapshot, and when the
+    store's key file is there and cannot be read: the owner's open
+    refuses to rekey over it, and the command says so in one line
+    (`cli._common.exit_if_key_unreadable`)."""
     import sys
 
     from .backup import bundle_refusal
+    from .cli._common import exit_if_key_unreadable
     from .config import STORE_FILENAME, load_config
 
     config = load_config()
@@ -371,7 +375,8 @@ def run_command(*, dry_run: bool) -> None:
         raise SystemExit(2)
     # The migration writes, from the owner's process: a store whose key
     # moved is rekeyed here as `open_or_create` would.
-    store = Store.open(path, allow_rekey=True)
+    with exit_if_key_unreadable(exit_code=2):
+        store = Store.open(path, allow_rekey=True)
     try:
         report = migrate(
             store,

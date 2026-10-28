@@ -327,6 +327,7 @@ def run_shim() -> None:
     # before a daemon is spawned only to exit.
     exit_if_bundle_file(store_path)
     env = daemon_env_for(store_path)
+    failed: Exception | None = None
     try:
         state = ensure_daemon(
             state_dir,
@@ -336,16 +337,25 @@ def run_shim() -> None:
             env=env,
         )
     except Exception as exc:  # noqa: BLE001 - the fallback below is the answer
-        log.warning("daemon lookup failed: %s: %s", exc.__class__.__name__, exc)
-        state = None
+        failed, state = exc, None
     if state is None:
+        from .cli.serve import open_for_serve, run_serve
+
+        # The fallback's store is opened before the shim says it falls
+        # back: a store it cannot open either (a key file that is there
+        # and cannot be read, which stopped the daemon too) ends the shim
+        # in the opener's one line and exit 1, not in that line after two
+        # warnings about an in-process server that never starts.
+        opened = open_for_serve()
+        if failed is not None:
+            log.warning(
+                "daemon lookup failed: %s: %s", failed.__class__.__name__, failed
+            )
         log.warning(
             "no daemon could be reached or started for %s; serving the store in-process",
             store_path,
         )
-        from .cli.serve import run_serve
-
-        run_serve()
+        run_serve(opened)
         return
     log.info(
         "stdio shim for the daemon at 127.0.0.1:%s (pid %s)",

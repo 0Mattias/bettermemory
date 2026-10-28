@@ -11,16 +11,22 @@ import argparse
 import logging
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 from ..builder import build_server
-from ..config import load_config
+from ..config import Config, load_config
 from ..store import (
     STORE_FILENAME,
     Store,
     UnmigratedV8DirectoryError,
     refuse_unmigrated_v8,
 )
-from ._common import exit_if_bundle_file, migration_line, run_migration_at_open
+from ._common import (
+    exit_if_bundle_file,
+    migration_line,
+    open_owner_store,
+    run_migration_at_open,
+)
 
 
 log = logging.getLogger("bettermemory")
@@ -49,25 +55,47 @@ def exit_if_unmigrated_v8(path: Path) -> None:
         raise SystemExit(1) from None
 
 
-def run_serve() -> None:
+class Opened(NamedTuple):
+    """The config, the storage directory and the store `serve` serves."""
+
+    config: Config
+    directory: Path
+    store: Store
+
+
+def open_for_serve() -> Opened:
+    """The store `serve` serves, opened as the owner's process opens it,
+    or the command ended in one line on stderr and exit 1: a directory
+    holding an un-migrated bettermemory 8 store and no store file, a
+    store file inside a backup bundle (serving it would write into the
+    bundle's snapshot and fail its hash), and a key file that is there
+    and cannot be read (`_common.open_owner_store`; nothing is rekeyed).
+
+    The shim calls this before it says it falls back to serving in
+    process, so a store the fallback cannot open ends the shim in that
+    one line, not after two warnings about a server that never starts."""
+    config = load_config()
+    directory = config.resolved_directory()
+    exit_if_unmigrated_v8(directory / STORE_FILENAME)
+    exit_if_bundle_file(directory / STORE_FILENAME)
+    store = open_owner_store(directory / STORE_FILENAME)
+    return Opened(config=config, directory=directory, store=store)
+
+
+def run_serve(opened: Opened | None = None) -> None:
     """Start the MCP server over stdio.
 
     Identical behavior to the pre-extraction ``_cli_serve``: configure
     root logging on stderr, load config, instantiate the Store at the
-    resolved directory, then hand off to ``build_server(...).run("stdio")``.
+    resolved directory (`open_for_serve`, unless the caller opened it
+    already), then hand off to ``build_server(...).run("stdio")``.
     """
     logging.basicConfig(
         level=logging.INFO,
         stream=sys.stderr,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-    config = load_config()
-    directory = config.resolved_directory()
-    exit_if_unmigrated_v8(directory / STORE_FILENAME)
-    # A store directory that is a backup bundle: serving it would write
-    # into the bundle's snapshot and fail its hash. One line, exit 1.
-    exit_if_bundle_file(directory / STORE_FILENAME)
-    store = Store.open_or_create(directory / STORE_FILENAME)
+    config, directory, store = opened if opened is not None else open_for_serve()
     # The migration's run at open (design 8.6), logged rather than printed
     # apart: this process's stderr is the server's log.
     report = run_migration_at_open(store, config, level=logging.WARNING)
