@@ -593,10 +593,15 @@ def test_a_store_under_one_key_is_anchored_at_seq_one_and_unchanged(
         for memory in memories:
             first.put_memory(memory)
         store_id = first.store_id
+        own = first.key_fingerprint
         created = first.log_rows()[0]
         before = first.log_verify()
         rows_before = len(first.log_rows())
-    assert _origin_file(keys, store_id) == {"seq": 1, "mac": created.mac}
+    assert _origin_file(keys, store_id) == {
+        "seq": 1,
+        "mac": created.mac,
+        "key_fingerprint": own,
+    }
     for _ in range(2):
         with Store.open_or_create(
             path, keys_dir=keys, strict_provenance=strict
@@ -635,7 +640,12 @@ def test_a_copied_store_is_anchored_at_its_takeover_and_keeps_its_labels(
     path, keys_b, arrived, written, rekey_seq, store_id = copied
     with Store.open(path, keys_dir=keys_b) as here:
         rekey = next(r for r in here.log_rows() if r.seq == rekey_seq)
-    assert _origin_file(keys_b, store_id) == {"seq": rekey_seq, "mac": rekey.mac}
+        own = here.key_fingerprint
+    assert _origin_file(keys_b, store_id) == {
+        "seq": rekey_seq,
+        "mac": rekey.mac,
+        "key_fingerprint": own,
+    }
     with Store.open_or_create(path, keys_dir=keys_b, strict_provenance=strict) as here:
         assert here.provenance_for([arrived.id, written.id]) == {
             arrived.id: UNACCOUNTED if strict else LOCAL,
@@ -1048,17 +1058,23 @@ def test_strict_provenance_and_the_anchor_together(
             }
 
 
-def test_a_lost_key_moves_the_anchor_to_the_new_keys_history(
+def test_a_lost_key_never_moves_the_anchor_and_reads_unverifiable(
     owned: tuple[Path, Memory, str, str],
     keys: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """The key file is gone (the user's doing: an editor of the store file
     cannot reach the keys directory). Nothing here can verify the anchored
-    row any more, so the new key's rekey row anchors the history, the rows
-    before it read as a copied store's, and nothing reads as tampering."""
-    path, genuine, _own, store_id = owned
+    row any more, and the anchor names a key the ring no longer holds: it
+    stays where it is and reads `unverifiable`, the rows before the new
+    key's rekey row read as a copied store's, and nothing reads as
+    tampering. Putting the key back makes the anchor hold again, which a
+    moved anchor could never do."""
+    path, genuine, own, store_id = owned
     ring = KeyRing(keys, store_id)
+    anchored = ring.read_origin()
+    assert anchored is not None and anchored.key_fingerprint == own
+    lost = ring.current_path().read_bytes()
     ring.current_path().unlink()
     with Store.open(path, keys_dir=keys) as reader:
         report = reader.log_verify()
@@ -1071,10 +1087,16 @@ def test_a_lost_key_moves_the_anchor_to_the_new_keys_history(
             assert owner.provenance_for([genuine.id]) == {genuine.id: LOCAL}
             report = owner.log_verify()
     assert rekey.kind == chain.REKEY
-    assert ring.read_origin() == HistoryOrigin(rekey.seq, rekey.mac)
-    assert report["origin"] == {"status": "ok", "seq": rekey.seq}
+    assert _origin_file(keys, store_id) == anchored.to_dict()
+    assert report["origin"] == {"status": "unverifiable", "seq": 1}
     assert report["status"] == "unverifiable"
-    assert "origin anchor moves" in caplog.text
+    assert _problems(report, chain.ORIGIN_MISMATCH) == []
+    assert "origin anchor moves" not in caplog.text
+
+    ring.retired_path(own).write_bytes(lost)
+    with Store.open(path, keys_dir=keys) as reader:
+        report = reader.log_verify()
+    assert report["origin"] == {"status": "ok", "seq": 1}
 
 
 def test_a_lost_key_keeps_an_anchor_a_retired_key_still_verifies(
@@ -1104,11 +1126,10 @@ def test_a_lost_key_keeps_an_anchor_whose_row_was_edited(
     assert report["status"] == "tampered"
 
 
-def test_a_lost_key_whose_anchor_cannot_be_moved_still_opens(
+def test_a_lost_key_never_replaces_the_anchor(
     owned: tuple[Path, Memory, str, str],
     keys: Path,
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     path, _genuine, _own, store_id = owned
     ring = KeyRing(keys, store_id)
@@ -1116,14 +1137,12 @@ def test_a_lost_key_whose_anchor_cannot_be_moved_still_opens(
     ring.current_path().unlink()
 
     def refused(self: KeyRing, origin: HistoryOrigin | None) -> HistoryOrigin | None:
-        raise PermissionError("read-only key directory")
+        raise AssertionError("the opener moved the origin anchor")
 
     monkeypatch.setattr(KeyRing, "replace_origin", refused)
-    with caplog.at_level(logging.WARNING, logger="bettermemory.store"):
-        with Store.open_or_create(path, keys_dir=keys) as owner:
-            assert owner.has_key
+    with Store.open_or_create(path, keys_dir=keys) as owner:
+        assert owner.has_key
     assert ring.read_origin() == anchored
-    assert "could not be moved" in caplog.text
 
 
 def _copy_store(source: Path, target: Path) -> None:
@@ -1181,7 +1200,9 @@ def test_a_key_ring_that_cannot_be_written_never_fails_an_open(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    def refused(self: KeyRing, *, seq: int, mac: str) -> bool:
+    def refused(
+        self: KeyRing, *, seq: int, mac: str, key_fingerprint: str | None = None
+    ) -> bool:
         raise PermissionError("read-only key directory")
 
     monkeypatch.setattr(KeyRing, "write_origin", refused)

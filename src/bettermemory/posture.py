@@ -562,7 +562,12 @@ def _key(
         "the next owner open (the daemon, a hook, the CLI) writes a new key and "
         "rekeys the log, and the rows signed before it stay unverifiable for good"
     )
-    key = keyring.load_current()
+    try:
+        key = keyring.load_current()
+    except OSError:
+        # There and unreadable (`log.KeyUnreadableError`): the branch below
+        # names it, from the presence check.
+        key = None
     key_present, key_unreachable = _presence(key_path)
     if key is None and (key_present or key_unreachable is not None):
         where = "exists" if key_present else f"cannot be looked for ({key_unreachable})"

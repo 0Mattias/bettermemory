@@ -708,6 +708,7 @@ def check_store(ctx: _Context) -> list[Check]:
     open. A missing store is the first-run state, not a fault: the first
     session creates it. A directory that holds an un-migrated 8.x store
     and no store file is one: a daemon refuses to start there."""
+    from .log import KeyUnreadableError
     from .store import (
         SCHEMA_VERSION,
         STORE_FILENAME,
@@ -774,7 +775,13 @@ def check_store(ctx: _Context) -> list[Check]:
         meta = store.meta()
         keyring = store.keyring
         expected = meta.get("key_fingerprint", "")
-        current = keyring.load_current()
+        unreadable: KeyUnreadableError | None = None
+        try:
+            current = keyring.load_current()
+        except KeyUnreadableError as exc:
+            # There and unreadable (`log.KeyUnreadableError`): the store
+            # opened for reading without it, and the check says so below.
+            current, unreadable = None, exc
         has_key = store.has_key
         head = keyring.read_head()
         tail = store.conn.execute(
@@ -848,6 +855,16 @@ def check_store(ctx: _Context) -> list[Check]:
             [] if head_finding is None else [head_finding],
             ok_summary=f"the key at {key_path} matches the store ({expected[:16]})",
             details=key_details,
+        )
+    elif unreadable is not None:
+        key_check = Check(
+            "key",
+            FAIL,
+            f"the key at {key_path} is there and cannot be read "
+            f"({unreadable.reason}): the log cannot be verified, "
+            "and every writing open of the store fails until it can",
+            "make it readable to this account again (owner-only, 0600)",
+            key_details,
         )
     elif current is None:
         key_check = Check(

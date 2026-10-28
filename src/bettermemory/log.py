@@ -55,24 +55,37 @@ history and every segment after it would then look like a copied store's,
 whose rows keep their labels. So where this machine's history begins is
 recorded OUTSIDE the store, in the key ring beside the key and the head:
 ``<store_id>.origin`` holds the seq and the MAC column of the first row
-this machine's key ring signed for the store (`KeyRing.write_origin`).
-The store writes it once, at `Store.create` (seq 1) or when it takes over
-a store copied here (the ``rekey`` row its opener writes), and on a store
-from before the anchor existed at its first writing open, as the first
-row of the earliest segment this machine holds (trust on first use: an
-edit made before that open is not caught by the anchor). Every check of
-the segments checks the anchor first (`check_origin`): the row at its seq
-must exist, carry its MAC, and verify under a key the ring holds. When it
-does, a segment whose key is not held is *leading* only when it ends
-before that seq, and *foreign* otherwise, whatever came before it. When
-it does not, ``verify_chain`` reports ``origin_mismatch``, and since the
-split between leading and foreign can no longer be trusted, the store's
-reads treat every segment whose key is not held as foreign. A store with
-no anchor keeps the rule above. Copying a store file over this machine's
-copy again, from the machine it came from, changes the history at the
-anchor and reads as ``origin_mismatch`` too: deleting
-``<store_id>.origin`` and ``<store_id>.head`` accepts the replaced history,
-and trusts the file again on purpose.
+this machine's key ring signed for the store, and the fingerprint of the
+key that signed it (`KeyRing.write_origin`). The store writes it once, at
+`Store.create` (seq 1) or when it takes over a store copied here (the
+``rekey`` row its opener writes), and on a store from before the anchor
+existed at its first writing open, as the first row of the earliest
+segment this machine holds (trust on first use: an edit made before that
+open is not caught by the anchor). Once written it never moves, a lost
+key included (only a restore puts a bundle's back, on the record:
+`KeyRing.replace_origin`); an anchor written before anchors named their
+key gains that name, and nothing else, at the first writing open that
+finds its row verifying (`KeyRing.name_origin_key`).
+Every check of the segments checks the anchor first (`check_origin`): the
+row at its seq must exist, carry its MAC, and verify under a key the ring
+holds. When it does, a segment whose key is not held is *leading* only
+when it ends before that seq, and *foreign* otherwise, whatever came
+before it. When the row is gone or carries another MAC, or when the key
+the anchor names is still held and does not verify it (the row was
+rewritten under its own MAC), ``verify_chain`` reports
+``origin_mismatch``, and since the split between leading and foreign can
+no longer be trusted, the store's reads treat every segment whose key is
+not held as foreign. When the row carries the anchor's MAC and the key
+that signed it is no longer held (its file was lost: an editor of the
+store file cannot remove it), nothing here can say whether the row is
+still the one signed, which is ``unverifiable``, not a verdict: the split
+falls back to the rule without an anchor, and putting the key back makes
+the anchor hold again. A store with no anchor keeps the rule above.
+Copying a store file over this machine's copy again, from the machine it
+came from, changes the history at the anchor and reads as
+``origin_mismatch`` too: deleting ``<store_id>.origin`` and
+``<store_id>.head`` accepts the replaced history, and trusts the file
+again on purpose.
 
 The store binding. The key ring is found by the store id, a value the
 store file carries, so two store files with one id (a copy of the store
@@ -181,8 +194,10 @@ TAMPER_PROBLEMS = frozenset(
 # What a check of the origin anchor finds (`check_origin`). ``absent``:
 # no anchor, which is a store from before the anchor existed or one only
 # ever opened for reading here, and is no finding. ``unverifiable``: the
-# row is there with the anchor's MAC, but the ring holds no key at all to
-# check it with. ``mismatch`` is the tamper finding.
+# row is there with the anchor's MAC, but no key the ring holds verifies
+# it and the key that signed it is not among them (the ring holds no key
+# at all, or the anchor names a key whose file is gone). ``mismatch`` is
+# the tamper finding.
 ORIGIN_OK = "ok"
 ORIGIN_ABSENT = "absent"
 ORIGIN_MISMATCHED = "mismatch"
@@ -265,20 +280,38 @@ class HistoryOrigin:
     """The origin anchor: where this machine's history of a store begins,
     as the seq and the MAC column of the first row its key ring signed
     (the module docstring). Kept beside the key, outside the store, so an
-    editor of the store file cannot move it."""
+    editor of the store file cannot move it.
+
+    ``key_fingerprint`` names the key that signed that row: what tells a
+    row rewritten under its own MAC (the key is still held and does not
+    verify it, a mismatch) from a row whose key was lost (no held key can
+    say, ``unverifiable``). None on an anchor written before anchors named
+    their key, which reads as it did then. It is evidence about the row,
+    not where the anchor is, so two anchors at the same seq and MAC are
+    equal whatever key they name."""
 
     seq: int
     mac: str
+    key_fingerprint: str | None = field(default=None, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"seq": self.seq, "mac": self.mac}
+        """``{"seq", "mac", "key_fingerprint"?}``: the key only when the
+        anchor names one, so an anchor from before reads back as it was
+        written."""
+        out: dict[str, Any] = {"seq": self.seq, "mac": self.mac}
+        if self.key_fingerprint is not None:
+            out["key_fingerprint"] = self.key_fingerprint
+        return out
 
 
 def parse_origin(raw: Any) -> HistoryOrigin | None:
     """The anchor ``raw`` describes, or None when it is not one: an object
     with a positive integer ``seq`` that SQLite can hold and a ``mac`` of
     64 lowercase hex characters, the shape `compute_mac` gives. Anything
-    else is read as no anchor, as an unreadable head is read as no head."""
+    else is read as no anchor, as an unreadable head is read as no head.
+    An optional ``key_fingerprint`` of the same shape names the key that
+    signed the row; one of any other shape is read as no name, which is
+    the stricter reading (`_check_origin`), not as no anchor."""
     if not isinstance(raw, dict):
         return None
     seq, mac = raw.get("seq"), raw.get("mac")
@@ -286,7 +319,32 @@ def parse_origin(raw: Any) -> HistoryOrigin | None:
         return None
     if not isinstance(mac, str) or _HEX_MAC.fullmatch(mac) is None:
         return None
-    return HistoryOrigin(seq=seq, mac=mac)
+    named = raw.get("key_fingerprint")
+    if not isinstance(named, str) or _HEX_MAC.fullmatch(named) is None:
+        named = None
+    return HistoryOrigin(seq=seq, mac=mac, key_fingerprint=named)
+
+
+class KeyUnreadableError(OSError):
+    """The current key file is there and cannot be read (a permission, a
+    directory where the file should be, an I/O error). Never read as a
+    missing key: the owner's opener replaces a missing key and rekeys the
+    log, which a failure that passes in a moment must not lead to
+    (`KeyRing.load_current`). ``path`` is the key file and ``reason`` what
+    the read said."""
+
+    def __init__(self, path: Path, cause: OSError) -> None:
+        reason = cause.strerror or str(cause) or type(cause).__name__
+        self.message = (
+            f"the key file {path} is there and cannot be read ({reason}); "
+            "the store is not rekeyed over it"
+        )
+        super().__init__(cause.errno, self.message)
+        self.path = path
+        self.reason = reason
+
+    def __str__(self) -> str:
+        return self.message
 
 
 class StoreBinding(NamedTuple):
@@ -360,15 +418,25 @@ class KeyRing:
         return self.keys_dir / f"{self.store_id}.path"
 
     def load_current(self) -> bytes | None:
+        """The current key, or None when there is no key file. A key file
+        that is there and cannot be read raises `KeyUnreadableError`, which
+        names it: read as missing, it would have the owner's opener retire
+        nothing, write a new key over the store's and rekey the log, for a
+        failure (a permission, an I/O error, a network home) that may pass
+        in a moment. A caller that only reports on the key catches it."""
+        path = self.current_path()
         try:
-            return self.current_path().read_bytes()
-        except OSError:
+            return path.read_bytes()
+        except FileNotFoundError:
             return None
+        except OSError as exc:
+            raise KeyUnreadableError(path, exc) from exc
 
     def retire_current(self) -> str | None:
         """Move the current key file aside under its fingerprint, so the
         segment it signed stays verifiable. Returns the fingerprint, or
-        None when there was no current key."""
+        None when there was no current key; raises `KeyUnreadableError`
+        when the key file cannot be read (`load_current`)."""
         key = self.load_current()
         if key is None:
             return None
@@ -397,7 +465,10 @@ class KeyRing:
         name the log may give wrongly is tried against (`chain_segments`);
         a key file that cannot be read is skipped."""
         keys: list[bytes] = []
-        current = self.load_current()
+        try:
+            current = self.load_current()
+        except KeyUnreadableError:
+            current = None
         if current is not None:
             keys.append(current)
         pattern = f"{glob.escape(self.store_id)}.*.key"
@@ -446,29 +517,54 @@ class KeyRing:
             return None
         return parse_origin(raw)
 
-    def write_origin(self, *, seq: int, mac: str) -> bool:
+    def write_origin(
+        self, *, seq: int, mac: str, key_fingerprint: str | None = None
+    ) -> bool:
         """Record where this machine's history of the store begins, once:
         when an anchor is already there nothing is written, whatever the
-        caller names. Under the anchor's own lock, so two openers taking
-        over one store write one anchor; atomic and owner-only from the
-        moment it is visible, as the head is. True when written. A file
-        that does not read as an anchor is replaced, as an unreadable head
-        is: it anchors nothing."""
+        caller names. ``key_fingerprint`` names the key that signed the
+        row (`HistoryOrigin`). Under the anchor's own lock, so two openers
+        taking over one store write one anchor; atomic and owner-only from
+        the moment it is visible, as the head is. True when written. A
+        file that does not read as an anchor is replaced, as an unreadable
+        head is: it anchors nothing."""
         self.ensure_dir()
         with flock_excl(self.origin_path()):
             if self.read_origin() is not None:
                 return False
-            self._write_origin_file(HistoryOrigin(seq=seq, mac=mac))
+            self._write_origin_file(
+                HistoryOrigin(seq=seq, mac=mac, key_fingerprint=key_fingerprint)
+            )
+        return True
+
+    def name_origin_key(self, origin: HistoryOrigin, key_fingerprint: str) -> bool:
+        """Name the key that signed the anchored row on an anchor written
+        before anchors named it, and change nothing else: the seq and the
+        MAC stay, so the anchor does not move. Under the anchor's lock, and
+        only while the anchor there is still ``origin`` and names no key.
+        True when written. The caller has seen the key verify the row."""
+        self.ensure_dir()
+        with flock_excl(self.origin_path()):
+            current = self.read_origin()
+            if (
+                current is None
+                or current.key_fingerprint is not None
+                or (current.seq, current.mac) != (origin.seq, origin.mac)
+            ):
+                return False
+            self._write_origin_file(
+                dataclasses.replace(current, key_fingerprint=key_fingerprint)
+            )
         return True
 
     def replace_origin(self, origin: HistoryOrigin | None) -> HistoryOrigin | None:
         """Install ``origin`` whatever the anchor says now, or remove the
         anchor when ``origin`` is None, and return the one it replaced.
-        Only two callers move an anchor, each on the record: a restore
-        puts back the bundle's (`backup.restore_bundle`), and the owner's
-        opener moves one no key this machine still holds can verify, after
-        this machine lost the key that signed it (`Store.open`). Nothing
-        that only edits the store file reaches either."""
+        One caller moves an anchor, on the record: a restore puts back the
+        bundle's (`backup.restore_bundle`). The owner's opener never moves
+        one, not even after this machine lost the key that signed its row
+        (that anchor reads ``unverifiable``, `check_origin`), and nothing
+        that only edits the store file reaches this."""
         self.ensure_dir()
         with flock_excl(self.origin_path()):
             before = self.read_origin()
@@ -617,8 +713,8 @@ class ChainReport:
     follows one whose key is held (``foreign_segment``), the origin
     anchor no longer matches the log (``origin_mismatch``), or the head
     names a row the log no longer holds; ``unverifiable`` when a leading
-    segment's key is absent, there is no head, or the ring holds no key
-    to check the anchor with; ``ok`` otherwise. ``origin`` is the anchor
+    segment's key is absent, there is no head, or the anchor's row carries
+    its MAC and the key that signed it is not held; ``ok`` otherwise. ``origin`` is the anchor
     check (`OriginCheck.to_dict`); an absent anchor changes no status."""
 
     rows: int
@@ -683,12 +779,16 @@ class OriginCheck:
     is one of ``ok``, ``absent``, ``mismatch`` or ``unverifiable`` (the
     ``ORIGIN_*`` names), ``seq`` the anchor's seq when there is one, and
     ``reason`` why a mismatch is one: ``missing`` (no row at that seq),
-    ``mac`` (the row carries another MAC) or ``signature`` (no key the
-    ring holds verifies the row)."""
+    ``mac`` (the row carries another MAC) or ``signature`` (the key the
+    anchor names, or on an anchor that names none any key the ring holds,
+    is held and does not verify the row). ``signer`` is the fingerprint of
+    the held key that verified the row when the anchor holds; it is not
+    part of a report."""
 
     status: str
     seq: int | None = None
     reason: str | None = None
+    signer: str | None = field(default=None, compare=False)
 
     @property
     def holds(self) -> bool:
@@ -740,7 +840,19 @@ def _check_origin(
     when there is none): the row must be there, carry the anchor's MAC,
     and verify under one of ``keys``. The first two need no key, so a
     ring that holds none still sees a row deleted or replaced; it only
-    cannot say whether the row is still the one its key signed."""
+    cannot say whether the row is still the one its key signed.
+
+    A row with the anchor's MAC that no held key verifies is one of two
+    things. Either it was rewritten under its own MAC (an editor changed
+    a field and kept the ``mac`` column, so the copied-store rule would
+    pass this machine's history off as a copy's), or the key that signed
+    it is gone (the user lost the key file; an editor of the store file
+    cannot remove it). The anchor's ``key_fingerprint`` tells them apart:
+    when that key is among ``keys`` it is the rewrite, ``mismatch``; when
+    it is not, no key here can say, ``unverifiable``, and putting the key
+    back answers it. An anchor that names no key (written before anchors
+    named one) cannot tell, and reads as the rewrite, as it did then,
+    until the owner's opener names its key (`KeyRing.name_origin_key`)."""
     if origin is None:
         return OriginCheck(ORIGIN_ABSENT)
     if row is None:
@@ -748,13 +860,18 @@ def _check_origin(
     if not same_mac(row.mac, origin.mac):
         return OriginCheck(ORIGIN_MISMATCHED, origin.seq, "mac")
     tried = False
+    signer_held = False
     for key in keys():
         tried = True
         if row_verifies(key, row):
-            return OriginCheck(ORIGIN_OK, origin.seq)
+            return OriginCheck(ORIGIN_OK, origin.seq, signer=fingerprint(key))
+        if fingerprint(key) == origin.key_fingerprint:
+            signer_held = True
     if not tried:
         return OriginCheck(ORIGIN_UNVERIFIABLE, origin.seq)
-    return OriginCheck(ORIGIN_MISMATCHED, origin.seq, "signature")
+    if origin.key_fingerprint is None or signer_held:
+        return OriginCheck(ORIGIN_MISMATCHED, origin.seq, "signature")
+    return OriginCheck(ORIGIN_UNVERIFIABLE, origin.seq)
 
 
 def check_origin(
@@ -987,7 +1104,9 @@ def verify_chain(
     a foreign segment is reported as ``foreign_segment`` with its range.
     The origin anchor is checked first, as `chain_trust` checks it; a
     broken one is ``origin_mismatch``, and the foreign segments are then
-    the ones that follow a held segment, the rule without an anchor."""
+    the ones that follow a held segment, the rule without an anchor. So
+    are they under an anchor whose key is no longer held, which makes the
+    report ``unverifiable`` and no worse on its own."""
     rows = list(iter_rows(conn))
     report = ChainReport(rows=len(rows))
     problems = report.problems
@@ -1152,6 +1271,7 @@ __all__ = [
     "Head",
     "HistoryOrigin",
     "KeyRing",
+    "KeyUnreadableError",
     "LogRow",
     "OriginCheck",
     "Segment",

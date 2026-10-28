@@ -136,6 +136,7 @@ from .log import (
     Head,
     HistoryOrigin,
     KeyRing,
+    KeyUnreadableError,
     canonical_payload,
     fingerprint,
     last_row,
@@ -921,7 +922,9 @@ def verify_bundle(bundle: Path, *, keys_dir: Path | None = None) -> dict[str, An
         # The anchor the signed manifest records, so `log_verify` checks the
         # snapshot against where the host's history of the store begins.
         if origin is not None:
-            scratch_ring.write_origin(seq=origin.seq, mac=origin.mac)
+            scratch_ring.write_origin(
+                seq=origin.seq, mac=origin.mac, key_fingerprint=origin.key_fingerprint
+            )
         try:
             opened = _store.Store.open(
                 copy, keys_dir=scratch_ring.keys_dir, allow_rekey=False
@@ -1177,12 +1180,16 @@ def _only_self_signed(verification: Mapping[str, Any]) -> bool:
 def _self_signed_refusal(verification: Mapping[str, Any], keys_root: Path) -> str:
     """Why a ``self_signed`` bundle is refused, and how to restore it."""
     fp = _self_signed_fingerprint(verification) or ""
-    current = KeyRing(keys_root, str(verification["store_id"])).load_current()
-    holds = (
-        f"which holds {fingerprint(current)[:16]} as this store's current key"
-        if current is not None
-        else "which holds no current key for this store"
-    )
+    try:
+        current = KeyRing(keys_root, str(verification["store_id"])).load_current()
+    except OSError:
+        holds = "whose current key for this store cannot be read"
+    else:
+        holds = (
+            f"which holds {fingerprint(current)[:16]} as this store's current key"
+            if current is not None
+            else "which holds no current key for this store"
+        )
     return (
         f"the bundle is signed only by a key the bundle carries ({fp[:16]}), "
         f"not by one under {keys_root}, {holds}. The signature shows the "
@@ -1307,7 +1314,13 @@ def restore_bundle(
         )
         needed = [str(k["fingerprint"]) for k in verification["keys"]]
         final = str(verification["log"]["key_fingerprint"])
-        actions = _key_actions(live, bundle_ring, needed, final)
+        try:
+            actions = _key_actions(live, bundle_ring, needed, final)
+        except KeyUnreadableError as exc:
+            # Read as missing, the store's current key would be written over
+            # by the bundle's. Refused before anything changes.
+            report["detail"] = f"{exc}; make it readable and run the restore again"
+            return report
         aside = _aside_base(store_file, stamp)
         before = live.read_head()
         current_store_id = _current_store_id(store_file)

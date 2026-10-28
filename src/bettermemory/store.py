@@ -32,10 +32,11 @@ naming the key directory, unless the caller opens with
 migrations, do), when the key is retired, a fresh one written, and a
 ``rekey`` row appended. Meta's fingerprint is only what the file says:
 a key that signs a segment of the log is this store's own whatever meta
-names, and stays (`Store.open`). The key ring is bound to one store file
-(``<store_id>.path``, `log.KeyRing.bind_store`): the owner's opener of a
-second file with the same store id, while the bound file still holds it,
-writes nothing and refuses writes.
+names, and stays (`Store.open`). A key file that cannot be read is not a
+missing one, and is never replaced. The key ring is bound to one store
+file (``<store_id>.path``, `log.KeyRing.bind_store`): the owner's opener
+of a second file with the same store id, while the bound file still
+holds it, writes nothing and refuses writes.
 
 Foreign segments. A segment of the log whose key this machine does not
 hold, after one whose key it does, is rows a writer without the key put
@@ -54,7 +55,10 @@ the anchor existed it anchors the earliest segment this machine holds,
 once (`_settle_origin`). The reads check it with the segment map
 (`log.chain_trust`). An anchor the log no longer matches means the
 history was rewritten where this machine's begins, so every segment whose
-key is not held reads as foreign, leading ones included.
+key is not held reads as foreign, leading ones included. An anchor never
+moves: one whose row no key here verifies because the key that signed it
+was lost reads ``unverifiable``, and the reads keep the rule without an
+anchor until the key is back.
 """
 
 from __future__ import annotations
@@ -89,11 +93,11 @@ from .log import (
     CAPTURE_KINDS,
     CONTROL_KINDS,
     MIGRATE_V8,
-    ORIGIN_MISMATCHED,
     REKEY,
     STORE_CREATED,
     HistoryOrigin,
     KeyRing,
+    KeyUnreadableError,
     LogRow,
     OriginCheck,
     Segment,
@@ -2063,6 +2067,22 @@ def _signs_a_segment(segments: Sequence[Segment], key: bytes) -> bool:
     )
 
 
+def _current_key(keyring: KeyRing, path: Path, *, writing: bool) -> bytes | None:
+    """The key ring's current key for the store at ``path`` (`open`). A key
+    file that is there and cannot be read (`log.KeyUnreadableError`) fails
+    the owner's open, naming the file: read as a missing key it would be
+    replaced and the log rekeyed, for a failure that may pass in a moment.
+    A reader opens without it, as it opens without a missing key, and says
+    why in the log."""
+    try:
+        return keyring.load_current()
+    except KeyUnreadableError as exc:
+        if writing:
+            raise
+        log.warning("store %s opens without its key: %s", path, exc)
+        return None
+
+
 def _store_id_at(path: Path) -> str | None:
     """The store id meta records in the store file at ``path``, read
     without opening it as a store (`Store.open` runs the additive schema
@@ -2353,7 +2373,7 @@ class Store:
                     },
                     session=None,
                 )
-            store._record_origin(first)
+            store._record_origin(first, key)
             # The new store's id is fresh, so the key ring was bound to no
             # file: this one is the file it belongs to.
             _claim_key_ring(keyring, path, store_id)
@@ -2400,8 +2420,8 @@ class Store:
         docstring): the ``rekey`` row it writes for a store copied here is
         where this machine's history of it begins (`_take_over_origin`),
         and on any other writing open a store with no anchor gets one
-        (`_settle_origin`). No repair moves an anchor that exists. A
-        reader never writes one.
+        (`_settle_origin`). Nothing moves an anchor that exists, a lost key
+        included. A reader never writes one.
 
         Before any of that, the owner's opener claims the key ring for this
         file (`_claim_key_ring`): the ring is found by the store id the
@@ -2412,6 +2432,10 @@ class Store:
         open writes nothing and opens as a reader does, refusing writes
         even when its key matches, with a warning naming both files. A
         reader never binds the ring.
+
+        A key file that is there and cannot be read fails the owner's open
+        (`log.KeyUnreadableError`) instead of being replaced; a reader
+        opens without it.
 
         ``strict_provenance`` is ``[security] strict_provenance`` for this
         connection; None (the default) reads it from the config the first
@@ -2445,7 +2469,7 @@ class Store:
                 Path(keys_dir) if keys_dir is not None else resolve_keys_dir(),
                 store_id,
             )
-            key = keyring.load_current()
+            key = _current_key(keyring, path, writing=allow_rekey)
             # The owner's opener first claims the key ring for this file
             # (`_claim_key_ring`): one that is bound to another file still
             # holding this store id is that file's, and this open writes
@@ -2524,7 +2548,6 @@ class Store:
             # names it: the rekey row records what it replaced, and meta
             # is only what the file says.
             previous = segments[-1].key_fingerprint if segments else expected
-            key_lost = key is None
             if key is not None:
                 keyring.retire_current()
             key = keyring.create_key()
@@ -2549,7 +2572,7 @@ class Store:
                 previous[:16],
                 fingerprint(key)[:16],
             )
-            store._take_over_origin(rekeyed, key_lost=key_lost)
+            store._take_over_origin(rekeyed)
             return store
         except Exception:
             conn.close()
@@ -2705,13 +2728,16 @@ class Store:
         self._segments = None
         self._origin = None
 
-    def _record_origin(self, row: LogRow) -> None:
-        """Anchor this machine's history of the store at ``row``, unless an
-        anchor is already there (`log.KeyRing.write_origin`). A key ring
-        that cannot be written logs why, as the head does: the store opens,
-        and a later writing open anchors it (`_settle_origin`)."""
+    def _record_origin(self, row: LogRow, key: bytes) -> None:
+        """Anchor this machine's history of the store at ``row``, signed
+        by ``key``, unless an anchor is already there
+        (`log.KeyRing.write_origin`). A key ring that cannot be written
+        logs why, as the head does: the store opens, and a later writing
+        open anchors it (`_settle_origin`)."""
         try:
-            written = self._keyring.write_origin(seq=row.seq, mac=row.mac)
+            written = self._keyring.write_origin(
+                seq=row.seq, mac=row.mac, key_fingerprint=fingerprint(key)
+            )
         except OSError as exc:
             log.warning("origin anchor for %s not written: %s", self._path, exc)
             return
@@ -2727,10 +2753,15 @@ class Store:
         is written. Trust on first use: whatever was done to the file
         before this open is taken as it stands, so a history rewritten
         before it is not caught by the anchor (the rule without one still
-        is). Costs one file read on a store that has an anchor, and never
-        fails the open."""
+        is). On a store whose anchor names no key (written before anchors
+        named one) it names the key instead (`_name_origin_key`). Costs one
+        file read on a store whose anchor names its key, and never fails
+        the open."""
         assert self._key is not None
-        if self._keyring.read_origin() is not None:
+        existing = self._keyring.read_origin()
+        if existing is not None:
+            if existing.key_fingerprint is None:
+                self._name_origin_key(existing)
             return
         try:
             segments = chain_segments(
@@ -2762,55 +2793,57 @@ class Store:
                 held.first_seq,
             )
             return
-        self._record_origin(held.first_row)
+        self._record_origin(held.first_row, held.key)
 
-    def _take_over_origin(self, row: LogRow, *, key_lost: bool) -> None:
+    def _name_origin_key(self, origin: HistoryOrigin) -> None:
+        """Name the key that signed the anchored row, on an anchor written
+        before anchors named their key, when a key this machine holds still
+        verifies the row (the anchor holds): from then on a row rewritten
+        under its own MAC reads as the mismatch it is, and one whose key is
+        later lost reads ``unverifiable`` rather than as tampering
+        (`log.check_origin`). The anchor itself does not move. An anchor
+        that does not hold stays as it is and keeps reading as before.
+        Never fails the open."""
+        try:
+            check = check_origin(
+                self._conn, keyring=self._keyring, current_key=self._key
+            )
+        except (sqlite3.Error, ValueError, TypeError, OverflowError) as exc:
+            log.warning(
+                "store %s: the origin anchor's key not named: the log could not "
+                "be read (%s)",
+                self._path,
+                exc,
+            )
+            return
+        if not check.holds or check.signer is None:
+            return
+        try:
+            self._keyring.name_origin_key(origin, check.signer)
+        except OSError as exc:
+            log.warning(
+                "store %s: the origin anchor's key not named: %s", self._path, exc
+            )
+
+    def _take_over_origin(self, row: LogRow) -> None:
         """The owner's opener wrote a new key and the ``rekey`` row ``row``
         for a store whose key it did not hold: where this machine's history
         of the store begins, when no anchor names an earlier row.
 
-        An anchor that exists stays, with one exception: when this machine's
-        current key was missing (``key_lost``), and the anchored row is
-        still the one anchored (its MAC column unchanged) but no key the
-        ring now holds verifies it, the key that signed it is gone with the
-        key file, and the anchor would read as a rewritten history on every
-        read from now on. It moves to ``row``, with a warning, and the rows
-        before read as a copied store's. Removing the key file takes write
-        access to the key directory, which an editor of the store file does
-        not have, so this is never theirs to trigger. An anchor whose row
-        is gone or carries another MAC stays, and reads ``origin_mismatch``."""
+        An anchor that exists stays where it is, always. When this machine
+        lost the key that signed the anchored row (the key file is gone),
+        no key here verifies that row any more; the anchor then reads
+        ``unverifiable`` (`log.check_origin`), the store's reads fall back
+        to the rule without an anchor, and putting the key file back makes
+        it hold again. Moving it to ``row`` instead would accept, for good,
+        whatever an editor did to the anchored row before the key went. An
+        anchor that names no key is given one when a held key, the one just
+        retired among them, still verifies its row (`_settle_origin`)."""
         if self._keyring.read_origin() is None:
-            self._record_origin(row)
+            assert self._key is not None
+            self._record_origin(row, self._key)
             return
-        if not key_lost:
-            return
-        check = check_origin(self._conn, keyring=self._keyring, current_key=self._key)
-        if check.status != ORIGIN_MISMATCHED or check.reason != "signature":
-            return
-        try:
-            before = self._keyring.replace_origin(
-                HistoryOrigin(seq=row.seq, mac=row.mac)
-            )
-        except OSError as exc:
-            log.warning(
-                "store %s: the origin anchor at seq %s names a row no key on this "
-                "host verifies, and it could not be moved to seq %d (%s)",
-                self._path,
-                check.seq,
-                row.seq,
-                exc,
-            )
-            return
-        self._forget_segments()
-        log.warning(
-            "store %s: this host's key for it was missing, and no key it still "
-            "holds verifies the row at seq %s where its history of the store "
-            "began; the origin anchor moves to the rekey row at seq %d, and the "
-            "rows before it read as a store copied here",
-            self._path,
-            None if before is None else before.seq,
-            row.seq,
-        )
+        self._settle_origin()
 
     def close(self) -> None:
         self._conn.close()

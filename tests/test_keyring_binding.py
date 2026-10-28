@@ -1,4 +1,5 @@
-"""The key ring's binding to one store file.
+"""The key ring's binding to one store file, and a key ring that cannot
+lose what it was given.
 
 The key ring, the head checkpoint and the origin anchor are found by the
 store id, a value the store file carries. A second file with that id (a
@@ -19,6 +20,13 @@ the ring belongs to. What is pinned here:
    no claim: the ring is bound again and the open is an ordinary one. The
    same file under another name (a hard link, a case spelling) is the
    same store.
+4. A key file that is there and cannot be read is never a lost key: the
+   owner's open fails, naming it, and nothing is rekeyed; a reader opens
+   without it; the reports that look at the key say what is wrong.
+5. The origin anchor never moves after it is written. An anchored row
+   whose key was lost reads `unverifiable`, not tampered, and the
+   segments fall back to the rule without an anchor; a row rewritten
+   under its own MAC while its key is still held stays a mismatch.
 """
 
 from __future__ import annotations
@@ -36,10 +44,11 @@ from typing import Any
 
 import pytest
 
+from bettermemory import backup
 from bettermemory import log as chain
 from bettermemory import store as store_module
-from bettermemory.backup import create_backup, restore_bundle
-from bettermemory.log import KeyRing
+from bettermemory.backup import create_backup, restore_bundle, verify_bundle
+from bettermemory.log import HistoryOrigin, KeyRing, KeyUnreadableError
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.store import LOCAL, STORE_FILENAME, UNACCOUNTED, Store
 
@@ -368,3 +377,353 @@ def test_the_bound_store_id_is_read_without_writing_to_the_file(
     junk.parent.mkdir()
     junk.write_bytes(b"not a database")
     assert store_module._store_id_at(junk) is None
+
+
+# ---------------------------------------------------------------------------
+# 4. A key file that cannot be read
+# ---------------------------------------------------------------------------
+
+
+def _load_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`KeyRing.load_current` as it answers a key file that is there and
+    cannot be read, for the callers that only report on the key."""
+
+    def load_current(self: KeyRing) -> bytes | None:
+        raise KeyUnreadableError(
+            self.current_path(), PermissionError(13, "Permission denied")
+        )
+
+    monkeypatch.setattr(KeyRing, "load_current", load_current)
+
+
+def _unreadable(monkeypatch: pytest.MonkeyPatch, key_path: Path) -> None:
+    """Make reading the key file fail as a permission does, once it is
+    there: the transient failure a lost key must never be mistaken for."""
+    real = Path.read_bytes
+
+    def read_bytes(self: Path) -> bytes:
+        if self == key_path:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real(self)
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+
+
+def test_load_current_tells_a_missing_key_from_an_unreadable_one(
+    tmp_path: Path,
+) -> None:
+    ring = KeyRing(tmp_path / "keys", "ab" * 16)
+    assert ring.load_current() is None
+    ring.ensure_dir()
+    ring.current_path().mkdir()
+    with pytest.raises(KeyUnreadableError) as raised:
+        ring.load_current()
+    assert raised.value.path == ring.current_path()
+    assert str(ring.current_path()) in str(raised.value)
+    assert isinstance(raised.value, OSError)
+    assert ring.held_keys() == []
+    with pytest.raises(KeyUnreadableError):
+        ring.retire_current()
+
+
+def test_an_unreadable_key_fails_the_owners_open_and_rekeys_nothing(
+    home: tuple[Path, Memory, str],
+    keys: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path, genuine, store_id = home
+    ring = KeyRing(keys, store_id)
+    ring_before = _ring_files(keys, store_id)
+    with monkeypatch.context() as patched:
+        _unreadable(patched, ring.current_path())
+        with pytest.raises(KeyUnreadableError, match="cannot be read"):
+            Store.open_or_create(path, keys_dir=keys)
+    assert _ring_files(keys, store_id) == ring_before
+    with Store.open_or_create(path, keys_dir=keys) as owner:
+        assert owner.has_key
+        assert all(row.kind != chain.REKEY for row in owner.log_rows())
+        assert owner.provenance_for([genuine.id]) == {genuine.id: LOCAL}
+        assert owner.log_verify()["status"] == "ok"
+
+
+def test_a_reader_opens_without_an_unreadable_key(
+    home: tuple[Path, Memory, str],
+    keys: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path, _genuine, store_id = home
+    _unreadable(monkeypatch, KeyRing(keys, store_id).current_path())
+    with caplog.at_level(logging.WARNING, logger="bettermemory.store"):
+        with Store.open(path, keys_dir=keys, allow_rekey=False) as reader:
+            assert reader.has_key is False
+    assert "opens without its key" in caplog.text
+
+
+def test_doctor_names_an_unreadable_key(
+    tmp_path: Path, keys_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bettermemory import doctor
+
+    directory = tmp_path / "store"
+    with Store.create(directory / STORE_FILENAME, keys_dir=keys_dir) as created:
+        store_id = created.store_id
+    _unreadable(monkeypatch, KeyRing(keys_dir, store_id).current_path())
+    checks = {
+        check.id: check
+        for check in doctor.check_store(doctor._Context(cwd=None, directory=directory))
+    }
+    assert checks["store"].status == doctor.OK
+    assert checks["key"].status == doctor.FAIL
+    assert "cannot be read" in checks["key"].summary
+
+
+def test_posture_names_an_unreadable_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bettermemory import posture
+
+    keys = tmp_path / "keys"
+    path = tmp_path / "store" / STORE_FILENAME
+    with Store.create(path, keys_dir=keys) as created:
+        meta = created.meta()
+    ring = KeyRing(keys, meta["store_id"])
+    _unreadable(monkeypatch, ring.current_path())
+    finding = posture._key(path, keys, meta, None, ring)
+    assert finding.id == "key.match"
+    assert finding.status == "high"
+    assert "cannot read it" in finding.summary
+
+
+def test_a_restore_over_an_unreadable_key_is_refused_before_anything_changes(
+    tmp_path: Path, keys_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = tmp_path / "store"
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(directory))
+    path = directory / STORE_FILENAME
+    with Store.create(path, keys_dir=keys_dir) as created:
+        store_id = created.store_id
+    bundle = Path(create_backup(path)["bundle"])
+    ring_before = _ring_files(keys_dir, store_id)
+    store_before = path.read_bytes()
+    _load_fails(monkeypatch)
+    report = restore_bundle(bundle, path, apply=True)
+    assert report["status"] == "refused"
+    assert "cannot be read" in report["detail"]
+    assert report["moved_aside"] == []
+    assert _ring_files(keys_dir, store_id) == ring_before
+    assert path.read_bytes() == store_before
+
+
+def test_a_self_signed_refusal_names_an_unreadable_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    keys = tmp_path / "keys"
+    store_id = "cd" * 16
+    _load_fails(monkeypatch)
+    text = backup._self_signed_refusal(
+        {"store_id": store_id, "problems": [], "log": None}, keys
+    )
+    assert "cannot be read" in text
+
+
+# ---------------------------------------------------------------------------
+# 5. The origin anchor never moves
+# ---------------------------------------------------------------------------
+
+
+def test_a_lost_key_reads_unverifiable_and_falls_back_to_the_rule_without_an_anchor(
+    home: tuple[Path, Memory, str], keys: Path
+) -> None:
+    """With the anchor's key lost, the split is the one without an anchor:
+    the lost key's history leads (its labels stand), and a forged segment
+    after the new key's is still foreign."""
+    path, genuine, store_id = home
+    ring = KeyRing(keys, store_id)
+    anchored = ring.read_origin()
+    ring.current_path().unlink()
+    with Store.open_or_create(path, keys_dir=keys) as owner:
+        written = _memory("written under the new key")
+        owner.put_memory(written)
+        new_fingerprint = owner.key_fingerprint
+    forged_key = b"f" * chain.KEY_BYTES
+    planted = _memory("planted after the new key's rows")
+    conn = sqlite3.connect(str(path))
+    try:
+        chain.append_row(
+            conn,
+            key=forged_key,
+            kind=chain.REKEY,
+            payload={
+                "old_fingerprint": new_fingerprint,
+                "new_fingerprint": chain.fingerprint(forged_key),
+            },
+        )
+        payload: dict[str, Any] = {
+            "memory": planted.model_dump(mode="json"),
+            "provenance": LOCAL,
+            "filename": None,
+        }
+        row = chain.append_row(conn, key=forged_key, kind="memory_put", payload=payload)
+        store_module._apply_mutation(conn, "memory_put", payload, log_mac=row.mac)
+        conn.commit()
+    finally:
+        conn.close()
+    with Store.open(path, keys_dir=keys, allow_rekey=False) as reader:
+        assert reader.provenance_for([genuine.id, written.id, planted.id]) == {
+            genuine.id: LOCAL,
+            written.id: LOCAL,
+            planted.id: UNACCOUNTED,
+        }
+        report = reader.log_verify()
+    assert report["origin"] == {"status": "unverifiable", "seq": 1}
+    found = {p["problem"] for p in report["problems"]}
+    assert chain.FOREIGN_SEGMENT in found
+    assert chain.ORIGIN_MISMATCH not in found
+    assert ring.read_origin() == anchored
+
+
+def test_a_row_rewritten_under_its_own_mac_while_its_key_is_held_is_a_mismatch(
+    home: tuple[Path, Memory, str], keys: Path
+) -> None:
+    path, _genuine, _store_id = home
+    _edit(path, "UPDATE log SET ts = ts || ' ' WHERE seq = 1")
+    with Store.open(path, keys_dir=keys) as reader:
+        report = reader.log_verify()
+    assert report["origin"] == {"status": "mismatch", "seq": 1, "reason": "signature"}
+    assert report["status"] == "tampered"
+
+
+def test_an_anchor_from_before_anchors_named_their_key(
+    home: tuple[Path, Memory, str], keys: Path
+) -> None:
+    """An rc12 anchor names no key. A row no held key verifies then reads as
+    it did (a mismatch), a reader leaves the anchor as it is, and the first
+    writing open that sees the row verify names the key without moving the
+    anchor; from then on a lost key reads `unverifiable`."""
+    path, _genuine, store_id = home
+    ring = KeyRing(keys, store_id)
+    named = ring.read_origin()
+    assert named is not None and named.key_fingerprint is not None
+    legacy = {"seq": named.seq, "mac": named.mac}
+    ring.origin_path().write_text(json.dumps(legacy), encoding="utf-8")
+
+    with Store.open(path, keys_dir=keys, allow_rekey=False) as reader:
+        assert reader.log_verify()["origin"] == {"status": "ok", "seq": 1}
+    assert json.loads(ring.origin_path().read_text(encoding="utf-8")) == legacy
+
+    lost = ring.current_path().read_bytes()
+    stand_in = KeyRing(keys, store_id)
+    stand_in.retired_path("0" * 64).write_bytes(b"s" * chain.KEY_BYTES)
+    ring.current_path().unlink()
+    with Store.open(path, keys_dir=keys, allow_rekey=False) as reader:
+        origin = chain.check_origin(reader.conn, keyring=ring)
+    assert origin.to_dict() == {"status": "mismatch", "seq": 1, "reason": "signature"}
+
+    ring.current_path().write_bytes(lost)
+    stand_in.retired_path("0" * 64).unlink()
+    with Store.open_or_create(path, keys_dir=keys) as owner:
+        assert owner.has_key
+    assert json.loads(ring.origin_path().read_text(encoding="utf-8")) == {
+        **legacy,
+        "key_fingerprint": named.key_fingerprint,
+    }
+    ring.current_path().unlink()
+    ring.retired_path("1" * 64).write_bytes(b"s" * chain.KEY_BYTES)
+    with Store.open(path, keys_dir=keys, allow_rekey=False) as reader:
+        origin = chain.check_origin(reader.conn, keyring=ring)
+    assert origin.to_dict() == {"status": "unverifiable", "seq": 1}
+
+
+@pytest.mark.parametrize("why", ["rewritten", "unwritable", "unreadable"])
+def test_an_anchor_whose_key_cannot_be_named_stays_as_it_was(
+    home: tuple[Path, Memory, str],
+    keys: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    why: str,
+) -> None:
+    """Naming the key never fails the open: a row no held key verifies
+    names nothing (it is the mismatch it was), and a ring or a log that
+    cannot be read or written is said in the log."""
+    path, _genuine, store_id = home
+    ring = KeyRing(keys, store_id)
+    named = ring.read_origin()
+    assert named is not None
+    legacy = {"seq": named.seq, "mac": named.mac}
+    ring.origin_path().write_text(json.dumps(legacy), encoding="utf-8")
+    if why == "rewritten":
+        _edit(path, "UPDATE log SET ts = ts || ' ' WHERE seq = 1")
+    elif why == "unwritable":
+
+        def refused(self: KeyRing, origin: HistoryOrigin, key_fingerprint: str) -> bool:
+            raise PermissionError("read-only key directory")
+
+        monkeypatch.setattr(KeyRing, "name_origin_key", refused)
+    else:
+
+        def unreadable(*args: Any, **kwargs: Any) -> chain.OriginCheck:
+            raise sqlite3.DatabaseError("database disk image is malformed")
+
+        monkeypatch.setattr(store_module, "check_origin", unreadable)
+    with caplog.at_level(logging.WARNING, logger="bettermemory.store"):
+        with Store.open_or_create(path, keys_dir=keys) as owner:
+            assert owner.has_key
+    assert json.loads(ring.origin_path().read_text(encoding="utf-8")) == legacy
+    if why != "rewritten":
+        assert "the origin anchor's key not named" in caplog.text
+
+
+def test_naming_the_key_never_moves_or_rewrites_another_anchor(
+    tmp_path: Path,
+) -> None:
+    ring = KeyRing(tmp_path / "keys", "ef" * 16)
+    origin = HistoryOrigin(3, "1" * 64)
+    assert ring.name_origin_key(origin, "2" * 64) is False
+    assert ring.write_origin(seq=3, mac="1" * 64) is True
+    assert ring.name_origin_key(HistoryOrigin(4, "1" * 64), "2" * 64) is False
+    assert ring.read_origin() == origin
+    assert ring.name_origin_key(origin, "2" * 64) is True
+    named = ring.read_origin()
+    assert named is not None and named.key_fingerprint == "2" * 64
+    assert ring.name_origin_key(origin, "3" * 64) is False
+    named = ring.read_origin()
+    assert named is not None and named.key_fingerprint == "2" * 64
+
+
+@pytest.mark.parametrize(
+    ("raw", "named"),
+    [
+        ({"seq": 1, "mac": "1" * 64, "key_fingerprint": "2" * 64}, "2" * 64),
+        ({"seq": 1, "mac": "1" * 64, "key_fingerprint": "2" * 63}, None),
+        ({"seq": 1, "mac": "1" * 64, "key_fingerprint": 7}, None),
+        ({"seq": 1, "mac": "1" * 64}, None),
+    ],
+)
+def test_an_anchor_reads_its_key_only_in_the_shape_a_fingerprint_has(
+    raw: dict[str, Any], named: str | None
+) -> None:
+    origin = chain.parse_origin(raw)
+    assert origin is not None
+    assert origin.key_fingerprint == named
+    assert origin == HistoryOrigin(1, "1" * 64)
+
+
+def test_a_bundle_of_a_store_whose_anchor_key_was_lost_is_not_tampered(
+    tmp_path: Path, keys_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = tmp_path / "store"
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(directory))
+    path = directory / STORE_FILENAME
+    with Store.create(path, keys_dir=keys_dir) as created:
+        created.put_memory(_memory("written under the key that is lost"))
+        store_id = created.store_id
+        lost = created.key_fingerprint
+    KeyRing(keys_dir, store_id).current_path().unlink()
+    with Store.open_or_create(path, keys_dir=keys_dir) as owner:
+        owner.put_memory(_memory("written under the new key"))
+    result = create_backup(path)
+    assert result["manifest"]["origin"]["key_fingerprint"] == lost
+    report = verify_bundle(Path(result["bundle"]))
+    assert report["log"]["origin"] == {"status": "unverifiable", "seq": 1}
+    assert report["log"]["status"] == "unverifiable"
