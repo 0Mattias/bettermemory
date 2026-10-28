@@ -756,6 +756,18 @@ def test_cli_warns_when_the_cursor_is_past_the_log(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert f"the log ends at seq {last}" in captured.err
+    # No warning for a cursor the log has reached.
+    assert _run_cli(["log", "export", "--since-seq", str(last)], monkeypatch) == 0
+    assert capsys.readouterr().err == ""
+    # A log emptied whole is the same warning: every row was the tail.
+    outside = _outside(cli_store)
+    outside.execute("DELETE FROM log")
+    outside.commit()
+    outside.close()
+    assert _run_cli(["log", "export", "--since-seq", str(last)], monkeypatch) == 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "the log ends at seq 0 (it holds no rows)" in captured.err
 
 
 @pytest.mark.parametrize(

@@ -370,9 +370,13 @@ def _cli_log_export(
                 parser.error(f"--out: cannot write {out}: {exc}")
     finally:
         store.close()
-    if summary.log_last_seq is not None and summary.log_last_seq < since:
+    # A log with no rows at all ends at seq 0: a cursor past it is the
+    # same warning, the whole log being the tail that went.
+    log_end = summary.log_last_seq or 0
+    if log_end < since:
+        empty = " (it holds no rows)" if summary.log_last_seq is None else ""
         sys.stderr.write(
-            f"bettermemory log export: the log ends at seq {summary.log_last_seq}, "
+            f"bettermemory log export: the log ends at seq {log_end}{empty}, "
             f"before --since-seq {since}: the store was restored or its tail "
             f"removed since the last export, or this is another store; "
             f"run `bettermemory log verify`\n"
