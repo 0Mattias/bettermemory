@@ -1,0 +1,68 @@
+name: Scorecard
+
+# OpenSSF Scorecard: an outside grading of the repository's supply-chain
+# posture (pinned dependencies, token permissions, branch protection, signed
+# releases, code review and the rest), published to the public Scorecard API
+# and uploaded to Security > Code scanning. An enterprise reviewer asks for
+# this result by name.
+#
+# `publish_results: true` makes the Scorecard API enforce rules on this
+# workflow before it accepts the result: no workflow-level env or defaults,
+# no workflow-level write permission, `id-token: write` on the scorecard job
+# only, no job-level env, containers or services, and that job's steps drawn
+# only from checkout, upload-artifact, codeql-action's upload-sarif and the
+# scorecard action itself. Keep `run:` steps out of it too. Break a rule and
+# the publish is refused.
+#
+# Not a release gate: release.yml neither calls this workflow nor needs it.
+# It runs on the default branch only, which is the branch Scorecard grades.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "41 5 * * 2"
+  # A change to branch protection changes the Branch-Protection check's
+  # score; re-grade when it happens rather than at the next weekly run.
+  branch_protection_rule:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      # Upload the SARIF results to code scanning.
+      security-events: write
+      # The OIDC token the Scorecard API verifies the published result with.
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run the Scorecard checks
+        uses: ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e # v2.5.0
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      # Kept on the run for five days, so the result can be read without
+      # write access to the repository's code scanning alerts.
+      - name: Upload the SARIF file as an artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: scorecard-sarif
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload the SARIF file to code scanning
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: results.sarif

@@ -1,0 +1,64 @@
+name: CodeQL
+
+# Static analysis of the Python source and of the workflows themselves.
+# CodeQL's `actions` language reads .github/workflows for expression
+# injection into `run:`, untrusted checkouts and over-broad permissions, the
+# rules the workflow policy test holds the files to by hand. Results land
+# under Security > Code scanning.
+#
+# This is CodeQL's advanced setup. GitHub's default setup must stay off in
+# the repository settings: the two conflict, and the default one would run
+# without these query suites or this schedule.
+#
+# Not a release gate. release.yml neither calls this workflow nor needs it,
+# so a finding is triaged into an issue, never a blocked tag. `build-mode:
+# none` because neither language is compiled: CodeQL reads the source as it
+# is, with no build step to run or to trust.
+
+on:
+  push:
+    branches: [main, v9, rs-f7-phase1]
+  pull_request:
+    branches: [main, v9, rs-f7-phase1]
+  schedule:
+    # Weekly, so a query added to the CodeQL bundle reaches code that has
+    # not changed since its last push.
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+# Nothing by default; the one job below asks for what it uses.
+permissions: {}
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # Upload the SARIF results to code scanning.
+      security-events: write
+      # Read this run's workflow metadata, which the CodeQL action reports
+      # alongside the results.
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, actions]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          # The default suite plus the lower-precision security queries.
+          queries: security-extended
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: "/language:${{ matrix.language }}"
