@@ -340,20 +340,32 @@ def run_shim() -> None:
     if state is None:
         from .cli.serve import open_for_serve, run_serve
 
+        def falling_back() -> None:
+            if failed is not None:
+                log.warning(
+                    "daemon lookup failed: %s: %s", failed.__class__.__name__, failed
+                )
+            log.warning(
+                "no daemon could be reached or started for %s; serving the store "
+                "in-process",
+                store_path,
+            )
+
         # The fallback's store is opened before the shim says it falls
         # back: a store it cannot open either (a key file that is there
         # and cannot be read, which stopped the daemon too) ends the shim
-        # in the opener's one line and exit 1, not in that line after two
-        # warnings about an in-process server that never starts.
-        opened = open_for_serve()
-        if failed is not None:
-            log.warning(
-                "daemon lookup failed: %s: %s", failed.__class__.__name__, failed
-            )
-        log.warning(
-            "no daemon could be reached or started for %s; serving the store in-process",
-            store_path,
-        )
+        # in the opener's one line and exit 1 (a `SystemExit`), not in that
+        # line after two warnings about an in-process server that never
+        # starts. Any other failure of the open has no such line, and its
+        # traceback alone would hide why the daemon was not there (its
+        # error and its log, which `DaemonExited` names): the warnings
+        # come first then, as they always did.
+        try:
+            opened = open_for_serve()
+        except Exception:
+            falling_back()
+            raise
+        falling_back()
         run_serve(opened)
         return
     log.info(

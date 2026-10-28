@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -275,6 +276,45 @@ def test_the_shim_says_so_before_it_says_it_falls_back(
     assert "in-process" not in caplog.text
     assert "daemon lookup failed" not in caplog.text
     unreadable.assert_nothing_rekeyed()
+
+
+def test_the_shim_still_warns_first_when_its_fallback_fails_another_way(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Only an open that ends in a line of its own (a `SystemExit`) goes
+    without the shim's warnings. A store the fallback cannot open for any
+    other reason ends in its traceback, as it always did, with the
+    daemon's failure and the log that failure names warned above it: the
+    traceback alone would not say why no daemon was there."""
+    from bettermemory import shim
+    from bettermemory.cli import serve
+
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(tmp_path / "store"))
+    daemon_log = tmp_path / "daemon.log"
+
+    def exited(store_path: Path, *args: object, **kwargs: object) -> None:
+        raise _daemon_client.DaemonExited(
+            store_path, 1, "the daemon's own line", daemon_log
+        )
+
+    def unopenable() -> serve.Opened:
+        raise sqlite3.DatabaseError("file is not a database")
+
+    def never(*_args: object) -> None:
+        raise AssertionError("a store that did not open was served")
+
+    monkeypatch.setattr(_daemon_client, "ensure_daemon", exited)
+    monkeypatch.setattr(serve, "open_for_serve", unopenable)
+    monkeypatch.setattr(serve, "run_serve", never)
+    caplog.set_level(logging.WARNING)
+    with pytest.raises(sqlite3.DatabaseError):
+        shim.run_shim()
+    assert "daemon lookup failed: DaemonExited" in caplog.text
+    assert "the daemon's own line" in caplog.text
+    assert str(daemon_log) in caplog.text
+    assert "serving the store in-process" in caplog.text
 
 
 @pytest.mark.parametrize(
