@@ -2188,17 +2188,51 @@ def _bound_store_check(store_id: str) -> tuple[Callable[[Path], bool], list[str]
     return holds, unread
 
 
+#: The (store file, bound file) pairs this process has warned about
+#: (`_warn_bound_elsewhere`). Once per process, by `config`'s
+#: `_DEPRECATED_KEY_WARNED_PATHS` rule: the daemon opens a worker
+#: connection per thread (`Store.reopen`), and each is a reader's open
+#: that reads the binding again, so a copy left beside the bound store
+#: repeated the same warning for every worker of a long-lived daemon.
+#: Keyed on both files, so a second copy, or the same copy once the ring
+#: is bound to a third file, still gets its own warning.
+_BOUND_ELSEWHERE_WARNED: set[tuple[Path, Path]] = set()
+
+
+def _resolved_for_guard(path: Path) -> Path:
+    """`path` resolved for the one-shot guard's key, so two spellings of
+    one file share a warning; as given when it cannot be resolved (the
+    rule of `config._resolved_for_guard`, for a store file). A symlink
+    loop raises RuntimeError before Python 3.13, and a log line must not
+    fail the open that says it."""
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError):
+        return path
+
+
 def _warn_bound_elsewhere(
     keyring: KeyRing, path: Path, store_id: str, other: Path, unread: Sequence[str]
 ) -> None:
     """Say in the log that the key ring is another store file's, naming both
-    files and the remedy (`_claim_key_ring`, `_key_ring_elsewhere`)."""
+    files and the remedy (`_claim_key_ring`, `_key_ring_elsewhere`): a
+    warning the first time this process opens ``path`` while the ring is
+    bound to ``other``, the same line at DEBUG on every later open of the
+    pair (`_BOUND_ELSEWHERE_WARNED`). Every open still reads the binding
+    and still opens for reading only; only the repetition is quieter."""
+    guard_key = (_resolved_for_guard(path), _resolved_for_guard(other))
+    if guard_key in _BOUND_ELSEWHERE_WARNED:
+        level = logging.DEBUG
+    else:
+        _BOUND_ELSEWHERE_WARNED.add(guard_key)
+        level = logging.WARNING
     holds = (
         f"which could not be read to tell whether it still holds that id ({unread[-1]})"
         if unread
         else "which still holds that id"
     )
-    log.warning(
+    log.log(
+        level,
         "store %s carries store id %s, and the key ring under %s belongs to "
         "the store at %s, %s; this one opens for reading only, and nothing is "
         "rekeyed or written. Move or remove one of the two stores, or delete %s "
