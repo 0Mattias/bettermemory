@@ -473,6 +473,59 @@ def test_a_telemetry_event_names_its_record_state_only_for_a_record(
     ]
 
 
+def test_an_event_about_a_pruned_record_and_a_conflict_put_name_their_record(
+    store: Store,
+) -> None:
+    """A write event outlives its record: once the tombstone is pruned it
+    is about a record only the log still holds, `pruned`, not one that
+    never existed. A `conflict_put` names the conflict it carries, live
+    while the queue holds the row and pruned once it is deleted, as the
+    table pass names it."""
+    memory = store.write(content="clean", scopes=["x"])
+    store.record_event(
+        "write",
+        id=memory.id,
+        status="committed",
+        credentials_acknowledged=[],
+        claims=[f"uses {_GITHUB}"],
+    )
+    store.tombstone(memory.id, reason="leaked")
+    assert store.prune_tombstones(timedelta(0)) == [memory.id]
+    a = store.write(content="clean a", scopes=["x"])
+    b = store.write(content="clean b", scopes=["x"])
+    store.put_conflict(
+        {
+            "id": "cf-1",
+            "a_id": a.id,
+            "b_id": b.id,
+            "summary_a": f"deploy uses {_AWS}",
+            "summary_b": "clean b",
+            "similarity": 0.9,
+            "method": "jaccard",
+            "detector": "test",
+            "created": "2026-01-01T00:00:00+00:00",
+            "status": "pending",
+        }
+    )
+
+    def logged() -> list[tuple[str | None, str | None, str | None]]:
+        return [
+            (f.log_kind, f.record_id, f.record_state)
+            for f in scan_store(store, include_log=True).findings
+            if f.location == "log"
+        ]
+
+    assert logged() == [
+        ("write", memory.id, PRUNED),
+        ("conflict_put", "cf-1", LIVE),
+    ]
+    store.delete_conflict("cf-1")
+    assert logged() == [
+        ("write", memory.id, PRUNED),
+        ("conflict_put", "cf-1", PRUNED),
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Never the value
 # ---------------------------------------------------------------------------
@@ -619,6 +672,33 @@ def test_a_row_the_models_refuse_is_still_scanned(store: Store) -> None:
         ("claims", "github-token"),
     }
     assert {f.record_id for f in findings} == {"outside-1"}
+
+
+def test_a_text_column_holding_a_blob_is_scanned(store: Store) -> None:
+    """SQLite keeps the type a statement binds, so a row written outside
+    the store can hold its body as a BLOB: the scan reads it as text."""
+    store.conn.execute(
+        "INSERT INTO memories(id, created, updated, confidence, body, scopes_text, "
+        "scopes_json, provenance, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "outside-2",
+            "x",
+            "x",
+            "x",
+            f"pasted {_AWS}".encode(),
+            "",
+            "[]",
+            "local",
+            "explicit",
+        ),
+    )
+
+    found = _only(scan_store(store).findings, location="memories")
+    assert (found.record_id, found.field, found.kind) == (
+        "outside-2",
+        "body",
+        "aws-access-key-id",
+    )
 
 
 def test_a_log_payload_that_is_not_json_is_scanned_as_text(store: Store) -> None:

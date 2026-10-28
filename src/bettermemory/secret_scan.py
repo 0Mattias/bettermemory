@@ -140,13 +140,19 @@ _TABLE_STATE = {
 # Scanning a derived column would report a body hit a second time.
 _SKIPPED_COLUMNS = frozenset({"body_fts", "scopes_fts", "scopes_text", "log_mac"})
 
-# The log kinds whose payload is one record, and the key it sits under.
+# The log kinds whose payload is one row of a scanned table, and the key
+# it sits under. A conflict is not a record, but its row is a copy of
+# body text the table pass reports by its id, so its log rows are named
+# the same way.
 _RECORD_PUTS = {
     "memory_put": "memory",
     "tombstone_put": "tombstone",
     "episode_put": "episode",
+    "conflict_put": "conflict",
 }
-_RECORD_DELETES = frozenset({"memory_delete", "tombstone_delete", "episode_delete"})
+_RECORD_DELETES = frozenset(
+    {"memory_delete", "tombstone_delete", "episode_delete", "conflict_delete"}
+)
 
 # The telemetry kinds that carry `credentials_acknowledged`: the committed
 # write and the successful update (handlers/write.py, handlers/update.py).
@@ -215,9 +221,9 @@ class SecretFinding:
     the field holds; neither carries any of the value. `record_id` and
     `log_kind` are `*` when they are not plain tokens or a detector fires
     on them. `record_state` is None for a log row that names no record (a
-    membership or control row, a telemetry event about something that is
-    not a record this store holds). `acknowledged` is None when the log
-    holds no gated write for the record."""
+    membership or control row, a telemetry event about an id no record
+    row in the log names). `acknowledged` is None when the log holds no
+    gated write for the record."""
 
     location: str
     record_id: str | None
@@ -349,11 +355,16 @@ def _row_strings(row: sqlite3.Row) -> Iterator[tuple[str, str]]:
     """The text a table row holds, as (field, text): each text column by
     its name, and each string inside a `*_json` column by its path under
     the column's name without the suffix (`claims_json` -> `claims[0]`).
-    A JSON column that does not parse is scanned as text."""
+    A JSON column that does not parse is scanned as text. SQLite keeps
+    the type a statement binds, so a row written outside the store can
+    hold a text column as a BLOB; it is read as UTF-8, an undecodable
+    byte replaced."""
     for column in row.keys():
         if column in _SKIPPED_COLUMNS:
             continue
         value = row[column]
+        if isinstance(value, bytes):
+            value = value.decode("utf-8", errors="replace")
         if not isinstance(value, str):
             continue
         if not column.endswith("_json"):
@@ -471,18 +482,19 @@ def _scan_table(
 
 
 def _log_state(
-    kind: str, record_id: str | None, live: set[str], tombstoned: set[str]
+    record_id: str | None, live: set[str], tombstoned: set[str], logged: set[str]
 ) -> str | None:
-    """The state of the record a log row names. A record put or delete
-    whose record no table holds is `pruned`; any other row whose id is no
-    current record names something that is not a record (None)."""
+    """The state of the record a log row names. A record some put or
+    delete in the log names and no table holds is `pruned`, whether this
+    row is that put or a telemetry event about the record; an id no
+    record row ever named is not a record (None)."""
     if record_id is None:
         return None
     if record_id in live:
         return LIVE
     if record_id in tombstoned:
         return TOMBSTONED
-    if kind in _RECORD_PUTS or kind in _RECORD_DELETES:
+    if record_id in logged:
         return PRUNED
     return None
 
@@ -492,11 +504,16 @@ def _scan_log(
 ) -> tuple[int, list[SecretFinding]]:
     """Every log row's payload in seq order, whatever its kind: the rows
     read and the findings. A payload that is not JSON is scanned as text
-    under the field name ``payload``."""
-    live = _ids(store, "memories") | _ids(store, "episodes")
+    under the field name ``payload``. The states are settled after the
+    walk, against every record the log's puts and deletes name, so an
+    event logged before its record's put (an imported v8 event) is judged
+    by the whole log."""
+    live = _ids(store, "memories") | _ids(store, "episodes") | _ids(store, "conflicts")
     tombstoned = _ids(store, "tombstones")
+    logged: set[str] = set()
     rows = 0
-    findings: list[SecretFinding] = []
+    # (seq, log kind, record id, field, detector kind, offset, count)
+    hits: list[tuple[int, str, str | None, str, str, int, int]] = []
     for log_row in iter_rows(store.conn):
         rows += 1
         try:
@@ -504,23 +521,38 @@ def _scan_log(
         except ValueError:
             payload = log_row.payload
         record_id = _log_record_id(log_row.kind, payload)
-        state = _log_state(log_row.kind, record_id, live, tombstoned)
+        if record_id is not None and (
+            log_row.kind in _RECORD_PUTS or log_row.kind in _RECORD_DELETES
+        ):
+            logged.add(record_id)
         for field_name, text in _distinct(_strings(payload, "")):
             for kind, (offset, count) in _hits(text).items():
-                findings.append(
-                    SecretFinding(
-                        location=LOG,
-                        record_id=_shown(record_id),
-                        seq=log_row.seq,
-                        log_kind=_shown(log_row.kind),
-                        field=field_name or "payload",
-                        kind=kind,
-                        offset=offset,
-                        occurrences=count,
-                        record_state=state,
-                        acknowledged=_acknowledged(acks, record_id, kind),
+                hits.append(
+                    (
+                        log_row.seq,
+                        log_row.kind,
+                        record_id,
+                        field_name or "payload",
+                        kind,
+                        offset,
+                        count,
                     )
                 )
+    findings = [
+        SecretFinding(
+            location=LOG,
+            record_id=_shown(record_id),
+            seq=seq,
+            log_kind=_shown(log_kind),
+            field=field_name,
+            kind=kind,
+            offset=offset,
+            occurrences=count,
+            record_state=_log_state(record_id, live, tombstoned, logged),
+            acknowledged=_acknowledged(acks, record_id, kind),
+        )
+        for seq, log_kind, record_id, field_name, kind, offset, count in hits
+    ]
     return rows, findings
 
 
