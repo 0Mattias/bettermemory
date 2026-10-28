@@ -11,6 +11,7 @@ on a store named by `BETTERMEMORY_DIR`.
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
@@ -277,11 +278,25 @@ def test_text_names_every_section(store: Store) -> None:
         assert len(row) <= 88 or not row.startswith("    memories")
 
 
-def test_store_text_is_made_printable(store: Store) -> None:
-    _put(store, "tools", days_ago=0, client="evil\x1b[2Jclient")
+def test_store_text_is_made_printable(store: Store, store_dir: Path) -> None:
+    memory = _put(store, "tools", days_ago=0, client="evil\x1b[2Jclient")
+    assert "evil�[2Jclient 1" in render(collect(store, days=1, now=_NOW))
+    # Not only names: ids, stamps and the engine version in `meta` are
+    # whatever an editor of the file wrote there too.
+    outside = sqlite3.connect(str(store_dir / STORE_FILENAME))
+    outside.execute(
+        "UPDATE memories SET id = ?, updated = ? WHERE id = ?",
+        ("X\x1b]0;id\x07", "2026-10-27\x1b[2J", memory.id),
+    )
+    outside.execute(
+        "UPDATE meta SET value = ? WHERE key = 'engine_version'", ("9\x9b31m",)
+    )
+    outside.commit()
+    outside.close()
     text = render(collect(store, days=1, now=_NOW))
-    assert "\x1b" not in text
-    assert "evil�[2Jclient 1" in text
+    for raw in ("\x1b", "\x07", "\x9b"):
+        assert raw not in text
+    assert "engine 9�31m" in text
 
 
 def test_cli_json_and_text(

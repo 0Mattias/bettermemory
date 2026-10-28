@@ -112,12 +112,14 @@ _EVENT_DETAIL = ("status", "reason", "fields", "door", "attribution", "triggered
 def printable(text: str) -> str:
     """`text` made safe to print on one terminal line: control and format
     characters (category Cc and Cf: escapes, line breaks, bidi controls,
-    zero-width characters) become U+FFFD; a tab is kept. The text comes
+    zero-width characters) become U+FFFD, as does a lone surrogate (Cs,
+    which a ``\\ud800`` escape in stored JSON decodes to and which a
+    strict UTF-8 stdout refuses to write); a tab is kept. The text comes
     from the store, which an editor of the file may have written; a raw
     escape sequence in a reason or a scope must not reach the terminal as
     one."""
     return "".join(
-        "�" if ch != "\t" and unicodedata.category(ch) in ("Cc", "Cf") else ch
+        "�" if ch != "\t" and unicodedata.category(ch) in ("Cc", "Cf", "Cs") else ch
         for ch in text
     )
 
@@ -731,7 +733,10 @@ _VERIFIED_TEXT = {True: "mac ok", False: "MAC FAILS", None: "mac unverifiable"}
 
 def render_text(history: RecordHistory, *, diff: bool = False) -> str:
     """The text form: a header, one line per row, the body diff under a
-    version with ``--diff``, and the findings last."""
+    version with ``--diff``, and the findings last. Every line goes
+    through `printable`, the header too: the provenance label it names
+    is the table's own column, which an editor of the file can set to
+    anything and which a pointer that verifies does not check."""
     kind = history.record_kind or "record"
     count = len(history.rows)
     lines = [
@@ -755,14 +760,14 @@ def render_text(history: RecordHistory, *, diff: bool = False) -> str:
             line += f" changed {','.join(row.changed)}"
         for name, value in row.detail.items():
             line += f" {name}={_value_text(value)}"
-        lines.append(printable(line))
+        lines.append(line)
         if diff and row.diff:
-            lines.extend(f"      {printable(text)}" for text in row.diff.split("\n"))
+            lines.extend(f"      {text}" for text in row.diff.split("\n"))
     findings = history.findings
     if findings:
         lines.append("  findings")
-        lines.extend(f"    {printable(text)}" for text in findings)
-    return "\n".join(lines) + "\n"
+        lines.extend(f"    {text}" for text in findings)
+    return "\n".join(printable(line) for line in lines) + "\n"
 
 
 def render_json(history: RecordHistory, *, diff: bool = False) -> str:

@@ -475,6 +475,9 @@ def test_printable_neutralises_terminal_controls() -> None:
     assert printable("ok\x1b[31mred‮\n") == "ok�[31mred��"
     assert printable("a​zero-width") == "a�zero-width"
     assert printable("tab\tkept, é kept") == "tab\tkept, é kept"
+    # A lone surrogate (a `\ud800` escape in stored JSON) would make a
+    # strict UTF-8 stdout raise instead of printing the report.
+    assert printable("a\ud800b") == "a�b"
 
 
 def test_text_output_never_carries_a_raw_escape(store: Store) -> None:
@@ -482,6 +485,23 @@ def test_text_output_never_carries_a_raw_escape(store: Store) -> None:
     store.tombstone(memory.id, "evil \x1b]0;title\x07 reason")
     text = render_text(record_history(store, memory.id), diff=True)
     assert "\x1b" not in text and "\x07" not in text
+
+
+def test_the_header_is_made_printable_too(store: Store, store_dir: Path) -> None:
+    """The provenance label the header names is the table's own column.
+    An editor can set it; the record's pointer into the log still
+    verifies, so the label comes back as written."""
+    memory = store.write(content="Plain body.", scopes=["tools"])
+    outside = sqlite3.connect(str(store_dir / STORE_FILENAME))
+    outside.execute(
+        "UPDATE memories SET provenance = ? WHERE id = ?",
+        ("local\x1b]0;title\x07", memory.id),
+    )
+    outside.commit()
+    outside.close()
+    text = render_text(record_history(store, memory.id))
+    assert "\x1b" not in text and "\x07" not in text
+    assert "  provenance local�]0;title�\n" in text
 
 
 # ---------------------------------------------------------------------------

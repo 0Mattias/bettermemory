@@ -452,11 +452,9 @@ def _memories(count: int) -> str:
 
 
 def _label(value: Any, missing: str) -> str:
-    """A value read from the store, safe for the terminal (scope, project
-    and client names are whatever a writer put there)."""
-    from ..history import printable
-
-    return missing if value is None else printable(str(value))
+    """A value read from the store, or `missing` in its place. `render`
+    makes every line printable."""
+    return missing if value is None else str(value)
 
 
 def _at(entry: dict[str, Any] | None) -> str:
@@ -482,7 +480,12 @@ def _wrapped(items: Iterable[str], width: int = 88) -> list[str]:
 
 
 def render(report: dict[str, Any]) -> str:
-    """The text form of a `collect` report."""
+    """The text form of a `collect` report. Every line goes through
+    `history.printable`: scope, project and client names, ids, stamps and
+    the engine version in ``meta`` are all whatever an editor of the file
+    put there, and a raw escape sequence must not reach the terminal."""
+    from ..history import printable
+
     store = report["store"]
     files = report["files"]
     memories = report["memories"]
@@ -569,7 +572,7 @@ def render(report: dict[str, Any]) -> str:
                 f"{day['memory_puts']:>11}  {day['episode_puts']:>12}  "
                 f"{day['log_rows']:>8}"
             )
-    return "\n".join(lines) + "\n"
+    return "\n".join(printable(line) for line in lines) + "\n"
 
 
 __all__ = [
