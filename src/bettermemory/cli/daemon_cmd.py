@@ -465,7 +465,13 @@ def run_up(args: argparse.Namespace) -> None:
     another process still holds after the wait (a daemon starting, busy or
     hung, beside which none is started) is named in the shim's words
     (`_daemon_client.held_lock_reason`), in the text and in ``--json``'s
-    ``error``. The lock is probed once the wait is over, never held."""
+    ``error``. The lock is probed once the wait is over, never held.
+
+    A store inside a backup bundle (`BETTERMEMORY_DIR` naming one) is
+    refused before any daemon is spawned, in the line and with the exit 1
+    the daemon itself would give it (`_common.exit_if_bundle_file`), so no
+    process is started only to refuse it."""
+    from ..backup import bundle_refusal
     from .._daemon_client import (
         START_TIMEOUT_SECONDS,
         DaemonExited,
@@ -500,6 +506,11 @@ def run_up(args: argparse.Namespace) -> None:
         "log_file": str(log_file_for(state_dir, store_path)),
         "exit_status": None,
     }
+    refusal = bundle_refusal(store_path)
+    if refusal is not None:
+        failure["error"] = f"bettermemory: {refusal}"
+        _emit(failure, json_out=json_out, text=failure["error"], err=True)
+        raise SystemExit(1)
     try:
         state = ensure_daemon(
             state_dir,

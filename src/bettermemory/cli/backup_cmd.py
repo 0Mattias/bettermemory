@@ -50,7 +50,8 @@ def add_subparser(
         "names the fingerprint they must match: keep a copy of the keys "
         "directory somewhere apart from the bundles. Exit 0 when the bundle "
         "is written, 1 when it could not be (--include-key with no key "
-        "held, a write error), 2 when there is no store."
+        "held, a write error, a store that is itself inside a backup bundle, "
+        "refused before anything is written), 2 when there is no store."
     )
     create = backup_sub.add_parser("create", help=text, description=text)
     create.add_argument(

@@ -78,8 +78,9 @@ def add_subparser(
     install_text = (
         "Write the unit for this install and this store, stop a daemon of the "
         "store running outside the supervisor, and load the unit, which starts "
-        "the daemon. Exit 0 when written and loaded, 1 when loading failed or "
-        "the interpreter lives in a package manager's cache, 2 when the config "
+        "the daemon. Exit 0 when written and loaded, 1 when loading failed, "
+        "the interpreter lives in a package manager's cache or the store is "
+        "inside a backup bundle (nothing is written then), 2 when the config "
         "does not load."
     )
     install = service_sub.add_parser(
@@ -349,9 +350,26 @@ def _owner_only_log(path: Path) -> None:
 def _install(ctx: _Context, *, load: bool, json_out: bool) -> int:
     from .. import service_units as units
     from .._fsutil import atomic_write_bytes, ensure_owner_only_dir
+    from ..backup import bundle_refusal
 
     spec = ctx.spec
     payload: dict[str, Any] = {**_describe(ctx), "written": False, "loaded": False}
+    # A store inside a backup bundle (`BETTERMEMORY_DIR` naming one): the
+    # unit's daemon would refuse it at every start, and the supervisor
+    # would start it again every `service_units.RESTART_SECONDS`. Refused
+    # before the state directory, the log or the unit is written and
+    # before any daemon is stopped, in the openers' words
+    # (`backup.bundle_refusal`).
+    refusal = bundle_refusal(ctx.store)
+    if refusal is not None:
+        payload["error"] = refusal
+        _emit(
+            payload,
+            json_out=json_out,
+            text=f"bettermemory service: {refusal}",
+            err=True,
+        )
+        return 1
     _, prefix = _interpreter()
     if units.ephemeral_interpreter(prefix, os.environ):
         payload["error"] = (

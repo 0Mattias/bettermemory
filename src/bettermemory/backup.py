@@ -505,13 +505,24 @@ def create_backup(
     it, a store whose key is not held still gets a bundle, unsigned, with a
     warning. On any failure the partial bundle is removed and
     `BackupError` raised: a bundle directory either holds a manifest or
-    does not exist."""
+    does not exist.
+
+    A store file inside a backup bundle (`BETTERMEMORY_DIR` naming the
+    bundle) is that bundle's snapshot, and is refused with the openers'
+    refusal (`bundle_refusal`) before anything is created: the default
+    directory, ``backups`` beside the store file, is inside the bundle,
+    which would then hold more than its manifest lists. A bundle is kept
+    by copying its directory as it is; its store is backed up from a copy
+    of the file made outside it, as the refusal says."""
     from . import __version__
     from . import store as _store
 
     store_file = Path(store_file)
     if not store_file.is_file():
         raise BackupError(f"no bettermemory 9 store at {store_file}")
+    refusal = bundle_refusal(store_file)
+    if refusal is not None:
+        raise BackupError(refusal)
     keys_root = Path(keys_dir) if keys_dir is not None else _store.resolve_keys_dir()
     parent = Path(out_dir) if out_dir is not None else default_backups_dir(store_file)
     moment = now if now is not None else datetime.now(timezone.utc)
