@@ -63,7 +63,7 @@ jobs:
        startsWith(github.event.workflow_run.head_branch, 'v'))
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Check out the TAG, not the default branch. Under `workflow_run` the
           # default checkout is whatever `main` points at now, which is not
