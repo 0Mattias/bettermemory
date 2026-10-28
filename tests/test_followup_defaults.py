@@ -366,8 +366,10 @@ def test_the_start_goes_ahead_once_the_holder_lets_the_lock_go(
     released: list[float] = []
 
     def let_go() -> None:
-        release_lock(held.pop())
+        # The time is taken before the release: the client may see the
+        # lock free and start before this thread runs again.
         released.append(time.monotonic())
+        release_lock(held.pop())
 
     timer = _after(0.3, let_go)
     try:
@@ -431,3 +433,81 @@ def test_the_shims_reconnect_starts_no_daemon_beside_a_holder(
     assert state is not None and state["port"] == started_listeners[0].port
     assert spawns.at == []
     assert read_state(state_dir, store_file) == state
+
+
+class _Running:
+    """A spawned child that never exits and never answers."""
+
+    returncode = None
+
+    def poll(self) -> None:
+        return None
+
+
+def _shim_find_once(
+    state_dir: Path, store_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[dict[str, Any] | None, str | None]:
+    """What the shim's `find()` answers on one reconnect, with a short
+    start timeout."""
+    from bettermemory import shim
+
+    store_file.write_bytes(b"")
+    monkeypatch.setattr(_daemon_client, "START_TIMEOUT_SECONDS", 0.4)
+    monkeypatch.setattr(_daemon_client, "resolved_store_path", lambda: store_file)
+    monkeypatch.setattr(_daemon_client, "resolve_state_dir", lambda: state_dir)
+    monkeypatch.setattr(
+        _daemon_client, "ensure_daemon", lambda *a, **k: {"port": 1, "pid": 1}
+    )
+    monkeypatch.setattr(logging, "basicConfig", lambda **kwargs: None)
+    found: list[tuple[dict[str, Any] | None, str | None]] = []
+
+    async def serve(state: dict[str, Any], version: str, find: Any) -> None:
+        found.append(find())
+
+    monkeypatch.setattr(shim, "_serve_through_daemon", serve)
+    shim.run_shim()
+    [answer] = found
+    return answer
+
+
+def test_the_shims_reason_names_a_silent_holder_not_a_start(
+    state_dir: Path,
+    store_file: Path,
+    held: list[Any],
+    spawns: _Spawns,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Beside a holder that never answers the reconnect starts nothing,
+    so the reason it gives the request names the held lock, not a start
+    that did not happen."""
+    state, why = _shim_find_once(state_dir, store_file, monkeypatch)
+    assert state is None
+    assert spawns.at == []
+    assert why is not None
+    assert "holds the store's lock" in why
+    assert "of a start" not in why
+
+
+def test_the_shims_reason_still_names_a_start_nobody_answered(
+    tmp_path: Path,
+    state_dir: Path,
+    store_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With the lock free a daemon is started; when it never answers, the
+    reason is the start nobody answered, as it was."""
+    starts: list[Path] = []
+
+    def spawn(state_dir: Path, store_path: Path, **kwargs: Any) -> Any:
+        starts.append(Path(store_path))
+        return _daemon_client.Started(
+            child=_Running(),  # type: ignore[arg-type]
+            log=tmp_path / "daemon.log",
+            log_offset=0,
+        )
+
+    monkeypatch.setattr(_daemon_client, "_spawn", spawn)
+    state, why = _shim_find_once(state_dir, store_file, monkeypatch)
+    assert state is None
+    assert starts == [store_file]
+    assert why == "none answered within 0.4 s of a start"
