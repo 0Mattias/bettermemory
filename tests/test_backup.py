@@ -1208,6 +1208,38 @@ def test_an_edited_log_row_is_named_by_seq_in_the_text_report(
     assert "seq 2 (memory_put): mac_mismatch" in text
 
 
+def test_a_bundles_text_reaches_the_terminal_without_its_escapes(
+    bundle: Path,
+    store_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The text reports quote what a bundle and a store file say about
+    themselves: the manifest's creation time, the fingerprints rekey rows
+    name, the store id in meta. Anyone who can write those can put an
+    escape sequence in them; it reaches the terminal as text."""
+    conn = sqlite3.connect(str(store_file))
+    conn.execute("UPDATE meta SET value = 'x\x1b[2J' WHERE key = 'store_id'")
+    conn.commit()
+    conn.close()
+    assert _run_cli(["backup", "restore", str(bundle)], monkeypatch) == 3
+    out = capsys.readouterr().out
+    assert "current store x" in out and "the bundle is a different store" in out
+    assert "\x1b" not in out
+
+    manifest = _manifest(bundle)
+    manifest["created_at"] = "\x1b]0;owned\x07\x1b[8m"
+    _write_manifest(bundle, manifest)
+    assert _run_cli(["backup", "verify", str(bundle)], monkeypatch) == 1
+    assert _run_cli(["backup", "restore", str(bundle)], monkeypatch) == 1
+    out = capsys.readouterr().out
+    assert "created" in out and "does not verify (mismatched)" in out
+    assert "\x1b" not in out and "\x07" not in out
+    # The verify report a refused restore carries keeps its own lines.
+    assert "\nbettermemory backup verify: mismatched\n    bundle " in out
+    assert "\N{REPLACEMENT CHARACTER}    bundle" not in out
+
+
 def test_a_snapshot_from_a_newer_schema_is_unreadable_here(bundle: Path) -> None:
     snapshot = bundle / STORE_FILENAME
     conn = sqlite3.connect(str(snapshot))

@@ -900,8 +900,10 @@ def _await_state_file(state_file: Path, lock_path: Path) -> dict[str, Any] | Non
 
 def check_daemon(ctx: _Context) -> Check:
     """The daemon for this store: its state file, whether it answers
-    `/health`, whether the store it serves is this one, and its version
-    against this CLI's. The state file is read and never removed, and a
+    `/health` with the proof that it holds the state file's token (as
+    `status`, `down` and every hook require), whether the store it serves
+    is this one, and its version against this CLI's. The state file is
+    read and never removed, and a
     daemon is neither started nor stopped: `bettermemory status` and
     `ensure_daemon` act on what they find, and this reports it."""
     from . import _daemon_client as _dc
@@ -961,7 +963,11 @@ def check_daemon(ctx: _Context) -> Check:
             "started": state.get("started"),
         }
     )
-    answer = _dc.health(port, timeout=1.0)
+    # The proof every client checks before it posts the token
+    # (`_daemon_client.identify`): a reply that repeats the state file's
+    # store and pid without the token's MAC over a fresh nonce is not the
+    # daemon, however it reads, and `status --check` calls it not ours.
+    answer, proven = _dc.identify(state, timeout=1.0)
     if answer is None:
         if _dc.pid_alive(pid) and _lock_held(lock_path):
             return Check(
@@ -981,11 +987,14 @@ def check_daemon(ctx: _Context) -> Check:
         )
     served = answer.get("store")
     details["served_store"] = served
-    if served != str(store_path):
+    if not proven or served != str(store_path):
+        # Nothing the listener sent is quoted: it is not this daemon, and
+        # its reply is its own to make up.
         return Check(
             "daemon",
             FAIL,
-            f"the process answering on port {port} serves {served}, not {store_path}",
+            f"port {port} answers, but not as the daemon of {store_path}: the "
+            "reply cannot prove it holds this daemon's token (the state file's)",
             f"stop the process on port {port}, or move {state_file} aside; then "
             "`bettermemory up`",
             details,
@@ -1626,7 +1635,11 @@ def render_text(document: Mapping[str, Any]) -> str:
             lines.append(f"{indent}{finding['status']}: {finding['summary']}")
             if finding["remedy"]:
                 lines.append(f"{indent}  fix: {finding['remedy']}")
-    return "\n".join(lines) + "\n"
+    # Summaries quote what doctor read: paths, config values, a daemon's
+    # version. None of it reaches the terminal as an escape sequence.
+    from .history import printable
+
+    return "\n".join(printable(line) for line in lines) + "\n"
 
 
 __all__ = [

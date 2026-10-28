@@ -121,10 +121,15 @@ stable 9.0.0 follows the candidates' testing.
   rc12, is accepted only when the reply repeats its pid and store, so an
   rc11 daemon is still replaced as before. `shutdown_daemon` signals a
   pid only when the daemon proved itself or the pid is alive while the
-  store's lock is held, never on a stale state file alone. The state
+  store's lock is held, never on a stale state file alone. `doctor`'s
+  daemon check asks for the proof too and fails a reply without it, where
+  `status --check` answers 3. The state
   directory is made 0700 before the daemon log is opened in it, and the
   log is created 0600. A hook to its own daemon is still one GET and one
-  POST.
+  POST. What a listener's reply names, and what a bundle's manifest or a
+  store's meta says, reaches the text of `status`, `down`, `doctor` and
+  `backup verify|restore` with control and format characters replaced, as
+  `stats` and `memory history` print stored text.
   (`src/bettermemory/_daemon_client.py`, `src/bettermemory/daemon.py`,
   `src/bettermemory/shim.py`, `src/bettermemory/cli/daemon_cmd.py`)
 - **Nothing for the daemon goes through a proxy.** The client's

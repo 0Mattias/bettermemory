@@ -232,10 +232,26 @@ def _answered(answer: dict[str, Any] | None, other: str | None) -> dict[str, Any
     }
 
 
-def _who(answer: dict[str, Any] | None, other: str | None) -> str:
-    """The listener `_answered` describes, for a message."""
+def _who(
+    answer: dict[str, Any] | None, other: str | None, state: dict[str, Any]
+) -> str:
+    """The listener `_answered` describes, for a message.
+
+    A reply that names the state file's own store and pid is described as
+    that, without the token's proof: "another process" followed by this
+    daemon's identity would read as a contradiction. What the listener
+    sent is its own to make up, and reaches the terminal only through
+    `history.printable`, so an escape sequence in it stays text."""
     if answer is not None:
-        return f"another process (store {answer.get('store')}, pid {answer.get('pid')})"
+        from ..history import printable
+
+        store, pid = answer.get("store"), answer.get("pid")
+        if store == state.get("store") and pid == state.get("pid"):
+            return (
+                f"a process that repeats this daemon's store and pid {pid} "
+                "without the token's proof"
+            )
+        return printable(f"another process (store {store}, pid {pid})")
     return f"something that is not a bettermemory daemon ({other})"
 
 
@@ -401,7 +417,7 @@ def daemon_report(
     if answer is not None or other is not None:
         report["answered"] = _answered(answer, other)
         report["state"] = NOT_OURS
-        who = _who(answer, other)
+        who = _who(answer, other, state)
         if gone:
             # The line a stale state file always printed, then what holds
             # its port now.
@@ -582,7 +598,7 @@ def run_down(args: argparse.Namespace) -> None:
             state_file_kept=not removed,
             answered=_answered(answer, other),
         )
-        who = _who(answer, other)
+        who = _who(answer, other, state)
         if removed:
             outcome["message"] = (
                 f"bettermemory daemon: not running for {store_path}; port {port} "

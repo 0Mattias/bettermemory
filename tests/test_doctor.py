@@ -304,7 +304,9 @@ def test_doctor_writes_nothing(
         store.write(content="a memory doctor must leave alone", scopes=["global"])
     # A state file whose daemon is alive and silent: doctor then probes
     # the lock file, the one file it opens for anything but reading.
-    monkeypatch.setattr(_daemon_client, "health", lambda port, timeout=1.0: None)
+    monkeypatch.setattr(
+        _daemon_client, "health", lambda port, timeout=1.0, nonce=None: None
+    )
     monkeypatch.setattr(_daemon_client, "pid_alive", lambda pid: True)
     _state(env)
     with _held_lock(env):
@@ -994,10 +996,11 @@ def test_a_daemon_that_writes_its_state_file_during_the_wait_is_ok(
     monkeypatch.setattr(
         _daemon_client,
         "health",
-        lambda port, timeout=1.0: {
+        lambda port, timeout=1.0, nonce=None: {
             "status": "ok",
             "version": _daemon_client.package_version(),
             "store": str(store_path),
+            "pid": 4242,
         },
     )
     started = threading.Timer(0.2, lambda: _state(env, pid=4242))
@@ -1020,7 +1023,9 @@ def test_a_free_lock_file_with_no_state_file_is_ok(env: Env) -> None:
 def test_a_stale_state_file_warns_and_is_kept(
     env: Env, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(_daemon_client, "health", lambda port, timeout=1.0: None)
+    monkeypatch.setattr(
+        _daemon_client, "health", lambda port, timeout=1.0, nonce=None: None
+    )
     state_file = _state(env)
     check = env.checks()["daemon"]
     assert check.status == "warn"
@@ -1031,7 +1036,9 @@ def test_a_stale_state_file_warns_and_is_kept(
 def test_a_daemon_that_holds_the_lock_but_does_not_answer_warns(
     env: Env, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(_daemon_client, "health", lambda port, timeout=1.0: None)
+    monkeypatch.setattr(
+        _daemon_client, "health", lambda port, timeout=1.0, nonce=None: None
+    )
     monkeypatch.setattr(_daemon_client, "pid_alive", lambda pid: pid == 4242)
     _state(env, pid=4242)
     with _held_lock(env):
@@ -1066,7 +1073,80 @@ def test_a_listener_serving_another_store_fails(env: Env) -> None:
         _state(env, port=port)
         check = env.checks()["daemon"]
     assert check.status == "fail"
-    assert "not " + str(env.store_dir / STORE_FILENAME) in check.summary
+    assert "not as the daemon of " + str(env.store_dir / STORE_FILENAME) in (
+        check.summary
+    )
+
+
+def test_a_listener_that_repeats_the_state_file_without_the_proof_fails(
+    env: Env, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A state file written by a daemon that offers the proof
+    (`health_proof`) is answered by that daemon with the token's MAC over
+    the nonce. A listener that repeats the store, the pid and the version
+    an earlier, open /health gave it, without the proof, is not the
+    daemon: doctor fails it as `status --check` reads it not ours, instead
+    of reporting it running. Nothing it sent reaches the terminal raw."""
+    store_path = env.store_dir / STORE_FILENAME
+    body = {
+        "status": "ok",
+        "version": _daemon_client.package_version(),
+        "store": str(store_path),
+        "pid": 4242,
+    }
+    with _health_stub(body) as port:
+        _state(env, port=port, pid=4242, health_proof=1)
+        check = env.checks()["daemon"]
+    assert check.status == "fail"
+    assert "cannot prove it holds this daemon's token" in check.summary
+    assert "running" not in check.summary
+
+    body["store"] = "/x\x1b]52;c;cHduZWQ=\x07\x1b[2J"
+    with _health_stub(body) as port:
+        _state(env, port=port, pid=4242, health_proof=1)
+        code, out = _run_cli(["doctor"], monkeypatch, capsys)
+    assert code == 1
+    assert "\x1b" not in out and "\x07" not in out
+
+
+def test_a_daemon_that_proves_its_token_is_running(env: Env) -> None:
+    """The reply the daemon gives a nonce: the token's MAC over it."""
+    store_path = env.store_dir / STORE_FILENAME
+    token = "t" * 32
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - the stdlib's name
+            query = self.path.partition("?")[2]
+            nonce = query.partition("=")[2]
+            body = {
+                "status": "ok",
+                "version": _daemon_client.package_version(),
+                "store": str(store_path),
+                "pid": 4242,
+                "proof": _daemon_client.health_proof(token, nonce),
+            }
+            data = json.dumps(body).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        _state(env, port=int(server.server_address[1]), pid=4242, health_proof=1)
+        check = env.checks()["daemon"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+    assert check.status == "ok", check
+    assert check.summary.startswith("running: pid 4242")
 
 
 @pytest.mark.parametrize(
@@ -1084,10 +1164,11 @@ def test_version_skew_warns(
     monkeypatch.setattr(
         _daemon_client,
         "health",
-        lambda port, timeout=1.0: {
+        lambda port, timeout=1.0, nonce=None: {
             "status": "ok",
             "version": theirs,
             "store": str(store_path),
+            "pid": _DEAD_PID,
         },
     )
     _state(env)

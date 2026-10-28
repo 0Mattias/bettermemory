@@ -176,6 +176,17 @@ def _emit_json(document: dict[str, Any]) -> None:
     sys.stdout.write(json.dumps(document, indent=2, sort_keys=True) + "\n")
 
 
+def _text(lines: list[str]) -> str:
+    """`lines` as the text a report prints. They quote what a bundle and a
+    store file say about themselves (a manifest's creation time, the
+    fingerprints a rekey row names, the store id in meta), which anyone
+    able to write those files chose: each line goes through
+    `history.printable`, so an escape sequence in them stays text."""
+    from ..history import printable
+
+    return "\n".join(printable(line) for line in lines) + "\n"
+
+
 # ---------------------------------------------------------------------------
 # create
 # ---------------------------------------------------------------------------
@@ -229,7 +240,7 @@ def render_create(result: dict[str, Any]) -> str:
     if "mac" not in manifest:
         lines.append("  manifest NOT signed: the store's key is not held here")
     lines.append(f"  check it with: bettermemory backup verify {result['bundle']}")
-    return "\n".join(lines) + "\n"
+    return _text(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +314,7 @@ def render_verify(report: dict[str, Any], *, title: str = "backup verify") -> st
     if problems:
         lines.append("  problems")
         lines.extend(f"    {_problem_line(p)}" for p in problems)
-    return "\n".join(lines) + "\n"
+    return _text(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -347,7 +358,10 @@ def render_restore(report: dict[str, Any]) -> str:
         lines.append(f"  {report['detail']}")
     verification = report["verify"]
     if verification is not None and verification["status"] != "ok":
-        lines.append(render_verify(verification).rstrip("\n").replace("\n", "\n  "))
+        # Line by line, so `_text` sees each one and no line break.
+        first, *rest = render_verify(verification).splitlines()
+        lines.append(first)
+        lines.extend("  " + line for line in rest)
     plan = report["plan"]
     if plan is not None:
         current = plan["current_store_id"]
@@ -400,4 +414,4 @@ def render_restore(report: dict[str, Any]) -> str:
     log = report["log"]
     if log is not None:
         lines.append(f"  log verify of the restored store: {log['status']}")
-    return "\n".join(lines) + "\n"
+    return _text(lines)

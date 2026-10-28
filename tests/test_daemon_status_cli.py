@@ -478,6 +478,61 @@ def test_a_listener_beside_a_daemon_that_holds_the_lock_keeps_the_file(
     assert path.exists()
 
 
+def test_a_listener_reply_reaches_the_terminal_without_its_escapes(
+    where: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Whatever listens on the state file's port writes the store and the
+    pid its /health reply names. `status` and `down` quote them, and an
+    OSC 52 clipboard write or a clear-screen sequence among them must not
+    reach the terminal as one."""
+    state_dir, store = where
+    answer = {
+        "status": "ok",
+        "store": "/x\x1b]52;c;cHduZWQ=\x07\x1b[2J",
+        "pid": "1\x1b[8m",
+    }
+    with _listener(answer) as (port, _), _held(state_dir, store):
+        _stage(state_dir, store, pid=os.getpid(), port=port)
+        assert _main(["status"], monkeypatch) == 0
+        assert _main(["down"], monkeypatch) == 1
+    captured = capsys.readouterr()
+    for text in (captured.out, captured.err):
+        assert "answers for another process" in text
+        assert "\x1b" not in text and "\x07" not in text
+
+
+def test_a_listener_that_repeats_the_state_file_says_it_has_no_proof(
+    where: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A listener that repeats the store and the pid of a state file whose
+    daemon offers the proof reads not ours, and the message says why: the
+    same store and pid, without the token's proof, not "another process"
+    whose identity reads the state file's own."""
+    state_dir, store = where
+    answer = {"status": "ok", "store": str(store), "pid": os.getpid()}
+    with _listener(answer) as (port, _), _held(state_dir, store):
+        write_state(
+            state_dir,
+            {
+                "pid": os.getpid(),
+                "port": port,
+                "token": "t" * 64,
+                "version": __version__,
+                "store": str(store),
+                "started": "2026-01-01T00:00:00Z",
+                "health_proof": 1,
+            },
+        )
+        assert _main(["status", "--check"], monkeypatch) == CHECK_NOT_OURS
+    out = capsys.readouterr().out
+    assert "without the token's proof" in out
+    assert "another process" not in out
+
+
 @pytest.mark.parametrize("kind", sorted(_NOT_HEALTH))
 def test_a_listener_that_is_no_daemon_reads_not_ours_without_a_traceback(
     where: tuple[Path, Path],
