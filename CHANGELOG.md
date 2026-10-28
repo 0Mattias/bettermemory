@@ -205,6 +205,16 @@ stable 9.0.0 follows the candidates' testing.
   is a starting point. (`src/bettermemory/managed.py`,
   `src/bettermemory/config.py`)
 
+- **The daemon takes its port for exclusive use on Windows.** It bound
+  with `SO_REUSEADDR`, which on Windows also lets a socket bind a port
+  another socket holds: a daemon started on a state file's stale port
+  shared it with whatever held it, so the hooks reached that listener,
+  refused it and had no daemon, and another process could bind the
+  daemon's own port beside it. Where the platform has
+  `SO_EXCLUSIVEADDRUSE` the daemon now asks for it, so a held port
+  fails to bind and the daemon takes another and records it in its
+  state file, as on POSIX. (`src/bettermemory/daemon.py`)
+
 #### Added
 
 - **`[security] strict_provenance`** (default false). True reads every
@@ -475,6 +485,20 @@ stable 9.0.0 follows the candidates' testing.
 - **The credential hints no longer mention the removed sync lane.**
   (`src/bettermemory/handlers/write.py`,
   `src/bettermemory/handlers/update.py`)
+
+- **A hand-edited payload nested past 128 levels exports as its text.**
+  Python 3.14's JSON parser is bounded by the C stack rather than the
+  recursion limit, so on some hosts it parsed a payload nested 100,000
+  deep that 3.11 to 3.13 refuse, and `log export --include-bodies` then
+  overflowed the stack encoding it. The export now reads a payload more
+  than 128 levels deep as text on every Python; the store writes a few.
+  (`src/bettermemory/audit_export.py`)
+- **A MAC column or a capture batch token that is not ASCII is a
+  mismatch.** Both were compared as text with `compare_digest`, which
+  raises TypeError on a non-ASCII string, so a store file edited that
+  way ended the open, `log verify`, `memory history` or `capture
+  review` in a traceback. They are compared as UTF-8 bytes now.
+  (`src/bettermemory/log.py`, `src/bettermemory/capture.py`)
 
 #### Known limitations
 
