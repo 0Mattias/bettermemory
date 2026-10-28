@@ -109,8 +109,15 @@ Repository = "https://github.com/0Mattias/bettermemory"
 Issues = "https://github.com/0Mattias/bettermemory/issues"
 Changelog = "https://github.com/0Mattias/bettermemory/blob/main/CHANGELOG.md"
 
+# The backend is pinned to one release. `uv build` in release.yml resolves
+# it afresh from PyPI under build isolation and uv.lock's hashes do not
+# cover it, so a bare `hatchling` built each release with whatever version
+# PyPI served on the day of the tag. 1.32.4 is the version that built
+# 9.0.0rc11 (its wheel's `Generator` line). A bump is a deliberate change
+# of its own: rebuild a tagged release with the new version and compare the
+# files before committing it.
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling==1.32.4"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
