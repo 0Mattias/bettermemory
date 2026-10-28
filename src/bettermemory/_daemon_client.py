@@ -35,8 +35,9 @@ client decides that a daemon answers, before it posts a payload or
 signals a pid, it sends ``/health`` a fresh nonce and checks the reply's
 proof against the token in the state file (`identify`): only the daemon
 that wrote the file holds that token. A daemon from before 9.0.0rc12
-offers no proof and is taken as ours only when it reports the state
-file's store and pid. Anything else answering there is someone else's:
+offers no proof and is taken as ours only when its state file says it
+predates the proof and it reports that file's store and pid. Anything
+else answering there is someone else's:
 nothing is posted to it, its pid is never signalled, and a daemon is
 started beside it, which binds another port when that one is held.
 """
@@ -82,6 +83,15 @@ _NONCE = re.compile(r"[0-9a-fA-F]{32,128}")
 #: What the proof's MAC covers ahead of the nonce, so the token's MAC over
 #: a health nonce can never stand for its MAC over anything else.
 _PROOF_CONTEXT = b"bettermemory-health-v1:"
+#: The key a daemon that answers the proof writes into its state file
+#: (`daemon.serve`, 9.0.0rc12 on), with the proof's version, 1. The pid and
+#: the store a daemon reports at ``/health`` are no secret: the route
+#: answers them to any process on the host, without the token. So a reply
+#: without a proof is taken for a daemon from before the proof only at the
+#: port of a state file without this key, one such a daemon wrote. At the
+#: port of a file that carries it, that reply is another listener's,
+#: whatever pid and store it repeats (`proves`).
+PROOF_STATE_KEY = "health_proof"
 
 #: The hook words `_entry.main` routes here. The three 8.x names are
 #: aliases of the events the daemon serves, so an installed hooks.json
@@ -352,13 +362,16 @@ def proves(state: Mapping[str, Any], answer: Mapping[str, Any], nonce: str) -> b
 
     A reply that carries a ``proof`` is decided by the proof alone: the
     token's MAC over the nonce, compared in constant time, which only the
-    process that wrote the state file can produce. A reply without one is
-    a daemon from before 9.0.0rc12, which offers none; it is taken as ours
-    only when it reports the state file's store and the state file's pid.
-    The state file is the one named after the caller's store
-    (`state_file_for`), so its ``store`` is the caller's store path. A
-    listener another account left on a crashed daemon's port, or another
-    store's daemon that came up on it, fails either way."""
+    process that wrote the state file can produce. A reply without one can
+    be a daemon from before 9.0.0rc12, which offers none, only when the
+    state file was written by such a daemon (it carries no
+    `PROOF_STATE_KEY`); it is then taken as ours only when it reports the
+    state file's store and the state file's pid. The state file is the one
+    named after the caller's store (`state_file_for`), so its ``store`` is
+    the caller's store path. A listener another account left on a crashed
+    daemon's port, or another store's daemon that came up on it, fails
+    either way, even when it repeats the pid and the store an earlier
+    ``/health`` told it."""
     if "proof" in answer:
         proof = answer["proof"]
         if not isinstance(proof, str):
@@ -369,6 +382,11 @@ def proves(state: Mapping[str, Any], answer: Mapping[str, Any], nonce: str) -> b
         return hmac.compare_digest(
             proof.encode("utf-8", errors="replace"), expected.encode("ascii")
         )
+    if PROOF_STATE_KEY in state:
+        # The daemon that wrote this file answers every nonce with a
+        # proof: a reply without one is a listener that read the pid and
+        # the store off an earlier, open ``/health``.
+        return False
     pid = answer.get("pid")
     return (
         type(pid) is int
@@ -1224,6 +1242,7 @@ __all__ = [
     "HOOK_WORDS",
     "HOST",
     "Identified",
+    "PROOF_STATE_KEY",
     "STATE_DIR_ENV",
     "STORE_FILENAME",
     "Started",

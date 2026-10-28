@@ -90,6 +90,7 @@ from ._daemon_client import (
     HEALTH_NONCE_PARAM,
     HOST,
     LOCK_WAIT_SECONDS,
+    PROOF_STATE_KEY,
     acquire_lock,
     health_proof,
     lock_file_for,
@@ -1358,6 +1359,10 @@ def _serve_locked(
         "version": _version(),
         "store": str(store.path),
         "started": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        # This daemon answers ``/health?nonce=`` with a proof, so a client
+        # takes no reply without one at this port for it
+        # (`_daemon_client.proves`), whatever pid and store it repeats.
+        PROOF_STATE_KEY: 1,
     }
     write_state(state_dir, state)
     log.info(

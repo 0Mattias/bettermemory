@@ -36,6 +36,7 @@ import pytest
 from bettermemory import _daemon_client
 from bettermemory._daemon_client import (
     HEALTH_NONCE_PARAM,
+    PROOF_STATE_KEY,
     Identified,
     health,
     health_proof,
@@ -124,6 +125,19 @@ def test_a_daemon_without_a_proof_is_ours_only_with_its_store_and_pid(
     answer: dict[str, Any], ours: bool
 ) -> None:
     assert proves(STATE, {"status": "ok", **answer}, NONCE) is ours
+
+
+def test_no_proof_is_not_ours_where_the_state_file_says_its_daemon_proves() -> None:
+    """A daemon of 9.0.0rc12 or later writes `PROOF_STATE_KEY` into its
+    state file and answers every nonce with a proof. Its pid and store
+    are what ``/health`` tells any process without the token, so a
+    listener that repeats them with no proof is not taken for it: the
+    fallback is for the file a daemon from before the proof wrote."""
+    state = {**STATE, PROOF_STATE_KEY: 1}
+    repeated = {"status": "ok", "pid": state["pid"], "store": state["store"]}
+    assert proves(STATE, repeated, NONCE)
+    assert not proves(state, repeated, NONCE)
+    assert proves(state, {**repeated, "proof": health_proof(TOKEN, NONCE)}, NONCE)
 
 
 def test_a_boolean_is_no_pid() -> None:
@@ -409,6 +423,42 @@ def test_a_hook_posts_nothing_to_a_listener_that_is_not_ours(
     assert "INJECTED" not in out + err
     assert "no daemon could be reached or started" in err
     assert listener.posts == []
+
+
+def test_a_hook_posts_nothing_to_a_listener_repeating_a_proving_daemons_health(
+    tmp_path: Path,
+    listeners: list[_Listener],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The listener answers what the crashed daemon's open ``/health``
+    told it before the crash: this version, the state file's store and
+    pid, no proof. The state file says its daemon proves, so the hook
+    takes the listener for none and sends it nothing."""
+    store = tmp_path / "memory.sqlite"
+    listener = _listen(
+        listeners,
+        lambda nonce: {
+            "status": "ok",
+            "version": package_version(),
+            "store": str(store),
+            "pid": DEAD_PID,
+        },
+    )
+    write_state(
+        tmp_path / "state", {**_state(listener.port, store), PROOF_STATE_KEY: 1}
+    )
+    code, out, err = _hook(
+        monkeypatch,
+        capsys,
+        tmp_path,
+        {"session_id": "s", "prompt": SECRET_PROMPT, "cwd": str(tmp_path)},
+    )
+    assert code == 0
+    assert out == ""
+    assert "no daemon could be reached or started" in err
+    assert listener.posts == []
+    assert len(listener.gets) >= 1
 
 
 def test_a_hook_posts_to_a_pre_rc12_daemon_of_its_store(
@@ -723,6 +773,24 @@ def test_a_real_daemon_proves_itself_and_takes_only_its_own_port(
     with pytest.raises(urllib.error.HTTPError) as refused:
         urllib.request.urlopen(request, timeout=5)
     assert refused.value.code == 421
+    assert _cli(["down"], daemon_env).returncode == 0
+
+
+def test_a_listener_repeating_a_real_daemons_health_is_not_taken_for_it(
+    tmp_path: Path, daemon_env: dict[str, str], listeners: list[_Listener]
+) -> None:
+    """What ``/health`` tells any process on the host without the token,
+    the daemon's pid and store, is not enough to pass for the daemon once
+    it is gone: its state file says it proves, and a listener that
+    repeats its reply word for word offers no proof."""
+    assert _cli(["up", "--port", "0"], daemon_env).returncode == 0
+    state = _wait_running(tmp_path)
+    assert state[PROOF_STATE_KEY] == 1
+    seen = health(state["port"])
+    assert seen is not None and seen["pid"] == state["pid"]
+    listener = _listen(listeners, lambda nonce: seen)
+    assert identify({**state, "port": listener.port}).foreign
+    assert identify(state).ours
     assert _cli(["down"], daemon_env).returncode == 0
 
 
