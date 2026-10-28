@@ -641,26 +641,39 @@ def test_the_export_is_deterministic(
 
 
 def test_the_export_reads_one_snapshot_while_another_connection_writes(
-    store: Store,
+    store: Store, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A writer that commits while the export streams does not change
-    what the export holds: one read transaction serves every row."""
+    what the export holds: one read transaction serves every row. The
+    first commit lands between the read of the log's last seq and the
+    row cursor's first step, where only the shared snapshot keeps the
+    cursor (``through_seq``) and the rows written in agreement; a single
+    statement's own read could not. The second lands mid-stream."""
     store.put_memory(_memory("alpha"))
     rows_before = len(store.log_rows())
     writer = Store.open(store.path, keys_dir=store.keys_dir)
     written: list[str] = []
+    real_segment_map = audit_export.segment_map
+
+    def segment_map_then_write(
+        conn: sqlite3.Connection, *, current_fingerprint: str
+    ) -> audit_export.Segments:
+        writer.put_memory(_memory("written before the rows are read"))
+        return real_segment_map(conn, current_fingerprint=current_fingerprint)
 
     def write(line: str) -> None:
         if not written:
             writer.put_memory(_memory("written meanwhile"))
         written.append(line)
 
+    monkeypatch.setattr(audit_export, "segment_map", segment_map_then_write)
     try:
         summary = export(store, write)
     finally:
         writer.close()
     assert summary.rows == rows_before == len(written)
-    assert len(store.log_rows()) == rows_before + 1
+    assert summary.last_seq == summary.log_last_seq == summary.through_seq
+    assert len(store.log_rows()) == rows_before + 2
 
 
 # ---------------------------------------------------------------------------
