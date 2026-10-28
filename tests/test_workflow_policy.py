@@ -628,6 +628,14 @@ def test_a_rule_flags_its_violation(rule: Rule, text: str, fragment: str) -> Non
     assert any(fragment in problem for problem in problems), problems
 
 
+def test_every_rule_has_a_sample_that_breaks_it() -> None:
+    """The promise in the module docstring, kept for a rule added later: one
+    with no sample in `VIOLATIONS` could match nothing and pass every
+    workflow unnoticed."""
+    sampled = {rule.__name__ for rule, _, _ in VIOLATIONS}
+    assert [rule.__name__ for rule in RULES if rule.__name__ not in sampled] == []
+
+
 # --- release.yml: what reaches PyPI, and where provenance is signed ---------
 
 
@@ -647,10 +655,15 @@ def test_the_publish_jobs_ship_the_gated_build_alone() -> None:
         assert steps[0]["with"] == {"name": "dist", "path": "dist/"}, job_id
 
 
-#: A shell redirection or an output flag aimed into dist/ (not dist-extra/).
+#: A shell redirection or an output flag aimed into dist/ (not dist-extra/),
+#: or a copy, move or link whose last operand is dist/ or a path in it. A
+#: dist/ path followed by another operand is a source, so `cp dist/x out/`
+#: does not match.
 _WRITES_INTO_DIST = re.compile(
     r"(?:>>?|\btee(?:\s+-a)?|(?:^|\s)(?:-o|--out|--output|--out-dir|--outdir)(?:\s+|=))"
     r"\s*[\"']?(?:\./)?dist/"
+    r"|\b(?:cp|mv|ln|install|rsync)\b[^\n;&|]*\s[\"']?(?:\./)?dist(?:/[^\s;&|\"')]*)?"
+    r"[\"']?[ \t]*(?:$|[\n;&|)])"
 )
 
 
@@ -661,6 +674,12 @@ _WRITES_INTO_DIST = re.compile(
         ("python3 tools/sbom.py --out dist/x.json", True),
         ("python3 tools/sbom.py --out=./dist/x.json", True),
         ("echo x | tee -a dist/notes", True),
+        ("cp dist-extra/SHA256SUMS dist/", True),
+        ("mv bettermemory.cdx.json ./dist/sbom.json && ls", True),
+        ("set -e\ncp SHA256SUMS dist\necho done", True),
+        ("cp dist/*.whl dist-extra/", False),
+        ("cp -r dist dist-backup", False),
+        ("uv python install 3.13", False),
         ("(cd dist && sha256sum -- *) > dist-extra/SHA256SUMS", False),
         ("cd dist && sha256sum --check --strict ../dist-extra/SHA256SUMS", False),
         (
