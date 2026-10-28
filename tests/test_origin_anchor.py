@@ -1275,11 +1275,31 @@ def test_the_key_ring_writes_an_anchor_once_and_replaces_it_on_the_record(
         {"seq": "1", "mac": "1" * 64},
         {"seq": 1, "mac": "1" * 63},
         {"seq": 1, "mac": "A" * 64},
+        {"seq": 2**63, "mac": "1" * 64},
     ],
 )
 def test_only_a_seq_and_a_mac_read_as_an_anchor(raw: Any) -> None:
     assert parse_origin(raw) is None
     assert parse_origin({"seq": 1, "mac": "1" * 64}) == HistoryOrigin(1, "1" * 64)
+    assert parse_origin({"seq": 2**63 - 1, "mac": "1" * 64}) == HistoryOrigin(
+        2**63 - 1, "1" * 64
+    )
+
+
+def test_an_anchor_past_what_sqlite_holds_reads_as_none(
+    owned: tuple[Path, Memory, str, str], keys: Path
+) -> None:
+    """A seq SQLite's INTEGER cannot hold names no row, and binding it to
+    the lookup raises OverflowError: as an anchor it would fail every read
+    of a record's provenance. It reads as no anchor, as any file that does
+    not parse does."""
+    path, genuine, _own, store_id = owned
+    KeyRing(keys, store_id).origin_path().write_text(
+        json.dumps({"seq": 2**64, "mac": "1" * 64}), encoding="utf-8"
+    )
+    with Store.open(path, keys_dir=keys) as reader:
+        assert reader.provenance_for([genuine.id]) == {genuine.id: LOCAL}
+        assert reader.log_verify()["origin"] == {"status": "absent"}
 
 
 def test_without_an_anchor_the_segment_map_is_the_rule_without_one(

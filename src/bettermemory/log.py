@@ -186,6 +186,11 @@ ORIGIN_KIND = "origin"
 
 _HEX_MAC = re.compile(r"[0-9a-f]{64}")
 
+# The largest seq SQLite's INTEGER holds. An anchor past it names no row
+# the log can hold, and binding it to a query raises OverflowError, so it
+# reads as no anchor (`parse_origin`) rather than failing every read.
+_MAX_SEQ = 2**63 - 1
+
 
 def canonical_payload(payload: Mapping[str, Any]) -> str:
     """The one JSON text a payload has: sorted keys, no whitespace,
@@ -262,13 +267,13 @@ class HistoryOrigin:
 
 def parse_origin(raw: Any) -> HistoryOrigin | None:
     """The anchor ``raw`` describes, or None when it is not one: an object
-    with a positive integer ``seq`` and a ``mac`` of 64 lowercase hex
-    characters, the shape `compute_mac` gives. Anything else is read as no
-    anchor, as an unreadable head is read as no head."""
+    with a positive integer ``seq`` that SQLite can hold and a ``mac`` of
+    64 lowercase hex characters, the shape `compute_mac` gives. Anything
+    else is read as no anchor, as an unreadable head is read as no head."""
     if not isinstance(raw, dict):
         return None
     seq, mac = raw.get("seq"), raw.get("mac")
-    if not isinstance(seq, int) or isinstance(seq, bool) or seq < 1:
+    if not isinstance(seq, int) or isinstance(seq, bool) or not 1 <= seq <= _MAX_SEQ:
         return None
     if not isinstance(mac, str) or _HEX_MAC.fullmatch(mac) is None:
         return None
