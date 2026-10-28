@@ -772,6 +772,8 @@ def test_a_real_daemon_proves_itself_and_takes_only_its_own_port(
     )
     with pytest.raises(urllib.error.HTTPError) as refused:
         urllib.request.urlopen(request, timeout=5)
+    # The error holds the response and its socket until closed.
+    refused.value.close()
     assert refused.value.code == 421
     assert _cli(["down"], daemon_env).returncode == 0
 
@@ -795,7 +797,10 @@ def test_a_listener_repeating_a_real_daemons_health_is_not_taken_for_it(
 
 
 def test_a_daemon_starts_beside_a_listener_on_the_stale_port(
-    tmp_path: Path, daemon_env: dict[str, str], listeners: list[_Listener]
+    tmp_path: Path,
+    daemon_env: dict[str, str],
+    listeners: list[_Listener],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The whole recovery: the state file names a crashed daemon's port,
     which another listener now holds. The client starts a daemon of its
@@ -805,6 +810,15 @@ def test_a_daemon_starts_beside_a_listener_on_the_stale_port(
     state_dir = tmp_path / "state"
     listener = _listen(listeners, _another_store())
     write_state(state_dir, _state(listener.port, store))
+    spawned: list[_daemon_client.Started] = []
+    spawn = _daemon_client._spawn
+
+    def recording(*args: Any, **kwargs: Any) -> _daemon_client.Started:
+        started = spawn(*args, **kwargs)
+        spawned.append(started)
+        return started
+
+    monkeypatch.setattr(_daemon_client, "_spawn", recording)
     state = _daemon_client.ensure_daemon(
         state_dir,
         store,
@@ -819,3 +833,8 @@ def test_a_daemon_starts_beside_a_listener_on_the_stale_port(
     assert read_state(state_dir, store) == state
     assert listener.posts == []
     assert all(path.startswith("/health?") for path in listener.gets)
+    # The daemon this process spawned is stopped and reaped here, so its
+    # Popen is not collected while the child still runs.
+    assert _cli(["down"], daemon_env).returncode == 0
+    for started in spawned:
+        started.child.wait(timeout=30)
