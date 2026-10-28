@@ -5,8 +5,9 @@
 #
 #   macOS    /Library/Application Support/bettermemory/managed.toml
 #   Linux    /etc/bettermemory/managed.toml (every other POSIX system too)
-#   Windows  %ProgramData%\bettermemory\managed.toml, the ProgramData folder
-#            the system registers, not the variable a user can set
+#   Windows  none in this release: no managed file is read on Windows until
+#            its owner and ACL are checked, since a standard account can
+#            create folders under ProgramData. A file placed there is ignored.
 #
 # Make it readable by every account that runs bettermemory and writable only
 # by the administrator (root-owned, mode 0644, on POSIX).

@@ -86,6 +86,20 @@ def test_windows_reads_no_managed_file_yet(monkeypatch: pytest.MonkeyPatch) -> N
     assert _REAL_MANAGED_CONFIG_PATH() is None
 
 
+def test_the_example_sends_no_windows_admin_to_a_path_never_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The example's install table is what an administrator follows. While
+    no managed file is read on Windows, its Windows line says so, rather
+    than name a path whose pins would be ignored without a word."""
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert _REAL_MANAGED_CONFIG_PATH() is None
+    header = _EXAMPLE.read_text(encoding="utf-8").split("[storage]")[0]
+    [windows] = [line for line in header.splitlines() if "Windows" in line]
+    assert "none in this release" in windows
+    assert "managed.toml" not in windows
+
+
 @pytest.mark.parametrize(
     ("platform", "expected"),
     [
