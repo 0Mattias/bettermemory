@@ -418,16 +418,17 @@ def test_a_forged_first_rekey_cannot_rename_this_hosts_history(
 
 
 @pytest.mark.parametrize("edit_meta", [True, False], ids=["meta-edit", "no-meta-edit"])
-def test_a_rewritten_first_row_is_caught_only_under_strict_provenance(
+def test_a_rewritten_first_row_is_caught_under_strict_provenance(
     owned: tuple[Path, Memory, str], keys: Path, edit_meta: bool
 ) -> None:
-    """The limit `log`'s docstring names. An editor who renames this
-    host's history and also rewrites its first row, so that no key here
-    verifies it, leaves nothing in the log that says where this host's
-    rows begin: the history and the forged segment after it read like a
-    store copied here, whose labels stand by default. Under
-    `strict_provenance` the planted row reads `unaccounted`, and a row of
-    this host's own that its current key still verifies reads `local`."""
+    """An editor who renames this host's history and also rewrites its
+    first row, so that no key here verifies it, leaves nothing in the log
+    that says where this host's rows begin: the history and the forged
+    segment after it read like a store copied here. The origin anchor
+    beside the key says where they begin, and catches it by default
+    (tests/test_origin_anchor.py); `strict_provenance` catches it without
+    one. Under it the planted row reads `unaccounted`, and a row of this
+    host's own that its current key still verifies reads `local`."""
     path, genuine, _own = owned
     conn = _outside(path)
     conn.execute("UPDATE log SET ts = ts || ' ' WHERE seq = 1")
@@ -1065,17 +1066,20 @@ def test_the_security_section_defaults_off_and_round_trips(tmp_path: Path) -> No
 
 
 def test_the_shipped_security_prose_matches_the_behaviour() -> None:
-    """The template's claims, each pinned by a test above: rows after
-    this machine's own under a key it never held read unaccounted (the
-    recipe tests), a copied store keeps its labels by default (the
-    moved-store test), an editor who rewrites where this machine's rows
-    begin can pass for one (the rewritten-first-row test), and the switch
-    widens that (the strict tests)."""
+    """The template's claims, each pinned by a test: rows after this
+    machine's own under a key it never held read unaccounted (the recipe
+    tests), a copied store keeps its labels by default (the moved-store
+    test), where this machine's rows begin is kept beside the key and an
+    edit made before it was written, or a fresh store id, still passes
+    for a copy (tests/test_origin_anchor.py), and the switch widens that
+    (the strict tests)."""
     block = DEFAULT_CONFIG.split("[security]")[1].split("[capture]")[0]
     # Commented out, as every key rc12 adds: a managed file that pins it
     # then draws no notice about a line the user never wrote.
     assert "Off by default.\n# strict_provenance = true" in block
     assert "never held read `unaccounted`" in block
     assert "copied here" in block
-    assert "careful editor can pass its rows off" in block
+    assert "kept beside the key (`<store_id>.origin`)" in block
+    assert "fresh id, can\n# still pass an editor's rows off" in block
+    assert "read off the log" not in block
     assert "log verify" in block
