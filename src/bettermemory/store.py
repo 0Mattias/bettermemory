@@ -37,9 +37,11 @@ names, and stays (`Store.open`).
 Foreign segments. A segment of the log whose key this machine does not
 hold, after one whose key it does, is rows a writer without the key put
 into history this machine signed (`log.chain_segments`). Every read
-labels its records ``unaccounted``, as it labels a row whose MAC fails;
-the leading segments of a store copied here keep their labels unless
-``[security] strict_provenance`` is set.
+labels its records ``unaccounted``, as it labels a row whose MAC fails,
+save a row this machine's own key signed into it (a daemon that had the
+store open while the forged row went in); the leading segments of a
+store copied here keep their labels unless ``[security]
+strict_provenance`` is set.
 """
 
 from __future__ import annotations
@@ -2378,8 +2380,10 @@ class Store:
         not write named it: the owner's opener, with meta and the key in
         agreement. Rows this store appends after a forged ``rekey`` row
         would otherwise sit in the segment that row opened, under a key
-        nobody here holds, and never verify. One indexed lookup when there
-        is nothing to close; the write lock only when there is."""
+        nobody here holds, where `log verify` never checks them and only
+        the reads' fallback to this machine's own key verifies them
+        (`_pointer_verified`). One indexed lookup when there is nothing to
+        close; the write lock only when there is."""
         assert self._key is not None
         own = fingerprint(self._key)
         named = last_rekey_name(self._conn)
@@ -3817,7 +3821,8 @@ class Store:
         whose MAC does not verify under the segment's key, or names a row
         in a foreign segment (one whose key this machine does not hold,
         after one whose key it does), or, with ``strict_provenance``, in
-        any segment whose key is not held. Such a row reads
+        any segment whose key is not held, that this machine's own key
+        did not sign either. Such a row reads
         ``unaccounted``, as does one the last ``refold`` in this process
         found so. A row in a leading segment whose key is not held (a
         store copied here without its key) keeps its label. A store
@@ -3872,13 +3877,16 @@ class Store:
     def _pointer_verified(self, record_id: str, kind: str, log_mac: Any) -> bool | None:
         """Does the record's ``log_mac`` name a log row of ``kind`` that
         put this very record, and does that row's MAC verify under its
-        segment's key? A row in a foreign segment is not verified (False):
-        its key is one nobody here holds, after rows this machine signed.
-        A row in a leading segment whose key is not held answers None (its
-        label stands), or False under ``strict_provenance``. None too when
-        the store was opened without its key. The True and False answers
-        are cached per (id, mac)."""
-        if self._key is None:
+        segment's key? A row in a foreign segment is checked against this
+        connection's own key instead, since nobody here holds the
+        segment's: it verifies only when this machine appended it, and
+        anything else is False. A row in a leading segment whose key is
+        not held answers None (its label stands), or is checked the same
+        way under ``strict_provenance``. None too when the store was
+        opened without its key. The True and False answers are cached per
+        (id, mac)."""
+        own_key = self._key
+        if own_key is None:
             return None
         if not isinstance(log_mac, str) or not log_mac:
             return False
@@ -3903,21 +3911,30 @@ class Store:
                 segment = self._segment_for(int(raw["seq"]))
                 if segment is None:
                     return None
-                if segment.key is not None:
-                    expected = compute_mac(
-                        segment.key,
-                        seq=int(raw["seq"]),
-                        ts=str(raw["ts"]),
-                        session=None if raw["session"] is None else str(raw["session"]),
-                        kind=str(raw["kind"]),
-                        payload=str(raw["payload"]),
-                        prev_mac=str(raw["prev_mac"]),
-                    )
-                    verdict = hmac.compare_digest(expected, log_mac)
-                elif not segment.foreign and not self.strict_provenance:
-                    # A leading segment: signed elsewhere, before this
-                    # machine first signed the store. Its label stands.
-                    return None
+                key = segment.key
+                if key is None:
+                    if not segment.foreign and not self.strict_provenance:
+                        # A leading segment: signed elsewhere, before this
+                        # machine first signed the store. Its label stands.
+                        return None
+                    # No key here signed the segment, but this machine
+                    # may have appended rows to it: a daemon that had the
+                    # store open while a forged rekey row went in, or an
+                    # opener whose repair could not be written, writes
+                    # under its own key into the segment that row opened.
+                    # Those rows verify under that key; a forged one
+                    # cannot, so it still reads unaccounted.
+                    key = own_key
+                expected = compute_mac(
+                    key,
+                    seq=int(raw["seq"]),
+                    ts=str(raw["ts"]),
+                    session=None if raw["session"] is None else str(raw["session"]),
+                    kind=str(raw["kind"]),
+                    payload=str(raw["payload"]),
+                    prev_mac=str(raw["prev_mac"]),
+                )
+                verdict = hmac.compare_digest(expected, log_mac)
         self._pointer_cache[cache_key] = verdict
         return verdict
 
@@ -5146,7 +5163,8 @@ class Store:
         """``{id: label}`` for the episodes asked: ``local`` when the row's
         pointer into the log verifies, ``unaccounted`` when it does not
         (the planted shape, a row in a foreign segment, or one in any
-        segment whose key is not held under ``strict_provenance``), the
+        segment whose key is not held under ``strict_provenance``, that
+        this machine's own key did not sign either; `_pointer_verified`), the
         row's label as stored when the key is not on this machine. Unknown
         ids are omitted."""
         ids = list(dict.fromkeys(episode_ids))

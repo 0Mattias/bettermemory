@@ -19,7 +19,8 @@ What is pinned here:
    `[security] strict_provenance` off, and `unaccounted` with it on.
 3. A store under one key throughout is unchanged: same labels, same
    verify report, no extra row at open.
-4. The owner's own rows after the foreign segment verify `local`.
+4. The owner's own rows after the foreign segment verify `local`, and
+   so do rows it appended into the segment while it stood open.
 
 The attacker in these tests is the editor with sqlite3 and the file: a
 second connection that appends rows signed with a key of its own (a
@@ -288,6 +289,53 @@ def test_a_connection_open_during_the_forgery_reads_it_unaccounted(
                 }
         finally:
             worker.close()
+
+
+@pytest.mark.parametrize("edit_meta", [True, False], ids=["meta-edit", "no-meta-edit"])
+def test_rows_the_owner_wrote_while_the_segment_stood_open_stay_local(
+    owned: tuple[Path, Memory, str], keys: Path, edit_meta: bool
+) -> None:
+    """A daemon that had the store open when the forged rekey row went in
+    keeps appending under its own key, into the segment that row opened,
+    until a restart's opener closes it. Those rows are this machine's:
+    they verify under its key on a fresh connection and after the repair,
+    strict or not, while the planted row still does not."""
+    path, genuine, own = owned
+    planted = _memory("planted while the daemon ran")
+    with Store.open_or_create(path, keys_dir=keys) as running:
+        forgery = _forge(path, old_fingerprint=own, memory=planted, edit_meta=edit_meta)
+        during = _memory("written by the daemon after the forgery")
+        running.put_memory(during)
+        if not edit_meta:
+            # A fresh map puts the row in the foreign segment.
+            worker = running.reopen()
+            try:
+                assert worker.provenance_for([planted.id, during.id]) == {
+                    planted.id: UNACCOUNTED,
+                    during.id: LOCAL,
+                }
+            finally:
+                worker.close()
+    for strict in (False, True):
+        with Store.open_or_create(
+            path, keys_dir=keys, strict_provenance=strict
+        ) as owner:
+            assert owner.provenance_for([genuine.id, planted.id, during.id]) == {
+                genuine.id: LOCAL,
+                planted.id: UNACCOUNTED,
+                during.id: LOCAL,
+            }
+            assert owner.unaccounted_ids() == [planted.id]
+            assert owner.provenance_counts() == {LOCAL: 2, UNACCOUNTED: 1}
+            report = owner.log_verify()
+        # The row is still inside the segment, which `log verify` reports
+        # whole: the repair closed it after the daemon's row.
+        assert report["status"] == "tampered"
+        [foreign] = _foreign_problems(report)
+        assert (foreign["first_seq"], foreign["last_seq"]) == (
+            forgery.rekey_seq,
+            forgery.last_seq + 1,
+        )
 
 
 @pytest.mark.parametrize("edit_meta", [True, False], ids=["meta-edit", "no-meta-edit"])
