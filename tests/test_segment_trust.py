@@ -274,19 +274,19 @@ def test_a_connection_open_during_the_forgery_reads_it_unaccounted(
         assert running.provenance_for([planted.id]) == {planted.id: UNACCOUNTED}
         assert running.unaccounted_ids() == [planted.id]
         # A worker connection opened after the forgery reads the map fresh,
-        # with the segment in it. After a meta edit it opens without the
-        # key (`reopen` never rekeys) and says trust is unavailable, which
-        # every read surface withholds or labels; it never reads `local`.
+        # with the segment in it. After a meta edit it opens without a key
+        # to write with (`reopen` never rekeys), and checks pointers under
+        # this machine's key, whose history of the store the anchor
+        # records: it never reads `local` for the planted row.
         worker = running.reopen()
         try:
             if edit_meta:
                 assert worker.has_key is False
-                assert worker.trust_rows([planted.id]) is None
-            else:
-                assert worker.provenance_for([planted.id, genuine.id]) == {
-                    planted.id: UNACCOUNTED,
-                    genuine.id: LOCAL,
-                }
+                assert worker.can_verify is True
+            assert worker.provenance_for([planted.id, genuine.id]) == {
+                planted.id: UNACCOUNTED,
+                genuine.id: LOCAL,
+            }
         finally:
             worker.close()
 

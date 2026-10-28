@@ -259,6 +259,41 @@ def test_a_reader_sees_the_mismatch_before_the_owner_opens(
     assert report["origin"]["status"] == "mismatch"
 
 
+@pytest.mark.parametrize("rewrite_first_row", [True, False])
+def test_a_reader_sees_the_forgery_when_meta_names_the_forged_key(
+    owned: tuple[Path, Memory, str, str],
+    keys: Path,
+    rewrite_first_row: bool,
+) -> None:
+    """With meta's `key_fingerprint` pointed at the forged key, a reader
+    found no key for the store and bound none, so no pointer was checked
+    and the planted record kept its stored `local` while `log verify`
+    reported tampering. This host's key signs a segment of the log, so it
+    is the store's whatever meta names: a reader checks pointers under it,
+    and still refuses to write."""
+    path, genuine, own, _store_id = owned
+    if rewrite_first_row:
+        _rewrite_without_resigning(path, 1)
+    planted = _memory("planted, meta pointed at the forged key")
+    _forge(path, old_fingerprint=own, memory=planted, edit_meta=True)
+    with Store.open(path, keys_dir=keys, allow_rekey=False) as reader:
+        assert reader.has_key is False
+        assert reader.can_verify is True
+        labels = reader.provenance_for([genuine.id, planted.id])
+        assert labels[planted.id] == UNACCOUNTED
+        if not rewrite_first_row:
+            assert labels[genuine.id] == LOCAL
+        assert reader.unaccounted_ids() and planted.id in reader.unaccounted_ids()
+        worker = reader.reopen()
+        try:
+            assert worker.provenance_for([planted.id]) == {planted.id: UNACCOUNTED}
+        finally:
+            worker.close()
+        with pytest.raises(RuntimeError, match="open for reading only"):
+            reader.put_memory(_memory("a reader never writes"))
+        assert reader.log_verify()["status"] == "tampered"
+
+
 def test_the_bypass_on_a_store_copied_in_is_caught_at_its_rekey_row(
     copied: tuple[Path, Path, Memory, Memory, int, str],
 ) -> None:
@@ -892,7 +927,8 @@ def test_a_restore_over_a_store_taken_over_here_installs_the_bundles_anchor(
     """A bundle made on the machine a store came from, restored over this
     host's copy of it after this host took it over: the bundle's key and
     anchor replace this host's, so the restored store is judged against
-    the history it holds."""
+    the history it holds. The bundle is signed by a key only it carries
+    here, so that takes the caller's word (`trust_bundle_key`)."""
     source_keys = tmp_path / "source-keys"
     path = tmp_path / "store" / STORE_FILENAME
     with Store.create(path, keys_dir=source_keys) as source:
@@ -907,6 +943,11 @@ def test_a_restore_over_a_store_taken_over_here_installs_the_bundles_anchor(
     assert ring.read_origin() == HistoryOrigin(takeover.seq, takeover.mac)
 
     report = restore_bundle(bundle, path, apply=True, keys_dir=here_keys)
+    assert report["status"] == "refused"
+    assert ring.read_origin() == HistoryOrigin(takeover.seq, takeover.mac)
+    report = restore_bundle(
+        bundle, path, apply=True, keys_dir=here_keys, trust_bundle_key=True
+    )
     assert report["status"] == "restored", report["detail"]
     source_origin = KeyRing(source_keys, store_id).read_origin()
     assert ring.read_origin() == source_origin

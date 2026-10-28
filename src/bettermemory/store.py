@@ -2093,6 +2093,12 @@ class Store:
     _conn: sqlite3.Connection
     _keyring: KeyRing
     _key: bytes | None
+    # A reader's key for checking, never for signing: the key ring's
+    # current key, bound by a read-only open whose meta names another key
+    # when the key ring holds the store's origin anchor or that key signs
+    # a segment of the log (`open`). None otherwise; `_key` is the one key
+    # a mutation signs with.
+    _read_key: bytes | None
     _store_id: str
     _last_appended: LogRow | None
     _in_batch: bool
@@ -2131,6 +2137,7 @@ class Store:
             opened._store_id,
             strict_provenance=opened._strict_provenance,
         )
+        self._read_key = opened._read_key
 
     def _adopt(
         self,
@@ -2146,6 +2153,7 @@ class Store:
         self._conn = conn
         self._keyring = keyring
         self._key = key
+        self._read_key = None
         self._store_id = store_id
         self._last_appended = None
         self._in_batch = False
@@ -2326,7 +2334,7 @@ class Store:
                     store._settle_origin()
                 return store
             if not allow_rekey:
-                return cls._bind(
+                reader = cls._bind(
                     path,
                     conn,
                     keyring,
@@ -2334,6 +2342,31 @@ class Store:
                     store_id,
                     strict_provenance=strict_provenance,
                 )
+                # Meta's fingerprint is only what the file says. When this
+                # machine has a history of the store (its key ring holds
+                # an origin anchor for it, or its key signs a segment of
+                # the log, as the owner's opener reads it below), an editor
+                # who pointed meta at another key must not thereby switch
+                # the reads' checks off, which left a planted record its
+                # stored label here while `log verify` read the store
+                # tampered. The key is bound for checking pointers, never
+                # for writing, and nothing is written to set meta back.
+                # Binding it can only take a stored label away: a row
+                # still verifies under its own segment's key.
+                if key is not None and (
+                    keyring.read_origin() is not None
+                    or _signs_a_segment(
+                        chain_segments(
+                            conn,
+                            keyring=keyring,
+                            current_fingerprint=expected,
+                            current_key=key,
+                        ),
+                        key,
+                    )
+                ):
+                    reader._read_key = key
+                return reader
             segments = chain_segments(
                 conn, keyring=keyring, current_fingerprint=expected, current_key=key
             )
@@ -2679,6 +2712,22 @@ class Store:
     @property
     def has_key(self) -> bool:
         return self._key is not None
+
+    @property
+    def can_verify(self) -> bool:
+        """Whether this connection checks pointers into the log: it holds
+        the key it writes with, or, opened for reading with meta naming a
+        key this machine does not hold, this machine has a history of the
+        store (an origin anchor, or a segment its current key signs; see
+        `open`). ``has_key`` is the narrower question, whether it may
+        write."""
+        return self._verify_key is not None
+
+    @property
+    def _verify_key(self) -> bytes | None:
+        """The key reads check this machine's own rows under: the one a
+        mutation signs with, else a reader's (`_read_key`)."""
+        return self._key if self._key is not None else self._read_key
 
     @property
     def strict_provenance(self) -> bool:
@@ -4017,7 +4066,7 @@ class Store:
                 self._conn,
                 keyring=self._keyring,
                 current_fingerprint=self.key_fingerprint,
-                current_key=self._key,
+                current_key=self._verify_key,
             )
             self._segments, self._origin = trust.segments, trust.origin
         found: Segment | None = None
@@ -4046,7 +4095,7 @@ class Store:
         known. A row below seq 1 is False whatever its segment. None too
         when the store was opened without its key. The True and False
         answers are cached per (id, mac)."""
-        own_key = self._key
+        own_key = self._verify_key
         if own_key is None:
             return None
         if not isinstance(log_mac, str) or not log_mac:
@@ -4112,7 +4161,7 @@ class Store:
         (the ``verifications`` row with no machine id), or None when the
         store was opened without its key, so no pointer can be verified and
         the response must say trust is unavailable."""
-        if self._key is None:
+        if self._verify_key is None:
             return None
         labels = self.provenance_for(memory_ids)
         if not labels:

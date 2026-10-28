@@ -92,6 +92,18 @@ stable 9.0.0 follows the candidates' testing.
   sits below seq 1 reads `unaccounted` on every read surface. No store
   writes such a row. (`src/bettermemory/log.py`,
   `src/bettermemory/store.py`)
+- **The read-only commands check pointers when `meta` names another
+  key.** A read-only open bound the key `meta.key_fingerprint` names,
+  and none when this host does not hold it, so after the forged-segment
+  edit above `memory history`, `export`, `stats` and `session-start`
+  checked no pointer: `memory history` printed the planted record as
+  `local (unverified: no key)` and exited 0 while `log verify` read the
+  store tampered. When this host's key ring holds the store's origin anchor,
+  or its current key signs a segment of the log, a read-only open now
+  checks pointers under that key, writing nothing and still refusing
+  every write, so the planted record reads `unaccounted` and `memory
+  history` exits 1. (`src/bettermemory/store.py`,
+  `src/bettermemory/history.py`, `tests/test_memory_history.py`)
 - **A store id is the shape `create` writes, or the store is refused.**
   The key ring joins `meta.store_id` onto the keys directory, so a store
   file whose id was a relative path could bind a key planted beside it

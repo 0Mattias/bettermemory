@@ -201,10 +201,13 @@ class RecordHistory:
     tombstoning it, ``missing`` when the log's last word puts it but no table
     holds it (deleted outside the store), ``unknown`` when neither the log
     nor any table names it. ``provenance`` is the verified provenance
-    label of an active record; without the key it is the stored label,
-    unverified, and ``key_present`` says so. A tombstone's is None, or
-    ``unaccounted`` when the log's last word on the record is not the
-    ``tombstone_put`` that wrote it; None for every other state."""
+    label of an active record; without a key to check it under it is the
+    stored label, unverified, and ``key_present`` says so
+    (`Store.can_verify`: the store's key, or this machine's own when meta
+    names another and this machine has a history of the store). A
+    tombstone's is None, or ``unaccounted`` when the log's last word on
+    the record is not the ``tombstone_put`` that wrote it; None for every
+    other state."""
 
     record_id: str
     record_kind: str | None
@@ -732,7 +735,7 @@ def _read_history(store: Store, record_id: str) -> RecordHistory:
         record_kind=record_kind,
         state=state,
         provenance=provenance,
-        key_present=store.has_key,
+        key_present=store.can_verify,
         rows=tuple(rows),
     )
 
