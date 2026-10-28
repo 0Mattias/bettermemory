@@ -93,13 +93,19 @@ PINNED_PATH_VARIABLES: tuple[str, ...] = (
 #: Variables carried over as they are. PATH because the daemon runs
 #: `git` by name (`_git`), and launchd's PATH is /usr/bin:/bin:/usr/sbin:
 #: /sbin: a git the user installed elsewhere would be missed.
-#: BETTERMEMORY_FLOCK_TIMEOUT tunes the daemon's own lock waits. The
+#: BETTERMEMORY_FLOCK_TIMEOUT tunes the daemon's own lock waits, and
+#: BETTERMEMORY_INDEX_THRESHOLD its searches (`_handlers`), which a
+#: spawned daemon inherits from the shell that started it. The
 #: identity variables (BETTERMEMORY_CLIENT, _CLIENT_VERSION, _MODEL,
 #: _WORKSPACE) are left out on purpose: they describe the client a
 #: process serves, and one daemon serves every client, the reason
 #: `_daemon_client.daemon_env_for` drops the harness session id from a
 #: spawned daemon's environment.
-PINNED_VARIABLES: tuple[str, ...] = ("BETTERMEMORY_FLOCK_TIMEOUT", "PATH")
+PINNED_VARIABLES: tuple[str, ...] = (
+    "BETTERMEMORY_FLOCK_TIMEOUT",
+    "BETTERMEMORY_INDEX_THRESHOLD",
+    "PATH",
+)
 
 # Path components of an interpreter that a package manager may delete:
 # uv's cache (`uvx`, `uv run --with`: archive-v0, builds-v0,
@@ -239,7 +245,7 @@ def render_launchd(spec: UnitSpec) -> str:
     """The LaunchAgent plist. KeepAlive restarts the daemon only after an
     unsuccessful exit (see the module docstring); ExitTimeOut is the stop
     bound; Umask 63 is 0o077. plistlib is imported here, not at the top:
-    every CLI start imports this module through the `service` parser, and
+    `print` and `status` import this module for a systemd unit too, and
     only a launchd unit needs it."""
     import plistlib
 
@@ -432,10 +438,23 @@ def ephemeral_interpreter(prefix: str, env: Mapping[str, str]) -> bool:
     return False
 
 
-def manual_instructions(command: Sequence[str], *, state_dir: Path) -> str:
+def manual_instructions(
+    command: Sequence[str], *, state_dir: Path, windows: bool = False
+) -> str:
     """What to tell a user on a platform with no unit here: the command a
-    supervisor of their own runs, and what it needs to know."""
-    line = " ".join(command)
+    supervisor of their own runs, and what it needs to know. The command
+    is quoted for the platform's own command line (`windows`: the rules
+    `subprocess` applies there), since an interpreter under a directory
+    with a space in its name, ``C:\\Program Files`` or a user profile, is
+    the usual case on Windows and a bare join would split it."""
+    if windows:
+        import subprocess
+
+        line = subprocess.list2cmdline(list(command))
+    else:
+        import shlex
+
+        line = shlex.join(command)
     return (
         "bettermemory service writes launchd (macOS) and systemd (Linux) "
         "units only.\n"

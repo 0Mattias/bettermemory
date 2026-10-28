@@ -199,7 +199,8 @@ def _context(supervisor: str) -> _Context:
 def _run_steps(steps: list[units.Step]) -> list[dict[str, Any]]:
     """Run `steps` in order and report each; stop after a required one
     fails. A command that cannot be run at all (no launchctl or systemctl
-    on PATH) reports returncode None."""
+    on PATH) reports returncode None. Output that does not decode (a path
+    in another encoding in `launchctl print`) is replaced, not raised."""
     from .. import service_units as units
 
     results: list[dict[str, Any]] = []
@@ -209,6 +210,7 @@ def _run_steps(steps: list[units.Step]) -> list[dict[str, Any]]:
                 list(step.argv),
                 capture_output=True,
                 text=True,
+                errors="replace",
                 timeout=units.STOP_TIMEOUT_SECONDS + COMMAND_MARGIN_SECONDS,
                 check=False,
             )
@@ -310,7 +312,9 @@ def _unsupported(json_out: bool) -> int:
     from .._daemon_client import resolve_state_dir
 
     command = units.daemon_command(_interpreter()[0])
-    text = units.manual_instructions(command, state_dir=resolve_state_dir())
+    text = units.manual_instructions(
+        command, state_dir=resolve_state_dir(), windows=_platform() == "win32"
+    )
     payload = {
         "supported": False,
         "platform": _platform(),

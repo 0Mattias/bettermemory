@@ -100,9 +100,10 @@ def test_unit_paths(tmp_path: Path) -> None:
 
 def test_the_pinned_environment(tmp_path: Path) -> None:
     """The path variables the shell sets are carried absolute, against the
-    directory `install` ran in and with ``~`` as home; PATH and the lock
-    timeout as they are; the state directory always; the identity
-    variables, which describe a client and not the daemon, never."""
+    directory `install` ran in and with ``~`` as home; PATH and the
+    daemon's tuning variables as they are; the state directory always;
+    the identity variables, which describe a client and not the daemon,
+    never."""
     home, cwd, state_dir = tmp_path / "home", tmp_path / "cwd", tmp_path / "state"
     env = {
         "BETTERMEMORY_DIR": "store/../store",
@@ -110,6 +111,7 @@ def test_the_pinned_environment(tmp_path: Path) -> None:
         "XDG_CONFIG_HOME": str(tmp_path / "xdg"),
         "PATH": "/usr/local/bin:/usr/bin",
         "BETTERMEMORY_FLOCK_TIMEOUT": "5",
+        "BETTERMEMORY_INDEX_THRESHOLD": "200",
         "BETTERMEMORY_STATE_DIR": "elsewhere",
         "BETTERMEMORY_CLIENT": "claude-code",
         "BETTERMEMORY_CLIENT_VERSION": "2.0",
@@ -121,6 +123,7 @@ def test_the_pinned_environment(tmp_path: Path) -> None:
     assert pinned == {
         "BETTERMEMORY_DIR": str(cwd / "store"),
         "BETTERMEMORY_FLOCK_TIMEOUT": "5",
+        "BETTERMEMORY_INDEX_THRESHOLD": "200",
         "BETTERMEMORY_KEYS_DIR": str(home / "keys"),
         "BETTERMEMORY_STATE_DIR": str(state_dir),
         "PATH": "/usr/local/bin:/usr/bin",
@@ -326,6 +329,21 @@ def test_the_manual_instructions_name_the_command(tmp_path: Path) -> None:
     assert f"{_EXE} -m bettermemory up --foreground" in text
     assert str(tmp_path) in text
     assert str(units.STOP_TIMEOUT_SECONDS) in text
+
+
+def test_the_manual_instructions_quote_an_interpreter_path_with_a_space(
+    tmp_path: Path,
+) -> None:
+    """An interpreter under ``C:\\Program Files`` is one word on the line
+    the user copies, quoted the way the platform's command line reads it."""
+    windows = units.daemon_command(r"C:\Program Files\Python313\python.exe")
+    text = units.manual_instructions(windows, state_dir=tmp_path, windows=True)
+    assert (
+        r'"C:\Program Files\Python313\python.exe" -m bettermemory up --foreground'
+    ) in text
+    posix = units.daemon_command("/opt/my bm/bin/python")
+    text = units.manual_instructions(posix, state_dir=tmp_path)
+    assert "'/opt/my bm/bin/python' -m bettermemory up --foreground" in text
 
 
 # ---------------------------------------------------------------------------
@@ -905,6 +923,16 @@ def test_the_store_is_the_one_a_daemon_in_the_state_directory_resolves(
         {"BETTERMEMORY_DIR": str(tmp_path / "s")}, state_dir
     )
     assert named == (tmp_path / "s").resolve() / "memory.sqlite"
+
+
+def test_a_command_whose_output_does_not_decode_is_still_reported() -> None:
+    """A supervisor command's output is read as text with what does not
+    decode replaced: bytes in another encoding (a path in `launchctl
+    print`) must not end `service status` with a UnicodeDecodeError."""
+    script = "import sys; sys.stdout.buffer.write(b'state = running\\xff\\n')"
+    [result] = service_cmd._run_steps([units.Step((sys.executable, "-c", script))])
+    assert result["returncode"] == 0
+    assert result["stdout"].startswith("state = running")
 
 
 def test_the_context_falls_back_to_home_when_the_cwd_is_gone(
