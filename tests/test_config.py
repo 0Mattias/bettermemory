@@ -1602,9 +1602,14 @@ def test_membership_keys_go_through_the_bool_coercion(
     assert (membership.write_token, membership.strict) == (write_token, strict)
 
 
-def test_a_membership_value_that_is_not_a_table_loads_the_defaults(
+def test_a_membership_value_that_is_not_a_table_is_a_located_error(
     tmp_path: Path,
 ) -> None:
+    """Every section refuses a value that is not a table, naming the file
+    and the section (`config._section_table`); this one used to read as
+    its defaults without a word."""
     config_path = tmp_path / "config.toml"
     config_path.write_text("membership = 3\n", encoding="utf-8")
-    assert load_config(config_path).membership == Config().membership
+    with pytest.raises(ValueError, match=r"\[membership\] = 3 must be a table") as exc:
+        load_config(config_path)
+    assert str(config_path) in str(exc.value)

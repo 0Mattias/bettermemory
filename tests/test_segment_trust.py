@@ -1049,8 +1049,11 @@ def test_the_security_section_defaults_off_and_round_trips(tmp_path: Path) -> No
     assert load_config(path).security.strict_provenance is True
     path.write_text('[security]\nstrict_provenance = "yes"\n', encoding="utf-8")
     assert load_config(path).security.strict_provenance is True
+    # A `security` value that is not a table fails the load, naming the
+    # file and the section, which the store reads as strict (fail closed).
     path.write_text("security = 1\n", encoding="utf-8")
-    assert load_config(path).security.strict_provenance is False
+    with pytest.raises(ValueError, match=r"\[security\] = 1 must be a table"):
+        load_config(path)
     path.write_text("[behavior]\n", encoding="utf-8")
     assert load_config(path).security.strict_provenance is False
 

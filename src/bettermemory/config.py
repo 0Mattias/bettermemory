@@ -1280,6 +1280,30 @@ def _apply_legacy_endorsement_debt_alias(
         )
 
 
+def read_config_file(path: Path) -> dict[str, Any]:
+    """One config file, parsed, with a parse failure that names the file.
+
+    `tomllib`'s own error says only where in the text it stopped ("Invalid
+    value (at line 3, column 9)"), and a file that is not UTF-8 fails with
+    a bare codec error; neither names the file, so a daemon that would not
+    start, or a CLI command that stopped, left the user to guess which of
+    the config files was at fault. Both are re-raised here as a ValueError
+    that starts ``malformed config in <path>:``, the prefix the loader's
+    value errors carry (`_malformed_config_msg`).
+
+    Decoded as ``utf-8-sig``, as `managed.read_managed` decodes the managed
+    file: a leading byte-order mark, which Windows PowerShell 5.1 writes
+    with ``-Encoding UTF8``, is dropped rather than refused as an invalid
+    statement at line 1, column 1. Without a mark the decoding is plain
+    UTF-8. An OSError (a file this account cannot read, a directory at the
+    path) propagates unchanged; its text already names the path."""
+    raw = path.read_bytes()
+    try:
+        return tomllib.loads(raw.decode("utf-8-sig"))
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        raise ValueError(f"malformed config in {path}: {exc}") from exc
+
+
 def load_config(path: Path | None = None) -> Config:
     """Load config from `path`, creating it with defaults if missing, and
     pin every key the organisation-managed file sets, when the machine has
@@ -1300,9 +1324,12 @@ def load_config(path: Path | None = None) -> Config:
             file=sys.stderr,
         )
 
-    with config_path.open("rb") as f:
-        data = tomllib.load(f)
+    return _overlay_managed(read_config_file(config_path), config_path)
 
+
+def _overlay_managed(data: dict[str, Any], config_path: Path) -> Config:
+    """The `Config` for one parsed user file, with the managed file's pins
+    applied when the machine has one."""
     # The organisation-managed file, looked up through the module so the
     # suite's autouse fixture can point it at a scratch path. None (no
     # file, every install that never deployed one) leaves the user's file
@@ -1425,6 +1452,36 @@ def _warn_pinned_key(
     )
 
 
+def _section_table(
+    data: dict[str, Any], name: str, config_path: Path
+) -> dict[str, Any]:
+    """The `[name]` table of one parsed file: ``{}`` when the file has no
+    such section, the table itself (mutated in place by the steps below)
+    when it has one, and a located ValueError naming the file and the
+    section when the name holds anything else (``storage = 5``).
+
+    Before this guard the sections went three ways. `[storage]`,
+    `[behavior]`, `[scopes]` and `[telemetry]` crashed with an
+    AttributeError from ``5.get(...)``, which the commands that catch a
+    bad config as ``(ValueError, OSError)`` (`security audit`, `security
+    sandbox`) let through as a traceback.
+    `[daemon]`, `[capture]`, `[membership]` and `[security]` read as
+    their defaults without a word, so ``security = true``, written by
+    someone who meant to switch a protection on, left it off. Only
+    `[policy]` refused. Now every section refuses, as `[policy]` did and
+    as the managed file refuses any top-level value that is not a table
+    (`managed.read_managed`): a section the file names but cannot be
+    read as one is a malformed file, the same as a malformed value in it.
+    `bettermemory config check` reports the same line before a daemon
+    tries to start on it."""
+    raw = data.get(name, {})
+    if not isinstance(raw, dict):
+        raise ValueError(
+            _malformed_config_msg(f"[{name}]", raw, config_path, "a table")
+        )
+    return raw
+
+
 def _config_from_data(data: dict[str, Any], config_path: Path) -> Config:
     """Build a `Config` from one parsed TOML file.
 
@@ -1434,30 +1491,15 @@ def _config_from_data(data: dict[str, Any], config_path: Path) -> Config:
     keys and sections are dropped, so a caller reading `data` afterwards
     sees only settings that still exist.
     """
-    storage_raw = data.get("storage", {})
-    behavior_raw = data.get("behavior", {})
-    scopes_raw = data.get("scopes", {})
-    # Not the silent `{}` fallback the sections below take: a `policy =
-    # ...` scalar where the table belongs would otherwise forbid nothing
-    # while the file reads as if it set a policy.
-    policy_raw = data.get("policy", {})
-    if not isinstance(policy_raw, dict):
-        raise ValueError(
-            _malformed_config_msg("[policy]", policy_raw, config_path, "a table")
-        )
-    telemetry_raw = data.get("telemetry", {})
-    daemon_raw = data.get("daemon", {})
-    if not isinstance(daemon_raw, dict):
-        daemon_raw = {}
-    capture_raw = data.get("capture", {})
-    if not isinstance(capture_raw, dict):
-        capture_raw = {}
-    membership_raw = data.get("membership", {})
-    if not isinstance(membership_raw, dict):
-        membership_raw = {}
-    security_raw = data.get("security", {})
-    if not isinstance(security_raw, dict):
-        security_raw = {}
+    storage_raw = _section_table(data, "storage", config_path)
+    behavior_raw = _section_table(data, "behavior", config_path)
+    scopes_raw = _section_table(data, "scopes", config_path)
+    policy_raw = _section_table(data, "policy", config_path)
+    telemetry_raw = _section_table(data, "telemetry", config_path)
+    daemon_raw = _section_table(data, "daemon", config_path)
+    capture_raw = _section_table(data, "capture", config_path)
+    membership_raw = _section_table(data, "membership", config_path)
+    security_raw = _section_table(data, "security", config_path)
 
     # T9: back-compat for the 3.1.x -> 3.2.0 TOML key rename. Mutates
     # `behavior_raw` so the downstream `behavior_raw.get(...)` lookups
