@@ -1,6 +1,6 @@
 [project]
 name = "bettermemory"
-version = "9.0.0rc11"
+version = "9.0.0rc12"
 description = "MCP memory server for coding agents. Memories are checked against your files and git history on every read. Signed change log, one local SQLite file, MIT."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -113,7 +113,7 @@ Changelog = "https://github.com/0Mattias/bettermemory/blob/main/CHANGELOG.md"
 # it afresh from PyPI under build isolation and uv.lock's hashes do not
 # cover it, so a bare `hatchling` built each release with whatever version
 # PyPI served on the day of the tag. 1.32.4 is the version that built
-# 9.0.0rc11 (its wheel's `Generator` line). A bump is a deliberate change
+# 9.0.0rc12 (its wheel's `Generator` line). A bump is a deliberate change
 # of its own: rebuild a tagged release with the new version and compare the
 # files before committing it.
 [build-system]
