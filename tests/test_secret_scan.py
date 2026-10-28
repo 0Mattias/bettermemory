@@ -970,7 +970,7 @@ def test_text_report_groups_findings_with_their_remediation(store: Store) -> Non
 
     text = render_report(scan_store(store, include_log=True))
     assert REMEDIATION["log"] in text
-    assert "no command erases a log row today" in text
+    assert "No command erases a log row today" in text
     assert f"memory_put {live.id} memory.body: aws-access-key-id" in text
     assert "; record tombstoned;" in text
 

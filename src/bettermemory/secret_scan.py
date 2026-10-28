@@ -181,32 +181,42 @@ _MASKED_KEY = "*"
 # anything else, and a token a detector fires on, prints as `*`.
 _PLAIN_TOKEN_RE = re.compile(r"[A-Za-z0-9_.:-]{1,128}")
 
-_ROTATE = "Rotate the credential at its issuer"
+# Rotation is the remedy for every location, and each text says so first:
+# the signed log keeps every version of every record (the module
+# docstring), so editing the value out, removing the record and pruning
+# the tombstone or the episode each leave the earlier payload in the store
+# file and in every backup of it. The steps after rotation only stop the
+# value being read from a table; none of them is a delete of the value.
+_ROTATE = (
+    "Rotate the credential at its issuer: that is the fix, because no "
+    "command deletes the value. The signed log keeps every earlier version "
+    "of the record, after an edit, a removal and a prune, in the store file "
+    "and in every backup of it"
+)
 REMEDIATION = {
     "memories": (
-        f"{_ROTATE}, then rewrite the record without it (memory_update) or "
-        "remove it (memory_remove, then `bettermemory tombstones prune`). "
-        "The log keeps the earlier versions."
+        f"{_ROTATE}. Then rewrite the record without it (memory_update) or "
+        "remove it (memory_remove, then `bettermemory tombstones prune`), so "
+        "it is no longer read or searched."
     ),
     "tombstones": (
-        f"{_ROTATE}, then hard-delete the tombstone with `bettermemory "
-        "tombstones prune --older-than DAYS` (at least one day after the "
-        "removal). The log keeps its payload."
+        f"{_ROTATE}. `bettermemory tombstones prune --older-than DAYS` (at "
+        "least one day after the removal) then drops the tombstone row, not "
+        "the log's copy of its payload."
     ),
     "episodes": (
         f"{_ROTATE}. No command edits or removes a single episode: "
-        "`bettermemory episodes prune --ttl-days DAYS` deletes whole sessions "
-        "past the TTL. The log keeps the payload."
+        "`bettermemory episodes prune --ttl-days DAYS` drops whole sessions "
+        "past the TTL from the episodes table, not the log's copy of them."
     ),
     "conflicts": (
-        f"{_ROTATE}, then fix the quoted record (memory_update or "
+        f"{_ROTATE}. Then fix the quoted record (memory_update or "
         "memory_remove): the conflict scan refreshes a pending row's quote "
-        "and drops a row whose record is gone. The log keeps the payload."
+        "and drops a row whose record is gone."
     ),
     LOG: (
-        f"{_ROTATE}. The signed log keeps every version of every record and "
-        "no command erases a log row today: removing or pruning the record "
-        "leaves this copy in the store file and in every backup of it."
+        f"{_ROTATE}. No command erases a log row today: removing or pruning "
+        "the record leaves this copy where it is."
     ),
 }
 

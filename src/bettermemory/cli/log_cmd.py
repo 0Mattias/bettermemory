@@ -32,7 +32,8 @@ def add_subparser(
     help_text = (
         "The bettermemory 9 store's hash-chained log. `log verify` checks "
         "every row's MAC against the key kept outside the store, the chain "
-        "between rows, the head checkpoint against the last row, and every "
+        "between rows, the head checkpoint against the last row, the origin "
+        "anchor against the row where this host's history begins, and every "
         "table against a replay of the log. Exit 0 when the log verifies, "
         "1 when it is tampered or cannot be verified. `log export` writes "
         "the log as JSON Lines for an audit pipeline, and `log anchor` "
@@ -41,11 +42,19 @@ def add_subparser(
     parser = sub.add_parser("log", help=help_text, description=help_text)
     log_sub = parser.add_subparsers(dest="log_cmd")
     verify_text = (
-        "Verify the log: MACs, chain, head and fold, and every --anchor "
-        "given. Prints a report and exits 0 only when every check passes; "
-        "1 when the log is tampered or cannot be verified (an anchor that "
-        "no longer matches is tampering); 2 when there is no store or an "
-        "anchor file cannot be read."
+        "Verify the log: MACs, chain, head, the origin anchor and fold, and "
+        "every --anchor given. The origin anchor, kept beside the key outside "
+        "the store, names the row where this host's history of the store "
+        "begins: that row must still be in the log with the same MAC and "
+        "verify under a key held here. A row gone, changed or signed by no "
+        "held key adds the problem origin_mismatch and the log reads "
+        "tampered; with no key held to check it the origin reads "
+        "unverifiable, and so does the log. Deleting <store_id>.origin and "
+        "<store_id>.head beside the key accepts a replaced history on "
+        "purpose. Prints a report and exits 0 only when every check passes; "
+        "1 when the log is tampered or cannot be verified (an anchor or an "
+        "origin that no longer matches is tampering); 2 when there is no "
+        "store or an anchor file cannot be read."
     )
     verify = log_sub.add_parser("verify", help=verify_text, description=verify_text)
     verify.add_argument(
