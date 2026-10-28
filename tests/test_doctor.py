@@ -185,7 +185,7 @@ def _health_stub(body: dict[str, Any]) -> Iterator[int]:
             self.end_headers()
             self.wfile.write(data)
 
-        def log_message(self, *args: Any) -> None:
+        def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
             pass
 
     # One thread serves every request, so `shutdown` leaves none behind.
