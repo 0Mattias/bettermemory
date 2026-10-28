@@ -198,7 +198,12 @@ stable 9.0.0 follows the candidates' testing.
   host's own keys verify is trusted. The store reads it lazily, once per
   connection, and only when a row in such a segment is first labelled;
   a config that cannot be read reads as true, with a warning. It is the
-  switch to pin in a managed file. (`src/bettermemory/config.py`,
+  switch to pin in a managed file, and it is commented out in the
+  config.toml a first run writes, as `[policy]`'s keys are, so a pin
+  draws no warning about a line the user never wrote. (`[telemetry]
+  enabled = true` is in that file and in every one written before, and
+  draws one where a managed file pins it off; `docs/operations.md`
+  says so.) (`src/bettermemory/config.py`,
   `src/bettermemory/store.py`)
 - **`[policy] forbid_force` and `forbid_acknowledge`** (default off and
   `[]`). The first refuses a `memory_write` with `force=true`

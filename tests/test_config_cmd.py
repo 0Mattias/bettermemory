@@ -495,8 +495,11 @@ def test_show_lists_every_setting_config_reads() -> None:
         entry["source"] == "user"
         for table in report["settings"].values()
         for key, entry in table.items()
-        if key in ("default_max_results", "enabled", "strict_provenance")
+        if key in ("default_max_results", "enabled")
     ), "the shipped default config sets these keys itself"
+    # A key rc12 adds is commented out in the shipped config, so a managed
+    # file that pins it draws no notice about a line the user never wrote.
+    assert report["settings"]["security"]["strict_provenance"]["source"] == "default"
 
 
 def test_show_labels_a_value_the_loader_could_not_read_as_the_default() -> None:

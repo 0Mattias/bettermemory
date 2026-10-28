@@ -286,8 +286,8 @@ enabled = true
 # copy's. With `strict_provenance = true` those read `unaccounted` too,
 # and only what this machine's own keys verify is trusted: the setting
 # for a managed deployment, or wherever a store may arrive from somewhere
-# else or be written to by someone else.
-strict_provenance = false
+# else or be written to by someone else. Off by default.
+# strict_provenance = true
 
 [capture]
 # Session capture at a turn end, Claude Code only, and off by default.

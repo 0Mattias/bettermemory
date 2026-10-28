@@ -400,6 +400,15 @@ error, and `bettermemory config show` labels each setting `managed`,
 `user` or `default`. `config check` reads only the fixed path, so a
 candidate file is checked where it is deployed.
 
+A user's config.toml line that a pin overrides with a different value
+gets one warning per process naming both files, on stderr for a hook.
+The config.toml a first run writes sets one such line itself,
+`[telemetry] enabled = true`, and every config.toml written before this
+release has it: where the managed file pins `[telemetry] enabled =
+false`, as the example does, each process warns about it until the line
+is deleted from config.toml. The keys this release adds are commented
+out in the file a first run writes, so they draw no warning.
+
 The file binds the user's config, not the account: a process running as
 the user can still set `BETTERMEMORY_DIR`, which decides the store ahead
 of a pinned `[storage] directory`. SECURITY.md has the rest.

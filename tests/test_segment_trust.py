@@ -751,7 +751,9 @@ def test_strict_provenance_is_read_from_the_config(
 ) -> None:
     path, keys_b, arrived, _fingerprint_a = moved
     config_module.default_config_path().write_text(
-        DEFAULT_CONFIG.replace("strict_provenance = false", "strict_provenance = true"),
+        DEFAULT_CONFIG.replace(
+            "# strict_provenance = true", "strict_provenance = true"
+        ),
         encoding="utf-8",
     )
     with Store.open_or_create(path, keys_dir=keys_b) as here:
@@ -1066,7 +1068,9 @@ def test_the_shipped_security_prose_matches_the_behaviour() -> None:
     begin can pass for one (the rewritten-first-row test), and the switch
     widens that (the strict tests)."""
     block = DEFAULT_CONFIG.split("[security]")[1].split("[capture]")[0]
-    assert "strict_provenance = false" in block
+    # Commented out, as every key rc12 adds: a managed file that pins it
+    # then draws no notice about a line the user never wrote.
+    assert "Off by default.\n# strict_provenance = true" in block
     assert "never held read `unaccounted`" in block
     assert "copied here" in block
     assert "careful editor can pass its rows off" in block
