@@ -246,14 +246,17 @@ enabled = true
 # Which rows of the signed log this machine trusts. A record reads
 # `unaccounted` when the log row behind it does not verify under a key
 # this machine holds. Rows added to the log after this machine's own
-# under a key it never held always read `unaccounted`: only someone
-# writing into the file without the key leaves that shape, and
+# under a key it never held read `unaccounted`: only someone writing
+# into the file without the key leaves that shape, and
 # `bettermemory log verify` reports it as tampering. Rows from before
 # this machine first signed the store (a store copied here from another
-# machine without its key) keep the labels they arrived with. With
-# `strict_provenance = true` those read `unaccounted` too, and only what
-# this machine's own keys verify is trusted: the setting for a managed
-# deployment, or wherever a store may arrive from somewhere else.
+# machine without its key) keep the labels they arrived with. Where this
+# machine's own rows begin is read off the log, which anyone holding the
+# file can rewrite, so a careful editor can pass its rows off as such a
+# copy's. With `strict_provenance = true` those read `unaccounted` too,
+# and only what this machine's own keys verify is trusted: the setting
+# for a managed deployment, or wherever a store may arrive from somewhere
+# else or be written to by someone else.
 strict_provenance = false
 
 [capture]

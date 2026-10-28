@@ -45,8 +45,15 @@ segment's name is one its own key never signed: the first ``rekey``
 row's ``old_fingerprint`` (MAC'd, if at all, by the next segment's key)
 or the store's meta. So a leading segment whose named key is not held is
 also tried against every key the ring holds, by its first row's MAC: a
-forged first ``rekey`` row cannot rename this machine's own history into
-the copied-store case.
+forged first ``rekey`` row alone cannot rename this machine's own history
+into the copied-store case. The check reads the log, though, and nothing
+outside it records where this machine's history begins: an editor who
+also rewrites the row that opens that history (seq 1, or this machine's
+first ``rekey`` row), so that no held key verifies it, makes the history
+and every segment after it up to this machine's next ``rekey`` row look
+like a copied store's, whose rows keep their labels. Only
+``[security] strict_provenance`` reads those ``unaccounted``;
+``verify_chain`` reports their segments ``unverifiable``.
 
 Not defended: an attacker holding the user's own key and config
 directory. The design keeps the two apart from the store file so that
@@ -457,7 +464,9 @@ def _leading_key(
     not held the first row is tried against every key the ring holds: a
     writer without the key who renames this machine's own history must
     not turn it into the copied-store case, whose rows keep their labels.
-    A key that verifies the first row is the key that signed it."""
+    A key that verifies the first row is the key that signed it. A first
+    row rewritten as well verifies under none, and the rename stands (the
+    module docstring)."""
     if current_key is not None and fingerprint(current_key) == named:
         return named, current_key
     key = keyring.key_for_fingerprint(named) if named else None

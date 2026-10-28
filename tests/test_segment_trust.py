@@ -417,6 +417,38 @@ def test_a_forged_first_rekey_cannot_rename_this_hosts_history(
     assert [p["first_seq"] for p in _foreign_problems(report)] == [forgery.rekey_seq]
 
 
+@pytest.mark.parametrize("edit_meta", [True, False], ids=["meta-edit", "no-meta-edit"])
+def test_a_rewritten_first_row_is_caught_only_under_strict_provenance(
+    owned: tuple[Path, Memory, str], keys: Path, edit_meta: bool
+) -> None:
+    """The limit `log`'s docstring names. An editor who renames this
+    host's history and also rewrites its first row, so that no key here
+    verifies it, leaves nothing in the log that says where this host's
+    rows begin: the history and the forged segment after it read like a
+    store copied here, whose labels stand by default. Under
+    `strict_provenance` the planted row reads `unaccounted`, and a row of
+    this host's own that its current key still verifies reads `local`."""
+    path, genuine, _own = owned
+    conn = _outside(path)
+    conn.execute("UPDATE log SET ts = ts || ' ' WHERE seq = 1")
+    conn.commit()
+    conn.close()
+    planted = _memory("planted behind a rewritten first row")
+    _forge(
+        path,
+        old_fingerprint=secrets.token_hex(32),
+        memory=planted,
+        edit_meta=edit_meta,
+    )
+    with Store.open_or_create(path, keys_dir=keys, strict_provenance=True) as owner:
+        labels = owner.provenance_for([genuine.id, planted.id])
+        assert labels[planted.id] == UNACCOUNTED
+        assert planted.id in owner.unaccounted_ids()
+        if not edit_meta:
+            # The opener kept the key, which still verifies the row.
+            assert labels[genuine.id] == LOCAL
+
+
 def test_a_meta_edit_alone_is_set_back_without_a_rekey(
     owned: tuple[Path, Memory, str], keys: Path
 ) -> None:
@@ -1025,12 +1057,14 @@ def test_the_security_section_defaults_off_and_round_trips(tmp_path: Path) -> No
 
 def test_the_shipped_security_prose_matches_the_behaviour() -> None:
     """The template's claims, each pinned by a test above: rows after
-    this machine's own under a key it never held read unaccounted always
-    (the recipe tests), a copied store keeps its labels by default (the
-    moved-store test), and the switch widens that (the strict test)."""
+    this machine's own under a key it never held read unaccounted (the
+    recipe tests), a copied store keeps its labels by default (the
+    moved-store test), an editor who rewrites where this machine's rows
+    begin can pass for one (the rewritten-first-row test), and the switch
+    widens that (the strict tests)."""
     block = DEFAULT_CONFIG.split("[security]")[1].split("[capture]")[0]
     assert "strict_provenance = false" in block
-    assert "`unaccounted`" in block
-    assert "always read `unaccounted`" in block
+    assert "never held read `unaccounted`" in block
     assert "copied here" in block
+    assert "careful editor can pass its rows off" in block
     assert "log verify" in block
