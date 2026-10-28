@@ -1000,6 +1000,39 @@ def test_a_store_that_reappears_mid_swap_is_refused(
     assert prepared.read_bytes() == b"prepared"
 
 
+def test_a_wal_stays_with_its_store_when_the_swap_backs_out(
+    store_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A store file that reappears after the store moved aside, its -wal
+    with it. Putting the -wal back would pair it with a file it was never
+    part of (SQLite replays a WAL into whatever database carries its name)
+    and leave the store aside without the rows only its WAL holds, so
+    nothing moves back and the store's files stay aside together."""
+    wal = store_file.with_name(STORE_FILENAME + "-wal")
+    wal.write_bytes(b"rows the moved store committed")
+    prepared = tmp_path / "prepared"
+    prepared.write_bytes(b"prepared")
+    aside = store_file.with_name(f"{STORE_FILENAME}.pre-restore-x")
+    aside_wal = aside.with_name(aside.name + "-wal")
+    real = _fsutil.replace_atomic
+
+    def reappearing(src: Path, dst: Path) -> None:
+        real(src, dst)
+        if Path(src) == store_file:
+            store_file.write_bytes(b"a store another process created")
+
+    monkeypatch.setattr(backup, "replace_atomic", reappearing)
+    moved: list[dict[str, str]] = []
+    with pytest.raises(BackupError, match="reappeared"):
+        backup._swap_in(prepared, store_file, aside, moved)
+    assert moved == [
+        {"from": str(store_file), "to": str(aside)},
+        {"from": str(wal), "to": str(aside_wal)},
+    ]
+    assert aside_wal.read_bytes() == b"rows the moved store committed"
+    assert not wal.exists()
+
+
 # ---------------------------------------------------------------------------
 # The command line
 # ---------------------------------------------------------------------------

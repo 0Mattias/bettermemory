@@ -942,9 +942,14 @@ def _swap_in(
     """Move the store file and its WAL siblings to `aside`, then rename
     `prepared` into the store's place. A failure part way renames back what
     was moved and raises, leaving the store as it was. `moved` holds every
-    move that stands, the caller's to report whether this returns or raises:
-    a move whose way back is taken (a process opened the store meanwhile)
-    stays in it."""
+    move that stands, the caller's to report whether this returns or raises.
+
+    The way back takes the store whole or not at all. When a name this
+    vacated is taken again (a process opened the store meanwhile), every
+    move stands: a ``-wal`` put back beside a file it was never part of
+    would be replayed into it, and the store aside would lose the rows only
+    its WAL holds. Otherwise the store file goes back first, and a move
+    back that fails leaves the rest aside, as `moved` says."""
     try:
         for suffix in _SIBLING_SUFFIXES:
             source = _sibling(store_file, suffix)
@@ -965,11 +970,13 @@ def _swap_in(
             )
         replace_atomic(prepared, store_file)
     except BaseException:
-        for step in reversed(list(moved)):
-            with contextlib.suppress(OSError):
-                if not Path(step["from"]).exists():
+        if not any(Path(step["from"]).exists() for step in moved):
+            for step in list(moved):
+                try:
                     replace_atomic(Path(step["to"]), Path(step["from"]))
-                    moved.remove(step)
+                except OSError:
+                    break
+                moved.remove(step)
         raise
     fsync_dir(store_file.parent)
 
