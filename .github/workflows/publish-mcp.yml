@@ -44,15 +44,20 @@ on:
 
 permissions:
   contents: read
-  # OIDC is what authorises the `io.github.0Mattias/*` namespace: the registry
-  # trusts the token's repository-owner claim, so no secret exists to leak or
-  # rotate. This is the only permission the publish needs.
-  id-token: write
 
 jobs:
   publish:
     name: Publish server.json to the MCP registry
     runs-on: ubuntu-latest
+    # Granted to this job alone rather than the workflow, so a job added later
+    # cannot mint a token by inheritance. A job-level block replaces the
+    # workflow's, which is why `contents: read` is repeated for the checkout.
+    permissions:
+      contents: read
+      # OIDC is what authorises the `io.github.0Mattias/*` namespace: the
+      # registry trusts the token's repository-owner claim, so no secret
+      # exists to leak or rotate. This is the only write the publish needs.
+      id-token: write
     # A `workflow_run` fires for every Release run, including failed ones and
     # the TestPyPI dispatch. Only a SUCCEEDED tag run is a release worth
     # listing: on a tag push `head_branch` carries the tag name, so the `v`
@@ -72,6 +77,9 @@ jobs:
           # went to PyPI. Empty (dispatch) falls back to the default branch,
           # which is the backfill contract.
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || '' }}
+          # Nothing here pushes, and this job can mint an OIDC token: the
+          # checkout token stays out of its git config.
+          persist-credentials: false
 
       # Every precondition the registry checks, checked here first, because a
       # rejection from the registry arrives as "Package validation failed"
@@ -162,14 +170,53 @@ jobs:
 
       - name: Install mcp-publisher
         if: steps.preconditions.outputs.prerelease != 'true'
-        # Unpinned, following the upstream guide, and the tradeoff is
-        # deliberate: the registry is in preview and its API moves with the
-        # tool, so a pin here buys reproducibility at the cost of breaking
-        # against the live service. It is tolerable ONLY because this
-        # workflow cannot affect the PyPI release path — see the header.
+        # Pinned to one upstream release and checked before it runs. The step
+        # used to follow `releases/latest`, as the upstream guide does, and ran
+        # what it fetched unchecked in a job that can mint an OIDC token. Now
+        # it fetches upstream's checksums file for the pinned version, holds
+        # that file to the digest below, and compares the archive with its
+        # line in it; any mismatch stops the job before the archive is
+        # unpacked. The checksums file is held to a digest of its own because
+        # a release's assets can be replaced after publication, and a file
+        # fetched from beside the archive would vouch for a swapped archive.
+        #
+        # The cost is the one the `latest` choice avoided: the registry is in
+        # preview and its API moves with the tool, so a stale pin can fail
+        # against the live service. That failure is loud, it leaves the
+        # release unlisted until a dispatch lists it, and this workflow cannot
+        # touch the PyPI release (see the header). To move the pin, set the
+        # version and the sha256 of that release's checksums file
+        # (`registry_<version>_checksums.txt`), which the release API reports
+        # as the asset's `digest`, after its `sha256:` prefix:
+        #   gh api repos/modelcontextprotocol/registry/releases/tags/v<version> \
+        #     --jq '.assets[] | select(.name | endswith("_checksums.txt")) | .digest'
+        env:
+          MCP_PUBLISHER_VERSION: "1.8.6"
+          MCP_PUBLISHER_CHECKSUMS_SHA256: "7ba85a15aa3c8204d3c31d415e35ef9b7eaa1d253f747f603eb7e9561514edf1"
         run: |
           set -euo pipefail
-          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+          OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+          ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+          ARCHIVE="mcp-publisher_${OS}_${ARCH}.tar.gz"
+          SUMS="registry_${MCP_PUBLISHER_VERSION}_checksums.txt"
+          BASE="https://github.com/modelcontextprotocol/registry/releases/download/v${MCP_PUBLISHER_VERSION}"
+
+          curl -sSfL --retry 3 -o "$SUMS" "$BASE/$SUMS"
+          curl -sSfL --retry 3 -o "$ARCHIVE" "$BASE/$ARCHIVE"
+
+          echo "${MCP_PUBLISHER_CHECKSUMS_SHA256}  ${SUMS}" | sha256sum --check --strict -
+
+          # Exactly one line names the archive; none, or two that disagree,
+          # is a checksums file this step does not understand.
+          COUNT=$(awk -v f="$ARCHIVE" '$2 == f { n++ } END { print n + 0 }' "$SUMS")
+          if [ "$COUNT" != 1 ]; then
+            echo "::error::${SUMS} lists ${ARCHIVE} ${COUNT} times, not once"
+            exit 1
+          fi
+          awk -v f="$ARCHIVE" '$2 == f' "$SUMS" | sha256sum --check --strict -
+
+          tar xzf "$ARCHIVE" mcp-publisher
+          echo "mcp-publisher ${MCP_PUBLISHER_VERSION} (${ARCHIVE}) matches its checksum"
           ./mcp-publisher --version || true
 
       - name: Authenticate to the registry (GitHub OIDC)
