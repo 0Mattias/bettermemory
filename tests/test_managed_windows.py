@@ -271,22 +271,33 @@ def test_on_windows_the_registry_seam_is_the_stdlib_module() -> None:
 def test_a_reg_sz_value_pins_its_settings_with_one_notice_per_key(
     tmp_path: Path, windows: FakeRegistry, caplog: pytest.LogCaptureFixture
 ) -> None:
-    windows.set("[telemetry]\nenabled = false\n[policy]\nforbid_force = true\n", REG_SZ)
-    user = _user_config(tmp_path, "[telemetry]\nenabled = true\n")
+    windows.set(
+        "[telemetry]\nenabled = false\n[policy]\nforbid_force = true\n"
+        "forbid_acknowledge = ['credential']\n",
+        REG_SZ,
+    )
+    # `enabled = true` restates the code default, so it draws no notice
+    # (config._restates_default); the user's own `forbid_acknowledge`
+    # choice is what the pin overrides, and the one notice names it.
+    user = _user_config(
+        tmp_path,
+        "[telemetry]\nenabled = true\n[policy]\nforbid_acknowledge = ['transient']\n",
+    )
 
     with caplog.at_level(logging.WARNING, logger="bettermemory.config"):
         loaded = load_config(user)
 
     assert loaded.telemetry.enabled is False
     assert loaded.policy.forbid_force is True
+    assert loaded.policy.forbid_acknowledge == ["credential"]
     assert loaded.managed_path == _managed.MANAGED_REGISTRY
     assert loaded.managed_keys == frozenset(
-        {"telemetry.enabled", "policy.forbid_force"}
+        {"telemetry.enabled", "policy.forbid_force", "policy.forbid_acknowledge"}
     )
     pinned = [n for n in _notices(caplog) if "pins" in n]
     assert len(pinned) == 1, pinned
     assert _LABEL in pinned[0]
-    assert "[telemetry] `enabled`" in pinned[0]
+    assert "[policy] `forbid_acknowledge`" in pinned[0]
 
 
 def test_a_reg_multi_sz_value_is_its_strings_one_per_line(
