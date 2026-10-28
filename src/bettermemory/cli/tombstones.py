@@ -62,10 +62,13 @@ def add_subparser(
     )
 
     tprune_help = (
-        "Hard-delete tombstones older than --older-than days. "
-        "Active memories are unaffected. Default value comes from "
-        "config.toml `behavior.tombstone_retention_days`; if that's 0 "
-        "(the default), --older-than is required."
+        "Delete the tombstones removed more than --older-than days ago "
+        "from the tombstones table, so they can no longer be restored. "
+        "Each prune is a signed tombstone_delete row; the log keeps every "
+        "earlier version of the record, body included, and no command "
+        "erases a log row. Active memories are unaffected. Default value "
+        "comes from config.toml `behavior.tombstone_retention_days`; if "
+        "that's 0 (the default), --older-than is required."
     )
     tprune_parser = tombstones_sub.add_parser(
         "prune", help=tprune_help, description=tprune_help
@@ -83,7 +86,7 @@ def add_subparser(
     tprune_parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print what would be deleted without touching disk.",
+        help="Print what would be pruned and prune nothing.",
     )
     tprune_parser.add_argument(
         "--json",

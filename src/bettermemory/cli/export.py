@@ -21,10 +21,12 @@ def add_subparser(
     """Register the ``export`` subparser on the parent parser."""
     help_text = (
         "Dump all active memories (and tombstones, by default) to a "
-        "self-describing JSON document. The format is round-trippable "
-        "and intended for backup, migration between machines, or "
-        "feeding an external indexer. Writes to stdout unless "
-        "--output is given."
+        "self-describing JSON document, with each record's home, for "
+        "reading or for an external indexer. It is not a backup: it "
+        "leaves out the signed log, episodes, conflicts and the other "
+        "tables, and no command restores a store from it. `bettermemory "
+        "backup create` makes a backup. Writes to stdout unless --output "
+        "is given."
     )
     parser = sub.add_parser("export", help=help_text, description=help_text)
     parser.add_argument(
@@ -34,8 +36,8 @@ def add_subparser(
         default=None,
         metavar="PATH",
         help=(
-            "Write the export to PATH instead of stdout. Use this for "
-            "scripted backups (`bettermemory export -o backup.json`)."
+            "Write the export to PATH instead of stdout "
+            "(`bettermemory export -o memories.json`)."
         ),
     )
     parser.add_argument(
@@ -43,8 +45,8 @@ def add_subparser(
         action="store_true",
         help=(
             "Skip tombstoned memories. By default the export includes "
-            "them so a restored archive carries the same removal-reason "
-            "audit trail; use this when you only want the live set."
+            "them, with their removal reasons; use this when you only "
+            "want the live set."
         ),
     )
     parser.add_argument(
@@ -64,8 +66,8 @@ def add_subparser(
         help=(
             "Exit non-zero when a memory or tombstone row could not be "
             "loaded and was left out of the export. The document is still "
-            "written; only the exit status changes. Use this in a backup "
-            "cron so a short archive fails the job instead of passing "
+            "written; only the exit status changes. Use this in a scheduled "
+            "export so a short document fails the job instead of passing "
             "silently. Under --no-tombstones the tombstone half is never "
             "read, so --strict cannot fire on it — the export records null "
             "there rather than a zero nobody checked. The store loads every "
