@@ -1304,11 +1304,23 @@ def read_config_file(path: Path) -> dict[str, Any]:
         raise ValueError(f"malformed config in {path}: {exc}") from exc
 
 
-def load_config(path: Path | None = None) -> Config:
+def load_config(path: Path | None = None, *, create: bool = True) -> Config:
     """Load config from `path`, creating it with defaults if missing, and
     pin every key the organisation-managed file sets, when the machine has
-    one (`managed.py`, `_apply_managed`)."""
+    one (`managed.py`, `_apply_managed`).
+
+    With ``create=False`` nothing is written: a missing file reads as the
+    defaults it would have been created with (the shipped DEFAULT_CONFIG
+    sets each key to its dataclass default), and the managed file is still
+    applied over them. The read-only commands use it (`bettermemory
+    config`), so a machine with a managed file and no config.toml reports
+    the pins in force rather than the bare defaults."""
     config_path = path or default_config_path()
+    if not create:
+        data: dict[str, Any] = (
+            read_config_file(config_path) if config_path.exists() else {}
+        )
+        return _overlay_managed(data, config_path)
     config_path.parent.mkdir(parents=True, exist_ok=True)
     if not config_path.exists():
         # Atomic + durable write via `_fsutil.atomic_write_bytes`: a plain
