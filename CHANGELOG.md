@@ -246,7 +246,9 @@ stable 9.0.0 follows the candidates' testing.
   text replaced by `{sha256, len}` unless `--include-bodies`, the MAC and
   its link, the segment's key fingerprint and `verified`.
   `--since-seq`/`--until-seq` make it incremental, `--kinds` filters, and
-  `--out` writes 0600 atomically and reports the cursor to pass next.
+  `--out` writes 0600 atomically and reports the cursor to pass next. A
+  cursor past the log's end, or inside the range a `backup restore`
+  rewound, warns on stderr.
   `anchor` takes `{store_id, seq, mac, chain_sha256, created_at}` of the
   log's last row, to keep off the host; `log verify --anchor FILE`
   (repeatable) reports `anchor_mismatch` when history up to an anchored

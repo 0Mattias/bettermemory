@@ -346,7 +346,8 @@ def _blackhole_stdout() -> None:
 def _cli_log_export(
     args: argparse.Namespace, *, parser: argparse.ArgumentParser
 ) -> None:
-    from ..audit_export import MAX_SEQ, export
+    from ..audit_export import MAX_SEQ, export, rewinds_across
+    from ..history import printable
 
     since = int(args.since_seq)
     until = None if args.until_seq is None else int(args.until_seq)
@@ -408,6 +409,23 @@ def _cli_log_export(
             f"before --since-seq {since}: the store was restored or its tail "
             f"removed since the last export, or this is another store; "
             f"run `bettermemory log verify`\n"
+        )
+    # A cursor inside the range a restore rewound: once the log grows past
+    # it again, the rows the restore handed its seqs to are skipped, and
+    # nothing above would say so.
+    for rewind in rewinds_across(store.keys_dir, store.store_id, since):
+        sys.stderr.write(
+            printable(
+                f"bettermemory log export: a restore at {rewind['restored_at']} "
+                f"rewound the log from seq {rewind['from_seq']} to seq "
+                f"{rewind['to_seq']}, and --since-seq {since} lies between: a "
+                "cursor taken before that restore skips the new rows after seq "
+                f"{rewind['to_seq']} up to seq {since}; export them with "
+                f"--since-seq {rewind['to_seq']} (if they were exported after "
+                f"the restore, this repeats until the cursor passes seq "
+                f"{rewind['from_seq']})"
+            )
+            + "\n"
         )
     if out is None:
         raise SystemExit(0)

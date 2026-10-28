@@ -770,6 +770,70 @@ def test_cli_warns_when_the_cursor_is_past_the_log(
     assert "the log ends at seq 0 (it holds no rows)" in captured.err
 
 
+def test_cli_warns_when_a_restore_rewound_the_log_below_the_cursor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A restore to an older bundle puts the seqs after the bundle's head
+    to new rows. A cursor taken before it, once the log grows past it
+    again, would skip the new rows between the two without a word: the
+    export reads the restore record beside the head and says which rows
+    to export again."""
+    from bettermemory.backup import create_backup, restore_bundle
+
+    directory = tmp_path / "store"
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(directory))
+    store_file = directory / STORE_FILENAME
+    with Store.create(store_file) as created:
+        created.put_memory(_memory("before the bundle"))
+    bundle = create_backup(store_file)["bundle"]
+    with Store.open(store_file) as opened:
+        rewound = opened.log_rows()[-1].seq
+        for n in range(3):
+            opened.put_memory(_memory(f"after the bundle {n}"))
+        cursor = opened.log_rows()[-1].seq
+    assert restore_bundle(Path(bundle), store_file, apply=True)["status"] == "restored"
+    with Store.open(store_file) as opened:
+        for n in range(6):
+            opened.put_memory(_memory(f"the new history {n}"))
+        assert opened.log_rows()[-1].seq > cursor
+
+    argv = ["log", "export", "--since-seq", str(cursor)]
+    assert _run_cli(argv, monkeypatch) == 0
+    err = capsys.readouterr().err
+    assert f"rewound the log from seq {cursor} to seq {rewound}" in err
+    assert f"--since-seq {rewound}" in err
+
+    # A cursor at or below the restored head, or past the head the
+    # restore rewound from, lies outside the rewound range: no warning.
+    for since in (rewound, cursor + 1):
+        argv = ["log", "export", "--since-seq", str(since)]
+        assert _run_cli(argv, monkeypatch) == 0
+        assert "rewound" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        "not json",
+        "[]",
+        '{"restores": {}}',
+        '{"restores": [1, {"head_before": null, "head_after": {"seq": 1}}]}',
+        '{"restores": [{"head_before": {"seq": "9"}, "head_after": {"seq": 1}}]}',
+    ],
+)
+def test_a_restore_record_that_does_not_read_is_no_rewind(
+    tmp_path: Path, record: str
+) -> None:
+    from bettermemory.backup import restore_record_path
+
+    path = restore_record_path(tmp_path, "s" * 32)
+    path.write_text(record, encoding="utf-8")
+    assert audit_export.rewinds_across(tmp_path, "s" * 32, 5) == []
+    assert audit_export.rewinds_across(tmp_path / "absent", "s" * 32, 5) == []
+
+
 @pytest.mark.parametrize(
     ("argv", "message"),
     [

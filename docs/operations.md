@@ -272,7 +272,8 @@ cursor=$(cat "$dir/cursor" 2>/dev/null || echo 0)
 bettermemory log export --since-seq "$cursor" --out "$dir/batch.jsonl" --json \
   | python3 -c 'import json, sys; print(json.load(sys.stdin)["through_seq"])' \
   > "$dir/cursor.next"
-# ship "$dir/batch.jsonl" here; advance the cursor only once it is shipped
+# ship "$dir/batch.jsonl" here; advance the cursor only once it is shipped,
+# and only when the batch's first prev_mac is the last mac shipped (below)
 mv "$dir/cursor.next" "$dir/cursor"
 ```
 
@@ -280,7 +281,13 @@ mv "$dir/cursor.next" "$dir/cursor"
 export completes; `through_seq` is the cursor to pass next time, whether
 or not `--kinds` let the last row through. A cursor past the log's end
 gets a warning on stderr: the store was restored, its tail removed, or
-it is another store. Or stream stdout into a collector (Vector, Fluent
+it is another store. So does a cursor inside the range a `backup
+restore` rewound (the restore record beside the head says from which seq
+to which): a cursor taken before the restore would skip the new rows
+the restore handed those seqs to, and the warning names the
+`--since-seq` to export them from. The cursor is a seq, so the export
+cannot tell such a cursor from one taken after the restore; the SIEM's
+link check below can, and is the one to rely on. Or stream stdout into a collector (Vector, Fluent
 Bit). The output is
 deterministic: the same range of the same log gives the same bytes. On
 Windows, stdout gets CRLF line ends and `--out` writes LF.
@@ -295,7 +302,10 @@ What to alert on:
   `meta.key_fingerprint` or inserting a `rekey` row. Alert on it, and run
   `log verify` on the host.
 - **A broken link**: each batch's first `prev_mac` should equal the last
-  `mac` the SIEM holds.
+  `mac` the SIEM holds (with `--kinds`, check the link on an unfiltered
+  export). A batch that does not link is history rewritten or rewound
+  past the cursor, a restore among the causes: export again from the
+  restored head.
 - **`kind: "rekey"`** rows, which a healthy store writes only when its
   key is replaced.
 

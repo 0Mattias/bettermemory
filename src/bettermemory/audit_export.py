@@ -89,6 +89,7 @@ import sqlite3
 from collections.abc import Callable, Collection, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import timezone
+from pathlib import Path
 from typing import Any
 
 from .log import CONTROL_KINDS, REKEY, KeyRing, compute_mac
@@ -589,6 +590,53 @@ def export(
     )
 
 
+def rewinds_across(
+    keys_dir: Path, store_id: str, since_seq: int
+) -> list[dict[str, Any]]:
+    """The restores recorded for `store_id` (`backup.restore_record_path`)
+    that rewound the log across `since_seq`: from a head at or past it to
+    one below it, ``{restored_at, from_seq, to_seq}`` each.
+
+    A restore to an older bundle hands the seqs after the bundle's head to
+    new rows. An export cursor taken before it, past that head, names a
+    row the log no longer holds; once the log grows past the cursor again,
+    `export` reads on from it and the new rows between the restored head
+    and the cursor are never exported, with nothing to say so (the cursor
+    is a seq, not a row). The record beside the head is what knows: a
+    cursor inside a rewound range may predate the restore. It may also
+    have been taken after it, in which case the rows were exported, and
+    the caller's warning says so; only a cursor that carried the row's
+    MAC could tell the two apart. A record that is missing or does not
+    read is no rewind."""
+    from .backup import restore_record_path
+
+    path = restore_record_path(keys_dir, store_id)
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    restores = document.get("restores") if isinstance(document, dict) else None
+    found: list[dict[str, Any]] = []
+    for entry in restores if isinstance(restores, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        before, after = entry.get("head_before"), entry.get("head_after")
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            continue
+        from_seq, to_seq = before.get("seq"), after.get("seq")
+        if type(from_seq) is not int or type(to_seq) is not int:
+            continue
+        if to_seq < since_seq <= from_seq:
+            found.append(
+                {
+                    "restored_at": str(entry.get("restored_at")),
+                    "from_seq": from_seq,
+                    "to_seq": to_seq,
+                }
+            )
+    return found
+
+
 def export_lines(
     store: Store,
     *,
@@ -625,6 +673,7 @@ __all__ = [
     "export",
     "export_lines",
     "read_snapshot",
+    "rewinds_across",
     "record_actor",
     "record_ids",
     "redact_payload",
