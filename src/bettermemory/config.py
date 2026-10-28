@@ -1479,11 +1479,11 @@ def _section_table(
     when it has one, and a located ValueError naming the file and the
     section when the name holds anything else (``storage = 5``).
 
-    Before this guard the sections went three ways. `[storage]`,
-    `[behavior]`, `[scopes]` and `[telemetry]` crashed with an
-    AttributeError from ``5.get(...)``, which the commands that catch a
-    bad config as ``(ValueError, OSError)`` (`security audit`, `security
-    sandbox`) let through as a traceback.
+    Before this guard the sections went three ways. `[storage]` and
+    `[scopes]` crashed with an AttributeError from ``5.get(...)``, and
+    `[behavior]` and `[telemetry]` with a TypeError, which the commands
+    that catch a bad config as ``(ValueError, OSError)`` (`security
+    audit`, `security sandbox`) let through as a traceback.
     `[daemon]`, `[capture]`, `[membership]` and `[security]` read as
     their defaults without a word, so ``security = true``, written by
     someone who meant to switch a protection on, left it off. Only

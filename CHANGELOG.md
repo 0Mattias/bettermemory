@@ -356,28 +356,37 @@ stable 9.0.0 follows the candidates' testing.
   from its source machine over this host's copy again, with the same
   store id, then reads `origin_mismatch` (Known limitations has the
   recovery).
-- **A config section written as a scalar stops the load.** A config.toml
-  with `[daemon]`, `[capture]`, `[membership]` or `[security]` written
-  as a scalar (`security = true`) loaded that section's defaults without
-  a word; one with `[storage]`, `[behavior]`, `[scopes]`, `[policy]` or
-  `[telemetry]` as a scalar crashed with AttributeError, and `security
-  audit` and `security sandbox` printed a traceback. Each now raises
-  `ValueError: malformed config in <path>: [<section>] = <value> must be
-  a table`, as the managed file already did: the daemon does not start,
-  the hook client prints the error and exits 0, and the store's
-  `strict_provenance` lookup reads as strict. A TOML syntax error or a
+- **A config section written as a scalar stops the load.** In rc11 a
+  config.toml with `[daemon]`, `[capture]` or `[membership]` written as
+  a scalar (`daemon = 5`) loaded that section's defaults without a word,
+  and the daemon and the hooks ran; one with `[storage]` or `[scopes]` as
+  a scalar crashed with AttributeError, and one with `[behavior]` or
+  `[telemetry]` with TypeError. Each, and the new `[security]` and
+  `[policy]` (which rc11 did not read, so a scalar there was ignored),
+  now raises `ValueError: malformed config in <path>: [<section>] =
+  <value> must be a table`, as the managed file already did: the daemon
+  does not start, the hook client prints the error and exits 0, and the
+  store's `strict_provenance` lookup reads as strict. For `[daemon]`,
+  `[capture]` and `[membership]` that is the change: memory ran on those
+  sections' defaults and is now off until the line is fixed. A TOML syntax error or a
   config.toml that is not UTF-8 raises `malformed config in <path>:
   ...`, naming the file. A config.toml that starts with a UTF-8
   byte-order mark now loads, and `doctor` reads it as the loader does.
   (`src/bettermemory/config.py`, `src/bettermemory/doctor.py`)
 - **`status` and `down` keep a live daemon's state file.** Both removed
   a state file whose daemon did not answer, so a starting, busy or hung
-  daemon disappeared from view and hooks spawned daemons that waited 8 s
-  on its lock. A state file is now removed only when its pid is gone or
-  the store's lock can be taken; otherwise `status` reports the state as
-  present and not answering. A port that answers with something other
-  than a daemon's `/health` reads as not ours instead of a traceback.
-  The default text and exit codes of `status` are otherwise unchanged.
+  daemon disappeared from view, and `down` could no longer find it to
+  stop it. A state file is now removed only when its pid is gone or the
+  store's lock can be taken. For a daemon that is alive and holds the
+  lock but does not answer, `status` now prints `state present, daemon
+  not answering (pid N holds the lock); the state file ... is kept`
+  where it printed `not running for <store> (stale state file for pid N
+  removed)`, and `down` stops that daemon once it answers again. A hook
+  still starts a daemon beside a hung one, which finds the lock taken
+  and exits, and the hook gives up after the same wait as before (8 to
+  9 s); this entry changes what `status` and `down` see, not that. A
+  port that answers with something other than a daemon's `/health` reads
+  as not ours instead of a traceback. Plain `status` exits 0 as before.
 - **The daemon's Host check pins its own port.** `/mcp` accepted any
   loopback port in the Host header, as the SDK does; every route now
   requires the daemon's bound port or none, so a client reaching the
