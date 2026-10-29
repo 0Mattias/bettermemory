@@ -152,15 +152,13 @@ def _cli_export_mirror(
     exit 2, the code for a store this command cannot read
     (`backup.bundle_refusal`): opening it would change the bundle's
     snapshot and fail its hash."""
-    from pathlib import Path as _Path
-
     from ..backup import bundle_refusal
     from ..config import load_config as _load_config
     from ..mirror import MirrorRefused, write_mirror
     from ..store import STORE_FILENAME, Store
 
     store_path = (
-        _Path(store).expanduser()
+        Path(store).expanduser()
         if store
         else _load_config().resolved_directory() / STORE_FILENAME
     )
@@ -171,7 +169,7 @@ def _cli_export_mirror(
         parser.error(refusal)
     with Store.open(store_path, allow_rekey=False) as opened:
         try:
-            report = write_mirror(opened, _Path(mirror))
+            report = write_mirror(opened, Path(mirror))
         except MirrorRefused as exc:
             parser.error(str(exc))
     sys.stdout.write(report.render_text())
@@ -352,10 +350,8 @@ def _write_export(
     tombstoned_count: int,
 ) -> None:
     """Write the document to ``output`` atomically, or to stdout; returns nothing."""
-    from pathlib import Path as _Path
-
     if output:
-        out_path = _Path(output)
+        out_path = Path(output)
         # Pre-check the parent is an existing directory. `atomic_write_bytes`
         # would otherwise silently create the parent tree via
         # `parent.mkdir(parents=True, exist_ok=True)` — that auto-mkdir

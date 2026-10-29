@@ -25,8 +25,7 @@ from .eval_model import (
     _parse_ts,
     _silent_miss_from_event,
 )
-from .health import endorsement_tier as _endorsement_tier
-from .health import is_hook_telemetry_event
+from .health import endorsement_tier as _endorsement_tier, is_hook_telemetry_event
 from .models import Memory, first_summary_line
 
 
@@ -119,7 +118,7 @@ class _AuditTally:
 def _count_search(
     walk: _EvalWalk,
     ev: dict[str, Any],
-    kind: Any,
+    kind: str,
     passes_scope: Callable[[str | None], bool],
 ) -> None:
     """Count one in-window search or list event's deliveries into ``walk``."""

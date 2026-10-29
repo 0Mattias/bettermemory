@@ -1539,9 +1539,7 @@ def _loopback_entries(domains: list[str], ports: tuple[int, ...]) -> list[str]:
 
 @dataclass(frozen=True)
 class _ClaudeSettings:
-    """The Claude Code settings files the audit read, as (level, path,
-    document) in merge order and highest precedence first, with the
-    lookups it makes in them."""
+    """The settings files the audit read, as (level, path, document): `documents` in merge order, `ranked` highest precedence first."""
 
     documents: list[tuple[str, Path, dict[str, Any]]]
     ranked: list[tuple[str, Path, dict[str, Any]]]

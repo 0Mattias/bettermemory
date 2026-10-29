@@ -878,7 +878,7 @@ def _key_check(
     state: KeyState,
     status: dict[str, Any],
     head: Head | None,
-    tail: Any,
+    tail: sqlite3.Row | None,
 ) -> Check:
     """Check the key the open read and, when it is present, the head against the log's last row; returns the key check."""
     from .store import KEY_PRESENT
