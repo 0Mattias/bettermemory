@@ -8,20 +8,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from ._common import cli_context
+from ._common import CliContext, cli_context
 
 
-def add_subparser(
-    sub: argparse._SubParsersAction[argparse.ArgumentParser],
-) -> argparse.ArgumentParser:
-    """Register the ``eval`` subparser on the parent parser."""
-    help_text = (
-        "Compute the three memory-effectiveness rates "
-        "(memory_helped_rate, endorsement_rate, silent_miss_rate) "
-        "from the event log + active store. Methodology in "
-        "docs/eval.md."
-    )
-    parser = sub.add_parser("eval", help=help_text, description=help_text)
+def _add_rate_args(parser: argparse.ArgumentParser) -> None:
+    """Add the window and the rate-mode knobs to the eval parser; returns nothing."""
     parser.add_argument(
         "--since",
         type=str,
@@ -73,6 +64,10 @@ def add_subparser(
             "The full series stays in the event log. Default: 20."
         ),
     )
+
+
+def _add_mode_args(parser: argparse.ArgumentParser) -> None:
+    """Add the mode switches and the output flags to the eval parser; returns nothing."""
     parser.add_argument(
         "--tool-usage",
         action="store_true",
@@ -161,6 +156,21 @@ def add_subparser(
         action="store_true",
         help="Emit JSON instead of human-readable text.",
     )
+
+
+def add_subparser(
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> argparse.ArgumentParser:
+    """Register the ``eval`` subparser on the parent parser."""
+    help_text = (
+        "Compute the three memory-effectiveness rates "
+        "(memory_helped_rate, endorsement_rate, silent_miss_rate) "
+        "from the event log + active store. Methodology in "
+        "docs/eval.md."
+    )
+    parser = sub.add_parser("eval", help=help_text, description=help_text)
+    _add_rate_args(parser)
+    _add_mode_args(parser)
     return parser
 
 
@@ -190,6 +200,224 @@ def run(
         output=args.output,
         parser=sub_parser,
     )
+
+
+def _reject_eval_flags(
+    parser: Any,
+    *,
+    report: bool,
+    json_out: bool,
+    output: str | None,
+    tool_usage: bool,
+    threshold_sweep: bool,
+    widening_preview: bool,
+    widening_detail: bool,
+    until_spec: str | None,
+) -> bool:
+    """Refuse conflicting eval flags through ``parser.error``; returns True when it refused."""
+    if report and (
+        tool_usage or threshold_sweep or widening_preview or widening_detail
+    ):
+        # Same clean-exit style as the --detail guard below: message +
+        # SystemExit(2) via parser.error. The report already composes
+        # the rate trio, the threshold sweep, and the tool-usage rollup,
+        # so combining it with a single-rollup mode flag is a conflict,
+        # not a refinement.
+        parser.error(
+            "--report cannot be combined with --tool-usage, "
+            "--threshold-sweep, --widening-preview, or "
+            "--detail (the report already composes the relevant rollups)"
+        )
+        return True  # pragma: no cover — parser.error raises SystemExit
+
+    if report and json_out:
+        parser.error(
+            "--report emits markdown, not JSON; --json only applies to the other modes"
+        )
+        return True  # pragma: no cover — parser.error raises SystemExit
+
+    if output is not None and not report:
+        parser.error("--output only applies to --report")
+        return True  # pragma: no cover — parser.error raises SystemExit
+
+    if sum((tool_usage, threshold_sweep, widening_preview)) > 1:
+        parser.error(
+            "--tool-usage, --threshold-sweep, and --widening-preview are "
+            "mutually exclusive"
+        )
+        return True  # pragma: no cover — parser.error raises SystemExit
+
+    if widening_detail and not widening_preview:
+        parser.error("--detail only applies to --widening-preview")
+        return True  # pragma: no cover — parser.error raises SystemExit
+
+    if until_spec is not None and (
+        report or tool_usage or threshold_sweep or widening_preview
+    ):
+        parser.error("--until only applies to the default rate mode")
+        return True  # pragma: no cover — parser.error raises SystemExit
+    return False
+
+
+def _run_report_mode(
+    ctx: CliContext, since: timedelta | None, output: str | None, parser: Any
+) -> None:
+    """Compose the markdown report and write it to stdout or ``output``; returns nothing."""
+    from ..eval import compute_report, render_report_markdown
+
+    # Report mode ignores the rate-mode knobs (`--scope`,
+    # `--min-retrievals`, `--silent-miss-limit`) the same way the
+    # other alternative modes do — no parser.error, so shell loops
+    # don't have to strip them per invocation. Scope filtering in
+    # particular is deliberately unsupported: the report never
+    # prints scope names, and a scoped rate column would be
+    # unlabelable without leaking the scope.
+    report_store = ctx.store
+    doc = compute_report(
+        memories=report_store.load_all(),
+        events=ctx.store.iter_events(),
+        since=since,
+        # Same tombstone enumeration rate-mode uses, so the report's
+        # silent-miss numbers agree with `bettermemory eval` and
+        # `memory_health` over the same log.
+        tombstoned_ids={t.id for t in report_store.load_tombstones()},
+    )
+    markdown = render_report_markdown(doc)
+    if output is not None:
+        try:
+            Path(output).write_text(markdown, encoding="utf-8")
+        except OSError as exc:
+            parser.error(f"--output: cannot write {output!r}: {exc}")
+            return  # pragma: no cover — parser.error raises SystemExit
+    else:
+        sys.stdout.write(markdown)
+
+
+def _run_tool_usage_mode(
+    ctx: CliContext, since: timedelta | None, json_out: bool
+) -> None:
+    """Compute and print the tool-usage rollup over the span; returns nothing."""
+    import json as _json
+
+    from ..eval import compute_tool_usage, render_tool_usage_text
+
+    # Tool-usage mode ignores `--scope`, `--min-retrievals`, and
+    # `--silent-miss-limit` — they're rate-mode knobs. We don't
+    # call parser.error on them so a user piping the same args
+    # into both modes (a reasonable shell loop) doesn't have to
+    # strip the rate-mode flags before each invocation.
+    usage_report = compute_tool_usage(
+        events=ctx.store.iter_events(),
+        since=since,
+    )
+    if json_out:
+        sys.stdout.write(_json.dumps(usage_report.to_dict(), indent=2) + "\n")
+    else:
+        sys.stdout.write(render_tool_usage_text(usage_report))
+
+
+def _run_sweep_mode(ctx: CliContext, since: timedelta | None, json_out: bool) -> None:
+    """Compute and print the threshold sweep over the span; returns nothing."""
+    import json as _json
+
+    from ..eval import compute_threshold_sweep, render_threshold_sweep_text
+
+    sweep_report = compute_threshold_sweep(
+        events=ctx.store.iter_events(),
+        since=since,
+    )
+    if json_out:
+        sys.stdout.write(_json.dumps(sweep_report.to_dict(), indent=2) + "\n")
+    else:
+        sys.stdout.write(render_threshold_sweep_text(sweep_report))
+
+
+def _run_widening_mode(
+    ctx: CliContext, since: timedelta | None, widening_detail: bool, json_out: bool
+) -> None:
+    """Compute and print the widening preview, or its per-turn detail; returns nothing."""
+    import json as _json
+
+    from ..eval import (
+        compute_widening_detail,
+        compute_widening_preview,
+        render_widening_detail_text,
+        render_widening_preview_text,
+    )
+
+    if widening_detail:
+        # The detail lane joins top-hit ids against the store for
+        # summaries the same way rate-mode does (active memories +
+        # tombstone log), so a flagged hit whose memory was since
+        # removed reads "tombstoned" rather than resurfacing.
+        detail_store = ctx.store
+        detail_report = compute_widening_detail(
+            events=ctx.store.iter_events(),
+            since=since,
+            memories=detail_store.load_all(),
+            tombstoned_ids={t.id for t in detail_store.load_tombstones()},
+        )
+        if json_out:
+            sys.stdout.write(_json.dumps(detail_report.to_dict(), indent=2) + "\n")
+        else:
+            sys.stdout.write(render_widening_detail_text(detail_report))
+        return
+    preview_report = compute_widening_preview(
+        events=ctx.store.iter_events(),
+        since=since,
+    )
+    if json_out:
+        sys.stdout.write(_json.dumps(preview_report.to_dict(), indent=2) + "\n")
+    else:
+        sys.stdout.write(render_widening_preview_text(preview_report))
+
+
+def _run_rate_mode(
+    ctx: CliContext,
+    now: datetime,
+    window_since: timedelta | datetime | None,
+    window_until: timedelta | datetime | None,
+    scope: str | None,
+    endorsement_min_retrievals: int | None,
+    silent_miss_limit: int,
+    json_out: bool,
+) -> None:
+    """Compute and print the rate trio over the window; returns nothing."""
+    import json as _json
+
+    from ..eval import DEFAULT_ENDORSEMENT_MIN_RETRIEVALS, compute_eval, render_text
+
+    store = ctx.store
+
+    floor = (
+        endorsement_min_retrievals
+        if endorsement_min_retrievals is not None
+        else DEFAULT_ENDORSEMENT_MIN_RETRIEVALS
+    )
+
+    # `rate_report`, not `report` — that name is taken by the --report
+    # mode flag in this scope since the report mode landed.
+    rate_report = compute_eval(
+        memories=store.load_all(),
+        events=ctx.store.iter_events(),
+        now=now,
+        since=window_since,
+        until=window_until,
+        scope=scope,
+        endorsement_min_retrievals=floor,
+        silent_miss_limit=silent_miss_limit,
+        # Same enumeration `health.report_for_store` and the
+        # scope-overview handler feed `compute_health`, so the eval
+        # CLI's silent-miss numerator applies the identical tombstone
+        # filter (health's `_silent_miss_stats` filter #2) — a miss
+        # whose top-hit memory was since removed is no longer
+        # actionable and must not keep the two surfaces disagreeing.
+        tombstoned_ids={t.id for t in store.load_tombstones()},
+    )
+    if json_out:
+        sys.stdout.write(_json.dumps(rate_report.to_dict(), indent=2) + "\n")
+    else:
+        sys.stdout.write(render_text(rate_report))
 
 
 def _cli_eval(
@@ -235,66 +463,19 @@ def _cli_eval(
     one flag is set the parser exits with an error before this
     function runs.
     """
-    import json as _json
+    from ..eval import parse_window_bound, resolve_window
 
-    from ..eval import (
-        DEFAULT_ENDORSEMENT_MIN_RETRIEVALS,
-        compute_eval,
-        compute_report,
-        compute_threshold_sweep,
-        compute_tool_usage,
-        compute_widening_detail,
-        compute_widening_preview,
-        parse_window_bound,
-        render_report_markdown,
-        render_text,
-        render_threshold_sweep_text,
-        render_tool_usage_text,
-        render_widening_detail_text,
-        render_widening_preview_text,
-        resolve_window,
-    )
-
-    if report and (
-        tool_usage or threshold_sweep or widening_preview or widening_detail
+    if _reject_eval_flags(
+        parser,
+        report=report,
+        json_out=json_out,
+        output=output,
+        tool_usage=tool_usage,
+        threshold_sweep=threshold_sweep,
+        widening_preview=widening_preview,
+        widening_detail=widening_detail,
+        until_spec=until_spec,
     ):
-        # Same clean-exit style as the --detail guard below: message +
-        # SystemExit(2) via parser.error. The report already composes
-        # the rate trio, the threshold sweep, and the tool-usage rollup,
-        # so combining it with a single-rollup mode flag is a conflict,
-        # not a refinement.
-        parser.error(
-            "--report cannot be combined with --tool-usage, "
-            "--threshold-sweep, --widening-preview, or "
-            "--detail (the report already composes the relevant rollups)"
-        )
-        return  # pragma: no cover — parser.error raises SystemExit
-
-    if report and json_out:
-        parser.error(
-            "--report emits markdown, not JSON; --json only applies to the other modes"
-        )
-        return  # pragma: no cover — parser.error raises SystemExit
-
-    if output is not None and not report:
-        parser.error("--output only applies to --report")
-        return  # pragma: no cover — parser.error raises SystemExit
-
-    if sum((tool_usage, threshold_sweep, widening_preview)) > 1:
-        parser.error(
-            "--tool-usage, --threshold-sweep, and --widening-preview are "
-            "mutually exclusive"
-        )
-        return  # pragma: no cover — parser.error raises SystemExit
-
-    if widening_detail and not widening_preview:
-        parser.error("--detail only applies to --widening-preview")
-        return  # pragma: no cover — parser.error raises SystemExit
-
-    if until_spec is not None and (
-        report or tool_usage or threshold_sweep or widening_preview
-    ):
-        parser.error("--until only applies to the default rate mode")
         return  # pragma: no cover — parser.error raises SystemExit
 
     now = datetime.now(timezone.utc)
@@ -328,117 +509,28 @@ def _cli_eval(
     ctx = cli_context()
 
     if report:
-        # Report mode ignores the rate-mode knobs (`--scope`,
-        # `--min-retrievals`, `--silent-miss-limit`) the same way the
-        # other alternative modes do — no parser.error, so shell loops
-        # don't have to strip them per invocation. Scope filtering in
-        # particular is deliberately unsupported: the report never
-        # prints scope names, and a scoped rate column would be
-        # unlabelable without leaking the scope.
-        report_store = ctx.store
-        doc = compute_report(
-            memories=report_store.load_all(),
-            events=ctx.store.iter_events(),
-            since=since,
-            # Same tombstone enumeration rate-mode uses, so the report's
-            # silent-miss numbers agree with `bettermemory eval` and
-            # `memory_health` over the same log.
-            tombstoned_ids={t.id for t in report_store.load_tombstones()},
-        )
-        markdown = render_report_markdown(doc)
-        if output is not None:
-            try:
-                Path(output).write_text(markdown, encoding="utf-8")
-            except OSError as exc:
-                parser.error(f"--output: cannot write {output!r}: {exc}")
-                return  # pragma: no cover — parser.error raises SystemExit
-        else:
-            sys.stdout.write(markdown)
+        _run_report_mode(ctx, since, output, parser)
         return
 
     if tool_usage:
-        # Tool-usage mode ignores `--scope`, `--min-retrievals`, and
-        # `--silent-miss-limit` — they're rate-mode knobs. We don't
-        # call parser.error on them so a user piping the same args
-        # into both modes (a reasonable shell loop) doesn't have to
-        # strip the rate-mode flags before each invocation.
-        usage_report = compute_tool_usage(
-            events=ctx.store.iter_events(),
-            since=since,
-        )
-        if json_out:
-            sys.stdout.write(_json.dumps(usage_report.to_dict(), indent=2) + "\n")
-        else:
-            sys.stdout.write(render_tool_usage_text(usage_report))
+        _run_tool_usage_mode(ctx, since, json_out)
         return
 
     if threshold_sweep:
-        sweep_report = compute_threshold_sweep(
-            events=ctx.store.iter_events(),
-            since=since,
-        )
-        if json_out:
-            sys.stdout.write(_json.dumps(sweep_report.to_dict(), indent=2) + "\n")
-        else:
-            sys.stdout.write(render_threshold_sweep_text(sweep_report))
+        _run_sweep_mode(ctx, since, json_out)
         return
 
     if widening_preview:
-        if widening_detail:
-            # The detail lane joins top-hit ids against the store for
-            # summaries the same way rate-mode does (active memories +
-            # tombstone log), so a flagged hit whose memory was since
-            # removed reads "tombstoned" rather than resurfacing.
-            detail_store = ctx.store
-            detail_report = compute_widening_detail(
-                events=ctx.store.iter_events(),
-                since=since,
-                memories=detail_store.load_all(),
-                tombstoned_ids={t.id for t in detail_store.load_tombstones()},
-            )
-            if json_out:
-                sys.stdout.write(_json.dumps(detail_report.to_dict(), indent=2) + "\n")
-            else:
-                sys.stdout.write(render_widening_detail_text(detail_report))
-            return
-        preview_report = compute_widening_preview(
-            events=ctx.store.iter_events(),
-            since=since,
-        )
-        if json_out:
-            sys.stdout.write(_json.dumps(preview_report.to_dict(), indent=2) + "\n")
-        else:
-            sys.stdout.write(render_widening_preview_text(preview_report))
+        _run_widening_mode(ctx, since, widening_detail, json_out)
         return
 
-    store = ctx.store
-
-    floor = (
-        endorsement_min_retrievals
-        if endorsement_min_retrievals is not None
-        else DEFAULT_ENDORSEMENT_MIN_RETRIEVALS
+    _run_rate_mode(
+        ctx,
+        now,
+        window_since,
+        window_until,
+        scope,
+        endorsement_min_retrievals,
+        silent_miss_limit,
+        json_out,
     )
-
-    # `rate_report`, not `report` — that name is taken by the --report
-    # mode flag in this scope since the report mode landed.
-    rate_report = compute_eval(
-        memories=store.load_all(),
-        events=ctx.store.iter_events(),
-        now=now,
-        since=window_since,
-        until=window_until,
-        scope=scope,
-        endorsement_min_retrievals=floor,
-        silent_miss_limit=silent_miss_limit,
-        # Same enumeration `health.report_for_store` and the
-        # scope-overview handler feed `compute_health`, so the eval
-        # CLI's silent-miss numerator applies the identical tombstone
-        # filter (health's `_silent_miss_stats` filter #2) — a miss
-        # whose top-hit memory was since removed is no longer
-        # actionable and must not keep the two surfaces disagreeing.
-        tombstoned_ids={t.id for t in store.load_tombstones()},
-    )
-    if json_out:
-        sys.stdout.write(_json.dumps(rate_report.to_dict(), indent=2) + "\n")
-    else:
-        sys.stdout.write(render_text(rate_report))
