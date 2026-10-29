@@ -39,8 +39,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ._fsutil import ensure_owner_only_dir, sqlite_file_uri
+from ._fsutil import (
+    ensure_owner_only_dir,
+    fsync_file,
+    replace_atomic,
+    sqlite_file_uri,
+)
 from .log import (
+    KEY_BYTES,
     Head,
     KeyRing,
     KeyUnreadableError,
@@ -622,7 +628,11 @@ def key_state(
     ``warn`` says an unreadable key and the binding in the log, as an open
     does; doctor and posture read quietly and render the state. ``conn``
     is the open's connection to the file, which the unclaimed check reads
-    its log through; without one it opens a read-only one."""
+    its log through; without one it opens a read-only one. An open (one
+    with ``conn``) first finishes a `key rotate` that committed and did
+    not rename its key (`finish_rotation`)."""
+    if conn is not None:
+        finish_rotation(keyring, store_file, expected)
     try:
         key = keyring.load_current()
     except KeyUnreadableError as exc:
@@ -854,6 +864,105 @@ def _warn_unclaimed(state: KeyState) -> None:
     log.log(level, "store %s: %s. %s", state.store_file, state.summary, remedy)
 
 
+def pending_key_path(keyring: KeyRing) -> Path:
+    """Where `key rotate` writes the new key before its commit
+    (`key_lifecycle._rotate`), until the rename that makes it the current
+    key: ``<store_id>.key.pending``. Not ``<store_id>.<x>.key``, which reads
+    as a retired key."""
+    return keyring.keys_dir / f"{keyring.store_id}.key.pending"
+
+
+def write_key_once(path: Path, key: bytes) -> bool:
+    """Create ``path`` holding ``key``, owner-only, only when nothing is
+    there: False when a file is, which is never written over (an owner's
+    open wrote a key meanwhile, or a copy is there already)."""
+    try:
+        fd = os.open(
+            path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0),
+            0o600,
+        )
+    except FileExistsError:
+        return False
+    try:
+        os.write(fd, key)
+        fsync_file(fd)
+    finally:
+        os.close(fd)
+    return True
+
+
+def _bound_here_or_nowhere(keyring: KeyRing, store_file: Path) -> bool:
+    try:
+        bound = keyring.read_binding()
+    except OSError:
+        return False
+    if bound is None:
+        return True
+    try:
+        return bound == Path(store_file).resolve() or os.path.samefile(
+            bound, store_file
+        )
+    except (OSError, ValueError):
+        return False
+
+
+def finish_rotation(keyring: KeyRing, store_file: Path, recorded: str) -> bytes | None:
+    """Finish a `key rotate` that committed and did not rename its new key
+    (a crash or a failure between its commit and the rename): when the
+    pending key file (`pending_key_path`) holds the key the store's meta
+    names (``recorded``) and the ring is bound to ``store_file`` or to no
+    file, the current key is kept under its fingerprint first (a copy is
+    there already when the rotation wrote it) and the pending key renamed
+    over it, so the current key file is never absent. Returns that key, or
+    None when there is nothing to finish or it cannot be done now (said in
+    the log; the open goes on as it would have, and the next one tries
+    again). A pending key meta does not name is a rotation that did not
+    commit: it signs nothing and is left alone."""
+    pending = pending_key_path(keyring)
+    try:
+        key = pending.read_bytes()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        log.warning(
+            "store %s: the pending key %s cannot be read: %s", store_file, pending, exc
+        )
+        return None
+    if len(key) != KEY_BYTES or fingerprint(key) != recorded:
+        return None
+    if not _bound_here_or_nowhere(keyring, store_file):
+        return None
+    try:
+        current = keyring.load_current()
+        if current is not None and fingerprint(current) != recorded:
+            retired = keyring.retired_path(fingerprint(current))
+            if not write_key_once(retired, current) and retired.read_bytes() != current:
+                raise OSError(f"{retired} holds another key under the same prefix")
+        replace_atomic(pending, keyring.current_path())
+    except (OSError, KeyUnreadableError) as exc:
+        try:
+            now = keyring.load_current()
+        except KeyUnreadableError:
+            now = None
+        if now is not None and fingerprint(now) == recorded:
+            return now
+        log.warning(
+            "store %s: the rotated key %s could not be made current (%s); the "
+            "next open tries again",
+            store_file,
+            recorded[:16],
+            exc,
+        )
+        return None
+    log.info(
+        "store %s: the key %s a rotation committed is now the current key",
+        store_file,
+        recorded[:16],
+    )
+    return key
+
+
 def _signing_key(
     conn: sqlite3.Connection, keyring: KeyRing, path: Path, key: bytes
 ) -> bytes:
@@ -866,7 +975,8 @@ def _signing_key(
     ``key`` while meta still names it; the key ring's current key when meta
     names that one (the rekey replaced the key in this ring, which only a
     process that can write the keys directory, and so holds the key, can
-    do). Otherwise still ``key``: meta is not authenticated, so a key meta
+    do), after finishing a `key rotate` that committed and has not renamed
+    its new key yet (`finish_rotation`). Otherwise still ``key``: meta is not authenticated, so a key meta
     names that this ring does not hold (an edit of the file, or a rekey
     under another keys directory) is not taken at its word. The owner goes
     on signing under its own key into that segment, as it did before this
@@ -886,6 +996,8 @@ def _signing_key(
         current = keyring.load_current()
     except KeyUnreadableError:
         current = None
+    if current is None or fingerprint(current) != recorded:
+        current = finish_rotation(keyring, path, recorded) or current
     if current is not None and fingerprint(current) == recorded:
         log.info(
             "store %s was rekeyed since this connection opened; it signs with "

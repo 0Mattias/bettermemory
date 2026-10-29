@@ -51,6 +51,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import sqlite3
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
@@ -63,7 +64,6 @@ from ._fsutil import (
     bounded_read,
     ensure_owner_only_dir,
     flock_excl,
-    fsync_file,
 )
 from .log import (
     HISTORY_ACCEPTED,
@@ -80,6 +80,7 @@ from .log import (
     LogRow,
     chain_segments,
     fingerprint,
+    last_row,
     row_verifies,
 )
 from .store_keys import (
@@ -94,7 +95,10 @@ from .store_keys import (
     KeyState,
     _signs_a_segment,
     _store_id_at,
+    finish_rotation,
+    pending_key_path,
     ring_fit,
+    write_key_once,
 )
 from .time_utils import isoformat_utc
 
@@ -468,26 +472,6 @@ def read_key_file(source: Path) -> tuple[str | None, list[bytes]]:
     return store_id, keys
 
 
-def _write_new(path: Path, key: bytes) -> bool:
-    """Create ``path`` holding ``key``, owner-only, only when nothing is
-    there: False when a file is (an owner's open wrote a key meanwhile),
-    which is never written over."""
-    try:
-        fd = os.open(
-            path,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0),
-            0o600,
-        )
-    except FileExistsError:
-        return False
-    try:
-        os.write(fd, key)
-        fsync_file(fd)
-    finally:
-        os.close(fd)
-    return True
-
-
 def import_keys(
     store_file: Path, source: Path, *, keys_dir: Path | None = None
 ) -> dict[str, Any]:
@@ -590,11 +574,11 @@ def import_keys(
             if entry["action"] == "current":
                 if state.state == KEY_FOREIGN:
                     retired_foreign = ring.retire_current()
-                if _write_new(ring.current_path(), key):
+                if write_key_once(ring.current_path(), key):
                     continue
                 # An owner's open wrote a key meanwhile: never written over.
                 entry["action"] = "retired"
-            if not _write_new(ring.retired_path(own), key):
+            if not write_key_once(ring.retired_path(own), key):
                 existing = ring.retired_path(own).read_bytes()
                 if existing != key:
                     raise OSError(
@@ -784,16 +768,21 @@ def adopt_ring(
 
 
 def rotate_key(
-    store_file: Path, *, apply: bool, keys_dir: Path | None = None
+    store_file: Path,
+    *,
+    apply: bool,
+    keys_dir: Path | None = None,
+    state_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """`key rotate`: retire the store's current key (kept under its
-    fingerprint, so the rows it signed still verify), write a new one, set
-    meta to it and append the ``rekey`` row that opens its segment, signed
-    with the new key: the rekey the owner's opener runs for a store whose
-    key is missing, on a key that is present. Under the store's write lock,
-    so a daemon serving the store signs its next row with the new key
-    (`store_keys._signing_key`). The origin anchor does not move; the key
-    it names stays held. Refused unless the key is present (a missing,
+    """`key rotate`: write a new key for the store, set meta to it and
+    append the ``rekey`` row that opens its segment, signed with the new
+    key, keeping the old key under its fingerprint so the rows it signed
+    still verify (`_rotate`). The current key file is never absent while it
+    runs, so an owner's open racing it never reads the key missing and
+    never writes one. Under the store's daemon and spawn locks, refused
+    while a daemon serves or starts for the store (naming `bettermemory
+    down`), and its write lock. The origin anchor does not move; the key it
+    names stays held. Refused unless the key is present (a missing,
     foreign or unreadable key, or a ring bound elsewhere, in the words
     every reader says it in). Without ``apply``, the plan."""
     root = keys_root(keys_dir)
@@ -812,41 +801,95 @@ def rotate_key(
     if not apply:
         report["status"] = PLANNED
         return report
-    try:
-        with _opened(store_file, root, read_only=False) as writer:
-            if not writer.has_key:
-                return _refused(report, _state_refusal(writer.key_state))
-            new, seq = _rotate(writer)
-    except (ValueError, sqlite3.Error, OSError, RuntimeError) as exc:
-        report["status"] = FAILED
-        report["detail"] = f"the key was not rotated: {exc}"
-        return report
+    locks = daemon_locks(
+        _state_root(state_dir), [store_file], command="key rotate --yes"
+    )
+    with locks as why:
+        if why is not None:
+            return _refused(report, why)
+        try:
+            with _opened(store_file, root, read_only=False) as writer:
+                if not writer.has_key:
+                    return _refused(report, _state_refusal(writer.key_state))
+                new, seq, pending = _rotate(writer)
+        except (ValueError, sqlite3.Error, OSError, RuntimeError) as exc:
+            report["status"] = FAILED
+            report["detail"] = f"the key was not rotated: {exc}"
+            return report
     report["status"] = DONE
     report["new_fingerprint"] = new
     report["seq"] = seq
+    if pending is not None:
+        report["detail"] = (
+            f"the rotation is committed at seq {seq}, and the new key is still at "
+            f"{pending}: the next open of the store makes it the current key"
+        )
     return report
 
 
-def _rotate(store: Store) -> tuple[str, int]:
-    """The rotation on an open store that holds its key, under its write
-    lock: meta read again there, the current key retired and a new one
-    written, meta set and the ``rekey`` row appended in one transaction. A
-    failure inside puts the old key back as the current key, so the ring
-    and meta never disagree."""
+def _meta_fingerprint(store: Store) -> str | None:
+    """The key fingerprint the store's meta names now, read outside any
+    transaction; None when it cannot be read."""
+    try:
+        row = store.conn.execute(
+            "SELECT value FROM meta WHERE key = 'key_fingerprint'"
+        ).fetchone()
+    except sqlite3.Error:
+        return None
+    return None if row is None else str(row[0])
+
+
+def _take_back(path: Path, key: bytes) -> None:
+    """Remove ``path`` when it holds exactly ``key``: what a rotation that
+    did not commit wrote (a write that failed after the file landed
+    included), and nothing else."""
+    with contextlib.suppress(OSError):
+        if path.read_bytes() == key:
+            path.unlink()
+
+
+def _rotate(store: Store) -> tuple[str, int, Path | None]:
+    """The rotation on an open store that holds its key, in this order,
+    so that the ring and meta agree after a crash or a failure at any step
+    and the current key file is never absent:
+
+    1. under the write lock, meta read again (another connection's rekey
+       refuses the rotation);
+    2. the old key copied to its retired name (``<id>.<prefix>.key``), a
+       file only ever created, never written over;
+    3. the new key written to `store_keys.pending_key_path`;
+    4. meta set and the ``rekey`` row appended, signed with the new key,
+       and the transaction committed;
+    5. the pending key renamed over the current key file
+       (`store_keys.finish_rotation`), which an open that finds a committed
+       rotation unfinished does too.
+
+    A failure before the commit takes back what 2 and 3 wrote (a retired
+    copy this rotation created, the pending key), once meta is read naming
+    the old key; when meta cannot be read the files stay (a pending key
+    meta does not name is never used). Returns the new
+    fingerprint, the rekey row's seq, and the pending path when step 5 did
+    not happen (the next open finishes it)."""
     ring = store.keyring
     old = store._key
     assert old is not None
-    with store._transaction() as tx:
-        recorded = tx.execute(
-            "SELECT value FROM meta WHERE key = 'key_fingerprint'"
-        ).fetchone()
-        if recorded is None or str(recorded[0]) != fingerprint(old):
-            raise RuntimeError(
-                "the store was rekeyed since it was opened; run the rotation again"
-            )
-        ring.retire_current()
-        try:
-            new = ring.create_key()
+    new = secrets.token_bytes(KEY_BYTES)
+    pending = pending_key_path(ring)
+    retired = ring.retired_path(fingerprint(old))
+    retired_was_there = os.path.lexists(retired)
+    try:
+        with store._transaction() as tx:
+            recorded = tx.execute(
+                "SELECT value FROM meta WHERE key = 'key_fingerprint'"
+            ).fetchone()
+            if recorded is None or str(recorded[0]) != fingerprint(old):
+                raise RuntimeError(
+                    "the store was rekeyed since it was opened; run the rotation again"
+                )
+            ring.ensure_dir()
+            if not write_key_once(retired, old) and retired.read_bytes() != old:
+                raise OSError(f"{retired} holds another key under the same prefix")
+            atomic_write_bytes(pending, new, mode_before_rename=0o600)
             store._key = new
             store._key_state = KeyState(
                 KEY_PRESENT, ring, store.path, fingerprint(new), key=new
@@ -865,14 +908,29 @@ def _rotate(store: Store) -> tuple[str, int]:
                 },
                 session=None,
             )
-        except BaseException:
+    except BaseException:
+        if _meta_fingerprint(store) != fingerprint(new):
             store._key = old
             store._key_state = KeyState(
                 KEY_PRESENT, ring, store.path, fingerprint(old), key=old
             )
-            atomic_write_bytes(ring.current_path(), old, mode_before_rename=0o600)
+            if _meta_fingerprint(store) == fingerprint(old):
+                _take_back(pending, new)
+                if not retired_was_there:
+                    _take_back(retired, old)
             raise
+        # The commit landed and what failed came after it: finish below.
+        committed = last_row(store.conn)
+        assert committed is not None
+        row = committed
     store._forget_segments()
+    finished = finish_rotation(ring, store.path, fingerprint(new))
+    if finished is None:
+        # An open that found the rotation committed may have finished it.
+        with contextlib.suppress(KeyUnreadableError):
+            finished = ring.load_current()
+        if finished is not None and fingerprint(finished) != fingerprint(new):
+            finished = None
     log.warning(
         "store %s: key %s retired and key %s written by `bettermemory key "
         "rotate`; the rekey row at seq %d opens its segment",
@@ -881,7 +939,7 @@ def _rotate(store: Store) -> tuple[str, int]:
         fingerprint(new)[:16],
         row.seq,
     )
-    return fingerprint(new), row.seq
+    return fingerprint(new), row.seq, (None if finished is not None else pending)
 
 
 # ---------------------------------------------------------------------------

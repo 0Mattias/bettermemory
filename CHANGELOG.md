@@ -91,9 +91,14 @@ follows the candidates' testing.
   only when it signs a segment of the store's log: the store's own key as
   the current key when the ring has none or another (that one retired),
   every other key as a retired key. `key adopt [--yes]` binds the ring to
-  this store file; `key rotate [--yes]` retires the key, writes a new one
-  and appends the `rekey` row that opens its segment, under the write
-  lock, so a running daemon signs its next row with the new key. Each
+  this store file; `key rotate [--yes]` writes a new key and appends the
+  `rekey` row that opens its segment, keeping the old key under its
+  fingerprint: the old key is copied to its retired name, the new one
+  written as `<store_id>.key.pending`, the transaction committed, then
+  the pending key renamed over the current one, so the current key file
+  is never absent and an owner's open racing the rotation never writes a
+  key; an open that finds a committed rotation unfinished finishes the
+  rename, and a failure before the commit takes back both files. Each
   change is a row in the log, signed with the store's key: two new control
   kinds, `key_imported` and `key_adopted`, and for a rotation a `rekey`
   row with `cause: "rotate"` (a new kind would not split the chain's
@@ -103,7 +108,7 @@ follows the candidates' testing.
   (`adopt`), a ring bound to another file (`export`, `import`, `rotate`),
   a file this user cannot read, an import that would leave the ring
   without the store's own key, and a daemon serving or starting for the
-  store or the bound file (`adopt`). None of the commands opens the store
+  store or the bound file (`adopt`, `rotate`). None of the commands opens the store
   as its owner, so none replaces a missing key.
   (`src/bettermemory/key_lifecycle.py`, `src/bettermemory/cli/key_cmd.py`,
   `src/bettermemory/cli/__init__.py`, `src/bettermemory/store_keys.py`,

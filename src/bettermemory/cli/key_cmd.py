@@ -99,12 +99,15 @@ def add_subparser(
     adopt.add_argument("--json", action="store_true", help="Emit the report as JSON.")
 
     rotate_text = (
-        "Retire the store's key (kept, so the rows it signed still verify), "
-        "write a new one and append the rekey row that opens its segment, "
-        "signed with the new key, under the store's write lock: a running "
-        "daemon signs its next row with the new key. Refused unless the key "
-        "is present. Without --yes prints the plan. Exit 0 rotated, 1 "
-        "refused or failed, 2 no store, 3 the plan."
+        "Write a new key for the store and append the rekey row that opens "
+        "its segment, signed with the new key, keeping the old key under its "
+        "fingerprint so the rows it signed still verify. The current key file "
+        "is never absent while it runs: the new key is written beside it, the "
+        "rotation committed, then the new key renamed over it (an open that "
+        "finds a committed rotation unfinished finishes it). Refused while a "
+        "daemon serves the store (run `bettermemory down` first) and unless "
+        "the key is present. Without --yes prints the plan. Exit 0 rotated, "
+        "1 refused or failed, 2 no store, 3 the plan."
     )
     rotate = key_sub.add_parser("rotate", help=rotate_text, description=rotate_text)
     rotate.add_argument("--yes", action="store_true", help="Rotate; without it, plan.")
