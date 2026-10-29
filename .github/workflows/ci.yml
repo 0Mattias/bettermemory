@@ -375,6 +375,13 @@ jobs:
           tests/test_checkout_token.py tests/test_project_file.py
           tests/test_gitobjects.py tests/test_membership_capture.py
           tests/test_membership_resolution.py
+          tests/test_location_bounds.py tests/test_location_fetch.py
+          tests/test_location_git_config.py tests/test_location_gitfile.py
+          tests/test_location_gitfile_posture.py tests/test_location_lock.py
+          tests/test_location_reachable.py tests/test_membership_hung_view.py
+          tests/test_membership_import_witness.py tests/test_membership_lines.py
+          tests/test_membership_members_index.py
+          tests/test_membership_remint.py tests/test_membership_view_path.py
 
   membership-smb:
     name: membership on SMB 3.0 (loopback)

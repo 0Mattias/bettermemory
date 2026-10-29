@@ -245,6 +245,9 @@ def audit(*, cwd: Path | None = None, platform: str | None = None) -> Audit:
     findings.extend(_daemon(state_dir, store_file))
     findings.extend(_settings(config))
     findings.extend(_claude(config, cwd=cwd, platform=platform))
+    from .location_git import gitfile_posture  # ENG-158: the location family's
+
+    findings.append(Finding(**gitfile_posture(None if cwd is None else str(cwd))))
     return Audit(
         store=store_file, store_rule=rule, platform=platform, findings=findings
     )

@@ -1140,6 +1140,26 @@ the candidates' testing.
   issue id alone, and the relations the comments assert. No value
   changed. (`src/bettermemory/location_git.py`,
   `src/bettermemory/location.py`, `src/bettermemory/membership_records.py`)
+- **The security audit names a `.git` file membership does not follow.**
+  Since ENG-158 a folder whose `.git` file names another checkout's git
+  directory reads as no repository, but nothing told the user it was
+  there, and git itself still follows it: a git command in that folder
+  acts on the other repository. `bettermemory security audit` now walks
+  up from the working directory as git's discovery does and reports
+  `membership.gitfile`: a warning naming each such file, and each folder
+  holding `HEAD` and a `commondir` that names a repository it is not
+  registered under, with the git directory it names and why it is not
+  followed; `info` where the repository found is a `--separate-git-dir`
+  pointer, which carries no pointer back and is followed as git follows
+  it (a planted one naming a known path too); `ok` otherwise. The
+  warning's fix is a check by hand of where the file points (a
+  worktree's `.git` file names `<common>/worktrees/<name>`, which names it
+  back) and the removal of a plant; it suggests no command that rewrites
+  a worktree's registration, since one run in a copy of a live worktree
+  moves the registration to the copy. SECURITY.md says so, and names the
+  refusal of a git directory whose config cannot be read whole.
+  (`src/bettermemory/location_git.py`, `src/bettermemory/posture.py`,
+  `SECURITY.md`, `.github/workflows/ci.yml`)
 
 #### Known limitations
 

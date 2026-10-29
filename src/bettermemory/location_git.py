@@ -874,7 +874,7 @@ def gitfile_refusal(directory: str, dotgit: str, target: str) -> str | None:
     _common, linked = _common_of(target)
     named = None if linked else _commondir(target)
     if named is not None:
-        return f"{target} names the common directory {named} but is not one of its worktrees"
+        return _not_registered(target, named)
     if linked:
         back = _small_text(os.path.join(target, "gitdir"))
         if not back:
@@ -944,6 +944,30 @@ def _commondir(git_dir: str) -> str | None:
     return os.path.normpath(os.path.join(git_dir, rel))
 
 
+def _not_registered(git_dir: str, common: str) -> str:
+    """Why a git directory whose ``commondir`` names `common` is not
+    followed: it is not one of that repository's worktrees."""
+    return (
+        f"{git_dir} names the common directory {common} but is not one of its worktrees"
+    )
+
+
+def _foreign_commondir(git_dir: str) -> str | None:
+    """The common directory `git_dir`'s ``commondir`` file names, where
+    that is a repository's (``objects`` and ``refs``) and `git_dir` is not
+    registered under it: git reads `git_dir` as a git directory of that
+    repository, membership as none (ENG-158, review M G5). None
+    otherwise."""
+    named = _commondir(git_dir)
+    if named is None or _registered(git_dir, named):
+        return None
+    if os.path.isdir(os.path.join(named, "objects")) and os.path.isdir(
+        os.path.join(named, "refs")
+    ):
+        return named
+    return None
+
+
 def _registered(git_dir: str, common: str) -> bool:
     """Whether `git_dir` sits at ``<common>/worktrees/<name>``, the only
     place git keeps a linked worktree's git directory (``git worktree
@@ -992,12 +1016,20 @@ def _from_env(start: str) -> _Git | None:
     return _Git(None, git_dir, common, root, kind)
 
 
-def _discover(start: str) -> _Git | None:
+def _discover(
+    start: str, refused: list[tuple[str, str, str]] | None = None
+) -> _Git | None:
     """The repository git would find from `start` (``setup.c``'s walk):
     at each directory a ``.git`` entry first, then the directory itself as
     a git directory (a bare repository, or the inside of one); stopping
     below a ceiling and at a filesystem boundary (unless
-    GIT_DISCOVERY_ACROSS_FILESYSTEM)."""
+    GIT_DISCOVERY_ACROSS_FILESYSTEM). Each ``.git`` file passed over as
+    not followed (`gitfile_refusal`) goes to `refused` as (the file, the
+    git directory it names, why), and so does a directory holding ``HEAD``
+    and a ``commondir`` that names a repository it is not registered under
+    (the directory, that repository's common directory, why): git reads
+    it as a git directory of that repository, membership passes over it
+    (review M G5)."""
     if os.environ.get("GIT_DIR"):
         return _from_env(start)
     ceiling = _ceiling(start)
@@ -1013,7 +1045,7 @@ def _discover(start: str) -> _Git | None:
         except (OSError, ValueError):
             st = None
         if st is not None:
-            found = _at_dotgit(d, dotgit, st)
+            found = _at_dotgit(d, dotgit, st, refused)
             if found is not None:
                 return found
         if os.path.isfile(os.path.join(d, "HEAD")) and _is_git_directory(d):
@@ -1025,6 +1057,10 @@ def _discover(start: str) -> _Git | None:
                 parent = os.path.dirname(d)
                 return _Git(d, d, common, parent, LINKED if linked else PRIMARY)
             return _Git(None, d, common, None, BARE)
+        if refused is not None and os.path.isfile(os.path.join(d, "HEAD")):
+            named = _foreign_commondir(d)
+            if named is not None:
+                refused.append((d, named, _not_registered(d, named)))
         parent = os.path.dirname(d)
         if parent == d:
             return None
@@ -1039,7 +1075,12 @@ def _discover(start: str) -> _Git | None:
         d = parent
 
 
-def _at_dotgit(directory: str, dotgit: str, st: os.stat_result) -> _Git | None:
+def _at_dotgit(
+    directory: str,
+    dotgit: str,
+    st: os.stat_result,
+    refused: list[tuple[str, str, str]] | None = None,
+) -> _Git | None:
     if stat.S_ISDIR(st.st_mode):
         if not os.path.isfile(os.path.join(dotgit, "HEAD")):
             return None
@@ -1049,9 +1090,12 @@ def _at_dotgit(directory: str, dotgit: str, st: os.stat_result) -> _Git | None:
     target = _gitfile_target(dotgit)
     if target is None or not os.path.isfile(os.path.join(target, "HEAD")):
         return None
-    if gitfile_refusal(directory, dotgit, target) is not None:
+    why = gitfile_refusal(directory, dotgit, target)
+    if why is not None:
         # Not followed (ENG-158): read as a `.git` file that names nothing,
         # so no other checkout's git directory keys this folder.
+        if refused is not None:
+            refused.append((dotgit, target, why))
         return None
     common, linked = _common_of(target)
     # A ``.git`` file names a linked worktree's git directory (it has a
@@ -1059,6 +1103,111 @@ def _at_dotgit(directory: str, dotgit: str, st: os.stat_result) -> _Git | None:
     # dir``, a submodule's): the latter is the primary checkout of its
     # repository, its git directory elsewhere.
     return _Git(dotgit, target, common, directory, LINKED if linked else PRIMARY)
+
+
+#: The security audit's finding id for the ``.git`` files above the cwd.
+GITFILE_FINDING = "membership.gitfile"
+
+
+def gitfile_posture(cwd: str | None) -> dict[str, Any]:
+    """The security audit's finding on the ``.git`` files at `cwd` (the
+    working directory when None) and above (ENG-158), as the keyword
+    arguments of `posture.Finding`: ``warn`` naming each ``.git`` file
+    git's discovery walk passes there that membership does not follow
+    (`gitfile_refusal`; git itself still follows it, so a git command
+    there acts on the repository it names), and each folder holding
+    ``HEAD`` and a ``commondir`` naming a repository it is not registered
+    under, with a check by hand as its fix (`_gitfile_fix`); ``info``
+    where the repository found is a ``.git`` file naming a git directory
+    with no pointer back (``--separate-git-dir``, design I22), which
+    membership follows as git does, so a planted one naming a known path
+    is followed too; ``ok`` otherwise; ``skip`` with no working
+    directory. Reads only."""
+    try:
+        start = os.path.realpath(cwd if cwd is not None else os.getcwd())
+    except (OSError, ValueError):
+        return {
+            "id": GITFILE_FINDING,
+            "status": "skip",
+            "summary": "no working directory to walk up from",
+        }
+    refused: list[tuple[str, str, str]] = []
+    try:
+        found = _discover(start, refused)
+    except (OSError, ValueError):
+        found = None
+    if refused:
+        first, _target, why = refused[0]
+        return {
+            "id": GITFILE_FINDING,
+            "status": "warn",
+            "summary": f"{first} names a git directory membership does not follow: {why}",
+            "path": first,
+            "fix": _gitfile_fix(first),
+            "details": {
+                "cwd": start,
+                "refused": [
+                    {"dotgit": d, "target": t, "reason": w} for d, t, w in refused
+                ],
+            },
+        }
+    dotgit = None if found is None else found.dotgit
+    details: dict[str, Any] = {"cwd": start, "dotgit": dotgit}
+    if (
+        found is not None
+        and dotgit not in (None, found.git_dir)
+        and found.kind == PRIMARY
+    ):
+        config = os.path.join(found.git_dir, "config")
+        if not _config_values(config, git_dir=found.git_dir).get(
+            ("core", None, "worktree")
+        ):
+            return {
+                "id": GITFILE_FINDING,
+                "status": "info",
+                "summary": (
+                    f"{dotgit} names {found.git_dir}, a git directory kept apart "
+                    "(--separate-git-dir) with no pointer back; membership follows "
+                    "it as git does"
+                ),
+                "path": dotgit,
+                "fix": (
+                    "if this checkout was not made with --separate-git-dir, remove "
+                    "the .git file: a planted one naming a git directory whose path "
+                    "is known is followed too"
+                ),
+                "details": {**details, "target": found.git_dir},
+            }
+    return {
+        "id": GITFILE_FINDING,
+        "status": "ok",
+        "summary": (
+            "no .git file at or above the working directory names a git directory "
+            "membership does not follow"
+        ),
+        "details": details,
+    }
+
+
+def _gitfile_fix(refused: str) -> str:
+    """The warning's fix for the refused `.git` file or folder `refused`
+    (review M D4): a check by hand of where it points and the removal of a
+    plant. It suggests no command that rewrites a worktree's registration:
+    one run in a copy of a live worktree moves the live worktree's
+    registration to the copy, and membership then follows the copy."""
+    plant = (
+        "its .git file"
+        if os.path.basename(refused) == ".git"
+        else "the HEAD and commondir files in it"
+    )
+    return (
+        "git still follows it, so a git command here acts on the repository it "
+        "names. Check by hand where it points: a worktree's .git file names "
+        "<common>/worktrees/<name>, whose gitdir file names that .git file back, "
+        "and a submodule's names a git directory whose core.worktree names this "
+        "folder; any other is not this folder's. If this folder came from an "
+        f"archive, a copy or someone else, remove {plant}."
+    )
 
 
 # ---------------------------------------------------------------------------
