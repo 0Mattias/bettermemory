@@ -2250,6 +2250,12 @@ follows the candidates' testing.
   to WAL, is read once more after the switch, so that connection holds
   SQLite's shared lock before the restore lock is given back. Only the
   thread that holds the restore lock opens the store through it.
+  `bettermemory doctor` has a `restore` check, between `store_location`
+  and `store`: a restore that did not finish fails it (`writes are
+  refused: a restore did not finish (...)`, the fix naming `bettermemory
+  backup unlock --yes` after checking the store, or the restore to run
+  again), exit 1, and one running warns; its store check opens the
+  store read-only and never met the refusal every writing open got.
   `store.py` gains one line. This closes the 9.0.0rc12 Known limitation
   "A restore is guarded only against the daemon and spawn locks" (its
   other half, the text output that did not show the origin anchor, is

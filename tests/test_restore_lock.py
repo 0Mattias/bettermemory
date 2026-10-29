@@ -588,3 +588,67 @@ def test_a_directory_flock_cannot_lock_falls_back_to_the_record_file(
     held.release(clear=False)
     with pytest.raises(StoreRefusedError, match="did not finish"):
         Store.open(store_file, keys_dir=keys_dir)
+
+
+def test_doctor_fails_a_store_a_restore_did_not_finish(
+    bundle: Path,
+    store_file: Path,
+    keys_dir: Path,
+    child_env: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """doctor's store check opens the store read-only, so it never meets
+    the refusal every writing open gets after a killed restore: its own
+    `restore` check reads the record, fails with both ways out (doctor
+    then exits 1), and is ok once `backup unlock --yes` removed it (cold
+    review H2). Called directly: a whole doctor run reads the home's client
+    settings, which tests/test_doctor.py fakes."""
+    from bettermemory import doctor
+
+    assert doctor.CHECK_IDS.index("restore") == doctor.CHECK_IDS.index("store") - 1
+    context = doctor._Context(cwd=None, directory=store_file.parent)
+    assert doctor.check_restore(context).status == "ok"
+    crashed = subprocess.run(
+        [sys.executable, "-c", _CRASHED_RESTORE, str(store_file), str(bundle)],
+        env=child_env,
+        capture_output=True,
+        text=True,
+        timeout=_CHILD_SECONDS,
+    )
+    assert crashed.returncode == 0, crashed.stderr
+
+    check = doctor.check_restore(context)
+    assert check.status == "fail"
+    assert check.summary.startswith("writes are refused: a restore did not finish (")
+    assert "stopped at moving the store aside" in check.summary
+    assert check.remedy is not None
+    assert check.remedy.startswith(
+        "run `bettermemory backup unlock --yes` after checking the store, or "
+        "re-run the restore"
+    )
+    assert f"bettermemory backup restore {bundle} --yes" in check.remedy
+    assert check.details["record"] == f"{store_file}.restore-lock"
+    assert doctor.exit_code(doctor.overall_status([check])) == 1
+
+    assert _run_cli(["backup", "unlock", "--yes"], monkeypatch) == 0
+    capsys.readouterr()
+    assert doctor.check_restore(context).status == "ok"
+
+
+def test_doctor_warns_while_a_restore_runs(
+    bundle: Path, store_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bettermemory import doctor
+
+    thread, go, result = _restore_paused_after_the_swap(bundle, store_file, monkeypatch)
+    try:
+        check = doctor.check_restore(
+            doctor._Context(cwd=None, directory=store_file.parent)
+        )
+    finally:
+        go.set()
+        thread.join(_CHILD_SECONDS)
+    assert check.status == "warn"
+    assert check.summary == "writes are refused while a restore runs"
+    assert result["status"] == "restored", result["detail"]

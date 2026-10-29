@@ -212,9 +212,10 @@ job, an MDM script or a CI step can run it as is.
 | `bettermemory log verify` | the log verifies | tampered, or cannot be verified | no store, or an `--anchor` file cannot be read | |
 
 `doctor` checks the install, that the config loads, which rule chose
-the store, the store and its key, the store file's pages and its search
-index, the daemon, the Claude Code and other client wiring, and the
-disk, each `ok`, `warn` or `fail` with a one-line fix. `security audit` covers what `doctor` leaves out: file modes and
+the store, whether a restore of it runs or did not finish, the store
+and its key, the store file's pages and its search index, the daemon,
+the Claude Code and other client wiring, and the disk, each `ok`,
+`warn` or `fail` with a one-line fix. `security audit` covers what `doctor` leaves out: file modes and
 owners, the key against the store, git working trees and synced folders,
 and Claude Code's sandbox settings. `config check` grades the contents
 of `config.toml` and the managed config: a typo `doctor` cannot see, such
@@ -488,9 +489,12 @@ To restore:
 A restore that is killed, or fails after it swapped the store file in,
 leaves its record, `memory.sqlite.restore-lock`: every writing open then
 refuses the store, which may be part restored, naming the bundle and the
-step it reached. Run the same restore again to finish it, or
-`bettermemory backup unlock --yes` to keep the store as it stands
-(without `--yes` it shows the record).
+step it reached, and `bettermemory doctor` fails its `restore` check
+with the record and both ways out, exit 1. Run the same restore again
+to finish it, or `bettermemory backup unlock --yes` to keep the store as
+it stands (without `--yes` it shows the record); after an unlock, run
+`bettermemory log verify` and `bettermemory doctor`, since the store
+kept may be part restored.
 
 A restore into another store directory, while the store the bundle was
 taken from is still there, moves the key ring's binding to the restored

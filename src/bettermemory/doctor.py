@@ -20,6 +20,10 @@ would hide the fault it was run for, so this module reads only:
   never rekeyed, and no store is created where none exists; a store file
   inside a backup bundle is not opened at all (its open would change the
   snapshot and fail the bundle's hash) and fails the `store` check;
+- a restore's record beside the store is read, never removed, and its
+  lock is not held past the look (`restore_lock.state_finding`): a
+  restore that did not finish refuses every writing open, which the
+  read-only open never meets, and fails the `restore` check;
 - the daemon is asked `GET /health` and nothing else; its state file is
   read, never removed, and no daemon is started or stopped;
 - client and Claude Code settings files are read, never patched.
@@ -81,6 +85,7 @@ CHECK_IDS: tuple[str, ...] = (
     "install",
     "config",
     "store_location",
+    "restore",
     "store",
     "key",
     "index",
@@ -792,6 +797,21 @@ def _bundle_check(path: Path, details: dict[str, Any]) -> list[Check] | None:
         ),
         _not_checked("key", "the store is a backup bundle's file", "copy it out first"),
     ]
+
+
+def check_restore(ctx: _Context) -> Check:
+    """A restore that did not finish (fail) or one running (warn): either
+    refuses every writing open of the store, which the store check's
+    read-only open does not meet (`restore_lock.state_finding`)."""
+    from .restore_lock import CLEAR, RUNNING, state_finding
+    from .store import STORE_FILENAME
+
+    if ctx.directory is None:
+        why, first = "the store's directory is not known", "fix the config first"
+        return _not_checked("restore", why, first)
+    state, summary, remedy, details = state_finding(ctx.directory / STORE_FILENAME)
+    status = {CLEAR: OK, RUNNING: WARN}.get(state, FAIL)
+    return Check("restore", status, summary, remedy, details)
 
 
 def check_store(ctx: _Context) -> list[Check]:
@@ -1705,6 +1725,7 @@ def run_checks(*, cwd: Path | None = None) -> list[Check]:
     checks += _guarded(("install",), lambda: [check_install()])
     checks += _guarded(("config",), lambda: [check_config(ctx)])
     checks += _guarded(("store_location",), lambda: [check_store_location(ctx)])
+    checks += _guarded(("restore",), lambda: [check_restore(ctx)])
     checks += _guarded(("store", "key"), lambda: check_store(ctx))
     checks += _guarded(("index",), lambda: [check_index(ctx)])
     checks += _guarded(("daemon",), lambda: [check_daemon(ctx)])

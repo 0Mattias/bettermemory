@@ -698,6 +698,82 @@ def unlock(store_file: Path, *, apply: bool) -> dict[str, Any]:
         held.release(clear=not keep)
 
 
+# ---------------------------------------------------------------------------
+# What a reader of the lock sees: `doctor`
+# ---------------------------------------------------------------------------
+
+
+#: `restore_state`'s answers besides `CLEAR`.
+RUNNING = "running"
+UNFINISHED = "unfinished"
+
+
+def restore_state(
+    store_file: Path, *, wait: float = 0.0
+) -> tuple[str, dict[str, Any] | None]:
+    """Whether a restore of the store runs or did not finish, read without
+    opening the store, holding the lock past the look, or making anything:
+    ``(RUNNING, record)`` while another process, or another thread of this
+    one, holds the restore lock past `wait` seconds; ``(UNFINISHED,
+    record)`` when no one holds it and a restore that did not finish left
+    its record; ``(CLEAR, None)`` otherwise, a store directory that does
+    not open included (no restore by this account could lock it). `doctor`
+    reads it: a store's read-only open never meets the refusal every
+    writing open of such a store gets."""
+    try:
+        target = _take(
+            store_file, create=False, shared=True, wait=wait, mine=_this_thread_holds
+        )
+    except OSError:
+        return CLEAR, None
+    if target is None:
+        return CLEAR, None
+    try:
+        if target.mine:
+            return CLEAR, None
+        if not target.taken:
+            return RUNNING, read_marker(store_file)
+        _unlock(target.fd)
+    finally:
+        os.close(target.fd)
+    record = read_marker(store_file)
+    return (CLEAR, None) if record is None else (UNFINISHED, record)
+
+
+def state_finding(store_file: Path) -> tuple[str, str, str | None, dict[str, Any]]:
+    """`restore_state` in `doctor`'s terms: ``(state, summary, remedy,
+    details)``, the summary and remedy naming both ways out of a restore
+    that did not finish."""
+    from .history import printable
+
+    state, record = restore_state(store_file)
+    details: dict[str, Any] = {"state": state, "record": str(lock_path(store_file))}
+    if state == UNFINISHED:
+        details["restore"] = record
+        bundle = (record or {}).get("bundle")
+        again = printable(
+            f"bettermemory backup restore {bundle} --yes"
+            if isinstance(bundle, str)
+            else "bettermemory backup restore BUNDLE --yes"
+        )
+        return (
+            state,
+            f"writes are refused: a restore did not finish ({describe(record or {})})",
+            "run `bettermemory backup unlock --yes` after checking the store, or "
+            f"re-run the restore (`{again}`)",
+            details,
+        )
+    if state == RUNNING:
+        details["restore"] = record
+        return (
+            state,
+            "writes are refused while a restore runs",
+            "run `bettermemory doctor` again when the restore has finished",
+            details,
+        )
+    return state, "no restore is running or left unfinished", None, details
+
+
 __all__ = [
     "CLEAR",
     "CLEARED",
@@ -707,6 +783,8 @@ __all__ = [
     "OPEN_WAIT_SECONDS",
     "PLANNED",
     "RESTORE_WAIT_SECONDS",
+    "RUNNING",
+    "UNFINISHED",
     "UNLOCK_EXIT",
     "RestoreLock",
     "RestoreLockedError",
@@ -716,5 +794,7 @@ __all__ = [
     "lock_path",
     "probe",
     "read_marker",
+    "restore_state",
+    "state_finding",
     "unlock",
 ]
