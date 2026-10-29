@@ -450,8 +450,8 @@ async def memory_verify(
     # memory would then read `fresh`, with the freshness resting on nothing.
     # The read side cannot recover this on its own: an ABSOLUTE attested
     # path is only ever existence-checked when the body also names it (see
-    # `_normalize_attestations` in `verify.py`), so an attestation the prose
-    # never references stays inert forever.
+    # `_normalize_attestations` in `verify_anchoring.py`), so an
+    # attestation the prose never references stays inert forever.
     #
     # Refuse rather than silently drop the bad entries: this tool's own
     # description instructs the caller to attest specific files, so a

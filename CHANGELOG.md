@@ -139,6 +139,22 @@ the candidates' testing.
   (`src/bettermemory/origin.py`, `src/bettermemory/origin_gitfiles.py`,
   `src/bettermemory/origin_remote.py`, `tests/test_commit_drift_cache.py`,
   `docs/internals.md`, `SECURITY.md`)
+- **`verify.py` is split into three modules.** `verify.py` was 4,231
+  lines. The path-candidate extraction (the per-body caps, the
+  extraction regexes, the candidate validator with its route, home and
+  placeholder rules, the existence check and the body parse memo) moves
+  to `verify_candidates.py`, and `detect_path_drift` with its report,
+  `ClaimAnchor`, `Anchoring` and the anchored reads of attestations and
+  relative citations to `verify_anchoring.py`. `verify.py` (1,726
+  lines) keeps verification staleness, commit drift and the staleness
+  verdict, and re-exports every name a caller imports from
+  `bettermemory.verify`, as the same object, so no import path changes
+  and every drift report and verdict reads as before. A test that
+  patches the candidate scan, the memo's bound or the existence check's
+  `Path` now patches `verify_candidates`. (`src/bettermemory/verify.py`,
+  `src/bettermemory/verify_candidates.py`,
+  `src/bettermemory/verify_anchoring.py`, `tests/test_verify.py`,
+  `tests/test_body_parse_memo.py`)
 
 #### Fixed
 
