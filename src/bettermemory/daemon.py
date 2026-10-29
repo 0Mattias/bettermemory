@@ -77,7 +77,7 @@ from collections.abc import AsyncIterator, Coroutine, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Mapping, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping, TypeVar, cast
 
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -120,6 +120,11 @@ from .store import (
     orphan_order,
 )
 from .time_utils import parse_event_ts
+
+if TYPE_CHECKING:
+    from mcp.server.mcpserver import MCPServer
+
+    from .recall import RecallState
 
 log = logging.getLogger("bettermemory.daemon")
 
@@ -706,40 +711,10 @@ def _failed(surface: str, exc: Exception) -> Response:
     )
 
 
-def build_app(
-    *,
-    config: Config,
-    store: Store,
-    token: str,
-    shutdown: Callable[[], None],
-    version: str | None = None,
-    port: int | None = None,
-) -> Starlette:
-    """The daemon's ASGI app: the MCP surface at ``/mcp``, the hook
-    endpoints, ``/health`` and the shutdown endpoint, behind the bearer
-    check. `shutdown` is called by ``POST /api/v1/admin/shutdown``.
-
-    Three checks wrap every route, outermost first: the Host and Origin
-    check (`LocalHostMiddleware`, against `port`, the port the daemon
-    bound; `serve` always passes it, and an app built without it takes
-    any port on a loopback name), the bearer check (`BearerAuthMiddleware`)
-    and the body cap on the hook and admin routes (`BodyLimitMiddleware`).
-    A request with a rebinding Host is refused before the token is read,
-    and a body is read only once the token has been checked, so a client
-    without it cannot make the daemon hold a body at all."""
-    from . import capture_hook as _capture_hook
-    from . import hook as _hook
-    from . import recall as _recall
-
-    served_version = version if version is not None else _version()
-    # Two pools over the daemon's store: the hook bodies' and the tool
-    # bodies' (design: a tool body waiting on git holds no hook up).
-    workers = _Workers(store, busy_timeout=HOOK_BUSY_TIMEOUT_SECONDS)
-    tool_workers = _Workers(
-        store, count=TOOL_WORKERS, name="tool", busy_timeout=TOOL_BUSY_TIMEOUT_SECONDS
-    )
-    mcp = build_server(config=config, store=store, offload=tool_workers.run_coroutine)
-    recall_state = _recall.RecallState()
+def _add_health_route(
+    mcp: MCPServer[Any], store: Store, token: str, served_version: str
+) -> None:
+    """Register ``/health``, with the token's proof for a nonce; returns nothing."""
 
     @_route(mcp, "/health", ["GET"])
     async def health(request: Request) -> Response:
@@ -765,6 +740,13 @@ def build_app(
         if valid_nonce(nonce):
             answer["proof"] = health_proof(token, nonce)
         return JSONResponse(answer)
+
+
+def _add_session_start_route(
+    mcp: MCPServer[Any], config: Config, workers: _Workers, recall_state: RecallState
+) -> None:
+    """Register the session-start hook's endpoint, the session brief; returns nothing."""
+    from . import recall as _recall
 
     @_route(mcp, "/api/v1/hook/session-start", ["POST"])
     async def hook_session_start(request: Request) -> Response:
@@ -796,6 +778,13 @@ def build_app(
             return _failed("session_brief", exc)
         return JSONResponse(result.to_response())
 
+
+def _add_prompt_route(
+    mcp: MCPServer[Any], config: Config, workers: _Workers, recall_state: RecallState
+) -> None:
+    """Register the prompt hook's endpoint, the prompt recall; returns nothing."""
+    from . import recall as _recall
+
     @_route(mcp, "/api/v1/hook/prompt", ["POST"])
     async def hook_prompt(request: Request) -> Response:
         payload = await _json_body(request)
@@ -824,6 +813,14 @@ def build_app(
             log.warning("hook prompt failed: %s: %s", exc.__class__.__name__, exc)
             return _failed("prompt_recall", exc)
         return JSONResponse(result.to_response())
+
+
+def _add_stop_route(
+    mcp: MCPServer[Any], config: Config, workers: _Workers, recall_state: RecallState
+) -> None:
+    """Register the Stop hook's endpoint: the capture step, then the turn audit; returns nothing."""
+    from . import capture_hook as _capture_hook
+    from . import hook as _hook
 
     @_route(mcp, "/api/v1/hook/stop", ["POST"])
     async def hook_stop(request: Request) -> Response:
@@ -935,11 +932,15 @@ def build_app(
             }
         )
 
-    @_route(mcp, "/api/v1/admin/shutdown", ["POST"])
-    async def admin_shutdown(request: Request) -> Response:
-        shutdown()
-        return JSONResponse({"status": "stopping"})
 
+def _wire_app(
+    mcp: MCPServer[Any],
+    token: str,
+    port: int | None,
+    workers: _Workers,
+    tool_workers: _Workers,
+) -> Starlette:
+    """Build the ASGI app behind its three checks and the pools' close; returns the app."""
     app = mcp.streamable_http_app(
         streamable_http_path="/mcp",
         stateless_http=True,
@@ -986,6 +987,52 @@ def build_app(
     app.state.close_workers = close_workers
     app.state.finish_workers = finish_workers
     return app
+
+
+def build_app(
+    *,
+    config: Config,
+    store: Store,
+    token: str,
+    shutdown: Callable[[], None],
+    version: str | None = None,
+    port: int | None = None,
+) -> Starlette:
+    """The daemon's ASGI app: the MCP surface at ``/mcp``, the hook
+    endpoints, ``/health`` and the shutdown endpoint, behind the bearer
+    check. `shutdown` is called by ``POST /api/v1/admin/shutdown``.
+
+    Three checks wrap every route, outermost first: the Host and Origin
+    check (`LocalHostMiddleware`, against `port`, the port the daemon
+    bound; `serve` always passes it, and an app built without it takes
+    any port on a loopback name), the bearer check (`BearerAuthMiddleware`)
+    and the body cap on the hook and admin routes (`BodyLimitMiddleware`).
+    A request with a rebinding Host is refused before the token is read,
+    and a body is read only once the token has been checked, so a client
+    without it cannot make the daemon hold a body at all."""
+    from . import recall as _recall
+
+    served_version = version if version is not None else _version()
+    # Two pools over the daemon's store: the hook bodies' and the tool
+    # bodies' (design: a tool body waiting on git holds no hook up).
+    workers = _Workers(store, busy_timeout=HOOK_BUSY_TIMEOUT_SECONDS)
+    tool_workers = _Workers(
+        store, count=TOOL_WORKERS, name="tool", busy_timeout=TOOL_BUSY_TIMEOUT_SECONDS
+    )
+    mcp = build_server(config=config, store=store, offload=tool_workers.run_coroutine)
+    recall_state = _recall.RecallState()
+
+    _add_health_route(mcp, store, token, served_version)
+    _add_session_start_route(mcp, config, workers, recall_state)
+    _add_prompt_route(mcp, config, workers, recall_state)
+    _add_stop_route(mcp, config, workers, recall_state)
+
+    @_route(mcp, "/api/v1/admin/shutdown", ["POST"])
+    async def admin_shutdown(request: Request) -> Response:
+        shutdown()
+        return JSONResponse({"status": "stopping"})
+
+    return _wire_app(mcp, token, port, workers, tool_workers)
 
 
 #: How often, in seconds, the daemon checks that its store path still
@@ -1475,6 +1522,115 @@ def _migrate_at_start(store: Store, config: Config) -> None:
     )
 
 
+def _watch_lifespan(
+    app: Starlette,
+    holder: dict[str, Any],
+    watch: _StoreWatch,
+    optimize: Callable[[], None],
+    settle: Callable[[], None],
+) -> None:
+    """Wrap the app's lifespan so the watch and the optimizer run while it serves; returns nothing."""
+    built_lifespan = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def lifespan(served: Any) -> AsyncIterator[Any]:
+        # The watch runs while the loop does, so it always has one to
+        # hand the backup to.
+        holder["loop"] = asyncio.get_running_loop()
+        watch.start()
+        holder["optimizer"] = holder["loop"].call_soon(optimize)
+        try:
+            async with built_lifespan(served) as started:
+                yield started
+        finally:
+            holder["stopping"] = True
+            holder["optimizer"].cancel()
+            if "optimizing" in holder:
+                # A run in flight ends on its own connection before the
+                # store is closed.
+                await asyncio.wait([holder["optimizing"]])
+            watch.stop()
+            settle()
+
+    app.router.lifespan_context = lifespan
+
+
+def _write_daemon_state(
+    state_dir: Path, store: Store, token: str, bound_port: int, host: str
+) -> None:
+    """Write the daemon's state file and log where it serves; returns nothing."""
+    state = {
+        "pid": os.getpid(),
+        "port": bound_port,
+        "token": token,
+        "version": _version(),
+        "store": str(store.path),
+        "started": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        # This daemon answers ``/health?nonce=`` with a proof. A client of
+        # 9.0.0rc14 on takes no reply without one for any daemon
+        # (`_daemon_client.proves`) and reads no key here; the key tells
+        # an rc12 or rc13 client, installed beside this one, to do the
+        # same at this port, whatever pid and store a reply repeats.
+        PROOF_STATE_KEY: 1,
+    }
+    write_state(state_dir, state)
+    log.info(
+        "bettermemory daemon %s on %s:%d, store %s",
+        state["version"],
+        host,
+        bound_port,
+        store.path,
+    )
+
+
+def _stop_serving(
+    app: Starlette,
+    watch: _StoreWatch,
+    holder: dict[str, Any],
+    settle: Callable[[], None],
+    store: Store,
+    state_dir: Path,
+    sock: socket.socket,
+) -> None:
+    """Close the workers, settle and close the store, then give the state and port back; returns nothing."""
+    # Every worker's connection closed before anything below: the
+    # lifespan's close has done it when the app shut down or its task
+    # was cancelled, and returns at once here; a loop closed without
+    # cancelling the app's tasks never ran it. A close cut short (a
+    # Ctrl-C repeated during its wait) is logged, the watch and the
+    # settle below still run, and the wait is finished before the
+    # store is closed and the lock given back.
+    try:
+        app.state.close_workers()
+    except BaseException:
+        log.exception("closing the daemon's workers was cut short")
+    try:
+        watch.stop()
+        if not holder.get("settled"):
+            # A loop closed without cancelling the app's tasks never
+            # ran its shutdown, `settle` with it. This is the thread
+            # the loop ran on, and `store`'s connection is still open.
+            try:
+                settle()
+            except Exception:
+                log.exception("saving the removed store %s failed", store.path)
+    finally:
+        try:
+            # `down` waits for the store's lock, which `serve` gives
+            # back once this returns: every worker has ended and the
+            # store is closed here first, so a free lock means no
+            # handle of this daemon is open on the store's files
+            # (`_daemon_client._stopped`).
+            _wait_for_workers(app.state.finish_workers)
+            _store_index.optimize(store, why="shutdown")
+            store.close()
+        except Exception:
+            log.exception("closing the store %s failed", store.path)
+        finally:
+            remove_state(state_dir, store.path, pid=os.getpid())
+            sock.close()
+
+
 def _serve_locked(
     *,
     config: Config,
@@ -1574,51 +1730,8 @@ def _serve_locked(
     app = build_app(
         config=config, store=store, token=token, shutdown=shutdown, port=bound_port
     )
-    built_lifespan = app.router.lifespan_context
-
-    @asynccontextmanager
-    async def lifespan(served: Any) -> AsyncIterator[Any]:
-        # The watch runs while the loop does, so it always has one to
-        # hand the backup to.
-        holder["loop"] = asyncio.get_running_loop()
-        watch.start()
-        holder["optimizer"] = holder["loop"].call_soon(optimize)
-        try:
-            async with built_lifespan(served) as started:
-                yield started
-        finally:
-            holder["stopping"] = True
-            holder["optimizer"].cancel()
-            if "optimizing" in holder:
-                # A run in flight ends on its own connection before the
-                # store is closed.
-                await asyncio.wait([holder["optimizing"]])
-            watch.stop()
-            settle()
-
-    app.router.lifespan_context = lifespan
-    state = {
-        "pid": os.getpid(),
-        "port": bound_port,
-        "token": token,
-        "version": _version(),
-        "store": str(store.path),
-        "started": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        # This daemon answers ``/health?nonce=`` with a proof. A client of
-        # 9.0.0rc14 on takes no reply without one for any daemon
-        # (`_daemon_client.proves`) and reads no key here; the key tells
-        # an rc12 or rc13 client, installed beside this one, to do the
-        # same at this port, whatever pid and store a reply repeats.
-        PROOF_STATE_KEY: 1,
-    }
-    write_state(state_dir, state)
-    log.info(
-        "bettermemory daemon %s on %s:%d, store %s",
-        state["version"],
-        host,
-        bound_port,
-        store.path,
-    )
+    _watch_lifespan(app, holder, watch, optimize, settle)
+    _write_daemon_state(state_dir, store, token, bound_port, host)
     uv_config = uvicorn.Config(
         app,
         host=host,
@@ -1643,42 +1756,7 @@ def _serve_locked(
     try:
         server.run(sockets=[sock])
     finally:
-        # Every worker's connection closed before anything below: the
-        # lifespan's close has done it when the app shut down or its task
-        # was cancelled, and returns at once here; a loop closed without
-        # cancelling the app's tasks never ran it. A close cut short (a
-        # Ctrl-C repeated during its wait) is logged, the watch and the
-        # settle below still run, and the wait is finished before the
-        # store is closed and the lock given back.
-        try:
-            app.state.close_workers()
-        except BaseException:
-            log.exception("closing the daemon's workers was cut short")
-        try:
-            watch.stop()
-            if not holder.get("settled"):
-                # A loop closed without cancelling the app's tasks never
-                # ran its shutdown, `settle` with it. This is the thread
-                # the loop ran on, and `store`'s connection is still open.
-                try:
-                    settle()
-                except Exception:
-                    log.exception("saving the removed store %s failed", store.path)
-        finally:
-            try:
-                # `down` waits for the store's lock, which `serve` gives
-                # back once this returns: every worker has ended and the
-                # store is closed here first, so a free lock means no
-                # handle of this daemon is open on the store's files
-                # (`_daemon_client._stopped`).
-                _wait_for_workers(app.state.finish_workers)
-                _store_index.optimize(store, why="shutdown")
-                store.close()
-            except Exception:
-                log.exception("closing the store %s failed", store.path)
-            finally:
-                remove_state(state_dir, store.path, pid=os.getpid())
-                sock.close()
+        _stop_serving(app, watch, holder, settle, store, state_dir, sock)
     return 0
 
 
