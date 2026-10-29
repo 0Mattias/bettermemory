@@ -484,7 +484,7 @@ and its exact line. Until it is
 answered the checkout's project is provisional, nothing of another
 project is delivered there, and the line leads every session's first
 output there. `bettermemory project join <id>` and `project new` answer
-it; so does evidence arriving. The lines (`line_*` in `membership.py`):
+it; so does evidence arriving. The lines (`line_*` in `membership_lines.py`):
 L1 a checkout that may be a known project, L2 a new project, L3 a project
 file naming another project, L4 joined, L5 a remote that diverged, L6 the
 records of a gone folder that may belong here, L7 a sub-project file
