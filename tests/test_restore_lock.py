@@ -783,9 +783,13 @@ def test_a_console_hook_refuses_a_running_restore_without_waiting(
         assert held is not None
         try:
             held.mark(bundle=str(tmp_path / "bundle"), stage="moving the store aside")
+            # The store and the restore's record as the hook found them,
+            # read again while the restore still holds them.
+            before = _files(store_file.parent)
             started = time.monotonic()
             hook = _console_hook(child_env, "prompt")
             took = time.monotonic() - started
+            after = _files(store_file.parent)
         finally:
             held.release(clear=True)
     assert hook.returncode == 0
@@ -797,3 +801,5 @@ def test_a_console_hook_refuses_a_running_restore_without_waiting(
     )
     assert took < _daemon_client.START_TIMEOUT_SECONDS, took
     assert not list(state_dir.glob("daemon-*.log")), "a daemon was started"
+    assert store_file.name in before
+    assert after == before
