@@ -457,8 +457,8 @@ def _dump_yaml(post: Post, max_yaml_bytes: int) -> str:
 
 def _check_file_cap(final: str, max_file_bytes: int) -> None:
     """Refuse a serialised file over max_file_bytes, the size the read cap would reject; returns nothing."""
-    # Total-file cap: the `_MAX_YAML_BYTES` check above bounds only the
-    # frontmatter region, but `load` rejects the WHOLE file (frontmatter +
+    # Total-file cap: the `_MAX_YAML_BYTES` check in `_dump_yaml` bounds only
+    # the frontmatter region, but `load` rejects the WHOLE file (frontmatter +
     # body) against `_MAX_FILE_BYTES` via `bounded_read`'s stat check. A
     # legal-sized frontmatter (dense `verified_paths` etc.) plus a body near
     # the handler-boundary `max_content_bytes` cap (config-tunable, default
@@ -471,7 +471,7 @@ def _check_file_cap(final: str, max_file_bytes: int) -> None:
     # one chokepoint every persist routes through turns that silent permanent
     # data loss into a clean ValueError for body+frontmatter combined and ALL
     # fields, present and future — the write-side mirror of the file cap.
-    # `max_file_bytes` defaults to `_MAX_WRITE_BYTES` (read cap minus
+    # `dumps` defaults `max_file_bytes` to `_MAX_WRITE_BYTES` (read cap minus
     # maintenance headroom) for content-admitting writes so the record stays
     # tombstoneable; the lifecycle re-dump paths pass the full `_MAX_FILE_BYTES`
     # to allow that bounded growth up to (but never past) the read cap.

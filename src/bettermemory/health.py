@@ -252,10 +252,10 @@ def _dead_weight_bucket(
     # docstring for the full gate list).
     #
     # Memories with `retrieval_count == 0` move into `cold_memories`
-    # below. Ambient-category memories are excluded from both buckets:
-    # their value is implicit (they shape responses without being cited),
-    # so the use signal is structurally absent and a count of zero
-    # there is not an indictment.
+    # (`_usage_buckets`). Ambient-category memories are excluded from
+    # both buckets: their value is implicit (they shape responses without
+    # being cited), so the use signal is structurally absent and a count
+    # of zero there is not an indictment.
     #
     # ...and none of that reasoning holds on a store where nothing was
     # ever in a position to record an apply. The honesty gate empties
@@ -339,7 +339,8 @@ def _usage_buckets(
     # Attach the resolution timeline to each contradicted row. Cheap because
     # the bucket is typically empty or small. We slice the per-id event list
     # rather than re-iterating the events stream — the accumulator was built
-    # in the same pass that produced the counters above.
+    # in the same pass over the events, in `compute_health`, that produced
+    # the counters in `by_id`.
     for stats in contradicted:
         stats.resolution_timeline = list(resolution_events_by_id.get(stats.id, []))
     return cold_memories, heavily_used, contradicted
@@ -593,16 +594,16 @@ def _health_report(
         scope for stats in by_id.values() for scope in stats.scopes
     )
 
-    # Per-actor pivot. Built from the memory walk above and the event
-    # rollups together, in Python, from the arguments this function was
-    # handed — deliberately NOT off the index's v11 actor columns.
-    # `compute_health` is pure over memories + events and never sees an
-    # index (`provenance` is the one index-backed field and it is
-    # populated a layer up, in `report_for_store`); the events half
-    # has no index at all; and an index can legitimately sit a row
-    # behind disk between a write and a rebuild, which would put this
-    # report's own reconciliation invariants in disagreement with
-    # themselves. The v11 columns serve `memory_search`'s SQL
+    # Per-actor pivot. Built from the memory walk (`_census_memories`)
+    # and the event rollups together, in Python, from the arguments
+    # this function was handed — deliberately NOT off the index's v11
+    # actor columns. `compute_health` is pure over memories + events
+    # and never sees an index (`provenance` is the one index-backed
+    # field and it is populated a layer up, in `report_for_store`); the
+    # events half has no index at all; and an index can legitimately
+    # sit a row behind disk between a write and a rebuild, which would
+    # put this report's own reconciliation invariants in disagreement
+    # with themselves. The v11 columns serve `memory_search`'s SQL
     # prefilter, which is what they were added for.
     actor_slices = _build_actor_slices(
         memories=census.actor_memories,
@@ -831,10 +832,11 @@ def compute_health(
         anchoring=anchoring,
         admission=admission,
     )
-    # Recommendations are distilled from the buckets, so the gate above
-    # reaches them for free: an emptied `dead_weight` cannot cross the
-    # size floor, and `memory_health` therefore never tells the model to
-    # go remove rot it invented from a missing hook.
+    # Recommendations are distilled from the buckets, so the honesty
+    # gate in `_dead_weight_bucket` reaches them for free: an emptied
+    # `dead_weight` cannot cross the size floor, and `memory_health`
+    # therefore never tells the model to go remove rot it invented from
+    # a missing hook.
     report.recommendations = _compute_recommendations(report)
     return report
 
@@ -951,7 +953,8 @@ def _recorded_root_reachable(
     # So: positively absent is a finding, unreadable is a separate
     # finding, and only a directory we could actually stat is
     # handed to git — asking git to work inside a directory we
-    # could not stat is how the mislabel below happened.
+    # could not stat is how the mislabel happened that
+    # `_recorded_root_group`'s `repo is None` comment describes.
     if location.view_state(worktree, location.PRIMARY, None, None) == "gone":
         skipped.append(
             {
@@ -994,15 +997,16 @@ def _recorded_root_group(
     if live.repo is None or not repos_match(repo, live.repo):
         # `repo is None` is THREE outcomes wearing one value, and
         # only one of them is a finding about the directory. The
-        # stat split above fixed the unreadable arm and it would be
-        # easy to stop there and claim the rest — but `origin._git`
-        # folds a missing binary, a timeout at its 1.0s ceiling and
-        # a non-zero exit into the same `None`, and `capture` gates
-        # `repo` on `worktree_root`, so "git never answered" arrives
-        # here indistinguishable from "git answered: not a
-        # checkout". A server spawned from a GUI with a minimal PATH
-        # has no git at all, and would otherwise have every foreign
-        # group in the estate libeled at once.
+        # stat split in `_recorded_root_reachable` fixed the
+        # unreadable arm and it would be easy to stop there and
+        # claim the rest — but `origin._git` folds a missing binary,
+        # a timeout at its 1.0s ceiling and a non-zero exit into the
+        # same `None`, and `capture` gates `repo` on
+        # `worktree_root`, so "git never answered" arrives here
+        # indistinguishable from "git answered: not a checkout". A
+        # server spawned from a GUI with a minimal PATH has no git
+        # at all, and would otherwise have every foreign group in
+        # the estate libeled at once.
         #
         # `worktree_root` is the discriminator, because `capture`
         # sets it from the FIRST probe and only when that probe

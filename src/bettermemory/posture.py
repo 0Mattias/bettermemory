@@ -1750,7 +1750,7 @@ def _network_gaps(
         # Claude Code's sandboxing documentation: on Linux and WSL2 a
         # sandboxed command's localhost is its own, and the key has no
         # effect there. Native Windows, where the sandbox does not run,
-        # returned a skip above and never reaches this.
+        # returned a skip in `_claude` and never reaches this.
         yield Finding(
             "claude.sandbox.local_binding",
             "info",

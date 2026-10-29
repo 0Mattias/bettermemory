@@ -260,8 +260,9 @@ def _export_active(
     # over-reports by one — the residual race, and the rarer of the two by
     # a wide margin (writes are a routine reflex; removals are curation).
     # `bettermemory doctor` re-reads and names files rather than
-    # subtracting counts, which is why the warning below sends the reader
-    # there instead of asserting which file is at fault.
+    # subtracting counts, which is why the warning `_warn_skipped_files`
+    # prints sends the reader there instead of asserting which file is at
+    # fault.
     active = store.load_all()
     # Count the drop BEFORE the scope filter. A file the reader could not
     # parse has no scopes to test, so it can only be measured against the
@@ -277,13 +278,13 @@ def _export_tombstones(
     store: Store, scope_set: set[str] | None
 ) -> tuple[list[TombstonedMemory], int]:
     """Count and load the tombstones, then filter them by scope; returns them and the skipped count."""
-    # Same count-then-load ordering as the active half above, for the
-    # same reason. The write that lands in this gap is a
-    # `memory_remove` (it creates the tombstone), and the removal that
-    # lands in it is a `memory_restore`; both are rarer here than a
-    # `memory_write` is there, but the ordering costs nothing and
-    # keeping the two halves symmetrical is what stops one of them
-    # from being reasoned about again from scratch.
+    # Same count-then-load ordering as the active half,
+    # `_export_active`, for the same reason. The write that lands in
+    # this gap is a `memory_remove` (it creates the tombstone), and
+    # the removal that lands in it is a `memory_restore`; both are
+    # rarer here than a `memory_write` is there, but the ordering
+    # costs nothing and keeping the two halves symmetrical is what
+    # stops one of them from being reasoned about again from scratch.
     tombstone_files_before = store.count_tombstones()
     tombstoned = store.load_tombstones()
     skipped_tombstone_files = max(0, tombstone_files_before - len(tombstoned))
@@ -386,10 +387,11 @@ def _write_export(
             )
             # Route through `parser.error` for a clean
             # `bettermemory export: error: …` + exit 2 instead of a raw
-            # traceback / exit 1, mirroring the --scope ValueError arm
-            # above and the sibling rename-scope / tombstones-restore
-            # commands. `parser is None` (programmatic / test callers)
-            # keeps the raw exception so they still see the exception type.
+            # traceback / exit 1, mirroring the --scope ValueError arm in
+            # `_export_scope_set` and the sibling rename-scope /
+            # tombstones-restore commands. `parser is None` (programmatic /
+            # test callers) keeps the raw exception so they still see the
+            # exception type.
             if parser is not None:
                 parser.error(msg)
             raise FileNotFoundError(msg)

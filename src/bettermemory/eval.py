@@ -450,11 +450,11 @@ def compute_eval(
     count is SEARCH deliveries only (``memory_list`` browses and
     ``memory_show`` pinpoint reads keep feeding
     ``retrieval_occurrences`` but not the floor — see the
-    ``search_delivery_count`` comment below), and the bucket rides the
-    same Stop-hook telemetry honesty gate: on a log with zero
-    ``health.is_hook_telemetry_event`` rows — measured over the whole
-    log, not the window — the rows are skipped entirely and
-    ``cold_endorsement_suppressed`` says so, because
+    ``search_delivery_count`` comment in ``eval_rates._EvalWalk``),
+    and the bucket rides the same Stop-hook telemetry honesty gate: on
+    a log with zero ``health.is_hook_telemetry_event`` rows — measured
+    over the whole log, not the window — the rows are skipped entirely
+    and ``cold_endorsement_suppressed`` says so, because
     ``explicit_applied_count == 0`` is uninformative when nothing was
     ever in a position to attribute an apply.
     """
@@ -595,7 +595,8 @@ def _buffer_sweep_misses(
         # can't replay events every rate surface has already
         # invalidated. Latest `cutoff_ts` wins; a malformed value
         # parses to None and is ignored. `miss_ack` events are
-        # deliberately not resolved here — see the docstring.
+        # deliberately not resolved here — see the docstring of
+        # `compute_threshold_sweep`.
         if kind == "silent_miss_cutoff":
             parsed_cutoff = _parse_ts(ev.get("cutoff_ts"))
             if parsed_cutoff is not None and (

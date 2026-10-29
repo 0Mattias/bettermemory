@@ -165,16 +165,17 @@ def _open_reader(
     # Meta's fingerprint is only what the file says. When this
     # machine has a history of the store (its key ring holds
     # an origin anchor for it, or its key signs a segment of
-    # the log, as the owner's opener reads it below), an editor
-    # who pointed meta at another key must not thereby switch
-    # the reads' checks off, which left a planted record its
-    # stored label here while `log verify` read the store
-    # tampered. The key is bound for checking pointers, never
-    # for writing, and nothing is written to set meta back.
-    # Binding it can only take a stored label away: a row
-    # still verifies under its own segment's key. An owner's
-    # open refused for a key ring bound elsewhere checks under
-    # a key meta names too, as the bound store's reads would.
+    # the log, as the owner's opener, `_open_connected`, reads
+    # it), an editor who pointed meta at another key must not
+    # thereby switch the reads' checks off, which left a
+    # planted record its stored label here while `log verify`
+    # read the store tampered. The key is bound for checking
+    # pointers, never for writing, and nothing is written to
+    # set meta back. Binding it can only take a stored label
+    # away: a row still verifies under its own segment's key.
+    # An owner's open refused for a key ring bound elsewhere
+    # checks under a key meta names too, as the bound store's
+    # reads would.
     if key is not None and (
         matches
         or keyring.read_origin() is not None

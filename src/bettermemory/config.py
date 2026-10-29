@@ -1802,8 +1802,9 @@ def _config_from_data(data: dict[str, Any], config_path: ConfigSource) -> Config
     security_raw = _section_table(data, "security", config_path)
 
     # T9: back-compat for the 3.1.x -> 3.2.0 TOML key rename. Mutates
-    # `behavior_raw` so the downstream `behavior_raw.get(...)` lookups
-    # below pick up the legacy value under the new key.
+    # `behavior_raw` so the `behavior_raw.get(...)` lookups in
+    # `config_sections._behavior_config` pick up the legacy value
+    # under the new key.
     _apply_legacy_endorsement_debt_alias(behavior_raw, config_path)
 
     # Keys and sections a major removed: ignored with a one-time notice

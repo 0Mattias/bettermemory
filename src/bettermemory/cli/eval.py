@@ -397,7 +397,8 @@ def _run_rate_mode(
     )
 
     # `rate_report`, not `report` — that name is taken by the --report
-    # mode flag in this scope since the report mode landed.
+    # mode flag in `_cli_eval`, this mode's caller, since the report
+    # mode landed.
     rate_report = compute_eval(
         memories=store.load_all(),
         events=ctx.store.iter_events(),

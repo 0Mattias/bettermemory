@@ -159,7 +159,7 @@ def _count_use(
     # comparison (a stray truthy `auto=1` / `auto="true"` reads
     # as NON-auto, same as missing/None, so we never silently
     # relabel borderline data as the server closing the loop).
-    # Shared rather than re-derived here: this module and
+    # Shared rather than re-derived here: `eval.compute_eval` and
     # `health._StatsAccumulator._handle_use` publish the same
     # split under different names, and the per-memory tallies
     # below are the cold-endorsement bucket health lists too.
@@ -188,12 +188,12 @@ def _count_use(
     # Dedupe `ids` within a single use event before counting.
     # A model that sends `record_use(memory_ids=["A", "A"], ...)`
     # would otherwise inflate `applied_total` and the helped-rate
-    # numerator. Since eval.py is the citable reference for the
-    # published metric, the dedup must happen here — we can't
-    # fix upstream without changing recorder semantics. Preserve
-    # the first non-empty excerpt per id so the helped-rate
-    # numerator stays accurate when "A" appears twice with
-    # excerpts `["foo", "bar"]`.
+    # numerator. Since `eval.compute_eval` counts through this
+    # walk and is the citable reference for the published metric,
+    # the dedup must happen here — we can't fix upstream without
+    # changing recorder semantics. Preserve the first non-empty
+    # excerpt per id so the helped-rate numerator stays accurate
+    # when "A" appears twice with excerpts `["foo", "bar"]`.
     seen_ids: dict[str, Any] = {}
     for i, mid in enumerate(ids):
         if not isinstance(mid, str):
@@ -319,9 +319,9 @@ def _walk_eval_events(
             # Buffered rather than counted inline so a cutoff/ack
             # marker later in the log can retroactively invalidate
             # earlier telemetry. Resolution happens after the pass,
-            # below — chronological order is preserved, so the
-            # counting is identical to the pre-buffer inline loop
-            # whenever no marker exists.
+            # in `_resolve_audit_telemetry` — chronological order
+            # is preserved, so the counting is identical to the
+            # pre-buffer inline loop whenever no marker exists.
             walk.audit_telemetry.append(ev)
     return walk
 
