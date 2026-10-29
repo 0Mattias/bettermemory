@@ -1040,7 +1040,8 @@ and quarantine, `store_membership.py` the membership tables' rows,
 refold and verification, `store_provenance.py` the provenance labels
 and the trust reads, and `store_index.py` the reads behind search
 and the document frequency memo.
-`origin.py` stamps where the write happened.
+`origin.py` stamps where the write happened, in an `Origin`
+(`origin_model.py`).
 
 **Read path.** `handlers/search.py` and `handlers/show.py` read the
 store's candidate query (the FTS5 prefilter above the index threshold)
