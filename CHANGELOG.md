@@ -366,7 +366,8 @@ follows the candidates' testing.
   `src/bettermemory/handlers/_shared.py`, `src/bettermemory/_handlers.py`,
   `src/bettermemory/doctor.py`, `CONTRIBUTING.md`, `docs/internals.md`,
   `docs/api.md`, `docs/operations.md`, `docs/release.md`,
-  `tests/test_store_versions.py`, `tests/test_doctor.py`)
+  `tests/test_store_versions.py`, `tests/test_doctor.py`,
+  `tests/test_cross_build.py`)
 - **A change to the store's schema within a major runs as a numbered
   step, and one that changes what is there runs only after a backup.**
   `store_steps.STEPS` lists every step this build knows, numbered from 1;
