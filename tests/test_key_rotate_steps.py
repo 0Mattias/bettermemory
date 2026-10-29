@@ -28,6 +28,7 @@ import pytest
 
 from bettermemory import _daemon_client
 from bettermemory import key_lifecycle as lifecycle
+from bettermemory._fsutil import atomic_write_bytes
 from bettermemory.log import REKEY, KeyRing, fingerprint
 from bettermemory.store import STORE_FILENAME, Store
 
@@ -53,7 +54,7 @@ def _inject(
     """Raise ``fault`` at ``step`` of the rotation, once the step's write
     is done (the commit fails as it is made)."""
     if step == "retired":
-        real_once = lifecycle.write_key_once
+        from bettermemory.store_keys import write_key_once as real_once
 
         def once(path: Path, key: bytes) -> bool:
             real_once(path, key)
@@ -61,7 +62,7 @@ def _inject(
 
         monkeypatch.setattr(lifecycle, "write_key_once", once)
     elif step == "pending":
-        real_write = lifecycle.atomic_write_bytes
+        real_write = atomic_write_bytes
 
         def write(target: Path, data: bytes, **kwargs: Any) -> None:
             real_write(target, data, **kwargs)
@@ -208,7 +209,7 @@ def test_an_owners_open_racing_the_rotation_never_writes_a_key(
 
     racers: list[threading.Thread] = []
     if window == "before_commit":
-        real_write = lifecycle.atomic_write_bytes
+        real_write = atomic_write_bytes
 
         def then_race(target: Path, data: bytes, **kwargs: Any) -> None:
             real_write(target, data, **kwargs)
@@ -220,7 +221,7 @@ def test_an_owners_open_racing_the_rotation_never_writes_a_key(
 
         monkeypatch.setattr(lifecycle, "atomic_write_bytes", then_race)
     else:
-        real_finish = lifecycle.finish_rotation
+        from bettermemory.store_keys import finish_rotation as real_finish
 
         def race_then_finish(*args: Any) -> Any:
             racing_open()

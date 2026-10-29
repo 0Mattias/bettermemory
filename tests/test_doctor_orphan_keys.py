@@ -443,11 +443,11 @@ def test_a_clear_cut_short_moves_the_rest_on_the_next_run(
             raise OSError("the disk went away")
         real_rename(src, dst)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(lifecycle.os, "rename", no_binding)
+    monkeypatch.setattr(os, "rename", no_binding)
     first = lifecycle.clear_orphan_rings(None, apply=True)
     assert [f["store_id"] for f in first["failed"]] == [store_id]
     assert _standing(keys_dir, store_id).state == lifecycle.RING_ORPHANED
-    monkeypatch.setattr(lifecycle.os, "rename", real_rename)
+    monkeypatch.setattr(os, "rename", real_rename)
     second = lifecycle.clear_orphan_rings(None, apply=True)
     assert [m["store_id"] for m in second["moved"]] == [store_id]
     target = lifecycle.quarantine_path(keys_dir, store_id)
