@@ -993,29 +993,8 @@ def probe_for_miss(
     production would never have surfaced. Both production producers build
     the pair together via `handlers.search.resolve_search_pool`; offline
     callers that pass a full `load_all()` correctly leave this None,
-    because for them pool statistics ARE corpus statistics.
-
-    Honest residuals in that pool parity, none of them closed here:
-
-    - The producers size the pool's cap-starvation guard for a DEFAULT
-      search (`handlers.search.default_search_width` — the config knob
-      under the same clamp a request goes through), since the search they
-      describe is the one that did not happen and carries no width of its
-      own. A model habitually passing a wider `max_results` is therefore
-      measured against a narrower counterfactual than its own habit;
-      `handlers.search.resolve_search_pool` carries the measurement of
-      how far that can travel.
-    - The producers build the pool from the RAW USER MESSAGE, because
-      that is the only query text a turn-end audit has. The model would
-      have typed a distilled query, so above the index threshold the FTS
-      prefilter draws a different capped slice than the model's own
-      search would have — the pool is production's *mechanism*, not
-      necessarily production's *rows*.
-    - `corpus_stats_provider` prices document frequencies over the
-      admitted collection, which still contains the memories the
-      creation shield below then drops from `memories`. Only the df
-      DENOMINATORS see them — no shielded memory can be ranked or
-      returned — so the effect is a small IDF drift, not a leak.
+    because for them pool statistics ARE corpus statistics. The honest
+    residuals in that pool parity are listed above `_probe_hits`.
 
     `creation_shield_seconds` is the creation-shield window: memories
     whose `created` falls within it are dropped from the candidate set
@@ -1051,6 +1030,40 @@ def probe_for_miss(
     `search_miss` event when `report.is_miss` — this function is
     side-effect-free so it can be reused from offline tooling.
     """
+    now = _probe_now(now)
+    if not memories or not user_message.strip():
+        return _no_signal_report(now, session_id, lookback_seconds, None)
+    if _too_thin_to_probe(user_message):
+        return _no_signal_report(now, session_id, lookback_seconds, user_message)
+    memories = _created_before_shield(memories, now, creation_shield_seconds)
+    hits = _probe_hits(
+        memories,
+        user_message,
+        now=now,
+        mode=mode,
+        excluded_scopes=excluded_scopes,
+        admission=admission,
+        half_life_days=half_life_days,
+        corpus_stats_provider=corpus_stats_provider,
+        conversational=conversational,
+    )
+    if not hits:
+        return _no_signal_report(now, session_id, lookback_seconds, user_message)
+    return _probe_report(
+        _miss_hits(hits),
+        user_message,
+        recent_events,
+        session_id=session_id,
+        retrieval_session_id=retrieval_session_id,
+        now=now,
+        lookback_seconds=lookback_seconds,
+        admission=admission,
+        worktree_root=worktree_root,
+    )
+
+
+def _probe_now(now: datetime | None) -> datetime:
+    """Take the caller's `now` (naive, aware or None); return it as aware UTC."""
     # Coerce at the single seam: an INJECTED naive `now` (e.g. a test or
     # offline caller that builds `datetime(...)` without tzinfo) would
     # otherwise flow uncoerced into `_count_recent_retrievals` (where
@@ -1061,20 +1074,30 @@ def probe_for_miss(
     # naive cutoff. `ensure_utc(None)` returns None so the `or` fallback
     # still fires for the unset case; both downstream call sites read this
     # now-coerced local `now`.
-    now = ensure_utc(now) or datetime.now(timezone.utc)
+    return ensure_utc(now) or datetime.now(timezone.utc)
 
-    if not memories or not user_message.strip():
-        return MissReport(
-            verdict="no_signal",
-            checked_at=now,
-            session_id=session_id,
-            lookback_seconds=lookback_seconds,
-            recent_retrieval_count=0,
-            threshold_rule=THRESHOLD_RULE_V1,
-            top_hits=(),
-            probe_query=None,
-        )
 
+def _no_signal_report(
+    now: datetime,
+    session_id: str,
+    lookback_seconds: int,
+    probe_query: str | None,
+) -> MissReport:
+    """Take the probe's context and query; return its `no_signal` report."""
+    return MissReport(
+        verdict="no_signal",
+        checked_at=now,
+        session_id=session_id,
+        lookback_seconds=lookback_seconds,
+        recent_retrieval_count=0,
+        threshold_rule=THRESHOLD_RULE_V1,
+        top_hits=(),
+        probe_query=probe_query,
+    )
+
+
+def _too_thin_to_probe(user_message: str) -> bool:
+    """Take the user's message; return True when it carries too little to probe."""
     # Single-content-token cohort: structurally always scores "high" on
     # the v1 rule because 1/1 = 1.0 = "high" against any memory that
     # mentions the token. Bare continuations ("yes", "continue",
@@ -1098,18 +1121,15 @@ def probe_for_miss(
         for t in _strip_stopwords(_tokenize_unstemmed(user_message))
         if not t.isdigit()
     }
-    if len(content_tokens) < MIN_PROBE_CONTENT_TOKENS or surface_tokens <= _ACK_TOKENS:
-        return MissReport(
-            verdict="no_signal",
-            checked_at=now,
-            session_id=session_id,
-            lookback_seconds=lookback_seconds,
-            recent_retrieval_count=0,
-            threshold_rule=THRESHOLD_RULE_V1,
-            top_hits=(),
-            probe_query=user_message,
-        )
+    return (
+        len(content_tokens) < MIN_PROBE_CONTENT_TOKENS or surface_tokens <= _ACK_TOKENS
+    )
 
+
+def _created_before_shield(
+    memories: list[Memory], now: datetime, creation_shield_seconds: int
+) -> list[Memory]:
+    """Take the pool and the shield; return the memories created before it."""
     # A memory created inside the CREATION-SHIELD window did not exist
     # when the user message arrived, so it cannot be evidence of a
     # retrieval miss. Without this filter the proactive-capture flow
@@ -1138,10 +1158,44 @@ def probe_for_miss(
     # candidate list, `run_search` returns no hits and the
     # no_signal-with-probe_query branch below reports it.
     creation_cutoff = now - timedelta(seconds=creation_shield_seconds)
-    memories = [
-        m for m in memories if (ensure_utc(m.created) or now) <= creation_cutoff
-    ]
+    return [m for m in memories if (ensure_utc(m.created) or now) <= creation_cutoff]
 
+
+# Honest residuals in the pool parity `probe_for_miss` keeps with
+# production (its docstring), none of them closed here:
+#
+# - The producers size the pool's cap-starvation guard for a DEFAULT
+#   search (`handlers.search.default_search_width` — the config knob
+#   under the same clamp a request goes through), since the search they
+#   describe is the one that did not happen and carries no width of its
+#   own. A model habitually passing a wider `max_results` is therefore
+#   measured against a narrower counterfactual than its own habit;
+#   `handlers.search.resolve_search_pool` carries the measurement of
+#   how far that can travel.
+# - The producers build the pool from the RAW USER MESSAGE, because
+#   that is the only query text a turn-end audit has. The model would
+#   have typed a distilled query, so above the index threshold the FTS
+#   prefilter draws a different capped slice than the model's own
+#   search would have — the pool is production's *mechanism*, not
+#   necessarily production's *rows*.
+# - `corpus_stats_provider` prices document frequencies over the
+#   admitted collection, which still contains the memories the
+#   creation shield then drops from `memories`. Only the df
+#   DENOMINATORS see them — no shielded memory can be ranked or
+#   returned — so the effect is a small IDF drift, not a leak.
+def _probe_hits(
+    memories: list[Memory],
+    user_message: str,
+    *,
+    now: datetime,
+    mode: str,
+    excluded_scopes: set[str] | None,
+    admission: Admission | None,
+    half_life_days: float,
+    corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None,
+    conversational: bool,
+) -> list[MemoryHit]:
+    """Take the shielded pool, the message and the ranker knobs; return the hits."""
     # `run_search` returns up to `max_results` hits already sorted by
     # relevance; we ask for `_TOP_HITS_RETAINED` so the report carries
     # enough context to triage without a second call. `mode` is cast to
@@ -1168,19 +1222,12 @@ def probe_for_miss(
         rescue_expansion=False,
         conversational=conversational,
     )
-    if not hits:
-        return MissReport(
-            verdict="no_signal",
-            checked_at=now,
-            session_id=session_id,
-            lookback_seconds=lookback_seconds,
-            recent_retrieval_count=0,
-            threshold_rule=THRESHOLD_RULE_V1,
-            top_hits=(),
-            probe_query=user_message,
-        )
+    return hits
 
-    top_hits = tuple(
+
+def _miss_hits(hits: list[MemoryHit]) -> tuple[MissHit, ...]:
+    """Take the probe's ranked hits; return them as the report's `MissHit`s."""
+    return tuple(
         MissHit(
             id=h.id,
             score=h.score,
@@ -1194,6 +1241,20 @@ def probe_for_miss(
         for h in hits
     )
 
+
+def _probe_report(
+    top_hits: tuple[MissHit, ...],
+    user_message: str,
+    recent_events: Iterable[dict[str, Any]],
+    *,
+    session_id: str,
+    retrieval_session_id: str | None,
+    now: datetime,
+    lookback_seconds: int,
+    admission: Admission | None,
+    worktree_root: str | None,
+) -> MissReport:
+    """Take the probe's hits and the session's events; return the verdict's report."""
     # v1 rule: any top-1-relevance="high" hit counts as "the probe found
     # something the model should have retrieved." Looser than requiring
     # high on all three; tighter than letting "medium" through (which
@@ -1221,7 +1282,29 @@ def probe_for_miss(
         admission=admission,
         worktree_root=worktree_root,
     )
+    verdict, suppressed_by = _probe_verdict(
+        top_hits, clears_threshold, recent_retrieval_count, admission
+    )
+    return MissReport(
+        verdict=verdict,
+        checked_at=now,
+        session_id=session_id,
+        lookback_seconds=lookback_seconds,
+        recent_retrieval_count=recent_retrieval_count,
+        threshold_rule=THRESHOLD_RULE_V1,
+        top_hits=top_hits,
+        probe_query=user_message,
+        suppressed_by=suppressed_by,
+    )
 
+
+def _probe_verdict(
+    top_hits: tuple[MissHit, ...],
+    clears_threshold: bool,
+    recent_retrieval_count: int,
+    admission: Admission | None,
+) -> tuple[Verdict, str | None]:
+    """Take the hits and the shields' inputs; return (verdict, suppressed_by)."""
     # `suppressed_by` names the shield that downgraded a
     # threshold-clearing hit; None everywhere else (see MissReport).
     suppressed_by: str | None = None
@@ -1248,18 +1331,7 @@ def probe_for_miss(
         suppressed_by = "project_cohort"
     else:
         verdict = "miss"
-
-    return MissReport(
-        verdict=verdict,
-        checked_at=now,
-        session_id=session_id,
-        lookback_seconds=lookback_seconds,
-        recent_retrieval_count=recent_retrieval_count,
-        threshold_rule=THRESHOLD_RULE_V1,
-        top_hits=top_hits,
-        probe_query=user_message,
-        suppressed_by=suppressed_by,
-    )
+    return verdict, suppressed_by
 
 
 def _caller_in_top_hit_project(
