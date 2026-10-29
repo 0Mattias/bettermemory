@@ -38,11 +38,13 @@ FORBIDDEN: dict[str, frozenset[str]] = {
     "bettermemory.recall": frozenset({"bettermemory.hook"}),
     "bettermemory.recall_state": frozenset({"bettermemory.hook"}),
     "bettermemory.recall_admission": frozenset({"bettermemory.hook"}),
+    "bettermemory.recall_brief": frozenset({"bettermemory.hook"}),
     "bettermemory.sessions": frozenset(
         {
             "bettermemory.recall",
             "bettermemory.recall_state",
             "bettermemory.recall_admission",
+            "bettermemory.recall_brief",
             "bettermemory.hook",
         }
     ),
