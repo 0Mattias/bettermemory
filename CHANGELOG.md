@@ -150,7 +150,11 @@ the candidates' testing.
   `src/bettermemory/store_index.py`, `tests/test_store_transactions.py`,
   `tests/test_bound_elsewhere_warning.py`, `tests/test_sqlite_uri.py`,
   `tests/test_commit_drift_cache.py`, `tests/test_episode_volume_rollup.py`,
-  `tests/test_event_window.py`, `docs/internals.md`, `CONTRIBUTING.md`)
+  `tests/test_event_window.py`, `docs/internals.md`, `CONTRIBUTING.md`;
+  citations only in `src/bettermemory/_fsutil.py`, `src/bettermemory/backup.py`,
+  `src/bettermemory/config.py`, `src/bettermemory/_frontmatter.py`,
+  `src/bettermemory/init.py`, `tests/test_frontmatter.py`,
+  `tests/test_sqlite_uri.py`, `tests/test_import_graph.py`)
 - **`search.py` is split into five modules.** The ranker keeps `search()`,
   the fusion, the snippet and token caches and the conversational rerank,
   and goes from 4,305 lines to 1,686. Beside it, `search_lexicon` holds
