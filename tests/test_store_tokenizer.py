@@ -540,7 +540,7 @@ def test_each_tokenizer_fingerprint_names_the_step_that_raised_the_writers() -> 
     back and forth at every owner's open, each time under the write lock
     (34 s for 250,000 memories). With it, the older build reads the
     raised minimum, opens the store for reading only (``PRAGMA
-    query_only``, `store_schema.check_versions`) and re-spells nothing
+    query_only``, `store_versions.check_versions`) and re-spells nothing
     (`store_index.cannot_write`). So each entry of `TOKENIZER_REVISIONS`
     names a step of this build whose `writer` is its own number, the
     revisions rise with the entries, and the newest is at most the

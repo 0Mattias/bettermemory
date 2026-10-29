@@ -7,7 +7,7 @@ this build knows, and meta's ``schema_revision`` the newest step a store
 has had: a store this build creates has had every step (`Store.create`
 writes the revision with the tables), and an open by an owner
 (``allow_rekey``) runs, in order, each step whose number is above the
-store's revision (`run_steps`, from `store_schema.check_versions`, after
+store's revision (`run_steps`, from `store_versions.check_versions`, after
 the store's minimums have admitted this build). A reader's open runs none.
 
 Each step says what it does to the builds around it (CONTRIBUTING.md,

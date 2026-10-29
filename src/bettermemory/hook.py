@@ -829,7 +829,7 @@ def _record_stop_rows(
 
     # `turn_audited` / `search_miss` field sets come from the shared
     # builders in `audit.py`, so the Stop hook and the in-process MCP
-    # handler (`_handlers._advance_turn`) cannot drift — the 2.6.4
+    # handler (`handlers._shared._advance_turn`) cannot drift — the 2.6.4
     # audit found them already diverged. `triggered_from="stop_hook"`
     # tags the source.
     #

@@ -113,12 +113,13 @@ _NEWEST_TESTED_PYTHON = (3, 14)
 
 #: Free space under the store below which a write can fail outright.
 #: Derived, not measured: the store keeps SQLite's default WAL
-#: autocheckpoint (1,000 pages; the store sets none) at `store.PAGE_SIZE`
-#: (8 KiB), so a WAL restarts near 8 MiB, and the checkpoint that restarts
-#: it copies those pages into the store file: about 16 MiB of new room
-#: between two checkpoints. 64 MiB is four times that, for a WAL a long
-#: reader keeps from restarting and for the daemon's log, which has no
-#: size cap and shares the filesystem when the state directory does.
+#: autocheckpoint (1,000 pages; the store sets none) at
+#: `store_schema.PAGE_SIZE` (8 KiB), so a WAL restarts near 8 MiB, and the
+#: checkpoint that restarts it copies those pages into the store file:
+#: about 16 MiB of new room between two checkpoints. 64 MiB is four times
+#: that, for a WAL a long reader keeps from restarting and for the
+#: daemon's log, which has no size cap and shares the filesystem when the
+#: state directory does.
 DISK_FAIL_BYTES = 64 * 1024 * 1024
 #: Free space below which the next growth can reach the floor above: this,
 #: or twice the store's size, whichever is larger. Twice the store is
@@ -675,7 +676,7 @@ def _open_remedy(path: Path, exc: Exception) -> str:
     is damaged; a lock held past the busy timeout, a file or directory
     this user cannot open, and an I/O error are not, and restoring a copy
     over a sound store would lose every write since the copy. A file
-    every opener refuses (`store.StoreRefusedError`) is not damaged
+    every opener refuses (`store_schema.StoreRefusedError`) is not damaged
     either: it is not a store this build wrote, and nothing reads it."""
     from .store import StoreRefusedError
     from .store_schema import StoreVersionError

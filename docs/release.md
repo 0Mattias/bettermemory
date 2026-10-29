@@ -87,9 +87,9 @@ uv lock
 uv sync --locked --extra dev
 pytest tests/test_plugin.py tests/test_version.py -q
 
-# 5b. IF THIS RELEASE CHANGES THE STORE (`store.SCHEMA_VERSION`, a table,
-#     a fold), it ships a `bettermemory migrate <subcommand>` and the
-#     release notes say so (CONTRIBUTING.md, the compatibility
+# 5b. IF THIS RELEASE CHANGES THE STORE (`store_schema.SCHEMA_VERSION`,
+#     a table, a fold), it ships a `bettermemory migrate <subcommand>`
+#     and the release notes say so (CONTRIBUTING.md, the compatibility
 #     contract); `bettermemory migrate v8` is the pattern. A change to
 #     what a build writes is a numbered step in `store_steps.STEPS`,
 #     whose number `store_schema.SCHEMA_REVISION` takes; the step names

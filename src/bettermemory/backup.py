@@ -543,7 +543,7 @@ def create_backup(
     when it exists: a directory the caller names may be shared on purpose.
     The bundle directory under it is always new and 0700, and every file in
     it 0600. `keys_dir` is where the store's keys are read from (default
-    `store.resolve_keys_dir`). With `include_key` the keys go into the
+    `store_schema.resolve_keys_dir`). With `include_key` the keys go into the
     bundle and a store whose current key is not held is refused; without
     it, a store whose key is not held still gets a bundle, unsigned, with a
     warning. On any failure the partial bundle is removed and
@@ -937,8 +937,8 @@ def verify_bundle(bundle: Path, *, keys_dir: Path | None = None) -> dict[str, An
     segment under a key only the bundle carries follows one under a key
     `keys_dir` holds: ``foreign_segment``, as the live store reads it) or
     ``unverifiable`` (a segment's key is in neither `keys_dir`, default
-    `store.resolve_keys_dir`, nor the bundle, the manifest is unsigned, or
-    it is signed with a key only the bundle carries: ``manifest_mac`` then
+    `store_schema.resolve_keys_dir`, nor the bundle, the manifest is unsigned,
+    or it is signed with a key only the bundle carries: ``manifest_mac`` then
     reads ``self_signed``). Reads the bundle and writes nothing to it: the
     log verification runs on a copy in a private temporary directory."""
     from . import store as _store

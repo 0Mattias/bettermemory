@@ -432,7 +432,7 @@ def scratch_session(
     - a checkout token write or re-mint, whatever the path;
     - the state directory `_daemon_client.resolve_state_dir` resolves, and
       the one `machine.open_machine` is given or resolves;
-    - the keys directory `store.resolve_keys_dir` and
+    - the keys directory `store_schema.resolve_keys_dir` and
       `log.default_keys_dir` resolve.
 
     A child process a test spawns inherits the environment named here or

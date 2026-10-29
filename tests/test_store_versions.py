@@ -5,7 +5,7 @@ the first the open is refused, below the second the store opens for
 reading only, and a writing open records this build's revision, minimums
 and version. The other build is simulated by patching the version
 constants on `store_schema`, the module that reads them, and the package
-version on `bettermemory`, which `store_schema.check_versions` and
+version on `bettermemory`, which `store_versions.check_versions` and
 `Store.create` read at call time.
 """
 

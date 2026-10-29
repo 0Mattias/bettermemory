@@ -19,7 +19,7 @@ asked of the agent, never of a human:
   for the caller (`backlog_line`).
 
 An answer is a row of the ``standing`` table naming the body it was given
-for (`store.body_sha256`). A row naming another body is no answer, so an
+for (`store_rows.body_sha256`). A row naming another body is no answer, so an
 edit by any path, this build's or another's, puts the record back to the
 agent. A body is hashed once per version of its row (`log_mac`), so the
 session's first output reads the backlog without reading every body.

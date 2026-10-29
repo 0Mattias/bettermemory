@@ -323,7 +323,7 @@ def compute_mac(
 def default_keys_dir() -> Path:
     """Where keys and heads live: the user's config directory, never the
     store. Patched by tests; the store honours ``BETTERMEMORY_KEYS_DIR``
-    ahead of it (`store.resolve_keys_dir`), and the CLI takes that."""
+    ahead of it (`store_schema.resolve_keys_dir`), and the CLI takes that."""
     return Path(platformdirs.user_config_dir("bettermemory")) / "keys"
 
 

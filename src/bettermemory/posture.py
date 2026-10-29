@@ -513,8 +513,8 @@ def read_meta(store_file: Path) -> dict[str, str]:
     (`store_schema.admit_store`): a store this build did not write (a
     view or a trigger of its own choosing, the shape that made a
     repository's store hang this read for good) raises
-    `store.StoreRefusedError` before meta is read, and meta is read under
-    the admission deadline (`store_schema.read_store_meta`)."""
+    `store_schema.StoreRefusedError` before meta is read, and meta is read
+    under the admission deadline (`store_schema.read_store_meta`)."""
     from .store import CLI_BUSY_TIMEOUT_SECONDS, connect_read_only, read_store_meta
 
     resolved = store_file.resolve()

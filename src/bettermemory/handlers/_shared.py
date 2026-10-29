@@ -436,7 +436,7 @@ def caller_anchoring(store: Store, config: Config) -> tuple[Anchoring, Caller]:
     it, from which each record's anchor follows.
 
     On a store open for reading only by its versions the resolution runs
-    in a transaction that is rolled back (`store_schema.writes_rolled_back`),
+    in a transaction that is rolled back (`store_versions.writes_rolled_back`),
     with the checkout token's write off, so a read answers as on a store
     this build may write and leaves the store and the checkout as they
     were."""

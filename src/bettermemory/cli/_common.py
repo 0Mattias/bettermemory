@@ -81,7 +81,7 @@ def open_read_only(
     (`store_schema.connect_read_only`: no WAL switch, no chmod, no added
     table, no ``-wal`` or ``-shm`` left behind; a closed WAL-mode store
     is read from a private copy). A file every opener refuses
-    (`store.StoreRefusedError`) is refused here in the same words. No
+    (`store_schema.StoreRefusedError`) is refused here in the same words. No
     file at `path` is a usage error; a file that is not a
     store this build reads (not a database, no meta table, a store id or
     schema it refuses), or one in a directory this account cannot search,
@@ -189,7 +189,7 @@ def open_owner_store(path: Path) -> Store:
     for writing, with a key file it cannot read ending the command in one
     line and exit 1 (`exit_if_key_unreadable`) rather than a traceback,
     and so does a store file every opener refuses
-    (`store.StoreRefusedError`: one this build did not write, such as a
+    (`store_schema.StoreRefusedError`: one this build did not write, such as a
     repository's ``.claude-memory`` store whose ``meta`` is a view). The
     opener `cli_context` and `serve` share, and so the daemon's own: its
     line is the last of its log, which `up` and the hooks quote."""

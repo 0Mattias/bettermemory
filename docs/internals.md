@@ -1194,7 +1194,7 @@ The `meta` table also says which builds may read and write the store
 line's format; `schema_revision`, what the store holds within it;
 `min_reader_revision` and `min_writer_revision`, the lowest revisions that
 may read and write it; and `engine_version`, the newest build that opened it
-to write. Every open checks them (`store_schema.check_versions`, which
+to write. Every open checks them (`store_versions.check_versions`, which
 `store_versions.py` holds and `store_schema` re-exports, one call in
 `Store.open` after the store id and the schema version have passed). A
 build below the reader minimum refuses the store with `StoreVersionError`.
@@ -1204,7 +1204,7 @@ fails with SQLite's `attempt to write a readonly database` as on read-only
 media, and the owner's open goes on as a reader's (no rekey, no key ring
 claim, no origin anchor), with one warning per process. A tool's read
 on such a store resolves its caller in a transaction rolled back at its
-end (`store_schema.writes_rolled_back`, from
+end (`store_versions.writes_rolled_back`, from
 `handlers/_shared.caller_anchoring`), with the checkout token's write
 off, so the membership rows and events a resolution writes are never
 kept, and a write through a tool is refused in words

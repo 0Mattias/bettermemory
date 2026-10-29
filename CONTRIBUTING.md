@@ -94,7 +94,7 @@ git config core.hooksPath .githooks
 
 ## Versioning and the compatibility contract
 
-The project uses semver with the conventions below. The headline: **within a major line, the surface defined in [`docs/api.md`](docs/api.md) and the store schema versioned by `store.SCHEMA_VERSION` are stable.** Anyone who pins `bettermemory~=9.0` gets a contract they can rely on. The current major is 9. The rules below have held across every major line since 1.0; they describe the project's stance on stability, not a one-off cleanup.
+The project uses semver with the conventions below. The headline: **within a major line, the surface defined in [`docs/api.md`](docs/api.md) and the store schema versioned by `store_schema.SCHEMA_VERSION` are stable.** Anyone who pins `bettermemory~=9.0` gets a contract they can rely on. The current major is 9. The rules below have held across every major line since 1.0; they describe the project's stance on stability, not a one-off cleanup.
 
 ### Surface (the nine MCP tools)
 
@@ -123,7 +123,7 @@ Forbidden within a major:
 - Changing the default value of an optional parameter.
 - Changing the meaning of an enum value (for example, redefining what `"applied"` means in `memory_record_use`).
 
-### On-disk format (`store.SCHEMA_VERSION`)
+### On-disk format (`store_schema.SCHEMA_VERSION`)
 
 `SCHEMA_VERSION = 1` is the constant in `src/bettermemory/store_schema.py` (re-exported by `store.py`), recorded in the store's `meta` table beside the tokenizer and engine fingerprints. The 9.0 store is one SQLite file whose tables are the fold of a hash-chained log; `models.SCHEMA_VERSION`, the frontmatter version every 1.x through 8.x memory file carried, stays at 1 for the frozen v8 readers and the mirror, which still read and write those files.
 
@@ -131,7 +131,7 @@ Within a major, all changes to the store schema are **additive only**: new nulla
 
 ### Store versions: who may read and who may write
 
-Two builds of one major meet on one store: the daemon keeps a newer daemon running beside an older client, and an older CLI writes the store directly. So a store records which builds may read it and which may write it, and every open checks (`store_schema.check_versions`). The vocabulary is two integers and a package version, each with one job; all four live in the store's `meta`:
+Two builds of one major meet on one store: the daemon keeps a newer daemon running beside an older client, and an older CLI writes the store directly. So a store records which builds may read it and which may write it, and every open checks (`store_versions.check_versions`). The vocabulary is two integers and a package version, each with one job; all four live in the store's `meta`:
 
 - `schema_version` (`SCHEMA_VERSION`): the major line's format. It moves only with a major release, and every build refuses a store whose value is above its own, including the builds from before this contract.
 - `schema_revision` (`SCHEMA_REVISION`, 1 in 9.0): what the store holds within that format. A change to what a build writes raises it.
@@ -141,7 +141,7 @@ Two builds of one major meet on one store: the daemon keeps a newer daemon runni
 The rule every open applies, in this order:
 
 1. A build whose `SCHEMA_REVISION` is below `min_reader_revision` refuses the store (`StoreVersionError`, a `ValueError`), naming the newest writer.
-2. A build whose `SCHEMA_REVISION` is below `min_writer_revision` opens the store for reading only: its connection refuses every write as on read-only media, and the owner's open neither rekeys, binds the key ring nor anchors. Its reads still answer: a tool resolves its caller in a transaction that is rolled back (`store_schema.writes_rolled_back`), and a write through a tool is refused in words.
+2. A build whose `SCHEMA_REVISION` is below `min_writer_revision` opens the store for reading only: its connection refuses every write as on read-only media, and the owner's open neither rekeys, binds the key ring nor anchors. Its reads still answer: a tool resolves its caller in a transaction that is rolled back (`store_versions.writes_rolled_back`), and a write through a tool is refused in words.
 3. Otherwise the store's schema steps run (`store_steps.run_steps`, below): the owner's open (the daemon, the CLI, the hooks and the migrations open through it) applies each step numbered above `schema_revision`, in order, and each records its number as the revision and raises the minimums to its own, never lowering one. The owner's open then names its build in `engine_version` when it comes later. A reader's open applies no step and writes nothing; while a step that is not additive is pending it reads the store as it stands with every write refused (`PRAGMA query_only`), as `backup verify` and `backup restore` read a bundle taken before the step.
 
 A store from before the contract (9.0.0rc13 and earlier) carries no revision and no minimums; they read as 0, so every build opens it, and its first writing open records them with step 1. A value that is not a whole number refuses the open: `meta` is not authenticated, and guessing would admit a build the store's writer kept out or keep out one it admitted.

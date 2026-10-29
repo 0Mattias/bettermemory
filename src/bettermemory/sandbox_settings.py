@@ -17,7 +17,7 @@ neither the ``BETTERMEMORY_*`` overrides nor a ``[storage] directory``.
 This module builds the block from what the running config and environment
 resolve: the store directory by the config's own rule
 (`Config.resolved_directory`), the home default ``~/.claude-memory`` beside
-it, the keys directory (`store.resolve_keys_dir`), the config directory
+it, the keys directory (`store_schema.resolve_keys_dir`), the config directory
 (`config.default_config_path`) and the state directory
 (`_daemon_client.resolve_state_dir`). A directory inside another one in the
 list is dropped, since denying the outer one covers it: on Linux the keys

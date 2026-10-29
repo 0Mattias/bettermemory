@@ -5,8 +5,8 @@ accept-history` do, so that no one recovers a store by placing or deleting
 hand.
 
 Every command names the store the config resolves and the keys directory
-the store reads (`store.resolve_keys_dir`). Each one that changes the key
-ring writes a row of its own kind into the store's log, signed with the
+the store reads (`store_schema.resolve_keys_dir`). Each one that changes the
+key ring writes a row of its own kind into the store's log, signed with the
 store's key, naming what the ring held before and after: ``key_imported``
 (`import_keys`), ``key_adopted`` (`adopt_ring`), ``history_accepted``
 (`accept_history`) and ``rekey`` (`rotate_key`, the kind every key change
@@ -134,7 +134,7 @@ _HEX_KEY = re.compile(r"[0-9a-f]{64}")
 
 def keys_root(keys_dir: Path | str | None = None) -> Path:
     """``keys_dir``, or the keys directory the store reads
-    (`store.resolve_keys_dir`: ``BETTERMEMORY_KEYS_DIR`` when set)."""
+    (`store_schema.resolve_keys_dir`: ``BETTERMEMORY_KEYS_DIR`` when set)."""
     if keys_dir is not None:
         return Path(keys_dir)
     from . import store as _store

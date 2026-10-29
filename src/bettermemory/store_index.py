@@ -420,7 +420,7 @@ def contradicted_at(self: Store, memory_ids: Sequence[str]) -> dict[str, datetim
 # build's (`reconciles_tokenizer`). The owner's writing open re-spells a store
 # whose fingerprint differs (`rebuild_index`), in one write
 # transaction, as the owner's open runs a store's schema steps
-# (`store_schema.check_versions`); every other open says so once and
+# (`store_versions.check_versions`); every other open says so once and
 # searches the index as it stands, so a memory spelled by the old
 # tokenizer may not be found until the owner's next open.
 
@@ -516,7 +516,7 @@ def cannot_write(store: Store) -> str | None:
     """Why this connection may not re-spell the index, or None when it
     may: it holds the key the log row is signed with, it was not opened
     read-only, and its versions let it write (``PRAGMA query_only`` off,
-    `store_schema.check_versions`)."""
+    `store_versions.check_versions`)."""
     if store._read_only:
         return "it was opened read-only"
     if not store.has_key:
@@ -630,7 +630,7 @@ def reconciles_tokenizer(open_: Callable[_P, Store]) -> Callable[_P, Store]:
     closes the store before it propagates."""
 
     # The owner's word is the caller's ``allow_rekey``, not whether the
-    # open may write: an open `store_schema.check_versions` downgrades to a
+    # open may write: an open `store_versions.check_versions` downgrades to a
     # reader sets ``PRAGMA query_only``, as it does whenever it downgrades,
     # and `cannot_write` reads that. A downgrade that left query_only off
     # would let this re-spell a store the open was told not to write.

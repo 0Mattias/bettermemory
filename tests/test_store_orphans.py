@@ -4,7 +4,7 @@ is gone.
 A daemon whose store path was removed or replaced saves the store it had
 open as ``<store>.orphaned-<stamp>.sqlite`` beside the path
 (`daemon.save_orphan`). The store created next at the path names those
-files in its ``meta`` (`store.CREATED_AFTER_ORPHANS`), and while any of
+files in its ``meta`` (`store_schema.CREATED_AFTER_ORPHANS`), and while any of
 them is still on disk ``/health`` lists them under ``store_orphans`` and
 the session brief leads with one line on how to restore the old store.
 A store that already existed, or one copied back from the orphan, carries
