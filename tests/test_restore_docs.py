@@ -73,7 +73,6 @@ def test_the_residuals_are_rc14_known_limitations() -> None:
     for residual in (
         "A restore holds off only the writers that open through `store._connect`.",
         "On Windows a writing open holds the restore lock only for its check.",
-        "The probe does not see an idle connection to a rollback-journal store.",
         "After a restore onto a host with no copy of the store, `log export` "
         "warns every cursor past the restored head.",
         "A restore that fails between its record and its row leaves an entry "
@@ -88,7 +87,10 @@ def test_the_limitations_the_fold_closed_are_gone() -> None:
     """The cold review's fold closed these rc14 Known limitations; the
     section says so in its bullets, not as limitations."""
     known = _section("9.0.0rc14").split("#### Known limitations", 1)[1]
-    for closed in ("A `backup create` with an unreadable key still writes a bundle.",):
+    for closed in (
+        "A `backup create` with an unreadable key still writes a bundle.",
+        "The probe does not see an idle connection to a rollback-journal store.",
+    ):
         assert closed not in known, closed
 
 

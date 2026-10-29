@@ -11,12 +11,14 @@ file). A restore that dies, or fails after the swap, leaves its record
 beside the store, which refuses every writing open until a restore
 finishes or `backup unlock --yes` removes it.
 
-The writers run as subprocesses: a restore lets an open from its own
-process through, so an in-process opener would not be refused.
+The writers mostly run as subprocesses; a restore lets an open from its
+own thread through, and refuses one from another thread of its process.
 """
 
 from __future__ import annotations
 
+import errno
+import logging
 import os
 import queue
 import sqlite3
@@ -39,7 +41,6 @@ from bettermemory.store import STORE_FILENAME, Store, StoreRefusedError
 
 from .conftest import shielded_child_env
 
-POSIX_ONLY = pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
 #: How long a spawned `bettermemory` has to import, open and answer.
 _CHILD_SECONDS = 60.0
 
@@ -491,3 +492,99 @@ def test_the_probe_sees_a_connection_and_not_a_closed_one(store_file: Path) -> N
     assert reason is not None and f"a process has {store_file} open" in reason
     assert restore_lock.probe(store_file) is None
     assert restore_lock.probe(store_file.with_name("missing.sqlite")) is None
+
+
+def test_another_thread_of_the_restoring_process_is_refused(
+    bundle: Path,
+    store_file: Path,
+    keys_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only the thread that holds the restore lock opens the store through
+    it: a writing open from another thread of the same process waits and
+    is refused as any other opener is (cold review L1)."""
+    from bettermemory import restore_lock
+
+    monkeypatch.setattr(restore_lock, "OPEN_WAIT_SECONDS", 0.2)
+    thread, go, result = _restore_paused_after_the_swap(bundle, store_file, monkeypatch)
+    try:
+        with pytest.raises(StoreRefusedError, match="a restore of it is running"):
+            Store.open(store_file, keys_dir=keys_dir)
+    finally:
+        go.set()
+        thread.join(_CHILD_SECONDS)
+    assert result["status"] == "restored", result["detail"]
+
+
+def test_a_store_switched_to_wal_by_its_open_is_seen_by_the_probe(
+    store_file: Path,
+) -> None:
+    """A store in rollback-journal mode (copied in by hand) is switched to
+    WAL by its first writing open, and a WAL connection holds SQLite's
+    shared lock only from its next read: `_connect` reads once after the
+    switch, under the restore lock, so a restore's probe sees the
+    connection as soon as the open returns (cold review M2)."""
+    from bettermemory import restore_lock
+    from bettermemory.store import _connect
+
+    plain = sqlite3.connect(str(store_file))
+    try:
+        assert plain.execute("PRAGMA journal_mode = DELETE").fetchone()[0] == "delete"
+    finally:
+        plain.close()
+    opened = _connect(store_file)
+    try:
+        assert opened.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        assert restore_lock.probe(store_file) is not None
+    finally:
+        opened.close()
+    assert restore_lock.probe(store_file) is None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows locks the record file")
+@pytest.mark.parametrize("code", [errno.ENOTSUP, errno.EINVAL])
+def test_a_directory_flock_cannot_lock_falls_back_to_the_record_file(
+    bundle: Path,
+    store_file: Path,
+    keys_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    code: int,
+) -> None:
+    """A mount where flock on a directory fails as unsupported (ENOTSUP, as
+    a `nolocks` NFS mount answers, or EINVAL) is no restore holding the
+    lock: writing opens go on, the log says once that the restore lock is
+    the record file there, as on Windows, a restore finishes, and a
+    record a restore left refuses writers (cold review M1)."""
+    import fcntl
+
+    from bettermemory import restore_lock
+
+    real = fcntl.flock
+
+    def flock(fd: int, operation: int) -> None:
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise OSError(code, os.strerror(code))
+        real(fd, operation)
+
+    monkeypatch.setattr(fcntl, "flock", flock)
+    monkeypatch.setattr(restore_lock, "_RECORD_MODE_DIRS", set())
+    with caplog.at_level(logging.WARNING, logger="bettermemory.restore_lock"):
+        _put(store_file, keys_dir, "gamma, with no directory lock")
+        _put(store_file, keys_dir, "delta, the same")
+    said = [
+        r.getMessage() for r in caplog.records if "flock cannot lock" in r.getMessage()
+    ]
+    assert len(said) == 1, said
+    assert str(restore_lock.lock_path(store_file)) in said[0]
+
+    report = restore_bundle(bundle, store_file, apply=True)
+    assert report["status"] == "restored", report["detail"]
+    assert not restore_lock.lock_path(store_file).exists()
+
+    held = restore_lock.acquire(store_file)
+    assert held is not None and held.record
+    held.mark(bundle=str(bundle), stage="moving the store aside")
+    held.release(clear=False)
+    with pytest.raises(StoreRefusedError, match="did not finish"):
+        Store.open(store_file, keys_dir=keys_dir)

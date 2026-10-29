@@ -373,7 +373,7 @@ def _connect(path: Path) -> sqlite3.Connection:
         # file holds a table, and WAL mode fixes it for good.
         conn.execute(f"PRAGMA page_size = {PAGE_SIZE}")
         conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA journal_mode = WAL")
+        conn.executescript("PRAGMA journal_mode = WAL; PRAGMA schema_version")
         conn.execute("PRAGMA synchronous = NORMAL")
         conn.row_factory = sqlite3.Row
         for sibling in (

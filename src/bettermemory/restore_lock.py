@@ -46,10 +46,12 @@ Two halves, each closing one order of the race.
   SQLite's exclusive lock on the file and fails with SQLITE_BUSY while
   any other connection has the store open; the restore is then refused.
   The two cannot cross: an opener holds the lock shared from before it
-  opens the file until `_connect` returns, after
-  `store_schema.admit_store` has read it (on a WAL-mode store, the
-  shared lock SQLite keeps from then on), so the restore's exclusive
-  `acquire` waits for it, and its probe then sees the connection.
+  opens the file until `_connect` returns, after it has switched the
+  store to WAL and read it once more (the shared lock SQLite keeps
+  from then on: a store in rollback-journal mode, switched by this
+  open, holds none between the switch and its next read), so the
+  restore's exclusive `acquire` waits for it, and its probe then sees
+  the connection.
 
 The marker. A restore keeps a JSON record in ``<store>.restore-lock``
 beside the store file (`lock_path`, `RestoreLock.mark`): its process,
@@ -64,10 +66,11 @@ finishes the job) or `bettermemory backup unlock --yes` (`unlock`), which
 removes it and leaves the store as it stands. An opener reads the
 marker and never makes it.
 
-The restore's own process opens the restored store itself, to check its
-log: `admit` lets an open through when this process is the one that
-holds the lock (`_HELD`, keyed by the locked file's device and inode,
-so the spelling of the path does not matter).
+The restore opens the restored store itself, to check its log: `admit`
+lets an open through when the thread that holds the lock makes it
+(`_HELD`, keyed by the locked file's device and inode, so the spelling
+of the path does not matter). Another thread of the same process is
+refused as any other opener is.
 
 POSIX locks the directory with ``flock`` (shared and exclusive).
 Windows cannot lock a directory, and has only exclusive byte-range locks
@@ -77,24 +80,31 @@ restore makes it. An opener checks it when it is there, for the moment
 it checks, and does not hold it across `_connect`; the order "opened
 before the restore" is still caught by the probe, and Windows itself
 refuses to rename a store file another process has open, which the swap
-does.
+does. A POSIX directory whose ``flock`` fails as unsupported (ENOTSUP or
+EOPNOTSUPP on a mount without locks, EINVAL, ENOLCK: any errno but the
+ones for a lock another holds) is put in that same record mode for the
+process, and the log says so once (`_take`); only EWOULDBLOCK and EAGAIN
+read as a restore that holds the lock.
 
-Not covered: an opener that writes without `store._connect` (none in this
-package; a copy of the file by hand is not a writer); a store file in
-rollback-journal mode (one copied in by hand and not opened since, since
-`_connect` switches every store to WAL) whose opener switched it to WAL
-and has not read since: SQLite holds no shared lock on it in that
-moment, so the probe does not see it.
+Not covered: an opener that writes without `store._connect`. In this
+package that is only the daemon's handover row (`daemon._tell_successor`,
+its own ``mode=rw`` connection), which needs a live daemon of the
+store's state directory: the daemon locks and the probe keep one out of
+a restore. A copy of the file by hand is not a writer.
 """
 
 from __future__ import annotations
 
 import contextlib
+import errno
 import json
+import logging
 import os
 import sqlite3
 import sys
+import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -125,8 +135,16 @@ _DIRECTORY_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
 _LOCKS_THE_DIRECTORY = sys.platform != "win32"
 
 #: The restore locks this process holds, by the locked file's device and
-#: inode: an open of the store by the restore itself is let through.
+#: inode: an open of the store by the restore's own thread is let through.
 _HELD: dict[tuple[int, int], RestoreLock] = {}
+#: flock's errnos for a lock another holds (and a call interrupted, tried
+#: again): any other is a filesystem that cannot lock (`_Unlockable`).
+_RETRY_ERRNOS = frozenset({errno.EWOULDBLOCK, errno.EAGAIN, errno.EINTR})
+#: The directories this process found ``flock`` cannot lock, by device and
+#: inode: their restore lock is the record file, as on Windows (`_take`).
+_RECORD_MODE_DIRS: set[tuple[int, int]] = set()
+
+log = logging.getLogger(__name__)
 
 
 def lock_path(store_file: Path) -> Path:
@@ -141,9 +159,19 @@ def lock_path(store_file: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
+class _Unlockable(Exception):
+    """``flock`` does not lock this file where it lives: an errno other
+    than the ones for a lock another holds (ENOTSUP or EOPNOTSUPP on a
+    mount without locks, EINVAL, ENOLCK)."""
+
+    def __init__(self, error: OSError) -> None:
+        super().__init__(f"{error.strerror or error} (errno {error.errno})")
+
+
 def _try_lock(fd: int, *, shared: bool) -> bool:
     """Take the lock on `fd` without waiting; False when another holds it
-    (or another open file of it in this process does)."""
+    (or another open file of it in this process does). Raises
+    `_Unlockable` when ``flock`` cannot lock the file at all."""
     if sys.platform == "win32":
         import msvcrt
 
@@ -159,8 +187,10 @@ def _try_lock(fd: int, *, shared: bool) -> bool:
         mode = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
         try:
             fcntl.flock(fd, mode | fcntl.LOCK_NB)
-        except OSError:
-            return False
+        except OSError as exc:
+            if exc.errno in _RETRY_ERRNOS:
+                return False
+            raise _Unlockable(exc) from exc
         return True
 
 
@@ -192,14 +222,118 @@ def _file_key(fd: int) -> tuple[int, int]:
     return (found.st_dev, found.st_ino)
 
 
-def _open_lock_target(store_file: Path, *, create: bool) -> int:
-    """An open file of what the restore lock is taken on: the store's
-    directory, or on Windows the marker file, made (owner-only) only when
-    `create`. Raises OSError when it cannot be opened."""
-    if _LOCKS_THE_DIRECTORY:
-        return os.open(Path(store_file).parent, _DIRECTORY_FLAGS)
+@dataclass
+class _Target:
+    """What the restore lock of one store file is taken on: an open file
+    of the store's directory, or of the record file (`record`: Windows,
+    or a directory ``flock`` cannot lock), its device and inode (`_HELD`'s
+    key), whether the lock was taken (`taken`; True with nothing taken
+    where no lock works at all, and then only the record speaks), and
+    whether the caller's own hold covers it (`mine`)."""
+
+    fd: int
+    key: tuple[int, int]
+    record: bool
+    taken: bool = False
+    mine: bool = False
+
+
+def _open_record(store_file: Path, *, create: bool) -> _Target | None:
+    """The record file as the lock's target, made (owner-only) only when
+    `create`; None when it is not there and not `create`."""
     flags = os.O_RDWR | _BINARY | (os.O_CREAT if create else 0)
-    return os.open(lock_path(store_file), flags, 0o600)
+    try:
+        fd = os.open(lock_path(store_file), flags, 0o600)
+    except FileNotFoundError:
+        if create:
+            raise
+        return None
+    try:
+        return _Target(fd, _file_key(fd), record=True)
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _open_target(store_file: Path, *, create: bool) -> _Target | None:
+    """What the restore lock is taken on: the store's directory, or the
+    record file on Windows and for a directory this process found
+    ``flock`` cannot lock (`_RECORD_MODE_DIRS`). Raises OSError when the
+    directory cannot be opened."""
+    if _LOCKS_THE_DIRECTORY:
+        fd = os.open(Path(store_file).parent, _DIRECTORY_FLAGS)
+        try:
+            key = _file_key(fd)
+        except BaseException:
+            os.close(fd)
+            raise
+        if key not in _RECORD_MODE_DIRS:
+            return _Target(fd, key, record=False)
+        os.close(fd)
+    return _open_record(store_file, create=create)
+
+
+def _take(
+    store_file: Path,
+    *,
+    create: bool,
+    shared: bool,
+    wait: float,
+    mine: Callable[[tuple[int, int]], bool],
+) -> _Target | None:
+    """Open what the restore lock is on (`_open_target`) and take it within
+    `wait`: None when there is nothing to open (no record file, in record
+    mode and not `create`), the target untaken and ``mine`` when `mine`
+    names its key, else the target with ``taken`` saying whether the lock
+    was had. A directory whose ``flock`` fails as unsupported
+    (`_Unlockable`) is put in record mode, as on Windows, and the log says
+    so once: the record file is opened and locked instead, and where that
+    cannot be locked either nothing is taken and only the record refuses.
+    Raises OSError when the target cannot be opened."""
+    target = _open_target(store_file, create=create)
+    if target is not None and not target.record:
+        try:
+            if mine(target.key):
+                target.mine = True
+                return target
+            target.taken = _lock_within(target.fd, shared=shared, wait=wait)
+            return target
+        except _Unlockable as exc:
+            os.close(target.fd)
+            if target.key not in _RECORD_MODE_DIRS:
+                _RECORD_MODE_DIRS.add(target.key)
+                log.warning(
+                    "%s: flock cannot lock this directory (%s); the restore lock "
+                    "of its store is the record file %s, as on Windows",
+                    Path(store_file).parent,
+                    exc,
+                    lock_path(store_file),
+                )
+            target = _open_record(store_file, create=create)
+        except BaseException:
+            os.close(target.fd)
+            raise
+    if target is None:
+        return None
+    try:
+        if mine(target.key):
+            target.mine = True
+            return target
+        try:
+            target.taken = _lock_within(target.fd, shared=shared, wait=wait)
+        except _Unlockable:
+            target.taken = True
+        return target
+    except BaseException:
+        os.close(target.fd)
+        raise
+
+
+def _this_thread_holds(key: tuple[int, int]) -> bool:
+    """The restore lock `key` names is held by this thread: the restore's
+    own opens of its store go through."""
+    held = _HELD.get(key)
+    return held is not None and held.thread == threading.get_ident()
 
 
 def _read_marker(fd: int) -> dict[str, Any] | None:
@@ -317,40 +451,50 @@ def admit(store_file: Path) -> object | None:
     Returns the shared hold on the restore lock, which the caller keeps
     until the connection has read the store (`_connect` keeps it in a
     local until it returns), or None when there is nothing to hold: this
-    process holds the lock itself (the restore's own open), the store's
+    thread holds the lock itself (the restore's own open), the store's
     directory cannot be opened (no restore by this account can lock it
-    either), or Windows (module docstring), where there is nothing to
-    check either when no marker is there.
+    either), or the lock is the record file (Windows, or a directory
+    ``flock`` cannot lock: module docstring), which an opener checks and
+    does not hold, and where there is nothing to check when no record is
+    there.
 
     Raises `RestoreLockedError` when a restore holds the lock past
     `OPEN_WAIT_SECONDS`, or when a restore that did not finish left its
     marker."""
     lock = lock_path(store_file)
     try:
-        fd = _open_lock_target(store_file, create=False)
+        target = _take(
+            store_file,
+            create=False,
+            shared=True,
+            wait=OPEN_WAIT_SECONDS,
+            mine=_this_thread_holds,
+        )
     except OSError:
         return None
+    if target is None:
+        return None
     try:
-        if _file_key(fd) in _HELD:
-            os.close(fd)
+        if target.mine:
+            os.close(target.fd)
             return None
-        if not _lock_within(fd, shared=True, wait=OPEN_WAIT_SECONDS):
+        if not target.taken:
             raise RestoreLockedError(
                 Path(store_file), lock, read_marker(store_file), running=True
             )
         marker = read_marker(store_file)
         if marker is not None:
-            _unlock(fd)
+            _unlock(target.fd)
             raise RestoreLockedError(Path(store_file), lock, marker, running=False)
     except BaseException:
         with contextlib.suppress(OSError):
-            os.close(fd)
+            os.close(target.fd)
         raise
-    if not _LOCKS_THE_DIRECTORY:
-        _unlock(fd)
-        os.close(fd)
+    if target.record:
+        _unlock(target.fd)
+        os.close(target.fd)
         return None
-    return _SharedHold(fd)
+    return _SharedHold(target.fd)
 
 
 @dataclass
@@ -358,7 +502,9 @@ class RestoreLock:
     """A restore's exclusive hold on its store's lock (`acquire`), and the
     marker file it keeps. ``previous`` is the marker a restore that did
     not finish left, which this one takes over; None when there was
-    none."""
+    none. ``record``: the lock is the record file itself (Windows, or a
+    directory ``flock`` cannot lock). ``thread``: the thread that took it,
+    the only one whose opens of the store `admit` lets through."""
 
     path: Path
     store_file: Path
@@ -367,6 +513,8 @@ class RestoreLock:
     _lock_fd: int
     _key: tuple[int, int]
     _marker: dict[str, Any] = field(default_factory=dict)
+    record: bool = False
+    thread: int = field(default_factory=threading.get_ident)
 
     def mark(self, **fields: Any) -> None:
         """Write the marker, with `fields` over what it held, durably:
@@ -395,7 +543,7 @@ class RestoreLock:
             if clear:
                 with contextlib.suppress(OSError):
                     os.ftruncate(self._fd, 0)
-                if _LOCKS_THE_DIRECTORY:
+                if sys.platform != "win32":
                     # Under the lock, so no restore makes it meanwhile.
                     with contextlib.suppress(OSError):
                         self.path.unlink()
@@ -405,7 +553,7 @@ class RestoreLock:
             for fd in {self._fd, self._lock_fd}:
                 with contextlib.suppress(OSError):
                     os.close(fd)
-            if clear and not _LOCKS_THE_DIRECTORY:
+            if clear and sys.platform == "win32":
                 # Windows removes no open file: after the close. One a new
                 # restore has open by then stays, empty, and is no marker.
                 with contextlib.suppress(OSError):
@@ -418,30 +566,45 @@ def acquire(
     """The store's restore lock, held exclusively, with its marker file
     made (owner-only) when missing, or None when another process holds
     the lock after `wait` seconds (a restore runs, or openers kept it
-    shared that long). Raises OSError when the lock or the marker cannot
-    be opened."""
+    shared that long, or a restore in this process holds it). Raises
+    OSError when the lock or the marker cannot be opened."""
     lock = lock_path(store_file)
-    lock_fd = _open_lock_target(store_file, create=True)
+    target = _take(
+        store_file,
+        create=True,
+        shared=False,
+        wait=wait,
+        mine=lambda key: key in _HELD,
+    )
+    if target is None:
+        raise FileNotFoundError(f"{lock} could not be made")
     try:
-        key = _file_key(lock_fd)
-        if key in _HELD or not _lock_within(lock_fd, shared=False, wait=wait):
-            os.close(lock_fd)
+        if target.mine or not target.taken:
+            os.close(target.fd)
             return None
         try:
             fd = (
-                os.open(lock, os.O_RDWR | os.O_CREAT | _BINARY, 0o600)
-                if _LOCKS_THE_DIRECTORY
-                else lock_fd
+                target.fd
+                if target.record
+                else os.open(lock, os.O_RDWR | os.O_CREAT | _BINARY, 0o600)
             )
         except BaseException:
-            _unlock(lock_fd)
+            _unlock(target.fd)
             raise
-        held = RestoreLock(lock, Path(store_file), _read_marker(fd), fd, lock_fd, key)
+        held = RestoreLock(
+            lock,
+            Path(store_file),
+            _read_marker(fd),
+            fd,
+            target.fd,
+            target.key,
+            record=target.record,
+        )
     except BaseException:
         with contextlib.suppress(OSError):
-            os.close(lock_fd)
+            os.close(target.fd)
         raise
-    _HELD[key] = held
+    _HELD[target.key] = held
     return held
 
 

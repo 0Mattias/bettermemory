@@ -2242,7 +2242,14 @@ follows the candidates' testing.
   its one file. Windows cannot lock a directory: there the record file,
   made only by a restore, is the lock, an opener checks it when it is
   there and only for its check, and Windows' refusal to rename an open
-  file stays the backstop.
+  file stays the backstop. A mount where `flock` cannot lock a
+  directory (any errno but EWOULDBLOCK and EAGAIN: ENOTSUP on an NFS
+  mount without locks, EINVAL) is put in that record mode, and the log
+  says so once, instead of reading as a restore that holds the lock. A
+  store in rollback-journal mode, which its first writing open switches
+  to WAL, is read once more after the switch, so that connection holds
+  SQLite's shared lock before the restore lock is given back. Only the
+  thread that holds the restore lock opens the store through it.
   `store.py` gains one line. This closes the 9.0.0rc12 Known limitation
   "A restore is guarded only against the daemon and spawn locks" (its
   other half, the text output that did not show the origin anchor, is
@@ -2705,17 +2712,14 @@ follows the candidates' testing.
   what it saw then.
 - **On Windows a writing open holds the restore lock only for its
   check.** Windows cannot lock a directory and `msvcrt` has no shared
-  lock, so the lock there is the record file a restore makes: an opener
+  lock, so the lock there is the record file a restore makes (as on a
+  POSIX mount where `flock` cannot lock a directory): an opener
   that finds no record file goes on, and one that finds it takes its
   lock, reads the record and gives the lock back, before SQLite opens
   the file. An opener that checks just before a restore takes the lock,
   and opens the file just after the restore's probe, is not seen;
   Windows' refusal to rename a store file another process has open
   stops the swap only when the open came first.
-- **The probe does not see an idle connection to a rollback-journal
-  store.** A store in rollback-journal mode (copied in by hand and not
-  opened since) whose opener has switched it to WAL and not yet read
-  holds no SQLite lock in that moment, so the restore's probe passes.
 - **After a restore onto a host with no copy of the store, `log export`
   warns every cursor past the restored head.** Where the replaced log
   ended is not known there, so a cursor taken after the restore, past
