@@ -130,7 +130,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ._fsutil import (
     atomic_write_bytes,
@@ -157,9 +157,12 @@ from .log import (
     fingerprint,
     last_row,
     parse_origin,
-    same_mac,
+    same_mac as same_mac,
 )
 from .time_utils import isoformat_utc
+
+if TYPE_CHECKING:
+    from .backup_restore import _RestorePlan
 
 #: The manifest's ``format`` and the highest ``format_version`` this build
 #: reads. A change a reader of version 1 would misread bumps the version.
@@ -554,8 +557,8 @@ def create_backup(
     scheduled backup would go on writing bundles that cannot be
     restored). Only a key that is not there gives an unsigned bundle,
     with a warning."""
-    from . import __version__
     from . import store as _store
+    from .backup_create import _bundle_manifest, _write_bundle_keys
 
     store_file = Path(store_file)
     if not store_file.is_file():
@@ -601,76 +604,31 @@ def create_backup(
             )
         written = [snapshot]
         if include_key:
-            if current_key is None:
-                raise BackupError(
-                    f"--include-key: no key under {keys_root} matches the "
-                    f"store's fingerprint {facts.key_fingerprint[:16]}"
-                )
-            ring = KeyRing(bundle, facts.store_id)
-            for fp, key in held.items():
-                if key is None:
-                    why = unreadable.get(fp)
-                    warnings.append(
-                        (
-                            f"the retired key {fp[:16]}: {why}"
-                            if why is not None
-                            else f"the retired key {fp[:16]} is not under {keys_root}"
-                        )
-                        + "; its segment of the log verifies only where it is held"
-                    )
-                    continue
-                path = (
-                    ring.current_path()
-                    if fp == facts.key_fingerprint
-                    else ring.retired_path(fp)
-                )
-                _write_private(path, key)
-                written.append(path)
+            _write_bundle_keys(
+                bundle,
+                facts,
+                held,
+                unreadable,
+                current_key,
+                keys_root,
+                warnings,
+                written,
+            )
         head_path = KeyRing(bundle, facts.store_id).head_path()
         bundle_head = Head(seq=facts.head.seq, mac=facts.head.mac, ts=created_at)
         _write_private(head_path, _head_bytes(bundle_head))
         written.append(head_path)
-        files: dict[str, dict[str, Any]] = {}
-        for path in written:
-            digest, size = _file_digest(path)
-            files[path.name] = {"sha256": digest, "size": size}
-        manifest: dict[str, Any] = {
-            "format": BUNDLE_FORMAT,
-            "format_version": BUNDLE_FORMAT_VERSION,
-            "bettermemory_version": __version__,
-            "created_at": created_at,
-            "source": str(store_file),
-            "store_id": facts.store_id,
-            "schema_version": facts.schema_version,
-            "key_fingerprint": facts.key_fingerprint,
-            "key_fingerprints": list(facts.key_fingerprints),
-            "key_included": include_key,
-            "head": {"seq": facts.head.seq, "mac": facts.head.mac},
-            "counts": facts.counts,
-            "files": files,
-        }
-        # The origin anchor, as the head is recorded: what a restore puts
-        # back so the restored store is checked against where this host's
-        # history of it begins. An anchor past the snapshot's last row was
-        # written after the snapshot began (the takeover that wrote it
-        # committed meanwhile) and names a row the bundle does not hold.
-        origin = live.read_origin()
-        if origin is not None and origin.seq <= facts.head.seq:
-            manifest["origin"] = origin.to_dict()
-        elif origin is not None:
-            warnings.append(
-                f"the origin anchor at seq {origin.seq} is past the snapshot's "
-                f"last row (seq {facts.head.seq}); the bundle records no anchor, "
-                "and a restore of it leaves the next writing open to anchor one"
-            )
-        if current_key is not None:
-            manifest["mac"] = manifest_mac(current_key, manifest)
-        else:
-            warnings.append(
-                f"no key under {keys_root} matches the store's fingerprint "
-                f"{facts.key_fingerprint[:16]}: the manifest is not signed, and "
-                "`backup verify` reads the bundle as unverifiable"
-            )
+        manifest = _bundle_manifest(
+            written,
+            created_at,
+            store_file,
+            facts,
+            include_key,
+            live,
+            current_key,
+            keys_root,
+            warnings,
+        )
         text = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
         _write_private(bundle / MANIFEST_NAME, text.encode("utf-8"))
         fsync_dir(bundle)
@@ -974,6 +932,12 @@ def verify_bundle(bundle: Path, *, keys_dir: Path | None = None) -> dict[str, An
     reads ``self_signed``). Reads the bundle and writes nothing to it: the
     log verification runs on a copy in a private temporary directory."""
     from . import store as _store
+    from .backup_verify import (
+        _check_bundle_files,
+        _check_keys_and_signature,
+        _check_snapshot_claims,
+        _scratch_keys,
+    )
     from .store_index import drift_named, index_problems
 
     bundle = Path(bundle)
@@ -1011,39 +975,7 @@ def verify_bundle(bundle: Path, *, keys_dir: Path | None = None) -> dict[str, An
         origin=None if origin is None else origin.to_dict(),
         key_included=manifest.get("key_included"),
     )
-    snapshot_unreadable = False
-    for name, entry in sorted(manifest["files"].items()):
-        path = bundle / name
-        result: dict[str, Any] = {
-            "name": name,
-            "status": OK,
-            "sha256": entry["sha256"],
-            "size": entry["size"],
-        }
-        if not path.is_file():
-            result["status"] = "missing"
-            problems.append({"problem": "file_missing", "file": name})
-        else:
-            try:
-                digest, size = _file_digest(path)
-            except OSError as exc:
-                # A file this account cannot read (its mode, a lock, a
-                # read error) proves nothing either way about what the
-                # manifest says of it.
-                result["status"] = "unreadable"
-                problems.append(
-                    {"problem": "file_unreadable", "file": name, "detail": str(exc)}
-                )
-                report["files"].append(result)
-                snapshot_unreadable = snapshot_unreadable or name == SNAPSHOT_NAME
-                continue
-            if size != entry["size"]:
-                result["status"] = "size_mismatch"
-                problems.append({"problem": "size_mismatch", "file": name})
-            elif not same_mac(digest, str(entry["sha256"])):
-                result["status"] = "sha256_mismatch"
-                problems.append({"problem": "sha256_mismatch", "file": name})
-        report["files"].append(result)
+    snapshot_unreadable = _check_bundle_files(bundle, manifest, report, problems)
     snapshot = bundle / SNAPSHOT_NAME
     if not snapshot.is_file() or snapshot_unreadable:
         return report
@@ -1080,89 +1012,13 @@ def verify_bundle(bundle: Path, *, keys_dir: Path | None = None) -> dict[str, An
             return report
         report["min_writer_revision"] = facts.min_writer
         report["engine_version"] = facts.engine
-        for claim, found in (
-            ("store_id", facts.store_id),
-            ("key_fingerprint", facts.key_fingerprint),
-        ):
-            if manifest[claim] != found:
-                problems.append(
-                    {"problem": "claim_mismatch", "field": claim, "found": found}
-                )
-        if (facts.head.seq, facts.head.mac) != (head.seq, head.mac):
-            problems.append(
-                {
-                    "problem": "claim_mismatch",
-                    "field": "head",
-                    "found": {"seq": facts.head.seq, "mac": facts.head.mac},
-                }
-            )
+        _check_snapshot_claims(manifest, facts, head, problems)
         scratch_ring = KeyRing(Path(scratch) / "keys", store_id)
         scratch_ring.ensure_dir()
-        # The keys directory first: a key it holds is one this host already
-        # trusts, and the report says so. A key found only in the bundle
-        # comes with the bundle and is worth what the bundle is.
-        keys: dict[str, tuple[bytes, str]] = {}
-        wanted = dict.fromkeys(
-            (*facts.key_fingerprints, str(manifest["key_fingerprint"]))
+        keys = _scratch_keys(
+            manifest, facts, live_ring, bundle_ring, scratch_ring, report, problems
         )
-        for fp in wanted:
-            source: str | None = None
-            key = live_ring.key_for_fingerprint(fp)
-            if key is not None:
-                source = "keys_dir"
-            else:
-                key = bundle_ring.key_for_fingerprint(fp)
-                source = "bundle" if key is not None else None
-            report["keys"].append({"fingerprint": fp, "source": source})
-            if key is None or source is None:
-                problems.append({"problem": "key_absent", "fingerprint": fp})
-                continue
-            keys[fp] = (key, source)
-            _write_private(scratch_ring.retired_path(fp), key)
-            if fp == facts.key_fingerprint:
-                _write_private(scratch_ring.current_path(), key)
-        # The snapshot's log is checked under every key found, so a
-        # segment under a key only the bundle carries verifies whatever
-        # comes before it. The live store reads a segment whose key this
-        # host does not hold, after one its key signs, as rows written
-        # into its history without its key (`foreign_segment`), and so
-        # does this check: otherwise a writer of the bundle could rekey
-        # the owner's snapshot to a key of their own, add rows, and have
-        # the log read `ok` and the bundle wait only on --trust-bundle-key.
-        # An --include-key bundle on a machine that holds none of its keys
-        # has no held segment and is not affected.
-        held_seen = False
-        for fp in facts.key_fingerprints:
-            found_key = keys.get(fp)
-            if found_key is None:
-                continue
-            if found_key[1] == "keys_dir":
-                held_seen = True
-            elif held_seen:
-                problems.append({"problem": "foreign_segment", "fingerprint": fp})
-        signing = keys.get(str(manifest["key_fingerprint"]))
-        if "mac" not in manifest:
-            report["manifest_mac"] = "absent"
-            problems.append({"problem": "manifest_unsigned"})
-        elif signing is None:
-            report["manifest_mac"] = UNVERIFIABLE
-        elif not same_mac(manifest_mac(signing[0], manifest), str(manifest["mac"])):
-            report["manifest_mac"] = "mismatch"
-            problems.append({"problem": "manifest_mac_mismatch"})
-        elif signing[1] == "bundle":
-            # The MAC holds, under a key the bundle itself supplied: anyone
-            # who can write the bundle can remake it under a key of their
-            # own and sign it so. It proves the bundle is whole, not that
-            # this store's key holder wrote it.
-            report["manifest_mac"] = SELF_SIGNED
-            problems.append(
-                {
-                    "problem": "manifest_self_signed",
-                    "fingerprint": str(manifest["key_fingerprint"]),
-                }
-            )
-        else:
-            report["manifest_mac"] = OK
+        _check_keys_and_signature(manifest, facts, keys, report, problems)
         _write_private(scratch_ring.head_path(), _head_bytes(head))
         # The anchor the signed manifest records, so `log_verify` checks the
         # snapshot against where the host's history of the store begins.
@@ -1626,6 +1482,125 @@ def _release_restore_lock(
         )
 
 
+def _restore_report(bundle: Path, store_file: Path) -> dict[str, Any]:
+    """Build a restore's report as it stands before any step; takes the bundle and store paths and returns the refused report."""
+    return {
+        "status": REFUSED,
+        "detail": None,
+        "bundle": str(bundle),
+        "store": str(store_file),
+        "verify": None,
+        "plan": None,
+        "moved_aside": [],
+        "keys_installed": [],
+        "head": None,
+        "origin": None,
+        "binding": None,
+        "record": None,
+        "row": None,
+        "log": None,
+        "lock": None,
+    }
+
+
+def _apply_restore(
+    plan: _RestorePlan,
+    held: restore_lock.RestoreLock,
+    swapped: list[bool],
+    moved: list[dict[str, str]],
+    report: dict[str, Any],
+    verification: dict[str, Any],
+    bundle: Path,
+    store_file: Path,
+    keys_root: Path,
+    log_end: dict[str, Any] | None,
+    stamp: str,
+) -> None:
+    """Swap the snapshot in, install the keys, rewind the head, record the restore and verify the store; returns nothing."""
+    from . import store as _store
+
+    ensure_owner_only_dir(store_file.parent, parents=True)
+    handle, temp_name = tempfile.mkstemp(
+        prefix=f".{store_file.name}.restore-",
+        suffix=".tmp",
+        dir=store_file.parent,
+    )
+    os.close(handle)
+    prepared = Path(temp_name)
+    try:
+        shutil.copyfile(bundle / SNAPSHOT_NAME, prepared)
+        os.chmod(prepared, 0o600)
+        with prepared.open("r+b") as fh:
+            fsync_file(fh.fileno())
+        # The bundle is read twice, once to verify and once here: the
+        # copy put in place must be the file the signed manifest
+        # hashed, not one swapped into the bundle in between.
+        expected = next(f for f in verification["files"] if f["name"] == SNAPSHOT_NAME)
+        if _file_digest(prepared) != (expected["sha256"], expected["size"]):
+            raise BackupError(f"{bundle / SNAPSHOT_NAME} changed after it was verified")
+        held.mark(stage="moving the store aside")
+        try:
+            _swap_in(prepared, store_file, plan.aside, moved)
+        finally:
+            swapped[0] = bool(moved) or not prepared.exists()
+    finally:
+        with contextlib.suppress(OSError):
+            if prepared.exists():
+                prepared.unlink()
+    held.mark(stage="installing the keys and rewinding the head")
+    _install_keys(plan.live, plan.bundle_ring, plan.actions)
+    report["keys_installed"] = list(plan.actions)
+    replaced = _rewind_head(plan.live, plan.head)
+    report["head"] = {
+        "before": None
+        if replaced is None
+        else {"seq": replaced.seq, "mac": replaced.mac},
+        "after": {"seq": plan.head.seq, "mac": plan.head.mac},
+    }
+    report["origin"] = {
+        "before": _origin_dict(plan.live.replace_origin(plan.origin)),
+        "after": _origin_dict(plan.origin),
+    }
+    # The ring's keys, head and anchor are the restored file's now;
+    # a binding left on another file that holds the store id would
+    # open this one for reading only (`store_keys._claim_key_ring`).
+    report["binding"] = {
+        "before": _path_str(plan.live.rebind_store(store_file)),
+        "after": plan.binding_after,
+    }
+    entry: dict[str, Any] = {
+        "kind": STORE_RESTORED,
+        "row": None,
+        "restored_at": plan.head.ts,
+        "bundle": str(bundle),
+        "bundle_created_at": verification["created_at"],
+        "store": str(store_file),
+        "store_id": plan.store_id,
+        "replaced_store_id": report["plan"]["current_store_id"],
+        "head_before": report["head"]["before"],
+        "head_after": report["head"]["after"],
+        "log_end_before": log_end,
+        "origin_before": report["origin"]["before"],
+        "origin_after": report["origin"]["after"],
+        "binding_before": report["binding"]["before"],
+        "binding_after": report["binding"]["after"],
+        "moved_aside": report["moved_aside"],
+        "keys_installed": [a["fingerprint"] for a in plan.actions],
+        "trusted_bundle_key": plan.trusted_key,
+    }
+    _append_record(plan.record, entry, stamp)
+    report["record"] = str(plan.record)
+    held.mark(stage="verifying the restored store")
+    restored = _store.Store.open(store_file, keys_dir=keys_root, allow_rekey=False)
+    try:
+        report["row"] = append_history_replaced(restored, STORE_RESTORED, entry)
+        if report["row"] is not None:
+            _record_row(plan.record, entry, report["row"])
+        report["log"] = restored.log_verify()
+    finally:
+        restored.close()
+
+
 def restore_bundle(
     bundle: Path,
     store_file: Path,
@@ -1658,6 +1633,7 @@ def restore_bundle(
     then on. The record names the key so trusted."""
     from . import _daemon_client as client
     from . import store as _store
+    from .backup_restore import _plan_restore
 
     bundle = Path(bundle)
     store_file = Path(store_file)
@@ -1667,23 +1643,7 @@ def restore_bundle(
     )
     moment = now if now is not None else datetime.now(timezone.utc)
     stamp = utc_stamp(moment)
-    report: dict[str, Any] = {
-        "status": REFUSED,
-        "detail": None,
-        "bundle": str(bundle),
-        "store": str(store_file),
-        "verify": None,
-        "plan": None,
-        "moved_aside": [],
-        "keys_installed": [],
-        "head": None,
-        "origin": None,
-        "binding": None,
-        "record": None,
-        "row": None,
-        "log": None,
-        "lock": None,
-    }
+    report = _restore_report(bundle, store_file)
     # A store resolved inside a bundle (`BETTERMEMORY_DIR` naming one) is
     # that bundle's snapshot: the restore would move it aside and copy
     # another bundle's database over it, and the bundle would be gone.
@@ -1719,63 +1679,18 @@ def restore_bundle(
         if later is not None:
             report["detail"] = later
             return report
-        trusted_key = _self_signed_fingerprint(verification) if self_signed else None
-        store_id = str(verification["store_id"])
-        live = KeyRing(keys_root, store_id)
-        bundle_ring = KeyRing(bundle, store_id)
-        head = Head(
-            seq=int(verification["head"]["seq"]),
-            mac=str(verification["head"]["mac"]),
-            ts=isoformat_utc(moment.astimezone(timezone.utc)),
+        plan = _plan_restore(
+            verification,
+            self_signed,
+            bundle,
+            store_file,
+            keys_root,
+            moment,
+            stamp,
+            report,
         )
-        needed = [str(k["fingerprint"]) for k in verification["keys"]]
-        final = str(verification["log"]["key_fingerprint"])
-        try:
-            actions = _key_actions(live, bundle_ring, needed, final)
-        except KeyUnreadableError as exc:
-            # Read as missing, the store's current key would be written over
-            # by the bundle's. Refused before anything changes.
-            report["detail"] = f"{exc}; make it readable and run the restore again"
+        if plan is None:
             return report
-        aside = _aside_base(store_file, stamp)
-        before = live.read_head()
-        facts = _store_facts(store_file)
-        current_store_id = facts[0]
-        origin = parse_origin(verification["origin"])
-        origin_before = live.read_origin()
-        try:
-            bound = live.read_binding()
-        except OSError:
-            bound = None
-        binding_before = _path_str(bound)
-        binding_after = str(store_file.resolve())
-        log_end = _replaced_log_end(store_file, store_id, facts, bound)
-        record = restore_record_path(keys_root, store_id)
-        report["plan"] = {
-            "current_store_id": current_store_id,
-            "bundle_store_id": store_id,
-            "move_aside": [
-                {"from": str(_sibling(store_file, s)), "to": str(_sibling(aside, s))}
-                for s in _SIBLING_SUFFIXES
-                if _sibling(store_file, s).exists()
-            ],
-            "keys": actions,
-            "head": {
-                "before": None
-                if before is None
-                else {"seq": before.seq, "mac": before.mac},
-                "after": {"seq": head.seq, "mac": head.mac},
-            },
-            "log_end_before": log_end,
-            "origin": {
-                "before": _origin_dict(origin_before),
-                "after": _origin_dict(origin),
-            },
-            "binding": {"before": binding_before, "after": binding_after},
-            "record": str(record),
-            "trusted_bundle_key": trusted_key,
-            "unfinished_restore": restore_lock.read_marker(store_file),
-        }
         if not apply:
             report["status"] = PLANNED
             return report
@@ -1787,97 +1702,24 @@ def restore_bundle(
         # Read again now that no process has the store open: a writer that
         # closed after the plan was read may have moved the log on.
         log_end = _replaced_log_end(
-            store_file, store_id, _store_facts(store_file), bound
+            store_file, plan.store_id, _store_facts(store_file), plan.bound
         )
         report["status"] = FAILED
         moved: list[dict[str, str]] = report["moved_aside"]
         try:
-            ensure_owner_only_dir(store_file.parent, parents=True)
-            handle, temp_name = tempfile.mkstemp(
-                prefix=f".{store_file.name}.restore-",
-                suffix=".tmp",
-                dir=store_file.parent,
+            _apply_restore(
+                plan,
+                held,
+                swapped,
+                moved,
+                report,
+                verification,
+                bundle,
+                store_file,
+                keys_root,
+                log_end,
+                stamp,
             )
-            os.close(handle)
-            prepared = Path(temp_name)
-            try:
-                shutil.copyfile(bundle / SNAPSHOT_NAME, prepared)
-                os.chmod(prepared, 0o600)
-                with prepared.open("r+b") as fh:
-                    fsync_file(fh.fileno())
-                # The bundle is read twice, once to verify and once here: the
-                # copy put in place must be the file the signed manifest
-                # hashed, not one swapped into the bundle in between.
-                expected = next(
-                    f for f in verification["files"] if f["name"] == SNAPSHOT_NAME
-                )
-                if _file_digest(prepared) != (expected["sha256"], expected["size"]):
-                    raise BackupError(
-                        f"{bundle / SNAPSHOT_NAME} changed after it was verified"
-                    )
-                held.mark(stage="moving the store aside")
-                try:
-                    _swap_in(prepared, store_file, aside, moved)
-                finally:
-                    swapped[0] = bool(moved) or not prepared.exists()
-            finally:
-                with contextlib.suppress(OSError):
-                    if prepared.exists():
-                        prepared.unlink()
-            held.mark(stage="installing the keys and rewinding the head")
-            _install_keys(live, bundle_ring, actions)
-            report["keys_installed"] = list(actions)
-            replaced = _rewind_head(live, head)
-            report["head"] = {
-                "before": None
-                if replaced is None
-                else {"seq": replaced.seq, "mac": replaced.mac},
-                "after": {"seq": head.seq, "mac": head.mac},
-            }
-            report["origin"] = {
-                "before": _origin_dict(live.replace_origin(origin)),
-                "after": _origin_dict(origin),
-            }
-            # The ring's keys, head and anchor are the restored file's now;
-            # a binding left on another file that holds the store id would
-            # open this one for reading only (`store_keys._claim_key_ring`).
-            report["binding"] = {
-                "before": _path_str(live.rebind_store(store_file)),
-                "after": binding_after,
-            }
-            entry: dict[str, Any] = {
-                "kind": STORE_RESTORED,
-                "row": None,
-                "restored_at": head.ts,
-                "bundle": str(bundle),
-                "bundle_created_at": verification["created_at"],
-                "store": str(store_file),
-                "store_id": store_id,
-                "replaced_store_id": report["plan"]["current_store_id"],
-                "head_before": report["head"]["before"],
-                "head_after": report["head"]["after"],
-                "log_end_before": log_end,
-                "origin_before": report["origin"]["before"],
-                "origin_after": report["origin"]["after"],
-                "binding_before": report["binding"]["before"],
-                "binding_after": report["binding"]["after"],
-                "moved_aside": report["moved_aside"],
-                "keys_installed": [a["fingerprint"] for a in actions],
-                "trusted_bundle_key": trusted_key,
-            }
-            _append_record(record, entry, stamp)
-            report["record"] = str(record)
-            held.mark(stage="verifying the restored store")
-            restored = _store.Store.open(
-                store_file, keys_dir=keys_root, allow_rekey=False
-            )
-            try:
-                report["row"] = append_history_replaced(restored, STORE_RESTORED, entry)
-                if report["row"] is not None:
-                    _record_row(record, entry, report["row"])
-                report["log"] = restored.log_verify()
-            finally:
-                restored.close()
         except (OSError, sqlite3.Error, BackupError, ValueError, RuntimeError) as exc:
             report["detail"] = f"{exc.__class__.__name__}: {exc}"
             return report
