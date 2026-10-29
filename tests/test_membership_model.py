@@ -13,6 +13,8 @@ from __future__ import annotations
 import hashlib
 import itertools
 import json
+import os
+import re
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
@@ -2616,21 +2618,20 @@ def test_b17_the_model_decides_where_an_init_was_made(world: World) -> None:
     checkout's, with no other named), the checkout keeping its own, and
     the folder's first sight resolves to the part; a folder the view does
     not hold is refused."""
-    repo = world.repo("/w/mono")
+    # The paths are made absolute for the platform (a drive on Windows), as
+    # the capture records a view, so the folder reads here as a cwd does.
+    mono = os.path.abspath("/w/mono")
+    api_dir = os.path.join(mono, "packages", "api")
+    elsewhere = os.path.abspath("/w/elsewhere")
+    repo = world.repo(mono)
     root = world.see(repo)
     assert root.checkout is not None and root.project is not None
     k = world.model.checkout(root.checkout)
-    # The world's paths are synthetic (no drive on Windows), so they are
-    # read as views record them; test_membership_view_path reads real ones.
-
-    def below(directory: str) -> bool | None:
-        return world.model.below_root(k, directory, canonical=True)
-
-    assert below("/w/mono") is False
-    assert below("/w/mono/") is False
-    assert below("/w/mono/packages/api") is True
-    assert below("/w/mono-two") is None
-    assert below("/w") is None
+    assert world.model.below_root(k, mono) is False
+    assert world.model.below_root(k, mono + os.sep) is False
+    assert world.model.below_root(k, api_dir) is True
+    assert world.model.below_root(k, mono + "-two") is None
+    assert world.model.below_root(k, os.path.dirname(mono)) is None
     fid = _file_id()
     done = world.model.declare(
         Declaration(
@@ -2639,20 +2640,22 @@ def test_b17_the_model_decides_where_an_init_was_made(world: World) -> None:
             checkout=root.checkout,
             file_id=fid,
             name="api",
-            directory="/w/mono/packages/api",
+            directory=api_dir,
         )
     )
     assert done.project not in (None, root.project)
     assert world.model.project(str(done.project)).parent == root.project
     assert world.model.checkout(root.checkout).project == root.project
-    with pytest.raises(ValueError, match="cannot tell where /w/elsewhere stands"):
+    with pytest.raises(
+        ValueError, match=f"cannot tell where {re.escape(elsewhere)} stands"
+    ):
         world.model.declare(
             Declaration(
                 "init",
                 "os:tester",
                 checkout=root.checkout,
                 file_id=_file_id(),
-                directory="/w/elsewhere",
+                directory=elsewhere,
             )
         )
     at_root = world.model.declare(
@@ -2661,13 +2664,13 @@ def test_b17_the_model_decides_where_an_init_was_made(world: World) -> None:
             "os:tester",
             checkout=root.checkout,
             file_id=_file_id(),
-            directory="/w/mono/",
+            directory=mono + os.sep,
         )
     )
     assert at_root.project == root.project
-    api = _file("/w/mono/packages/api", name="api")
+    api = _file(api_dir, name="api")
     api = replace(api, id=fid)
-    part = world.see(repo, cwd="/w/mono/packages/api", files=(api,))
+    part = world.see(repo, cwd=api_dir, files=(api,))
     assert (part.outcome, part.project, part.checkout) == (
         SILENT,
         done.project,
