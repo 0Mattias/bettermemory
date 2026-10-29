@@ -59,9 +59,19 @@ if TYPE_CHECKING:
     from .store import Store
 
 # A token is about four characters of English text; the checkpoint is
-# configured in tokens and measured in characters.
+# configured in tokens and measured in characters. The host estimates the
+# same way: Claude Code 2.1.296 counts thinking text as ceil(length / 4)
+# tokens, and a request as its JSON's length / 4 where it cannot ask the
+# API for a count. The checkpoint is a threshold, so the ratio's error moves
+# when a capture is asked for, not what the capture holds.
 CHARS_PER_TOKEN = 4
 # After an interrupted capture the session is not asked again for this long.
+# A judgment, not a measurement: an interrupt is the user declining the
+# capture turn, and the next checkpoint (12,000 tokens by default) can come
+# round within minutes of work, so an hour keeps a declined request from
+# returning in the same stretch while leaving the session's later work to
+# be asked about. Nothing is lost meanwhile: an interrupted batch leaves the
+# watermark where it was, and the next request covers the stretch again.
 QUIET_AFTER_INTERRUPT = timedelta(hours=1)
 # The payload field the hook client sets, to exactly this, when Claude Code
 # marked the session attended.

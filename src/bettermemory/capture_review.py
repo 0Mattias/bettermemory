@@ -46,7 +46,11 @@ CHANGED_CONFLICT = "conflict"
 # The write path files a member's own conflict pairs just after its commit
 # (`handlers.write._file_conflicts`, `_file_review_pairs`), the member as
 # `a_id`. A pending row filed this soon is the capture's own, not a sign
-# anyone relied on the member.
+# anyone relied on the member. The filings run in the same request right
+# after the commit, with nothing between them but the commit and, for the
+# review pairs, one read of the store's memories, so their rows land well
+# inside the minute. A row a later write files names that write as `a_id`,
+# and one filed for the member past the minute reads as reliance on it.
 OWN_FILING_WINDOW = timedelta(minutes=1)
 
 

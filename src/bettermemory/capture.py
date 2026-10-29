@@ -207,7 +207,12 @@ def body_hash(body: str) -> str:
 # ---------------------------------------------------------------------------
 
 # A batch the Stop never settled (the session ended mid-capture) stops
-# accepting writes after this long; its members stay undoable.
+# accepting writes after this long; its members stay undoable. A judgment,
+# not a measurement: a capture is one turn writing what one checkpoint's
+# stretch holds, settled at that turn's Stop, and half an hour leaves room
+# for a turn held up (a permission prompt waiting on the person) while a
+# batch whose session is gone stops taking writes under its token the same
+# half hour.
 BATCH_TTL = timedelta(minutes=30)
 
 MODE_CHECKPOINT = "checkpoint"

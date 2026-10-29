@@ -391,6 +391,12 @@ def capture_caller(cwd: Path | None = None) -> Origin:
 ORIGIN_CACHE_SECONDS = 600.0
 
 # The most directories the cache holds; past it the oldest capture goes.
+# Measured with tracemalloc (Python 3.11, macOS), a capture keeps about
+# 1.8 KB for a directory outside any repository and 3.5 KB for a checkout
+# with a remote, with what its signature reads, so the cap holds the cache
+# under 1 MB. One entry per directory a caller captures from (a workspace,
+# a hook's cwd); an evicted one costs its next capture the probes (one
+# process outside a repository, four in a checkout).
 _ORIGIN_CACHE_CAP = 256
 
 
@@ -575,7 +581,11 @@ _UNANSWERED = _Unanswered()
 # check, the eviction and the store one step: two registrations past the
 # cap otherwise read the same oldest key, and the second pop raised
 # KeyError out of `capture` (or, had it tolerated the miss, the registry
-# grew past its cap). A lookup is one dict read and takes no lock.
+# grew past its cap). A lookup is one dict read and takes no lock. An
+# entry, a remote and one other spelling, measured about 250 bytes, so the
+# cap of 32 holds it near 8 KB; one per remote a caller captured in, and
+# every capture registers its remote again, cached or not, so an evicted
+# remote's spellings return with the next capture in its checkout.
 _CALLER_REPO_ALTERNATES: dict[str, tuple[str, ...]] = {}
 _CALLER_REPO_ALTERNATES_CAP = 32
 _CALLER_REPO_ALTERNATES_LOCK = threading.Lock()
@@ -1228,7 +1238,14 @@ class ReachableWalk:
 # pass, and the walks no memo keeps, in its `walked` mapping
 # (`commits_since_anchor`). The lock makes each look-up-and-touch and each
 # insert-and-evict atomic; the walk runs outside it. Registered with
-# `_caches`, which empties it before each test.
+# `_caches`, which empties it before each test. One entry per (root,
+# anchor, head): an anchor is a memory's verified head, so a search adds
+# at most one per distinct verified head among its hits in a repository. The
+# cap counts entries, not bytes: measured with tracemalloc (Python 3.11,
+# macOS, each commit changing one file), a walk holds about 141 bytes a
+# commit, 183 KB at 1,000 commits and 1.4 MB at 10,000, so 128 walks of
+# 10,000 commits hold about 180 MB; the walk took 15 us a commit, and the
+# 5 s ceiling admits one of about 335,000 commits (about 47 MB).
 _WALK_MEMO_CAP = 128
 _WalkKey: TypeAlias = tuple[str, str, str, tuple[object, ...]]
 _WALK_MEMO: OrderedDict[_WalkKey, ReachableWalk] = OrderedDict()

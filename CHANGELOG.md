@@ -757,6 +757,9 @@ the candidates' testing.
   the session's subagent transcripts again, searching up to 64 of them
   taken by name, so with more alive the compacting one can be missed.
   A subagent's own tool calls are recorded under the session.
+- **The reachable-walk memo is bounded at 128 walks, not in bytes.** A
+  walk holds about 141 bytes a commit, so 128 walks of 10,000 commits
+  hold about 180 MB in a long-lived daemon. (`src/bettermemory/origin.py`)
 
 ### 9.0.0rc13
 
