@@ -725,19 +725,9 @@ def _build_actor_slices(
     return ActorSlices(declared=declared, undeclared=slice_for(None))
 
 
-def _compute_recommendations(report: HealthReport) -> list[Recommendation]:
-    """Distill the bucket rollups into proactive curation suggestions.
-
-    Order is fixed (matches `RECOMMENDATION_KINDS`) so the first
-    actionable item is the one that most likely warrants attention.
-    Size-driven kinds (dead_weight, cold_endorsement_memories,
-    drifted) only fire when the bucket crosses
-    `_RECOMMENDATION_SIZE_FLOOR`; per-row kinds (contradicted,
-    rare_scopes) fire on first occurrence because each instance is
-    independently actionable.
-    """
+def _recommend_from_buckets(report: HealthReport) -> list[Recommendation]:
+    """Recommend on the dead weight, the contradicted and the cold endorsements; returns them in order."""
     out: list[Recommendation] = []
-
     if len(report.dead_weight) >= _RECOMMENDATION_SIZE_FLOOR:
         out.append(
             Recommendation(
@@ -804,7 +794,12 @@ def _compute_recommendations(report: HealthReport) -> list[Recommendation]:
                 ],
             )
         )
+    return out
 
+
+def _recommend_from_drift_and_scopes(report: HealthReport) -> list[Recommendation]:
+    """Recommend on the commit drift, the unaccounted records and the typo scopes; returns them in order."""
+    out: list[Recommendation] = []
     if (
         report.commit_drift_debt is not None
         and report.commit_drift_debt.total_drifted >= _RECOMMENDATION_SIZE_FLOOR
@@ -881,7 +876,23 @@ def _compute_recommendations(report: HealthReport) -> list[Recommendation]:
                 scope=", ".join(report.rare_scopes[:_RECOMMENDATION_ROW_CAP]),
             )
         )
+    return out
 
+
+def _compute_recommendations(report: HealthReport) -> list[Recommendation]:
+    """Distill the bucket rollups into proactive curation suggestions.
+
+    Order is fixed (matches `RECOMMENDATION_KINDS`) so the first
+    actionable item is the one that most likely warrants attention.
+    Size-driven kinds (dead_weight, cold_endorsement_memories,
+    drifted) only fire when the bucket crosses
+    `_RECOMMENDATION_SIZE_FLOOR`; per-row kinds (contradicted,
+    rare_scopes) fire on first occurrence because each instance is
+    independently actionable.
+    """
+    out: list[Recommendation] = []
+    out.extend(_recommend_from_buckets(report))
+    out.extend(_recommend_from_drift_and_scopes(report))
     return out
 
 
