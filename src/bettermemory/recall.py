@@ -154,6 +154,7 @@ from .recall_state import (
     SegmentView as SegmentView,
     Subagent,
     _str_ids,
+    agent_of as agent_of,
     is_settlement,
     rebuild_session as rebuild_session,
 )

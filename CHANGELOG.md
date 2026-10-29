@@ -426,10 +426,13 @@ the candidates' testing.
   id, on the markers of the subagent's own transcript; its rows carry
   `agent_id`, `agent_type` and `agent_from`, and the session's segment,
   signal and shows are left as they were. No Claude Code build read
-  fills `agent_id` on a SessionStart yet. A row without these fields
-  reads as before. (`src/bettermemory/recall.py`,
+  fills `agent_id` on a SessionStart yet. Eval's surfaces count the
+  segments opened per session, subagent and number, so a subagent's
+  segment 1 and the session's own segment 1 no longer read as one. A
+  row without these fields reads as before. (`src/bettermemory/recall.py`,
   `src/bettermemory/recall_state.py`, `src/bettermemory/recall_brief.py`,
-  `src/bettermemory/daemon.py`, `src/bettermemory/cli/session_start_cmd.py`)
+  `src/bettermemory/recall_counters.py`, `src/bettermemory/daemon.py`,
+  `src/bettermemory/cli/session_start_cmd.py`)
 
 #### Known limitations
 

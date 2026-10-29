@@ -52,6 +52,7 @@ from bettermemory.recall import (
     prompt_recall,
     session_brief,
 )
+from bettermemory.recall_counters import compute_surface_report
 from bettermemory.time_utils import isoformat_utc
 
 from . import _transcript_rows as tr
@@ -785,6 +786,42 @@ def test_held_and_rebuilt_agree_through_a_subagents_compactions(
     assert [r.get("agent_id") for r in parent.rows("segment_opened")][0] == AGENT
     assert parent.segment().segment == 2
     assert first in parent.segment().shown
+
+
+# ---------------------------------------------------------------------------
+# The counters
+# ---------------------------------------------------------------------------
+
+
+def test_the_surfaces_count_a_subagents_segment_apart_from_the_sessions(
+    parent: Parent, world: PromptWorld, clock: Clock
+) -> None:
+    """The subagent's compaction, taken back, opened the subagent's
+    segment 1; the session's own compaction opened the session's segment
+    1. Eval's surfaces count two segments opened, not one, and read the
+    shows as before: three briefs, the compact one printed into the
+    subagent among them."""
+    _subagent_compacts(parent, world, clock)
+    clock.advance(seconds=300)
+    parent.stop()
+    signal = clock.now
+    parent.start("compact")
+    tr.append(parent.transcript, tr.boundary(signal + timedelta(seconds=1)))
+    clock.advance(seconds=120)
+    parent.stop()
+    assert parent.segment().segment == 1
+    assert [
+        (r.get("agent_id"), r["segment"]) for r in parent.rows("segment_opened")
+    ] == [
+        (AGENT, 1),
+        (None, 1),
+    ]
+    surfaces = compute_surface_report(
+        list(world.store.iter_events()), start=None, end=None
+    )
+    assert surfaces is not None
+    assert surfaces["segments"] == {"sessions": 1, "opened": 2}
+    assert surfaces["brief"]["deliveries"] == 3
 
 
 # ---------------------------------------------------------------------------

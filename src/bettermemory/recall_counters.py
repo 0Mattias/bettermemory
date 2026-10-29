@@ -36,6 +36,12 @@ show an id a brief showed), or else up to the window's end: an open or
 a use counts once, for the latest show of the id before it. Rows carry
 ids, counts and labels, never a body or a prompt, and so does
 everything here.
+
+A segment is a cooldown's: a session's own, or one of a subagent's of
+the session, whose rows carry the session's id and the subagent's
+``agent_id`` (ENG-150), so the segments opened are counted per session,
+subagent and number, and a subagent's segment is never taken for one of
+the session's that bears the same number.
 """
 
 from __future__ import annotations
@@ -48,7 +54,7 @@ from datetime import datetime
 from typing import Any
 
 from .events import HARNESS_SESSION_FIELD, HARNESS_STAMPED_KINDS
-from .recall import SURFACE_BRIEF, SURFACE_RECALL, is_settlement
+from .recall import SURFACE_BRIEF, SURFACE_RECALL, agent_of, is_settlement
 from .sessions import hook_spans, runs_beside
 from .time_utils import parse_event_ts
 
@@ -415,7 +421,8 @@ def compute_surface_report(
     reshown = _reshown(rows, end)
     tallies = {surface: _SurfaceTally() for surface in SURFACES}
     sessions: set[str] = set()
-    segments: set[tuple[str, int]] = set()
+    # A segment is a cooldown's, the session's own or a subagent's.
+    segments: set[tuple[str, str, int]] = set()
     rules: set[str] = set()
     picked = shows if pick is None else [(i, row) for i, row in shows if pick(row)]
     for index, show in picked:
@@ -439,7 +446,7 @@ def compute_surface_report(
             sessions.add(session)
             segment = show.get("segment")
             if isinstance(segment, int) and not isinstance(segment, bool) and segment:
-                segments.add((session, segment))
+                segments.add((session, agent_of(show) or "", segment))
         later = [
             row
             for row in after.get(session or "", [])
@@ -474,7 +481,7 @@ def compute_surface_report(
             continue
         sessions.add(session)
         if isinstance(segment, int) and not isinstance(segment, bool) and segment:
-            segments.add((session, segment))
+            segments.add((session, agent_of(row) or "", segment))
         rule = _str(row.get("rule"))
         if rule is not None:
             rules.add(rule)
