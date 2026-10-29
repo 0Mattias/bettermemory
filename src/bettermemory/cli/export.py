@@ -7,9 +7,10 @@ from __future__ import annotations
 import argparse
 import sqlite3
 import sys
+from pathlib import Path
 from typing import Any
 
-from ..models import utcnow, validate_scope
+from ..models import Memory, TombstonedMemory, utcnow, validate_scope
 from .._fsutil import atomic_write_bytes
 from .._response import isoformat
 from ..store import STORE_FILENAME, Store
@@ -188,6 +189,236 @@ def _membership_part(store: Store, record_ids: list[str]) -> dict[str, Any] | No
         return None
 
 
+def _open_export_store(parser: argparse.ArgumentParser | None) -> tuple[Path, Store]:
+    """Open the configured store read-only, refusing a missing store or a bundle; returns its directory and the store."""
+    # Lazy import keeps the module-import cost of ``bettermemory.cli``
+    # off the hot path; ``load_config`` reads TOML and only matters when
+    # ``export`` actually runs.
+    from ..backup import bundle_refusal
+    from ..config import load_config as _load_config
+
+    config = _load_config()
+    directory = config.resolved_directory()
+    # Read-only, as the mirror is: no store is created where none exists,
+    # and a store whose key is absent is read without rekeying it.
+    path = directory / STORE_FILENAME
+    if not path.is_file():
+        msg = f"no bettermemory 9 store at {path} ({STORE_FILENAME})"
+        if parser is not None:
+            parser.error(msg)
+        raise FileNotFoundError(msg)
+    # A store directory that is a backup bundle: even this read-only open
+    # switches the snapshot to WAL, and the bundle then fails its hash.
+    # Exit 2, the code this command gives for a store it cannot read.
+    refusal = bundle_refusal(path)
+    if refusal is not None:
+        if parser is not None:
+            parser.error(refusal)
+        raise ValueError(refusal)
+    store = Store.open(path, allow_rekey=False)
+    return directory, store
+
+
+def _export_scope_set(
+    scopes: list[str] | None, parser: argparse.ArgumentParser | None
+) -> set[str] | None:
+    """Validate the --scope values; returns the scope filter, or None for no filter."""
+    if scopes:
+        # `validate_scope` raises ValueError on a malformed --scope
+        # (uppercase, spaces, illegal chars). Route it through
+        # `parser.error(...)` for a clean `bettermemory export: error: …`
+        # + exit 2 instead of an uncaught traceback. The `parser is None`
+        # fallback (direct `_cli_export` callers / tests) keeps the raw
+        # ValueError so programmatic callers still see the exception.
+        try:
+            scopes = [validate_scope(s) for s in scopes]
+        except ValueError as exc:
+            if parser is not None:
+                parser.error(str(exc))
+            raise
+    scope_set = set(scopes) if scopes else None
+    return scope_set
+
+
+def _export_active(
+    store: Store, scope_set: set[str] | None
+) -> tuple[list[Memory], int]:
+    """Load the active memories and filter them by scope; returns them and the skipped count."""
+    # Count BEFORE the load, not after, and the order is the whole
+    # protection. These are two walks of a directory a live server may be
+    # writing to; whichever walk runs SECOND sees the newer state, and the
+    # delta only accuses the loader when the file walk is the larger
+    # number. Counting after the load meant a `memory_write` landing
+    # between them was indistinguishable from a file the loader refused —
+    # a backup reporting itself short, and under --strict a red cron job,
+    # on a store that was never damaged. Counting first inverts that: a
+    # memory written in the gap is loaded but never counted, so the delta
+    # goes negative and `max(0, …)` reads it as the non-event it is.
+    #
+    # It does not make the pair atomic. A `memory_remove` in the gap moves
+    # a counted file to `.tombstones/` before the load sees it and still
+    # over-reports by one — the residual race, and the rarer of the two by
+    # a wide margin (writes are a routine reflex; removals are curation).
+    # `bettermemory doctor` re-reads and names files rather than
+    # subtracting counts, which is why the warning below sends the reader
+    # there instead of asserting which file is at fault.
+    active = store.load_all()
+    # Count the drop BEFORE the scope filter. A file the reader could not
+    # parse has no scopes to test, so it can only be measured against the
+    # unfiltered read — subtracting after the filter would blame the scope
+    # filter for every out-of-scope memory.
+    skipped_active_files = 0
+    if scope_set is not None:
+        active = [m for m in active if scope_set.intersection(m.scopes)]
+    return active, skipped_active_files
+
+
+def _export_tombstones(
+    store: Store, scope_set: set[str] | None
+) -> tuple[list[TombstonedMemory], int]:
+    """Count and load the tombstones, then filter them by scope; returns them and the skipped count."""
+    # Same count-then-load ordering as the active half above, for the
+    # same reason. The write that lands in this gap is a
+    # `memory_remove` (it creates the tombstone), and the removal that
+    # lands in it is a `memory_restore`; both are rarer here than a
+    # `memory_write` is there, but the ordering costs nothing and
+    # keeping the two halves symmetrical is what stops one of them
+    # from being reasoned about again from scratch.
+    tombstone_files_before = store.count_tombstones()
+    tombstoned = store.load_tombstones()
+    skipped_tombstone_files = max(0, tombstone_files_before - len(tombstoned))
+    if scope_set is not None:
+        tombstoned = [t for t in tombstoned if scope_set.intersection(t.scopes)]
+    return tombstoned, skipped_tombstone_files
+
+
+def _warn_skipped_files(
+    skipped_active_files: int, skipped_tombstone_files: int | None, directory: Path
+) -> int:
+    """Warn on stderr about the files the loader skipped; returns how many it skipped."""
+    # Warn before writing, not after: an export that then fails on a bad
+    # --output path has still already told the user their store is short.
+    # The document is written either way — a partial backup beats none —
+    # so this is a warning, and only --strict escalates it to an exit code.
+    dropped = skipped_active_files + (skipped_tombstone_files or 0)
+    if dropped:
+        parts = []
+        if skipped_active_files:
+            parts.append(f"{skipped_active_files} active memory file(s)")
+        if skipped_tombstone_files:
+            parts.append(f"{skipped_tombstone_files} tombstone file(s)")
+        # Where to go next, branched on which half dropped, because the
+        # two have different answers: doctor re-reads the active files and
+        # names them, and no check anywhere names a skipped tombstone. Its
+        # `auto_memory_stranded` check does READ `.tombstones/` (via
+        # `store.load_tombstones`, for ingest dedup), but that reader
+        # swallows per-file failures, so a dropped tombstone shows up there
+        # only as one more source file called stranded — never as itself.
+        # A flat "run doctor" sent a user whose tombstone dropped to a
+        # command that cannot name the file they need.
+        if skipped_active_files and skipped_tombstone_files:
+            pointer = (
+                "Run `bettermemory log verify` to see the rows by id; a "
+                "tombstone row the loader refused is named the same way."
+            )
+        elif skipped_active_files:
+            pointer = "Run `bettermemory log verify` to see the rows by id."
+        else:
+            pointer = (
+                "No check names a skipped tombstone, so `doctor` will "
+                "not report these — inspect `.tombstones/` by hand."
+            )
+        # Doctor's claim for the same delta: the loader skipped these, and
+        # the two causes a count cannot tell apart are both named rather
+        # than collapsed into "could not be read". Telling a user their
+        # file is corrupt when it merely came from a newer install sends
+        # them editing frontmatter that is already correct.
+        sys.stderr.write(
+            f"WARNING: {' and '.join(parts)} in {directory} were skipped by "
+            f"the loader (malformed frontmatter, or a schema_version newer "
+            f"than this install) and are NOT in this export. The export is a "
+            f"partial capture of the store, not a complete backup. {pointer}\n"
+        )
+    return dropped
+
+
+def _write_export(
+    output: str | None,
+    text: str,
+    parser: argparse.ArgumentParser | None,
+    active: list[Memory],
+    include_tombstones: bool,
+    tombstoned_count: int,
+) -> None:
+    """Write the document to ``output`` atomically, or to stdout; returns nothing."""
+    from pathlib import Path as _Path
+
+    if output:
+        out_path = _Path(output)
+        # Pre-check the parent is an existing directory. `atomic_write_bytes`
+        # would otherwise silently create the parent tree via
+        # `parent.mkdir(parents=True, exist_ok=True)` — that auto-mkdir
+        # is intentional for fresh-install callers (init.py creating
+        # ~/.claude.json under a missing ~/.config, sync.py creating a
+        # .gitignore under a fresh sync root) but wrong here: a user
+        # who typed `bettermemory export -o /typod/path/backup.json`
+        # wants a loud error, not a silently-created
+        # /typod/path/ tree with their backup buried inside. Pre-3.2.1
+        # the bare `write_text` raised FileNotFoundError for missing
+        # parents; this restores that contract while preserving the
+        # atomic-write durability benefit. `out_path.parent` is
+        # Path(".") when output is a bare filename, which always
+        # exists as a directory — so this only fires on a genuinely
+        # bad parent.
+        #
+        # `is_dir()` (not `exists()`): if the parent path is a regular
+        # FILE, `exists()` returns True and the pre-check would pass,
+        # but the helper's `mkdir(parents=True, exist_ok=True)` then
+        # raises a confusing `FileExistsError` naming the internal
+        # `.tmp` path. `is_dir()` catches both the missing-parent and
+        # the parent-is-a-file cases here, so the export caller surfaces
+        # one clean error pointing at the parent the user actually typed.
+        parent = out_path.parent
+        if not parent.is_dir():
+            msg = (
+                f"--output parent directory does not exist or is not a "
+                f"directory: {parent}"
+            )
+            # Route through `parser.error` for a clean
+            # `bettermemory export: error: …` + exit 2 instead of a raw
+            # traceback / exit 1, mirroring the --scope ValueError arm
+            # above and the sibling rename-scope / tombstones-restore
+            # commands. `parser is None` (programmatic / test callers)
+            # keeps the raw exception so they still see the exception type.
+            if parser is not None:
+                parser.error(msg)
+            raise FileNotFoundError(msg)
+        # Atomic + durable write via `_fsutil.atomic_write_bytes`: a plain
+        # `out_path.write_text(...)` here would leave a truncated JSON on
+        # power loss / process kill mid-write, defeating the point of a
+        # backup. The helper writes to a tmp sibling, fsyncs, atomic-
+        # renames into place, and fsyncs the parent directory. A genuine
+        # filesystem failure here (read-only parent, ENOSPC, EACCES)
+        # routes through `parser.error` for the same clean exit 2, rather
+        # than leaking a raw OSError traceback.
+        try:
+            atomic_write_bytes(out_path, (text + "\n").encode("utf-8"))
+        except OSError as exc:
+            if parser is not None:
+                parser.error(str(exc))
+            raise
+        summary = f"Exported {len(active)} active memories"
+        if include_tombstones:
+            summary += f" + {tombstoned_count} tombstones"
+        summary += f" to {out_path}\n"
+        # Status line goes to stderr so `-o` callers can still pipe
+        # the file path on stdout if they want; consistent with how
+        # most CLI tools split status from data.
+        sys.stderr.write(summary)
+    else:
+        sys.stdout.write(text + "\n")
+
+
 def _cli_export(
     *,
     output: str | None,
@@ -279,75 +510,12 @@ def _cli_export(
     as surely as it freezes the record fields.
     """
     import json as _json
-    from pathlib import Path as _Path
 
-    # Lazy import keeps the module-import cost of ``bettermemory.cli``
-    # off the hot path; ``load_config`` reads TOML and only matters when
-    # ``export`` actually runs.
-    from ..backup import bundle_refusal
-    from ..config import load_config as _load_config
+    directory, store = _open_export_store(parser)
 
-    config = _load_config()
-    directory = config.resolved_directory()
-    # Read-only, as the mirror is: no store is created where none exists,
-    # and a store whose key is absent is read without rekeying it.
-    path = directory / STORE_FILENAME
-    if not path.is_file():
-        msg = f"no bettermemory 9 store at {path} ({STORE_FILENAME})"
-        if parser is not None:
-            parser.error(msg)
-        raise FileNotFoundError(msg)
-    # A store directory that is a backup bundle: even this read-only open
-    # switches the snapshot to WAL, and the bundle then fails its hash.
-    # Exit 2, the code this command gives for a store it cannot read.
-    refusal = bundle_refusal(path)
-    if refusal is not None:
-        if parser is not None:
-            parser.error(refusal)
-        raise ValueError(refusal)
-    store = Store.open(path, allow_rekey=False)
+    scope_set = _export_scope_set(scopes, parser)
 
-    if scopes:
-        # `validate_scope` raises ValueError on a malformed --scope
-        # (uppercase, spaces, illegal chars). Route it through
-        # `parser.error(...)` for a clean `bettermemory export: error: …`
-        # + exit 2 instead of an uncaught traceback. The `parser is None`
-        # fallback (direct `_cli_export` callers / tests) keeps the raw
-        # ValueError so programmatic callers still see the exception.
-        try:
-            scopes = [validate_scope(s) for s in scopes]
-        except ValueError as exc:
-            if parser is not None:
-                parser.error(str(exc))
-            raise
-    scope_set = set(scopes) if scopes else None
-
-    # Count BEFORE the load, not after, and the order is the whole
-    # protection. These are two walks of a directory a live server may be
-    # writing to; whichever walk runs SECOND sees the newer state, and the
-    # delta only accuses the loader when the file walk is the larger
-    # number. Counting after the load meant a `memory_write` landing
-    # between them was indistinguishable from a file the loader refused —
-    # a backup reporting itself short, and under --strict a red cron job,
-    # on a store that was never damaged. Counting first inverts that: a
-    # memory written in the gap is loaded but never counted, so the delta
-    # goes negative and `max(0, …)` reads it as the non-event it is.
-    #
-    # It does not make the pair atomic. A `memory_remove` in the gap moves
-    # a counted file to `.tombstones/` before the load sees it and still
-    # over-reports by one — the residual race, and the rarer of the two by
-    # a wide margin (writes are a routine reflex; removals are curation).
-    # `bettermemory doctor` re-reads and names files rather than
-    # subtracting counts, which is why the warning below sends the reader
-    # there instead of asserting which file is at fault.
-    active = store.load_all()
-    # Count the drop BEFORE the scope filter. A file the reader could not
-    # parse has no scopes to test, so it can only be measured against the
-    # unfiltered read — subtracting after the filter would blame the scope
-    # filter for every out-of-scope memory.
-    skipped_active_files = 0
-    if scope_set is not None:
-        active = [m for m in active if scope_set.intersection(m.scopes)]
+    active, skipped_active_files = _export_active(store, scope_set)
 
     payload: dict[str, Any] = {
         "format_version": 1,
@@ -361,18 +529,7 @@ def _cli_export(
     # read — see the docstring: 0 would assert an absence nobody checked.
     skipped_tombstone_files: int | None = None
     if include_tombstones:
-        # Same count-then-load ordering as the active half above, for the
-        # same reason. The write that lands in this gap is a
-        # `memory_remove` (it creates the tombstone), and the removal that
-        # lands in it is a `memory_restore`; both are rarer here than a
-        # `memory_write` is there, but the ordering costs nothing and
-        # keeping the two halves symmetrical is what stops one of them
-        # from being reasoned about again from scratch.
-        tombstone_files_before = store.count_tombstones()
-        tombstoned = store.load_tombstones()
-        skipped_tombstone_files = max(0, tombstone_files_before - len(tombstoned))
-        if scope_set is not None:
-            tombstoned = [t for t in tombstoned if scope_set.intersection(t.scopes)]
+        tombstoned, skipped_tombstone_files = _export_tombstones(store, scope_set)
         payload["tombstoned_memories"] = [t.model_dump(mode="json") for t in tombstoned]
         tombstoned_count = len(tombstoned)
         record_ids.extend(t.id for t in tombstoned)
@@ -384,114 +541,11 @@ def _cli_export(
 
     text = _json.dumps(payload, indent=2)
 
-    # Warn before writing, not after: an export that then fails on a bad
-    # --output path has still already told the user their store is short.
-    # The document is written either way — a partial backup beats none —
-    # so this is a warning, and only --strict escalates it to an exit code.
-    dropped = skipped_active_files + (skipped_tombstone_files or 0)
-    if dropped:
-        parts = []
-        if skipped_active_files:
-            parts.append(f"{skipped_active_files} active memory file(s)")
-        if skipped_tombstone_files:
-            parts.append(f"{skipped_tombstone_files} tombstone file(s)")
-        # Where to go next, branched on which half dropped, because the
-        # two have different answers: doctor re-reads the active files and
-        # names them, and no check anywhere names a skipped tombstone. Its
-        # `auto_memory_stranded` check does READ `.tombstones/` (via
-        # `store.load_tombstones`, for ingest dedup), but that reader
-        # swallows per-file failures, so a dropped tombstone shows up there
-        # only as one more source file called stranded — never as itself.
-        # A flat "run doctor" sent a user whose tombstone dropped to a
-        # command that cannot name the file they need.
-        if skipped_active_files and skipped_tombstone_files:
-            pointer = (
-                "Run `bettermemory log verify` to see the rows by id; a "
-                "tombstone row the loader refused is named the same way."
-            )
-        elif skipped_active_files:
-            pointer = "Run `bettermemory log verify` to see the rows by id."
-        else:
-            pointer = (
-                "No check names a skipped tombstone, so `doctor` will "
-                "not report these — inspect `.tombstones/` by hand."
-            )
-        # Doctor's claim for the same delta: the loader skipped these, and
-        # the two causes a count cannot tell apart are both named rather
-        # than collapsed into "could not be read". Telling a user their
-        # file is corrupt when it merely came from a newer install sends
-        # them editing frontmatter that is already correct.
-        sys.stderr.write(
-            f"WARNING: {' and '.join(parts)} in {directory} were skipped by "
-            f"the loader (malformed frontmatter, or a schema_version newer "
-            f"than this install) and are NOT in this export. The export is a "
-            f"partial capture of the store, not a complete backup. {pointer}\n"
-        )
+    dropped = _warn_skipped_files(
+        skipped_active_files, skipped_tombstone_files, directory
+    )
 
-    if output:
-        out_path = _Path(output)
-        # Pre-check the parent is an existing directory. `atomic_write_bytes`
-        # would otherwise silently create the parent tree via
-        # `parent.mkdir(parents=True, exist_ok=True)` — that auto-mkdir
-        # is intentional for fresh-install callers (init.py creating
-        # ~/.claude.json under a missing ~/.config, sync.py creating a
-        # .gitignore under a fresh sync root) but wrong here: a user
-        # who typed `bettermemory export -o /typod/path/backup.json`
-        # wants a loud error, not a silently-created
-        # /typod/path/ tree with their backup buried inside. Pre-3.2.1
-        # the bare `write_text` raised FileNotFoundError for missing
-        # parents; this restores that contract while preserving the
-        # atomic-write durability benefit. `out_path.parent` is
-        # Path(".") when output is a bare filename, which always
-        # exists as a directory — so this only fires on a genuinely
-        # bad parent.
-        #
-        # `is_dir()` (not `exists()`): if the parent path is a regular
-        # FILE, `exists()` returns True and the pre-check would pass,
-        # but the helper's `mkdir(parents=True, exist_ok=True)` then
-        # raises a confusing `FileExistsError` naming the internal
-        # `.tmp` path. `is_dir()` catches both the missing-parent and
-        # the parent-is-a-file cases here, so the export caller surfaces
-        # one clean error pointing at the parent the user actually typed.
-        parent = out_path.parent
-        if not parent.is_dir():
-            msg = (
-                f"--output parent directory does not exist or is not a "
-                f"directory: {parent}"
-            )
-            # Route through `parser.error` for a clean
-            # `bettermemory export: error: …` + exit 2 instead of a raw
-            # traceback / exit 1, mirroring the --scope ValueError arm
-            # above and the sibling rename-scope / tombstones-restore
-            # commands. `parser is None` (programmatic / test callers)
-            # keeps the raw exception so they still see the exception type.
-            if parser is not None:
-                parser.error(msg)
-            raise FileNotFoundError(msg)
-        # Atomic + durable write via `_fsutil.atomic_write_bytes`: a plain
-        # `out_path.write_text(...)` here would leave a truncated JSON on
-        # power loss / process kill mid-write, defeating the point of a
-        # backup. The helper writes to a tmp sibling, fsyncs, atomic-
-        # renames into place, and fsyncs the parent directory. A genuine
-        # filesystem failure here (read-only parent, ENOSPC, EACCES)
-        # routes through `parser.error` for the same clean exit 2, rather
-        # than leaking a raw OSError traceback.
-        try:
-            atomic_write_bytes(out_path, (text + "\n").encode("utf-8"))
-        except OSError as exc:
-            if parser is not None:
-                parser.error(str(exc))
-            raise
-        summary = f"Exported {len(active)} active memories"
-        if include_tombstones:
-            summary += f" + {tombstoned_count} tombstones"
-        summary += f" to {out_path}\n"
-        # Status line goes to stderr so `-o` callers can still pipe
-        # the file path on stdout if they want; consistent with how
-        # most CLI tools split status from data.
-        sys.stderr.write(summary)
-    else:
-        sys.stdout.write(text + "\n")
+    _write_export(output, text, parser, active, include_tombstones, tombstoned_count)
 
     # The strict arm runs AFTER the document is written, in both output
     # modes: `--strict` is about the exit status a backup job checks, not
