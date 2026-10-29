@@ -1,9 +1,12 @@
 """Per-tool MCP handler implementations.
 
 One module per served tool, or per action of the two dispatch tools
-(`episode`, `memory_admin`). Each module owns its description constant
-and the handler function; shared bookkeeping (`_advance_turn`, payload
-validation, the auto-`record_use` token scan) lives in `_shared.py`.
+(`episode`, `memory_admin`). Each of the nine served tools' modules owns
+its `DESC_*` description constant and its handler function; the action
+bodies behind `episode` and `memory_admin` keep no description of their
+own, since the dispatcher's description covers every action. Shared
+bookkeeping (`_advance_turn`, payload validation, the auto-`record_use`
+token scan) lives in `_shared.py`.
 
 The MCP-facing surface, the `ToolHandlers` class, lives in
 `_handlers.py` as a thin facade: it captures the dependency references
