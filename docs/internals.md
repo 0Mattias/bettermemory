@@ -923,10 +923,13 @@ client, which still holds the first daemon's tools
 `cli/service_cmd.py` with `service_units.py` writes and loads the
 launchd or systemd unit that supervises the daemon. `cli/serve.py` is
 the in-process server the shim falls back to when no daemon can be
-reached or started; both hand off to `builder.build_server`, which
+reached or started; both hand off to `build_server` in `builder.py`, which
 instantiates the MCP SDK server and binds the nine tools. `server.py`
 is a re-export shim kept for callers that import `build_server` from
-there. `__main__.py` covers `python -m bettermemory`.
+there. `__main__.py` covers `python -m bettermemory`, and `__init__.py`
+gives `__version__`, read from the `_version.py` every build and editable
+install writes (it is not tracked), and the package's few top-level
+names. `cli/_common.py` holds what the subcommands share.
 
 **The daemon's proof.** `GET /health?nonce=<32 to 128 hex>` answers
 `proof`, hex(HMAC-SHA256(token, `bettermemory-health-v1:` + nonce))
@@ -970,10 +973,24 @@ so a later httpx2 can make the shim fail closed, never send the token
 down a pool it did not prove.
 
 **Request.** Every tool handler lives in `handlers/<tool>.py` beside its
-`DESC_` description constant; `handlers/admin.py` and
-`handlers/episode.py` are the two dispatchers, one function per former
-tool behind them. `handlers/_shared.py` holds what all of them reach for
-(payload validation, use-token settlement, the turn counter).
+`DESC_` description constant: `handlers/search.py`, `handlers/show.py`,
+`handlers/write.py`, `handlers/update.py`, `handlers/verify.py`,
+`handlers/remove.py`, `handlers/record_use.py`, and the two dispatchers,
+`handlers/admin.py` and `handlers/episode.py`, whose descriptions cover
+every action. Behind the dispatchers is a module per action, or per
+pair of actions, that keeps no description of its own:
+`handlers/episode_write.py` and `handlers/episode_handoff.py` behind
+`episode`, and behind `memory_admin` `handlers/standing.py`,
+`handlers/questions.py` (the agent's declarations: an answer to a
+membership question, a project joined or unjoined),
+`handlers/restore.py`, `handlers/tombstones.py`, `handlers/health.py`,
+`handlers/rename_scope.py`, `handlers/conflicts.py`,
+`handlers/acknowledge_miss.py`, `handlers/scope_toggle.py` and
+`handlers/capture_relations.py`. `handlers/_guard.py` is the guard on a
+change to a standing memory, which reads the user's words for it
+(`said`) for every door that makes one. `handlers/_shared.py` holds
+what all of them reach for (payload validation, use-token settlement,
+the turn counter).
 `_handlers.py` is the facade that wires those functions onto one class.
 `identity.py` resolves who is calling and from where (the declared
 client, model and transport session, the attested OAuth principal, and
@@ -982,7 +999,8 @@ request; on the wire path its middleware asks a roots-capable client
 where it works, once per connection. `session.py` resolves the
 per-client `SessionState` for the request (disabled scopes, use
 tokens), keyed on that caller, and `_response.py` shapes what goes back
-on the wire. `time_utils.py` is cross-cutting.
+on the wire, with the `depends_on` auto-pull's steps in
+`_response_depends.py`. `time_utils.py` is cross-cutting.
 
 **Write path.** `handlers/write.py` first lets `policy.py` refuse a
 call that passes an escape hatch `[policy]` forbids, then checks
@@ -1006,8 +1024,11 @@ transaction, with `log.py` signing the row and keeping the chain.
 `store.py` is the `Store` class, with its open, its connections and
 transactions, the admission readers and the status; it re-exports
 what a caller imports from its family and binds the family's method
-groups by name: `store_schema.py` the vocabulary, the table texts,
-the errors, the paths a store opens by and the version check,
+groups by name: `store_open.py` the steps an open takes once the
+file is connected, `store_schema.py` the vocabulary, the table texts,
+the errors, the paths a store opens by and the version check, which
+`store_versions.py` defines with the rest of the compatibility
+contract (ENG-107) and `store_schema.py` re-exports,
 `store_steps.py` the numbered schema steps and their runner,
 `store_rows.py` the row
 codecs and `_apply_mutation`, `store_keys.py` the key checks an open
@@ -1024,9 +1045,17 @@ and the document frequency memo.
 **Read path.** `handlers/search.py` and `handlers/show.py` read the
 store's candidate query (the FTS5 prefilter above the index threshold)
 into `search.py`, the ranker, with `expansion.py` kept for the retrieval
-bench's expansion arm. Ranking is drift-independent; `verify.py` then
-annotates each hit with the staleness verdict from path, commit and
-calendar drift, with `symbols.py` for advisory symbol citations, and
+bench's expansion arm. `search.py` re-exports its family: the tokenizer
+and the text the index stores (`search_lexicon.py`), the keyword and
+BM25 scorers it fuses (`search_bm25.py`), the conversational lane's
+temporal reading and the per-hit labels (`search_lane.py`), write-time
+dedup (`search_dedup.py`) and the query-side steps (`search_steps.py`).
+Ranking is drift-independent; `verify.py` then annotates each hit with
+the staleness verdict from path, commit and calendar drift (path drift
+in `verify_anchoring.py`, with its body-candidate pass in
+`path_drift_steps.py`, over the candidates `verify_candidates.py`
+extracts; the commit-drift count's bases in `verify_basis.py`), with
+`symbols.py` for advisory symbol citations, and
 the store's `trust_rows` supplies the provenance label and this host's
 stamp. The warm daemon's caches sit on this path and keep every answer
 bit-identical: `origin.py` keeps the captured origin per directory for
@@ -1045,13 +1074,22 @@ its clearer with `_caches.py`, and `_caches.clear_all` empties them.
 **Telemetry.** `events.py` is the recorder every handler records
 through; each event is a row of the store's log. `audit.py` and
 `attribution.py` turn the rows into silent-miss and use telemetry;
-`eval.py` computes the effectiveness rates; `health.py` is the rollup
-`handlers/health.py` and the CLI serve.
+`eval.py` computes the effectiveness rates (`cli/eval.py`), with its
+model in `eval_model.py`, the walk and the counts behind the rates in
+`eval_rates.py` and its renderers in `eval_render.py`; `health.py` is
+the rollup `handlers/health.py` and the CLI serve (`cli/health_cmd.py`),
+with its report model in `health_model.py`, the event-log arithmetic in
+`health_stats.py` and its renderers in `health_render.py`.
 
 **Hooks.** `bettermemory hook session-start|stop|prompt` runs the
 standard-library client in `_daemon_client.py`, which posts the hook's
 payload to the daemon, and `daemon.py` serves the three bodies at
-`/api/v1/hook/`. `hook.py` is the Stop body: the turn audit and
+`/api/v1/hook/`. Two parts of the client live apart, on the standard
+library alone like it: the namespace probe every post carries
+(`_location_probe.py`, design 8.1), and the stores a hook refuses
+before it starts a daemon, a store inside a backup bundle or one a
+restore holds or did not finish (`_store_refusal.py`). `hook.py` is
+the Stop body: the turn audit and
 settlement. The audit reads the turn the payload's `prompt_id` names,
 and no other (`transcript.py`: the user rows carrying that `promptId`,
 read from the end of the file one 1 MiB chunk at a time, 64 MiB at
@@ -1072,15 +1110,18 @@ after those settlements and before the interrupted turns' walk.
 `recall.py` is the recall surface, the session brief and the prompt
 recall, and re-exports its family: the per-session state and cooldown
 (`recall_state.py`), the caller's admission (`recall_admission.py`),
-the brief's ranking and render (`recall_brief.py`) and the probe both
-hooks run with the Stop's settlement (`recall_settle.py`);
+the brief's ranking and render (`recall_brief.py`), the prompt recall's
+steps that read the log, probe and record its rows (`recall_prompt.py`)
+and the probe both hooks run with the Stop's settlement
+(`recall_settle.py`);
 `standing.py` says what is standing and `in_force.py` what is in force
 at delivery;
 `owner_prompt.py` is the one definition of an owner prompt; `verdict.py`
 is the memoised verdict `memory_show` reads. The bodies run in the
 daemon but outside the MCP request path, so they read the store rather
 than a session's state. They join the conversation's tool rows by the
-harness session stamp, the worktree bridge when nothing carries it.
+harness session stamp, the worktree bridge when nothing carries it
+(`sessions.py`, whose join anchors the disabled-scope replay too).
 Claude Code names the conversation anew on /clear and /resume while
 the server keeps the id it was spawned with, so a server stamped with
 another id is another window's only when that id's hooks run beside this
@@ -1094,7 +1135,7 @@ written since the clear (a missed join) and takes the other window's
 while it alone has (a foreign join).
 `recall_counters.py` and `recall_review.py` are the surface's
 measurement: the eval's surfaces section and `bettermemory recall
-review`.
+review` and `recall grade` (`cli/recall_cmd.py`).
 
 **The write review and session capture.** `review.py` is the write
 review: the questions, the related set and the pure decision, with
@@ -1122,11 +1163,15 @@ captures where a caller stands, from files, and resolves it under a
 per-location lock, and `location_git.py` holds its readers: git's
 discovery and config, the `Capture` model and its token codec, the
 HEAD, ref, stamp and manifest readers and the history reader;
+`_git.py` is the one way the package runs git (`run_git`), for
+`location.py` and `origin.py` alike;
 `gitobjects.py` reads commits and blobs from the repository's object
 files; `checkout_token.py` and `project_file.py` read and write the two
 files; `machine.py` is the machine id and the store id; `admission.py`
 holds one request's admissions; `membership_migrate.py` is the
-migration. `cli/project_cmd.py`, `cli/memory_move_cmd.py` and
+migration; `declare.py` opens the model a declaration runs on, for the
+CLI's declarations and the agent's. `cli/project_cmd.py`,
+`cli/memory_move_cmd.py` and
 `cli/membership_cmd.py` are the commands.
 
 **Offline.** `migrate_v8.py` reads an 8.x directory through the frozen
@@ -1135,13 +1180,25 @@ back out as that directory, with `_frontmatter.py` as the markdown
 codec and `mirror_format.py` holding the v8 file names and frontmatter
 it writes, which the migration shares, so the mirror imports neither v8
 module and stays when they go; `rollback.py` removes one actor's writes and leaves everyone
-else's; `init.py` and `_install_hints.py` are client onboarding.
+else's; `init.py` and `_install_hints.py` are client onboarding. Their
+commands are `cli/migrate.py`, `cli/export.py` (the JSON export and
+`--mirror`), `cli/rollback.py` and `cli/init.py`. The store's own
+upkeep is `key_lifecycle.py`, the key ring's lifecycle (`key show`,
+`export`, `import`, `adopt` and `rotate` in `cli/key_cmd.py`, and `log
+accept-history`), and the commands `cli/tombstones.py` (list, restore
+and prune), `cli/episodes.py` (list and prune), `cli/rename_scope.py`
+(a scope renamed across the store) and `cli/index_cmd.py` (`index
+rebuild`). `cli/try_cmd.py` is `bettermemory try`, a demo of the
+staleness verdict in a temporary store of its own.
 
 **Operations.** The commands an operator runs, every one of them
 read-only except a restore and `backup unlock`. `backup.py` is
 `bettermemory backup` (`cli/backup_cmd.py`): the bundle, its signed
 manifest, its verification on a private copy and the restore, which
-appends a signed `store_restored` row to the restored log.
+appends a signed `store_restored` row to the restored log;
+`backup_create.py`, `backup_verify.py` and `backup_restore.py` hold the
+steps that fill a bundle, the checks a verification runs and the plan a
+restore reads before it changes anything.
 `restore_lock.py` is the restore lock, on the store's directory, which a
 restore holds for its length and every writing open takes shared in
 `store._connect`, and the record a restore that did not finish leaves,
@@ -1157,12 +1214,17 @@ checks (`cli/log_cmd.py`). `history.py` is `memory history`
 parser.
 
 **Leaves.** `models.py` (Pydantic models, enums, ULIDs), `config.py`
-(config loading and the store-directory rule), `managed.py` (the
+(config loading and the store-directory rule, with the section builders
+in `config_sections.py`), `managed.py` (the
 organisation-managed config's fixed location, a file or on Windows a
 registry value, and its reader), `prompts.py` (the
 system-prompt addendum), `_fsutil.py` (atomic writes and owner-only
 directories), `githead.py` (HEAD and the ref it names, read from the
-repository files) and `_caches.py` (the cache registry). Nothing in this group imports a handler or the store, and
+repository files), `_paths.py` (whether one recorded path lies at or
+below another), `claude_paths.py` (where Claude Code keeps its files on
+this host, the one answer `init`, `doctor`, `posture` and
+`sandbox_settings` read) and `_caches.py` (the cache registry). Nothing
+in this group imports a handler or the store, and
 a new cross-cutting concept belongs here, not in a cycle.
 
 ## Storage
