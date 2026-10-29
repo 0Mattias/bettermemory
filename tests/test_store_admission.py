@@ -22,6 +22,16 @@ admission, SQLite's own text for its statistics tables, and the column
 check of each table this build creates), and so is a schema SQLite
 cannot parse, which ended ``up --foreground`` in a traceback.
 
+A later build of the major may add to a store what an older build must
+still read and write (ENG-107, CONTRIBUTING.md, "Store versions"): a plain
+table, a nullable column with a literal default, an index on columns.
+Each is admitted and read on the file as this build's own tables are, so
+the review's three placed on a table this build never creates are still
+refused in time. What a later build may not add without raising the
+reader minimum (a view, a trigger, a virtual table, an index on an
+expression or with a WHERE) is refused, and a refused store whose meta
+says a later build wrote it is told to upgrade (`LaterStoreError`).
+
 The four surfaces run in a child process each, from the repository's
 directory with no ``BETTERMEMORY_DIR``, so the store is the one
 ``cwd_store`` picks, under a harness timeout (`_CHILD_TIMEOUT`): against a
@@ -49,7 +59,7 @@ from typing import Any, TypeVar
 
 import pytest
 
-from bettermemory import store_schema
+from bettermemory import doctor, posture, store_schema
 from bettermemory.cli import _common
 from bettermemory.config import PROJECT_DIR_NAME
 from bettermemory.log import KeyRing
@@ -84,6 +94,26 @@ _ENDLESS = (
     "SELECT 'store_id' AS key, x AS value FROM n WHERE x < 0"
 )
 
+#: A ``meta`` whose ``value`` is a generated column over one costly
+#: ``instr`` call (the cold review's first store, ENG-172 H1).
+_SLOW_META = (
+    "PRAGMA writable_schema = ON",
+    "UPDATE sqlite_master SET sql = 'CREATE TABLE meta (key TEXT PRIMARY KEY, "
+    "value TEXT GENERATED ALWAYS AS (v || substr(instr(printf(''%.*c'', "
+    "10000000 + length(v) * 0, ''a''), printf(''%.*c'', 100000, ''a'') || ''b''), "
+    "1, 0)) VIRTUAL, v TEXT)' WHERE type = 'table' AND name = 'meta'",
+    "PRAGMA writable_schema = OFF",
+)
+#: The text the cold review gave ``sqlite_stat1``: a generated ``stat``.
+_SLOW_STAT1 = (
+    "PRAGMA writable_schema = ON",
+    "UPDATE sqlite_master SET sql = 'CREATE TABLE sqlite_stat1(tbl, idx, stat "
+    "GENERATED ALWAYS AS (s || substr(instr(printf(''%.*c'', 10000000 + "
+    "length(s) * 0, ''a''), printf(''%.*c'', 100000, ''a'') || ''b''), 1, 0)) "
+    "VIRTUAL, s)' WHERE name = 'sqlite_stat1'",
+    "PRAGMA writable_schema = OFF",
+)
+
 #: The ways a repository's store is made to hang a reader: ``meta`` as an
 #: endless view (every reader), and a trigger of its own on ``log`` whose
 #: body never ends (every writer of a row, the session-start hook's brief
@@ -97,23 +127,8 @@ _POISONS: dict[str, tuple[str, ...]] = {
     # The cold review's three (ENG-172 H1): each passed the schema check by
     # its tables' names. One `instr` over ten million characters is one
     # step that takes seconds.
-    "generated": (
-        "PRAGMA writable_schema = ON",
-        "UPDATE sqlite_master SET sql = 'CREATE TABLE meta (key TEXT PRIMARY KEY, "
-        "value TEXT GENERATED ALWAYS AS (v || substr(instr(printf(''%.*c'', "
-        "10000000 + length(v) * 0, ''a''), printf(''%.*c'', 100000, ''a'') || ''b''), "
-        "1, 0)) VIRTUAL, v TEXT)' WHERE type = 'table' AND name = 'meta'",
-        "PRAGMA writable_schema = OFF",
-    ),
-    "stat1": (
-        "ANALYZE",
-        "PRAGMA writable_schema = ON",
-        "UPDATE sqlite_master SET sql = 'CREATE TABLE sqlite_stat1(tbl, idx, stat "
-        "GENERATED ALWAYS AS (s || substr(instr(printf(''%.*c'', 10000000 + "
-        "length(s) * 0, ''a''), printf(''%.*c'', 100000, ''a'') || ''b''), 1, 0)) "
-        "VIRTUAL, s)' WHERE name = 'sqlite_stat1'",
-        "PRAGMA writable_schema = OFF",
-    ),
+    "generated": _SLOW_META,
+    "stat1": ("ANALYZE", *_SLOW_STAT1),
     "check": (
         "PRAGMA writable_schema = ON",
         "UPDATE sqlite_master SET sql = substr(sql, 1, length(sql) - 1) || "
@@ -127,6 +142,54 @@ _POISONS: dict[str, tuple[str, ...]] = {
         "UPDATE sqlite_master SET sql = 'CREATE VIEW meta AS SELECT nonsense FROM ((' "
         "WHERE name = 'meta'",
         "PRAGMA writable_schema = OFF",
+    ),
+    # The review's three on a table this build never creates, which a
+    # later build may add (ENG-107) and which is admitted as a plain table
+    # only once its columns are read: its generated column, read unbounded,
+    # takes about 20 s, and this build never evaluates it. Its row is
+    # written before the column is, as the review's meta is built.
+    "later_generated": (
+        "CREATE TABLE later_slow (v TEXT)",
+        "INSERT INTO later_slow (v) VALUES ('x')",
+        "PRAGMA writable_schema = ON",
+        "UPDATE sqlite_master SET sql = 'CREATE TABLE later_slow (w TEXT GENERATED "
+        "ALWAYS AS (v || substr(instr(printf(''%.*c'', 10000000 + length(v) * 0, "
+        "''a''), printf(''%.*c'', 100000, ''a'') || ''b''), 1, 0)) VIRTUAL, v TEXT)' "
+        "WHERE name = 'later_slow'",
+        "PRAGMA writable_schema = OFF",
+    ),
+    "later_stat1": (
+        "CREATE TABLE later_ranks (id TEXT PRIMARY KEY, w REAL)",
+        "CREATE INDEX later_by_w ON later_ranks(w)",
+        "INSERT INTO later_ranks VALUES ('a', 0.5), ('b', 0.25)",
+        "ANALYZE",
+        *_SLOW_STAT1,
+    ),
+    "later_check": (
+        "CREATE TABLE later_checked (x TEXT, CHECK (instr(printf('%.*c', "
+        "10000000, 'a'), printf('%.*c', 100000, 'a') || 'b') = 0))",
+    ),
+    # The slow meta in a store whose meta says a later build wrote it: a
+    # refused file's revision is read only from a meta the table check
+    # admits, so this one is never read and the refusal stays the schema's.
+    "later_revision_generated": (
+        "UPDATE meta SET value = '2' WHERE key = 'schema_revision'",
+        *_SLOW_META,
+    ),
+    # A unique index this build never creates on a table it writes (the
+    # review of the ENG-107 reconciliation, H1): admitted, it turned this
+    # build's INSERT OR REPLACE into quarantine, its INSERT OR IGNORE into
+    # memory_links and FTS5's REPLACE into the docsize table into silent
+    # deletes and drops, and the log then read tampered.
+    "unique_quarantine": ("CREATE UNIQUE INDEX later_q ON quarantine(reason)",),
+    "unique_links": ("CREATE UNIQUE INDEX later_l ON memory_links(source_id)",),
+    "unique_fts_docsize": ("CREATE UNIQUE INDEX later_s ON memories_fts_docsize(sz)",),
+    # One of this build's index names in capitals, on a table (H2): SQLite
+    # compares names in any case, so the additive step's CREATE INDEX failed
+    # on it and the owner's opener ended in a traceback.
+    "upper_name": (
+        "DROP INDEX projects_by_merged_into",
+        "CREATE TABLE PROJECTS_BY_MERGED_INTO (x)",
     ),
 }
 
@@ -245,7 +308,13 @@ def test_every_store_this_build_writes_is_admitted(repo: Path) -> None:
         (_POISONS["view"], "view named 'meta'"),
         ((f"CREATE VIEW recent AS {_ENDLESS}",), "view named 'recent'"),
         (_POISONS["trigger"], "trigger named 'log_spin'"),
-        (("CREATE TABLE extra(x)",), "table named 'extra'"),
+        (
+            (
+                "DROP TABLE memories_fts",
+                "CREATE VIRTUAL TABLE memories_fts USING fts5(body_fts)",
+            ),
+            "table 'memories_fts' is not the one",
+        ),
         (
             (
                 "DROP TRIGGER memories_ai",
@@ -442,12 +511,13 @@ def test_a_bound_store_with_one_more_index_keeps_the_ring(
     repo: Path, tmp_path: Path
 ) -> None:
     """The cold review's H2: the bound store gains one object this build
-    does not create (another build's index, or one added by hand). This
-    build refuses it, but it may still hold the store's id, so the key
-    ring stays bound to it: a copy opens read-only and writes nothing, and
-    the original, once the index is gone, verifies clean. Read as no
-    store, the ring went to the copy, which signed with the key and moved
-    the head, and the original read tampered (``tail_deleted``)."""
+    refuses (another build's index on an expression, or one added by
+    hand; an index on columns alone is admitted, ENG-107). It may still
+    hold the store's id, so the key ring stays bound to it: a copy opens
+    read-only and writes nothing, and the original, once the index is
+    gone, verifies clean. Read as no store, the ring went to the copy,
+    which signed with the key and moved the head, and the original read
+    tampered (``tail_deleted``)."""
     path = repo / PROJECT_DIR_NAME / STORE_FILENAME
     copy = tmp_path / "copy" / STORE_FILENAME
     copy.parent.mkdir()
@@ -455,7 +525,7 @@ def test_a_bound_store_with_one_more_index_keeps_the_ring(
         bound.put_memory(_memory("the staging database listens on 5432"))
         store_id = bound.store_id
     shutil.copy(path, copy)
-    _sql(path, "CREATE INDEX extra ON memories(created)")
+    _sql(path, "CREATE INDEX extra ON memories(lower(created))")
     with pytest.raises(OSError):
         _in_time(lambda: _store_id_at(path))
     with Store.open_or_create(copy) as opened:
@@ -484,6 +554,367 @@ def test_the_owners_opener_ends_in_one_line(
     err = capsys.readouterr().err
     assert err.count("\n") == 1
     assert _REFUSED in err
+
+
+# ---------------------------------------------------------------------------
+# What a later build of the major adds (ENG-107)
+# ---------------------------------------------------------------------------
+
+#: What a later build may add without raising ``min_reader_revision``
+#: (CONTRIBUTING.md, "Store versions"), each admitted: a plain table (with
+#: the index SQLite makes for its key), nullable columns with literal
+#: defaults, and indexes on columns, on this build's table and on its own.
+_LATER_ADDITIONS: dict[str, tuple[str, ...]] = {
+    "table": (
+        "CREATE TABLE later_ranks (id TEXT PRIMARY KEY, w REAL NOT NULL DEFAULT 0, "
+        "note TEXT DEFAULT 'none', blob BLOB DEFAULT X'00')",
+    ),
+    "columns": (
+        "ALTER TABLE memories ADD COLUMN later_rank REAL",
+        "ALTER TABLE memories ADD COLUMN later_tag TEXT DEFAULT 'x'",
+        "ALTER TABLE memories ADD COLUMN later_n TEXT NOT NULL DEFAULT ''",
+    ),
+    "literal defaults": (
+        "ALTER TABLE memories ADD COLUMN later_flag INTEGER DEFAULT FALSE",
+        "ALTER TABLE memories ADD COLUMN later_on INTEGER DEFAULT TRUE",
+        "ALTER TABLE memories ADD COLUMN later_w REAL DEFAULT 1e3",
+        "ALTER TABLE memories ADD COLUMN later_h INTEGER DEFAULT 0x10",
+        "ALTER TABLE memories ADD COLUMN later_e REAL DEFAULT -1.5e-3",
+    ),
+    "NOT NULL on its table": ("CREATE TABLE later_n (x TEXT NOT NULL)",),
+    "index": (
+        'CREATE INDEX later_by_created ON memories(created DESC, "id" COLLATE NOCASE)',
+    ),
+    "index on its table": (
+        'CREATE TABLE "later digest" (id TEXT, digest BLOB, UNIQUE (id))',
+        'CREATE UNIQUE INDEX "later by digest" ON "later digest"(digest, id)',
+    ),
+}
+
+
+@pytest.mark.parametrize("addition", sorted(_LATER_ADDITIONS))
+def test_what_a_later_build_may_add_is_admitted(repo: Path, addition: str) -> None:
+    """Admitted by every opener, and this build reads and writes the store
+    beside it: the reader's open, the owner's, a write and a verify."""
+    path = repo / PROJECT_DIR_NAME / STORE_FILENAME
+    _sql(path, *_LATER_ADDITIONS[addition])
+    assert store_schema.schema_refusal(_master(path)) is None
+    with Store.open(path) as reader:
+        assert reader.count_memories() == 0
+    with Store.open(path, allow_rekey=True) as owner:
+        owner.put_memory(_memory("the build server is named after a moon"))
+        assert owner.log_verify()["status"] == "ok"
+    with Store.open(path) as reader:
+        assert reader.count_memories() == 1
+
+
+#: What a later build may not add without raising ``min_reader_revision``,
+#: each refused on a table, index, view or trigger this build never creates:
+#: a table that computes a column, checks a row, refers to another table or
+#: defaults to an expression, an index on an expression or with a WHERE, a
+#: view, a trigger, a virtual table, and a name this build gives another
+#: kind of object.
+_LATER_REFUSED: dict[str, tuple[tuple[str, ...], str]] = {
+    "generated column": (
+        ("CREATE TABLE later_x (v TEXT, n AS (length(v)))",),
+        "its table 'later_x' has a generated column 'n'",
+    ),
+    "check": (("CREATE TABLE later_x (v TEXT CHECK (v <> ''))",), "has a check"),
+    "foreign key": (
+        ("CREATE TABLE later_x (id TEXT REFERENCES memories(id))",),
+        "its table 'later_x' has a foreign key",
+    ),
+    "expression default": (
+        ("CREATE TABLE later_x (at TEXT DEFAULT (datetime('now')))",),
+        "default that is not a literal",
+    ),
+    "expression index": (
+        ("CREATE INDEX later_x ON memories(lower(body))",),
+        "index named 'later_x'",
+    ),
+    "partial index": (
+        ("CREATE INDEX later_x ON memories(created) WHERE created > ''",),
+        "index named 'later_x'",
+    ),
+    "view": (
+        ("CREATE VIEW later_x AS SELECT id FROM memories",),
+        "view named 'later_x'",
+    ),
+    "trigger": (
+        ("CREATE TRIGGER later_x AFTER INSERT ON memories BEGIN SELECT 1; END",),
+        "trigger named 'later_x'",
+    ),
+    "virtual table": (
+        ("CREATE VIRTUAL TABLE later_x USING fts5(v)",),
+        "virtual table named 'later_x'",
+    ),
+    "another object's name": (
+        ("DROP INDEX log_by_kind", "CREATE TABLE log_by_kind (x)"),
+        "a name this build gives another object",
+    ),
+    "another object's name in capitals": (
+        _POISONS["upper_name"],
+        "its table 'PROJECTS_BY_MERGED_INTO' has a name this build gives another",
+    ),
+    "the full-text table's name in capitals": (
+        (
+            "DROP TABLE memories_fts",
+            "CREATE TABLE MEMORIES_FTS (memories_fts, body_fts, scopes_fts)",
+        ),
+        "its table 'MEMORIES_FTS' is not the one this build creates",
+    ),
+    "unique index": (
+        _POISONS["unique_quarantine"],
+        "its unique index 'later_q' is on 'quarantine', which this build writes",
+    ),
+    "unique index on a full-text shadow table": (
+        _POISONS["unique_fts_docsize"],
+        "its unique index 'later_s' is on 'memories_fts_docsize'",
+    ),
+    "unique constraint": (
+        (
+            "CREATE TABLE quarantine_new (name TEXT PRIMARY KEY, reason TEXT NOT NULL "
+            "UNIQUE, detail TEXT, remote TEXT, at TEXT NOT NULL, size INTEGER, "
+            "sha256 TEXT)",
+            "DROP TABLE quarantine",
+            "ALTER TABLE quarantine_new RENAME TO quarantine",
+        ),
+        "its unique index 'sqlite_autoindex_quarantine_2' is on 'quarantine'",
+    ),
+    # The review's L1, on the base too: the key moved to another column
+    # keeps its index's name, and this build's INSERT OR REPLACE then
+    # deleted a quarantine row whose reason another row had.
+    "moved primary key": (
+        (
+            "PRAGMA writable_schema = ON",
+            "UPDATE sqlite_master SET sql = replace(replace(sql, 'name TEXT PRIMARY "
+            "KEY', 'name TEXT'), 'reason TEXT NOT NULL', 'reason TEXT NOT NULL "
+            "PRIMARY KEY') WHERE name = 'quarantine'",
+            "PRAGMA writable_schema = OFF",
+        ),
+        "its index 'sqlite_autoindex_quarantine_1' is not on the columns this build",
+    ),
+    "NOT NULL with no default": (
+        (
+            "ALTER TABLE memories ADD COLUMN later_n TEXT",
+            "PRAGMA writable_schema = ON",
+            "UPDATE sqlite_master SET sql = replace(sql, 'later_n TEXT', "
+            "'later_n TEXT NOT NULL') WHERE name = 'memories'",
+            "PRAGMA writable_schema = OFF",
+        ),
+        "its table 'memories' needs 'later_n', which this build leaves out",
+    ),
+}
+
+
+@pytest.mark.parametrize("refused", sorted(_LATER_REFUSED))
+def test_what_a_later_build_may_not_add_is_refused(repo: Path, refused: str) -> None:
+    """Refused by the reader's and the owner's open alike, at once, in the
+    admission's words, the file left as it was."""
+    statements, named = _LATER_REFUSED[refused]
+    path = repo / PROJECT_DIR_NAME / STORE_FILENAME
+    _sql(path, *statements)
+    before = _snapshot(path)
+    for allow_rekey in (False, True):
+        started = time.perf_counter()
+        with pytest.raises(ValueError, match=_REFUSED) as raised:
+            _in_time(lambda: Store.open(path, allow_rekey=allow_rekey))
+        assert time.perf_counter() - started < _REFUSAL_BOUND
+        assert named in str(raised.value)
+        assert isinstance(raised.value, store_schema.StoreRefusedError)
+        assert not isinstance(raised.value, store_schema.StoreVersionError)
+    assert _snapshot(path) == before
+
+
+def _collated(path: Path) -> None:
+    """An index on a collation its writer registered and this build does
+    not: every write to the table fails in this build."""
+    conn = sqlite3.connect(str(path), isolation_level=None)
+    try:
+        conn.create_collation("later", lambda a, b: (a > b) - (a < b))
+        conn.execute("CREATE INDEX later_x ON memories(body COLLATE later)")
+    finally:
+        conn.close()
+
+
+def _quoted_name(path: Path) -> None:
+    """An index on a double-quoted name no column has, which SQLite takes
+    for a string, and so for an expression."""
+    try:
+        _sql(path, 'CREATE INDEX later_x ON memories("no_such_column")')
+    except sqlite3.OperationalError as exc:  # pragma: no cover - SQLITE_DQS off
+        pytest.skip(f"this SQLite takes no double-quoted string ({exc})")
+
+
+@pytest.mark.parametrize(
+    ("make", "named"),
+    [
+        (_collated, "sorts by a collation SQLite does not build in"),
+        (_quoted_name, "is on an expression"),
+    ],
+)
+def test_an_index_that_reads_as_columns_is_held_to_what_sqlite_made(
+    repo: Path, make: Callable[[Path], None], named: str
+) -> None:
+    """Each index's text is columns alone (`schema_refusal` passes it);
+    what SQLite made of it is read on the file (`index_refusal`)."""
+    path = repo / PROJECT_DIR_NAME / STORE_FILENAME
+    make(path)
+    assert store_schema.schema_refusal(_master(path)) is None
+    with pytest.raises(ValueError, match=_REFUSED) as raised:
+        _in_time(lambda: Store.open(path, allow_rekey=True))
+    assert f"its index 'later_x' {named}" in str(raised.value)
+
+
+def _written_later(path: Path, *, reader: str, revision: str = "2") -> None:
+    """Meta saying a later build (9.1.0) wrote the store at `revision`,
+    with `reader` as its minimum reader, and a view this build refuses."""
+    _sql(
+        path,
+        f"UPDATE meta SET value = '{revision}' WHERE key = 'schema_revision'",
+        f"UPDATE meta SET value = '{reader}' WHERE key = 'min_reader_revision'",
+        "INSERT OR REPLACE INTO meta(key, value) VALUES ('engine_version', '9.1.0')",
+        "CREATE VIEW later_view AS SELECT id FROM memories",
+    )
+
+
+@pytest.mark.parametrize(
+    ("reader", "said", "key"),
+    [
+        (
+            "1",
+            "is at schema revision 2 (meta's schema_revision) (its newest writer "
+            "was bettermemory 9.1.0), and this build, bettermemory",
+            "schema_revision",
+        ),
+        (
+            "2",
+            "needs a reader at schema revision 2 or later (meta's "
+            "min_reader_revision) (its newest writer was bettermemory 9.1.0); "
+            "this build, bettermemory",
+            "min_reader_revision",
+        ),
+    ],
+)
+def test_a_refused_store_a_later_build_wrote_says_to_upgrade(
+    repo: Path, reader: str, said: str, key: str
+) -> None:
+    """A store whose ``schema_revision`` is above this build's holds what
+    a later build may have added: the refusal is the version refusal, in
+    `check_versions`' words when the reader minimum is above this build's
+    too, not "not a store this build wrote". It is still a refusal of the
+    file: the key ring's read of it cannot tell, and keeps the ring."""
+    path = repo / PROJECT_DIR_NAME / STORE_FILENAME
+    _written_later(path, reader=reader)
+    before = _snapshot(path)
+    for allow_rekey in (False, True):
+        started = time.perf_counter()
+        with pytest.raises(ValueError, match="upgrade bettermemory") as raised:
+            _in_time(lambda: Store.open(path, allow_rekey=allow_rekey))
+        assert time.perf_counter() - started < _REFUSAL_BOUND
+        refused = raised.value
+        message = str(refused)
+        assert said in message
+        assert "reads revision 1" in message
+        assert "does not admit what it holds (it holds a view named 'later_view'" in (
+            message
+        )
+        assert message.endswith(": upgrade bettermemory to open it")
+        assert _REFUSED not in message
+        assert isinstance(refused, store_schema.StoreVersionError)
+        assert (refused.key, refused.needed) == (key, 2)
+        assert isinstance(refused, store_schema.StoreRefusedError)
+        assert refused.holds_meta is True and not refused.timed_out
+    assert _snapshot(path) == before
+    with pytest.raises(OSError):
+        _in_time(lambda: _store_id_at(path))
+
+
+@pytest.mark.parametrize("revision", ["1", "0", "two", ""])
+def test_a_refused_store_at_this_builds_revision_keeps_the_schema_refusal(
+    repo: Path, revision: str
+) -> None:
+    """A revision at or below this build's, or one that is not a whole
+    number, says nothing of a later build: the admission's refusal."""
+    path = repo / PROJECT_DIR_NAME / STORE_FILENAME
+    _written_later(path, reader="2", revision=revision)
+    with pytest.raises(ValueError, match=_REFUSED) as raised:
+        _in_time(lambda: Store.open(path))
+    assert "view named 'later_view'" in str(raised.value)
+    assert not isinstance(raised.value, store_schema.StoreVersionError)
+    assert isinstance(raised.value, store_schema.StoreRefusedError)
+    assert raised.value.holds_meta is True
+
+
+def _later_refusal(repo: Path) -> tuple[Path, ValueError]:
+    path = repo / PROJECT_DIR_NAME / STORE_FILENAME
+    _written_later(path, reader="1")
+    with pytest.raises(ValueError) as raised:
+        Store.open(path)
+    return path, raised.value
+
+
+def test_doctor_advises_the_upgrade_for_a_store_a_later_build_wrote(
+    repo: Path,
+) -> None:
+    """doctor reads the version refusal before the refused file's: the
+    remedy is the build to open it with, not "move it aside"."""
+    path, refused = _later_refusal(repo)
+    remedy = doctor._open_remedy(path, refused)
+    assert "reads schema revision 2 or later (meta's schema_revision)" in remedy
+    assert "move" not in remedy
+
+
+def test_the_audit_reports_the_upgrade_for_a_store_a_later_build_wrote(
+    repo: Path, tmp_path: Path
+) -> None:
+    """The audit's key finding for it is a warning that says to upgrade, not
+    the high finding for a file a repository shipped."""
+    path, _refused = _later_refusal(repo)
+    _meta, error, refused = posture._meta_or_error(path)
+    assert refused is not None
+    finding = posture._key(path, tmp_path / "keys", None, error, None, refused=refused)
+    assert (finding.id, finding.status) == ("key.match", "warn")
+    assert finding.fix is not None and finding.fix.startswith("upgrade bettermemory")
+    assert "upgrade bettermemory to open it" in finding.summary
+
+
+def test_admission_reads_each_index_it_does_not_create_once(repo: Path) -> None:
+    """One read of each index this build never creates and none of a whole
+    table's index list per index, so admission grows with the indexes, not
+    their square (6,000 plain indexes on one table were refused as a
+    timeout when it read the list for each). Counted from the statements
+    SQLite runs, not timed."""
+    path = repo / PROJECT_DIR_NAME / STORE_FILENAME
+    count = 40
+    _sql(
+        path,
+        "CREATE TABLE later_t (x, y)",
+        *(f"CREATE INDEX later_{n} ON later_t(x, y)" for n in range(count)),
+    )
+    conn = sqlite3.connect(str(path), isolation_level=None)
+    statements: list[str] = []
+    conn.set_trace_callback(statements.append)
+    try:
+        store_schema.admit_store(conn, path)
+    finally:
+        conn.close()
+    reads = [s for s in statements if s.startswith("PRAGMA index")]
+    assert sum("later_" in s for s in reads) == count
+    assert not any("index_list" in s for s in statements)
+
+
+def test_the_owners_opener_says_to_upgrade_in_one_line(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = repo / PROJECT_DIR_NAME / STORE_FILENAME
+    _written_later(path, reader="1")
+    with pytest.raises(SystemExit) as exited:
+        _in_time(lambda: _common.open_owner_store(path))
+    assert exited.value.code == 1
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1
+    assert "upgrade bettermemory to open it" in err
 
 
 # ---------------------------------------------------------------------------

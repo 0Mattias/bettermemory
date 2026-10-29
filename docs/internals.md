@@ -1150,8 +1150,9 @@ The `meta` table also says which builds may read and write the store
 line's format; `schema_revision`, what the store holds within it;
 `min_reader_revision` and `min_writer_revision`, the lowest revisions that
 may read and write it; and `engine_version`, the newest build that opened it
-to write. Every open checks them (`store_schema.check_versions`, one call
-in `Store.open` after the store id and the schema version have passed). A
+to write. Every open checks them (`store_schema.check_versions`, which
+`store_versions.py` holds and `store_schema` re-exports, one call in
+`Store.open` after the store id and the schema version have passed). A
 build below the reader minimum refuses the store with `StoreVersionError`.
 A build below the writer minimum opens it for reading only: the connection
 is set `PRAGMA query_only`, so every write, `BEGIN IMMEDIATE` included,
@@ -1183,6 +1184,45 @@ read the bundle taken before it. The owner's open then
 names this build in `engine_version` when it is the newest, in a
 `BEGIN IMMEDIATE` taken only then; a store that cannot be written is left
 as it is, and the next writing open records what is missing.
+
+Before any of that, every opener of an existing store file admits it
+(`store_schema.admit_store`, ENG-172): `trusted_schema` off, then, the
+schema reads held to 2 s of virtual-machine time together and to strings
+of at most 16 KiB, its `sqlite_master` checked (`schema_refusal`), each
+plain table's columns read (`table_refusal`) and each index the build
+never creates read once as SQLite made it (`index_refusal`: one
+`index_xinfo` an index, so the reads grow with the indexes, not their
+square). Names compare in any case, as SQLite's do. One of this build's
+objects must have its text (a plain table, its name; an index SQLite made
+for a constraint, its key columns); one it never creates is admitted when
+it is what a later build of the major may add without raising
+`min_reader_revision` (CONTRIBUTING.md, "Store versions"): a plain table
+with no generated column, CHECK, foreign key or default but a literal
+(SQLite's grammar, `TRUE`, `FALSE`, hex and exponent numbers included), a
+column on one of this build's tables that is `NOT NULL` only with a
+default, or an index on columns alone (no expression, no `WHERE`, only
+SQLite's own collations) that is not unique on one of this build's tables.
+A view, a trigger this build did not write, a virtual table, an index on
+an expression or with a `WHERE`, a unique index on one of this build's
+tables (the full-text table's shadow tables included), a `NOT NULL` column
+with no default that this build's own table text does not have, and any of
+its own objects with another text are refused with `StoreRefusedError`:
+each runs SQL of the file's choosing on this build's connection, or turns
+its writes into losses no one is told of (on a unique index, `INSERT OR
+REPLACE` deletes a row, `INSERT OR IGNORE` and FTS5's replace drop one,
+and `log verify` then reads the chain as tampered). The admission check is
+that boundary for every build, so a later build that adds such an object
+raises `min_reader_revision`, and an older build that refuses a file whose
+`schema_revision` is above its own says to upgrade: `LaterStoreError`, a
+`StoreRefusedError` and a `StoreVersionError`, in `check_versions`' words
+when the reader minimum is above its own too, naming what the admission
+refused either way. It reads that revision only from a plain `meta` the
+table check passes, in a 2 s window of its own and under the same length
+limit, and keeps the admission's refusal for a file with no such `meta` or
+with a revision at or below its own; an admitted file's `meta`
+(`read_store_meta`) is read in a window of its own as well. `doctor` and
+the audit read that refusal as a version refusal first: their remedy is
+the later build, not moving the file aside.
 
 A record a later build wrote may carry fields this build's models do not
 define; the models read past them (pydantic's `extra='ignore'`). Every

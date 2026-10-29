@@ -686,6 +686,12 @@ def _open_remedy(path: Path, exc: Exception) -> str:
         # `admit_store`): damaged, or not a database at all, as before the
         # check, and restoring a copy is the fix.
         exc = cause
+    if isinstance(exc, StoreVersionError) and exc.needed is not None:
+        return (
+            f"open it with a bettermemory build that reads schema revision "
+            f"{exc.needed} or later (meta's {exc.key}), or run `bettermemory "
+            "backup restore` under that build; doctor leaves the file as it is"
+        )
     if isinstance(exc, StoreRefusedError):
         if exc.timed_out:
             return (
@@ -701,12 +707,6 @@ def _open_remedy(path: Path, exc: Exception) -> str:
         )
     if "this build reads up to" in str(exc):
         return "upgrade bettermemory: a newer release wrote this store"
-    if isinstance(exc, StoreVersionError) and exc.needed is not None:
-        return (
-            f"open it with a bettermemory build that reads schema revision "
-            f"{exc.needed} or later (meta's {exc.key}), or run `bettermemory "
-            "backup restore` under that build; doctor leaves the file as it is"
-        )
     if isinstance(exc, StoreVersionError) and exc.key is not None:
         return (
             f"set meta's {exc.key} back to a whole number, or restore the store "

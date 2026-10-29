@@ -7,15 +7,16 @@ membership rows are checked against, the row types the reads return
 `StandingAnswer`), the `SCHEMA`, `MEMBERSHIP_SCHEMA` and `ADDITIVE_SCHEMA`
 texts with the additive step that brings an older store up to them, the
 store's errors, the compatibility contract's versions and the check every
-open makes of them (`check_versions`, ENG-107), the paths a store opens
+open makes of them (`check_versions`, ENG-107, from `store_versions`, whose
+names it re-exports), the paths a store opens
 by (`store_path`, the saved orphans, the v8 directory check,
 `resolve_keys_dir`), the check every opener of an existing store file
 runs before it reads a value from it (`admit_store`, `read_store_meta`,
 `StoreRefusedError`), and the read-only commands' connection, which
 writes nothing to the file or beside it (`connect_read_only`). `store`
 re-exports every name a caller reads. It lives apart from `store.py` to
-keep each module under the package's 2,000-line bound (ENG-96), at the
-bottom of the store family: it imports no other store module.
+keep each module under the package's 2,000-line bound (ENG-96), near the
+bottom of the store family: it imports no store module but `store_versions`.
 """
 
 from __future__ import annotations
@@ -31,20 +32,30 @@ import shutil
 import sqlite3
 import tempfile
 import time
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import Any, NamedTuple
 
 from . import log as _chain
 from ._fsutil import sqlite_file_uri
 from .config import KEYS_DIR_ENV, STORE_FILENAME
 from .log import CONTROL_KINDS
 from .models import Memory, TombstonedMemory
-
-if TYPE_CHECKING:
-    from .store import Store
+from .store_versions import (
+    ENGINE_VERSION_KEY as ENGINE_VERSION_KEY,
+    MIN_READER_KEY as MIN_READER_KEY,
+    MIN_WRITER_KEY as MIN_WRITER_KEY,
+    SCHEMA_REVISION_KEY as SCHEMA_REVISION_KEY,
+    StoreVersionError as StoreVersionError,
+    VersionVerdict as VersionVerdict,
+    _shown,
+    _WHOLE,
+    check_versions as check_versions,
+    version_meta as version_meta,
+    writes_rolled_back as writes_rolled_back,
+)
 
 log = logging.getLogger("bettermemory.store")
 
@@ -75,10 +86,6 @@ SCHEMA_VERSION = 1
 SCHEMA_REVISION = 1
 MIN_READER_REVISION = 1
 MIN_WRITER_REVISION = 1
-SCHEMA_REVISION_KEY = "schema_revision"
-MIN_READER_KEY = "min_reader_revision"
-MIN_WRITER_KEY = "min_writer_revision"
-ENGINE_VERSION_KEY = "engine_version"
 
 # Set on a store's first open, before its first table and before WAL mode
 # fixes it. A record row (body, its token stream, the JSON columns) runs
@@ -987,22 +994,6 @@ class UnknownFieldsError(ValueError):
         )
 
 
-class StoreVersionError(ValueError):
-    """The store needs a newer build to open it: its minimum reader
-    revision is above this build's `SCHEMA_REVISION`, or a version key in
-    its meta does not read as a whole number. `key` is the meta key that
-    refused the open and `needed` the schema revision a build must read to
-    open the store (None when a revision is not what it needs), which
-    `doctor` names in its remedy."""
-
-    def __init__(
-        self, message: str, *, key: str | None = None, needed: int | None = None
-    ) -> None:
-        super().__init__(message)
-        self.key = key
-        self.needed = needed
-
-
 def resolve_keys_dir() -> Path:
     """The keys directory a store opens with when the caller names none:
     ``BETTERMEMORY_KEYS_DIR`` when set, else the user's config directory
@@ -1197,252 +1188,22 @@ def _add_membership_tables(
     meta[MEMBERSHIP_STORE_ID] = str(row[0])
 
 
-# ---------------------------------------------------------------------------
-# The versions an open checks (ENG-107)
-# ---------------------------------------------------------------------------
-
-
-class VersionVerdict(NamedTuple):
-    """What `check_versions` decided for one open. `writes`: the open goes
-    on as the owner's writing open (``allow_rekey``); False for a reader's
-    open and for a store this build may only read. `read_only`: the store's
-    minimum writer revision is above this build's, and the connection
-    refuses every write (``PRAGMA query_only``); `reason` says why.
-    `revision`, `min_reader` and `min_writer` are the store's as the open
-    read them, 0 for a key the store does not carry."""
-
-    writes: bool
-    read_only: bool
-    reason: str | None
-    revision: int
-    min_reader: int
-    min_writer: int
-
-
-# The stores this process has said it opens for reading only, each with the
-# minimum writer revision that decided it: said once, not at every
-# connection a daemon's workers reopen.
-_READ_ONLY_TOLD: set[tuple[str, int]] = set()
-
-_WHOLE = re.compile(r"[0-9]{1,9}")
-
-
-def version_meta() -> dict[str, str]:
-    """The version keys `Store.create` writes into a new store's meta: this
-    build's revision and the minimums a store it creates carries."""
-    return {
-        SCHEMA_REVISION_KEY: str(SCHEMA_REVISION),
-        MIN_READER_KEY: str(MIN_READER_REVISION),
-        MIN_WRITER_KEY: str(MIN_WRITER_REVISION),
-    }
-
-
-def _shown(text: str) -> str:
-    """A value read from meta, fit for one line of a message: meta holds
-    whatever an editor of the file wrote, so control and format characters
-    are escaped (`repr`) and the text is cut at 64 characters."""
-    escaped = repr(text)[1:-1]
-    return escaped if len(escaped) <= 64 else escaped[:61] + "..."
-
-
-def _stored_revision(meta: Mapping[str, str], key: str, path: Path) -> int:
-    """meta's revision under `key`, 0 when the store carries none. A value
-    that is not a whole number raises `StoreVersionError`: meta is not
-    authenticated, and an open that guessed would admit a build the store's
-    writer kept out, or keep out one it admitted."""
-    raw = meta.get(key)
-    if raw is None:
-        return 0
-    if not _WHOLE.fullmatch(raw):
-        raise StoreVersionError(
-            f"{path} carries a {key} that is not a whole number "
-            f"('{_shown(raw)}'); the store is not opened: set meta's {key} "
-            "back to a whole number, or restore the store from a backup taken "
-            "before the edit",
-            key=key,
-        )
-    return int(raw)
-
-
-def _release_order(version: str | None) -> tuple[int, ...] | None:
-    """`version`'s place in release order (`_daemon_client.version_key`,
-    any local ``+...`` part left off), None when it has none."""
-    if version is None:
-        return None
-    from ._daemon_client import version_key
-
-    return version_key(version.split("+", 1)[0])
-
-
-def _newer_engine(stored: str | None, version: str) -> bool:
-    """Whether `version` names a newer build than ``engine_version``'s
-    `stored`: later in release order, or the stored one has no place in it
-    and `version` has."""
-    ours = _release_order(version)
-    theirs = _release_order(stored)
-    return ours is not None and (theirs is None or ours > theirs)
-
-
-def _record_engine(
-    conn: sqlite3.Connection, path: Path, meta: dict[str, str], version: str
-) -> None:
-    """Name this build in ``engine_version`` at a writing open when it is
-    newer than the stored one (`_newer_engine`), read again under the write
-    lock so two builds opening at once leave the newer. An open of a store
-    that already names this build or a newer one takes no lock. A store
-    that cannot be written now (a read-only file, or one another writer
-    holds past the busy timeout) is left as it is with one line logged; the
-    next writing open records it. `meta` gains what was written."""
-    if not _newer_engine(meta.get(ENGINE_VERSION_KEY), version):
-        return
-    try:
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            row = conn.execute(
-                "SELECT value FROM meta WHERE key = ?", (ENGINE_VERSION_KEY,)
-            ).fetchone()
-            newer = _newer_engine(None if row is None else str(row[0]), version)
-            if newer:
-                conn.execute(
-                    "INSERT INTO meta(key, value) VALUES (?, ?) "
-                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                    (ENGINE_VERSION_KEY, version),
-                )
-            conn.execute("COMMIT")
-        except BaseException:
-            # The COMMIT is inside, as in `_add_membership_tables`.
-            if conn.in_transaction:
-                conn.execute("ROLLBACK")
-            raise
-    except sqlite3.OperationalError as exc:
-        log.info(
-            "store %s: engine_version not recorded (%s); the next writing open "
-            "records it",
-            path,
-            exc,
-        )
-        return
-    if newer:
-        meta[ENGINE_VERSION_KEY] = version
-    elif row is not None:
-        meta[ENGINE_VERSION_KEY] = str(row[0])
-
-
-def check_versions(
-    conn: sqlite3.Connection,
-    path: Path,
-    meta: dict[str, str],
-    writing: bool,
-    keys_dir: Path | str | None = None,
-) -> VersionVerdict:
-    """The compatibility contract at an open (ENG-107), run by `Store.open`
-    once the store id and the schema version have passed. A store whose
-    minimum reader revision is above this build's `SCHEMA_REVISION` is
-    refused (`StoreVersionError`, naming the newest build that wrote it).
-    One whose minimum writer revision is above it opens for reading only:
-    the connection is set ``PRAGMA query_only``, so every write fails as on
-    read-only media, nothing is recorded, an owner's open goes on as a
-    reader's (no rekey, no key ring claim, no origin anchor), and the first
-    such open in a process logs one warning saying why. Otherwise the store's
-    schema steps run (`store_steps.run_steps`): at a writing open (`writing`,
-    the owner's ``allow_rekey``) each step above the store's revision is
-    applied and recorded, a step that is not additive after a backup signed
-    with a key from `keys_dir`, the opener's keys directory; a reader's open
-    applies none, and while a step that is not additive is pending it is
-    set ``PRAGMA query_only`` and reads the store as it stands. A writing
-    open then names this build in ``engine_version``
-    when it is the newest (`_record_engine`). The verdict's `writes` is
-    what the open goes on with."""
-    from . import __version__
-
-    revision = _stored_revision(meta, SCHEMA_REVISION_KEY, path)
-    min_reader = _stored_revision(meta, MIN_READER_KEY, path)
-    min_writer = _stored_revision(meta, MIN_WRITER_KEY, path)
-    engine = meta.get(ENGINE_VERSION_KEY)
-    newest = f" (its newest writer was bettermemory {_shown(engine)})" if engine else ""
-    if min_reader > SCHEMA_REVISION:
-        raise StoreVersionError(
-            f"{path} needs a reader at schema revision {min_reader} or later "
-            f"(meta's {MIN_READER_KEY}){newest}; this build, bettermemory "
-            f"{__version__}, reads revision {SCHEMA_REVISION}: upgrade "
-            "bettermemory to open it",
-            key=MIN_READER_KEY,
-            needed=min_reader,
-        )
-    if min_writer > SCHEMA_REVISION:
-        reason = (
-            f"{path} is open for reading only: it needs a writer at schema "
-            f"revision {min_writer} or later{newest}, and this build, "
-            f"bettermemory {__version__}, writes revision {SCHEMA_REVISION}: "
-            "upgrade bettermemory to write to it"
-        )
-        conn.execute("PRAGMA query_only = ON")
-        told = (str(path), min_writer)
-        if told not in _READ_ONLY_TOLD:
-            _READ_ONLY_TOLD.add(told)
-            log.warning("%s", reason)
-        return VersionVerdict(False, True, reason, revision, min_reader, min_writer)
-    from .store_steps import run_steps
-
-    run_steps(conn, path, meta, writing=writing, keys_dir=keys_dir)
-    if writing:
-        _record_engine(conn, path, meta, __version__)
-    return VersionVerdict(writing, False, None, revision, min_reader, min_writer)
-
-
-class _RolledBack(Exception):
-    """Ends `writes_rolled_back`'s transaction, which then rolls back."""
-
-
-@contextlib.contextmanager
-def writes_rolled_back(store: Store) -> Iterator[bool]:
-    """Run a read on `store` that records as it goes, whether or not its
-    connection may write. On a connection that refuses writes (``PRAGMA
-    query_only``, a store open for reading only by its versions,
-    `check_versions`) the block runs in one write transaction that is
-    rolled back at its end, the block's failure included, with
-    ``query_only`` lifted for its length and set again after: the caller's
-    membership resolution, which writes its events and, at first sight of
-    a checkout, its rows, reads what it would read on a store it may
-    write, and the store keeps none of it. Yields whether it does so,
-    and the block then writes nothing outside the store either (the
-    caller turns the checkout token's write off). On any other connection
-    the block runs as it is and the yield is False.
-
-    The block must not await: `store`'s connection serves one call at a
-    time, and the lifted ``query_only`` holds for nothing but the block.
-    The transaction takes the store's write lock (``BEGIN IMMEDIATE``)
-    for the block's length, which another build's writer waits for within
-    its busy timeout."""
-    conn = store.conn
-    if not conn.execute("PRAGMA query_only").fetchone()[0]:
-        yield False
-        return
-    conn.execute("PRAGMA query_only = OFF")
-    try:
-        with contextlib.suppress(_RolledBack), store.batch():
-            yield True
-            raise _RolledBack
-    finally:
-        conn.execute("PRAGMA query_only = ON")
-
-
 # Admitting a store file (ENG-172)
 # ---------------------------------------------------------------------------
 
-#: How long one statement may run on a store file while it is admitted
-#: (`admit_store`, `read_store_meta`), in seconds, counted from the
-#: statement's first progress callback: a wait for another connection's
-#: lock comes before it and is the busy timeout's to bound. The statements
-#: it bounds read ``sqlite_master`` (about 70 rows in every store this
-#: build writes), each plain table's columns, and ``meta`` (under ten),
-#: whatever the store's size: measured on this tree (scratch run, Apple
-#: silicon, 200 opens each) all of it took 0.71 ms at the median and
-#: 1.0 ms at most, on a fresh store and on one of 2,000 memories alike,
-#: so 2 s cuts nothing this build wrote and stays well inside the 15 s a
-#: hook's client waits (`_daemon_client.HOOK_TIMEOUT_SECONDS`). A meta of
-#: 8 million rows, read whole, took 2.15 s; under this deadline its open
-#: was refused at 2.09 s.
+#: How long a store file's reads may run while it is admitted, in seconds,
+#: counted from a block's first progress callback (`_deadline`): the schema
+#: reads together (`admit_store`), then a refused file's version keys
+#: (`_refuse_later`) or an admitted file's meta (`read_store_meta`) in a
+#: window of their own; a wait for another connection's lock comes first and
+#: is the busy timeout's. The schema reads take ``sqlite_master`` (about 70
+#: rows in every store this build writes) and each plain table's and other
+#: index's columns: measured on this tree (scratch run, Apple silicon, 200
+#: opens) all of it, meta included, took 0.71 ms at the median and 1.0 ms
+#: at most, on a fresh store and on one of 2,000 memories alike, so 2 s cuts
+#: nothing this build wrote and stays well inside the 15 s a hook's client
+#: waits (`_daemon_client.HOOK_TIMEOUT_SECONDS`). A meta of 8 million rows,
+#: read whole, took 2.15 s; under this deadline its open was refused at 2.09 s.
 ADMISSION_DEADLINE_SECONDS = 2.0
 
 #: SQLite virtual-machine steps between two looks at the clock while a
@@ -1470,10 +1231,12 @@ _SQLITE_STATISTICS = {
     "sqlite_stat4": "CREATE TABLE sqlite_stat4(tbl,idx,neq,nlt,ndlt,sample)",
 }
 
-#: A column default that is a literal: NULL, a number, a string or a blob,
-#: in parentheses or not. Every default this build's tables give is one.
+#: A column default that is a literal in SQLite's grammar, in parentheses
+#: or not: NULL, TRUE, FALSE, a number (hex, or with an exponent), a string
+#: or a blob. Every default this build's tables give is one.
 _LITERAL = re.compile(
-    r"\(*\s*(NULL|[-+]?\d+(\.\d+)?|'(?:[^']|'')*'|X'[0-9A-Fa-f]*')\s*\)*", re.I
+    r"(?i)\(*\s*(NULL|TRUE|FALSE|[-+]?(0X[0-9A-F]+|(\d+(\.\d*)?|\.\d+)(E[-+]?\d+)?)|"
+    r"'(?:[^']|'')*'|X'[0-9A-F]*')\s*\)*"
 )
 #: What a table's text quotes or comments out, so a word in it is not read
 #: as a keyword (`table_refusal`).
@@ -1481,6 +1244,26 @@ _QUOTED = re.compile(
     r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|`(?:[^`]|``)*`|\[[^\]]*\]|--[^\n]*|/\*.*?\*/",
     re.S,
 )
+#: A virtual table's text, a unique index's, and an index's on columns alone,
+#: once `_blanked`: ``CREATE [UNIQUE] INDEX name ON table (column [COLLATE
+#: name] [ASC|DESC], ...)``, no expression, no ``WHERE``; SQLite's collations.
+_VIRTUAL = re.compile(r"\s*CREATE\s+VIRTUAL\b", re.I)
+_UNIQUE = re.compile(r"\s*CREATE\s+UNIQUE\b", re.I)
+_COLUMN = r"[\w$]+(?:\s+COLLATE\s+\w+)?(?:\s+(?:ASC|DESC))?"
+_PLAIN_INDEX = re.compile(
+    rf"\s*CREATE\s+(?:UNIQUE\s+)?INDEX\s+[\w$]+\s+ON\s+[\w$]+\s*"
+    rf"\(\s*{_COLUMN}(?:\s*,\s*{_COLUMN})*\s*\)\s*;?\s*",
+    re.I,
+)
+_BUILTIN_COLLATIONS = frozenset({"BINARY", "NOCASE", "RTRIM"})
+
+
+def _blanked(sql: str | None) -> str:
+    """`sql` with `_QUOTED`'s names as ``q``, comments as spaces, strings ``'``."""
+    return _QUOTED.sub(
+        lambda m: {"'": "'", "-": " ", "/": " "}.get(m.group(0)[0], " q "), sql or ""
+    )
+
 
 #: SQLite's primary result codes for a file whose schema cannot be read:
 #: SQLITE_CORRUPT (a schema text SQLite cannot parse among them) and
@@ -1490,17 +1273,17 @@ _UNREADABLE_SCHEMA_CODES = frozenset({11, 26})
 
 class StoreRefusedError(ValueError):
     """A store file every opener refuses before it reads a value from it
-    (`admit_store`): its schema holds an object this build does not
-    create, or a read of its schema or its meta ran past
-    `ADMISSION_DEADLINE_SECONDS`. A ValueError, as every other refusal of
+    (`admit_store`): its schema holds an object this build does not admit
+    (`schema_refusal`, `table_refusal`, `index_refusal`), or a read of its
+    schema or its meta ran past `ADMISSION_DEADLINE_SECONDS`. A ValueError, as every other refusal of
     `Store.open` for a file this build does not read is, so each caller's
     handling of those reports this one too, in its own single line.
     ``timed_out`` tells the deadline from the schema: a file whose read
     ran long may be a store this build wrote, on a disk that stalled.
     ``holds_meta`` says whether the refused file has a ``meta`` table,
-    None when its schema was not read to tell: one that has may still
-    hold a store's id (another build's store with one more index), which
-    the key ring's binding check reads as a file it cannot read to tell
+    None when its schema was not read to tell: one that has may still hold
+    a store's id (a store with one more view or trigger), which the key
+    ring's binding check reads as a file it cannot read to tell
     (`store_keys._store_id_at`), not as no store."""
 
     def __init__(
@@ -1518,36 +1301,57 @@ class StoreRefusedError(ValueError):
         super().__init__(f"{path} is not opened: {why}")
 
 
+class LaterStoreError(StoreRefusedError, StoreVersionError):
+    """A refused store file whose meta's ``schema_revision`` is above this
+    build's (`_refuse_later`): it says to upgrade, not that the file is
+    foreign. A `StoreRefusedError`, so every opener reports it, and a
+    `StoreVersionError` whose `key` and `needed` name the revision needed."""
+
+    def __init__(
+        self, path: Path, why: str, message: str, *, key: str, needed: int
+    ) -> None:
+        StoreRefusedError.__init__(self, path, why, holds_meta=True)
+        StoreVersionError.__init__(self, message, key=key, needed=needed)
+
+
 _BUILT_OBJECTS: dict[tuple[str, str], tuple[str, str | None, bool]] = {}
 
 
 def _built_objects() -> dict[tuple[str, str], tuple[str, str | None, bool]]:
-    """Every object this build's schema creates, by (type, name): the table
-    it is on, its text as ``sqlite_master`` keeps it, and whether that text
-    must match. Read once from an in-memory database built from the three
-    schema texts, so the list is the schema itself and cannot drift from
-    it. Indexes, triggers and the full-text table must match their text:
-    each is the same text in every build since the store was one file
-    (checked over the history of `store.py` and this module when the check
-    was written). A plain table is matched by name, since
-    `_add_membership_tables` adds columns to an older store's tables and
-    SQLite rewrites their text when it does; what such a table can make
-    SQLite run is checked on the file itself (`table_refusal`)."""
+    """Every object this build's schema creates, by (type, name), names in
+    lower case as SQLite compares them: the table it is on, its text, and
+    whether that text must match. Read once from an in-memory database built
+    from the three schema texts, so the list is the schema itself and cannot
+    drift from it. Indexes, triggers and the full-text table must match their
+    text: each is the same text in every build since the store was one file
+    (checked over the history of `store.py` and this module). A plain table
+    is matched by name, since `_add_membership_tables` adds columns to an
+    older store's tables and SQLite rewrites their text when it does, and is
+    read on the file (`table_refusal`); its text here is the columns this
+    build declares NOT NULL with no default. An index SQLite made for a
+    UNIQUE or PRIMARY KEY has no text: its key columns stand for it, read on
+    the file too (`index_refusal`). No UNIQUE, PRIMARY KEY or NOT NULL of
+    this build's tables has moved or gone in that history."""
     if not _BUILT_OBJECTS:
         conn = sqlite3.connect(":memory:")
         try:
             for script in (SCHEMA, MEMBERSHIP_SCHEMA, ADDITIVE_SCHEMA):
                 conn.executescript(script)
-            built = {
-                (str(kind), str(name)): (
-                    str(table),
-                    sql,
-                    kind != "table" or str(sql or "").startswith("CREATE VIRTUAL"),
+            master = "SELECT type, name, tbl_name, sql FROM sqlite_master"
+            built: dict[tuple[str, str], tuple[str, str | None, bool]] = {}
+            for kind, name, table, sql in conn.execute(master).fetchall():
+                exact = sql is not None and (
+                    kind != "table" or bool(_VIRTUAL.match(sql))
                 )
-                for kind, name, table, sql in conn.execute(
-                    "SELECT type, name, tbl_name, sql FROM sqlite_master"
-                )
-            }
+                if not exact:
+                    pragma = "table_xinfo" if kind == "table" else "index_info"
+                    columns = conn.execute(f'PRAGMA {pragma}("{name}")').fetchall()
+                    sql = ",".join(
+                        str(c[1] if kind == "table" else c[2]).lower()
+                        for c in columns
+                        if kind != "table" or (c[3] and c[4] is None)
+                    )
+                built[str(kind), str(name).lower()] = (str(table).lower(), sql, exact)
         finally:
             conn.close()
         _BUILT_OBJECTS.update(built)
@@ -1556,48 +1360,81 @@ def _built_objects() -> dict[tuple[str, str], tuple[str, str | None, bool]]:
 
 def schema_refusal(rows: Iterable[Sequence[Any]]) -> str | None:
     """Why a store file whose ``sqlite_master`` holds `rows` (type, name,
-    table, text) is not one this build wrote, or None when it is. Every
-    object must be one this build creates (`_built_objects`), on the same
-    table, an index, a trigger or the full-text table with the same text,
-    and a plain table must not be a virtual one. SQLite's own statistics
-    tables pass with SQLite's own text. So a view of any name fails, a trigger this build did not
-    write, and one of its own triggers with another body: the objects that
-    run SQL of the file's choosing when this build reads or writes it. A
-    store an earlier build created holds a subset of these objects, and
-    passes."""
+    table, text) is not one this build may read, or None. Names compare in
+    any case, as SQLite's do. An object this build creates (`_built_objects`)
+    must be on the same table, an index, a trigger or the full-text table
+    with the same text, a plain table not virtual; SQLite's statistics
+    tables pass with SQLite's own text. One it never creates, as a later
+    build of the major may add (CONTRIBUTING.md, "Store versions"), passes
+    as a plain table or an index on columns alone (`_PLAIN_INDEX`, or
+    SQLite's own for a UNIQUE or PRIMARY KEY) under a name none of this
+    build's has, and `admit_store` reads it on the file. A view, a trigger
+    this build did not write, a virtual table, an index on an expression or
+    with a WHERE, or one of this build's with another text runs SQL of the
+    file's choosing when this build reads or writes it; a unique index on a
+    table this build writes turns its INSERT OR REPLACE, its INSERT OR
+    IGNORE and FTS5's REPLACE into a silent delete or drop of rows."""
     built = _built_objects()
+    names = {name for _kind, name in built}
+    tables = {name for kind, name in built if kind == "table"}
     for kind, name, table, sql in rows:
-        kind, name, table = str(kind), str(name), str(table)
-        if kind == "table" and name in _SQLITE_STATISTICS:
-            if sql != _SQLITE_STATISTICS[name]:
+        kind, name, table, low = str(kind), str(name), str(table), str(name).lower()
+        if kind == "table" and low in _SQLITE_STATISTICS:
+            if sql != _SQLITE_STATISTICS[low]:
                 return f"its table {name!r} is not the one SQLite writes"
             continue
-        expected = built.get((kind, name))
+        blanked = _blanked(sql)
+        virtual = _VIRTUAL.match(blanked) is not None
+        expected = built.get((kind, low))
         if expected is None:
-            return f"it holds a {kind} named {name!r}, which this build never creates"
+            never = f"named {name!r}, which this build never creates"
+            if kind == "table" and virtual:
+                return f"it holds a virtual table {never}"
+            if kind == "index" and not (
+                _PLAIN_INDEX.fullmatch(blanked)
+                or (sql is None and low.startswith("sqlite_autoindex_"))
+            ):
+                return f"it holds an index {never}, on more than columns"
+            if kind not in ("table", "index"):
+                return f"it holds a {kind} {never}"
+            if low in names:
+                return f"its {kind} {name!r} has a name this build gives another object"
+            unique = sql is None or _UNIQUE.match(blanked) is not None
+            if kind == "index" and unique and table.lower() in tables:
+                return f"its unique index {name!r} is on {table!r}, which this build writes"
+            continue
         on, text, exact = expected
-        if table != on:
+        if table.lower() != on:
             return f"its {kind} {name!r} is on {table!r}, not on {on!r}"
-        if exact and sql != text:
+        if (exact and sql != text) or (kind == "index" and not exact and sql):
             return f"its {kind} {name!r} is not the one this build creates"
-        if not exact and str(sql or "").lstrip().upper().startswith("CREATE VIRTUAL"):
+        if not exact and virtual:
             return f"its table {name!r} is a virtual table, which this build never makes it"
     return None
 
 
-def table_refusal(conn: sqlite3.Connection, name: str, sql: str | None) -> str | None:
-    """Why the plain table ``name`` this build creates, as the file on
-    `conn` defines it (``sql``), could make SQLite run an expression of the
-    file's choosing when this build reads or writes it, or None: a
-    generated column, a default that is not a literal, a CHECK, or a
-    foreign key. A table is admitted by its name, since an older store's
-    has fewer columns (`schema_refusal`); this reads its columns, so a
-    ``meta`` whose ``value`` is computed, or a ``log`` whose every insert
-    runs a check, is refused. None of this build's own tables has any of
-    them: their defaults are all ``''``, ``'[]'``, ``'{}'`` or ``0``."""
+def table_refusal(
+    conn: sqlite3.Connection, name: str, sql: str | None, filled: str | None = None
+) -> str | None:
+    """Why the plain table ``name``, as the file on `conn` defines it
+    (``sql``), could make SQLite run an expression of the file's choosing
+    when this build reads or writes it, or None: a generated column, a
+    default that is not a literal, a CHECK, or a foreign key; and, on a
+    table this build writes (``filled``, the columns it declares NOT NULL
+    with no default, `_built_objects`), a NOT NULL column with no default
+    its inserts leave out, on which every one would fail. A table is
+    admitted by name, or by kind (`schema_refusal`), so a computed ``meta``
+    ``value``, a check on every ``log`` insert, or a later build's table
+    that computes a column is refused here. None of this build's tables has
+    any: their defaults are ``''``, ``'[]'``, ``'{}'`` or ``0``."""
     quoted = '"' + name.replace('"', '""') + '"'
     for row in conn.execute(f"PRAGMA table_xinfo({quoted})"):
-        column, default, hidden = row[1], row[4], row[6]
+        column, notnull, default, hidden = row[1], row[3], row[4], row[6]
+        if notnull and default is None and filled is not None:
+            if str(column).lower() not in filled.split(","):
+                return (
+                    f"its table {name!r} needs {column!r}, which this build leaves out"
+                )
         if hidden:
             return f"its table {name!r} has a generated column {column!r}"
         if default is not None and not _LITERAL.fullmatch(str(default)):
@@ -1611,13 +1448,37 @@ def table_refusal(conn: sqlite3.Connection, name: str, sql: str | None) -> str |
     return None
 
 
+def index_refusal(
+    conn: sqlite3.Connection, name: str, columns: str | None = None
+) -> str | None:
+    """Why ``name``, an index this build never creates, could make SQLite run
+    an expression of the file's choosing when this build writes its table,
+    or None: an expression among its columns (a quoted name no column has is
+    a string, so one) or a collation SQLite does not build in; a WHERE is
+    the text's to refuse (`_PLAIN_INDEX`). With ``columns``, it is SQLite's
+    index for a UNIQUE or PRIMARY KEY of this build's table, which must be on
+    those key columns: moved, this build's INSERT OR REPLACE deletes rows.
+    One read of the index on the file, so admission is linear in indexes."""
+    quoted = '"' + name.replace('"', '""') + '"'
+    rows = conn.execute(f"PRAGMA index_xinfo({quoted})").fetchall()
+    for row in rows:
+        if row[1] == -2:
+            return f"its index {name!r} is on an expression"
+        if str(row[4]).upper() not in _BUILTIN_COLLATIONS:
+            return f"its index {name!r} sorts by a collation SQLite does not build in"
+    keys = ",".join(str(row[2]).lower() for row in rows if row[5])
+    if columns is not None and keys != columns:
+        return f"its index {name!r} is not on the columns this build gives it"
+    return None
+
+
 @contextlib.contextmanager
 def _deadline(
     conn: sqlite3.Connection, path: Path, what: str, *, length: int | None = None
 ) -> Iterator[None]:
-    """Run the statements inside the block with `ADMISSION_DEADLINE_SECONDS`
-    on each one's virtual-machine time: a progress handler that starts its
-    clock at its first call and interrupts the statement once the deadline
+    """Run the statements inside the block within `ADMISSION_DEADLINE_SECONDS`
+    of virtual-machine time together: a progress handler that starts its
+    clock at its first call and interrupts the running one once the deadline
     has passed, which SQLite reports as SQLITE_INTERRUPT and this raises as
     `StoreRefusedError` (``timed_out``). With ``length``, no string or blob
     longer than that is made inside the block (SQLITE_LIMIT_LENGTH), and
@@ -1668,52 +1529,52 @@ def admit_store(conn: sqlite3.Connection, path: Path) -> None:
     statement this build makes reads it or writes to it: ``trusted_schema``
     off for the connection's life, then, under the deadline and with no
     string longer than `_ADMISSION_MAX_LENGTH` (`_deadline`), its
-    ``sqlite_master`` read and checked against this build's schema
-    (`schema_refusal`), and each plain table this build creates read for
-    what it could make SQLite run (`table_refusal`). A file that fails is
-    refused with one `StoreRefusedError`, as is one whose schema SQLite
-    cannot read (SQLITE_CORRUPT, SQLITE_NOTADB), and the caller closes the
-    connection. `read_store_meta` then reads its meta under the deadline.
+    ``sqlite_master`` checked (`schema_refusal`), and each plain table
+    (`table_refusal`) and each index this build never creates
+    (`index_refusal`) read on the file. A file that fails, or whose schema
+    SQLite cannot read (SQLITE_CORRUPT, SQLITE_NOTADB), is refused with one
+    `StoreRefusedError` (`LaterStoreError` when its meta says a later build
+    wrote it: `_refuse_later`), and the caller closes the connection.
+    `read_store_meta` then reads an admitted file's meta under the deadline.
 
     What a refusal leaves: this build writes nothing to the file
-    (`store._connect` switches it to WAL, sets the file modes and runs
-    the additive step only after this). SQLite itself does what it does
-    on opening any database: on a WAL-mode file it makes the ``-wal`` and
-    ``-shm`` while it reads the schema and removes them at the close, and
-    a ``-wal`` or a hot ``-journal`` that came with the file is replayed
-    into it or rolled back, before the first statement's first step and
-    so outside the deadline.
+    (`store._connect` switches it to WAL, sets the file modes and runs the
+    additive step only after this). SQLite does what it does on opening
+    any database: on a WAL-mode file it makes the ``-wal`` and ``-shm``
+    while it reads the schema and removes them at the close, and a ``-wal``
+    or a hot ``-journal`` that came with the file is replayed into it or
+    rolled back before the first statement's first step, so outside the
+    deadline.
 
     Which files are checked: every existing file any opener reads, the
-    state directory's own store included, and only a file `Store.create`
-    has just written on the same connection goes unchecked. "A store this
-    build did not create" cannot be told before the file is read: the path
-    says nothing of the bytes now at it (a repository's
-    ``.claude-memory/memory.sqlite``, reached through ``[storage]
-    cwd_store``, is whatever the clone holds, and a ``git pull`` can
-    replace one the user's own build wrote; the state directory's file can
-    be a restored or synced copy), the key ring's binding
-    (`log.KeyRing.bind_store`) names a path, not bytes, and the store id
-    that finds the ring is read from the file itself. So the boundary is
-    the connection: what this build wrote on it, and nothing else. The
-    check costs one read of a table of about 70 rows per open.
+    state directory's own store included; only a file `Store.create` has
+    just written on the same connection goes unchecked. A path says nothing
+    of the bytes now at it (a repository's ``.claude-memory/memory.sqlite``,
+    reached through ``[storage] cwd_store``, is whatever the clone holds,
+    and a ``git pull``, or a restored or synced copy, can replace a store
+    this build wrote), the key ring's binding (`log.KeyRing.bind_store`)
+    names a path, not bytes, and the store id that finds the ring is read
+    from the file. So the boundary is the connection: what this build wrote
+    on it, and nothing else. The check costs one read of about 70 rows.
 
-    Why these three: a view, or a trigger of the file's choosing, runs
-    SQL the file chose whenever this build reads the table it stands for
-    or writes beside it, and a recursive one never ends (a ``meta`` that
-    is a view over an endless recursive CTE hung `security audit`,
-    `doctor`, the daemon and every hook); ``trusted_schema`` off keeps a
-    table's defaults, checks and generated columns to functions SQLite
-    marks harmless; the length limit bounds what one of those functions
-    can cost while the schema loads (``sqlite_stat1`` is read then);
-    the table check refuses a table of this build's name that computes a
-    column, checks a row, defaults to an expression or refers to another
-    table; and the deadline bounds the reads made before the file is
-    known, a schema too large to parse or a meta too large to read among
-    them. Once a file is admitted, its objects are this build's own
-    and run nothing of the file's choosing, so each later statement's
-    work is bounded by the rows it holds, as on any store this build
-    created, and the deadline is lifted."""
+    Why these: a view, or a trigger of the file's choosing, runs SQL the
+    file chose whenever this build reads the table it stands for or writes
+    beside it, and a recursive one never ends (a ``meta`` that is a view
+    over an endless recursive CTE hung `security audit`, `doctor`, the
+    daemon and every hook); ``trusted_schema`` off keeps a table's
+    defaults, checks and generated columns to functions SQLite marks
+    harmless; the length limit bounds what one of those can cost while the
+    schema loads (``sqlite_stat1`` is read then); the table and index
+    checks refuse a table that computes a column, checks a row, defaults to
+    an expression or refers to another table, and an index that computes
+    its key, holds a WHERE, or is unique on a table this build writes (its
+    INSERT OR REPLACE would delete rows); and the deadline bounds the reads
+    made before the file is known, a schema too large to parse among them. Once a file
+    is admitted its objects are this build's own or a later build's plain
+    tables and indexes on columns (what CONTRIBUTING.md's "Store versions"
+    lets a later build add without raising ``min_reader_revision``), which
+    run nothing of the file's choosing, so each later statement's work is
+    bounded by the rows it holds and the deadline is lifted."""
     with _deadline(conn, path, "schema", length=_ADMISSION_MAX_LENGTH):
         try:
             conn.execute("PRAGMA trusted_schema = OFF")
@@ -1730,22 +1591,63 @@ def admit_store(conn: sqlite3.Connection, path: Path) -> None:
                 f"schema cannot be read ({exc})",
             ) from exc
         why = schema_refusal(rows)
-        built = _built_objects()
         for kind, name, _table, sql in rows if why is None else ():
-            expected = built.get((str(kind), str(name)))
-            if expected is not None and str(kind) == "table" and not expected[2]:
-                why = table_refusal(conn, str(name), sql)
-                if why is not None:
-                    break
+            kind, name = str(kind), str(name)
+            expected = _built_objects().get((kind, name.lower()))
+            known = None if expected is None else expected[1]
+            if kind == "table" and name.lower() not in _SQLITE_STATISTICS:
+                if expected is None or not expected[2]:
+                    why = table_refusal(conn, name, sql, known)
+            elif kind == "index" and (expected is None or not expected[2]):
+                why = index_refusal(conn, name, known)
+            if why is not None:
+                break
     if why is not None:
+        texts = {str(n).lower(): s for k, n, _t, s in rows if str(k) == "table"}
+        if "meta" in texts:
+            _refuse_later(conn, path, texts["meta"], why)
         raise StoreRefusedError(
             path,
             f"it is not a store this build wrote ({why})",
-            holds_meta=any(
-                str(kind) == "table" and str(name) == "meta"
-                for kind, name, _table, _sql in rows
-            ),
+            holds_meta="meta" in texts,
         )
+
+
+def _refuse_later(
+    conn: sqlite3.Connection, path: Path, sql: str | None, why: str
+) -> None:
+    """Raise `LaterStoreError` when a file `admit_store` refused has a
+    ``schema_revision`` above this build's (a later build may have added
+    what this build refuses), in `check_versions`' words when its
+    ``min_reader_revision`` is too, and with what it does not admit either
+    way: a forged revision never reads exactly as a later store. Three keys are read, under the deadline
+    and the length limit, from a plain ``meta`` `table_refusal` admits; a
+    meta not read so, or a revision not a whole number, leaves the refusal."""
+    from . import __version__
+
+    keys = (SCHEMA_REVISION_KEY, MIN_READER_KEY, ENGINE_VERSION_KEY)
+    try:
+        with _deadline(conn, path, "meta table", length=_ADMISSION_MAX_LENGTH):
+            if _VIRTUAL.match(_blanked(sql)) or table_refusal(conn, "meta", sql):
+                return
+            query = "SELECT key, value FROM meta WHERE key IN (?, ?, ?)"
+            found = dict(conn.execute(query, keys).fetchall())
+    except (StoreRefusedError, sqlite3.Error):
+        return
+    revision, reader, engine = (str(found.get(key, "")) for key in keys)
+    if not _WHOLE.fullmatch(revision) or int(revision) <= SCHEMA_REVISION:
+        return
+    newest = f" (its newest writer was bettermemory {_shown(engine)})" if engine else ""
+    ours = f"this build, bettermemory {__version__}, reads revision {SCHEMA_REVISION}"
+    key, needed = SCHEMA_REVISION_KEY, int(revision)
+    said = f"is at schema revision {needed} (meta's {key}){newest}, and {ours}"
+    if _WHOLE.fullmatch(reader) and int(reader) > SCHEMA_REVISION:
+        key, needed = MIN_READER_KEY, int(reader)
+        said = f"needs a reader at schema revision {needed} or later (meta's {key})"
+        said += f"{newest}; {ours}"
+    message = f"{path} {said} and does not admit what it holds ({why}): upgrade "
+    message += "bettermemory to open it"
+    raise LaterStoreError(path, why, message, key=key, needed=needed)
 
 
 def read_store_meta(conn: sqlite3.Connection, path: Path) -> dict[str, str]:

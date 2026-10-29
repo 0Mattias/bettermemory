@@ -1585,19 +1585,23 @@ follows the candidates' testing.
   file (`Store.open` for the owner and for a reader, the audit's meta
   read, the key ring's read of a bound file, and the daemon's read of a
   store put in place of its own) now admits it first. Admission sets
-  `trusted_schema` off and then reads, each statement held to a 2 s
+  `trusted_schema` off and then reads, all held together to a 2 s
   deadline (a progress handler that looks at the clock every 100
   virtual-machine steps) and to strings and blobs of at most 16 KiB, the
   file's `sqlite_master`, compared with the objects this build's schema
-  creates, and the columns and foreign keys of each plain table this build
-  creates (`PRAGMA table_xinfo`, `foreign_key_list`). `meta` is read after
-  that under the deadline alone: an admitted `meta` computes nothing, and
-  its values can be longer. It refuses a view; a table, index or trigger
-  this build does not create; one of its own indexes or triggers with
-  another text, or one of its tables made virtual; a `sqlite_stat1` or
-  `sqlite_stat4` with any text but the one SQLite gives it; a table of
-  this build's name with a generated column, a check, a foreign key or a
-  default that is not a literal; a schema SQLite cannot read (`up
+  creates, the columns and foreign keys of each plain table (`PRAGMA
+  table_xinfo`, `foreign_key_list`), and each index this build does not
+  create as SQLite made it (`PRAGMA index_xinfo`). `meta` is read after
+  that in a 2 s window of its own: an admitted `meta` computes
+  nothing, and its values can be longer. It refuses a view; a trigger or
+  a virtual table this build does not create, and an index it does not
+  create on an expression, with a `WHERE` or with a collation SQLite does
+  not build in (a plain table and an index on columns alone, which a later
+  build of the major may add, are admitted, the next entry); one of its
+  own indexes or triggers with another text, or one of its tables made
+  virtual; a `sqlite_stat1` or `sqlite_stat4` with any text but the one
+  SQLite gives it; a table with a generated column, a check, a foreign key
+  or a default that is not a literal; a schema SQLite cannot read (`up
   --foreground` ended in a traceback on one); a longer string or blob made
   while the file is admitted; and a statement that runs past the deadline.
   Each is one `StoreRefusedError`: `doctor` fails its `store` check, the
@@ -1636,6 +1640,67 @@ follows the candidates' testing.
   `src/bettermemory/daemon.py`, `src/bettermemory/cli/_common.py`,
   `SECURITY.md`, `docs/api.md`, `docs/operations.md`,
   `tests/test_store_admission.py`)
+- **A store a later build changed as the compatibility contract allows is
+  admitted, and a refused one a later build wrote says to upgrade.**
+  Admission (the entry above) refused every object this build does not
+  create, and it runs before the versions are read, so a later build's
+  additive table was refused as "not a store this build wrote" and a store
+  whose reader minimum is above this build's got that refusal instead of
+  `StoreVersionError` (eight tests of `tests/test_cross_build.py` and
+  `tests/test_store_steps.py` failed together). An object this build never
+  creates is now admitted when it is a plain table the table check passes,
+  read on the file as this build's own are, or an index on columns alone,
+  read once as SQLite made it (`store_schema.index_refusal`, one `PRAGMA
+  index_xinfo` an index: no expression, which a double-quoted name no
+  column has becomes, no `WHERE`, no collation but `BINARY`, `NOCASE` or
+  `RTRIM`), under a name none of this build's objects has in any case
+  (SQLite compares names so, and one of this build's index names in
+  capitals on a table failed the additive step's `CREATE INDEX` and ended
+  the owner's open in a traceback). A default may be any of SQLite's
+  literals (`TRUE`, `FALSE`, `0x10`, `1e3` among them). Refused as before:
+  a view, a trigger, a virtual table, an index on an expression or with a
+  `WHERE`, and any of this build's own objects with another text. Refused
+  now as well: a unique index on one of this build's tables, the full-text
+  table's shadow tables included, whether a `CREATE UNIQUE INDEX` or a
+  `UNIQUE` or `PRIMARY KEY` this build's table text does not have or has
+  on other columns (on one, this build's `INSERT OR REPLACE` into
+  `quarantine` deleted rows, its `INSERT OR IGNORE` into `memory_links`
+  and FTS5's replace into the docsize table dropped them, and `log verify`
+  then read the chain as tampered); and a `NOT NULL` column with no
+  default on one of this build's tables that its own text does not have
+  (every insert this build made failed). A refused file whose
+  `schema_revision` is above this build's is refused with
+  `LaterStoreError`, a `StoreRefusedError` (every opener reports it as
+  before) and a `StoreVersionError` that says to upgrade and names what
+  the admission refused, in `check_versions`' words when the reader
+  minimum is above this build's too; `doctor` names the build that reads
+  it and the audit's `key.match` finding is a warning that says to
+  upgrade, where both said to move the file aside. Its revision is read
+  only from a plain `meta` the table check passes, three keys, in a
+  deadline window of its own under the same length limit, and a file with
+  no such `meta`, or at or below this build's revision, keeps the
+  admission's refusal. The versions section moved from `store_schema.py`
+  to `store_versions.py`, whose names `store_schema` re-exports, to keep
+  the module under its bound. CONTRIBUTING.md's contract says what a later
+  build may add without raising `min_reader_revision` and what requires
+  it: what an older build's admission refuses, since that check is the
+  boundary of what runs on its connection. Measured on this tree (scratch
+  run, Apple silicon, 50 opens each): `Store.open` refuses the cold
+  review's three stores, the same three on a table this build never
+  creates, the slow `meta` of a store at a later revision, the three
+  unique indexes, a capitalised name, a moved primary key and a `NOT NULL`
+  with no default in 0.52 to 1.17 ms at the median (2.1 ms at most),
+  refuses a later revision's view with `LaterStoreError` in 0.68 ms, opens
+  a store holding a later build's tables, columns and indexes in 1.44 ms
+  (a fresh store: 1.42 ms), and opens one with 2,000 plain indexes on a
+  table of its own in 27 to 31 ms and with 6,000 in 133 to 170 ms (5 opens
+  each, reader, owner and read-only), where reading the table's whole
+  index list for each index took 1.93 s for 2,000 and ran past the
+  deadline for 6,000. (`src/bettermemory/store_schema.py`,
+  `src/bettermemory/store_versions.py`, `src/bettermemory/doctor.py`,
+  `src/bettermemory/posture.py`, `CONTRIBUTING.md`, `SECURITY.md`,
+  `docs/internals.md`, `docs/api.md`, `docs/operations.md`,
+  `CHANGELOG.md`, `tests/test_store_admission.py`)
 - **A store's key reads as one state, said in one set of words, by the
   open, `doctor` and `security audit`.** Each read the key its own way:
   on a copy of a store whose key ring is bound to the original, `doctor`

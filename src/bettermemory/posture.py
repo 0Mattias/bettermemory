@@ -581,14 +581,20 @@ def _key(
             path=str(store_file),
         )
     if refused is not None:
+        from .store_schema import StoreVersionError
+
+        later = isinstance(refused, StoreVersionError)
         return Finding(
             "key.match",
-            "warn" if refused.timed_out else "high",
+            "warn" if refused.timed_out or later else "high",
             f"{refused}: every opener (the daemon, a hook, the CLI) refuses it "
             "the same way, and none reads a value from it or writes to it",
             path=str(store_file),
             fix=(
-                "run the audit again once the disk answers; a store whose meta "
+                "upgrade bettermemory: a later build wrote this store, and this "
+                "build reads no value from it, its key included"
+                if later
+                else "run the audit again once the disk answers; a store whose meta "
                 "takes that long to read is not one this build wrote"
                 if refused.timed_out
                 else "move the file aside and find out what wrote it: a store this "

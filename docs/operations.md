@@ -57,13 +57,17 @@ delete `<store_id>.path` so that the next owner's open binds the ring to
 the file it opens.
 
 Every opener admits a store file before it reads a value from it (since
-9.0.0rc14): a file whose schema holds anything this build's schema does
-not create in that form is refused in one line, and `doctor` and
-`security audit` report it in one finding each. Admission itself writes
-nothing, but SQLite does what it does on opening any database: a
-`-wal`, or a hot `-journal`, that came with the file (a repository
-that ships `.claude-memory/memory.sqlite` can ship them too) is
-replayed into it or rolled back when the file is first read, and a
+9.0.0rc14): a file whose schema holds what could run SQL of its own on
+this build's connection or lose its writes (a view, a trigger, a virtual
+table, an index on an expression, a unique index on one of this build's
+tables, one of this build's objects in another form) is refused in one
+line, one a later build wrote saying to upgrade, while a plain table or
+an index on plain columns that a later build adds is admitted; and
+`doctor` and `security audit` report it in one finding each. Admission
+itself writes nothing, but SQLite does what it does on opening any
+database: a `-wal`, or a hot `-journal`, that came with the file (a
+repository that ships `.claude-memory/memory.sqlite` can ship them too)
+is replayed into it or rolled back when the file is first read, and a
 WAL-mode file gets a `-wal` and `-shm` while it is read, removed when
 the opener closes it. So a refused file can differ from the one that
 arrived; keep a copy of it before any command reads it if you need the
