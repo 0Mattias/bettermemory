@@ -151,7 +151,7 @@ from .location_git import (
 from .location_witness import (
     AnsweredHistory as AnsweredHistory,  # tests/test_location_reachable.py
     AnsweredLiveness as AnsweredLiveness,  # tests/test_membership_resolution.py
-    AnsweredToken as AnsweredToken,  # membership's docstring, the remint tests
+    AnsweredToken as AnsweredToken,  # resolve_hook's witness path, below
     NeedWitnesses as NeedWitnesses,  # tests/test_membership_resolution.py
 )
 
