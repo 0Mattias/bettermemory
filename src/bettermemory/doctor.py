@@ -82,6 +82,7 @@ CHECK_IDS: tuple[str, ...] = (
     "store_location",
     "store",
     "key",
+    "index",
     "daemon",
     "claude_code",
     "clients",
@@ -942,6 +943,14 @@ def check_store(ctx: _Context) -> list[Check]:
     return [store_check, key_check]
 
 
+def check_index(ctx: _Context) -> Check:
+    """The store file's pages and its search index (`index`):
+    `store_index.doctor_check`, from a read-only open of its own."""
+    from .store_index import doctor_check
+
+    return doctor_check(ctx.directory)
+
+
 # ---------------------------------------------------------------------------
 # daemon
 # ---------------------------------------------------------------------------
@@ -1691,6 +1700,7 @@ def run_checks(*, cwd: Path | None = None) -> list[Check]:
     checks += _guarded(("config",), lambda: [check_config(ctx)])
     checks += _guarded(("store_location",), lambda: [check_store_location(ctx)])
     checks += _guarded(("store", "key"), lambda: check_store(ctx))
+    checks += _guarded(("index",), lambda: [check_index(ctx)])
     checks += _guarded(("daemon",), lambda: [check_daemon(ctx)])
     checks += _guarded(("claude_code",), lambda: [check_claude_code(ctx)])
     checks += _guarded(("clients",), lambda: [check_clients(ctx)])

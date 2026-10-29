@@ -198,15 +198,33 @@ job, an MDM script or a CI step can run it as is.
 | `bettermemory log verify` | the log verifies | tampered, or cannot be verified | no store, or an `--anchor` file cannot be read | |
 
 `doctor` checks the install, that the config loads, which rule chose
-the store, the store and its key, the daemon, the Claude Code and other
-client wiring, and the disk, each `ok`, `warn` or `fail` with a one-line
-fix. `security audit` covers what `doctor` leaves out: file modes and
+the store, the store and its key, the store file's pages and its search
+index, the daemon, the Claude Code and other client wiring, and the
+disk, each `ok`, `warn` or `fail` with a one-line fix. `security audit` covers what `doctor` leaves out: file modes and
 owners, the key against the store, git working trees and synced folders,
 and Claude Code's sandbox settings. `config check` grades the contents
 of `config.toml` and the managed config: a typo `doctor` cannot see, such
 as `[behaviour]`, `enabeld` or `"flase"`, is a warning there. `log verify`
 is the one that reads every row; it costs a pass over the whole log.
 Exit 2 is also argparse's code for a usage error, for each of them.
+
+`doctor`'s `index` check (ENG-100) opens the store read-only once more
+and runs SQLite's `PRAGMA quick_check`, which reads every page of every
+table and index, and FTS5's integrity-check in the form that compares an
+external-content index with the rows it indexes (`'integrity-check'`
+with rank 1). That command is an insert, which a read-only connection
+refuses, so it runs on a copy in memory of the indexed columns and the
+index's shadow tables, and nothing is written beside the store; on a
+store of 5,000 memories (15 MB) quick_check took 0.014 s and the index
+check 0.026 s. A damaged page fails the check (exit 1) and names the
+repair: restore the newest bundle that `backup verify` reads ok, which
+keeps the damaged file aside. An index that does not match its rows (a
+memory it lost, which no search finds, or an entry for text no row
+carries) warns and names `bettermemory index rebuild`, as does an index
+spelled by an older tokenizer than this build's, which the owner's next
+writing open re-spells too. `--json` carries both checks' output in the
+check's `details` (`quick_check`, `fts_integrity`, the two tokenizer
+fingerprints, the memory count and the seconds).
 
 `bettermemory stats` reports file sizes, rows per table, memories by
 project, scope, client and model, and the activity of the last `--since`
@@ -367,7 +385,14 @@ verifies: run `log verify` first, and `backup verify` after.
 
 `backup verify` checks every file's size and SHA-256, the manifest's
 signature and its claims, then runs the whole log check on a copy in a
-private temporary directory; the bundle is never opened in place. Exit 0
+private temporary directory; the bundle is never opened in place. On
+that copy it also runs the two checks `doctor`'s `index` check runs
+(ENG-100): a damaged page is `snapshot_unreadable` with `check`
+`quick_check`, the problem the log check gives when its own reads meet
+one, so the bundle reads `mismatched` and `restore` refuses it; an index
+that does not match its rows is `index_drift`, which leaves the verdict
+as it is, since the records are whole, and names the repair: restore,
+then `bettermemory index rebuild`. Exit 0
 ok; 1 mismatched or tampered; 2 unverifiable, when the key is held
 nowhere, the manifest is unsigned, or it is signed only by a key the
 bundle carries (signature `self_signed`: anyone who can write a bundle

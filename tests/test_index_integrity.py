@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+from bettermemory import doctor
+from bettermemory.backup import create_backup, manifest_mac, verify_bundle
 from bettermemory.store import STORE_FILENAME, Store
 from bettermemory.store_schema import MIN_WRITER_KEY
 
@@ -217,3 +219,143 @@ def test_index_without_a_subcommand_prints_its_help(
     code, out, _ = _run_cli(["index"], monkeypatch, capsys)
     assert code == 2
     assert "rebuild" in out
+
+
+# ---------------------------------------------------------------------------
+# doctor's index check and backup verify
+# ---------------------------------------------------------------------------
+
+
+def _damage_a_page(path: Path, index: str) -> None:
+    """Overwrite the header of `index`'s root page: a torn page in an
+    index the reads at hand never use, which only a check of every page
+    finds. The store is closed, so the page is in the file."""
+    conn = sqlite3.connect(path)
+    try:
+        page_size = int(conn.execute("PRAGMA page_size").fetchone()[0])
+        root = int(
+            conn.execute(
+                "SELECT rootpage FROM sqlite_master WHERE name = ?", (index,)
+            ).fetchone()[0]
+        )
+    finally:
+        conn.close()
+    with path.open("r+b") as raw:
+        raw.seek((root - 1) * page_size)
+        raw.write(b"\xff" * 16)
+
+
+def _check(path: Path) -> doctor.Check:
+    return doctor.check_index(doctor._Context(cwd=None, directory=path.parent))
+
+
+def test_doctor_reads_a_whole_store_ok(store_file: Path) -> None:
+    check = _check(store_file)
+    assert check.id == "index"
+    assert check.status == "ok", check
+    assert check.remedy is None
+    assert check.details["quick_check"] == "ok"
+    assert check.details["fts_integrity"] == "ok"
+    assert check.details["memories"] == len(BODIES)
+    assert (
+        check.details["stored_tokenizer_fingerprint"]
+        == (check.details["tokenizer_fingerprint"])
+    )
+
+
+def test_doctor_names_the_rebuild_for_an_index_drift(
+    store_file: Path,
+    keys_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A memory the index lost is a warning naming `index rebuild`, which
+    clears it; doctor itself writes nothing."""
+    _drop_from_index(store_file, _ids(store_file, keys_dir)["kubernetes"])
+    before = store_file.read_bytes()
+    check = _check(store_file)
+    assert store_file.read_bytes() == before
+    assert check.status == "warn"
+    assert "search index does not match its memories" in check.summary
+    assert "FTS5 integrity-check" in check.summary
+    assert check.remedy is not None
+    assert "bettermemory index rebuild" in check.remedy
+    assert check.details["quick_check"] == "ok"
+    assert check.details["fts_integrity"] != "ok"
+    code, _, _ = _run_cli(["index", "rebuild"], monkeypatch, capsys)
+    assert code == 0
+    assert _check(store_file).status == "ok"
+
+
+def test_doctor_fails_a_damaged_page_and_names_the_restore(store_file: Path) -> None:
+    _damage_a_page(store_file, "memories_by_updated")
+    check = _check(store_file)
+    assert check.status == "fail"
+    assert "has a damaged page (SQLite's quick_check: " in check.summary
+    assert check.remedy is not None
+    assert "bettermemory backup restore" in check.remedy
+    assert isinstance(check.details["quick_check"], list)
+    assert any("memories_by_updated" in m for m in check.details["quick_check"])
+
+
+def test_doctor_warns_an_index_another_tokenizer_spelled(
+    tmp_path: Path, keys_dir: Path
+) -> None:
+    from .test_store_tokenizer import OLD_FINGERPRINT, _old_store
+
+    path, _ = _old_store(tmp_path, keys_dir)
+    check = _check(path)
+    assert check.status == "warn"
+    assert f"spelled by tokenizer {OLD_FINGERPRINT[:16]}" in check.summary
+    assert check.remedy is not None
+    assert "bettermemory index rebuild" in check.remedy
+    assert check.details["stored_tokenizer_fingerprint"] == OLD_FINGERPRINT
+
+
+def test_backup_verify_reports_an_index_drift_and_its_repair(
+    store_file: Path,
+    keys_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A bundle taken of a store whose index drifted verifies (its records
+    are whole) and says so, with the repair for the restored store."""
+    _drop_from_index(store_file, _ids(store_file, keys_dir)["postgres"])
+    bundle = Path(create_backup(store_file)["bundle"])
+    report = verify_bundle(bundle)
+    assert report["status"] == "ok"
+    drifts = [p for p in report["problems"] if p["problem"] == "index_drift"]
+    assert len(drifts) == 1
+    assert "bettermemory index rebuild" in str(drifts[0]["repair"])
+    code, out, _ = _run_cli(["backup", "verify", str(bundle)], monkeypatch, capsys)
+    assert code == 0
+    assert "index_drift: detail " in out
+
+
+def test_backup_verify_reads_a_damaged_page_as_an_unreadable_snapshot(
+    store_file: Path, keys_dir: Path
+) -> None:
+    """A snapshot with a page the verification's own reads never reach
+    (`log_by_ts`, the index `stats` reads its window through), in a
+    bundle whose manifest names it as it is: quick_check finds it, and the
+    bundle reads `mismatched` as one whose replay met such a page does, so
+    `backup restore` refuses it. Before the check this bundle read ok."""
+    from .test_backup import _key, _manifest, _rehash, _write_manifest
+
+    bundle = Path(create_backup(store_file)["bundle"])
+    assert verify_bundle(bundle)["status"] == "ok"
+    _damage_a_page(bundle / STORE_FILENAME, "log_by_ts")
+    manifest = _manifest(bundle)
+    _rehash(bundle, manifest, STORE_FILENAME)
+    manifest["mac"] = manifest_mac(_key(keys_dir, manifest["store_id"]), manifest)
+    _write_manifest(bundle, manifest)
+    report = verify_bundle(bundle)
+    assert report["manifest_mac"] == "ok", report["problems"]
+    assert report["log"]["status"] == "ok"
+    assert report["status"] == "mismatched"
+    unreadable = [
+        p for p in report["problems"] if p["problem"] == "snapshot_unreadable"
+    ]
+    assert len(unreadable) == 1
+    assert unreadable[0]["check"] == "quick_check"
+    assert "log_by_ts" in str(unreadable[0]["detail"])

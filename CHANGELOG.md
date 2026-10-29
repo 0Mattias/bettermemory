@@ -1862,6 +1862,29 @@ follows the candidates' testing.
   docstring says what a change needs before the literal is updated: the
   rebuild measured on the change and the change named in the CHANGELOG.
   (`tests/test_store_tokenizer.py`)
+- **`doctor` and `backup verify` read every page and check the search
+  index against the memories.** Nothing read a store's pages or compared
+  its FTS5 index with the rows it indexes, so a torn page, or an index
+  that lost a memory's entries, dropped records from search without a
+  word. `doctor` gains an `index` check, and `backup verify` runs the
+  same two on its copy of the snapshot: SQLite's `PRAGMA quick_check`,
+  and FTS5's integrity-check in the form that compares an
+  external-content index with its rows (`'integrity-check'`, rank 1),
+  run on a copy in memory of the indexed columns and the index's shadow
+  tables, since the command is an insert that a read-only connection
+  refuses. In `doctor` a damaged page fails and names the restore of the
+  newest bundle that verifies; an index drift warns and names
+  `bettermemory index rebuild`, and so does an index spelled by an older
+  tokenizer. In `backup verify` a damaged page is `snapshot_unreadable`
+  (`check` `quick_check`), so the bundle reads `mismatched` as one whose
+  log replay met such a page does; probed on a bundle, a damaged root
+  page in 20 of the store's 43 indexes was one the log check never
+  reads, and such a bundle read `ok` before. An index drift there is
+  `index_drift`, naming the repair and leaving the verdict as it is.
+  Measured on 5,000 memories (15 MB): quick_check 0.014 s, the index
+  check 0.026 s. (`src/bettermemory/store_index.py`,
+  `src/bettermemory/doctor.py`, `src/bettermemory/backup.py`,
+  `docs/operations.md`, `docs/api.md`, `tests/test_index_integrity.py`)
 
 #### Known limitations
 

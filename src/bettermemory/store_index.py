@@ -16,7 +16,9 @@ The index's own integrity (ENG-100) is here too: the tokenizer the stored
 index text is spelled by, compared at every open with this build's
 (`reconciles_tokenizer`, the one line `Store.open` carries), and the
 re-spelling an owner's open runs when they differ (`rebuild_index`),
-which `bettermemory index rebuild` runs on demand (`cli/index_cmd.py`).
+which `bettermemory index rebuild` runs on demand (`cli/index_cmd.py`),
+and the checks `doctor` and `backup verify` run on the file's pages and
+the index (`index_report`).
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from __future__ import annotations
 import functools
 import json
 import logging
+import re
 import sqlite3
 import threading
 import time
@@ -38,10 +41,11 @@ from . import _caches
 from .identity import Actor
 from .log import INDEX_REBUILT
 from .search import fts_index_text, fts_match_query, tokenizer_fingerprint
-from .store_schema import _PROVENANCE_BATCH
+from .store_schema import _PROVENANCE_BATCH, SCHEMA
 from .store_rows import _dt, _load_json
 
 if TYPE_CHECKING:
+    from .doctor import Check
     from .store import Store
 
 log = logging.getLogger("bettermemory.store")
@@ -631,3 +635,271 @@ def rebuild_index(store: Store, *, reason: str) -> IndexRebuild | None:
         rebuilt.seconds,
     )
     return rebuilt
+
+
+# -- the index's integrity (ENG-100) --------------------------------------
+#
+# Nothing read a store's pages or compared its FTS5 index with the rows it
+# indexes, so a torn page, or an index that lost a memory's entries (a
+# write that bypassed the triggers, a damaged shadow page), dropped
+# records from search without a word. `doctor` (its `index` check) and
+# `backup verify` (on the bundle's snapshot) now run both checks:
+# SQLite's ``PRAGMA quick_check``, and FTS5's ``integrity-check`` in the
+# form that compares an external-content table's index with its content
+# (rank 1; the plain form checks the index's own structure only). That
+# command is an INSERT, which every read-only connection refuses
+# (``mode=ro``, ``immutable``, ``query_only``: probed), and `doctor` and
+# `backup verify` read through one; so it runs on a copy in memory of the
+# indexed columns and the index's four shadow tables, made with this
+# build's own table definition, and writes nothing beside the store.
+
+#: How many problems `PRAGMA quick_check` is asked to list at most.
+QUICK_CHECK_MESSAGES = 20
+
+#: The FTS5 table this build creates, as `store_schema.SCHEMA` creates it:
+#: the copy the integrity check runs on is made with it.
+_FTS_TABLE_MATCH = re.search(
+    r"CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5\(.*?\);",
+    SCHEMA,
+    re.S,
+)
+assert _FTS_TABLE_MATCH is not None
+_FTS_TABLE = _FTS_TABLE_MATCH.group(0)
+
+#: The shadow tables FTS5 keeps an external-content table's index in.
+_FTS_SHADOWS = ("data", "idx", "docsize", "config")
+
+#: The repairs the findings name.
+REPAIR_PAGES = (
+    "a page of the store file is damaged: restore the newest bundle that "
+    "`bettermemory backup verify` reads ok with `bettermemory backup restore`, "
+    "which keeps the damaged file aside; `bettermemory log verify` reads what "
+    "the file still holds"
+)
+REPAIR_INDEX = (
+    "run `bettermemory index rebuild`: it rebuilds the index from the "
+    "memories, which a drift leaves as they are"
+)
+REPAIR_TOKENIZER = (
+    "the owner's next writing open re-spells it (the daemon's next start, or "
+    "any writing command); `bettermemory index rebuild` does it now"
+)
+
+
+@dataclass(frozen=True)
+class IndexReport:
+    """What the checks found on one store connection (`index_report`):
+    `pages`, `PRAGMA quick_check`'s messages, empty when it reads ok;
+    `fts`, what FTS5's integrity-check said, None when the index matches
+    the rows; `tokenizer`, `(stored, live)` when meta names another
+    tokenizer than this build's (`tokenizer_drift`); the memory rows
+    copied; and how long the checks took, in seconds."""
+
+    pages: tuple[str, ...]
+    fts: str | None
+    tokenizer: tuple[str | None, str] | None
+    memories: int
+    seconds: float
+
+
+def quick_check(conn: sqlite3.Connection) -> tuple[str, ...]:
+    """``PRAGMA quick_check``'s messages, at most `QUICK_CHECK_MESSAGES`,
+    or none when the file reads ok: every page of every table and index
+    read, without `integrity_check`'s comparison of each index with its
+    table. A file too damaged to answer reads as the error SQLite gave."""
+    try:
+        rows = conn.execute(f"PRAGMA quick_check({QUICK_CHECK_MESSAGES})").fetchall()
+    except sqlite3.DatabaseError as exc:
+        return (str(exc),)
+    messages = tuple(str(row[0]) for row in rows)
+    return () if messages == ("ok",) else messages
+
+
+def fts_integrity(conn: sqlite3.Connection) -> tuple[str | None, int]:
+    """FTS5's integrity-check of `memories_fts` against the rows it
+    indexes (``INSERT INTO memories_fts(memories_fts, rank) VALUES
+    ('integrity-check', 1)``), run on a copy in memory of the memories'
+    `rowid`, `body_fts` and `scopes_fts` and the four shadow tables, so it
+    runs on a read-only connection and writes nothing beside the store.
+    Returns what the check said (None when the index matches the rows, or
+    the error a shadow table gave when it was read) and how many memory
+    rows were copied."""
+    scratch = sqlite3.connect(":memory:", isolation_level=None)
+    copied = 0
+    try:
+        scratch.execute(
+            "CREATE TABLE memories("
+            "rowid INTEGER PRIMARY KEY, body_fts TEXT, scopes_fts TEXT)"
+        )
+        scratch.execute(_FTS_TABLE)
+        scratch.execute("BEGIN")
+        try:
+            for row in conn.execute("SELECT rowid, body_fts, scopes_fts FROM memories"):
+                scratch.execute(
+                    "INSERT INTO memories(rowid, body_fts, scopes_fts) VALUES (?, ?, ?)",
+                    tuple(row),
+                )
+                copied += 1
+            for name in _FTS_SHADOWS:
+                table = f"memories_fts_{name}"
+                columns = [
+                    str(r[1]) for r in scratch.execute(f"PRAGMA table_info({table})")
+                ]
+                listed = ", ".join(columns)
+                scratch.execute(f"DELETE FROM {table}")
+                scratch.executemany(
+                    f"INSERT INTO {table}({listed}) "
+                    f"VALUES ({', '.join('?' * len(columns))})",
+                    (tuple(r) for r in conn.execute(f"SELECT {listed} FROM {table}")),
+                )
+        except sqlite3.DatabaseError as exc:
+            return f"the index could not be read: {exc}", copied
+        scratch.execute("COMMIT")
+        try:
+            scratch.execute(
+                "INSERT INTO memories_fts(memories_fts, rank) "
+                "VALUES ('integrity-check', 1)"
+            )
+        except sqlite3.DatabaseError as exc:
+            return str(exc), copied
+        return None, copied
+    finally:
+        scratch.close()
+
+
+def index_report(store: Store) -> IndexReport:
+    """The file's pages (`quick_check`), the FTS5 index against the rows
+    (`fts_integrity`) and the tokenizer the index is spelled by
+    (`tokenizer_drift`), on `store`'s connection, which may be read-only."""
+    started = time.monotonic()
+    conn = store.conn
+    pages = quick_check(conn)
+    fts, memories = fts_integrity(conn)
+    try:
+        drift = tokenizer_drift(conn)
+    except sqlite3.DatabaseError:
+        drift = None
+    return IndexReport(pages, fts, drift, memories, time.monotonic() - started)
+
+
+def _more(items: Sequence[str]) -> str:
+    return f" (and {len(items) - 1} more)" if len(items) > 1 else ""
+
+
+def doctor_check(directory: Path | None) -> Check:
+    """`doctor`'s `index` check: the store at `directory` opened read-only
+    once more (`check_store` has closed its open), `index_report` run on
+    it, and each problem a finding naming its repair. A damaged page
+    fails (records are at stake); an index that does not match its rows
+    and an index spelled by another tokenizer warn (the records are whole,
+    and one command or the next writing open repairs it). A store that
+    does not open, or that sits in a backup bundle, is the `store`
+    check's failure, and this one reads "not checked"."""
+    from .backup import bundle_manifest_beside
+    from .doctor import FAIL, OK, WARN, Check, Finding, _from_findings, _not_checked
+    from .store import STORE_FILENAME, Store
+
+    if directory is None:
+        return _not_checked(
+            "index", "the store's directory is not known", "fix the config first"
+        )
+    path = directory / STORE_FILENAME
+    if not path.is_file():
+        if path.exists():
+            return _not_checked(
+                "index", "the store does not open", "fix the store first"
+            )
+        return Check("index", OK, "no store yet; its index is written with it")
+    if bundle_manifest_beside(path) is not None:
+        return _not_checked(
+            "index", "the store is a backup bundle's file", "copy it out first"
+        )
+    try:
+        store = Store.open(path, read_only=True)
+    except (ValueError, sqlite3.Error, OSError):
+        return _not_checked("index", "the store does not open", "fix the store first")
+    with store:
+        report = index_report(store)
+    live = tokenizer_fingerprint()
+    details: dict[str, Any] = {
+        "path": str(path),
+        "quick_check": list(report.pages) or "ok",
+        "fts_integrity": report.fts or "ok",
+        "tokenizer_fingerprint": live,
+        "stored_tokenizer_fingerprint": (
+            live if report.tokenizer is None else report.tokenizer[0]
+        ),
+        "memories": report.memories,
+        "seconds": round(report.seconds, 6),
+    }
+    findings: list[Finding] = []
+    if report.pages:
+        findings.append(
+            Finding(
+                FAIL,
+                f"{path} has a damaged page (SQLite's quick_check: "
+                f"{report.pages[0]}{_more(report.pages)})",
+                REPAIR_PAGES,
+            )
+        )
+    if report.fts is not None:
+        findings.append(
+            Finding(
+                WARN,
+                f"{path}'s search index does not match its memories (FTS5 "
+                f"integrity-check: {report.fts}): a search can miss a memory, or "
+                "offer one for words it does not hold",
+                REPAIR_INDEX,
+            )
+        )
+    if report.tokenizer is not None:
+        stored, _ = report.tokenizer
+        findings.append(
+            Finding(
+                WARN,
+                f"{path}'s search index is spelled by tokenizer "
+                f"{(stored or 'none')[:16]} and this build's is {live[:16]}: a "
+                "search misses the memories the old one spelled",
+                REPAIR_TOKENIZER,
+            )
+        )
+    return _from_findings(
+        "index",
+        findings,
+        ok_summary=(
+            f"{path}: every page reads (quick_check) and the search index matches "
+            f"its {report.memories} memories (FTS5 integrity-check)"
+        ),
+        details=details,
+    )
+
+
+def index_problems(store: Store) -> list[dict[str, Any]]:
+    """`backup verify`'s problems from `index_report` on the bundle's
+    snapshot. A damaged page is ``snapshot_unreadable``, the problem the
+    verification gives when its own reads meet one (verdict `mismatched`,
+    so `backup restore` refuses the bundle), with ``check`` naming
+    quick_check. An index that does not match its rows is
+    ``index_drift``, which leaves the verdict as it is: the records are
+    whole, and `bettermemory index rebuild` repairs the restored store.
+    A snapshot spelled by an older tokenizer is no problem: the restored
+    store's owner's open re-spells it."""
+    report = index_report(store)
+    problems: list[dict[str, Any]] = []
+    if report.pages:
+        problems.append(
+            {
+                "problem": "snapshot_unreadable",
+                "check": "quick_check",
+                "detail": "; ".join(report.pages[:3]) + _more(report.pages[2:]),
+            }
+        )
+    if report.fts is not None:
+        problems.append(
+            {
+                "problem": "index_drift",
+                "detail": report.fts,
+                "repair": "restore it, then run `bettermemory index rebuild`",
+            }
+        )
+    return problems
