@@ -1019,7 +1019,7 @@ def test_log_help_lists_the_new_commands(
 ) -> None:
     assert _run_cli(["log"], monkeypatch) == 2
     out = capsys.readouterr().out
-    assert "{verify,export,anchor}" in out
+    assert "{verify,export,anchor,accept-history}" in out
     assert _run_cli(["log", "export", "--help"], monkeypatch) == 0
     help_text = capsys.readouterr().out
     for flag in ("--since-seq", "--until-seq", "--kinds", "--include-bodies", "--out"):

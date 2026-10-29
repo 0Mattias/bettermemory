@@ -208,6 +208,13 @@ KEY_IMPORTED = "key_imported"
 KEY_ADOPTED = "key_adopted"
 CONTROL_KINDS = CONTROL_KINDS | frozenset({KEY_IMPORTED, KEY_ADOPTED})
 
+# `bettermemory log accept-history --yes` (ENG-106): the store file's history
+# accepted as it stands, on the record. The origin anchor and the head
+# checkpoint it replaced, and the ones the owner's open wrote after it,
+# are the row's payload, as a restore's record names them.
+HISTORY_ACCEPTED = "history_accepted"
+CONTROL_KINDS = CONTROL_KINDS | frozenset({HISTORY_ACCEPTED})
+
 # A retired key is filed under the first characters of its fingerprint.
 _RETIRED_PREFIX_CHARS = 16
 
@@ -1481,6 +1488,7 @@ __all__ = [
     "GENESIS_MAC",
     "INDEX_REBUILT",
     "HISTORY_REPLACED",
+    "HISTORY_ACCEPTED",
     "KEY_ADOPTED",
     "KEY_BYTES",
     "KEY_IMPORTED",

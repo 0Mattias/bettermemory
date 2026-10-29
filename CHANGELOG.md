@@ -109,6 +109,27 @@ follows the candidates' testing.
   `src/bettermemory/cli/__init__.py`, `src/bettermemory/store_keys.py`,
   `src/bettermemory/log.py`, `docs/api.md`, `tests/test_key_lifecycle.py`)
 
+- **`bettermemory log accept-history [--yes]`: a replaced history
+  accepted on the record (ENG-106).** A store file copied over this host's
+  copy again, an origin anchor from before rc13 whose key was lost, or an
+  older copy put back by hand reads `tampered` for good, and the recovery
+  was deleting `<store_id>.origin` and `<store_id>.head` by hand. The
+  command does what that did, under the store's daemon and spawn locks:
+  the anchor and the head are set aside, the key ring is bound to this
+  file, and the store is opened as its owner opens it, which settles a
+  missing or foreign key and anchors this host's history at the first row
+  of the earliest segment a held key signs. A new control kind,
+  `history_accepted`, records the anchor, head and binding before and
+  after and the log's end before, signed with the store's key, and the
+  same entry goes into the rewind record beside the head, so `log export`
+  warns a cursor past the old end as after a restore. A failure before
+  the row puts the anchor, head and binding back. Refused while a daemon
+  holds the store or for a key file this user cannot read; nothing to
+  accept changes nothing; without `--yes`, the plan (exit 3).
+  (`src/bettermemory/key_lifecycle.py`, `src/bettermemory/cli/log_cmd.py`,
+  `src/bettermemory/log.py`, `docs/api.md`, `tests/test_accept_history.py`,
+  `tests/test_log_export.py`)
+
 #### Changed
 
 - **`recall` no longer imports `hook`.** The session join

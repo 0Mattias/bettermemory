@@ -2,12 +2,14 @@
 it against its key, its head checkpoint, a fold of its own rows and, on
 request, anchors kept off the host; `log export` writes it as JSON Lines
 for a SIEM (`bettermemory.audit_export`); `log anchor` takes one of those
-anchors (`bettermemory.anchor`).
+anchors (`bettermemory.anchor`); `log accept-history` accepts a replaced
+history on the record (`bettermemory.key_lifecycle.accept_history`).
 
-Every command here is read-only: the store opens with
-``read_only=True``, so a missing key is reported and never replaced,
+Every command here but `accept-history` is read-only: the store opens
+with ``read_only=True``, so a missing key is reported and never replaced,
 and nothing is written into the log being read, nor to the file or
-beside it (`store_schema.connect_read_only`)."""
+beside it (`store_schema.connect_read_only`). `accept-history` changes
+nothing without ``--yes``."""
 
 from __future__ import annotations
 
@@ -37,8 +39,9 @@ def add_subparser(
         "anchor against the row where this host's history begins, and every "
         "table against a replay of the log. Exit 0 when the log verifies, "
         "1 when it is tampered or cannot be verified. `log export` writes "
-        "the log as JSON Lines for an audit pipeline, and `log anchor` "
-        "takes an anchor to keep off this host for `log verify --anchor`."
+        "the log as JSON Lines for an audit pipeline, `log anchor` takes an "
+        "anchor to keep off this host for `log verify --anchor`, and `log "
+        "accept-history` accepts a replaced history on the record."
     )
     parser = sub.add_parser("log", help=help_text, description=help_text)
     log_sub = parser.add_subparsers(dest="log_cmd")
@@ -180,6 +183,34 @@ def add_subparser(
             "is printed as JSON either way."
         ),
     )
+    accept_text = (
+        "Accept the store file's history as it stands, on the record, when "
+        "the origin anchor reads origin_mismatch or unverifiable or the head "
+        "checkpoint names a row the log does not hold: a store file copied "
+        "over this host's copy again, an anchor from before 9.0.0rc13 whose "
+        "key was lost, an older copy put back by hand. With the daemon "
+        "stopped, the anchor and the head are set aside, the key ring is "
+        "bound to this file, and the store is opened as its owner opens it: "
+        "a missing or foreign key is settled as any writing command settles "
+        "it, and this host's history is anchored at the first row of the "
+        "earliest segment a key it holds signs. A history_accepted row, "
+        "signed with the store's key, names the anchor, head and binding "
+        "before and after; the rewind record beside the head "
+        "(<store_id>.backup_restore.json) gets the same entry. Refused "
+        "while a daemon serves or starts for the store, or when the key "
+        "file cannot be read. Without --yes prints the plan. Exit 0 "
+        "accepted (or nothing to accept), 1 refused, failed or the log "
+        "still tampered after it, 2 no store, 3 the plan."
+    )
+    accept = log_sub.add_parser(
+        "accept-history", help=accept_text, description=accept_text
+    )
+    accept.add_argument(
+        "--yes", action="store_true", help="Accept the history; without it, plan."
+    )
+    accept.add_argument(
+        "--json", action="store_true", help="Emit the report as JSON instead of text."
+    )
     return parser
 
 
@@ -203,7 +234,98 @@ def run(
     if args.log_cmd == "anchor":
         _cli_log_anchor(args, parser=sub_parser)
         return
+    if args.log_cmd == "accept-history":
+        _cli_log_accept_history(args, parser=sub_parser)
+        return
     sub_parser.error(f"unknown log subcommand: {args.log_cmd!r}")
+
+
+def _cli_log_accept_history(
+    args: argparse.Namespace, *, parser: argparse.ArgumentParser
+) -> None:
+    from ..key_lifecycle import DONE, EXIT_CODES, accept_history
+    from .key_cmd import _store_file
+
+    report = accept_history(_store_file(parser), apply=args.yes)
+    if args.json:
+        sys.stdout.write(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    else:
+        sys.stdout.write(render_accept(report))
+    if report["status"] == DONE and report.get("log") == "tampered":
+        raise SystemExit(1)
+    raise SystemExit(EXIT_CODES[report["status"]])
+
+
+def _anchor_text(origin: dict[str, Any] | None) -> str:
+    if origin is None:
+        return "none"
+    named = origin.get("key_fingerprint")
+    return f"seq {origin['seq']}" + (f" (key {named[:16]})" if named else "")
+
+
+def render_accept(report: dict[str, Any]) -> str:
+    """The text form of a `key_lifecycle.accept_history` report."""
+    from ..history import printable
+
+    status = report["status"]
+    heading = {
+        "planned": "plan (nothing changed; run again with --yes to accept)",
+        "unchanged": "nothing to accept",
+        "done": "accepted",
+    }.get(status, status)
+    lines = [
+        f"bettermemory log accept-history: {heading}",
+        f"  store {report['store']}",
+    ]
+    if report["detail"]:
+        lines.append(f"  {report['detail']}")
+    fit = report.get("fit")
+    if fit is not None:
+        origin = fit["origin"]
+        lines.append(
+            f"  origin anchor {_anchor_text(report['origin']['before'])}: "
+            f"{origin['status']}"
+            + (f" ({origin['reason']})" if "reason" in origin else "")
+        )
+        end = report["log_end_before"]
+        head = report["head"]["before"]
+        lines.append(
+            f"  head checkpoint {'none' if head is None else 'seq ' + str(head['seq'])}: "
+            f"{fit['head']['status']}; the log ends at seq "
+            f"{0 if end is None else end['seq']}"
+        )
+    if status == "planned":
+        anchor_at = report.get("anchor_at")
+        lines.append(
+            "  the anchor and the head are set aside and the store opened as its "
+            "owner opens it; "
+            + (
+                f"this host's history is anchored at seq {anchor_at['seq']}"
+                if anchor_at
+                else f"the key ({report.get('key_state')}) is settled first, and "
+                "the row that settles it anchors this host's history"
+            )
+        )
+    binding = report["binding"]
+    if status in ("planned", "done") and binding["before"] != binding["after"]:
+        lines.append(
+            f"  key ring binding: {binding['before'] or 'none'} -> {binding['after']}"
+        )
+    if status == "done":
+        lines.append(
+            f"  origin anchor now {_anchor_text(report['origin']['after'])}; head "
+            + (
+                "none"
+                if report["head"]["after"] is None
+                else f"seq {report['head']['after']['seq']}"
+            )
+        )
+        lines.append(f"  recorded in the log at seq {report['seq']}")
+        if report.get("record"):
+            lines.append(f"  and in {report['record']}")
+        if report.get("log"):
+            lines.append(f"  log verify: {report['log']}")
+    return "\n".join(printable(line) for line in lines) + "\n"
 
 
 def _open_read_only(parser: argparse.ArgumentParser, *, exit_code: int = 2) -> Store:

@@ -1,15 +1,17 @@
 """The key ring's lifecycle (ENG-106): what `bettermemory key show`,
-`key export`, `key import`, `key adopt` and `key rotate` do, so that no
-one recovers a store by placing or deleting ``<store_id>.<prefix>.key``,
-``.origin``, ``.head`` or ``.path`` files by hand.
+`key export`, `key import`, `key adopt`, `key rotate` and `log
+accept-history` do, so that no one recovers a store by placing or deleting
+``<store_id>.<prefix>.key``, ``.origin``, ``.head`` or ``.path`` files by
+hand.
 
 Every command names the store the config resolves and the keys directory
 the store reads (`store.resolve_keys_dir`). Each one that changes the key
 ring writes a row of its own kind into the store's log, signed with the
 store's key, naming what the ring held before and after: ``key_imported``
-(`import_keys`), ``key_adopted`` (`adopt_ring`) and ``rekey`` (`rotate_key`,
-the kind every key change of the chain is, since the segments split at
-it). `show` and `export` change nothing and write no row.
+(`import_keys`), ``key_adopted`` (`adopt_ring`), ``history_accepted``
+(`accept_history`) and ``rekey`` (`rotate_key`, the kind every key change
+of the chain is, since the segments split at it). `show` and `export`
+change nothing and write no row.
 
 The refusals, by command (each returns ``refused`` with the reason in
 ``detail``; nothing is changed):
@@ -28,12 +30,12 @@ The refusals, by command (each returns ``refused`` with the reason in
   one command that binds such a ring to this file;
 - a file this user cannot read: the key file, a retired key, the binding
   or the file `import` reads, each named with what reading it said;
-- a running daemon: `adopt` takes the daemon lock and the spawn lock of
-  the store and of the file the ring was bound to, as `backup restore`
-  takes its store's, and refuses while either is held.
+- a running daemon: `adopt` and `accept_history` take the daemon lock and
+  the spawn lock of the store and of the file the ring was bound to, as
+  `backup restore` takes its store's, and refuse while either is held.
 
-`adopt` and `rotate` without ``apply`` return the plan (``planned``) and
-change nothing.
+`adopt`, `rotate` and `accept_history` without ``apply`` return the plan
+(``planned``) and change nothing.
 """
 
 from __future__ import annotations
@@ -53,19 +55,28 @@ from ._fsutil import (
     atomic_write_bytes,
     bounded_read,
     ensure_owner_only_dir,
+    flock_excl,
     fsync_file,
 )
 from .log import (
+    HISTORY_ACCEPTED,
     KEY_ADOPTED,
     KEY_BYTES,
     KEY_IMPORTED,
+    ORIGIN_UNVERIFIABLE,
     REKEY,
+    Head,
+    HistoryOrigin,
     KeyRing,
     KeyUnreadableError,
+    LogRow,
     chain_segments,
     fingerprint,
+    row_verifies,
 )
 from .store_keys import (
+    HEAD_MISMATCH,
+    HEAD_PAST,
     KEY_BOUND_ELSEWHERE,
     KEY_FOREIGN,
     KEY_MISSING,
@@ -864,6 +875,286 @@ def _rotate(store: Store) -> tuple[str, int]:
     return fingerprint(new), row.seq
 
 
+# ---------------------------------------------------------------------------
+# log accept-history
+# ---------------------------------------------------------------------------
+
+
+def _head_dict(head: Head | None) -> dict[str, Any] | None:
+    return None if head is None else {"seq": head.seq, "mac": head.mac}
+
+
+def _row_dict(row: LogRow | None) -> dict[str, Any] | None:
+    return None if row is None else {"seq": row.seq, "mac": row.mac}
+
+
+def _origin_dict(origin: HistoryOrigin | None) -> dict[str, Any] | None:
+    return None if origin is None else origin.to_dict()
+
+
+def _set_head(ring: KeyRing, head: Head | None) -> Head | None:
+    """Write ``head`` as the head checkpoint whatever the current one says,
+    or remove the checkpoint when ``head`` is None, under the lock
+    `log.KeyRing.write_head` takes, and return the one it replaced: with a
+    restore's (`backup._rewind_head`), the one place a head moves
+    backwards, and the caller records it."""
+    ring.ensure_dir()
+    with flock_excl(ring.head_path()):
+        before = ring.read_head()
+        if head is None:
+            with contextlib.suppress(FileNotFoundError):
+                ring.head_path().unlink()
+        else:
+            payload = json.dumps({"seq": head.seq, "mac": head.mac, "ts": head.ts})
+            atomic_write_bytes(
+                ring.head_path(), payload.encode("utf-8"), mode_before_rename=0o600
+            )
+    return before
+
+
+def _first_held(store: Store, key: bytes | None) -> dict[str, Any] | None:
+    """The row the owner's open anchors a store with no anchor at
+    (`Store._settle_origin`): the first row of the earliest segment a key
+    the ring holds signs, when that row verifies under it. None when there
+    is none yet (the open then settles a missing or foreign key first and
+    anchors the ``rekey`` row it writes)."""
+    segments = chain_segments(
+        store.conn,
+        keyring=store.keyring,
+        current_fingerprint=store.key_state.expected,
+        current_key=key,
+    )
+    held = next((segment for segment in segments if segment.held), None)
+    if held is None or held.key is None or held.first_row is None:
+        return None
+    if not row_verifies(held.key, held.first_row):
+        return None
+    return {"seq": held.first_seq, "key_fingerprint": fingerprint(held.key)}
+
+
+def accept_history(
+    store_file: Path,
+    *,
+    apply: bool,
+    keys_dir: Path | None = None,
+    state_dir: Path | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """`log accept-history`: accept the store file's history as it stands,
+    on the record, where the key ring's origin anchor or head checkpoint
+    says it was replaced: an origin that reads ``origin_mismatch`` (a store
+    file copied over this host's copy again from the machine it came from;
+    an anchor written before rc13 whose key was lost, which nothing can
+    tell from a rewrite) or ``unverifiable`` (the anchor's key lost for
+    good), or a head past the log's end or on a row with another MAC (an
+    older copy put back by hand). What deleting ``<store_id>.origin`` and
+    ``<store_id>.head`` by hand did, with a row and a record.
+
+    Under the daemon and spawn locks of this file, and of the file the ring
+    was bound to when that is another: the anchor and the head are set
+    aside, the ring is bound to this file when it was bound to another, and
+    the store is opened as its owner opens it (`Store.open` with
+    ``allow_rekey=True``), which settles a missing or foreign key as every
+    writing command does, anchors this host's history at the first row of
+    the earliest segment a held key signs, and binds the ring. Then a
+    ``history_accepted`` row, signed with the store's key, names the
+    anchor, head and binding before and after and the log's end before, and
+    the rewind record beside the head gets the same entry
+    (`backup.restore_record_path`), so `log export` warns a cursor taken
+    before it across the seqs it handed to new rows. A failure before the
+    row puts the anchor, the head and the binding back.
+
+    Refused: a key file this user cannot read; a binding that cannot be
+    read; a daemon serving or starting for the store or the bound file.
+    ``unchanged`` when the anchor holds (or there is none) and the head is
+    on the log: nothing to accept (a ring bound to another file is then
+    `key adopt`'s). Without ``apply``, the plan."""
+    root = keys_root(keys_dir)
+    resolved = Path(store_file).resolve()
+    report = _report(
+        "accept-history",
+        store_file,
+        origin={"before": None, "after": None},
+        head={"before": None, "after": None},
+        binding={"before": None, "after": str(resolved)},
+        log_end_before=None,
+    )
+    refusal = _bundle_refusal(store_file)
+    if refusal is not None:
+        return _refused(report, refusal)
+    try:
+        with _opened(store_file, root, read_only=True) as store:
+            state = store.key_state
+            ring = store.keyring
+            store_id = store.store_id
+            fit = ring_fit(store.conn, ring, current_key=state.key)
+            candidate = (
+                _first_held(store, state.key) if state.state == KEY_PRESENT else None
+            )
+    except (ValueError, sqlite3.Error, OSError) as exc:
+        return _refused(report, _open_error(exc))
+    report["store_id"] = store_id
+    report["key_state"] = state.state
+    report["fit"] = fit.to_dict()
+    report["origin"]["before"] = _origin_dict(ring.read_origin())
+    report["head"]["before"] = _head_dict(ring.read_head())
+    report["log_end_before"] = _row_dict(fit.log_end)
+    report["anchor_at"] = candidate
+    try:
+        before = ring.read_binding()
+    except OSError as exc:
+        return _refused(
+            report,
+            f"the binding {ring.binding_path()} cannot be read ({exc}); make it "
+            "readable and run the command again",
+        )
+    report["binding"]["before"] = None if before is None else str(before)
+    if state.state == KEY_UNREADABLE:
+        return _refused(report, _state_refusal(state))
+    elsewhere = before is not None and not _same_path(before, resolved)
+    replaced = (
+        fit.origin.broken
+        or fit.origin.status == ORIGIN_UNVERIFIABLE
+        or fit.head_status in (HEAD_PAST, HEAD_MISMATCH)
+    )
+    if not replaced:
+        report["status"] = UNCHANGED
+        report["detail"] = (
+            "nothing to accept: the origin anchor holds and the head checkpoint "
+            "is on this file's log"
+        ) + (
+            f"; the key ring is bound to {before}, and `bettermemory key adopt "
+            "--yes` binds it to this file"
+            if elsewhere
+            else ""
+        )
+        return report
+    if not apply:
+        report["status"] = PLANNED
+        return report
+    locked = [store_file] + ([before] if before is not None and elsewhere else [])
+    command = "log accept-history --yes"
+    with daemon_locks(_state_root(state_dir), locked, command=command) as why:
+        if why is not None:
+            return _refused(report, why)
+        return _accept(
+            report, store_file, root, ring, before if elsewhere else None, now
+        )
+
+
+def _accept(
+    report: dict[str, Any],
+    store_file: Path,
+    root: Path,
+    ring: KeyRing,
+    moved_from: Path | None,
+    now: datetime | None,
+) -> dict[str, Any]:
+    """`accept_history`'s steps under the daemon locks. ``moved_from`` is
+    the other file the ring was bound to, which the binding leaves."""
+    from .backup import _append_record, restore_record_path, utc_stamp
+    from .store import Store
+
+    moment = now if now is not None else datetime.now(timezone.utc)
+    origin_before = ring.read_origin()
+    head_before: Head | None = None
+    try:
+        ring.replace_origin(None)
+        head_before = _set_head(ring, None)
+        if moved_from is not None:
+            ring.rebind_store(store_file)
+        store = Store.open(store_file, keys_dir=root, allow_rekey=True)
+    except (ValueError, sqlite3.Error, OSError) as exc:
+        _put_back(ring, origin_before, head_before, moved_from)
+        report["status"] = FAILED
+        report["detail"] = (
+            f"the owner's open failed ({exc}); the anchor, head and binding were "
+            "put back"
+        )
+        return report
+    try:
+        if not store.has_key:
+            raise RuntimeError(store.key_state.summary)
+        report["origin"]["after"] = _origin_dict(ring.read_origin())
+        try:
+            bound = ring.read_binding()
+        except OSError:
+            bound = None
+        report["binding"]["after"] = None if bound is None else str(bound)
+        report["seq"] = _append_row(
+            store,
+            HISTORY_ACCEPTED,
+            {
+                "origin_before": report["origin"]["before"],
+                "origin_after": report["origin"]["after"],
+                "head_before": _head_dict(head_before),
+                "log_end_before": report["log_end_before"],
+                "binding_before": report["binding"]["before"],
+                "binding_after": report["binding"]["after"],
+                "origin_status_before": report["fit"]["origin"]["status"],
+                "head_status_before": report["fit"]["head"]["status"],
+            },
+        )
+    except (ValueError, sqlite3.Error, OSError, RuntimeError) as exc:
+        store.close()
+        _put_back(ring, origin_before, head_before, moved_from)
+        report["status"] = FAILED
+        report["detail"] = (
+            f"the acceptance was not recorded ({exc}); the anchor, head and "
+            "binding were put back"
+        )
+        return report
+    report["status"] = DONE
+    try:
+        report["head"]["after"] = _head_dict(ring.read_head())
+        log_end = report["log_end_before"]
+        record = restore_record_path(root, store.store_id)
+        _append_record(
+            record,
+            {
+                "restored_at": isoformat_utc(moment.astimezone(timezone.utc)),
+                "accepted_history": True,
+                "store": str(store_file),
+                "store_id": store.store_id,
+                "replaced_store_id": store.store_id,
+                "head_before": _head_dict(head_before),
+                "head_after": log_end,
+                "log_end_before": log_end,
+                "origin_before": report["origin"]["before"],
+                "origin_after": report["origin"]["after"],
+                "binding_before": report["binding"]["before"],
+                "binding_after": report["binding"]["after"],
+                "seq": report["seq"],
+            },
+            utc_stamp(moment),
+        )
+        report["record"] = str(record)
+        report["log"] = store.log_verify()["status"]
+    except (ValueError, sqlite3.Error, OSError) as exc:
+        report["detail"] = f"accepted and recorded at seq {report['seq']}; then {exc}"
+    finally:
+        store.close()
+    return report
+
+
+def _put_back(
+    ring: KeyRing,
+    origin: HistoryOrigin | None,
+    head: Head | None,
+    binding: Path | None,
+) -> None:
+    """Put the anchor, the head and (when it was moved off ``binding``) the
+    binding back as they were, after a failure before the acceptance was
+    recorded."""
+    with contextlib.suppress(OSError):
+        ring.replace_origin(origin)
+    with contextlib.suppress(OSError):
+        _set_head(ring, head)
+    if binding is not None:
+        with contextlib.suppress(OSError):
+            ring.rebind_store(binding)
+
+
 __all__ = [
     "DONE",
     "EXIT_CODES",
@@ -873,6 +1164,7 @@ __all__ = [
     "PLANNED",
     "REFUSED",
     "UNCHANGED",
+    "accept_history",
     "adopt_ring",
     "daemon_locks",
     "describe",
