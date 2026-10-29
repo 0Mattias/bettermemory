@@ -129,7 +129,7 @@ def _project_name_matches(
     project_roots: dict[str, str],
     found: tuple[list[ScopeMismatchEntry], set[str]],
 ) -> tuple[list[ScopeMismatchEntry], set[str]]:
-    """Match undeclared project names in `body`; return matches and suggestions."""
+    """Add undeclared project names in `body` to `found` in place; return its list and set."""
     matches, suggested = found
     # For each `projects:<name>` scope, look for `<name>` as a
     # whole-token match in the body. The boundary semantics mirror the
@@ -198,7 +198,7 @@ def _project_root_matches(
     project_roots: dict[str, str],
     found: tuple[list[ScopeMismatchEntry], set[str]],
 ) -> tuple[list[ScopeMismatchEntry], set[str]]:
-    """Match undeclared project roots in `body`; return matches and suggestions."""
+    """Add undeclared project roots in `body` to `found` in place; return its list and set."""
     matches, suggested = found
     declared_roots = {project_roots[s] for s in declared if project_roots.get(s)}
     # Folded twin of `declared_roots` for the identity check below

@@ -414,7 +414,7 @@ def _refuse_gated_write(
     decision: Reject,
     captured: _CaptureWrite | None,
 ) -> dict[str, Any]:
-    """Take a gate's refusal; return its response, after the corroboration and the event."""
+    """Take a gate's refusal, amending its event and response in place; return the response."""
     # Recurrence-as-evidence: a duplicate rejection IS the stored
     # claim re-entering a conversation. Record the corroboration
     # on the matched memory (once per session per memory) before

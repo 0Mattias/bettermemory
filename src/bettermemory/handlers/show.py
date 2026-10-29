@@ -150,7 +150,7 @@ def _show_response(
     index_reads: dict[str, Any],
     use_token: str,
 ) -> dict[str, Any]:
-    """Take the memory, its verdict, index reads and token; return the response."""
+    """Take the memory, verdict, token and index reads (popped in place); return the response."""
     drift = shown.path_drift
     verification = shown.verification
     commit_drift = shown.commit_drift

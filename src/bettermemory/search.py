@@ -1284,7 +1284,7 @@ def _browse_hits(
     anchoring: Anchoring | None,
     path_drift: bool,
 ) -> list[MemoryHit]:
-    """Sort the filtered candidates newest first; return them as zero-score hits."""
+    """Sort the filtered candidates newest first in place; return them as zero-score hits."""
     # Browse mode: the candidates passed the same filter the scored
     # path applies; sort by `updated` desc and emit zero-score
     # hits with no match terms. Mirrors the post-rank trim the
