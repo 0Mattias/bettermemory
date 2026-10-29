@@ -341,7 +341,8 @@ cold-endorsement list and recent silent-miss candidates. An 8.x store's
 events are read once `bettermemory migrate v8` has imported them.
 `--json` for machine-readable output. The compute layer is
 `src/bettermemory/eval.py` (`compute_eval` / `parse_since` /
-`render_text`) for callers outside the CLI.
+`render_text`, with the window parsing in `eval_model.py`) for callers
+outside the CLI.
 
 The default report also breaks the audit telemetry down per model
 (`by_model`, from the `client_model` stamp the Stop hook reads off the
@@ -410,9 +411,9 @@ Five additional modes:
   Both lanes share one event-filter pipeline (`_collect_replayable_
   audits`), so the counts and the listed turns can never disagree.
 All honor `--since`; all but `--report` honor `--json` (the report is
-markdown by construction). Rules live in `eval.THRESHOLD_RULES` /
-`eval.WIDENING_RULES`; adding one is a checker function plus a registry
-entry.
+markdown by construction). Rules live in `eval_model.THRESHOLD_RULES` /
+`eval_model.WIDENING_RULES`; adding one is a checker function plus a
+registry entry.
 
 ### Rule `rs-v5`: delivery by membership
 
