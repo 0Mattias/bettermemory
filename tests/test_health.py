@@ -21,7 +21,6 @@ from bettermemory.health import (
     MarkerStats,
     _edit_distance_within,
     compute_health,
-    curation_counts,
     find_prior_session_boundary,
     render_json,
     render_text,
@@ -242,31 +241,15 @@ def test_render_text_shows_cold_memories_section() -> None:
 
 
 # ---------------------------------------------------------------------------
-# curation_counts — fast helper used by memory_scope_overview
+# The dead-weight gates
 # ---------------------------------------------------------------------------
 
 
-def test_curation_counts_zero_on_empty_store() -> None:
-    out = curation_counts([], [], window_days=30, now=_utc(2026, 5, 1))
-    assert out == {
-        "stale": 0,
-        "never_verified": 0,
-        "drifted": 0,
-        "cold": 0,
-        "dead": 0,
-        "silent_misses": 0,
-        "unique_silent_miss_memories": 0,
-        "cold_endorsement_memories": 0,
-        "unaccounted": 0,
-    }
-
-
-def test_curation_counts_matches_compute_health_buckets() -> None:
-    """Numerical contract: counts agree with bucket sizes from
-    compute_health over the same inputs — including the dead-weight
-    gates both paths read from the shared `_is_dead_weight` predicate
-    (freshest-touch window, unresolved contradiction, endorsement
-    grace), exercised by the three `gated_*` rows below."""
+def test_dead_weight_holds_its_gates_on_every_would_be_dead_row() -> None:
+    """The buckets over one store, with the dead-weight gates of the
+    shared `_is_dead_weight` predicate (freshest-touch window, unresolved
+    contradiction, endorsement grace) exercised by the three `gated_*`
+    rows below: only the plain row is dead weight."""
     cold = _memory(created=_utc(2026, 1, 1))
     dead = _memory(created=_utc(2026, 1, 1))
     fresh_verified = _memory(
@@ -316,228 +299,15 @@ def test_curation_counts_matches_compute_health_buckets() -> None:
         verification_stale_days=30,
         now=_utc(2026, 5, 1),
     )
-    counts = curation_counts(
-        mems,
-        events,
-        window_days=30,
-        verification_stale_days=30,
-        now=_utc(2026, 5, 1),
-    )
-    assert counts["dead"] == len(report.dead_weight)
-    assert counts["cold"] == len(report.cold_memories)
-    assert counts["never_verified"] == report.verification_debt.never_verified_total
-    assert counts["stale"] == report.verification_debt.stale_total
-    # The gated rows must not be counted dead on either path.
+    # The gated rows must not be counted dead.
     assert [s.id for s in report.dead_weight] == [dead.id]
-    assert counts["dead"] == 1
-
-
-def test_curation_counts_excludes_ambient_from_dead_and_cold() -> None:
-    cold = _memory(created=_utc(2026, 1, 1), category=Category.AMBIENT)
-    dead = _memory(created=_utc(2026, 1, 1), category=Category.AMBIENT)
-    events = [_event("search", ts=_utc(2026, 4, 1), returned=[dead.id])]
-    counts = curation_counts([cold, dead], events, window_days=30, now=_utc(2026, 5, 1))
-    assert counts["dead"] == 0
-    assert counts["cold"] == 0
-
-
-# ---------------------------------------------------------------------------
-# curation_counts — `since` (delta) filter
-# ---------------------------------------------------------------------------
-
-
-def test_curation_counts_since_drops_events_older_than_boundary() -> None:
-    """Delta mode: a search_miss event before `since` does not contribute
-    to `silent_misses`. The same event with `since=None` does."""
-    old_event = _event("search_miss", ts=_utc(2026, 4, 1))
-    new_event = _event("search_miss", ts=_utc(2026, 4, 20))
-    events = [old_event, new_event]
-    absolute = curation_counts([], events, now=_utc(2026, 5, 1))
-    delta = curation_counts(
-        [],
-        events,
-        now=_utc(2026, 5, 1),
-        since=_utc(2026, 4, 10),
-    )
-    assert absolute["silent_misses"] == 2
-    assert delta["silent_misses"] == 1
-
-
-def test_curation_counts_delta_arm_sees_coverage_from_before_the_boundary() -> None:
-    """Coverage is a property of the STORE, not of the delta window.
-
-    `memory_scope_overview` runs `curation_counts` twice over one
-    snapshot — once unbounded, once bounded to events newer than the
-    prior session boundary — and shows both to the model. If the
-    coverage count were taken after the `since` filter, a store whose
-    Stop-hook rows all predate the boundary (i.e. any store on any
-    session after the first) would read as hookless in the delta arm
-    only: `dead` blanked in one view and populated in the other, same
-    events, same store. Both arms here must report the row."""
-    now = _utc(2026, 6, 1)
-    boundary = _utc(2026, 2, 1)
-    # Created after the boundary (so the delta's memory filter keeps
-    # it) but well outside the 30-day dead-weight window.
-    dead = _memory(created=_utc(2026, 3, 1))
-    events = [
-        # The ONLY hook row, and it predates the boundary.
-        _event("turn_audited", ts=_utc(2026, 1, 15), triggered_from="stop_hook"),
-        _event("search", ts=_utc(2026, 3, 2), returned=[dead.id]),
+    assert [s.id for s in report.cold_memories] == [
+        cold.id,
+        fresh_verified.id,
+        stale_v.id,
     ]
-    absolute = curation_counts(
-        [dead], events, window_days=30, now=now, hook_telemetry_events=0
-    )
-    delta = curation_counts(
-        [dead],
-        events,
-        window_days=30,
-        now=now,
-        since=boundary,
-        hook_telemetry_events=0,
-    )
-    assert absolute["dead"] == 1
-    assert delta["dead"] == 1
-
-
-def test_curation_counts_since_excludes_memories_created_before_boundary() -> None:
-    """Memories whose `created` predates `since` are filtered out of the
-    delta view — `cold` / `dead` / `stale` / `never_verified` rollups
-    only see post-`since` memories."""
-    old = _memory(created=_utc(2026, 1, 1))  # would normally count cold
-    fresh = _memory(created=_utc(2026, 4, 20))  # post-boundary, recent
-    absolute = curation_counts([old, fresh], [], window_days=30, now=_utc(2026, 5, 1))
-    delta = curation_counts(
-        [old, fresh],
-        [],
-        window_days=30,
-        now=_utc(2026, 5, 1),
-        since=_utc(2026, 4, 10),
-    )
-    # Both rows are never_verified absolute; only the post-boundary row
-    # is in the delta view.
-    assert absolute["never_verified"] == 2
-    assert delta["never_verified"] == 1
-    # Cold only triggers on >30d-old memories; the absolute counts the
-    # old row, the delta excludes it because old < since.
-    assert absolute["cold"] == 1
-    assert delta["cold"] == 0
-
-
-def test_curation_counts_since_zero_when_nothing_new() -> None:
-    """An event log fully behind `since` produces an all-zero delta —
-    distinct from None (no baseline), which is the handler's
-    responsibility, not the helper's."""
-    events = [_event("search_miss", ts=_utc(2026, 4, 1))]
-    delta = curation_counts(
-        [_memory(created=_utc(2026, 1, 1))],
-        events,
-        now=_utc(2026, 5, 1),
-        since=_utc(2026, 4, 30),
-    )
-    assert delta == {
-        "stale": 0,
-        "never_verified": 0,
-        "drifted": 0,
-        "cold": 0,
-        "dead": 0,
-        "silent_misses": 0,
-        "unique_silent_miss_memories": 0,
-        "cold_endorsement_memories": 0,
-        "unaccounted": 0,
-    }
-
-
-def test_curation_counts_since_excludes_old_memory_aging_into_stale() -> None:
-    """The headline `curation_pending_new_since_last_session` claim:
-    a memory created BEFORE `since` that has since aged into the
-    `stale` bucket (last_verified_at older than the staleness cutoff)
-    surfaces in the absolute view but NOT the delta. The point of
-    the delta is "new rot since last session"; an old row crossing
-    a threshold isn't new — the row itself predates `since`."""
-    # Verified the day after it was created, both far in the past.
-    # `stale` triggers when last_verified_at < (now - 30d), i.e.
-    # last_verified_at < 2026-04-01. The 2026-01-02 verification
-    # is well past that cutoff, so the row is `stale`.
-    old = _memory(
-        created=_utc(2026, 1, 1),
-        last_verified_at=_utc(2026, 1, 2),
-    )
-    absolute = curation_counts(
-        [old],
-        [],
-        window_days=30,
-        verification_stale_days=30,
-        now=_utc(2026, 5, 1),
-    )
-    delta = curation_counts(
-        [old],
-        [],
-        window_days=30,
-        verification_stale_days=30,
-        now=_utc(2026, 5, 1),
-        since=_utc(2026, 4, 10),
-    )
-    assert absolute["stale"] == 1
-    assert delta["stale"] == 0
-
-
-def test_curation_counts_since_filter_is_exclusive_at_boundary() -> None:
-    """`since` is *exclusive*: an event whose ts equals the boundary
-    value belongs to the prior session (the boundary IS that session's
-    last event ts, per `find_prior_session_boundary`) and must not
-    leak into the delta. Same applies to memory `created`. A naive
-    strict-`<` filter would double-count the boundary event."""
-    boundary = _utc(2026, 4, 10)
-    boundary_event = _event("search_miss", ts=boundary)
-    boundary_memory = _memory(created=boundary)
-    delta = curation_counts(
-        [boundary_memory],
-        [boundary_event],
-        window_days=30,
-        now=_utc(2026, 5, 1),
-        since=boundary,
-    )
-    assert delta["silent_misses"] == 0
-    assert delta["never_verified"] == 0
-
-
-def test_curation_counts_since_filters_cold_endorsement_to_post_boundary() -> None:
-    """`cold_endorsement_memories` rides the same `mem_list` filter as
-    stale / cold / dead, so a heavily-retrieved memory created before
-    `since` must not surface in the delta even if its post-`since`
-    retrievals push it over the floor."""
-    old = _memory(created=_utc(2026, 1, 1))
-    # 10 retrievals all after `since`, each closed by an auto-applied
-    # use event — a genuine cold-endorsement shape (applies happened,
-    # every one auto, zero explicit). Would normally flag the row; the
-    # row itself predates `since` so the delta must exclude it. The
-    # auto-applied events matter: without an apply the memory is
-    # dead_weight, not cold-endorsement (see
-    # test_zero_apply_memory_is_dead_weight_not_cold_endorsement), and
-    # this test is about the `since` filter, not the apply-gate.
-    search_events: list[dict[str, Any]] = []
-    for _ in range(10):
-        search_events.append(_event("search", ts=_utc(2026, 4, 20), returned=[old.id]))
-        search_events.append(
-            _event(
-                "use", ts=_utc(2026, 4, 20), ids=[old.id], outcome="applied", auto=True
-            )
-        )
-    absolute = curation_counts(
-        [old],
-        search_events,
-        now=_utc(2026, 5, 1),
-        cold_endorsement_min_retrievals=5,
-    )
-    delta = curation_counts(
-        [old],
-        search_events,
-        now=_utc(2026, 5, 1),
-        since=_utc(2026, 4, 10),
-        cold_endorsement_min_retrievals=5,
-    )
-    assert absolute["cold_endorsement_memories"] == 1
-    assert delta["cold_endorsement_memories"] == 0
+    assert report.verification_debt.never_verified_total == 6
+    assert report.verification_debt.stale_total == 1
 
 
 # ---------------------------------------------------------------------------
@@ -657,22 +427,6 @@ def test_silent_miss_cutoff_no_op_without_cutoff_event() -> None:
     report = compute_health([], misses + audits, now=_utc(2026, 5, 1))
     assert report.silent_misses.miss_total == 2
     assert report.silent_misses.audited_total == 2
-
-
-def test_silent_miss_cutoff_filters_curation_counts_too() -> None:
-    """The scope-overview fast helper honors the same cutoff as
-    `compute_health`. Without this, the session-start
-    `curation_pending.silent_misses` count and the deep health report
-    would disagree on the same store."""
-    pre = _event("search_miss", ts=_utc(2026, 4, 1))
-    post = _event("search_miss", ts=_utc(2026, 4, 20))
-    cutoff = _event(
-        "silent_miss_cutoff",
-        ts=_utc(2026, 4, 10),
-        cutoff_ts=_utc(2026, 4, 10).isoformat().replace("+00:00", "Z"),
-    )
-    counts = curation_counts([], [pre, post, cutoff], now=_utc(2026, 5, 1))
-    assert counts["silent_misses"] == 1
 
 
 def test_silent_miss_cutoff_drops_numerator_and_denominator_together() -> None:
@@ -822,34 +576,6 @@ def test_silent_miss_cutoff_filters_no_signal_bucket_too() -> None:
     assert report.silent_misses.no_signal_total == 1
 
 
-def test_silent_miss_cutoff_resolved_globally_under_since_delta() -> None:
-    """`curation_counts(since=...)` filters event walk by `--since`, but
-    `silent_miss_cutoff` events are global markers — their effect must
-    apply even if the cutoff event itself falls below the delta window.
-    Without this exemption, a delta run would drop the cutoff and the
-    rollup would over-count pre-cutoff misses."""
-    # Cutoff written long ago, well before the `since` boundary.
-    cutoff = _event(
-        "silent_miss_cutoff",
-        ts=_utc(2026, 1, 1),
-        cutoff_ts=_utc(2026, 4, 10).isoformat().replace("+00:00", "Z"),
-    )
-    # Two misses in the delta window — one pre-cutoff, one post-cutoff.
-    pre = _event("search_miss", ts=_utc(2026, 4, 5))
-    post = _event("search_miss", ts=_utc(2026, 4, 20))
-
-    counts = curation_counts(
-        [],
-        [cutoff, pre, post],
-        now=_utc(2026, 5, 1),
-        since=_utc(2026, 4, 1),
-    )
-    # The cutoff must apply — only the post-cutoff miss counts.
-    # Without the exemption, the cutoff would be silently dropped and
-    # both misses (pre and post) would count as 2.
-    assert counts["silent_misses"] == 1
-
-
 # ---------------------------------------------------------------------------
 # silent_misses dedup + tombstone filter (T2 / T3)
 # ---------------------------------------------------------------------------
@@ -863,9 +589,7 @@ def test_silent_miss_cutoff_resolved_globally_under_since_delta() -> None:
 # memory is gone the miss is no longer actionable, and other rollups
 # (`dead_weight`, `heavily_used`, `orphan_use_events`) already
 # cross-reference against the tombstone set. These tests pin both
-# behaviors against the public `compute_health` / `curation_counts`
-# surfaces — they're naturally coupled because the same accumulator
-# code path implements both.
+# behaviors against the public `compute_health` surface.
 
 
 def _search_miss_with_top_hit(memory_id: str, ts: datetime) -> dict[str, Any]:
@@ -898,21 +622,6 @@ def test_silent_misses_dedup_by_top_hit_in_compute_health() -> None:
     report = compute_health([m], events, window_days=30, now=_utc(2026, 5, 1))
     assert report.silent_misses.miss_total == 5
     assert report.silent_misses.unique_miss_memories == 1
-
-
-def test_silent_misses_dedup_by_top_hit_in_curation_counts() -> None:
-    """Same dedup contract applies to the fast `curation_counts` helper
-    so the session-start rollup and the deep `memory_health` view agree
-    on the same store — otherwise the model would see 9 in scope-overview
-    and 1 in health and have no way to reconcile."""
-    m = _memory(created=_utc(2026, 1, 1))
-    events = [
-        _search_miss_with_top_hit(m.id, ts=_utc(2026, 4, day))
-        for day in (1, 2, 3, 4, 5)
-    ]
-    counts = curation_counts([m], events, window_days=30, now=_utc(2026, 5, 1))
-    assert counts["silent_misses"] == 5
-    assert counts["unique_silent_miss_memories"] == 1
 
 
 def test_silent_misses_unique_count_matches_event_count_when_distinct() -> None:
@@ -955,25 +664,6 @@ def test_silent_misses_tombstone_filter_in_compute_health() -> None:
     assert post_tombstone.silent_misses.unique_miss_memories == 0
 
 
-def test_silent_misses_tombstone_filter_in_curation_counts() -> None:
-    """`curation_counts` honors the same filter — the scope-overview
-    fast path can't disagree with the deep health view on the same
-    store."""
-    m = _memory(created=_utc(2026, 1, 1))
-    events = [
-        _search_miss_with_top_hit(m.id, ts=_utc(2026, 4, day)) for day in (1, 2, 3, 4)
-    ]
-    counts = curation_counts(
-        [m],
-        events,
-        window_days=30,
-        now=_utc(2026, 5, 1),
-        tombstoned_ids={m.id},
-    )
-    assert counts["silent_misses"] == 0
-    assert counts["unique_silent_miss_memories"] == 0
-
-
 def test_silent_misses_mixed_live_and_tombstoned_targets() -> None:
     """The combined T2+T3 case: misses against a live memory M1 (3
     events) and a later-tombstoned memory M2 (4 events). After tombstone
@@ -1004,16 +694,6 @@ def test_silent_misses_mixed_live_and_tombstoned_targets() -> None:
     # M1's 3 misses survive both filters; M2's 4 drop out via tombstone.
     assert report.silent_misses.miss_total == 3
     assert report.silent_misses.unique_miss_memories == 1
-    # Same contract via the fast helper.
-    counts = curation_counts(
-        [m1, m2],
-        events,
-        window_days=30,
-        now=_utc(2026, 5, 1),
-        tombstoned_ids={m2.id},
-    )
-    assert counts["silent_misses"] == 3
-    assert counts["unique_silent_miss_memories"] == 1
 
 
 def test_silent_misses_malformed_top_hits_degrade_to_event_count_only() -> None:
@@ -1371,14 +1051,11 @@ def test_duplicate_ids_in_one_use_event_settle_once_agreeing_with_eval() -> None
     assert tools.applied_total == eval_report.applied_total == 2
 
 
-def test_curation_counts_dedupes_ids_within_one_use_event() -> None:
-    """The `curation_counts` use branch shares `_handle_use`'s per-event
-    dedup. Observable through the ratio threshold: an auto apply
-    carrying the id twice raw-counts as total=3 explicit=1 (ratio 1/3,
-    under 0.5 -> flagged); deduped it is total=2 explicit=1 (ratio
-    exactly 0.5, not under -> clean). The numerical contract holds:
-    the count agrees with `compute_health`'s bucket for the same
-    inputs."""
+def test_cold_endorsement_ratio_reads_ids_deduped_within_one_use_event() -> None:
+    """`_handle_use` dedupes ids within one event. Observable through the
+    ratio threshold: an auto apply carrying the id twice raw-counts as
+    total=3 explicit=1 (ratio 1/3, under 0.5 -> flagged); deduped it is
+    total=2 explicit=1 (ratio exactly 0.5, not under -> clean)."""
     m = _memory(created=_utc(2026, 1, 1))
     events = [
         _event("search", ts=_utc(2026, 2, 1), returned=[m.id]),
@@ -1394,14 +1071,6 @@ def test_curation_counts_dedupes_ids_within_one_use_event() -> None:
             attribution="model",
         ),
     ]
-    counts = curation_counts(
-        [m],
-        events,
-        now=_utc(2026, 5, 1),
-        cold_endorsement_min_retrievals=2,
-        cold_endorsement_ratio_threshold=0.5,
-    )
-    assert counts["cold_endorsement_memories"] == 0
     report = compute_health(
         [m],
         events,
@@ -2975,15 +2644,6 @@ def test_cold_endorsement_counts_memories_not_turns() -> None:
     )
     # ONE memory, regardless of how many turns hit it.
     assert report.cold_endorsement_memories.total == 1
-    # The same value surfaces through curation_counts.
-    counts = curation_counts(
-        [m],
-        events,
-        window_days=30,
-        cold_endorsement_min_retrievals=5,
-        now=_utc(2026, 5, 1),
-    )
-    assert counts["cold_endorsement_memories"] == 1
 
 
 def test_cold_endorsement_respects_min_retrievals_floor() -> None:
@@ -3068,9 +2728,8 @@ def test_cold_endorsement_sorted_by_retrieval_count_desc() -> None:
 
 def test_hookless_store_suppresses_cold_endorsement_with_dead_weight() -> None:
     """Armed gate + zero hook telemetry → the endorsement bucket is
-    empty BY CONSTRUCTION, `telemetry_coverage` names both suppressed
-    legs, and `curation_counts` falls to zero with it (the numerical
-    contract). The fixture would flag without the gate: retrievals over
+    empty BY CONSTRUCTION and `telemetry_coverage` names both suppressed
+    legs. The fixture would flag without the gate: retrievals over
     the inline floor, every apply the auto settlement an unwired hook
     still performs, zero explicit."""
     m = _memory()
@@ -3094,22 +2753,12 @@ def test_hookless_store_suppresses_cold_endorsement_with_dead_weight() -> None:
     assert coverage.to_dict()["cold_endorsement_suppressed"] is True, (
         "the published rendering must carry the new leg"
     )
-    counts = curation_counts(
-        [m],
-        events,
-        window_days=30,
-        cold_endorsement_min_retrievals=5,
-        hook_telemetry_events=0,
-        now=_utc(2026, 5, 1),
-    )
-    assert counts["cold_endorsement_memories"] == 0
 
 
 def test_hook_telemetry_restores_cold_endorsement_bucket() -> None:
     """Positive control: the same fixture plus one Stop-hook audit
     event (pure coverage — a `turn_audited` carries no endorsement
-    side effect) flips coverage on, and the memory flags again on both
-    surfaces."""
+    side effect) flips coverage on, and the memory flags again."""
     m = _memory()
     events = []
     for _ in range(6):
@@ -3127,15 +2776,6 @@ def test_hook_telemetry_restores_cold_endorsement_bucket() -> None:
     coverage = report.telemetry_coverage
     assert coverage is not None
     assert coverage.cold_endorsement_suppressed is False
-    counts = curation_counts(
-        [m],
-        events,
-        window_days=30,
-        cold_endorsement_min_retrievals=5,
-        hook_telemetry_events=0,
-        now=_utc(2026, 5, 1),
-    )
-    assert counts["cold_endorsement_memories"] == 1
 
 
 def test_cold_endorsement_threshold_overridable() -> None:
@@ -3172,22 +2812,6 @@ def test_cold_endorsement_min_retrievals_floor_clamped_above_zero() -> None:
     assert report.cold_endorsement_memories.total == 0
 
 
-def test_curation_counts_cold_endorsement_matches_health_bucket() -> None:
-    """Numerical contract: curation_counts['cold_endorsement_memories']
-    equals HealthReport.cold_endorsement_memories.total over the same
-    inputs."""
-    m = _memory()
-    events = []
-    for _ in range(5):
-        events.append(_event("search", returned=[m.id]))
-        events.append(_event("use", ids=[m.id], outcome="applied", auto=True))
-    report = compute_health(
-        [m], events, heavily_used_min_applied=1, now=_utc(2026, 5, 1)
-    )
-    counts = curation_counts([m], events, window_days=30, now=_utc(2026, 5, 1))
-    assert counts["cold_endorsement_memories"] == report.cold_endorsement_memories.total
-
-
 def test_zero_apply_memory_is_dead_weight_not_cold_endorsement() -> None:
     """A memory created before the window, retrieved over the floor, but
     NEVER applied (auto or explicit) is dead_weight — NOT cold-endorsement.
@@ -3198,8 +2822,7 @@ def test_zero_apply_memory_is_dead_weight_not_cold_endorsement() -> None:
     `applied_count == 0` gate it satisfied `explicit_applied_count == 0`
     and double-counted into both buckets, inflating the cold-endorsement
     rollup and mis-routing a never-applied memory to acknowledge-debt
-    instead of removal. Pinned across compute_health AND curation_counts
-    so the two surfaces stay in numerical agreement."""
+    instead of removal."""
     m = _memory(created=_utc(2026, 1, 1))
     # 5 retrievals (>= floor), ZERO use events — never applied at all.
     events = [_event("search", ts=_utc(2026, 4, 1), returned=[m.id]) for _ in range(5)]
@@ -3215,17 +2838,6 @@ def test_zero_apply_memory_is_dead_weight_not_cold_endorsement() -> None:
     # ... and ABSENT from cold_endorsement (no apply ever happened).
     assert report.cold_endorsement_memories.total == 0
     assert report.cold_endorsement_memories.rows == []
-
-    # The fast helper agrees: dead counted, cold_endorsement not.
-    counts = curation_counts(
-        [m],
-        events,
-        window_days=30,
-        cold_endorsement_min_retrievals=5,
-        now=_utc(2026, 5, 1),
-    )
-    assert counts["dead"] == 1
-    assert counts["cold_endorsement_memories"] == 0
 
 
 def test_cold_endorsement_to_dict_shape() -> None:
@@ -3655,37 +3267,6 @@ def test_report_for_store_carries_the_provenance_bucket(
     assert report_for_store(_keyless(store, tmp_path)).provenance is None
 
 
-def test_curation_counts_unaccounted_reads_the_store_and_honors_since(
-    store: Store,
-) -> None:
-    Recorder(store=store, session_id="s").record("search", returned=[], relevance=[])
-    planted = _plant(store, "placed by hand", ["tools"])
-    memories = store.load_all()
-    events = list(store.iter_events())
-
-    assert curation_counts(memories, events, window_days=30)["unaccounted"] == 0, (
-        "no store, no claim"
-    )
-    assert (
-        curation_counts(memories, events, window_days=30, store=store)["unaccounted"]
-        == 1
-    )
-    after = planted.created + timedelta(seconds=1)
-    assert (
-        curation_counts(memories, events, window_days=30, store=store, since=after)[
-            "unaccounted"
-        ]
-        == 0
-    ), "delta mode counts only unaccounted memories created after the boundary"
-    before = planted.created - timedelta(seconds=1)
-    assert (
-        curation_counts(memories, events, window_days=30, store=store, since=before)[
-            "unaccounted"
-        ]
-        == 1
-    )
-
-
 # ---------------------------------------------------------------------------
 # miss_ack — per-event silent-miss escape hatch (T4)
 # ---------------------------------------------------------------------------
@@ -3750,22 +3331,6 @@ def test_miss_ack_drops_acked_event_from_compute_health_rollup() -> None:
     # at 1 because EVID_B still points at memory `m`.
     assert post_ack.silent_misses.miss_total == 1
     assert post_ack.silent_misses.unique_miss_memories == 1
-
-
-def test_miss_ack_drops_acked_event_from_curation_counts() -> None:
-    """The fast `curation_counts` helper honors the same ack filter
-    so the session-start view and the deep health view agree on the
-    same store — same parity contract as the tombstone filter (T3)."""
-    m = _memory(created=_utc(2026, 1, 1))
-    a = _search_miss_with_event_id(m.id, "EVID_A", ts=_utc(2026, 4, 5))
-    b = _search_miss_with_event_id(m.id, "EVID_B", ts=_utc(2026, 4, 10))
-    ack = _event(
-        "miss_ack", ts=_utc(2026, 4, 15), event_id="EVID_A", reason="false positive"
-    )
-
-    counts = curation_counts([m], [a, b, ack], now=_utc(2026, 5, 1))
-    assert counts["silent_misses"] == 1
-    assert counts["unique_silent_miss_memories"] == 1
 
 
 def test_miss_ack_unique_memories_drops_to_zero_when_all_acked() -> None:
@@ -3866,15 +3431,6 @@ def test_combined_cutoff_tombstone_ack_filters_compose() -> None:
     )
     assert report.silent_misses.miss_total == 1
     assert report.silent_misses.unique_miss_memories == 1
-
-    counts = curation_counts(
-        [live, tombstoned],
-        events,
-        now=_utc(2026, 5, 1),
-        tombstoned_ids={tombstoned.id},
-    )
-    assert counts["silent_misses"] == 1
-    assert counts["unique_silent_miss_memories"] == 1
 
 
 def test_recent_silent_misses_surfaced_on_health_report() -> None:
@@ -4011,15 +3567,14 @@ def test_recent_silent_misses_serialised_in_to_dict() -> None:
 def test_scalar_id_field_does_not_blank_health_rollup() -> None:
     """A well-formed dict event carrying a SCALAR where a list of ids is
     expected must not crash the whole rollup. A numeric scalar under
-    `for mid in <scalar>` raises TypeError (blanking memory_health /
-    scope_overview / doctor); a bare string would iterate by character
+    `for mid in <scalar>` raises TypeError (blanking memory_health and
+    `bettermemory health`); a bare string would iterate by character
     and mis-attribute counts. Valid events around the malformed ones
     must still be aggregated normally, and a lone-string id must be
     treated as a single id rather than iterated per-character.
 
-    Exercises all four iteration sites: `_StatsAccumulator` handles
-    (compute_health, sites 1/2) and the curation_counts loop (sites
-    3/4) both walk the same event list.
+    Exercises both of `_StatsAccumulator`'s iteration sites
+    (compute_health's search and use handlers).
     """
     m = _memory(created=_utc(2026, 1, 1))
     events = [
@@ -4068,11 +3623,6 @@ def test_scalar_id_field_does_not_blank_health_rollup() -> None:
     assert report.dead_weight[0].id == m.id
     assert report.dead_weight[0].retrieval_count == 2
     assert report.dead_weight[0].applied_count == 0
-
-    # curation_counts walks its own event loop (sites 3/4) — it must
-    # survive the same malformed events and classify the memory as dead.
-    counts = curation_counts([m], events, window_days=30, now=_utc(2026, 5, 1))
-    assert counts["dead"] == 1
 
 
 def test_unhashable_session_and_nested_id_elements_do_not_blank_rollup() -> None:
@@ -4148,10 +3698,6 @@ def test_unhashable_session_and_nested_id_elements_do_not_blank_rollup() -> None
     # The nested-list marker element produced no fires — no shredded rows.
     assert all(ms.marker != "mk" for ms in report.marker_stats)
 
-    # curation_counts shares `_event_id_list`; it must survive too.
-    counts = curation_counts([m], events, window_days=30, now=_utc(2026, 5, 1))
-    assert counts["dead"] == 1
-
 
 # ---------------------------------------------------------------------------
 # Anti-inert guard for the telemetry-coverage gate
@@ -4177,11 +3723,7 @@ def test_every_production_dead_weight_call_arms_the_telemetry_gate() -> None:
     """
     import ast
 
-    gated = {
-        "compute_health",
-        "curation_counts",
-        "curation_counts_with_coverage",
-    }
+    gated = {"compute_health"}
     repo_root = Path(__file__).resolve().parents[1]
     src_root = repo_root / "src"
     ungated: list[str] = []
@@ -4205,10 +3747,9 @@ def test_every_production_dead_weight_call_arms_the_telemetry_gate() -> None:
                 ungated.append(
                     f"{py_file.relative_to(repo_root)}:{node.lineno} {name}()"
                 )
-    assert scanned_calls >= 2, (
-        "the scan found almost no call sites: the walk is broken, not "
-        "the tree (expected report_for_store's compute_health call and "
-        "the curation_counts wrapper at minimum)"
+    assert scanned_calls >= 1, (
+        "the scan found no call site: the walk is broken, not the tree "
+        "(expected report_for_store's compute_health call at minimum)"
     )
     assert not ungated, (
         f"call site(s) in src/ do not arm the dead-weight telemetry "
@@ -4579,9 +4120,9 @@ def test_cross_repo_drift_survives_an_unreadable_worktree(tmp_path: Path) -> Non
     so a recorded worktree behind a permission-denied parent — equally,
     on a dropped network mount or failing media — propagated out of
     `_compute_cross_repo_drift`, out of `compute_health`, and blanked
-    `memory_health`, the full `memory_scope_overview` report and
-    `bettermemory health` at once. One directory nobody can stat is not
-    a reason to report nothing about the other 368 memories."""
+    `memory_health` and `bettermemory health` at once. One directory
+    nobody can stat is not a reason to report nothing about the other 368
+    memories."""
     from bettermemory.origin import Origin
 
     parent = tmp_path / "locked"
@@ -4803,102 +4344,3 @@ def test_cross_repo_drift_excludes_the_callers_own_repo(tmp_path: Path) -> None:
     )
     report = compute_health([m], [], caller_origin=caller, now=_utc(2026, 4, 1))
     assert report.cross_repo_drift is None
-
-
-# ---------------------------------------------------------------------------
-# A 0 the rollup did not measure is named, not published as clean.
-# ---------------------------------------------------------------------------
-
-
-def test_curation_counts_names_the_drifted_leg_it_could_not_measure(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """`commit_author_timestamps` returns None for "git not on PATH, not a
-    repo, no commits, parse error on every line" and its own timeout;
-    the cheap rollup left `drifted` at its 0 initialiser with no else
-    and `memory_scope_overview` published that 0 at session start as a
-    measured clean bill on the repo-aware staleness leg. A caller whose
-    origin capture could not run git at all is the same leg, unasked."""
-    from bettermemory import health as _health
-    from bettermemory.health import curation_counts_with_coverage
-    from bettermemory.origin import Origin
-
-    repo = "git@github.com:owner/foo.git"
-    verified = _memory(created=_utc(2026, 1, 1), last_verified_at=_utc(2026, 4, 25))
-    verified = verified.model_copy(
-        update={
-            "origin": Origin(cwd=str(tmp_path), repo=repo, worktree_root=str(tmp_path))
-        }
-    )
-    caller = Origin(cwd=str(tmp_path), repo=repo, worktree_root=str(tmp_path))
-
-    monkeypatch.setattr(_health, "commit_author_timestamps", lambda cwd: None)
-    counts, unmeasured = curation_counts_with_coverage(
-        [verified], [], caller_origin=caller, now=_utc(2026, 5, 1)
-    )
-    assert counts["drifted"] == 0
-    assert unmeasured == ["drifted"]
-
-    monkeypatch.setattr(
-        _health, "commit_author_timestamps", lambda cwd: [_utc(2026, 1, 1)]
-    )
-    counts, unmeasured = curation_counts_with_coverage(
-        [verified], [], caller_origin=caller, now=_utc(2026, 5, 1)
-    )
-    assert counts["drifted"] == 0
-    assert unmeasured == [], "git answered: a measured zero"
-
-    unknown = Origin(cwd=str(tmp_path))
-    unknown._git_indeterminate = True
-    counts, unmeasured = curation_counts_with_coverage(
-        [verified], [], caller_origin=unknown, now=_utc(2026, 5, 1)
-    )
-    assert unmeasured == ["drifted"], "capture could not run git: unasked"
-
-    nowhere = Origin(cwd=str(tmp_path))
-    counts, unmeasured = curation_counts_with_coverage(
-        [verified], [], caller_origin=nowhere, now=_utc(2026, 5, 1)
-    )
-    assert unmeasured == [], "git said 'not a repository': nothing to drift against"
-
-    # The one-valued wrapper is the same walk with the coverage dropped.
-    monkeypatch.setattr(_health, "commit_author_timestamps", lambda cwd: None)
-    assert (
-        curation_counts([verified], [], caller_origin=caller, now=_utc(2026, 5, 1))[
-            "drifted"
-        ]
-        == 0
-    )
-
-
-def test_curation_counts_names_the_unaccounted_leg_it_could_not_measure(
-    tmp_path: Path, store: Store
-) -> None:
-    """`provenance_debt` returns None for "could not look" (a store opened
-    without its key: no pointer verifies) and a bucket for "looked, found
-    none", so a caller can tell. The rollup collapsed the two and
-    published `unaccounted: 0` off a store that could label nothing."""
-    from bettermemory.health import curation_counts_with_coverage
-
-    memory = store.write(content="the auth service listens on port 8443", scopes=["t"])
-    mems = [memory]
-
-    counts, unmeasured = curation_counts_with_coverage(
-        mems, [], store=store, now=_utc(2026, 5, 1)
-    )
-    assert counts["unaccounted"] == 0
-    assert unmeasured == [], "a store with its key that labels nothing unaccounted"
-
-    keyless = _keyless(store, tmp_path)
-    counts, unmeasured = curation_counts_with_coverage(
-        mems, [], store=keyless, now=_utc(2026, 5, 1)
-    )
-    assert counts["unaccounted"] == 0
-    assert unmeasured == ["unaccounted"]
-
-    counts, unmeasured = curation_counts_with_coverage(
-        [], [], store=keyless, now=_utc(2026, 5, 1)
-    )
-    assert unmeasured == [], (
-        "no memories in scope: nothing the store could have labelled"
-    )

@@ -301,19 +301,6 @@ async def test_claims_only_memory_drift_agrees_across_surfaces(
     row = next(r for r in report["commit_drift_debt"]["rows"] if r["id"] == memory_id)
     assert row["commits_since_verify"] == 1
 
-    from bettermemory.health import curation_counts
-
-    store = Store.open(memory_dir)
-    counts = curation_counts(
-        store.load_all(),
-        store.iter_events(),
-        caller_origin=Origin(
-            cwd=str(repo), repo=_REMOTE, branch="main", worktree_root=str(repo)
-        ),
-        store=store,
-    )
-    assert counts["drifted"] == 1
-
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
 async def test_claims_only_stale_memory_with_clean_claims_demotes_on_search(

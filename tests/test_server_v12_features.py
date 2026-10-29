@@ -7,8 +7,8 @@ Covers the seven changes that landed together:
 2. Dead-weight rule fix + ``cold_memories`` bucket.
 3. ``staleness_verdict`` rollup field on every retrieval surface.
 4. Auto-``record_use`` via response tokens.
-5. (the session-start rollup; its tool is gone, `health.curation_counts`
-   is pinned in `tests/test_server_commit_drift.py`)
+5. (the session-start rollup; its tool and `health.curation_counts`
+   are gone, and the health report carries the counts)
 6. ``scope_mismatch`` warning at ``memory_write`` time.
 7. Structured ``verified_claims`` on ``memory_verify``.
 

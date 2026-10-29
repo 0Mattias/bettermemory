@@ -405,12 +405,10 @@ async def memory_search(
     # When set, narrow candidates to memories whose `updated` is
     # at/after the latest event-log timestamp from a session_id
     # other than the recorder's. We use the recorder's session
-    # (not state.session_id) for the same reason scope_overview
-    # does — the recorder is what stamps events with `session`,
-    # so the boundary check has to compare against the same id
-    # the events were tagged with. Surface as empty when no prior
-    # session exists; callers distinguish "nothing new" from "no
-    # baseline" by also calling memory_scope_overview.
+    # (not state.session_id) because the recorder is what stamps
+    # events with `session`, so the boundary check has to compare
+    # against the same id the events were tagged with. Surface as
+    # empty when no prior session exists.
     #
     # Resolve the boundary *before* loading candidates so the
     # "no prior session" shortcut can skip the load entirely, and
@@ -456,15 +454,12 @@ async def memory_search(
         if prior_boundary is None:
             memories = []
         else:
-            # Strict-`>` to match the `curation_counts` `<=` exclusion:
-            # the boundary IS the prior session's last event ts (per
-            # `find_prior_session_boundary`), so a memory whose `updated`
-            # equals it was written by the prior session and belongs to
-            # *that* session, not the current-session delta. A naive `>=`
-            # double-counts the boundary memory across the two surfaces
-            # (memory_search + memory_scope_overview/curation_counts) that
-            # the api docs pair together as the "what's new since last
-            # session" workflow.
+            # Strict `>`: the boundary IS the prior session's last event
+            # ts (per `find_prior_session_boundary`), so a memory whose
+            # `updated` equals it was written by the prior session and
+            # belongs to *that* session, not the current-session delta.
+            # A naive `>=` would count the boundary memory in both
+            # sessions' deltas.
             memories = [m for m in deps.store.load_all() if m.updated > prior_boundary]
     else:
         # The prefilter, the cap-starvation guard and the corpus-stats

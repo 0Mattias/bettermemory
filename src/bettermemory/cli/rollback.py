@@ -59,9 +59,8 @@ def add_subparser(
         "--yes",
         action="store_true",
         help=(
-            "Confirm a batch removal. Required alongside --apply, "
-            "matching the accept-gate `consolidate --llm --apply` "
-            "carries: a bulk removal must not commit silently."
+            "Confirm a batch removal. Required alongside --apply: "
+            "a bulk removal must not commit silently."
         ),
     )
     parser.add_argument(

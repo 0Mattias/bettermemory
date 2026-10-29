@@ -429,7 +429,7 @@ def _cli_eval(
         scope=scope,
         endorsement_min_retrievals=floor,
         silent_miss_limit=silent_miss_limit,
-        # Same enumeration `health.report_for_directory` and the
+        # Same enumeration `health.report_for_store` and the
         # scope-overview handler feed `compute_health`, so the eval
         # CLI's silent-miss numerator applies the identical tombstone
         # filter (health's `_silent_miss_stats` filter #2) — a miss

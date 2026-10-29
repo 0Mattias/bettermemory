@@ -28,7 +28,6 @@ import pytest
 from bettermemory.admission import CountedRecords
 from bettermemory.config import Config, StorageConfig
 from bettermemory.events import Recorder
-from bettermemory.health import curation_counts
 from bettermemory.origin import Origin
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
@@ -1217,15 +1216,14 @@ async def test_memory_health_commit_drift_debt_honors_verified_paths(
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
-async def test_curation_counts_drifted_honors_verified_paths(
+async def test_health_commit_drift_honors_verified_paths(
     server_with_fake_origin, tmp_path: Path, memory_dir: Path
 ) -> None:
-    """Regression: `curation_counts` (the session-start rollup's `drifted`)
-    was the only commit-drift surface that never applied the
-    verified_paths filter, so the rollup reported drift on memories
-    attested as stable, the loudest false-positive of all. With the fix,
-    a memory whose verified_paths were untouched by post-verify commits
-    is not counted as drifted.
+    """Regression: a memory whose verified_paths were untouched by
+    post-verify commits is not counted as drifted in the health report's
+    `commit_drift_debt`. The session-start rollup that once missed this
+    filter (the loudest false positive of all) is gone; the health
+    report is the surface that counts drift across the store.
     """
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -1247,11 +1245,11 @@ async def test_curation_counts_drifted_honors_verified_paths(
     _commit_at(repo, "post-1", when=datetime(2099, 1, 1, tzinfo=timezone.utc))
     _commit_at(repo, "post-2", when=datetime(2099, 2, 1, tzinfo=timezone.utc))
 
-    store = Store.open(memory_dir)
-    counts = curation_counts(
-        store.load_all(), store.iter_events(), caller_origin=origin, store=store
-    )
-    assert counts["drifted"] == 0
+    report = await _call(server, "memory_admin", action="health")
+    cd = report["commit_drift_debt"]
+    assert cd is not None
+    assert cd["total_drifted"] == 0
+    assert cd["rows"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -1660,14 +1658,6 @@ async def test_memory_health_commit_drift_debt_excludes_untethered(
     assert cd["total_drifted"] == 1
     assert [r["id"] for r in cd["rows"]] == [anchored["id"]]
 
-    # The curation rollup agrees: its `drifted` counts only the anchored
-    # memory (lockstep between the two health surfaces).
-    store = Store.open(memory_dir)
-    counts = curation_counts(
-        store.load_all(), store.iter_events(), caller_origin=origin, store=store
-    )
-    assert counts["drifted"] == 1
-
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
 async def test_a_sha_citing_fresh_memory_reads_fresh_on_both_surfaces(
@@ -1883,7 +1873,7 @@ async def test_a_branch_authored_before_the_stamp_and_merged_after_it_counts(
     then merged: in reachability space the branch's commit is inside
     ``anchor..HEAD`` and touches the cited file, so the anchored memory
     reads drift 1 on memory_show, on the search hit, in the health
-    rollup and in the curation count — every block naming the basis.
+    rollup — every block naming the basis.
     The unanchored memory reads the author-date count, zero, and says so:
     the fallback is labelled, never silent.
     """
@@ -1950,10 +1940,6 @@ async def test_a_branch_authored_before_the_stamp_and_merged_after_it_counts(
     rows = {r["id"]: r for r in report["commit_drift_debt"]["rows"]}
     assert set(rows) == {anchored["id"]}
     assert rows[anchored["id"]]["basis"] == "reachability"
-    counts = curation_counts(
-        store.load_all(), store.iter_events(), caller_origin=origin, store=store
-    )
-    assert counts["drifted"] == 1
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")

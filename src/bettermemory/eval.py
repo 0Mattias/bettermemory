@@ -26,10 +26,12 @@ Three rates the existing event log makes computable today:
   reported separately as ``turns_no_signal``, so a probe stuck at
   "declined" can't read as a healthy 0% miss rate. Both sides honor
   the same invalidation markers ``health.py``'s rollups honor: a
-  ``silent_miss_cutoff`` event (written by ``bettermemory consolidate
-  --acknowledge-misses-before``) drops every earlier ``turn_audited``
-  / ``search_miss`` event from numerator, both denominator buckets,
-  and the triage buffer alike (latest ``cutoff_ts`` wins), and a
+  ``silent_miss_cutoff`` event (a bulk acknowledgement, written by
+  ``memory_admin(action="acknowledge_miss", before=...)``; 8.x wrote it
+  with ``consolidate --acknowledge-misses-before``) drops every earlier
+  ``turn_audited`` / ``search_miss`` event from numerator, both
+  denominator buckets, and the triage buffer alike (latest
+  ``cutoff_ts`` wins), and a
   ``miss_ack`` event (written by ``memory_acknowledge_miss``) drops
   the one referenced miss from the numerator while the audited
   denominator keeps its turn. When the caller passes
@@ -202,7 +204,7 @@ class EvalReport:
     # health's `telemetry_coverage.cold_endorsement_suppressed`): True
     # when the walked log carries zero Stop-hook settlement telemetry
     # (`health.is_hook_telemetry_event`, counted over the WHOLE log —
-    # not the window — matching health/curation_counts' "did settlement
+    # not the window — matching health's "did settlement
     # telemetry EVER reach this log" semantics), in which case the rows
     # and total above are empty BY CONSTRUCTION, not because the store
     # is clean. Serialised under `cold_endorsement_memories` with the
@@ -338,10 +340,11 @@ def compute_eval(
     rate reflects the global cadence regardless of scope filter.
 
     Silent-miss telemetry honors the same two invalidation markers
-    ``health.compute_health`` / ``health.curation_counts`` honor, so
+    ``health.compute_health`` honors, so
     every surface reporting ``silent_miss_rate`` agrees over the same
     event stream: a ``silent_miss_cutoff`` event (written by
-    ``bettermemory consolidate --acknowledge-misses-before``) drops
+    ``memory_admin(action="acknowledge_miss", before=...)``; 8.x wrote it
+    with ``consolidate --acknowledge-misses-before``) drops
     ``turn_audited`` / ``search_miss`` events earlier than the latest
     ``cutoff_ts`` from the numerator, both denominator buckets, and
     the triage buffer — an earlier cutoff seen later in the log cannot
@@ -349,8 +352,8 @@ def compute_eval(
     ``memory_acknowledge_miss``) drops the one referenced miss from
     the numerator while the denominator keeps its turn. Both markers
     are global: they apply even when their own ``ts`` falls outside
-    the ``since`` window, mirroring ``curation_counts``' delta-mode
-    exemption. Streams carrying no markers count exactly as before.
+    the ``since`` window, as health reads them over the whole log.
+    Streams carrying no markers count exactly as before.
 
     ``tombstoned_ids`` mirrors ``health._silent_miss_stats``' filter
     #2: a ``search_miss`` whose canonical top-hit id
@@ -362,7 +365,7 @@ def compute_eval(
     so callers without a store handle (the comparative harness, the
     scripted driver) are untouched; the CLI wrapper enumerates the
     real set via ``store.load_tombstones()``, same as
-    ``health.report_for_directory``. Legacy ``top_hit_ids``-shaped
+    ``health.report_for_store``. Legacy ``top_hit_ids``-shaped
     events carry no canonical top-hit id and fall through the filter
     (health's can't-prove-tombstoned conservative read).
 
@@ -448,10 +451,9 @@ def compute_eval(
     explicit_applied_count: dict[str, int] = {}
     # Stop-hook settlement coverage for the cold-endorsement honesty
     # gate — counted over the WHOLE log (before the window filter),
-    # matching `health.compute_health` / `curation_counts`, whose
-    # accumulators measure "did settlement telemetry EVER reach this
-    # event log", not "recently". Costs nothing: the walk below already
-    # visits every event.
+    # matching `health.compute_health`, whose accumulator measures "did
+    # settlement telemetry EVER reach this event log", not "recently".
+    # Costs nothing: the walk below already visits every event.
     hook_telemetry_events = 0
 
     # Rolling buffer of recent silent-miss events (last K, since
@@ -470,7 +472,7 @@ def compute_eval(
     # buffer-then-resolve shape as ``health._StatsAccumulator``.
     audit_telemetry: list[dict[str, Any]] = []
     # The two escape hatches health.py's rollups honor, mirrored here
-    # so the eval CLI, memory_health, and memory_scope_overview agree
+    # so the eval CLI and memory_health agree
     # over the same event stream: `silent_miss_cutoff` wipes all miss
     # telemetry before its `cutoff_ts`; `miss_ack` retracts one
     # `search_miss` by `event_id`.
@@ -520,8 +522,7 @@ def compute_eval(
         if is_hook_telemetry_event(ev):
             hook_telemetry_events += 1
         # Invalidation markers — resolved BEFORE the `since` window
-        # filter, mirroring `curation_counts`' delta-mode exemption:
-        # both are global markers, so a cutoff/ack whose own ts falls
+        # filter: both are global markers, so a cutoff/ack whose own ts falls
         # outside the window still applies to in-window telemetry.
         # Without the exemption a windowed run would silently drop the
         # marker and over-count events health.py's rollups (which walk
@@ -556,7 +557,7 @@ def compute_eval(
             # keeps the eval denominator consistent with audit cadence.
             # Legacy-name fallback (`memory_ids` / `hit_ids`) — same
             # discipline as the other event consumers (hook /
-            # consolidate / _handlers). `list` events only ever wrote
+            # _handlers). `list` events only ever wrote
             # `returned`, but reading through the same fallback chain
             # is harmless.
             returned = (
@@ -924,8 +925,9 @@ def compute_threshold_sweep(
     (`compute_eval` / `health.compute_health`) honor apply
     ASYMMETRICALLY here, and the asymmetry is deliberate:
 
-    - `silent_miss_cutoff` (bulk, written by `bettermemory
-      consolidate --acknowledge-misses-before`) IS honored: events
+    - `silent_miss_cutoff` (bulk, written by
+      `memory_admin(action="acknowledge_miss", before=...)`; 8.x wrote
+      it with `consolidate --acknowledge-misses-before`) IS honored: events
       earlier than the latest `cutoff_ts` drop from the replay set
       and the legacy footnote alike, as if never logged. The cutoff
       exists to retract batches flagged by a since-fixed code bug
@@ -1130,8 +1132,10 @@ class WideningPreviewReport:
     Repeat audits are excluded (`repeat_audits_skipped`), matching the
     rate surfaces. The bulk `silent_miss_cutoff` marker IS applied
     (`cutoff_retracted`): a replayable audit whose `ts` falls before the
-    latest logged `cutoff_ts` was invalidated by `consolidate
-    --acknowledge-misses` and is dropped from the replay, the same way
+    latest logged `cutoff_ts` was retracted by a bulk acknowledgement
+    (`memory_admin(action="acknowledge_miss", before=...)`; 8.x wrote it
+    with `consolidate --acknowledge-misses-before`) and is dropped from
+    the replay, the same way
     `compute_eval` drops it from the rate surfaces. The marker used to
     be skipped on the reasoning that it only ever retracted pre-3.14
     batches no replay could see; cutoffs have long postdated the

@@ -117,8 +117,8 @@ def render_text(report: EvalReport) -> str:
             lines.append(f"  … plus {report.cold_endorsement_memories_total - 10} more")
     elif report.cold_endorsement_suppressed:
         # The one shared sentence (`health._HOOKLESS_REASON`) so this
-        # renderer, memory_health, and the consolidate refusal cannot
-        # drift into different explanations of the same silence.
+        # renderer, memory_health and `bettermemory health` cannot drift
+        # into different explanations of the same silence.
         lines.append("")
         lines.append(f"Cold-endorsement memories: suppressed — {_HOOKLESS_REASON}")
 
@@ -456,8 +456,9 @@ def render_widening_preview_text(report: WideningPreviewReport) -> str:
     if report.cutoff_retracted:
         lines.append(
             f"  (skipped {report.cutoff_retracted} audits retracted by a "
-            "silent_miss_cutoff marker — miss telemetry invalidated by "
-            "`consolidate --acknowledge-misses`)"
+            "silent_miss_cutoff marker — miss telemetry acknowledged in bulk by "
+            '`memory_admin(action="acknowledge_miss", before=...)`, or in 8.x by '
+            "`consolidate --acknowledge-misses-before`)"
         )
     if report.audits_with_features == 0:
         lines.append("")

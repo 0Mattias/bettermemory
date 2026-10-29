@@ -630,11 +630,8 @@ async def test_search_since_prior_session_excludes_boundary_memory(
     whose `updated` equals `prior_boundary` belongs to the prior session
     (the boundary IS that session's last event ts, per
     `find_prior_session_boundary`) and must not surface in the current
-    session's delta. Mirrors `test_curation_counts_since_filter_is_exclusive_at_boundary`
-    in tests/test_health.py — same concept, same answer across both surfaces
-    (memory_search + curation_counts) the api docs pair together as the
-    "what's new since last session" workflow. A naive inclusive `>=` would
-    double-count the boundary memory across the two surfaces."""
+    session's delta. A naive inclusive `>=` would count the boundary
+    memory in both sessions' deltas."""
     from bettermemory.health import find_prior_session_boundary
     from bettermemory.store import _iso
 
@@ -700,8 +697,7 @@ async def test_search_since_prior_session_excludes_boundary_memory(
     ids = [h["id"] for h in hits]
     assert written_a["id"] not in ids, (
         "memory whose `updated` equals `prior_boundary` belongs to the prior "
-        "session and must not appear in the since_prior_session delta — "
-        "must agree with curation_counts' strict `<=` exclusion at the boundary"
+        "session and must not appear in the since_prior_session delta"
     )
 
 

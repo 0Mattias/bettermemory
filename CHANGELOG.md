@@ -295,6 +295,33 @@ the candidates' testing.
   `tests/test_server_claims.py`, `tests/test_server_commit_drift.py`,
   `tests/test_server_v12_features.py`, `tests/test_commit_drift_cache.py`,
   `tests/test_membership_anchoring.py`, `tests/test_search_drift.py`)
+- **The health code keeps no rollup and no description for a tool 9.0
+  removed, and names no removed command.** `health.curation_counts` and
+  `health.curation_counts_with_coverage` fed `memory_scope_overview`'s
+  `curation_pending`, and had no caller outside the tests once 9.0
+  removed that tool; both import paths are gone. The standalone
+  `memory_health` and `memory_acknowledge_miss` descriptions were never
+  served after 9.0, where both are `memory_admin` actions described by
+  the admin tool's clauses, and the first still sent the reader to
+  `curation_pending.dead`, a field no response carries. Comments in the
+  health, eval and search code cited these, the removed
+  `report_for_directory` and 8.x's `consolidate` commands as live. The
+  rollup, its helper and both descriptions are gone, and the comments
+  name what reads each rule now. Two printed strings named a removed
+  command: `eval --widening-preview` said a `silent_miss_cutoff` came
+  from `consolidate --acknowledge-misses`, and `rollback --yes`'s help
+  cited `consolidate --llm --apply`. The first now names
+  `memory_admin(action="acknowledge_miss", before=...)` and the second
+  drops the comparison. The API reference's list of the report's fields
+  lacked `membership`, which the report carries; it now names it, and a
+  test holds that list to the report's keys in both directions.
+  `health.py` went from 1,896 to 1,291 lines.
+  (`src/bettermemory/health.py`, `src/bettermemory/health_model.py`,
+  `src/bettermemory/health_stats.py`, `src/bettermemory/eval.py`,
+  `src/bettermemory/eval_render.py`, `src/bettermemory/cli/eval.py`,
+  `src/bettermemory/cli/rollback.py`, `src/bettermemory/handlers/health.py`,
+  `src/bettermemory/handlers/search.py`,
+  `src/bettermemory/handlers/acknowledge_miss.py`, `docs/api.md`)
 
 #### Fixed
 

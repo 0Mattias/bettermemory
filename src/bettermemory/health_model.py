@@ -25,18 +25,13 @@ from .verify import BASIS_AUTHOR_DATE
 # Shared dead-weight predicate
 # ---------------------------------------------------------------------------
 #
-# One rule, three consumers: `compute_health`'s dead_weight bucket, the
-# `curation_counts` "dead" rollup behind `memory_scope_overview`, and
-# `consolidate.find_demotion_candidates` (the unattended fact->ambient
-# retag). The demotion pass grew three conservative gates — the
-# freshest-touch window, unresolved-contradiction parking, the
-# endorsement grace — while the reporting rollups still keyed on
-# `created` alone, so scope_overview kept reporting dead > 0 that the
-# demotion pass (correctly) refused to drain. `_is_dead_weight` below
-# is the single source of truth; the action side layers its fact/None
-# category whitelist ON TOP (the report still surfaces e.g.
-# user-inference dead rows — only the automated retag is
-# category-restricted).
+# The rule behind `compute_health`'s dead_weight bucket. 8.x's
+# unattended fact->ambient retag (`consolidate.find_demotion_candidates`,
+# removed in 9.0) grew three conservative gates — the freshest-touch
+# window, unresolved-contradiction parking, the endorsement grace —
+# while the reporting rollups still keyed on `created` alone, so the
+# report kept counting dead rows the demotion pass (correctly) refused
+# to drain. `_is_dead_weight` below carries all three gates.
 
 # Endorsement grace: the auto-applied endorsement structurally lags
 # every retrieval by >= 2 memory-tool turns (session.py's use-token
@@ -76,9 +71,8 @@ def _has_unresolved_contradiction(
 ) -> bool:
     """True when the newest `use(contradicted)` event postdates both
     resolution paths (memory_update bumps `updated`; memory_verify
-    bumps `last_verified_at`). The single implementation behind
-    `MemoryStats.has_unresolved_contradiction`, `curation_counts`, and
-    `consolidate.find_demotion_candidates` — see the property's
+    bumps `last_verified_at`). The implementation behind
+    `MemoryStats.has_unresolved_contradiction` — see the property's
     docstring for the full resolution semantics."""
     if last_contradicted_at is None:
         return False
@@ -144,25 +138,26 @@ def _is_dead_weight(
 # the token expires. So on a store whose Stop hook was never wired,
 # almost every retrieval ends with applied == 0 and the ENTIRE store
 # reads as dead weight. That is a statement about the client's hook
-# configuration, not about the memories — and on the unattended
-# demotion path (`consolidate.find_demotion_candidates`) it retags them
-# fact->ambient with nobody reviewing the diff.
+# configuration, not about the memories — and 8.x's unattended demotion
+# path (`consolidate.find_demotion_candidates`, removed in 9.0) acted on
+# it, retagging them fact->ambient with nobody reviewing the diff.
 #
 # `is_hook_telemetry_event` is the one predicate answering "did
 # hook-sourced settlement telemetry ever reach this event log?".
-# `compute_health`, `curation_counts` and `find_demotion_candidates`
-# each count it on their OWN existing event walk, so the three surfaces
-# cannot disagree about coverage the way they once disagreed about dead
-# weight — and the count costs no extra pass.
+# `compute_health` and `eval.compute_eval` each count it on their OWN
+# existing event walk, so the two surfaces cannot disagree about
+# coverage the way they once disagreed about dead weight — and the count
+# costs no extra pass.
 #
 # Two deliberate exclusions:
 #
-# - `auto_consolidate` events (`consolidate.py`) also carry
-#   `triggered_from="stop_hook"`, but that pass is opt-in-gated. Keying
-#   coverage on them would make the signal depend on `[consolidate]`
-#   config rather than on whether settlement runs. The `kind` gate below
-#   already excludes them; the exclusion is named here so a future
-#   widening to "anything stamped stop_hook" is a decision, not a slip.
+# - `auto_consolidate` events, written by 8.x's opt-in `consolidate.py`
+#   pass (removed in 9.0) and still present in a log carried over from
+#   it, also carry `triggered_from="stop_hook"`. Keying coverage on them
+#   would make the signal depend on whether that pass once ran rather
+#   than on whether settlement runs. The `kind` gate below already
+#   excludes them; the exclusion is named here so a future widening to
+#   "anything stamped stop_hook" is a decision, not a slip.
 # - `turn_audited` from `memory_audit_turn` carries
 #   `triggered_from="mcp_tool"` (handlers/audit_turn.py), i.e. the model
 #   calling the audit tool in-process. That is not evidence the hook is
@@ -222,8 +217,8 @@ def applied_tier(ev: dict[str, Any]) -> str:
       rather than an enumeration: a missing/None attribution (every
       pre-attribution event) and the CLI admin surfaces' own
       attribution values all land here. Admin-recorded rows ARE genuine
-      endorsements (that is what `consolidate --acknowledge-debt` is
-      for); what they must not do is masquerade as hook coverage. The
+      endorsements (8.x's `consolidate --acknowledge-debt` wrote them on
+      purpose); what they must not do is masquerade as hook coverage. The
       fall-through is also the only shape this module is permitted:
       `eval.is_admin_recorded_event` owns the admin classification, and
       `tests/test_eval.py::TestAdminRecordedParity` fails any module in
@@ -300,9 +295,9 @@ class TelemetryCoverage:
 
 
 # The one sentence every surface uses when it suppresses a dead-weight
-# verdict. Written once so the MCP report, the CLI rendering and the
-# consolidate refusal cannot drift into three different explanations of
-# the same silence.
+# verdict. Written once so the MCP report, the CLI rendering and
+# `bettermemory eval`'s cold-endorsement line cannot drift into three
+# different explanations of the same silence.
 #
 # NOT "applied_count is structurally zero without the hook" — that
 # overstates it, and this is a feature about honesty. The in-process
@@ -923,8 +918,8 @@ class CrossRepoDrift:
     projects rot invisibly from here. This rollup resolves each foreign
     group's recorded `origin.worktree_root` on disk and runs the same
     claim-anchored legs there — see `_compute_cross_repo_drift` for the
-    checks and the cap. Deep-report only by design: session-start's
-    `curation_pending` stays caller-repo cheap.
+    checks and the cap. Deep-report only by design: the session brief
+    stays caller-repo cheap.
     """
 
     groups: list[CrossRepoDriftGroup] = field(default_factory=list)
@@ -1310,7 +1305,7 @@ class HealthReport:
     commit_drift_debt: CommitDriftDebt | None = None
     cross_repo_drift: CrossRepoDrift | None = None
     # Provenance census plus the unaccounted rows, read off the index by
-    # `report_for_directory` (the one entry point with a root; the pure
+    # `report_for_store` (the one entry point with a root; the pure
     # `compute_health` never sees the index). None when no index.
     provenance: ProvenanceDebt | None = None
     # Silent-miss telemetry — the false-negative half of opt-in
@@ -1384,7 +1379,7 @@ class HealthReport:
     # Null when the report was built by `compute_health` directly — that
     # function takes memories + events and never sees `root`, so unit
     # fixtures and offline callers that hand in a list keep getting None.
-    # Production paths all go through `report_for_directory`, which does
+    # Production paths all go through `report_for_store`, which does
     # have a root; there it is null only when the episode subtree could
     # not be walked at all (see that function's OSError guard). Either
     # way None reads as "no measurement", never as "measured, empty" —

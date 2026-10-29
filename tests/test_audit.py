@@ -38,7 +38,7 @@ from bettermemory.audit import (
     prompt_recall_fields,
 )
 from bettermemory.config import Config, StorageConfig
-from bettermemory.health import compute_health, curation_counts
+from bettermemory.health import compute_health
 from bettermemory.location import resolve_caller
 from bettermemory.membership import (
     GLOBAL,
@@ -1631,7 +1631,7 @@ def test_default_lookback_constant_is_60_seconds() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Health rollup: silent_misses surfaces in compute_health + curation_counts
+# Health rollup: silent_misses surfaces in compute_health
 # ---------------------------------------------------------------------------
 
 
@@ -1661,21 +1661,6 @@ def test_compute_health_counts_silent_miss_and_turn_audited() -> None:
     report = compute_health([], events, window_days=30, now=_utc(2026, 5, 2))
     assert report.silent_misses.audited_total == 2
     assert report.silent_misses.miss_total == 1
-
-
-def test_curation_counts_includes_silent_misses() -> None:
-    """The session-start rollup surfaces silent_misses so a non-zero count
-    triggers the curation cue without paying the full health cost."""
-    events = [
-        {
-            "ts": _utc(2026, 5, 1).isoformat().replace("+00:00", "Z"),
-            "session": "sess_x",
-            "kind": "search_miss",
-            "threshold_rule": THRESHOLD_RULE_V1,
-        },
-    ]
-    counts = curation_counts([], events, window_days=30, now=_utc(2026, 5, 2))
-    assert counts["silent_misses"] == 1
 
 
 def test_compute_health_with_no_audit_events_reports_zeros() -> None:

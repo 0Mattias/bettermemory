@@ -4,8 +4,9 @@ Reads from `events.iter_all_events` (active log + rotated archives) and
 joins against `Store.load_all` to produce per-memory and per-marker
 stats. Exposed two ways:
 
-- as the `memory_health` MCP tool, so the model can self-curate during
-  a conversation,
+- as `memory_admin(action="health")` on the MCP surface (the
+  `memory_health` handler), so the model can self-curate during a
+  conversation,
 - as `bettermemory health` on the CLI, for offline audit.
 
 The metrics are designed around the failure modes the rest of this
@@ -16,9 +17,7 @@ project is trying to detect:
   search ranking isn't surfacing them, or they're noise. Either way,
   prune candidates. The rule is the shared `_is_dead_weight` predicate
   — freshest-touch window, unresolved-contradiction parking, and the
-  endorsement grace all exempt — which `curation_counts` and
-  `consolidate.find_demotion_candidates` read too, so the reported
-  signal and the unattended demotion action cannot diverge.
+  endorsement grace all exempt.
 - **heavily_used**: memories with high applied-count. These are working;
   don't touch them.
 - **contradicted**: memories with a `contradicted` use event newer than
@@ -43,30 +42,24 @@ reads lives in its child alone.
 
 from __future__ import annotations
 
-import bisect
 import os
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable
 
-from .events import _event_id_list
 from .models import Category, Memory, first_summary_line
 from . import location
 from .origin import (
     Origin,
-    ReachableWalk,
     capture,
     commit_author_timestamps,
-    commits_since_anchor,
     repo_toplevel_and_head,
     repos_match,
 )
-from .claims import load_claims
 from .verify import (
     Anchoring,
     commit_drift_anchor_paths,
-    resolve_commit_drift_count,
 )
 from .time_utils import (
     ensure_utc,
@@ -102,7 +95,6 @@ from .health_model import (
     _RECOMMENDATION_ROW_CAP as _RECOMMENDATION_ROW_CAP,
     _VERIFICATION_DEBT_CAP,
     _freshest_touch_ts as _freshest_touch_ts,
-    _has_unresolved_contradiction,
     _is_dead_weight,
     _is_weakly_endorsed,
     applied_tier,
@@ -116,7 +108,6 @@ from .health_stats import (
     _compute_recommendations,
     _drift_rows_for_candidates,
     _edit_distance_within as _edit_distance_within,
-    _parse_silent_miss_event,
     _rare_scopes,
     _silent_miss_stats,
     find_prior_session_boundary as find_prior_session_boundary,
@@ -128,7 +119,7 @@ if TYPE_CHECKING:
     from .admission import DriftScope
 
 
-# `_event_id_list` moved to `events.py` (imported above) so memory_health,
+# `_event_id_list` lives in `events.py` so memory_health,
 # memory_search's endorsement tally, and the negative-outcomes attach all
 # share ONE normalizer for event id fields — the 3.15.0 audit found the
 # health rollup hardened against poison id shapes while the search-path
@@ -338,7 +329,7 @@ def compute_health(
     # handed — deliberately NOT off the index's v11 actor columns.
     # `compute_health` is pure over memories + events and never sees an
     # index (`provenance` is the one index-backed field and it is
-    # populated a layer up, in `report_for_directory`); the events half
+    # populated a layer up, in `report_for_store`); the events half
     # has no index at all; and an index can legitimately sit a row
     # behind disk between a write and a rebuild, which would put this
     # report's own reconciliation invariants in disagreement with
@@ -362,10 +353,7 @@ def compute_health(
     # a curation pass should look.
     #
     # The rule is the shared `_is_dead_weight` predicate (see its
-    # docstring for the full gate list) so this bucket, the
-    # `curation_counts` "dead" rollup, and the consolidate demotion
-    # pass cannot diverge — the rollup used to key on `created` alone
-    # and reported dead rows the demotion pass refused to drain.
+    # docstring for the full gate list).
     #
     # Memories with `retrieval_count == 0` move into `cold_memories`
     # below. Ambient-category memories are excluded from both buckets:
@@ -681,7 +669,7 @@ def _compute_cross_repo_drift(
     caller is NOT standing in.
 
     The blind spot this closes (2026-08-30): every commit-drift
-    surface — show, search, `commit_drift_debt`, the curation counts —
+    surface — show, search, `commit_drift_debt` —
     is gated on the caller being inside the memory's origin repo, so
     records anchored in other projects rot invisibly for as long as
     health runs from here; the motivating find was a foreign record
@@ -841,14 +829,13 @@ def _compute_cross_repo_drift(
         # own ignore set (ENOENT/ENOTDIR/EBADF/ELOOP), so a foreign
         # checkout behind a permission-denied parent, on a dropped
         # network mount, or on failing media propagated out of here,
-        # out of `compute_health`, and took `memory_health`, the full
-        # `memory_scope_overview` report and `bettermemory health` down
-        # with it — one unreadable directory anywhere in the estate
-        # blanked the entire health surface. And where it does answer
-        # `False` it folds "nothing is there" together with a slice of
-        # "I could not find out" (Windows ERROR_NOT_READY: a removable
-        # or disconnected volume), which then got reported as the
-        # positive finding "worktree missing on disk".
+        # out of `compute_health`, and took `memory_health` and
+        # `bettermemory health` down with it — one unreadable directory
+        # anywhere in the estate blanked the entire health surface. And
+        # where it does answer `False` it folds "nothing is there"
+        # together with a slice of "I could not find out" (Windows
+        # ERROR_NOT_READY: a removable or disconnected volume), which then
+        # got reported as the positive finding "worktree missing on disk".
         #
         # `location.view_state` is the package's settled answer to
         # exactly that question, the one the membership model reads a
@@ -1128,23 +1115,6 @@ def _compute_commit_drift_debt(
     )
 
 
-def _root_history(
-    root: Path,
-) -> tuple[Path, list[datetime], Path | None, str | None] | None:
-    """The author timestamps, work tree and HEAD of the checkout at `root`,
-    the commit leg's inputs there; None when git cannot answer."""
-    times = commit_author_timestamps(root)
-    if times is None:
-        return None
-    located = repo_toplevel_and_head(root)
-    return (
-        root,
-        times,
-        located[0] if located is not None else None,
-        located[1] if located is not None else None,
-    )
-
-
 def _drift_rows_by_root(
     candidates: list[MemoryStats],
     *,
@@ -1221,580 +1191,6 @@ def _drift_rows_by_root(
 # ---------------------------------------------------------------------------
 # Public façade for callers that already have a memory directory
 # ---------------------------------------------------------------------------
-
-
-def curation_counts(
-    memories: Iterable[Memory],
-    events: Iterable[dict[str, Any]],
-    *,
-    window_days: int = 30,
-    verification_stale_days: int = 30,
-    cold_endorsement_min_retrievals: int = _COLD_ENDORSEMENT_MIN_RETRIEVALS,
-    cold_endorsement_ratio_threshold: float = 0.0,
-    caller_origin: Origin | None = None,
-    now: datetime | None = None,
-    since: datetime | None = None,
-    tombstoned_ids: set[str] | None = None,
-    hook_telemetry_events: int | None = None,
-    store: Any | None = None,
-    anchoring: Anchoring | None = None,
-) -> dict[str, int]:
-    """The counts half of `curation_counts_with_coverage`, for callers
-    that read the rollup as pressure and treat an unmeasured leg's 0 as
-    "no pressure" (the one-shot `curation_hint`). A surface that
-    PUBLISHES the counts must call the two-valued form and say which
-    legs did not answer."""
-    return curation_counts_with_coverage(
-        memories,
-        events,
-        window_days=window_days,
-        verification_stale_days=verification_stale_days,
-        cold_endorsement_min_retrievals=cold_endorsement_min_retrievals,
-        cold_endorsement_ratio_threshold=cold_endorsement_ratio_threshold,
-        caller_origin=caller_origin,
-        now=now,
-        since=since,
-        tombstoned_ids=tombstoned_ids,
-        hook_telemetry_events=hook_telemetry_events,
-        store=store,
-        anchoring=anchoring,
-    )[0]
-
-
-def curation_counts_with_coverage(
-    memories: Iterable[Memory],
-    events: Iterable[dict[str, Any]],
-    *,
-    window_days: int = 30,
-    verification_stale_days: int = 30,
-    cold_endorsement_min_retrievals: int = _COLD_ENDORSEMENT_MIN_RETRIEVALS,
-    cold_endorsement_ratio_threshold: float = 0.0,
-    caller_origin: Origin | None = None,
-    now: datetime | None = None,
-    since: datetime | None = None,
-    tombstoned_ids: set[str] | None = None,
-    hook_telemetry_events: int | None = None,
-    store: Any | None = None,
-    anchoring: Anchoring | None = None,
-) -> tuple[dict[str, int], list[str]]:
-    """Cheap summary of curation pressure, and the legs it could not measure.
-
-    `anchoring` counts a homed record's commits where design 3.6 resolves
-    its cited commit, as `compute_health`'s `commit_drift_debt` does.
-
-    Returns ``(counts, unmeasured)``. `counts` is
-    ``{"stale", "never_verified", "drifted", "cold", "dead",
-    "silent_misses", "unique_silent_miss_memories",
-    "cold_endorsement_memories", "unaccounted"}`` —
-    integer counts only, no row materialisation. `unmeasured` names the
-    legs whose 0 is not a measurement: ``"drifted"`` when git could not
-    answer for the caller's repo (the binary missing, a timeout, an
-    unreadable object store — `commit_author_timestamps` returns None
-    for all of them, and `origin.capture()` marks the origin
-    indeterminate when it could not run git at all), ``"unaccounted"``
-    when the index could not be read (`provenance_rows` returns None,
-    deliberately, for absent and unusable alike) while there were
-    memories to classify. Both legs used to publish a clean 0 through
-    the same branch a measured 0 takes, at session start, on the two
-    headline integrity claims; `_compute_commit_drift_debt` already
-    returns None for the first condition so its caller can tell, and
-    this is the same courtesy for the cheap rollup. `unaccounted` is the
-    one count that reads index state rather than event state: the
-    memories the index labels as having entered the store outside every
-    recorded path (`provenance.py`). It needs `index_root` and stays 0
-    without one; in delta mode it counts only the unaccounted memories
-    created after `since`. Used by
-    `memory_scope_overview` so the model can see at a glance whether
-    the store has anything worth a curation pass without paying the
-    full `compute_health` cost (which materialises and sorts every
-    bucket and walks the event log to build resolution timelines).
-    `silent_misses` here is the *numerator* (miss_total) only — the
-    rate denominator (audited_total) is available from
-    `compute_health().silent_misses` when the consumer needs it.
-    Session-start surfaces just the numerator because a non-zero
-    count is the actionable signal; the audit-cadence denominator
-    matters for tuning, not for "should I look at this now."
-    `unique_silent_miss_memories` is the cardinality of the set of
-    top-hit memory_ids on those events — distinguishes "9 events
-    against 1 mis-tagged memory" from "9 events against 9 memories."
-    `cold_endorsement_memories` is the count of distinct memories the
-    ranker keeps surfacing (retrieval_count >= min) that the model
-    never explicitly endorsed — per-memory, not per-turn or
-    per-event. Same shape decision as silent_misses: surface the
-    actionable count, defer the full bucket to compute_health.
-
-    Numerical contract: each count must agree with the corresponding
-    bucket size from `compute_health` over the same memories/events
-    and same parameters. The tests in `tests/test_health.py` lock
-    that in. We intentionally walk the event log here too — the
-    "cheap" comes from skipping row construction, not from skipping
-    the event walk (the walk is bounded and a session-start hint
-    pays it once per session, which is the right cost).
-
-    `caller_origin` drives the `drifted` count, mirroring
-    `_compute_commit_drift_debt`. Pass None to skip the
-    repo-aware portion (the count stays at zero).
-
-    `tombstoned_ids`, when set, drops silent-miss events whose top-hit
-    memory has been tombstoned. The miss is no longer actionable in
-    that case (the memory can't be retrieved anymore), so leaving it
-    in the rollup just inflates the count with stale signal. Both
-    `silent_misses` and `unique_silent_miss_memories` honor the
-    filter. The default (None / empty set) preserves the legacy
-    "every miss counts" semantic for callers that haven't been
-    updated.
-
-    `since`, when set, switches the helper into *delta* mode:
-    events older than `since` are skipped, and memories created
-    before `since` are excluded from every state-derived bucket.
-    The semantic shifts from "what's in the store today?" to "what
-    has *newly* appeared since `since`?" — which is what
-    `memory_scope_overview` uses to compute
-    `curation_pending_new_since_last_session`. Retrieval counts in
-    delta mode reflect only the post-`since` slice of the event log,
-    so a memory written before `since` that has had no new
-    retrievals will not light up `cold_endorsement_memories`. Drift
-    detection follows the same "newly appeared" framing as the other
-    state-derived buckets: the drift count is filtered to memories
-    created after `since`, so an older row that drifted in the prior
-    session won't double-surface in the next session's delta.
-
-    `hook_telemetry_events` arms the same honesty gate
-    `compute_health` carries, with identical semantics (`None` = caller
-    did not measure, assume covered; an int = gate on, OR-ed with this
-    walk's own observation). The `dead` AND `cold_endorsement_memories`
-    counts are both gated — each shares its bucket with
-    `compute_health`, and the numerical contract forces the two
-    surfaces to zero together.
-
-    The endorsement leg joined the gate 2026-08-30 (this paragraph
-    used to defer it as a follow-up). `cold_endorsement_memories` keys
-    on `explicit_applied_count == 0`, which is if anything MORE
-    hook-dependent than `dead` — the Stop hook's containment matcher
-    is the dominant producer of explicit applies — and the curation
-    hint's pressure formula
-    (`handlers/_shared._maybe_attach_curation_hint`) sums
-    `dead + drifted + cold_endorsement_memories`, so a hookless store
-    was nagged through a leg that was misleading for exactly the
-    reason the gate exists. Of the two recorded shapes, the gate was
-    widened rather than the leg dropped from the pressure sum alone:
-    gating only the hint would have left this published count
-    misleading on the one surface the model does not have to ask for,
-    while gating the count corrects the hint's sum for free and keeps
-    the compute_health agreement intact.
-
-    The returned key set is deliberately UNCHANGED: it flows into
-    `memory_scope_overview`'s `curation_pending` block, whose key set is
-    enumerated in that tool's description and pinned on the wire. The
-    explanation for a suppressed count lives on `memory_health`, which
-    is where a model that wants to know WHY a count is zero is already
-    being sent.
-    """
-    now = now or datetime.now(timezone.utc)
-    cutoff = now - timedelta(days=window_days)
-    verification_cutoff = now - timedelta(days=verification_stale_days)
-    since_aware = _ensure_utc(since)
-    tombstoned_ids_set = tombstoned_ids or set()
-
-    # Re-iterate only once over `memories` — pull the slim bookkeeping
-    # we need. In delta mode, `since` filters here so every downstream
-    # rollup sees only the post-`since` slice of the store.
-    mem_list: list[Memory] = []
-    for m in memories:
-        if since_aware is not None:
-            created_aware = _ensure_utc(m.created)
-            # Same `<=` boundary discipline as the event filter below:
-            # a memory created at exactly `since` was created by the
-            # prior session's last event (write events stamp creation
-            # at the same ts they record), so it belongs to that
-            # session, not the delta.
-            if created_aware is None or created_aware <= since_aware:
-                continue
-        mem_list.append(m)
-
-    retrieval_counts: dict[str, int] = {m.id: 0 for m in mem_list}
-    applied_counts: dict[str, int] = {m.id: 0 for m in mem_list}
-    # Tracks explicit-only applies for the cold_endorsement_memories
-    # count. An auto-flagged applied event is the server closing the
-    # loop, not the model endorsing — same discriminator
-    # `_advance_turn`/`memory_record_use` use.
-    explicit_applied_counts: dict[str, int] = {m.id: 0 for m in mem_list}
-    # Per-miss-event tuples of
-    # `(ts, top_hit_id, event_id, query_preview)`. The id is the first
-    # entry in the event's `top_hits` payload (audit.py:418-427) —
-    # needed for the tombstone filter and the unique-memories count.
-    # The `event_id` was added in T4 so the ack-filter can drop
-    # individually-acknowledged misses; legacy events without it read
-    # as None and cannot be acked (the bulk `silent_miss_cutoff`
-    # remains the only escape for those).
-    # Mirrors the `compute_health` shape so the two paths stay in
-    # numerical agreement.
-    silent_miss_events_list: list[
-        tuple[datetime | None, str | None, str | None, str | None]
-    ] = []
-    latest_miss_cutoff: datetime | None = None
-    # Per-event acknowledgments — T4 escape hatch.
-    # `miss_ack` events are global markers like `silent_miss_cutoff`:
-    # an ack written long ago still applies to any matching miss
-    # carrying its `event_id`, even in delta mode where the ack event
-    # itself falls outside the `--since` window. Without the
-    # delta-exemption a session-start scope_overview run could
-    # over-count freshly-emitted misses against an ack the user
-    # already recorded.
-    acknowledged_event_ids: set[str] = set()
-    # Earliest timestamped retrieval and newest contradicted ts per id —
-    # the endorsement-grace and unresolved-contradiction inputs to the
-    # shared `_is_dead_weight` predicate, mirroring what
-    # `_StatsAccumulator` tracks for `compute_health`.
-    earliest_retrieval: dict[str, datetime] = {}
-    last_contradicted: dict[str, datetime] = {}
-    observed_hook_telemetry = 0
-    for ev in events:
-        kind = ev.get("kind")
-        # Coverage bookkeeping is exempt from the `--since` filter
-        # below, exactly like the two global markers underneath it.
-        # "Is the Stop hook wired for this store?" is a property of the
-        # store, not of the delta window: a session whose hook events
-        # all predate the boundary is still a hooked store, and gating
-        # this behind the filter would make the delta arm manufacture a
-        # "hookless" verdict every session-start and blank the `dead`
-        # count that the absolute arm — same events, no filter — reports
-        # normally. The two arms are read side by side.
-        if is_hook_telemetry_event(ev):
-            observed_hook_telemetry += 1
-        # `silent_miss_cutoff` is a global marker — once written it
-        # applies to the entire silent_miss rollup regardless of
-        # window. Resolve it BEFORE the `--since` filter so a cutoff
-        # event whose own `ts` falls under the delta boundary still
-        # masks pre-cutoff misses correctly. Without this exemption a
-        # `--since` delta would silently drop the cutoff and the
-        # numerator would over-count.
-        if kind == "silent_miss_cutoff":
-            parsed = _ensure_utc(_parse_event_ts(ev.get("cutoff_ts")))
-            if parsed is not None and (
-                latest_miss_cutoff is None or parsed > latest_miss_cutoff
-            ):
-                latest_miss_cutoff = parsed
-            continue
-        if kind == "miss_ack":
-            # Same global-marker treatment as `silent_miss_cutoff`:
-            # an ack remains valid regardless of when it was written.
-            target = ev.get("event_id")
-            if isinstance(target, str) and target:
-                acknowledged_event_ids.add(target)
-            continue
-        if since_aware is not None:
-            ev_ts = _ensure_utc(_parse_event_ts(ev.get("ts")))
-            # Strict `<=` rather than `<`: when `since` is a session
-            # boundary from `find_prior_session_boundary`, the boundary
-            # value IS the prior session's last event timestamp, so
-            # that event belongs to the *prior* session and must not
-            # leak into the delta. The handler treats `since` as
-            # exclusive ("events strictly after the prior session").
-            if ev_ts is None or ev_ts <= since_aware:
-                continue
-        if kind == "search":
-            # Legacy-name fallback — see the note in `compute_health`.
-            search_ts = _ensure_utc(_parse_event_ts(ev.get("ts")))
-            for mid in _event_id_list(
-                ev.get("returned") or ev.get("memory_ids") or ev.get("hit_ids")
-            ):
-                if mid in retrieval_counts:
-                    retrieval_counts[mid] += 1
-                    if search_ts is not None:
-                        prev = earliest_retrieval.get(mid)
-                        if prev is None or search_ts < prev:
-                            earliest_retrieval[mid] = search_ts
-        elif kind == "use" and ev.get("outcome") == "applied":
-            is_auto = ev.get("auto") is True
-            # Same per-event id dedup as `_StatsAccumulator._handle_use`
-            # and eval's counting loop. The numerical contract (each
-            # count here must agree with its `compute_health` bucket)
-            # breaks without it: a duplicate-carrying event raw-counted
-            # here shifts the explicit/total ratio that feeds the
-            # `cold_endorsement_memories` threshold below.
-            for mid in dict.fromkeys(
-                _event_id_list(ev.get("ids") or ev.get("memory_ids"))
-            ):
-                if mid in applied_counts:
-                    applied_counts[mid] += 1
-                    if not is_auto and mid in explicit_applied_counts:
-                        explicit_applied_counts[mid] += 1
-        elif kind == "use" and ev.get("outcome") == "contradicted":
-            use_ts = _ensure_utc(_parse_event_ts(ev.get("ts")))
-            if use_ts is not None:
-                for mid in _event_id_list(ev.get("ids") or ev.get("memory_ids")):
-                    if mid in retrieval_counts:
-                        prev = last_contradicted.get(mid)
-                        if prev is None or use_ts > prev:
-                            last_contradicted[mid] = use_ts
-        elif kind == "search_miss":
-            # Shared parser with `_StatsAccumulator._handle_search_miss`
-            # so the two silent-miss readers stay numerically in lockstep.
-            silent_miss_events_list.append(_parse_silent_miss_event(ev))
-
-    silent_miss_stats = _silent_miss_stats(
-        audited=[],  # curation_counts only surfaces the numerator
-        miss_events=silent_miss_events_list,
-        cutoff=latest_miss_cutoff,
-        tombstoned_ids=tombstoned_ids_set,
-        acknowledged_event_ids=acknowledged_event_ids,
-    )
-    silent_misses = silent_miss_stats.miss_total
-    unique_silent_miss_memories = silent_miss_stats.unique_miss_memories
-
-    # Dead-weight honesty gate — see `compute_health` for the full
-    # contract. `None` leaves the count exactly as it was pre-3.32.
-    telemetry_covered = (
-        hook_telemetry_events is None
-        or (hook_telemetry_events + observed_hook_telemetry) > 0
-    )
-
-    never_verified = 0
-    stale = 0
-    cold = 0
-    dead = 0
-    cold_endorsement_memories = 0
-    endorsement_floor = max(1, int(cold_endorsement_min_retrievals))
-    grace_cutoff = now - timedelta(days=_ENDORSEMENT_GRACE_DAYS)
-    for m in mem_list:
-        is_ambient = m.category == Category.AMBIENT
-        if m.last_verified_at is None:
-            never_verified += 1
-        elif m.last_verified_at < verification_cutoff:
-            stale += 1
-        if not is_ambient and m.created < cutoff:
-            if retrieval_counts.get(m.id, 0) == 0:
-                cold += 1
-        # `dead` reads the shared `_is_dead_weight` predicate so the
-        # count agrees with `compute_health`'s dead_weight bucket (the
-        # numerical contract) — including the freshest-touch,
-        # contradiction, and endorsement-grace gates the demotion pass
-        # applies. Disjoint from `cold` by construction: dead requires
-        # at least one retrieval. The telemetry gate rides in the same
-        # condition for the same reason: `compute_health` empties its
-        # bucket on a hookless store, so this count must go to zero
-        # with it or the two surfaces disagree about the same store.
-        first_seen = earliest_retrieval.get(m.id)
-        if telemetry_covered and _is_dead_weight(
-            category=m.category,
-            freshest_ts=_freshest_touch_ts(
-                m.created, m.updated, m.last_verified_at, m.last_corroborated
-            ),
-            retrieval_count=retrieval_counts.get(m.id, 0),
-            applied_count=applied_counts.get(m.id, 0),
-            has_unresolved_contradiction=_has_unresolved_contradiction(
-                last_contradicted.get(m.id), m.updated, m.last_verified_at
-            ),
-            earliest_retrieval_ts=(
-                first_seen.timestamp() if first_seen is not None else None
-            ),
-            cutoff_ts=cutoff.timestamp(),
-            grace_cutoff_ts=grace_cutoff.timestamp(),
-        ):
-            dead += 1
-        # Cold-endorsement-memories count: heavily retrieved (over the
-        # floor) AND weakly endorsed under the same predicate
-        # compute_health uses. Default ratio_threshold=0.0 reduces to
-        # the original binary "no explicit applied event ever" check;
-        # setting ratio_threshold > 0 catches the "1 explicit out of
-        # 50 auto" case. We don't apply the `created < cutoff` window
-        # here because the retrieval floor itself is the "has had
-        # time to accumulate signal" guard. Per-memory count: one
-        # memory contributes one to the total even if hit hundreds
-        # of times by the ranker. The telemetry gate rides in the same
-        # condition for the same reason as `dead` above: explicit
-        # applies come from the hook matcher and deliberate model
-        # calls, so on a hookless store the zero is uninformative,
-        # `compute_health` empties its bucket, and this count must
-        # fall to zero with it or the two surfaces disagree.
-        if (
-            telemetry_covered
-            and not is_ambient
-            and retrieval_counts.get(m.id, 0) >= endorsement_floor
-        ):
-            explicit = explicit_applied_counts.get(m.id, 0)
-            total_applied = applied_counts.get(m.id, 0)
-            ratio_threshold = max(0.0, float(cold_endorsement_ratio_threshold))
-            # Gate on "at least one apply happened" — mirrors the
-            # `applied_count == 0` guard in `_is_weakly_endorsed`. A
-            # memory retrieved over the floor with zero applies is
-            # dead_weight, not cold-endorsement (the bucket is the
-            # complement of dead_weight: applies happened, but every
-            # one was auto). Without this, a pure dead-weight row would
-            # double-count here and in `dead`.
-            if total_applied == 0:
-                pass
-            elif explicit == 0:
-                cold_endorsement_memories += 1
-            elif ratio_threshold > 0.0:
-                ratio = explicit / total_applied
-                if ratio < ratio_threshold:
-                    cold_endorsement_memories += 1
-
-    unmeasured: list[str] = []
-    if not telemetry_covered:
-        # `dead` and `cold_endorsement_memories` are both gated on
-        # Stop-hook settlement telemetry above, so without it they stay
-        # at their 0 initialisers. Publishing those zeros as measured is
-        # exactly what this list exists to prevent: a client with no hook
-        # wired cannot otherwise tell "the store is clean" from "the leg
-        # was never asked", and `memory_health` already says so on its
-        # own surface through `telemetry_coverage`. This cannot fire on
-        # an install whose Stop hook runs; it is the stock hookless
-        # client that was being told two suppressed legs read zero.
-        unmeasured.append("dead")
-        unmeasured.append("cold_endorsement_memories")
-    drifted = 0
-    if caller_origin is not None and caller_origin.git_indeterminate:
-        # `capture()` could not run git at all, so the null repo below
-        # is "unknown", not "not a repository": the leg was never asked.
-        unmeasured.append("drifted")
-    elif caller_origin is not None and caller_origin.repo and caller_origin.cwd:
-        cwd_path = Path(caller_origin.cwd)
-        timestamps = commit_author_timestamps(cwd_path)
-        if timestamps is None:
-            # Git could not answer for a caller that IS in a repo: no
-            # binary, a timeout, an object store it cannot read. The
-            # sibling `_compute_commit_drift_debt` returns None here so
-            # its caller can tell; the cheap rollup used to leave the
-            # 0 initialiser in place and publish it as measured.
-            unmeasured.append("drifted")
-        else:
-            # One rev-parse for the whole pass — the root the per-memory
-            # anchor resolution reuses, and the head the reachable walks
-            # are keyed on.
-            located = repo_toplevel_and_head(cwd_path)
-            toplevel = located[0] if located is not None else None
-            head = located[1] if located is not None else None
-            # The walks of this pass no memo keeps, so a store verified at
-            # one dead anchor forks one walk for it.
-            walked: dict[tuple[str, str, str], ReachableWalk | bool] = {}
-            # The histories of the other roots homed records' cited
-            # commits resolve at (design 3.6), read once each.
-            histories: dict[
-                str, tuple[Path, list[datetime], Path | None, str | None] | None
-            ] = {}
-            caller_top = toplevel.resolve() if toplevel is not None else None
-            if anchoring is not None:
-                anchoring.prime([m.id for m in mem_list])
-            for m in mem_list:
-                if m.last_verified_at is None:
-                    continue
-                origin_repo = m.origin.repo if m.origin else None
-                if origin_repo is None:
-                    continue
-                if not repos_match(origin_repo, caller_origin.repo):
-                    continue
-                verified_at = _ensure_utc(m.last_verified_at)
-                if verified_at is None:
-                    continue
-                # Claim-anchored gate, matching memory_show /
-                # memory_search / commit_drift_debt: a memory citing no
-                # paths at all is exempt (repo commits can't invalidate
-                # a claim-less preference/lesson), and one whose anchors
-                # all escape this repo is exempt too. Anchor derivation
-                # is pure CPU; git work stays behind the count > 0 guard
-                # so a caught-up memory pays no git call. No quiescent
-                # applicability classification either: this is a
-                # `drifted` COUNT, incremented on `count > 0` only, so a
-                # caught-up memory reads the same zero contribution
-                # whether the signal applies to it or not.
-                anchors = commit_drift_anchor_paths(m.body, m.verified_paths)
-                parsed_claims = load_claims(m.claims) if m.claims else []
-                if not anchors and not parsed_claims:
-                    continue
-                # Where the commits are counted: the caller's directory,
-                # or for a homed record the root its cited commit
-                # resolves at (`verify.ClaimAnchor.commit_root`); a homed
-                # record no live store here resolves for is unconfirmed
-                # and not counted, as `commit_drift_debt` leaves it.
-                root, root_times, root_top, root_head = (
-                    cwd_path,
-                    timestamps,
-                    toplevel,
-                    head,
-                )
-                anchor = anchoring.for_record(m.id) if anchoring is not None else None
-                if anchor is not None:
-                    commit_root, _rule = anchor.commit_root(m.verified_head)
-                    if commit_root is None:
-                        continue
-                    if caller_top is None or Path(commit_root).resolve() != caller_top:
-                        if commit_root not in histories:
-                            histories[commit_root] = _root_history(Path(commit_root))
-                        read = histories[commit_root]
-                        if read is None:
-                            continue
-                        root, root_times, root_top, root_head = read
-                # The basis rule every other surface applies
-                # (`verify.compute_commit_drift`): the reachable walk
-                # from the stamp's anchor when the record carries one
-                # HEAD still descends from, the author-date bisect
-                # otherwise. The count is an integer either way.
-                walk = None
-                if m.verified_head is not None and root_head is not None:
-                    walk = commits_since_anchor(
-                        root,
-                        m.verified_head,
-                        toplevel=root_top,
-                        head=root_head,
-                        walked=walked,
-                    )
-                if walk is not None:
-                    count = len(walk.commits)
-                else:
-                    idx = bisect.bisect_right(root_times, verified_at)
-                    count = len(root_times) - idx
-                if count > 0:
-                    resolved = resolve_commit_drift_count(
-                        cwd=root,
-                        since=verified_at,
-                        unfiltered=count,
-                        anchors=anchors,
-                        claims=parsed_claims,
-                        toplevel=root_top,
-                        walk=walk,
-                    )
-                    if resolved is None:
-                        continue
-                    count = resolved
-                if count > 0:
-                    drifted += 1
-
-    # Provenance is index state, not event state: read the `unaccounted`
-    # ids off the index when a root is given, and in delta mode count
-    # only the ones created after the boundary (`mem_list` is already
-    # the post-`since` slice, so membership in it is the filter).
-    unaccounted = 0
-    if store is not None and not store.has_key:
-        # Without the key no pointer can be verified, so the store labels
-        # nothing; `provenance_debt` answers None for the same state. A 0
-        # here is the leg unasked, a finding only when there were rows to
-        # classify.
-        if mem_list:
-            unmeasured.append("unaccounted")
-    elif store is not None:
-        unaccounted_ids = store.unaccounted_ids()
-        if unaccounted_ids:
-            if since_aware is None:
-                unaccounted = len(unaccounted_ids)
-            else:
-                in_window = {m.id for m in mem_list}
-                unaccounted = sum(1 for i in unaccounted_ids if i in in_window)
-
-    counts = {
-        "stale": stale,
-        "never_verified": never_verified,
-        "drifted": drifted,
-        "cold": cold,
-        "dead": dead,
-        "silent_misses": silent_misses,
-        "unique_silent_miss_memories": unique_silent_miss_memories,
-        "cold_endorsement_memories": cold_endorsement_memories,
-        "unaccounted": unaccounted,
-    }
-    return counts, unmeasured
 
 
 # `_parse_event_ts` and `_ensure_utc` are thin module-local aliases for
@@ -1888,7 +1284,6 @@ __all__ = [
     "HealthReport",
     "applied_tier",
     "compute_health",
-    "curation_counts",
     "is_hook_telemetry_event",
     "render_text",
     "render_json",

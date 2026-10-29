@@ -1469,11 +1469,10 @@ def test_a_dead_anchor_forks_once_per_attach_and_is_not_memoised(
             assert warm_calls == []
 
 
-@pytest.mark.parametrize("rollup", ["commit_drift_debt", "curation drifted"])
 def test_a_health_pass_walks_a_dead_anchor_once(
-    rollup: str, memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The health rollups resolve every memory in one pass and remember
+    """The health rollup resolves every memory in one pass and remembers
     that pass's dead anchors, as a search does: three memories verified at
     one missing anchor fork one walk, and nothing of it outlives the
     pass."""
@@ -1505,17 +1504,9 @@ def test_a_health_pass_walks_a_dead_anchor_once(
         calls.clear()
         with monkeypatch.context() as patch:
             patch.setattr(subprocess, "run", spy)
-            if rollup == "commit_drift_debt":
-                report = health.compute_health(
-                    memories, [], caller_origin=caller, now=_NOW
-                )
-                assert report.commit_drift_debt is not None
-                drifted = report.commit_drift_debt.total_drifted
-            else:
-                counts = health.curation_counts(
-                    memories, [], caller_origin=caller, now=_NOW
-                )
-                drifted = counts["drifted"]
+            report = health.compute_health(memories, [], caller_origin=caller, now=_NOW)
+            assert report.commit_drift_debt is not None
+            drifted = report.commit_drift_debt.total_drifted
         assert drifted == 3
         assert len(_walks(calls)) == 1
     assert len(origin._WALK_MEMO) == 0

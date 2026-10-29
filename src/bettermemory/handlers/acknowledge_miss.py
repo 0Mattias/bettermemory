@@ -1,13 +1,15 @@
-"""memory_acknowledge_miss MCP tool — per-event silent-miss resolution.
+"""`memory_admin(action="acknowledge_miss")`: silent-miss resolution,
+one event at a time or all before a cutoff.
 
-The bulk `silent_miss_cutoff` hatch (written by `bettermemory
-consolidate --acknowledge-misses-before <ts>`) wipes EVERY pre-cutoff
-miss in one stroke — surgical when the operator wants to invalidate a
-batch of false positives a fix has retroactively cleared, but blunt
-when only one event in the window is the false positive. T4 closes
+The bulk `silent_miss_cutoff` hatch (`acknowledge_misses_before` below,
+reached with `before=<ts>`; 8.x wrote it with `bettermemory consolidate
+--acknowledge-misses-before`) wipes EVERY pre-cutoff miss in one
+stroke — surgical when the operator wants to invalidate a batch of
+false positives a fix has retroactively cleared, but blunt when only
+one event in the window is the false positive. T4 closes
 that gap: `memory_acknowledge_miss(event_id, reason)` emits one
 `miss_ack` event referencing the original `search_miss`. The
-`compute_health` / `curation_counts` rollups drop matching events
+`compute_health` rollup drops matching events
 from both `miss_total` and `unique_miss_memories` (the ack-filter
 sits alongside the tombstone filter; see `health_stats.py:_silent_miss_stats`).
 
@@ -55,52 +57,6 @@ _MIN_REASON_LENGTH = 8
 # an evidence-carrying note (the T3 note-cap decision); pasting
 # a whole transcript belongs in a memory body, not an ack reason.
 _MAX_REASON_LENGTH = 500
-
-
-DESC_MEMORY_ACKNOWLEDGE_MISS = (
-    "Acknowledge ONE `search_miss` event as a false positive. "
-    "Emits a `miss_ack` event referencing the original event by id; "
-    "future `memory_health` and `memory_scope_overview` rollups "
-    "exclude the acked miss from both `miss_total` and "
-    "`unique_miss_memories`.\n\n"
-    "When to use: `memory_health` surfaces a bounded "
-    "`recent_silent_misses` list (each entry: `{event_id, top_hit_id, "
-    "query_preview, ts}`). Scan it; if an entry is a false positive — "
-    "stopword-heavy query, audit fired on a turn that didn't need "
-    "retrieval, the top-hit memory is irrelevant to the actual user "
-    "intent — feed its `event_id` here.\n\n"
-    "How it differs from `bettermemory consolidate "
-    "--acknowledge-misses-before <ts>`: that command writes ONE "
-    "`silent_miss_cutoff` event that wipes EVERY pre-cutoff miss, "
-    "legitimate or not. This tool surgically targets one event so "
-    "legitimate misses keep counting.\n\n"
-    "Parameters:\n"
-    "- `event_id` (required): the per-event ULID stamped on the "
-    "original `search_miss`. Must reference an existing search_miss "
-    "in the event log. Legacy events written before this field "
-    'existed return `{"status": "not_found", ...}` — use the '
-    "bulk cutoff for those.\n"
-    f"- `reason` (required, {_MIN_REASON_LENGTH}–{_MAX_REASON_LENGTH} "
-    "chars): free-form "
-    'explanation captured for audit purposes (e.g. "stopword query, '
-    'no real intent", "top hit irrelevant to actual user turn"). '
-    "The text persists in the event log and downstream miss-probe "
-    "tuning can consume it.\n\n"
-    'Returns `{"status": "acknowledged", "event_id", '
-    '"reason"}` on success. Idempotent — a second ack for the '
-    "same `event_id` returns the success shape without emitting a "
-    'duplicate `miss_ack`. Returns `{"status": "not_found", '
-    '"event_id", "hint"}` when no `search_miss` with the given '
-    "id exists anywhere in the event log — the lookup covers "
-    "rotated archives too, so a not_found id is mistyped, stale, "
-    "or predates per-event ids; check "
-    "`memory_health.recent_silent_misses` for live ids. "
-    'Returns `{"status": "wrong_kind", ...}` when '
-    "the id is found but the event is not a `search_miss`. The ack "
-    "persists in the event log — once written, all future health "
-    "rollups exclude the miss; the rollups read rotated archives "
-    "too, so rotation does not undo an ack."
-)
 
 
 async def memory_acknowledge_miss(
@@ -284,7 +240,6 @@ async def acknowledge_misses_before(
 
 
 __all__ = [
-    "DESC_MEMORY_ACKNOWLEDGE_MISS",
     "acknowledge_misses_before",
     "canonical_cutoff",
     "memory_acknowledge_miss",

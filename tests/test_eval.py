@@ -752,10 +752,9 @@ class TestSilentMissInvalidation:
     def test_markers_resolve_globally_under_since_window(self) -> None:
         """A cutoff event whose own ts falls OUTSIDE the `--since`
         window still applies to in-window telemetry — global-marker
-        semantics, mirroring `curation_counts`' delta-mode exemption
-        (health's test_silent_miss_cutoff_resolved_globally_under_since_delta).
-        Without the exemption a windowed eval run would over-count
-        events the health surfaces have already invalidated."""
+        semantics, as health reads them over the whole log. Without the
+        exemption a windowed eval run would over-count events the health
+        report has already invalidated."""
         now = self._utc(2026, 5, 1)
         events = [
             # Cutoff written long before the window opens.
@@ -1122,9 +1121,8 @@ class TestColdEndorsementMemories:
         `auto + explicit > 0` gate, a never-applied memory satisfied the
         `explicit_applied_count == 0` test and surfaced here, mis-routing
         a removal candidate onto the acknowledge-debt path and inflating
-        the rollup. Mirrors health's `_is_weakly_endorsed` /
-        `curation_counts` `applied_count == 0` gate so the two surfaces
-        agree."""
+        the rollup. Mirrors health's `_is_weakly_endorsed`
+        `applied_count == 0` gate so the two surfaces agree."""
         mem = _mem()
         # 5 retrievals, NO use events — never applied at all.
         events = [_ev("search", returned=[mem.id]) for _ in range(5)]
@@ -2984,9 +2982,11 @@ class TestWindowedEventCounts:
         assert preview.cutoff_retracted == 2
         assert preview.v1_baseline_flagged == 1
         assert preview.to_dict()["cutoff_retracted"] == 2
-        assert "retracted by a silent_miss_cutoff" in render_widening_preview_text(
-            preview
-        )
+        text = render_widening_preview_text(preview)
+        assert "retracted by a silent_miss_cutoff" in text
+        # The printed pointer names the 9.0 surface, not a removed command.
+        assert 'memory_admin(action="acknowledge_miss", before=...)' in text
+        assert "`consolidate --acknowledge-misses`" not in text
         detail = compute_widening_detail(events, now=_WINDOW_NOW)
         assert detail.audits_with_features == 1
         assert detail.cutoff_retracted == 2

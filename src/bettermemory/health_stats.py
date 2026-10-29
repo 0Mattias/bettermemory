@@ -123,10 +123,11 @@ def _parse_silent_miss_event(
     """Extract the (ts, top_hit_id, event_id, query_preview) tuple from a
     ``search_miss`` event, defensive against malformed shapes.
 
-    Both ``_StatsAccumulator._handle_search_miss`` and ``curation_counts``
-    build this exact tuple and MUST stay numerically in lockstep (pinned
-    by ``test_curation_counts_matches_compute_health_buckets``). Sharing
-    one parser makes that agreement structural rather than hand-mirrored.
+    ``_StatsAccumulator._handle_search_miss`` builds this tuple.
+    ``eval_model._canonical_top_hit_id`` mirrors its ``top_hit_id`` half
+    by hand (canonical ``top_hits`` only, no legacy fallback), so the
+    tombstone filter reads a miss the same way on both surfaces; change
+    the two together.
 
     Malformed events (missing / non-list ``top_hits``, non-dict first
     entry, non-string ``id``) degrade ``top_hit_id`` to None — the event
@@ -303,18 +304,19 @@ class _StatsAccumulator:
         # `isinstance(sess, str)` guard, not bare truthiness: a
         # list/dict-valued `session` is truthy but unhashable, so
         # `set.add()` would raise TypeError and blank the whole rollup
-        # (memory_health / scope_overview / doctor). Only a non-empty
+        # (memory_health / doctor). Only a non-empty
         # string can be a real session id anyway.
-        # Admin/CLI writers (`consolidate --acknowledge-debt`'s use
-        # rows and its `silent_miss_cutoff` marker, `doctor --fix`)
-        # record under a fresh throwaway SessionState id — counting one
-        # would publish a session no client ever attached to, so each
-        # admin run would permanently inflate the Sessions line by one
-        # and put `memory_health` in silent disagreement with
+        # Admin/CLI writers (the commands recording through
+        # `cli._common.cli_recorder`, `rollback --apply`, and in a log
+        # carried over from 8.x `consolidate --acknowledge-debt` and
+        # `doctor --fix`) record under a fresh throwaway SessionState id —
+        # counting one would publish a session no client ever attached to,
+        # so each admin run would permanently inflate the Sessions line by
+        # one and put `memory_health` in silent disagreement with
         # `eval.compute_report` and doctor's cadence census, which both
         # already exclude these. The exclusion gates the SESSION TALLY
         # ONLY: the event still dispatches to its handler below, so
-        # acknowledge-debt's rows keep counting as the genuine
+        # admin-recorded use rows keep counting as the genuine
         # endorsements they are (eval.py's scope note on
         # `ADMIN_RECORDED_ATTRIBUTION_PREFIX`).
         sess = ev.get("session") or ev.get("session_id")
@@ -332,9 +334,9 @@ class _StatsAccumulator:
 
     def _handle_search(self, ev: dict[str, Any]) -> None:
         # Canonical-first read with the legacy-name fallback the other
-        # event consumers use (consolidate / hook / _handlers /
-        # _response) — keeps the health rollups consistent if an
-        # event carries the older `memory_ids` / `hit_ids` spelling.
+        # event consumers use (hook / _handlers / _response) — keeps
+        # the health rollups consistent if an event carries the older
+        # `memory_ids` / `hit_ids` spelling.
         ts = _ensure_utc(parse_event_ts(ev.get("ts")))
         for mid in _event_id_list(
             ev.get("returned") or ev.get("memory_ids") or ev.get("hit_ids")
@@ -507,9 +509,7 @@ class _StatsAccumulator:
         # without rewriting the events log.
         #
         # The (ts, top_hit_id, event_id, query_preview) tuple is built by
-        # the shared `_parse_silent_miss_event` so this accumulator and
-        # `curation_counts` cannot drift apart (their agreement is pinned
-        # by test_curation_counts_matches_compute_health_buckets).
+        # the shared `_parse_silent_miss_event`.
         self._silent_miss_events.append(_parse_silent_miss_event(ev))
 
     def _handle_miss_ack(self, ev: dict[str, Any]) -> None:
@@ -526,16 +526,16 @@ class _StatsAccumulator:
 
     def _handle_silent_miss_cutoff(self, ev: dict[str, Any]) -> None:
         # Additive escape hatch: when a fix lands that invalidates a
-        # batch of historical misses (e.g. v2.7.3 cwd-suppression),
-        # `bettermemory consolidate --acknowledge-misses-before <ts>`
-        # writes one of these and the rollup honors the latest
-        # `cutoff_ts` seen, dropping any earlier turn_audited /
-        # search_miss events. Older `cutoff_ts` values are ignored so
-        # a later cutoff can extend the window but not shrink it.
+        # batch of historical misses (e.g. v2.7.3 cwd-suppression), a
+        # bulk acknowledgement (`memory_admin(action="acknowledge_miss",
+        # before=<ts>)`; 8.x wrote it with `consolidate
+        # --acknowledge-misses-before`) writes one of these and the
+        # rollup honors the latest `cutoff_ts` seen, dropping any
+        # earlier turn_audited / search_miss events. Older `cutoff_ts`
+        # values are ignored so a later cutoff can extend the window but
+        # not shrink it.
         # `_ensure_utc` after parsing so a naive cutoff_ts compares
-        # cleanly against the aware event ts above (curation_counts
-        # uses the same combination; keep them in sync so a naive
-        # cutoff_ts can't produce divergent rollups across paths).
+        # cleanly against the aware event ts above.
         parsed_cutoff = _ensure_utc(parse_event_ts(ev.get("cutoff_ts")))
         if parsed_cutoff is not None and (
             self._latest_miss_cutoff is None or parsed_cutoff > self._latest_miss_cutoff
@@ -989,12 +989,12 @@ def _count_post_cutoff(
     """Count timestamps that fall at or after a cutoff.
 
     When `cutoff` is None, returns the full count — preserving the
-    pre-cutoff-event rollup behavior for stores that have never run
-    `consolidate --acknowledge-misses-before`. When `cutoff` is set,
-    events with a missing or unparseable timestamp are dropped on the
-    conservative interpretation that we cannot prove they post-date
-    the cutoff (a stamped Recorder always emits `ts`, so this only
-    affects malformed legacy events).
+    pre-cutoff-event rollup behavior for stores that never logged a bulk
+    acknowledgement (`memory_admin(action="acknowledge_miss", before=...)`).
+    When `cutoff` is set, events with a missing or unparseable timestamp
+    are dropped on the conservative interpretation that we cannot prove
+    they post-date the cutoff (a stamped Recorder always emits `ts`, so
+    this only affects malformed legacy events).
     """
     if cutoff is None:
         return len(timestamps)
@@ -1381,15 +1381,12 @@ def find_prior_session_boundary(
 ) -> datetime | None:
     """Latest event timestamp belonging to a session other than the current one.
 
-    Used by `memory_scope_overview` to compute the
-    `curation_pending_new_since_last_session` delta. Returns
+    Used by `memory_search(since_prior_session=True)` to narrow the
+    candidates to memories written after the prior session. Returns
     ``None`` when the event log carries no events outside the current
     session — typical on a fresh install or the very first session
-    after a memory directory was wiped. Callers treat ``None`` as
-    "no prior session to delta against" and surface the delta dict
-    as ``None`` rather than as the absolute counts, so the model can
-    distinguish "nothing new" (delta is zero) from "no baseline
-    available" (delta is None).
+    after a memory directory was wiped; the search then returns no
+    rows.
 
     Walks events forward and tracks the max ts among entries whose
     `session` (or legacy `session_id`) field differs from
