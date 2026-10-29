@@ -1340,6 +1340,30 @@ the candidates' testing.
   is closed. (`src/bettermemory/config.py`,
   `src/bettermemory/cli/config_cmd.py`, `docs/operations.md`,
   `docs/internals.md`, `tests/test_pin_notice_as_loaded.py`)
+- **Cygwin and MSYS refuse a managed file another account could plant.**
+  Their Python reads `/etc/bettermemory/managed.toml`, and there `/` is a
+  Windows folder, which a folder made under `C:\` lets every signed-in
+  account write by default: one account could plant the file and bind
+  every other, the risk rc12 refused ProgramData for. And Cygwin makes
+  `/etc/fstab.d` writable by every account and mounts what
+  `/etc/fstab.d/<user>` names for that user, so one account could mount
+  a folder it owns over `/etc/bettermemory` for another. On a platform
+  whose `sys.platform` starts with `cygwin` or `msys`, the file is now
+  refused, failing the load as an unreadable one does, when any folder
+  from `/` down to it, or the file, as written or through a link, lies
+  under a user mount or on a mount without access lists (`noacl`,
+  MSYS2's default) as `/proc/mounts` lists them, has a group or other
+  write bit, or can be written by the account running bettermemory; an
+  unreadable `/proc/mounts` is refused too. The error names the file,
+  the folder, why (for a mount, the mount point and its `user` or
+  `noacl` option), and the fix that can work in that case (remove the
+  `/etc/fstab.d` line; mount with acl or use a native Windows Python;
+  run bettermemory unelevated), and `config check` reports it. An absent
+  file is still no managed config, and no other platform runs the
+  check. The rc13 review raised this (ENG-93 item 9), and it is closed.
+  (`src/bettermemory/managed.py`, `SECURITY.md`, `docs/operations.md`,
+  `docs/installation.md`, `docs/internals.md`,
+  `tests/test_managed_cygwin.py`)
 
 #### Known limitations
 
@@ -1462,6 +1486,16 @@ the candidates' testing.
   sparse checkout with a split index (`git update-index --split-index`),
   whose shared index is not read, every absent path reads unconfirmed,
   neither missing nor left out by the cone.
+- **On Cygwin and MSYS the planting check does not read a folder's
+  owner or a link's own access list.** It refuses a user mount on the
+  way to the managed file, a mount without access lists, and a folder
+  with group or other write bits or writable by this account. A folder
+  that is no user mount, owned by an account that is no administrator
+  and writable by its owner alone, is not refused, and that account can
+  plant the file. A link on the way is checked through its target and
+  the folder that holds it, not its own access list, so a link object
+  another account may rewrite in place is not refused either. Neither
+  check has run on a real Cygwin or MSYS host. (`src/bettermemory/managed.py`)
 
 ### 9.0.0rc13
 

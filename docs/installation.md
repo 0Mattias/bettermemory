@@ -227,7 +227,9 @@ registry value `ManagedConfig` under
 `HKEY_LOCAL_MACHINE\SOFTWARE\Policies\bettermemory` (a REG_SZ, or a
 REG_MULTI_SZ with one line per string), which Group Policy or Intune can
 deploy. No environment variable moves it, and nothing under
-`%ProgramData%` is read. It takes `config.toml`'s sections and keys, and
+`%ProgramData%` is read; Cygwin's and MSYS2's Python read the Linux
+path and refuse it under a folder another account can write
+([operations.md](operations.md#the-managed-config)). It takes `config.toml`'s sections and keys, and
 every key it sets is pinned. `examples/managed.toml` is the starting
 point, with the `reg add` command for Windows:
 

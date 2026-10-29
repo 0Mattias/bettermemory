@@ -31,7 +31,7 @@ nothing. `bettermemory security audit` grades the modes and owners.
 | `daemon-<hash>.json` | the state directory: the daemon's port, pid, version, store and bearer token | | `0600` |
 | `daemon-<hash>.log` | the state directory: the daemon's output | | `0600` |
 | `daemon-<hash>.lock`, `.spawn.lock` | the state directory: held by the daemon for its life, and by whoever is starting one | | empty |
-| The managed config | `/Library/Application Support/bettermemory/managed.toml` on macOS, `/etc/bettermemory/managed.toml` on Linux and other POSIX systems; on Windows no file, the registry value `HKLM\SOFTWARE\Policies\bettermemory\ManagedConfig` | nothing | root-owned `0644`; on Windows the key's default access, which only administrators can write |
+| The managed config | `/Library/Application Support/bettermemory/managed.toml` on macOS, `/etc/bettermemory/managed.toml` on Linux and other POSIX systems; on Windows no file, the registry value `HKLM\SOFTWARE\Policies\bettermemory\ManagedConfig` | nothing | root-owned `0644`; on Cygwin and MSYS no folder from `/` down that another account can write, or it is refused; on Windows the key's default access, which only administrators can write |
 | Backup bundles | `backups/<UTC stamp>/` in the store directory | `backup create --out DIR` | directory `0700`, files `0600` |
 
 `<hash>` is derived from the store's path, so each store has its own
@@ -479,6 +479,28 @@ configuration management, at `/Library/Application
 Support/bettermemory/managed.toml` on macOS or
 `/etc/bettermemory/managed.toml` on Linux, root-owned, mode `0644`.
 
+Cygwin's and MSYS2's Python read the Linux path too, and there `/` is
+a Windows folder (`C:\cygwin64`, `C:\msys64`), which a folder made
+under `C:\` lets every signed-in account write by default. Since
+9.0.0rc14 the file is refused there, failing the load as an unreadable
+one does, when any folder from `/` down to it, or the file itself, as
+written or through a link, lies under a user mount, lies on a mount
+without access lists (`noacl`), has a group or other write bit, or can
+be written by the account running bettermemory: a file one account
+plants there would bind every other account, the reason nothing under
+`%ProgramData%` is read. Cygwin makes `/etc/fstab.d` writable by every
+account and mounts what `/etc/fstab.d/<user>` names for that user, so
+one account can mount a folder it owns over `/etc/bettermemory` for
+another; the mounts are read from `/proc/mounts`, and a table that
+cannot be read is a refusal too. The error names the file, the folder,
+why and what to do, and `config check` reports it. To deploy there,
+install under a folder only administrators can write, on a mount with
+access lists (MSYS2 mounts without them, `noacl`, by default), and
+remove any line under `/etc/fstab.d` that mounts something on the way,
+or use a native Windows Python, which reads the registry value below.
+An elevated process can write every folder, so it is refused too: run
+bettermemory unelevated.
+
 On Windows it is no file: the managed TOML is the `ManagedConfig` value
 under `HKEY_LOCAL_MACHINE\SOFTWARE\Policies\bettermemory`, a REG_SZ
 holding the whole text or a REG_MULTI_SZ holding one line per string,
@@ -510,7 +532,8 @@ config load when `BETTERMEMORY_DIR` is unset, to resolve the store.
 
 It fails closed. A file or value that exists but cannot be read, is not
 TOML, writes a top-level value outside a section, or holds an invalid
-value stops the config from loading, and the daemon does not start; the
+value, or on Cygwin and MSYS a file another account could have planted,
+stops the config from loading, and the daemon does not start; the
 hooks then print the error and change nothing. Only an absent file, key
 or value means there is no managed config. Check it on one machine
 before the fleet: `bettermemory config check` grades both sources and
@@ -560,7 +583,9 @@ store ahead of a pinned `[storage] directory`. SECURITY.md has the rest.
 2. **Deploy the managed config** (the file, or on Windows the registry
    value) with at least `[storage] cwd_store = false` and `[security]
    strict_provenance = true`, plus the `[policy]`
-   switches your rules call for. Decide telemetry on purpose: with
+   switches your rules call for. Under Cygwin's or MSYS2's Python, deploy
+   it under a `/` only administrators can write, on a mount with access
+   lists, or it is refused ([The managed config](#the-managed-config)). Decide telemetry on purpose: with
    `[telemetry] enabled = false` the session brief and the prompt recall
    deliver nothing, while the audit rows are kept either way.
 3. **Deploy Claude Code's sandbox as managed settings.** `bettermemory

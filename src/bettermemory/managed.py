@@ -22,7 +22,13 @@ moves it:
 
 - macOS: the file ``/Library/Application Support/bettermemory/managed.toml``
 - Linux and every other POSIX system: the file
-  ``/etc/bettermemory/managed.toml``
+  ``/etc/bettermemory/managed.toml``. Cygwin's and MSYS2's Python read it
+  too, and there ``/`` is a Windows folder (``C:\\cygwin64``,
+  ``C:\\msys64``) that often inherits write access for every account from
+  ``C:\\``: the file is refused, failing the load, when any folder from
+  ``/`` down to it can be written by an account other than an
+  administrator, or lies under a mount another account can add
+  (`_refuse_planted`), the planting ProgramData would allow.
 - Windows: no file. The managed TOML text is the ``ManagedConfig`` value
   of the registry key ``HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\bettermemory``
   (`MANAGED_REGISTRY`), a REG_SZ, or a REG_MULTI_SZ whose strings are its
@@ -66,11 +72,15 @@ neither the SDK nor pydantic (tests/test_hook_client.py).
 
 from __future__ import annotations
 
+import os
+import re
+import stat
 import sys
 import tomllib
+from collections.abc import Iterable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Protocol, TypeAlias
 
 #: The managed file's name inside the per-OS directory.
@@ -78,6 +88,12 @@ MANAGED_FILENAME = "managed.toml"
 
 _MACOS_DIR = Path("/Library/Application Support/bettermemory")
 _POSIX_DIR = Path("/etc/bettermemory")
+
+#: The `sys.platform` prefixes of a Python built on a POSIX layer over
+#: Windows: Cygwin's reports ``cygwin``, and MSYS2's runtime build
+#: ``msys`` or ``cygwin`` depending on the build. A MinGW or native build
+#: reports ``win32`` and reads the registry, not a file.
+_POSIX_ON_WINDOWS = ("cygwin", "msys")
 
 #: The registry key, under HKEY_LOCAL_MACHINE, that holds the managed
 #: config on Windows, and the name of the value in it.
@@ -223,7 +239,8 @@ def read_managed(path: Path) -> dict[str, dict[str, Any]] | None:
     start, the CLI reports the error). Skipping it would silently drop
     every pin the organisation set, which is the one outcome a managed
     file exists to prevent. Only a missing file means "no managed
-    config".
+    config". On Cygwin and MSYS a file under a folder another account can
+    write is refused the same way (`_refuse_planted`).
 
     Keys are not checked here. `config._apply_managed` parses the
     sections with the loader's own coercions, so a mistyped value gets
@@ -251,6 +268,7 @@ def read_managed(path: Path) -> dict[str, dict[str, Any]] | None:
             "the settings it pins. Make the file readable by every account "
             "that runs bettermemory, or remove it."
         ) from exc
+    _refuse_planted(path)
     # "utf-8-sig": a leading byte-order mark is dropped, not parsed.
     # Windows PowerShell 5.1, which MDM and configuration-management
     # scripts on Windows run under, writes one with `-Encoding UTF8`, and
@@ -262,6 +280,176 @@ def read_managed(path: Path) -> dict[str, dict[str, Any]] | None:
     except UnicodeDecodeError as exc:
         raise ValueError(f"malformed managed config in {path}: {exc}") from exc
     return _sections(parse_managed_text(text, path), path)
+
+
+def _refuse_planted(path: Path) -> None:
+    """On Cygwin and MSYS, refuse the managed file at `path` with a
+    ValueError naming it, the folder that lets it be planted, why, and
+    what would let it be read, when anything on the way from ``/`` down to
+    it, or the file itself, another account could have put there
+    (`_planting_reason`). Elsewhere, nothing.
+
+    There ``/`` is a Windows folder, and a folder made under ``C:\\``
+    inherits write access for every signed-in account by default, which
+    MSYS2's ``C:\\msys64`` keeps: one account could plant
+    ``/etc/bettermemory/managed.toml`` and bind every other account, the
+    risk rc12 refused ProgramData for. And Cygwin makes ``/etc/fstab.d``
+    writable by every account and mounts what ``/etc/fstab.d/<user>``
+    names for that user, so one account can mount a folder it owns over
+    ``/etc/bettermemory`` for another: the mounts are read from
+    ``/proc/mounts``, and one that cannot be read is a refusal. The chain
+    is read as written and as resolved, so a link into a writable folder
+    is refused too. A refusal fails the load, as an unreadable managed
+    file does: skipping the file would drop an organisation's pins
+    without a word, and a file this account can write pins nothing
+    against an agent running as it."""
+    if not _platform().startswith(_POSIX_ON_WINDOWS):
+        return
+    try:
+        mounts = _parse_mounts(_mounts_text())
+    except OSError as exc:
+        raise ValueError(
+            f"managed config {path} is refused: {_MOUNTS.as_posix()} cannot be read "
+            f"({exc.strerror or exc}), so a mount another account added on "
+            f"the way to it cannot be ruled out; {_PLANTED} Remove the file, "
+            "or use a native Windows Python, which reads the registry value."
+        ) from exc
+    for point in _planting_points(path):
+        reason = _planting_reason(point, mounts)
+        if reason is not None:
+            why, fix = reason
+            raise ValueError(
+                f"managed config {path} is refused: {point} {why}, and {_PLANTED} {fix}"
+            )
+
+
+#: Where Cygwin and MSYS list their mounts, one per line as Linux does:
+#: device, mount point (spaces written ``\\040``), type, options.
+_MOUNTS = Path("/proc/mounts")
+
+#: Why a planting refusal matters, said in each one.
+_PLANTED = (
+    "on Cygwin and MSYS / is a Windows folder where a file one account "
+    "plants would bind every other account. bettermemory will not start "
+    "without the settings it pins."
+)
+
+
+@dataclass(frozen=True)
+class _Mount:
+    """One line of ``/proc/mounts``: where it is mounted, and its options."""
+
+    point: PurePosixPath
+    options: frozenset[str]
+
+
+def _mounts_text() -> str:
+    """The text of ``/proc/mounts``, looked up at call time: the tests
+    replace it."""
+    return _MOUNTS.read_text(encoding="utf-8", errors="surrogateescape")
+
+
+def _parse_mounts(text: str) -> list[_Mount]:
+    """The mounts ``/proc/mounts`` lists, octal escapes decoded."""
+    mounts: list[_Mount] = []
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) >= 4:
+            point = re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), fields[1])
+            options = frozenset(fields[3].split(","))
+            mounts.append(_Mount(PurePosixPath(point), options))
+    return mounts
+
+
+def _covering(point: Path, mounts: Iterable[_Mount]) -> _Mount | None:
+    """The mount `point` lies on among `mounts`: the deepest one mounted
+    at `point` or at one of its parents, None when there is none."""
+    here = PurePosixPath(point.as_posix())
+    found: _Mount | None = None
+    for mount in mounts:
+        if (mount.point == here or mount.point in here.parents) and (
+            found is None or len(mount.point.parts) > len(found.point.parts)
+        ):
+            found = mount
+    return found
+
+
+def _planting_reason(point: Path, mounts: list[_Mount]) -> tuple[str, str] | None:
+    """Why another account could have put `point` there, and what would let
+    the file be read, or None when nothing says so.
+
+    In order: a user mount at `point` or above it (``user`` in its options,
+    which Cygwin gives every mount that is not the system's), which any
+    account can add for another through ``/etc/fstab.d``; a mount without
+    access lists (``noacl``, MSYS2's default), where the mode is
+    synthesised and nothing shows who can write; then the folder itself
+    (`_writable_by_users`). An elevated process can write every folder,
+    so a refusal for this account's own write access says so."""
+    user_mount = _covering(point, [m for m in mounts if "user" in m.options])
+    if user_mount is not None:
+        return (
+            f"is under the mount {user_mount.point}, which has the user option: "
+            "a user mount, which any account can add for another through "
+            "/etc/fstab.d",
+            "Remove the mount's line under /etc/fstab.d, or remove the file.",
+        )
+    mount = _covering(point, mounts)
+    if mount is not None and "noacl" in mount.options:
+        return (
+            f"is on the mount {mount.point}, which has the noacl option: no "
+            "access lists, so nothing shows who can write it",
+            "Mount it with acl, use a native Windows Python, which reads the "
+            "registry value, or remove the file.",
+        )
+    why = _writable_by_users(point)
+    if why is None:
+        return None
+    fix = (
+        "Let only administrators write every folder from / down to the "
+        "file, or remove the file."
+    )
+    if why == "is writable by this account":
+        fix += (
+            " An elevated process can write every folder: run bettermemory unelevated."
+        )
+    return why, fix
+
+
+def _planting_points(path: Path) -> list[Path]:
+    """Every folder from the root down to `path`, then `path` itself, as
+    written and then as resolved, each once: whoever can write one of them
+    can replace the file, or the folder on the way to it."""
+    points: list[Path] = []
+    for spelled in (path.absolute(), Path(os.path.realpath(path))):
+        for point in (*reversed(spelled.parents), spelled):
+            if point not in points:
+                points.append(point)
+    return points
+
+
+def _writable_by_users(point: Path) -> str | None:
+    """Why `point` can be written by an account other than an
+    administrator, or None when nothing says so.
+
+    Two readings, either one enough. Group or other write bits in its mode:
+    Cygwin maps an access entry beyond the owner's, such as the
+    Authenticated Users entry ``C:\\`` hands down, to the group bits. And
+    this account's own write access (`os.access`), which Cygwin answers
+    from the folder's access list: an account that can write it can plant
+    the file. On a mount without access lists (``noacl``, which MSYS2
+    uses by default) the mode is synthesised and every folder reads as
+    this account's own and writable, so a file there is refused: nothing
+    on that mount can show it is not plantable. A folder that cannot be
+    checked is refused too."""
+    try:
+        mode = os.stat(point).st_mode
+    except OSError as exc:
+        return f"cannot be checked ({exc.strerror or exc})"
+    if mode & 0o022:
+        return f"is writable by group or others (mode {stat.S_IMODE(mode):04o})"
+    if os.access(point, os.W_OK):
+        return "is writable by this account"
+    return None
 
 
 def read_managed_registry(

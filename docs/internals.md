@@ -1238,7 +1238,15 @@ and on Windows, since 9.0.0rc13, the `ManagedConfig` value under
 the text, a REG_MULTI_SZ its lines joined with newlines, and any other
 type, a REG_EXPAND_SZ included, is refused. Nothing under
 `%ProgramData%` is read, and no environment variable moves either
-source. The registry text goes through the file's own parse and
+source. Cygwin's and MSYS2's Python (`sys.platform` starting `cygwin` or
+`msys`) read the Linux path, under a `/` that is a Windows folder:
+since 9.0.0rc14 `managed._refuse_planted` refuses the file, failing the
+load, when a folder from `/` down to it, or the file, as written or
+resolved, lies under a mount `/proc/mounts` lists with the `user`
+option (one `/etc/fstab.d/<user>` added) or on one with `noacl`, has a
+group or other write bit, or passes `os.access(W_OK)` for this account
+(`_planting_reason`, `_writable_by_users`); an unreadable `/proc/mounts`
+is a refusal too. The registry text goes through the file's own parse and
 refusals, a leading byte-order mark dropped and text holding an
 unpaired surrogate refused as the file refuses bytes that are not UTF-8;
 errors and reports name it `registry
