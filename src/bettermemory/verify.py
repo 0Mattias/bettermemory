@@ -1371,6 +1371,22 @@ def compute_commit_drift(
         return None
     if last_verified_at.tzinfo is None:
         last_verified_at = last_verified_at.replace(tzinfo=timezone.utc)
+    counted = _count_since_verify(cwd_path, last_verified_at, verified_head)
+    if counted is None:
+        return None
+    count, basis, walk, toplevel = counted
+    resolved = _narrow_commit_drift(
+        cwd_path, last_verified_at, count, anchors, parsed_claims, toplevel, walk, basis
+    )
+    if resolved is None:
+        return None
+    return commit_drift_status(resolved)
+
+
+def _count_since_verify(
+    cwd_path: Path, last_verified_at: datetime, verified_head: str | None
+) -> tuple[int, str, ReachableWalk | None, Path | None] | None:
+    """Take the stamp; return (count, basis, walk, toplevel) since it, or None."""
     # The basis. A stamp that recorded the checkout's HEAD is counted in
     # reachability space — the commits in `verified_head..HEAD`, which
     # hold a branch authored before the stamp and merged after it — when
@@ -1424,6 +1440,20 @@ def compute_commit_drift(
         idx = bisect.bisect_right(timestamps, last_verified_at)
         count = len(timestamps) - idx
         basis = BASIS_AUTHOR_DATE
+    return count, basis, walk, toplevel
+
+
+def _narrow_commit_drift(
+    cwd_path: Path,
+    last_verified_at: datetime,
+    count: int,
+    anchors: tuple[str, ...],
+    parsed_claims: list[Claim],
+    toplevel: Path | None,
+    walk: ReachableWalk | None,
+    basis: str,
+) -> ResolvedCommitDrift | None:
+    """Take the count and its claims; return the narrowed resolution, or None."""
     # Claim-anchored narrowing: the full git-backed NARROWING (claim
     # split, weak tier, per-claim detail) only runs when there's drift
     # to narrow (`count > 0`). The narrowed count is measured on the
@@ -1482,13 +1512,11 @@ def compute_commit_drift(
         # must read the same not-applicable here as it does the moment
         # one unrelated commit lands.
         return None
-    return commit_drift_status(
-        ResolvedCommitDrift(
-            count,
-            claims_checked=claims_checked,
-            claims_drifted=claims_drifted,
-            basis=basis,
-        )
+    return ResolvedCommitDrift(
+        count,
+        claims_checked=claims_checked,
+        claims_drifted=claims_drifted,
+        basis=basis,
     )
 
 
