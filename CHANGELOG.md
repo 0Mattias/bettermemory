@@ -715,7 +715,8 @@ follows the candidates' testing.
   `projects` in Claude Code's configuration directory
   (`claude_paths.transcripts_dir`), which the variable moves as it moves
   the settings and the global config; without it the directory is
-  `~/.claude/projects` as before. `--transcripts` still overrides it,
+  `~/.claude/projects` as before (NFC-normalised, as Claude Code spells
+  it). `--transcripts` still overrides it,
   and its help now gives the default as `projects` in Claude Code's
   config directory (`~/.claude/projects`).
   (`src/bettermemory/claude_paths.py`,
