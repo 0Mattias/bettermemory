@@ -310,7 +310,10 @@ jobs:
         # The version's section, printed by tools/changelog_section.py (its
         # tests are tests/test_changelog_section.py); the build job checked
         # it exists before anything was published. GitHub's generated notes,
-        # the compare link, follow it in the body.
+        # the compare link, follow it in the body. The tool cuts a section
+        # over 120,000 characters at a paragraph boundary with a note, since
+        # GitHub refuses a body over 125,000 and this job runs after the
+        # PyPI publish.
         run: |
           python3 tools/changelog_section.py CHANGELOG.md "${GITHUB_REF_NAME#v}" > release-notes.md
           wc -c release-notes.md

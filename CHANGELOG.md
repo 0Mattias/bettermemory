@@ -728,6 +728,7 @@ follows the candidates' testing.
 
 #### Fixed
 
+- The release notes a tag's GitHub release carries are the version's CHANGELOG section cut to 120,000 characters at a paragraph or bullet boundary, ending in a note that says so and that CHANGELOG.md holds the whole section. GitHub refuses a body over 125,000 characters, and the fourteenth candidate's section is over 200,000, which would have failed the github-release job after the PyPI publish (`tools/changelog_section.py`, `RELEASE_BODY_CHARS`; `--max-chars` overrides it).
 - **Every mutating store call takes the write lock before it reads what
   it decides on.** `update`, `mark_verified`, `record_corroboration`,
   `tombstone`, `restore` and `put_memory` read their snapshot in
