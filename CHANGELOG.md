@@ -391,6 +391,21 @@ follows the candidates' testing.
   (`src/bettermemory/store_steps.py`, `src/bettermemory/store_schema.py`,
   `src/bettermemory/store.py`, `CONTRIBUTING.md`, `docs/internals.md`,
   `docs/api.md`, `docs/release.md`, `tests/test_store_steps.py`)
+- **A shim whose daemon comes back at another version asks for a
+  restart of its MCP client.** An MCP client loads the tools and the
+  instructions once, at the session's start, from the daemon the shim
+  found then. When that daemon is replaced while the session is open (a
+  newer install's client replaced it, or it was restarted from another
+  install), the shim finds the new one and forwards to it under the old
+  tools. The first time it finds its store's daemon at a version other
+  than the one its session began with, it now logs one warning naming
+  both versions and asking for a restart of the MCP client. A shim that
+  starts beside a newer daemon keeps it and serves that daemon's tools,
+  as before, now tested across a candidate boundary: this build's shim
+  against this build's daemon reporting the next candidate. CONTRIBUTING.md
+  states what a daemon owes the previous release's client within a major.
+  (`src/bettermemory/_daemon_client.py`, `CONTRIBUTING.md`,
+  `docs/internals.md`, `tests/test_shim_versions.py`)
 
 #### Fixed
 
@@ -1680,6 +1695,15 @@ follows the candidates' testing.
   `tampered`. CONTRIBUTING.md rules such a step out until refold
   compares over the columns both sides hold.
   (`src/bettermemory/store_events.py`, `src/bettermemory/store_rows.py`)
+- **The restart notice reaches the shim's stderr only, and only from
+  this candidate's shim.** An MCP client keeps a server's stderr in its
+  log, and nothing in the session shows the line. A shim from 9.0.0rc13
+  or earlier finds a daemon of another version after a restart without
+  a word. The shim tells a version change, not a change of tools: a
+  daemon of another version with the same tools is told too. An MCP
+  `notifications/tools/list_changed` from the shim would reach the
+  session and make the restart unneeded; it needs a change to `shim.py`.
+  (`src/bettermemory/_daemon_client.py`)
 
 ### 9.0.0rc13
 

@@ -160,6 +160,12 @@ A field a later build adds to a record (`Memory`, `TombstonedMemory`) travels in
 
 The builds from before this contract read none of the three revision keys: they open and write a store whatever its minimums say, and only `schema_version` keeps them out. They also drop a field they do not define when they write its record back.
 
+### A client and a daemon of different versions
+
+The plugin's unpinned `uvx bettermemory` moves to a new release while a `uv tool install` or a venv beside it does not, so a client (the shim, a hook, a CLI command) meets a daemon of another version on one store. A client keeps a daemon of its own version or a newer one and replaces an older one, or one whose version it cannot read (`_daemon_client._keeps`); two installs therefore never restart the daemon under each other, and the newer one's daemon serves both.
+
+So within a major the previous release's client must keep working against the next release's daemon: the state file's keys, `/health` and its proof, the bearer token, `/mcp` and the hook paths stay readable by it, and a change that cannot keep them so is a major release. The shim forwards `tools/list` and `tools/call` and carries the daemon's instructions, so an older shim serves the newer daemon's own tools. What it cannot follow is a daemon replaced while its session is open: the MCP client keeps the tools and instructions it loaded at the session's start. A shim that finds its store's daemon again at another version serves through it and logs one warning per version asking for a restart of the MCP client (`_daemon_client._session_version`). `tests/test_shim_versions.py` runs this build's shim against this build's daemon reporting the next candidate.
+
 ### Deprecation cycle
 
 When a tool, Python API, config key, parameter, or field is destined for removal at the next major bump:

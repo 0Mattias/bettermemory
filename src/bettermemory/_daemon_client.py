@@ -723,11 +723,56 @@ def _open_log(path: Path) -> Any:
 def _answering(state_dir: Path, store_path: Path | str) -> dict[str, Any] | None:
     """The state of a daemon for `store_path` that answers /health and
     proves itself the daemon its state file names (`identify`); None when
-    nothing answers there, or something else does."""
+    nothing answers there, or something else does. The daemon found is
+    one this process uses (`_session_version`), which tells a shim that
+    found its daemon again at another version to restart its client."""
     state = read_state(state_dir, store_path)
     if state is not None and identify(state, timeout=0.5).ours:
+        _session_version(state)
         return state
     return None
+
+
+#: For each store, as its daemon's state file names it, the version of the
+#: first daemon this process used, and the versions found there since that
+#: this process has told a restart for (`_session_version`).
+_SESSION_VERSIONS: dict[str, str] = {}
+_RESTART_TOLD: set[tuple[str, str]] = set()
+
+
+def _session_version(state: Mapping[str, Any]) -> None:
+    """Note the daemon in `state` as one this process uses. The first for
+    a store is the daemon a long-lived client's session began with: the
+    shim's ``initialize`` carried that daemon's instructions, and the MCP
+    client loaded that daemon's ``tools/list`` and keeps it for the
+    session. A daemon of another version found later for the store (the
+    shim finds its daemon again through `_answering` after a restart)
+    serves the session's calls under that daemon's tools, so the first
+    time each other version is found one warning asks for a restart of
+    the MCP client, which begins a session on the daemon's own tools. A
+    hook and a CLI command find their daemon once per process and do not
+    reach the warning. `logging` is imported only for it, as in `_keeps`."""
+    store = state.get("store")
+    if not isinstance(store, str) or not store:
+        return
+    seen = str(state.get("version"))
+    began = _SESSION_VERSIONS.setdefault(store, seen)
+    if began == seen or (store, seen) in _RESTART_TOLD:
+        return
+    _RESTART_TOLD.add((store, seen))
+    import logging
+
+    logging.getLogger(__name__).warning(
+        "the daemon at %s:%s (pid %s) runs version %s, and this session began "
+        "with the daemon of version %s, whose tools and instructions the MCP "
+        "client still holds: restart the MCP client to load version %s's",
+        HOST,
+        state["port"],
+        state["pid"],
+        seen,
+        began,
+        seen,
+    )
 
 
 def wait_for_daemon(
@@ -1008,12 +1053,15 @@ def _keeps(state: dict[str, Any], theirs: object, mine: str) -> bool:
     here, not at the top: only a kept newer daemon pays for it, and the
     hook path, which configures no logging, drops the line (INFO is
     under the last-resort handler's level) while the shim's stderr shows
-    it once at start."""
+    it once at start. A daemon kept is one this process uses
+    (`_session_version`)."""
     if theirs == mine:
+        _session_version(state)
         return True
     ours, other = version_key(mine), version_key(theirs)
     if ours is None or other is None or other < ours:
         return False
+    _session_version(state)
     import logging
 
     logging.getLogger(__name__).info(

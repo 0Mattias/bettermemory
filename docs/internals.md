@@ -880,7 +880,12 @@ hook bodies under `/api/v1/hook/`), started on first use through the
 client in `_daemon_client.py`, which the hook command shares and which
 proves the daemon it reaches by the token before it sends anything,
 and which starts none while another process holds the store's lock,
-waiting for that one instead (`start_and_wait`);
+waiting for that one instead (`start_and_wait`). A client keeps a
+daemon of its own version or a newer one (`_keeps`), and a shim that
+finds its store's daemon again at a version other than the one its
+session began with logs one warning asking for a restart of the MCP
+client, which still holds the first daemon's tools
+(`_session_version`);
 `cli/daemon_cmd.py` is `up`, `down` and `status`, and
 `cli/service_cmd.py` with `service_units.py` writes and loads the
 launchd or systemd unit that supervises the daemon. `cli/serve.py` is
