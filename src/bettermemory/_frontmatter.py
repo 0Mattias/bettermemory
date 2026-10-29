@@ -398,57 +398,8 @@ def normalise_body(body: str) -> str:
     return "\n".join(ln.rstrip("\r") for ln in body.split("\n")).rstrip()
 
 
-def dumps(
-    post: Post,
-    *,
-    max_file_bytes: int = _MAX_WRITE_BYTES,
-    max_yaml_bytes: int = _MAX_YAML_BYTES,
-) -> str:
-    """Serialise a Post to a frontmatter string.
-
-    Matches python-frontmatter's output: `---\\n<yaml>\\n---\\n\\n<body>`,
-    with `body` right-stripped of trailing whitespace (leading whitespace
-    preserved). Existing files written by the previous library round-trip
-    byte-for-byte (modulo the alias-suppression policy above, which only
-    affects metadata dicts where two fields share the same object).
-
-    `max_file_bytes` bounds the total serialized size. It defaults to
-    `_MAX_WRITE_BYTES` (the read cap minus maintenance headroom) so any
-    accepted record can later be tombstoned/renamed and stay readable;
-    the lifecycle re-dump paths (`store.tombstone` / `rename_scope`) pass
-    `_MAX_FILE_BYTES` to use the full read cap for that bounded growth.
-
-    `max_yaml_bytes` is the analogous bound on just the frontmatter-YAML
-    region. The signature default is the flat `_MAX_YAML_BYTES` — but that says
-    only what an argument-less caller gets, NOT that a first write is
-    unaffected, which is what this docstring inferred until
-    `store._yaml_admission_cap` (645d909) made the inference false. A reduced
-    ceiling now reaches here from TWO sources, keyed on what the write DOES
-    rather than on which function performs it:
-
-      * `store._yaml_admission_cap()` — `Store._write_path`'s own default, so
-        every write that ADMITS content (`Store.write`, `Store.update`) arrives
-        with a reduced ceiling, a first write included. `memory_update` can grow
-        the frontmatter without touching the body — 64 `links`, each with a long
-        `note`, are all individually legal and together land the frontmatter
-        just under the flat cap — and without the reservation that minted
-        records `memory_remove` could then never tombstone.
-      * `store._lifecycle_redump_yaml_cap(current_yaml)` — the metadata-only
-        re-dumps of an already-admitted record (`mark_verified`,
-        `record_corroboration`, `rename_scope`'s active branch, `migrate`'s
-        origin backfill/repair) reserve the same `_REMOVAL_META_BUDGET_BYTES`,
-        but keyed on the record's CURRENT frontmatter, so a record already past
-        the ceiling freezes there rather than being refused outright.
-
-    A caller that passes nothing takes the flat cap, which is what the re-dumps
-    that must not become refusable want — `store.tombstone` (it adaptively trims
-    its own removal metadata to fit rather than lean on a ceiling),
-    `store.restore`, `rename_scope`'s tombstone branch — and what `episodes`
-    wants, being written once and never tombstoned, so it reserves nothing for a
-    removal that never comes. Neither reduced ceiling can RELAX the flat cap: both
-    are `<= _MAX_YAML_BYTES`, and the second check below fires only for a
-    ceiling that comes in strictly under it.
-    """
+def _dump_yaml(post: Post, max_yaml_bytes: int) -> str:
+    """Dump the post's metadata as YAML within the flat cap and any tighter max_yaml_bytes; returns the YAML text."""
     # Pre-flight: reject an alias/nesting bomb BEFORE `yaml.dump` materializes
     # its (alias-free) expansion. The `_MAX_YAML_BYTES` check below is a
     # post-hoc backstop — it only fires after the whole expanded string is
@@ -501,29 +452,11 @@ def dumps(
             "no room for the record's own removal metadata, making it "
             "un-removable. Shrink the frontmatter (verified_paths / scopes)."
         )
-    # Normalise CRLF to LF, the missing half of the pair `loads` has always
-    # had. `loads` strips the CR off every line so a Windows-authored or
-    # `core.autocrlf`-checked-out file reads the same everywhere; writing the
-    # body verbatim meant a CRLF body reached disk with its CRs while every
-    # reader returned it without them. The file and its readers disagreed —
-    # `alpha\r\nbeta` on disk, `alpha\nbeta` from `memory_show` — until the
-    # first tombstone / restore / rename / update re-dump silently made the
-    # readers' version permanent. Normalising here makes the two agree at
-    # every step instead of eventually.
-    #
-    # Applied as the SAME per-line `rstrip("\r")` `loads` performs, not as a
-    # `replace("\r\n", "\n")`: the output has to be a fixed point of the read
-    # normalisation, or the disagreement just moves one carriage return
-    # deeper. `alpha\r\r\nbeta` under a plain replace lands `alpha\r\nbeta` on
-    # disk, which `loads` then reads back as `alpha\nbeta` — the identical
-    # bug. Mirroring the operation exactly means disk equals reader for every
-    # input, with no shape left over.
-    #
-    # A lone `\r` not followed by a newline survives both sides untouched: it
-    # is content, not a line terminator this format knows about. Like the
-    # `rstrip` below, this normalises PRESENTATION, not content.
-    body = normalise_body(post.content)
-    final = f"{_DELIM}\n{yaml_text}\n{_DELIM}\n\n{body}"
+    return yaml_text
+
+
+def _check_file_cap(final: str, max_file_bytes: int) -> None:
+    """Refuse a serialised file over max_file_bytes, the size the read cap would reject; returns nothing."""
     # Total-file cap: the `_MAX_YAML_BYTES` check above bounds only the
     # frontmatter region, but `load` rejects the WHOLE file (frontmatter +
     # body) against `_MAX_FILE_BYTES` via `bounded_read`'s stat check. A
@@ -549,6 +482,84 @@ def dumps(
             f"({final_bytes} bytes); refusing to write — a file this large "
             "would be rejected on read, silently dropping the record"
         )
+
+
+def dumps(
+    post: Post,
+    *,
+    max_file_bytes: int = _MAX_WRITE_BYTES,
+    max_yaml_bytes: int = _MAX_YAML_BYTES,
+) -> str:
+    """Serialise a Post to a frontmatter string.
+
+    Matches python-frontmatter's output: `---\\n<yaml>\\n---\\n\\n<body>`,
+    with `body` right-stripped of trailing whitespace (leading whitespace
+    preserved). Existing files written by the previous library round-trip
+    byte-for-byte (modulo the alias-suppression policy above, which only
+    affects metadata dicts where two fields share the same object).
+
+    `max_file_bytes` bounds the total serialized size. It defaults to
+    `_MAX_WRITE_BYTES` (the read cap minus maintenance headroom) so any
+    accepted record can later be tombstoned/renamed and stay readable;
+    the lifecycle re-dump paths (`store.tombstone` / `rename_scope`) pass
+    `_MAX_FILE_BYTES` to use the full read cap for that bounded growth.
+
+    `max_yaml_bytes` is the analogous bound on just the frontmatter-YAML
+    region. The signature default is the flat `_MAX_YAML_BYTES` — but that says
+    only what an argument-less caller gets, NOT that a first write is
+    unaffected, which is what this docstring inferred until
+    `store._yaml_admission_cap` (645d909) made the inference false. A reduced
+    ceiling now reaches here from TWO sources, keyed on what the write DOES
+    rather than on which function performs it:
+
+      * `store._yaml_admission_cap()` — `Store._write_path`'s own default, so
+        every write that ADMITS content (`Store.write`, `Store.update`) arrives
+        with a reduced ceiling, a first write included. `memory_update` can grow
+        the frontmatter without touching the body — 64 `links`, each with a long
+        `note`, are all individually legal and together land the frontmatter
+        just under the flat cap — and without the reservation that minted
+        records `memory_remove` could then never tombstone.
+      * `store._lifecycle_redump_yaml_cap(current_yaml)` — the metadata-only
+        re-dumps of an already-admitted record (`mark_verified`,
+        `record_corroboration`, `rename_scope`'s active branch, `migrate`'s
+        origin backfill/repair) reserve the same `_REMOVAL_META_BUDGET_BYTES`,
+        but keyed on the record's CURRENT frontmatter, so a record already past
+        the ceiling freezes there rather than being refused outright.
+
+    A caller that passes nothing takes the flat cap, which is what the re-dumps
+    that must not become refusable want — `store.tombstone` (it adaptively trims
+    its own removal metadata to fit rather than lean on a ceiling),
+    `store.restore`, `rename_scope`'s tombstone branch — and what `episodes`
+    wants, being written once and never tombstoned, so it reserves nothing for a
+    removal that never comes. Neither reduced ceiling can RELAX the flat cap: both
+    are `<= _MAX_YAML_BYTES`, and `_dump_yaml`'s second check fires only for a
+    ceiling that comes in strictly under it.
+    """
+    yaml_text = _dump_yaml(post, max_yaml_bytes)
+    # Normalise CRLF to LF, the missing half of the pair `loads` has always
+    # had. `loads` strips the CR off every line so a Windows-authored or
+    # `core.autocrlf`-checked-out file reads the same everywhere; writing the
+    # body verbatim meant a CRLF body reached disk with its CRs while every
+    # reader returned it without them. The file and its readers disagreed —
+    # `alpha\r\nbeta` on disk, `alpha\nbeta` from `memory_show` — until the
+    # first tombstone / restore / rename / update re-dump silently made the
+    # readers' version permanent. Normalising here makes the two agree at
+    # every step instead of eventually.
+    #
+    # Applied as the SAME per-line `rstrip("\r")` `loads` performs, not as a
+    # `replace("\r\n", "\n")`: the output has to be a fixed point of the read
+    # normalisation, or the disagreement just moves one carriage return
+    # deeper. `alpha\r\r\nbeta` under a plain replace lands `alpha\r\nbeta` on
+    # disk, which `loads` then reads back as `alpha\nbeta` — the identical
+    # bug. Mirroring the operation exactly means disk equals reader for every
+    # input, with no shape left over.
+    #
+    # A lone `\r` not followed by a newline survives both sides untouched: it
+    # is content, not a line terminator this format knows about. Like the
+    # `rstrip` below, this normalises PRESENTATION, not content.
+    body = normalise_body(post.content)
+    final = f"{_DELIM}\n{yaml_text}\n{_DELIM}\n\n{body}"
+    _check_file_cap(final, max_file_bytes)
     return final
 
 
