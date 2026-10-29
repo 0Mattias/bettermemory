@@ -668,6 +668,23 @@ the candidates' testing.
   again, so later ones log at DEBUG). The runner names a missing working
   directory the same way for every caller. (`src/bettermemory/origin.py`,
   `src/bettermemory/origin_gitfiles.py`, `src/bettermemory/_git.py`)
+- **No program a repository's configuration names runs on a read.** The
+  runner pinned fsmonitor and hooks off, but `log.showSignature=true` in
+  a repository's config ran its `gpg.program` for every signed commit a
+  `git log` listed, on every read of the author dates, and wrote the
+  program's output among the dates; and the patch stream's `git log -p`
+  ran a `diff.<driver>.textconv` program for every file whose attributes
+  named the driver, and diffed its conversion rather than the text a
+  claim reads from the file. Every call now pins `log.showSignature`
+  off, and the patch stream passes `--no-textconv` and `--no-ext-diff`,
+  so its lines are the blob's own; a file whose attributes say `-diff`
+  or `binary` still reads "Binary files differ". The stream's shape was
+  also open to two settings: `color.ui=always` wrapped its headers in
+  escapes, so a deleted claimed file parsed to nothing and read fresh,
+  and `diff.interHunkContext` merged two hunks with context lines and
+  lost a binding. It now passes `--no-color` and pins
+  `diff.interHunkContext=0`.
+  (`src/bettermemory/_git.py`, `src/bettermemory/origin.py`)
 
 #### Known limitations
 

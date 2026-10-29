@@ -13,8 +13,11 @@ call here, with all four properties:
   ``GIT_DIR``, ``GIT_WORK_TREE``, ``GIT_COMMON_DIR`` and
   ``GIT_INDEX_FILE`` removed, so git reads the repository the call names
   (its `cwd`, or `git_dir`), never one the environment points at;
-* ``core.fsmonitor`` and ``core.hooksPath`` are pinned off, so no
-  daemon starts and no hook of the repository's runs on a read;
+* ``core.fsmonitor``, ``core.hooksPath`` and ``log.showSignature`` are
+  pinned off, so no daemon starts, no hook of the repository's runs and
+  no ``gpg.program`` checks a signature on a read (the one diff reader,
+  `origin.commit_patch_stream`, keeps textconv and external diff
+  programs off on its own command line);
 * stdout and stderr are UTF-8 with ``errors="replace"`` (git emits UTF-8,
   paths especially; a bare ``text=True`` would decode with the locale's
   encoding, cp1252 on Windows, and mojibake every non-ASCII path) or raw
@@ -41,8 +44,17 @@ log = logging.getLogger("bettermemory._git")
 #: Environment variables that would point git at another repository than
 #: the call names; removed from every call's environment.
 SCRUBBED_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE")
-#: Configuration pinned on every call: no fsmonitor daemon, no hooks.
-PINS = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null")
+#: Configuration pinned on every call: no fsmonitor daemon, no hooks, no
+#: signature check (``log.showSignature`` runs ``gpg.program`` for every
+#: signed commit a log lists and writes its output among the log's lines).
+PINS = (
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "log.showSignature=false",
+)
 
 # How many git invocations could not run at all since import, on any
 # thread. Read through `unanswered_calls`.

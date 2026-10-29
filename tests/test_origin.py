@@ -1408,6 +1408,116 @@ def test_commit_patch_stream_dequotes_embedded_quote_path(tmp_path: Path) -> Non
     assert name in index["deleted"]
 
 
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_patch_stream_pins_colour_and_inter_hunk_context_off(
+    tmp_path: Path,
+) -> None:
+    """`color.ui=always` in inherited config wrapped every header in ANSI
+    escapes, so a DELETION parsed to nothing and `parse_mismatches` stayed
+    0: a deleted claimed file read fresh. `diff.interHunkContext` merged
+    two `-U0` hunks into one with context lines, a loud mismatch that lost
+    the later hunk's binding (review Ob, D2). Both are pinned off."""
+    _init_repo(tmp_path)
+    _set_repo_config(tmp_path, "color.ui", "always")
+    _set_repo_config(tmp_path, "diff.interHunkContext", "10")
+    when = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    filler = "".join(f"# line {n}\n" for n in range(3))
+    _commit_file(tmp_path, "gone.md", content="gone\n", when=when)
+    _commit_file(tmp_path, "mod.py", content=f"A = 1\n{filler}B = 2\n", when=when)
+    _commit_file(tmp_path, "mod.py", content=f"A = 10\n{filler}B = 20\n", when=when)
+    _delete_and_commit(tmp_path, "gone.md")
+    stream = commit_patch_stream(tmp_path, _all_shas(tmp_path), ["mod.py", "gone.md"])
+    assert stream is not None
+    assert "\x1b[" not in stream
+    assert "--- a/gone.md" in stream
+
+    from bettermemory.claims import build_binding_index
+
+    index = build_binding_index(stream)
+    assert "gone.md" in index["deleted"]
+    assert index["parse_mismatches"] == 0
+    for name in ("A", "B"):
+        entry = index["bindings"][("mod.py", "assign", name)]
+        assert (entry["adds"], entry["removes"]) == (2, 1), name
+
+
+def _recording_program(directory: Path) -> tuple[Path, Path]:
+    """A program a repository's config can name, and the file it appends to
+    whenever it runs; it prints its first argument's file upper-cased, as
+    a textconv driver prints its conversion."""
+    ran = directory / "ran.txt"
+    program = directory / "program.sh"
+    program.write_text(
+        f"#!/bin/sh\necho ran >> '{ran}'\ntr a-z A-Z < \"$1\" 2>/dev/null\nexit 0\n"
+    )
+    program.chmod(0o755)
+    return program, ran
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+@pytest.mark.skipif(os.name != "posix", reason="the program is a shell script")
+def test_a_repository_signature_check_does_not_run_on_a_read(tmp_path: Path) -> None:
+    """ENG-185: `log.showSignature=true` in a repository's config ran its
+    `gpg.program` for every signed commit a `git log` listed, on every read
+    of the author dates, and wrote the program's output among the dates.
+    `_git.PINS` pins it off: the program never runs and the dates parse."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    seeded = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    _make_commit(repo, "seed", when=seeded)
+    signed = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    stamp = int(signed.timestamp())
+    body = (
+        f"tree {_git_out(repo, 'rev-parse', 'HEAD^{tree}')}\n"
+        f"parent {_git_out(repo, 'rev-parse', 'HEAD')}\n"
+        f"author Test <test@example.com> {stamp} +0000\n"
+        f"committer Test <test@example.com> {stamp} +0000\n"
+        "gpgsig -----BEGIN PGP SIGNATURE-----\n \n -----END PGP SIGNATURE-----\n"
+        "\nsigned\n"
+    )
+    sha = subprocess.run(
+        ["git", "hash-object", "-t", "commit", "-w", "--stdin"],
+        cwd=repo,
+        input=body,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    _git_out(repo, "update-ref", "refs/heads/main", sha)
+    program, ran = _recording_program(tmp_path)
+    _set_repo_config(repo, "log.showSignature", "true")
+    _set_repo_config(repo, "gpg.program", str(program))
+    dates = commit_author_timestamps(repo)
+    assert not ran.exists()
+    assert dates is not None and sorted(dates) == [seeded, signed]
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+@pytest.mark.skipif(os.name != "posix", reason="the program is a shell script")
+def test_commit_patch_stream_runs_no_textconv_program(tmp_path: Path) -> None:
+    """ENG-185: `git log -p` runs a `diff.<driver>.textconv` program by
+    default for every file whose attributes name the driver, so a program
+    the repository's config named ran on a read, and the stream carried
+    its conversion instead of the text a claim reads from the file. The
+    stream keeps textconv off: the program never runs and the lines are
+    the file's own."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    when = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    _commit_file(repo, ".gitattributes", content="*.md diff=conv\n", when=when)
+    _commit_file(repo, "notes.md", content="alpha\n", when=when)
+    _commit_file(repo, "notes.md", content="beta\n", when=when)
+    program, ran = _recording_program(tmp_path)
+    _set_repo_config(repo, "diff.conv.textconv", str(program))
+    stream = commit_patch_stream(repo, _all_shas(repo), ["notes.md"])
+    assert not ran.exists()
+    assert stream is not None
+    assert "+beta" in stream and "-alpha" in stream
+    assert "BETA" not in stream
+
+
 def test_dequote_patch_headers_rewrites_only_complete_prefixed_headers() -> None:
     """The rewrite fires only when the whole header remainder decodes as
     ONE complete C-quoted string whose body carries the pinned prefix —

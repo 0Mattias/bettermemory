@@ -1836,9 +1836,17 @@ def commit_patch_stream(
     * ``core.quotePath=true`` (git's DEFAULT) octal-escapes non-ASCII
       bytes, so a claimed ``modül.py`` is indexed as its quoted
       spelling and never equals the claim's rel_path.
+    * ``color.ui=always`` (or ``color.diff=always``) wraps every header
+      and hunk line in ANSI escapes: no header matches, and a deletion
+      parses to nothing as under ``diff.noprefix``, silently.
+    * ``diff.interHunkContext`` merges two ``-U0`` hunks closer than its
+      value into one with the lines between them as context, which the
+      exact count reads as a mismatch, and the later hunk's bindings are
+      lost.
 
     Each is pinned back to the parser's shape with ``-c``, which
-    outranks every config file (older gits ignore the >= 2.45 keys).
+    outranks every config file (older gits ignore the >= 2.45 keys), and
+    colour with ``--no-color``, which outranks the configuration too.
     Paths git quotes even with quotePath off — embedded quotes,
     backslashes, control bytes — are rewritten to the unquoted spelling
     by `_dequote_patch_headers` before the stream is returned, so the
@@ -1846,12 +1854,21 @@ def commit_patch_stream(
     one-argument guarantee.
 
     What each file's diff looks like is left to its attributes (``-diff``
-    and ``binary`` print "Binary files differ", a textconv driver prints
-    its conversion), read from the working tree's ``.gitattributes``
-    files, ``info/attributes`` and the global attributes file; ``--text``
-    would change what a repository with such attributes is served.
-    `attribute_files_signature` and `gitattributes_signature` name those
-    files for a memo that keys on this stream.
+    and ``binary`` print "Binary files differ"), read from the working
+    tree's ``.gitattributes`` files, ``info/attributes`` and the global
+    attributes file; ``--text`` would change what a repository with such
+    attributes is served. `attribute_files_signature` and
+    `gitattributes_signature` name those files for a memo that keys on
+    this stream.
+
+    No program the configuration names runs on this read. ``git log -p``
+    runs a ``diff.<driver>.textconv`` program by default, for every file
+    whose attributes name the driver; ``--no-textconv`` keeps it off, and
+    the diff is then of the blob's own text, the text a claim reads from
+    the file, not the program's conversion. ``--no-ext-diff`` keeps an
+    external diff driver off, as ``log`` does by default. The signature
+    check ``log.showSignature`` would run is pinned off for every call
+    (`_git.PINS`).
 
     ``--format=<COMMIT_MARK>%H`` writes the same control-character
     record separator the bench streams carry; source content cannot
@@ -1890,9 +1907,14 @@ def commit_patch_stream(
         "diff.mnemonicPrefix=false",
         "-c",
         "core.quotePath=false",
+        "-c",
+        "diff.interHunkContext=0",
         "log",
         "--no-walk=unsorted",
         "-p",
+        "--no-color",
+        "--no-textconv",
+        "--no-ext-diff",
         "-U0",
         f"--format={COMMIT_MARK}%H",
         *shas,
