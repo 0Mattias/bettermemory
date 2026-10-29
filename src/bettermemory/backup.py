@@ -1515,7 +1515,7 @@ def _apply_restore(
     log_end: dict[str, Any] | None,
     stamp: str,
 ) -> None:
-    """Swap the snapshot in, install the keys, rewind the head, record the restore and verify the store; returns nothing."""
+    """Swap the snapshot in, install the keys, rewind the head, record the restore and verify the store, setting ``swapped[0]``, appending to ``moved`` and filling ``report``'s keys_installed, head, origin, binding, record, row and log."""
     from . import store as _store
 
     ensure_owner_only_dir(store_file.parent, parents=True)

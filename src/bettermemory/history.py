@@ -756,7 +756,7 @@ def _link_change_rows(
     links_by_source: dict[str, set[str]],
     verifier: _RowVerifier,
 ) -> list[HistoryRow]:
-    """Report the links to the record that a linking record's version adds or drops; returns those rows."""
+    """Report the links to the record that a linking record's version adds or drops, advancing ``links_by_source`` to that version's links; returns those rows."""
     rows: list[HistoryRow] = []
     now = _link_types(row.kind, payload, record_id)
     was = links_by_source.get(subject, set())

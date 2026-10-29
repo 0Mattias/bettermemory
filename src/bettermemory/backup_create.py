@@ -70,7 +70,7 @@ def _bundle_manifest(
     keys_root: Path,
     warnings: list[str],
 ) -> dict[str, Any]:
-    """Hash the written files into the manifest and sign it when the key is held; returns the manifest."""
+    """Hash the written files into the manifest and sign it when the key is held, adding to ``warnings``; returns the manifest."""
     from . import __version__
 
     files: dict[str, dict[str, Any]] = {}

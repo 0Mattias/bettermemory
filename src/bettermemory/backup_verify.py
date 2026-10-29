@@ -31,7 +31,7 @@ def _check_bundle_files(
     report: dict[str, Any],
     problems: list[dict[str, Any]],
 ) -> bool:
-    """Check every file the manifest lists against its size and hash; returns whether the snapshot could not be read."""
+    """Check every file the manifest lists against its size and hash, adding to ``report["files"]`` and ``problems``; returns whether the snapshot could not be read."""
     snapshot_unreadable = False
     for name, entry in sorted(manifest["files"].items()):
         path = bundle / name
@@ -76,7 +76,7 @@ def _check_snapshot_claims(
     head: Head,
     problems: list[dict[str, Any]],
 ) -> None:
-    """Compare the manifest's store id, key and head with the snapshot's; returns nothing."""
+    """Compare the manifest's store id, key and head with the snapshot's, adding to ``problems``."""
     for claim, found in (
         ("store_id", facts.store_id),
         ("key_fingerprint", facts.key_fingerprint),
@@ -104,7 +104,7 @@ def _scratch_keys(
     report: dict[str, Any],
     problems: list[dict[str, Any]],
 ) -> dict[str, tuple[bytes, str]]:
-    """Find each key the snapshot names and file it in the scratch ring; returns the keys found, by fingerprint, with where."""
+    """Find each key the snapshot names and file it in the scratch ring, adding to ``report["keys"]`` and ``problems``; returns the keys found, by fingerprint, with where."""
     # The keys directory first: a key it holds is one this host already
     # trusts, and the report says so. A key found only in the bundle
     # comes with the bundle and is worth what the bundle is.
@@ -136,7 +136,7 @@ def _check_keys_and_signature(
     report: dict[str, Any],
     problems: list[dict[str, Any]],
 ) -> None:
-    """Flag a foreign segment and read the manifest's signature into the report; returns nothing."""
+    """Flag a foreign segment and read the manifest's signature, setting ``report["manifest_mac"]`` and adding to ``problems``."""
     # The snapshot's log is checked under every key found, so a
     # segment under a key only the bundle carries verifies whatever
     # comes before it. The live store reads a segment whose key this

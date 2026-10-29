@@ -1529,7 +1529,7 @@ def _watch_lifespan(
     optimize: Callable[[], None],
     settle: Callable[[], None],
 ) -> None:
-    """Wrap the app's lifespan so the watch and the optimizer run while it serves; returns nothing."""
+    """Wrap the app's lifespan so the watch and the optimizer run while it serves; the wrapped lifespan keeps its loop, the optimizer and the stop flag in ``holder``."""
     built_lifespan = app.router.lifespan_context
 
     @asynccontextmanager

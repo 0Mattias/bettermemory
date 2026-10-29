@@ -934,7 +934,7 @@ def _group_cross_repo_candidates(
 def _recorded_root_reachable(
     repo: str, worktree: str, root: Path, skipped: list[dict[str, str]]
 ) -> bool:
-    """Stat a recorded worktree before git runs there; returns False, the skip listed, when it cannot."""
+    """Stat a recorded worktree before git runs there, adding to ``skipped`` when it cannot; returns whether it can."""
     # Liveness in THREE states, not two, because the two-state read
     # asserted things it could not know — and crashed on one of them.
     #
@@ -1001,7 +1001,7 @@ def _recorded_root_group(
     claims_by_id: dict[str, tuple[str, ...]] | None,
     verified_head_by_id: dict[str, str | None] | None,
 ) -> CrossRepoDriftGroup | None:
-    """Judge one recorded worktree's candidates; returns its group, or None with the skip listed."""
+    """Judge one recorded worktree's candidates, adding to ``skipped`` when it is skipped; returns its group, or None when skipped."""
     live = capture(root)
     if live.repo is None or not repos_match(repo, live.repo):
         # `repo is None` is THREE outcomes wearing one value, and
