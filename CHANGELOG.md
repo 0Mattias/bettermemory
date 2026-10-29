@@ -649,6 +649,13 @@ the candidates' testing.
   (by committer date or by count) keeps exact.
   (`src/bettermemory/origin.py`, `src/bettermemory/origin_history.py`,
   `src/bettermemory/githead.py`)
+- **Two captures past the alternates registry's cap no longer race.** The
+  daemon's workers capture on their own threads, and the registry of a
+  remote's other spellings evicted its oldest entry without a lock: two
+  registrations past its 32 entries read the same oldest key, and the
+  second's pop raised `KeyError` out of `capture`. The check, the
+  eviction and the store are now one step under a lock, and the eviction
+  tolerates a key already gone. (`src/bettermemory/origin.py`)
 
 #### Known limitations
 

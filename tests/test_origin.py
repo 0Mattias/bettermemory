@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
@@ -300,6 +301,47 @@ def test_repos_match_caller_alternates_parameter() -> None:
         "git@github.com:paramowner/repo",
         caller_alternates=("gh:paramowner/repo",),
     )
+
+
+def test_registering_alternates_past_the_cap_on_two_threads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ENG-185: the daemon's workers capture on their own threads, and two
+    registrations past the cap read the same oldest key, so the second pop
+    raised KeyError out of `capture`. Here a second worker registers while
+    the first has read the oldest key and not yet popped it: neither raises,
+    both spellings are kept, and the registry holds its cap."""
+    from bettermemory import origin as origin_module
+
+    cap = origin_module._CALLER_REPO_ALTERNATES_CAP
+    raised: list[BaseException] = []
+    raced: list[bool] = []
+
+    def register_other() -> None:
+        try:
+            origin_module._register_caller_alternates("https://example.com/b.git", ())
+        except BaseException as exc:  # noqa: BLE001 - asserted below
+            raised.append(exc)
+
+    racer = threading.Thread(target=register_other)
+
+    class Registry(dict[str, tuple[str, ...]]):
+        def pop(self, key: Any, *default: Any) -> Any:
+            if not raced:
+                raced.append(True)
+                racer.start()
+                # Long enough for the racer to finish where nothing holds
+                # it; where a lock does, the first pop goes on without it.
+                racer.join(timeout=0.5)
+            return super().pop(key, *default)
+
+    registry = Registry({f"https://example.com/{n}.git": () for n in range(cap)})
+    monkeypatch.setattr(origin_module, "_CALLER_REPO_ALTERNATES", registry)
+    origin_module._register_caller_alternates("https://example.com/a.git", ())
+    racer.join()
+    assert raised == []
+    assert len(registry) == cap
+    assert {"https://example.com/a.git", "https://example.com/b.git"} <= set(registry)
 
 
 # ---------------------------------------------------------------------------

@@ -569,8 +569,14 @@ _UNANSWERED = _Unanswered()
 # `current_repo` (`caller_origin.repo`); process-local and never
 # persisted, so the on-disk format is untouched. Bounded FIFO so a
 # long-lived server hopping across many repos can't grow it unboundedly.
+# The daemon's workers capture on their own threads, so the lock makes the
+# check, the eviction and the store one step: two registrations past the
+# cap otherwise read the same oldest key, and the second pop raised
+# KeyError out of `capture` (or, had it tolerated the miss, the registry
+# grew past its cap). A lookup is one dict read and takes no lock.
 _CALLER_REPO_ALTERNATES: dict[str, tuple[str, ...]] = {}
 _CALLER_REPO_ALTERNATES_CAP = 32
+_CALLER_REPO_ALTERNATES_LOCK = threading.Lock()
 
 
 def _register_caller_alternates(repo_url: str, alternates: tuple[str, ...]) -> None:
@@ -579,13 +585,14 @@ def _register_caller_alternates(repo_url: str, alternates: tuple[str, ...]) -> N
     Registering an empty tuple is meaningful — it clears a stale entry
     after the remote's extra URLs were removed from git config.
     """
-    if (
-        repo_url not in _CALLER_REPO_ALTERNATES
-        and len(_CALLER_REPO_ALTERNATES) >= _CALLER_REPO_ALTERNATES_CAP
-    ):
-        # FIFO eviction — dicts preserve insertion order.
-        _CALLER_REPO_ALTERNATES.pop(next(iter(_CALLER_REPO_ALTERNATES)))
-    _CALLER_REPO_ALTERNATES[repo_url] = alternates
+    with _CALLER_REPO_ALTERNATES_LOCK:
+        if (
+            repo_url not in _CALLER_REPO_ALTERNATES
+            and len(_CALLER_REPO_ALTERNATES) >= _CALLER_REPO_ALTERNATES_CAP
+        ):
+            # FIFO eviction — dicts preserve insertion order.
+            _CALLER_REPO_ALTERNATES.pop(next(iter(_CALLER_REPO_ALTERNATES)), None)
+        _CALLER_REPO_ALTERNATES[repo_url] = alternates
 
 
 def repos_match(
