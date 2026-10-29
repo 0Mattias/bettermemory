@@ -969,7 +969,7 @@ def test_a_head_the_log_does_not_end_at_warns(
     check = env.checks()["key"]
     assert check.status == "warn"
     assert fragment in check.summary
-    assert check.remedy == "run `bettermemory log verify`"
+    assert check.remedy == doctor._ROLLBACK_REMEDY
 
 
 def test_a_head_that_lags_the_log_is_ok(env: Env) -> None:

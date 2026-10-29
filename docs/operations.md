@@ -491,7 +491,7 @@ it is.
 **Keep the keys apart from the bundles.** Without `--include-key` a
 bundle holds no key, and verifies and restores only where the keys
 directory holds it. Back the keys directory up separately, to a place
-the bundles' readers cannot reach; `bettermemory key export FILE` writes
+the bundles' readers cannot reach; `bettermemory key export --out FILE` writes
 one store's keys to one owner-only file for that, and `bettermemory key
 import FILE` files them back. A bundle made with `--include-key`
 carries the store's key and any retired keys its log names, and anyone

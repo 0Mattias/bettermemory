@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from bettermemory import store_keys
+from bettermemory import doctor, store_keys
 from bettermemory.cli import main as cli_main
 from bettermemory.log import KeyRing
 
@@ -77,6 +77,46 @@ def test_log_verify_help_names_the_commands(
     assert "bettermemory key import" in text
     assert "bettermemory log accept-history --yes" in text
     assert "Deleting" not in text
+
+
+@pytest.mark.parametrize("name", (*RUNBOOK, "docs/api.md"))
+def test_key_export_is_written_with_out(name: str) -> None:
+    """`key export` takes its file as `--out FILE` (cold review M3)."""
+    flat = " ".join((_ROOT / name).read_text(encoding="utf-8").split())
+    bare = re.findall(r"key export(?! --out)(?!`)[^.;]{0,20}", flat)
+    assert bare == [], bare
+
+
+def test_doctors_head_remedies_name_the_commands(tmp_path: Path) -> None:
+    """A head the log does not end at names `backup restore` and `log
+    accept-history --yes`; an absent one asks for no copy by hand (cold
+    review M4)."""
+    head = tmp_path / f"{STORE_ID}.head"
+    for tail in (None, (2, "mac")):
+        finding = doctor._head_finding(
+            head_seq=3, head_mac="mac", tail=tail, head_path=head
+        )
+        assert finding is not None and finding.remedy is not None
+        assert "bettermemory backup restore" in finding.remedy
+        assert "bettermemory log accept-history --yes" in finding.remedy
+    mismatch = doctor._head_finding(
+        head_seq=3, head_mac="mac", tail=(3, "other"), head_path=head
+    )
+    assert mismatch is not None and mismatch.remedy == doctor._ROLLBACK_REMEDY
+    absent = doctor._head_finding(
+        head_seq=None, head_mac=None, tail=(3, "mac"), head_path=head
+    )
+    assert absent is not None and absent.remedy is not None
+    assert "copy" not in absent.remedy
+
+
+def test_the_rc14_changelog_advises_no_binding_deletion() -> None:
+    """The unreleased section names `key adopt`, not a binding to delete
+    (cold review M4)."""
+    text = (_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    rc14 = text[text.index("### 9.0.0rc14") : text.index("### 9.0.0rc13")]
+    flat = " ".join(rc14.split())
+    assert "deleting the `<store_id>.path` they name" not in flat
 
 
 @pytest.mark.parametrize("name", RUNBOOK)

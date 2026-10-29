@@ -1891,7 +1891,8 @@ follows the candidates' testing.
   renders it (ok only when present, else high), each with the state in
   `details["key_state"]`. On the copy all three now say the ring "is
   bound elsewhere", name the original and advise moving or removing one
-  store or deleting the `<store_id>.path` they name. A reader's open
+  store, or `bettermemory key adopt --yes` from the store that keeps the
+  ring. A reader's open
   without the key now reads the binding too, so it logs the same
   warning, once per pair of files. Doctor's foreign-key detail
   `found_fingerprint` is now `held_fingerprint`, the audit's name.

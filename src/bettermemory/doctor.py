@@ -735,6 +735,17 @@ def _open_remedy(path: Path, exc: Exception) -> str:
     return "restore the store from a copy; doctor leaves the file as it is"
 
 
+#: The remedy of a head checkpoint the log does not end at: the commands
+#: that read it, roll back to a backup, or accept an older copy on the
+#: record, never a key-ring file to place or delete.
+_ROLLBACK_REMEDY = (
+    "run `bettermemory log verify`; to go back to a backup, "
+    "`bettermemory backup restore`; for an older copy put back on "
+    "purpose, `bettermemory log accept-history --yes` accepts its "
+    "history on the record"
+)
+
+
 def _head_finding(
     *,
     head_seq: int | None,
@@ -754,8 +765,8 @@ def _head_finding(
             WARN,
             f"no head checkpoint at {head_path}: `bettermemory log verify` cannot "
             "check the log's end",
-            "the next write records one; when the keys directory is copied, copy "
-            f"{head_path.name} with the key",
+            "the next write records one; nothing in the keys directory is placed "
+            "by hand",
         )
     if tail is None or head_seq > tail[0]:
         last = (
@@ -764,13 +775,13 @@ def _head_finding(
         return Finding(
             WARN,
             f"the head checkpoint names seq {head_seq}, but {last}",
-            "run `bettermemory log verify`",
+            _ROLLBACK_REMEDY,
         )
     if head_seq == tail[0] and head_mac != tail[1]:
         return Finding(
             WARN,
             f"the head checkpoint names seq {head_seq} with another MAC than the log's",
-            "run `bettermemory log verify`",
+            _ROLLBACK_REMEDY,
         )
     return None
 
