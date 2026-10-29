@@ -204,6 +204,7 @@ from .store_keys import (
     KeyState as KeyState,
     _claim_key_ring,
     key_state as key_state,
+    _signing_key,
     _signs_a_segment,
     _store_id_at as _store_id_at,
     configured_strict_provenance as configured_strict_provenance,
@@ -1409,6 +1410,15 @@ class Store:
         if self._key is None:
             # In the words the open read the key's state in (`key_state`).
             raise RuntimeError(self.key_state.refusal(self._path))
+        # Meta read again under the write lock: a rekey another connection
+        # committed since this one opened names the key to sign with.
+        key = _signing_key(conn, self._keyring, self._path, self._key)
+        if key != self._key:
+            self._key = key
+            self._key_state = KeyState(
+                KEY_PRESENT, self._keyring, self._path, fingerprint(key), key=key
+            )
+            self._forget_segments()
         row = append_row(
             conn, key=self._key, kind=kind, payload=payload, session=session, ts=ts
         )

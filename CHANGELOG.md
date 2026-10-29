@@ -1697,6 +1697,30 @@ follows the candidates' testing.
   `SECURITY.md`, `docs/api.md`, `docs/operations.md`,
   `tests/test_read_only_open.py`, `tests/test_posture.py`,
   `tests/test_sqlite_uri.py`)
+- **A rekey between a connection's open and its write no longer reads as
+  tampering.** A connection reads its key once, at open, and
+  `Store._append` signed with it whatever meta said by the time the write
+  transaction began: a rekey another connection committed in between (an
+  owner's open that replaced a lost key) left the next row signed with
+  the old key inside the new key's segment, and `log verify` read the
+  store `tampered`. `_append` now reads `meta.key_fingerprint` again
+  inside its transaction, where the write lock holds it until the commit
+  (`store_keys._signing_key`): while meta names this connection's key it
+  signs with it; when meta names the key ring's current key, the
+  connection takes that key, says so in the log at INFO, and signs with
+  it. Meta is not authenticated, so a key it names that the ring does not
+  hold (an edit of the file, or a rekey under another keys directory) is
+  not taken at its word: the connection signs on under its own key as
+  before. After an edit of meta alone, `log verify` reads the store
+  tampered until the next owner's open and clean after it; after a rekey
+  under another keys directory it reports that rekey's segment as a
+  `foreign_segment` (tampered) from then on, this connection's own rows
+  in it included, and the next owner's open closes the segment, so the
+  rows after it verify. Refusing there would let anyone who can write the
+  store file stop a running daemon's writes. One more lookup of the
+  one-row `meta` key per appended row.
+  (`src/bettermemory/store_keys.py`, `src/bettermemory/store.py`,
+  `docs/api.md`, `tests/test_append_rekey_race.py`)
 
 #### Known limitations
 
@@ -1976,6 +2000,14 @@ follows the candidates' testing.
   the middle of a write leaves a `-journal` that only a writing open can
   roll back, so the read-only commands report the store unreadable until
   one has opened it.
+- **A rekey under another keys directory still opens a foreign segment.**
+  A connection whose key ring does not hold the key meta names signs on
+  under its own key into that segment, as before, which `log verify`
+  reports as a `foreign_segment` (tampered) from then on, this
+  connection's own rows in it included; the next owner's open closes the
+  segment, so the rows after it verify. Each such write also reads the
+  ring's current key file once. A reader's checking key
+  (`can_verify`) is still the one its open read.
 
 ### 9.0.0rc13
 

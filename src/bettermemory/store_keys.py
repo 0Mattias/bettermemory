@@ -10,7 +10,9 @@ doctor's `key` check and posture's `key.match` finding all read it through
 another file still holding the store id (`_key_ring_elsewhere`), read
 without opening it as a store (`_store_id_at`), warned about once per pair
 of files (`_warn_bound_elsewhere`). `Store.open` also checks whether a key
-signs a segment of the log (`_signs_a_segment`). Also
+signs a segment of the log (`_signs_a_segment`), and `Store._append`
+which key a row signs with once meta has been read again under the
+write lock (`_signing_key`). Also
 `configured_strict_provenance`. It logs as `bettermemory.store`. `store`
 re-exports every name a caller reads; a test that patches
 `_BOUND_ELSEWHERE_WARNED` patches this module. It lives apart from
@@ -522,6 +524,49 @@ def key_state(
     return KeyState(
         state, keyring, store_file, expected, key=key, bound_to=other, unread=unread
     )
+
+
+def _signing_key(
+    conn: sqlite3.Connection, keyring: KeyRing, path: Path, key: bytes
+) -> bytes:
+    """The key a row appended inside the caller's write transaction signs
+    with (`Store._append`, ENG-81). A connection reads its key once, at
+    open; another connection's rekey can commit before this one's write
+    transaction begins, and a row signed with the old key inside the new
+    key's segment reads ``tampered``. So meta's ``key_fingerprint`` is read
+    again here, under the write lock, which holds it until the commit:
+    ``key`` while meta still names it; the key ring's current key when meta
+    names that one (the rekey replaced the key in this ring, which only a
+    process that can write the keys directory, and so holds the key, can
+    do). Otherwise still ``key``: meta is not authenticated, so a key meta
+    names that this ring does not hold (an edit of the file, or a rekey
+    under another keys directory) is not taken at its word. The owner goes
+    on signing under its own key into that segment, as it did before this
+    check. After such a rekey `log verify` reports the segment as a
+    foreign_segment (tampered) from then on, this connection's own rows in
+    it included; the next owner's open closes the segment
+    (`Store._close_foreign_tail`, `Store._reclaim`), so the rows after it
+    verify. Refusing would let anyone who can write the store file stop
+    every write of a running daemon."""
+    row = conn.execute(
+        "SELECT value FROM meta WHERE key = 'key_fingerprint'"
+    ).fetchone()
+    recorded = None if row is None else str(row[0])
+    if recorded is None or recorded == fingerprint(key):
+        return key
+    try:
+        current = keyring.load_current()
+    except KeyUnreadableError:
+        current = None
+    if current is not None and fingerprint(current) == recorded:
+        log.info(
+            "store %s was rekeyed since this connection opened; it signs with "
+            "the new key %s",
+            path,
+            recorded[:16],
+        )
+        return current
+    return key
 
 
 def configured_strict_provenance() -> bool:
