@@ -62,7 +62,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import _install_hints
+from . import _install_hints, claude_paths
 
 if TYPE_CHECKING:
     from .config import Config
@@ -128,9 +128,6 @@ PLUGIN_NAME = "bettermemory"
 _HOOK_WORDS = frozenset({"hook", "session-start", "audit-turn", "prompt-recall"})
 
 _PLUGIN_INSTALL = "/plugin install bettermemory@bettermemory"
-_HOOKS_COPY = (
-    "copy the three hooks of the plugin's hooks/hooks.json into ~/.claude/settings.json"
-)
 _BUG_REMEDY = (
     "this is a bug in doctor; report it with this output at "
     "https://github.com/0Mattias/bettermemory/issues"
@@ -1173,6 +1170,15 @@ def launcher_problem(command: str, *, what: str, remedy: str) -> Finding | None:
     return None
 
 
+def _hooks_copy() -> str:
+    """The remedy that copies the plugin's hooks by hand, naming the user
+    settings file Claude Code reads here (`claude_paths.user_settings_path`)."""
+    return (
+        "copy the three hooks of the plugin's hooks/hooks.json into "
+        f"{claude_paths.user_settings_path()}"
+    )
+
+
 def _hook_event_word(words: Sequence[str]) -> bool:
     return any(word in _HOOK_WORDS for word in words[1:])
 
@@ -1215,11 +1221,12 @@ def _read_json_object(path: Path) -> dict[str, Any]:
 
 def _claude_registrations(cwd: Path | None, binary: str) -> list[str]:
     """Where Claude Code registers a bettermemory MCP server outside the
-    plugin: the user scope (`~/.claude.json`'s `mcpServers`), the local
-    scope (its `projects[<cwd>].mcpServers`) and the project scope
-    (`./.mcp.json`)."""
+    plugin: the user scope (the global config's `mcpServers`, in
+    ``$CLAUDE_CONFIG_DIR`` when it is set: `claude_paths.global_config_path`),
+    the local scope (its `projects[<cwd>].mcpServers`) and the project
+    scope (`./.mcp.json`)."""
     found: list[str] = []
-    user_json = Path.home() / ".claude.json"
+    user_json = claude_paths.global_config_path()
     sources: list[tuple[str, object]] = []
     with contextlib.suppress(OSError, ValueError):
         data = _read_json_object(user_json)
@@ -1233,7 +1240,7 @@ def _claude_registrations(cwd: Path | None, binary: str) -> list[str]:
                 )
     if cwd is not None:
         with contextlib.suppress(OSError, ValueError):
-            mcp_json = cwd / ".mcp.json"
+            mcp_json = claude_paths.project_mcp_path(cwd)
             sources.append(
                 (str(mcp_json), _read_json_object(mcp_json).get("mcpServers"))
             )
@@ -1258,22 +1265,21 @@ def check_claude_code(ctx: _Context) -> Check:
     one place that says so."""
     from .init import find_binary
 
-    home = Path.home()
-    claude_dir = home / ".claude"
-    if not claude_dir.is_dir() and not (home / ".claude.json").is_file():
+    # The configuration directory and the global config move together
+    # under CLAUDE_CONFIG_DIR (`claude_paths`); the project files do not.
+    claude_dir = claude_paths.config_dir()
+    global_config = claude_paths.global_config_path()
+    if not claude_dir.is_dir() and not global_config.is_file():
         return Check(
             "claude_code",
             OK,
-            "Claude Code not found (no ~/.claude or ~/.claude.json)",
+            f"Claude Code not found (no {claude_dir} or {global_config})",
             None,
-            {"found": False},
+            {"found": False, "config_dir": str(claude_dir)},
         )
-    settings = [claude_dir / "settings.json"]
+    settings = [claude_paths.user_settings_path()]
     if ctx.cwd is not None:
-        settings += [
-            ctx.cwd / ".claude" / "settings.json",
-            ctx.cwd / ".claude" / "settings.local.json",
-        ]
+        settings += list(claude_paths.project_settings_paths(ctx.cwd))
     findings: list[Finding] = []
     plugin: bool | None = None
     plugin_source: str | None = None
@@ -1312,6 +1318,7 @@ def check_claude_code(ctx: _Context) -> Check:
     registrations = _claude_registrations(ctx.cwd, binary)
     details: dict[str, Any] = {
         "found": True,
+        "config_dir": str(claude_dir),
         "plugin_enabled": plugin is True,
         "plugin_source": plugin_source,
         "hooks": hooks,
@@ -1360,7 +1367,7 @@ def check_claude_code(ctx: _Context) -> Check:
                 WARN,
                 "no bettermemory hooks in Claude Code: the session brief, the "
                 "prompt recall and the turn-end settlement are off",
-                f"install the plugin ({_PLUGIN_INSTALL}), or {_HOOKS_COPY}",
+                f"install the plugin ({_PLUGIN_INSTALL}), or {_hooks_copy()}",
             )
         )
     elif not plugin:
@@ -1371,7 +1378,7 @@ def check_claude_code(ctx: _Context) -> Check:
                     WARN,
                     f"the settings hooks cover {', '.join(sorted(hooks))} but not "
                     f"{', '.join(missing)}",
-                    _HOOKS_COPY,
+                    _hooks_copy(),
                 )
             )
     if not plugin and not registrations:
@@ -1624,7 +1631,7 @@ def _safe_cwd() -> Path | None:
 def run_checks(*, cwd: Path | None = None) -> list[Check]:
     """Every check, in `CHECK_IDS` order. `cwd` is the directory the store
     rule and Claude Code's project files (`.claude/settings*.json`,
-    `.mcp.json`, the local scope in `~/.claude.json`) are read from
+    `.mcp.json`, the local scope in the global config) are read from
     (default: this process's). The `clients` check reads the paths
     `init.KNOWN_CLIENTS` names, whose project-scoped ones `init` places at
     the process's own cwd."""

@@ -44,7 +44,7 @@ from typing import Any, Callable
 
 import yaml
 
-from . import _fsutil
+from . import _fsutil, claude_paths
 from .identity import ENV_CLIENT
 from .prompts import SYSTEM_PROMPT_ADDENDUM
 
@@ -82,16 +82,17 @@ class ClientPaths:
 
 
 def _claude_code_paths() -> ClientPaths:
-    # Claude Code reads `~/.claude.json` for user-scope MCP servers, and
-    # `./.mcp.json` (project root) for project-scope. We default to user
-    # scope on auto-patch — most strangers want "this works everywhere",
-    # not "this works in one repo".
+    # Claude Code reads its global config for user-scope MCP servers
+    # (`~/.claude.json`, or `$CLAUDE_CONFIG_DIR/.claude.json` when that is
+    # set: `claude_paths`), and `./.mcp.json` (project root) for
+    # project-scope. We default to user scope on auto-patch — most
+    # strangers want "this works everywhere", not "this works in one repo".
     return ClientPaths(
         name="claude-code",
         description="Claude Code CLI",
         paths=(
-            Path.home() / ".claude.json",
-            Path.cwd() / ".mcp.json",
+            claude_paths.global_config_path(),
+            claude_paths.project_mcp_path(Path.cwd()),
         ),
     )
 
@@ -830,14 +831,6 @@ DECLARATION_DENY_RULES = (
 )
 
 
-def claude_code_settings_path(config_path: Path) -> Path:
-    """The Claude Code settings file beside an MCP config: Claude Code reads
-    permission rules from `settings.json`, not from `~/.claude.json`, so the
-    user-scope `~/.claude.json` pairs with `~/.claude/settings.json` and a
-    project's `.mcp.json` with that project's `.claude/settings.json`."""
-    return config_path.parent / ".claude" / "settings.json"
-
-
 def remove_claude_code_deny_rules(settings_path: Path) -> dict[str, Any]:
     """Remove `DECLARATION_DENY_RULES` from `permissions.deny` in a Claude
     Code settings file that carries them; a file that does not exist, or
@@ -1345,8 +1338,10 @@ def cli_init(
     JSON `mcpServers` snippet for every JSON client, the YAML
     `mcp_servers` block for Hermes. For Claude Code the patch also removes
     the `DECLARATION_DENY_RULES` an earlier candidate added to the
-    settings file beside the config (`claude_code_settings_path`), and
-    says so when it did."""
+    settings file that pairs with the config
+    (`claude_paths.settings_for_mcp_config`: the user settings for the
+    global config, under ``CLAUDE_CONFIG_DIR`` when it is set), and says
+    so when it did."""
     if name is None:
         name = DEFAULT_SERVER_NAME
     if client is not None and client not in KNOWN_CLIENTS:
@@ -1391,7 +1386,7 @@ def cli_init(
             )
             if client == "claude-code":
                 out["permissions"] = remove_claude_code_deny_rules(
-                    claude_code_settings_path(target)
+                    claude_paths.settings_for_mcp_config(target)
                 )
         print(json.dumps(out, indent=2))
         return
@@ -1422,5 +1417,5 @@ def cli_init(
     )
     if client == "claude-code":
         _print_permissions_summary(
-            remove_claude_code_deny_rules(claude_code_settings_path(target))
+            remove_claude_code_deny_rules(claude_paths.settings_for_mcp_config(target))
         )

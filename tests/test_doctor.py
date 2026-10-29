@@ -1200,7 +1200,46 @@ _ALL_HOOKS = {
 def test_no_claude_code_is_ok(env: Env) -> None:
     check = env.checks()["claude_code"]
     assert check.status == "ok"
-    assert check.details == {"found": False}
+    assert check.details == {"found": False, "config_dir": str(env.home / ".claude")}
+
+
+def test_claude_code_is_read_where_claude_config_dir_points(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-176. Claude Code keeps its settings and its global config in
+    ``$CLAUDE_CONFIG_DIR`` when that is set (`claude_paths`); doctor read
+    ``~/.claude`` and ``~/.claude.json`` whatever it said, so it judged
+    files that Claude Code never reads. The home layout here says the
+    plugin is on and a server is registered; the Claude Code this
+    variable names has no files yet, so it is not found. Its own files
+    are the ones doctor reads."""
+    config_dir = env.tmp / "claude-work"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config_dir))
+    env.plugin()
+    registered = {
+        "mcpServers": {"bettermemory": {"command": "bettermemory", "args": []}}
+    }
+    env.write_json(env.home / ".claude.json", registered)
+    check = env.checks()["claude_code"]
+    assert check.status == "ok"
+    assert check.details == {"found": False, "config_dir": str(config_dir)}
+    assert str(config_dir) in check.summary
+
+    env.write_json(
+        config_dir / "settings.json",
+        {"enabledPlugins": {"bettermemory@bettermemory": True}},
+    )
+    env.write_json(config_dir / ".claude.json", registered)
+    check = env.checks()["claude_code"]
+    assert check.status == "ok", check
+    assert check.details["plugin_source"] == str(config_dir / "settings.json")
+    assert check.details["mcp_registrations"] == [str(config_dir / ".claude.json")]
+
+    (config_dir / "settings.json").unlink()
+    check = env.checks()["claude_code"]
+    assert check.status == "warn"
+    assert "no bettermemory hooks" in check.summary
+    assert str(config_dir / "settings.json") in (check.remedy or "")
 
 
 def test_the_plugin_enabled_is_ok(env: Env) -> None:

@@ -448,6 +448,34 @@ the candidates' testing.
   one high `key.match` finding ("every opener refuses this store") and
   runs no ring check from it.
   (`src/bettermemory/log.py`, `src/bettermemory/posture.py`)
+- **`init` and `doctor` find Claude Code's files where `CLAUDE_CONFIG_DIR`
+  puts them.** Claude Code keeps its global config (`.claude.json`, the
+  user-scope MCP servers and the project registry) and its user settings
+  in the directory `CLAUDE_CONFIG_DIR` names when that is set, the global
+  config inside it and the settings as its own `settings.json`. `init`
+  and `doctor` read `~/.claude.json` and `~/.claude` whatever the variable
+  said, so with it set `bettermemory init --client claude-code` wrote a
+  file that Claude Code never reads and reported "added", the deny rules
+  rc1 to rc5 added stayed in the settings file it does read (even
+  `--config-path $CLAUDE_CONFIG_DIR/.claude.json` looked for them in
+  `$CLAUDE_CONFIG_DIR/.claude/settings.json`), and `doctor` judged the
+  home layout's files, or reported Claude Code not found. One module now
+  resolves Claude Code's paths the way Claude Code does (the
+  configuration directory, the global config, the user settings, a
+  project's files, and the settings file that pairs with an MCP config),
+  and init, doctor, the security audit and `security sandbox` all read
+  them through it; the settings file is never derived from the MCP file's
+  parent alone. The global config is also found where Claude Code reads it
+  on the hosts the old answer missed: a legacy `.config.json` an old
+  install left in the configuration directory, which Claude Code reads
+  first, and `.claude-custom-oauth.json` under
+  `CLAUDE_CODE_CUSTOM_OAUTH_URL`. A `~` in the variable is kept as
+  written, as Claude Code keeps it. The test suite clears both variables
+  for every test, so a suite run from a shell that sets them cannot reach
+  the developer's own files.
+  (`src/bettermemory/claude_paths.py`, `src/bettermemory/init.py`,
+  `src/bettermemory/doctor.py`, `src/bettermemory/posture.py`,
+  `src/bettermemory/sandbox_settings.py`, `docs/clients.md`)
 
 #### Known limitations
 

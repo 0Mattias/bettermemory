@@ -36,7 +36,7 @@ from typing import Any
 
 import pytest
 
-from bettermemory import _daemon_client, posture, sandbox_settings
+from bettermemory import _daemon_client, claude_paths, posture, sandbox_settings
 from bettermemory import config as _config
 from bettermemory.config import Config
 from bettermemory.log import KeyRing
@@ -78,7 +78,7 @@ def layout(tmp_path: Path, keys_dir: Path, monkeypatch: pytest.MonkeyPatch) -> L
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
-    monkeypatch.delenv(sandbox_settings.CLAUDE_CONFIG_DIR_ENV, raising=False)
+    monkeypatch.delenv(claude_paths.CLAUDE_CONFIG_DIR_ENV, raising=False)
     managed = tmp_path / "managed" / "managed-settings.json"
     monkeypatch.setattr(
         sandbox_settings,
@@ -428,6 +428,27 @@ def test_keys_inside_the_store_directory_are_high(
     report = audit()
     assert _by_id(report, "key.placement").status == "high"
     assert _by_id(report, "key.match").status == "ok"
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="no Claude Code sandbox on native Windows"
+)
+def test_the_audit_reads_the_user_settings_where_claude_config_dir_points(
+    layout: Layout, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-176. The user settings file the audit reads is the one Claude
+    Code reads: ``$CLAUDE_CONFIG_DIR/settings.json`` when the variable is
+    set, through the same resolver init and doctor use; the home layout's
+    file is not read then."""
+    work = tmp_path / "claude-work"
+    monkeypatch.setenv(claude_paths.CLAUDE_CONFIG_DIR_ENV, str(work))
+    _write_json(
+        layout.home / ".claude" / "settings.json", {"sandbox": {"enabled": True}}
+    )
+    _write_json(work / "settings.json", {"sandbox": {"enabled": False}})
+    finding = _by_id(audit(), "claude.sandbox")
+    assert finding.status == "info"
+    assert finding.details["read"] == [str(work / "settings.json")]
 
 
 def test_unreadable_meta_is_a_warning(layout: Layout) -> None:

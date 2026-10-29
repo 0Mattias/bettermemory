@@ -26,7 +26,7 @@ from pathlib import Path, PureWindowsPath
 import platformdirs
 import pytest
 
-from bettermemory import _daemon_client
+from bettermemory import _daemon_client, claude_paths
 from bettermemory import config as _config
 from bettermemory import log as _log
 from bettermemory import sandbox_settings
@@ -57,7 +57,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     fake.mkdir()
     monkeypatch.setenv("HOME", str(fake))
     monkeypatch.setenv("USERPROFILE", str(fake))
-    monkeypatch.delenv(sandbox_settings.CLAUDE_CONFIG_DIR_ENV, raising=False)
+    monkeypatch.delenv(claude_paths.CLAUDE_CONFIG_DIR_ENV, raising=False)
     return fake
 
 
@@ -314,7 +314,7 @@ def test_user_settings_honour_claude_config_dir(
         sandbox_settings.claude_user_settings_path()
         == home / ".claude" / "settings.json"
     )
-    monkeypatch.setenv(sandbox_settings.CLAUDE_CONFIG_DIR_ENV, str(tmp_path / "cc"))
+    monkeypatch.setenv(claude_paths.CLAUDE_CONFIG_DIR_ENV, str(tmp_path / "cc"))
     assert (
         sandbox_settings.claude_user_settings_path()
         == tmp_path / "cc" / "settings.json"

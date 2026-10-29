@@ -21,7 +21,7 @@ For Claude Code 2.x. Bundles the MCP server registration AND a system-prompt-lev
 bettermemory init --client claude-code
 ```
 
-Patches `~/.claude.json` (user scope). For project scope, point at the repo's `.mcp.json`:
+Patches `~/.claude.json` (user scope), or `$CLAUDE_CONFIG_DIR/.claude.json` when `CLAUDE_CONFIG_DIR` is set, the file Claude Code reads then (`.claude-custom-oauth.json` under `CLAUDE_CODE_CUSTOM_OAUTH_URL`, and a legacy `.config.json` in the configuration directory when an old install left one, which Claude Code reads first). init also removes the deny rules an earlier 9.0 candidate added from the user settings file (`~/.claude/settings.json`, or `$CLAUDE_CONFIG_DIR/settings.json`). For project scope, point at the repo's `.mcp.json`:
 
 ```sh
 bettermemory init --client claude-code --config-path .mcp.json
@@ -176,7 +176,7 @@ If you find a JSON client that does not take this shape, please file an issue.
 | Client          | Path | Init auto-patch |
 |-----------------|------|-----------------|
 | Claude Code (plugin) | `/plugin install bettermemory@bettermemory` | n/a (plugin-managed) |
-| Claude Code (manual) | user `~/.claude.json` or project `.mcp.json` | yes |
+| Claude Code (manual) | user `~/.claude.json` (`$CLAUDE_CONFIG_DIR/.claude.json` when set) or project `.mcp.json` | yes |
 | Claude Desktop  | platform-standard `claude_desktop_config.json` | yes |
 | Cursor          | `~/.cursor/mcp.json` or `<repo>/.cursor/mcp.json` | yes |
 | Continue        | `~/.continue/config.json` (legacy shape; current Continue wants a YAML list in `config.yaml`, see the caveat above) | writes + warns |

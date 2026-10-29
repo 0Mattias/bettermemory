@@ -218,6 +218,20 @@ def no_harness_session(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def no_claude_config_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test inherits the CLAUDE_CONFIG_DIR of the shell running the
+    suite: init, doctor and the audit resolve Claude Code's files through
+    it (`claude_paths`), so a test that fakes only the home directory would
+    otherwise read, or patch, the developer's real Claude Code config. A
+    test of the variable sets it explicitly. The same holds for
+    CLAUDE_CODE_CUSTOM_OAUTH_URL, which renames the global config."""
+    from bettermemory.claude_paths import CLAUDE_CONFIG_DIR_ENV, CUSTOM_OAUTH_URL_ENV
+
+    monkeypatch.delenv(CLAUDE_CONFIG_DIR_ENV, raising=False)
+    monkeypatch.delenv(CUSTOM_OAUTH_URL_ENV, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def keys_dir(local_tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Every store a test opens keeps its key under the test's own
     directory (on local disk, `local_tmp_path`), never under the user's

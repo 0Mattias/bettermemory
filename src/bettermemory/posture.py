@@ -75,7 +75,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import _daemon_client, sandbox_settings
+from . import _daemon_client, claude_paths, sandbox_settings
 from ._fsutil import bounded_read, sqlite_file_uri
 from ._git import run_git
 from .config import (
@@ -1045,8 +1045,9 @@ def _settings_paths(platform: str) -> list[tuple[str, Path]]:
     """The settings files the audit reads, in the order Claude Code merges
     them: the managed file, then its drop-in directory's ``*.json`` files in
     name order (hidden ones skipped, as Claude Code skips them), then the
-    user's file. A project's own settings depend on where Claude Code
-    starts, and are not read."""
+    user's file, in the directory ``CLAUDE_CONFIG_DIR`` names when it is
+    set (`claude_paths.user_settings_path`). A project's own settings
+    depend on where Claude Code starts, and are not read."""
     managed = sandbox_settings.claude_managed_settings_path(platform)
     paths: list[tuple[str, Path]] = [("managed", managed)]
     drop_ins = managed.parent / "managed-settings.d"
@@ -1058,7 +1059,7 @@ def _settings_paths(platform: str) -> list[tuple[str, Path]]:
         )
     except OSError:
         pass
-    paths.append(("user", sandbox_settings.claude_user_settings_path()))
+    paths.append(("user", claude_paths.user_settings_path()))
     return paths
 
 

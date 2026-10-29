@@ -74,9 +74,10 @@ def add_subparser(
         default="settings",
         help=(
             "Which Claude Code settings file the block is for: `settings`, the "
-            "user's ~/.claude/settings.json (default), or `managed`, the "
-            "managed-settings.json nothing below overrides. The keys are the "
-            "same; the notes name the file."
+            "user's settings (~/.claude/settings.json, or "
+            "$CLAUDE_CONFIG_DIR/settings.json when that is set; the default), "
+            "or `managed`, the managed-settings.json nothing below overrides. "
+            "The keys are the same; the notes name the file."
         ),
     )
     sandbox.add_argument(

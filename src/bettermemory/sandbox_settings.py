@@ -77,6 +77,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePath, PureWindowsPath
 from typing import Any
 
+from . import claude_paths
 from . import config as _config
 from ._daemon_client import STATE_DIR_ENV
 from .config import (
@@ -90,10 +91,6 @@ from .config import (
 
 #: The values of ``--format``: the user settings file, or the managed one.
 FORMATS: tuple[str, ...] = ("settings", "managed")
-
-#: Where Claude Code keeps the home-directory files when it is set,
-#: ``~/.claude`` otherwise (Claude Code's settings documentation).
-CLAUDE_CONFIG_DIR_ENV = "CLAUDE_CONFIG_DIR"
 
 #: The rules for a project-local store, relative to the session's working
 #: directory. As deny rules, a single-segment relative pattern matches the
@@ -358,10 +355,9 @@ def settings_block(denied: list[Location], home: Path | None) -> dict[str, Any]:
 
 def claude_user_settings_path() -> Path:
     """The user's Claude Code settings file: ``$CLAUDE_CONFIG_DIR`` or
-    ``~/.claude``, then ``settings.json``."""
-    override = os.environ.get(CLAUDE_CONFIG_DIR_ENV)
-    base = Path(override).expanduser() if override else Path.home() / ".claude"
-    return base / "settings.json"
+    ``~/.claude``, then ``settings.json`` (`claude_paths.user_settings_path`,
+    which init, doctor and the audit read it through too)."""
+    return claude_paths.user_settings_path()
 
 
 def claude_managed_settings_path(platform: str | None = None) -> Path:
