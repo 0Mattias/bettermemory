@@ -7,11 +7,12 @@ held-commit and sparse-checkout probes, `detect_path_drift` with its
 anchored reads of attestations and relative citations,
 `_worktree_root_is_live` and `unverifiable_attestations`. The candidate
 scans, the caps and `_path_exists` come from `verify_candidates`, so a
-test that patches `Path` for the existence check patches that module.
-It lives apart from `verify.py` to keep each module under the package's
-2,000-line bound (ENG-96). From the verify family it imports
-`verify_candidates` alone; `verify.py` imports it and re-exports the
-names callers import from it.
+test that patches `Path` for the existence check patches that module;
+the body-candidate pass of an unanchored read comes from
+`path_drift_steps` (ENG-97). It lives apart from `verify.py` to keep each
+module under the package's 2,000-line bound (ENG-96). From the verify
+family it imports `verify_candidates` and `path_drift_steps` alone;
+`verify.py` imports it and re-exports the names callers import from it.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from . import _caches
 from ._paths import inside
 from .githead import GitDir, Stamp, locate, stamp
 from .gitobjects import ObjectReader, _config_object_format
+from .path_drift_steps import _check_body_candidates
 from .verify_candidates import (
     _CHECKABLE_CITATION_EXTENSIONS,
     _MAX_ANCHORED_CITATION_STATS,
@@ -870,7 +872,19 @@ def detect_path_drift(
     )
     if not candidates and anchor_root is None:
         return PathDriftReport(checked=(), missing=(), verified=())
+    return _detect_unanchored(
+        body, candidates, verified_paths, absent_paths, anchor_root
+    )
 
+
+def _detect_unanchored(
+    body: str,
+    candidates: list[tuple[str, bool, bool]],
+    verified_paths: tuple[str, ...] | list[str],
+    absent_paths: tuple[str, ...] | list[str],
+    anchor_root: Path | None,
+) -> PathDriftReport:
+    """Take the body and attestations; return an unanchored read's drift report."""
     # Run verified_paths through the same trim/validate pipeline the body
     # candidates pass through (`_normalize_candidate`) before the
     # `_claim_key` pass that handles `~`-expansion. Without
@@ -893,7 +907,7 @@ def detect_path_drift(
     # time a path is a string in `missing` there is nothing left on it to
     # tell prose from attestation, so the split has to be recorded where
     # the decision is made. Every append here is paired with an append to
-    # `missing` — the bucket is a subset marker, and the two helpers below
+    # `missing` — the bucket is a subset marker, and the three passes below
     # take it for the same reason.
     claim_anchored: list[str] = []
     verified: list[str] = []
@@ -904,132 +918,19 @@ def detect_path_drift(
     # one claim and land once. Every pass below dedupes against this one
     # set, and every key comes from the read's one `_ClaimKeys`.
     seen: set[str] = set()
-    for path, drop_if_missing, bare_spaced in candidates:
-        exists = _path_exists(path)
-        norm = keys(path)
-        # An attestation pins the citation: a path the caller explicitly
-        # named in `verified_paths` / `verified_absent_paths` is proven to
-        # be the complete, intended claim, which resolves any extraction
-        # ambiguity — the drops below never apply to attested candidates
-        # (otherwise a verified-then-deleted path would produce NO drift
-        # signal, breaking the documented contract).
-        attested = norm in verified_set or norm in absent_set
-        if not exists and not attested:
-            if bare_spaced:
-                # Existence-arbitrated fallback for spaced bare-scan
-                # candidates: the continuation rule can glue a prose
-                # acronym pair (`TCP/IP`, `CI/CD`) onto a real path
-                # (`/etc/hosts TCP/IP keepalive`). If the prefix up to
-                # the first space exists, the spaced run was prose —
-                # check the prefix instead, so the real path still gets
-                # its drift check. If neither form exists, the extraction
-                # is too ambiguous to trust; drop rather than flag a
-                # claim we may have manufactured. (Backticked spaced
-                # paths never take this branch — the author delimited
-                # those precisely, so a miss there is real drift.)
-                prefix = path.split(" ", 1)[0]
-                prefix_key = keys(prefix)
-                if _path_exists(prefix) and prefix_key not in seen:
-                    seen.add(prefix_key)
-                    checked.append(prefix)
-                    if prefix_key in verified_set:
-                        verified.append(prefix)
-                continue
-            if drop_if_missing:
-                # Ambiguous truncation: the bare scan stopped at
-                # ` Capitalized…` (or ` (2).pdf`-style continuations)
-                # right after this candidate, so the real citation may
-                # continue past the space. A missing-flag here would be
-                # manufactured by our own truncation, not by drift.
-                # An existing candidate is kept: existence proves the
-                # prefix is a real path regardless of the prose after it.
-                continue
-            if _is_multi_segment_routelike(path):
-                # An application route, not a deleted file. `_is_route`
-                # upstream can only suppress routes when the SAME body
-                # also happens to carry a domain-qualified URL to learn a
-                # vocabulary from, so a memory citing bare routes
-                # (`/api/v1/events/presence`, `/admin/macros`) had every
-                # one of them stat'd and reported missing. Kept out of
-                # `checked` and `missing` — "we looked and it wasn't
-                # there" is a meaningless statement about a URL path —
-                # but recorded in `dropped_as_route` so the suppression
-                # is at least readable off the returned report instead of
-                # leaving no trace anywhere. (Leaving no trace is what let
-                # 3.25.2's over-broad rule swallow real missing paths.)
-                # NOTE: a report whose ONLY non-empty bucket is this one
-                # still reaches no MCP surface — see the reach note on
-                # `PathDriftReport`.
-                #
-                # Deliberately LAST in this block: the spaced-bare and
-                # ambiguous-truncation arms above must arbitrate first,
-                # or a prose-glued candidate (`/tmp/real-dir TCP/IP`)
-                # would read as a route on its manufactured tail and skip
-                # the prefix-existence fallback that recovers the real
-                # path.
-                #
-                # Appended unguarded, unlike `checked` below. Every value
-                # that lands here is a candidate `path`, and
-                # `_extract_candidates` already dedupes those (it keys an
-                # index on the comparison form and appends only on a
-                # miss), so one route cannot arrive twice — a
-                # `not in dropped_as_route` guard would be unreachable.
-                # `checked` needs its guard for a reason that does not
-                # apply here: the spaced-bare arm above appends a DERIVED
-                # `prefix`, which a later, genuinely distinct candidate
-                # can equal.
-                dropped_as_route.append(path)
-                continue
-        if norm in seen:
-            continue
-        seen.add(norm)
-        checked.append(path)
-        if not exists:
-            if norm in absent_set:
-                expected_absent.append(path)
-            else:
-                # Known limitation: a bare absolute path that legitimately
-                # lives on a REMOTE host (`/opt/gophish`, `/data/compose/.env`
-                # on a homelab board) is stat'd against the LOCAL filesystem,
-                # so absence here says nothing about the host that owns it.
-                # Two outcomes, split by the route rule above:
-                #
-                #   * Reaches this line and reads `missing` — a perpetual
-                #     drift signal — when the citation carries an extension
-                #     (`/data/compose/.env`) or its parent happens to exist
-                #     locally (`/opt/gophish`, on a host that has `/opt`).
-                #   * Never reaches this line at all, since 3.25.2: any
-                #     extensionless non-home citation whose parent is absent
-                #     locally (`/srv/docker/gitea`, `/mnt/tank/media`) reads
-                #     as an application route and is DROPPED — not reported
-                #     missing, not even `checked`. It IS recorded in
-                #     `dropped_as_route`, which an in-process caller can
-                #     read. These shapes produce a route-ONLY report, so
-                #     no MCP surface emits them (a report that also
-                #     carries drift does ship the bucket via `to_dict()`).
-                #
-                # Either way `memory_verify(verified_absent_paths=[...])` is
-                # the intended escape hatch: it routes the citation to
-                # `expected_absent` above and pins it against BOTH outcomes
-                # (attested candidates skip the route drop entirely). There
-                # is no local-only heuristic that can tell a legitimately-
-                # remote path from a genuinely-deleted local one without
-                # also suppressing real local drift, so an unattested
-                # absence that gets this far stays `missing`.
-                missing.append(path)
-                if norm in verified_set:
-                    # Verified-then-deleted: the caller named this exact
-                    # path in `memory_verify(verified_paths=[...])`, so
-                    # its absence is evidence about a REVIEWED claim, not
-                    # about a token the extractor lifted out of a
-                    # sentence. That is the 3-of-3-real class in the
-                    # sweep, and the only shape in this loop that earns
-                    # escalation. (An absent-attested path never reaches
-                    # here — it took the `expected_absent` arm above.)
-                    claim_anchored.append(path)
-            continue
-        if norm in verified_set:
-            verified.append(path)
+    _check_body_candidates(
+        candidates,
+        verified_set,
+        absent_set,
+        checked=checked,
+        missing=missing,
+        claim_anchored=claim_anchored,
+        verified=verified,
+        expected_absent=expected_absent,
+        dropped_as_route=dropped_as_route,
+        seen=seen,
+        keys=keys,
+    )
 
     _check_anchored_attestations(
         anchor_root,
@@ -1850,7 +1751,7 @@ def _normalize_attestations(
     """Trim/validate an attestation list into a set of claim keys
     (`_claim_key`, through a read's `keys`) — the shared pipeline for
     `verified_paths` and `absent_paths` (see the call-site comment in
-    `detect_path_drift` for why both lists must run through the exact same
+    `_detect_unanchored` for why both lists must run through the exact same
     normalisation as the body candidates)."""
     out: set[str] = set()
     for raw in paths:

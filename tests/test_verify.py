@@ -3759,7 +3759,8 @@ def test_route_check_is_structurally_last_in_the_not_exists_block() -> None:
     above cannot construct the hazard.
 
     Asserts `_is_multi_segment_routelike` is the FINAL guard inside
-    `detect_path_drift`'s `not exists and not attested` block.
+    the `not exists and not attested` block of `detect_path_drift`'s
+    body-candidate pass (`path_drift_steps._check_body_candidates`).
 
     The guard is located by its TEST expression and the enclosing block
     by physical containment, then the ordering is pinned by identity.
@@ -3777,10 +3778,10 @@ def test_route_check_is_structurally_last_in_the_not_exists_block() -> None:
     import inspect
     import textwrap
 
-    from bettermemory import verify as verify_module
+    from bettermemory import path_drift_steps
 
     tree = ast.parse(
-        textwrap.dedent(inspect.getsource(verify_module.detect_path_drift))
+        textwrap.dedent(inspect.getsource(path_drift_steps._check_body_candidates))
     )
     guards = [
         node
