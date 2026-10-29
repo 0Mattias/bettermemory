@@ -28,8 +28,9 @@ would hide the fault it was run for, so this module reads only:
   read, never removed, and no daemon is started or stopped;
 - client and Claude Code settings files are read, never patched;
 - the keys directory is listed and each key ring's binding read, and
-  nothing in it changes unless `--clear-orphan-keys` is given, which
-  deletes the rings whose store is gone (`check_orphan_keys`).
+  nothing in it changes unless `--clear-orphan-keys --yes` is given,
+  which moves the rings whose store is shown gone to the keys
+  directory's quarantine, deleting nothing (`check_orphan_keys`).
 
 The read-only open writes nothing to the store file or beside it
 (`store_schema.connect_read_only`, 9.0.0rc14): no WAL switch, no chmod,
@@ -1652,20 +1653,25 @@ def check_security() -> Check:
     )
 
 
-def check_orphan_keys(ctx: _Context, *, clear: bool = False) -> Check:
-    """Key rings in the keys directory whose store is gone
+def check_orphan_keys(
+    ctx: _Context, *, clear: bool = False, apply: bool = False
+) -> Check:
+    """Key rings in the keys directory whose store is shown gone
     (`key_lifecycle.survey_rings`): a warning naming `--clear-orphan-keys`.
-    With ``clear`` they are deleted first (`key_lifecycle.clear_orphan_rings`,
-    under ``details["cleared"]``) and the survey reads what is left. A ring
-    whose store cannot be told gone, or that names no store file, is kept
-    and counted; the ring of the store this run checks is in use."""
+    With ``clear`` the clear's plan goes under ``details["clear"]``; with
+    ``apply`` too, those rings are moved to the quarantine directory first
+    (`key_lifecycle.clear_orphan_rings`; nothing is deleted) and the survey
+    reads what is left. A ring whose store is not shown gone, or that names
+    no store file, is kept and counted; the ring of the store this run
+    checks is in use. Each bound path is read within
+    `location.PROBE_BUDGET`, so a share that hangs does not hold doctor."""
     from .key_lifecycle import clear_orphan_rings, survey_rings
     from .store import STORE_FILENAME
 
     current = None if ctx.directory is None else ctx.directory / STORE_FILENAME
     details: dict[str, Any] = {}
     if clear:
-        details["cleared"] = clear_orphan_rings(current)
+        details["clear"] = clear_orphan_rings(current, apply=apply)
     survey = survey_rings(current)
     details.update(survey.to_dict())
     remedy = survey.remedy()
@@ -1740,15 +1746,16 @@ def _safe_cwd() -> Path | None:
 
 
 def run_checks(
-    *, cwd: Path | None = None, clear_orphan_keys: bool = False
+    *, cwd: Path | None = None, clear_orphan_keys: bool = False, yes: bool = False
 ) -> list[Check]:
     """Every check, in `CHECK_IDS` order. `cwd` is the directory the store
     rule and Claude Code's project files (`.claude/settings*.json`,
     `.mcp.json`, the local scope in the global config) are read from
     (default: this process's). The `clients` check reads the paths
     `init.KNOWN_CLIENTS` names, whose project-scoped ones `init` places at
-    the process's own cwd. ``clear_orphan_keys`` deletes the key rings
-    whose store is gone, at the `orphan_keys` check."""
+    the process's own cwd. ``clear_orphan_keys`` adds the plan of moving
+    the key rings whose store is shown gone to the quarantine, at the
+    `orphan_keys` check, and ``yes`` moves them."""
     ctx = _Context(cwd=_safe_cwd() if cwd is None else cwd)
     checks: list[Check] = []
     checks += _guarded(("install",), lambda: [check_install()])
@@ -1763,7 +1770,8 @@ def run_checks(
     checks += _guarded(("disk",), lambda: [check_disk(ctx)])
     checks += _guarded(("security",), lambda: [check_security()])
     checks += _guarded(
-        ("orphan_keys",), lambda: [check_orphan_keys(ctx, clear=clear_orphan_keys)]
+        ("orphan_keys",),
+        lambda: [check_orphan_keys(ctx, clear=clear_orphan_keys, apply=yes)],
     )
     return checks
 

@@ -130,24 +130,32 @@ follows the candidates' testing.
   `src/bettermemory/log.py`, `docs/api.md`, `tests/test_accept_history.py`,
   `tests/test_log_export.py`)
 - **`bettermemory doctor` names the key rings whose store is gone, and
-  `--clear-orphan-keys` deletes them (ENG-106).** One keys directory
-  serves every store on the host, and a store deleted with its directory
-  left its ring behind (keys, head, anchor, binding), with nothing to
+  `--clear-orphan-keys --yes` moves them to a quarantine (ENG-106).** One
+  keys directory serves every store on the host, and a store deleted
+  with its directory left its ring behind (keys, head, anchor, binding), with nothing to
   tell it from a live one but reading each binding by hand. The new
   `orphan_keys` check, last in the list, reads each ring's binding and
   the store id the bound file holds, without opening it as a store
-  (`store_keys._store_id_at`), and warns when a bound file is gone or
-  holds another store or none. `--clear-orphan-keys` deletes those
-  rings, each read again under its binding's lock first, so an owner's
-  open of a store moved there in the meantime keeps it. Kept whatever is
-  asked: a ring whose store file this user cannot read; one whose
-  nearest existing directory is a filesystem root, `/Volumes`, `/mnt`,
-  `/media`, `/run/media` or a user's directory under the last two,
-  where a volume or share that is not mounted would be; a ring that
-  names no store file (from before 9.0.0rc13); one a daemon still
-  serves; and the ring of the store doctor checks. A store moved by hand
-  and not opened since reads as gone, and the remedy names `key adopt
-  --yes` for it. Without the flag doctor still writes nothing.
+  (`store_keys._store_id_at`), each read within `location.PROBE_BUDGET`
+  (`location.bounded_read`), so a share that hangs does not hold doctor,
+  and warns when a store is shown gone: the directory the binding names
+  is there, can be read, is not empty, and holds no file by the store
+  file's name. `--clear-orphan-keys` prints the plan; with `--yes` it
+  moves those rings, never deleting a file, to `quarantine/<store_id>/`
+  under the keys directory (owner-only, with a `note.txt` line naming
+  the bound path, the reason and `key import`, which takes a key back),
+  each read again under its binding's lock first, so an owner's open of
+  a store moved there in the meantime keeps it; a name the quarantine
+  holds already is never written over. Kept whatever is asked, each
+  named: a ring whose bound directory is not there (a store moved or
+  deleted with its directory, a link to nothing on the way, a volume
+  not mounted), is empty (a mount point), cannot be read or does not
+  answer; one whose bound file is there and damaged or holds another
+  store; a ring that names no store file (from before 9.0.0rc13); one a
+  daemon still serves; and the ring of the store doctor checks. A store
+  moved by hand and not opened since reads as gone, and the remedy
+  names `key adopt --yes` for it. Without the flags doctor still writes
+  nothing.
   (`src/bettermemory/key_lifecycle.py`, `src/bettermemory/doctor.py`,
   `src/bettermemory/cli/doctor_cmd.py`, `docs/api.md`,
   `docs/operations.md`, `docs/installation.md`,

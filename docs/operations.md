@@ -232,10 +232,19 @@ and its key, the store file's pages and its search index, the daemon,
 the Claude Code and other client wiring, the disk, and the keys
 directory for key rings whose store is gone, each `ok`, `warn` or
 `fail` with a one-line fix.
-`doctor --clear-orphan-keys` deletes those rings; it keeps every ring
-whose store cannot be told gone (a path this user cannot read, a volume
-or share that is not mounted, a ring that names no store file), so run
-it again once a volume is back. `security audit` covers what `doctor` leaves out: file modes and
+`doctor --clear-orphan-keys` prints the plan, and `doctor
+--clear-orphan-keys --yes` moves those rings to `quarantine/<store_id>/`
+under the keys directory, owner-only, each with a `note.txt` line
+naming the store file it was bound to and why it was moved. Nothing is
+deleted: `bettermemory key import <keys>/quarantine/<store_id>/<store_id>.key`
+with `BETTERMEMORY_DIR` naming the store's directory files a key back.
+A ring moves only when its store is shown gone: the directory the
+binding names is there, can be read, is not empty and holds no file by
+the store file's name, each read within 0.5 s. Every other ring is kept
+and named (a directory not there, empty, unreadable or not answering, a
+file there that is damaged or holds another store, a ring that names no
+store file), so run it again once a volume is back, and run `key adopt
+--yes` from a store moved by hand before the clear. `security audit` covers what `doctor` leaves out: file modes and
 owners, the key against the store, git working trees and synced folders,
 and Claude Code's sandbox settings. `config check` grades the contents
 of `config.toml` and the managed config: a typo `doctor` cannot see, such

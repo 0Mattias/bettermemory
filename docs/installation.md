@@ -69,8 +69,9 @@ bettermemory config path   # which config, store, keys and state directories are
 
 `doctor` is read-only and grades each check ok, warn or fail with a
 one-line fix; it exits 0 when every check is ok, 1 on any failure and 2
-on warnings only. Its one write is `--clear-orphan-keys`, which deletes
-the key rings whose store is gone. `config path` prints the config file, the
+on warnings only. Its one write is `--clear-orphan-keys --yes`, which
+moves the key rings whose store is shown gone to the keys directory's
+`quarantine/` and deletes nothing (without `--yes`, the plan). `config path` prints the config file, the
 organisation's managed file, the store directory with the rule that
 chose it, and the keys and state directories.
 
