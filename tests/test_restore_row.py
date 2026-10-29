@@ -186,7 +186,7 @@ def test_a_bundle_whose_store_needs_a_later_writer_is_refused(
     assert f"needs a writer at schema revision {later} or later" in detail
     assert "(its newest writer was bettermemory 99.0.0)" in detail
     assert f"writes revision {SCHEMA_REVISION}: upgrade bettermemory" in detail
-    assert report["verify"]["min_writer_revision"] == later  # type: ignore[index]
+    assert report["verify"]["min_writer_revision"] == later
     assert report["moved_aside"] == [] and report["record"] is None
     assert hashlib.sha256(store_file.read_bytes()).hexdigest() == before
     with Store.open(store_file, read_only=True) as opened:

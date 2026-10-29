@@ -556,18 +556,19 @@ def test_a_directory_flock_cannot_lock_falls_back_to_the_record_file(
     lock: writing opens go on, the log says once that the restore lock is
     the record file there, as on Windows, a restore finishes, and a
     record a restore left refuses writers (cold review M1)."""
-    import fcntl
-
     from bettermemory import restore_lock
 
-    real = fcntl.flock
+    if sys.platform != "win32":  # fcntl is POSIX only (the mark skips Windows)
+        import fcntl
 
-    def flock(fd: int, operation: int) -> None:
-        if stat.S_ISDIR(os.fstat(fd).st_mode):
-            raise OSError(code, os.strerror(code))
-        real(fd, operation)
+        real = fcntl.flock
 
-    monkeypatch.setattr(fcntl, "flock", flock)
+        def flock(fd: int, operation: int) -> None:
+            if stat.S_ISDIR(os.fstat(fd).st_mode):
+                raise OSError(code, os.strerror(code))
+            real(fd, operation)
+
+        monkeypatch.setattr(fcntl, "flock", flock)
     monkeypatch.setattr(restore_lock, "_RECORD_MODE_DIRS", set())
     with caplog.at_level(logging.WARNING, logger="bettermemory.restore_lock"):
         _put(store_file, keys_dir, "gamma, with no directory lock")
