@@ -1215,6 +1215,20 @@ the candidates' testing.
   covers the file under any.
   (`src/bettermemory/verify_candidates.py`,
   `src/bettermemory/verify_anchoring.py`)
+- **A path recorded on Windows reads at this machine's checkout when the
+  record is read on POSIX.** Before handing an absolute claim to the
+  membership model to translate, the claim anchoring asked whether it
+  lay under a recorded view with its own test, which knew "/" and the
+  platform's separator, while the model knows either slash. So on macOS
+  or Linux a path recorded on Windows below a backslash view
+  (`C:\w\app\src\x.py`) was never translated: it was stat'd as spelled,
+  read absent, and an attested one read as a claim-anchored miss that
+  escalated the verdict. The anchoring now reads `_paths.inside`, the
+  either-slash rule the model's translation reads, which imports
+  nothing, so the verify family keeps the membership family and the
+  store off the hook path; the attestation now reads at this machine's
+  checkout of the project, on either kind of host.
+  (`src/bettermemory/_paths.py`, `src/bettermemory/verify_anchoring.py`)
 
 #### Known limitations
 

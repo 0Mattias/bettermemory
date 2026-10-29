@@ -70,6 +70,7 @@ from bettermemory.membership import (
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.store import RecordHome, Store
 from bettermemory.location_git import reachable_among
+from bettermemory.verify import Anchoring, detect_path_drift
 
 _NOW = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
 _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -2206,6 +2207,45 @@ def test_translate_writes_the_spelling_of_the_view_it_lands_in(world: World) -> 
         "/home/kim/app/src/x.py",
         "caller_checkout_same_project",
     )
+
+
+@pytest.mark.parametrize(
+    ("recorded", "sep"), [("C:\\w\\app", "\\"), ("/w/app", "/")], ids=["nt", "posix"]
+)
+def test_an_attestation_recorded_on_another_kind_of_machine_reads_here(
+    world: World, tmp_path: Path, recorded: str, sep: str
+) -> None:
+    """verify's anchoring hands a path below a recorded view to the model
+    by the model's own rule (`_paths.inside`, ENG-166). Its own test checked
+    "/" and the platform's separator, so on POSIX a path recorded on
+    Windows below a backslash view was never translated: it was stat'd as
+    spelled, absent, and an attested one read as a claim-anchored miss.
+    Here a record attested on another machine (Windows-spelled, and in
+    the reverse case POSIX-spelled) is read at this machine's checkout of
+    the project, a real directory holding the file."""
+    cited = sep.join((recorded, "src", "x.py"))
+    upstream = world.repo(recorded, remote="example.invalid/acme/app", machine="M2")
+    there = world.see(
+        upstream, model=world.model_for("M2"), git_dir=sep.join((recorded, ".git"))
+    )
+    rid = world.write(there)
+    live = tmp_path / "app"
+    (live / "src").mkdir(parents=True)
+    (live / "src" / "x.py").write_text("x = 1\n")
+    clone = world.clone(upstream, str(live), machine="M1")
+    here = world.see(clone, git_dir=str(live / ".git"))
+    anchor = Anchoring(world.model, here).for_record(rid)
+    assert anchor is not None
+    assert anchor.translate is not None
+    target, rule = anchor.translate(cited)
+    assert rule == "caller_checkout_same_project"
+    assert Path(target) == live / "src" / "x.py"
+    report = detect_path_drift(
+        f"The loader is `{cited}`.", verified_paths=[cited], anchor=anchor
+    )
+    assert not report.claim_anchored_missing
+    assert not report.missing
+    assert report.verified == (target,)
 
 
 def test_an_ask_line_spells_the_token_file_as_the_git_directory_is_spelled(

@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ._paths import inside
 from .githead import GitDir, locate
 from .githead import head_sha as _files_head_sha
 from .gitobjects import ObjectReader
@@ -419,11 +420,16 @@ class Anchoring:
 
     def translate(self, path: str) -> tuple[str, str]:
         """`Membership.translate` for `path`, with ``~`` expanded; a path
-        under no recorded view reads ``absolute`` as it is spelled."""
+        under no recorded view reads ``absolute`` as it is spelled.
+
+        "Under a view" is `_paths.inside`, the rule the model's own
+        translation reads, so a path the model would translate reaches
+        it on every host: a view recorded on Windows (``C:\\w\\app``) holds
+        a backslash path below it when the record is read on POSIX too."""
         hit = self._translated.get(path)
         if hit is None:
             expanded = os.path.expanduser(path)
-            if any(_under(expanded, view) for view in self._view_paths()):
+            if any(inside(expanded, view) for view in self._view_paths()):
                 hit = self.model.translate(expanded, self.caller)
             else:
                 hit = (path, "absolute")
@@ -436,12 +442,6 @@ class Anchoring:
                 view.path for k in self.model.checkouts() for view in k.views
             )
         return self._views
-
-
-def _under(path: str, root: str) -> bool:
-    """`path` is `root` or below it, as `Membership.translate` reads it."""
-    path, root = path.rstrip("/\\") or path, root.rstrip("/\\") or root
-    return path == root or any(path.startswith(root + sep) for sep in ("/", os.sep))
 
 
 def holds_commit(root: str | Path, sha: str) -> bool:
