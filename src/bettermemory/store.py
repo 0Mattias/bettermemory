@@ -68,10 +68,11 @@ was lost reads ``unverifiable``, and the reads keep the rule without an
 anchor until the key is back.
 
 The parts. Modules beside this one hold parts of the store, to keep each
-module under the package's 2,000-line bound (ENG-96); none of them imports
-this one at run time, and this one re-exports every name a caller imports
-from it. A method a module beside this one holds is a function of
-`self: Store` that `Store` binds by name (`write = _records.write`):
+module under the package's 2,000-line bound (ENG-96); none of them but
+`store_open` imports this one at run time, and this one re-exports every
+name a caller imports from it. A method a module beside this one holds
+is a function of `self: Store` that `Store` binds by name
+(`write = _records.write`):
 
 - `store_schema`: the vocabulary, the table texts, the errors and the
   paths a store opens by.
@@ -93,6 +94,9 @@ from it. A method a module beside this one holds is a function of
   built on it.
 - `store_index`: the reads behind search (the FTS candidates, the links,
   the declared scopes) and the document frequency memo.
+- `store_open`: the steps of `Store.open` once the file is connected. It
+  reads `chain_segments` and `resolve_keys_dir` from this module when it
+  runs, so a patch of either here reaches the open.
 """
 
 from __future__ import annotations
@@ -127,7 +131,7 @@ from .log import (
     OriginCheck,
     Segment,
     append_row,
-    chain_segments,
+    chain_segments as chain_segments,
     check_origin,
     fingerprint,
     last_rekey_name,
@@ -163,7 +167,6 @@ from .store_schema import (
     remove_read_only_copy as remove_read_only_copy,
     read_store_meta as read_store_meta,
     _MEMBERSHIP_SPECS as _MEMBERSHIP_SPECS,
-    _STORE_ID_PATTERN,
     ConcurrentUpdateError,
     EpisodeVolume,
     MemoryNotFoundError,
@@ -177,7 +180,6 @@ from .store_schema import (
     TrustRow,
     UnmigratedV8DirectoryError as UnmigratedV8DirectoryError,
     _add_membership_tables as _add_membership_tables,
-    check_versions,
     holds_v8_files as holds_v8_files,
     orphan_names as orphan_names,
     orphan_order as orphan_order,
@@ -206,7 +208,6 @@ from .store_keys import (
     _claim_key_ring,
     key_state as key_state,
     _signing_key,
-    _signs_a_segment,
     _store_id_at as _store_id_at,
     configured_strict_provenance as configured_strict_provenance,
 )
@@ -681,6 +682,8 @@ class Store:
         additive schema step (a reader finds a missing table empty), no
         ``-wal`` or ``-shm`` left behind, and every write fails in
         SQLite. It never rekeys, so it takes no ``allow_rekey``."""
+        from .store_open import _open_connected
+
         if read_only and allow_rekey:
             raise ValueError("a read-only open never rekeys")
         path = store_path(path)
@@ -692,137 +695,16 @@ class Store:
         else:
             conn = _connect(path)
         try:
-            meta = read_store_meta(conn, path)
-            store_id = meta.get("store_id")
-            expected = meta.get("key_fingerprint")
-            if not store_id or not expected:
-                raise ValueError(f"{path} carries no store id or key fingerprint")
-            if not _STORE_ID_PATTERN.fullmatch(store_id):
-                raise ValueError(
-                    f"{path} carries a store id this build never writes "
-                    f"({store_id[:40]!r}); the key directory is searched by it, "
-                    f"so the store is not opened"
-                )
-            schema = int(meta.get("schema_version", "0"))
-            if schema > SCHEMA_VERSION:
-                raise ValueError(
-                    f"{path} is schema {schema}; this build reads up to {SCHEMA_VERSION}"
-                )
-            allow_rekey = check_versions(conn, path, meta, allow_rekey, keys_dir).writes
-            if not read_only:
-                _add_membership_tables(conn, path, meta)
-            keyring = KeyRing(
-                Path(keys_dir) if keys_dir is not None else resolve_keys_dir(),
-                store_id,
-            )
-            # The owner's opener first claims the key ring for this file
-            # (`store_keys._claim_key_ring`): one that is bound to another
-            # file still holding this store id is that file's, and this
-            # open writes nothing to it or with it. A reader asks the same,
-            # writing no binding, since a reader whose key matches would
-            # sign with it too (`store_keys.key_state`).
-            state = key_state(keyring, path, expected, claim=allow_rekey, conn=conn)
-            key, elsewhere = state.key, state.withheld
-            matches = key is not None and fingerprint(key) == expected
-            if state.state == KEY_PRESENT:
-                store = cls._bind(
-                    path,
-                    conn,
-                    keyring,
-                    key,
-                    store_id,
-                    strict_provenance=strict_provenance,
-                )
-                store._keep_copy(read_only, scratch)
-                if allow_rekey:
-                    store._close_foreign_tail()
-                    store._settle_origin()
-                return store
-            if not allow_rekey or elsewhere is not None:
-                reader = cls._bind(
-                    path,
-                    conn,
-                    keyring,
-                    None,
-                    store_id,
-                    strict_provenance=strict_provenance,
-                )
-                reader._bound_elsewhere = elsewhere
-                reader._key_state = state
-                reader._keep_copy(read_only, scratch)
-                # Meta's fingerprint is only what the file says. When this
-                # machine has a history of the store (its key ring holds
-                # an origin anchor for it, or its key signs a segment of
-                # the log, as the owner's opener reads it below), an editor
-                # who pointed meta at another key must not thereby switch
-                # the reads' checks off, which left a planted record its
-                # stored label here while `log verify` read the store
-                # tampered. The key is bound for checking pointers, never
-                # for writing, and nothing is written to set meta back.
-                # Binding it can only take a stored label away: a row
-                # still verifies under its own segment's key. An owner's
-                # open refused for a key ring bound elsewhere checks under
-                # a key meta names too, as the bound store's reads would.
-                if key is not None and (
-                    matches
-                    or keyring.read_origin() is not None
-                    or _signs_a_segment(
-                        chain_segments(
-                            conn,
-                            keyring=keyring,
-                            current_fingerprint=expected,
-                            current_key=key,
-                        ),
-                        key,
-                    )
-                ):
-                    reader._read_key = key
-                return reader
-            segments = chain_segments(
-                conn, keyring=keyring, current_fingerprint=expected, current_key=key
-            )
-            if key is not None and _signs_a_segment(segments, key):
-                store = cls._bind(
-                    path,
-                    conn,
-                    keyring,
-                    key,
-                    store_id,
-                    strict_provenance=strict_provenance,
-                )
-                store._reclaim(segments, meta_fingerprint=expected)
-                store._settle_origin()
-                return store
-            # The key that signed the chain's last segment, as the log
-            # names it: the rekey row records what it replaced, and meta
-            # is only what the file says.
-            previous = segments[-1].key_fingerprint if segments else expected
-            if key is not None:
-                keyring.retire_current()
-            key = keyring.create_key()
-            store = cls._bind(
-                path, conn, keyring, key, store_id, strict_provenance=strict_provenance
-            )
-            with store._transaction() as tx:
-                tx.execute(
-                    "UPDATE meta SET value = ? WHERE key = 'key_fingerprint'",
-                    (fingerprint(key),),
-                )
-                rekeyed = store._append(
-                    tx,
-                    REKEY,
-                    {"old_fingerprint": previous, "new_fingerprint": fingerprint(key)},
-                    session=None,
-                )
-            log.warning(
-                "store %s was opened without its key (fingerprint %s); a new key "
-                "%s was written and the log rekeyed",
+            return _open_connected(
+                cls,
                 path,
-                previous[:16],
-                fingerprint(key)[:16],
+                conn,
+                scratch,
+                keys_dir=keys_dir,
+                allow_rekey=allow_rekey,
+                strict_provenance=strict_provenance,
+                read_only=read_only,
             )
-            store._take_over_origin(rekeyed)
-            return store
         except Exception:
             conn.close()
             if scratch is not None:
