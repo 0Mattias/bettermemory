@@ -38,7 +38,9 @@ directory with no ``BETTERMEMORY_DIR``, so the store is the one
 build without the check the child never returns, and the timeout ends the
 run as a failure instead of hanging the suite. Inside the child the call
 that refuses is timed and printed, and must come back well under the
-deadline (`_REFUSAL_BOUND`).
+deadline (`_REFUSAL_BOUND`); the one call that does not refuse, the
+audit's read of a meta SQLite cannot parse, within the deadline itself
+(`_READ_BOUND`).
 """
 
 from __future__ import annotations
@@ -87,6 +89,14 @@ _CHILD_TIMEOUT = 30.0
 #: about 70 rows). A literal, so this file collects on a build without
 #: the deadline.
 _REFUSAL_BOUND = 0.5
+
+#: How long the audit's read of a meta SQLite cannot parse may take. The
+#: audit does not refuse there: SQLite reports the malformed schema and the
+#: audit carries on to its one warning, so the time is a whole read of a
+#: freshly written file, which a loaded Windows runner stretched past a
+#: second (the rc14 release run). The product's own bound on that read is
+#: the 2 s admission deadline, held together with this literal below.
+_READ_BOUND = 2.0
 
 #: A query that never returns a row and never ends.
 _ENDLESS = (
@@ -443,8 +453,11 @@ def test_a_read_that_runs_past_the_deadline_is_refused(
     Store.open(path).close()
 
 
-def test_the_refusal_bound_is_well_under_the_deadline() -> None:
+def test_the_bounds_hold_to_the_admission_deadline() -> None:
+    """A refusal comes back well under the deadline; the audit's read of a
+    meta SQLite cannot parse, which does not refuse, within it."""
     assert _REFUSAL_BOUND <= store_schema.ADMISSION_DEADLINE_SECONDS / 4
+    assert _READ_BOUND == store_schema.ADMISSION_DEADLINE_SECONDS
 
 
 def test_the_deadline_ends_an_endless_statement(
@@ -1012,12 +1025,15 @@ def _run(
         )
 
 
-def _reported(code: str, repo: Path, tmp_path: Path) -> dict[str, Any]:
+def _reported(
+    code: str, repo: Path, tmp_path: Path, *, bound: float = _REFUSAL_BOUND
+) -> dict[str, Any]:
+    """The child's report; its timed call came back within ``bound``."""
     done = _run([sys.executable, "-c", code], cwd=repo, env=_child_env(tmp_path))
     assert done.returncode == 0, done.stderr
     reported: dict[str, Any] = json.loads(done.stdout.strip().splitlines()[-1])
     elapsed = reported["elapsed"]
-    assert isinstance(elapsed, float) and elapsed < _REFUSAL_BOUND, reported
+    assert isinstance(elapsed, float) and elapsed < bound, reported
     return reported
 
 
@@ -1030,7 +1046,8 @@ def test_the_audit_refuses_it_in_one_finding(
     database (`test_posture.test_unreadable_meta_is_a_warning`)."""
     path = _poisoned(repo, poison)
     before = _snapshot(path)
-    reported = _reported(_AUDIT, repo, tmp_path)
+    bound = _READ_BOUND if poison == "malformed" else _REFUSAL_BOUND
+    reported = _reported(_AUDIT, repo, tmp_path, bound=bound)
     findings: list[list[str]] = reported["findings"]
     assert len(findings) == 1
     status, summary = findings[0]
