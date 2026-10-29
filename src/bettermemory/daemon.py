@@ -773,6 +773,10 @@ def build_app(
                 source=_text(payload, "source"),
                 harness=_text(payload, "harness"),
                 transcript_path=_text(payload, "transcript_path"),
+                # The subagent the hook fires in (ENG-150): Claude Code's
+                # `agent_id` and `agent_type`, as the client forwarded them.
+                agent_id=_text(payload, "agent_id"),
+                agent_type=_text(payload, "agent_type"),
                 cwd=_cwd_of(payload),
                 config=config,
                 store=worker_store,

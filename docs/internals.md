@@ -84,7 +84,13 @@ validated ships as declared claims on `memory_write` / `memory_verify`.
   resume until a later hook, however late, finds a marker stamped within
   60 seconds of it, which opens the segment at the compact
   (`recall.confirm_compaction`). A resume keeps the segment, and its
-  brief omits what the segment has shown. The cooldown is rebuilt from
+  brief omits what the segment has shown. Claude Code raises a
+  subagent's compaction as a SessionStart under the parent's session id
+  and transcript path; one whose payload names the subagent
+  (`agent_id`) is the subagent's, kept in a scope of its own (its rows
+  carry `agent_id`, its segments open on its own transcript's markers),
+  and the session's segment, signal and shows are left as they were.
+  The cooldown is rebuilt from
   the session's own rows whenever they were stamped, so a restart, an
   eviction after a day idle and the CLI path see the segment the daemon
   held. Each show is recorded (`session_brief`, `prompt_recall`), a

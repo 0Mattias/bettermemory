@@ -4,7 +4,10 @@
 it is in, the ids shown and settled in it, and a compact signal still
 pending. `rebuild_session` computes the same state from the session's
 rows in the log through the transitions both share (`_restart`,
-`_reopen`, `_hold_signal`, `_replay`). The vocabulary the recall
+`_reopen`, `_hold_signal`, `_replay`). A subagent of the session has a
+scope of its own (`Subagent`, ENG-150): its rows carry its ``agent_id``,
+a state scoped to it reads only those, and the session's reads none of
+them. The vocabulary the recall
 modules read lives here too: the rule, the default harness, the
 delivered provenance labels, the summary length, the state's bounds
 and kinds, and the surfaces a settlement names. `recall` re-exports
@@ -102,6 +105,59 @@ REVIEW_UNANSWERED = "review_unanswered"
 
 def _str_ids(value: Any) -> list[str]:
     return [memory_id for _, memory_id in _event_id_items(value)]
+
+
+# -- a subagent's scope -------------------------------------------------------
+
+#: The row field naming the subagent a hook row belongs to (Claude Code's
+#: ``agent_id``); a row without it is the session's own.
+AGENT_FIELD = "agent_id"
+#: Where a row's subagent identity was read (`Subagent.found_by`): the hook
+#: payload's ``agent_id``, or the subagent transcript that holds the
+#: compaction's marker (``<dir>/<session>/subagents/agent-<agent_id>.jsonl``).
+AGENT_FROM_PAYLOAD = "payload"
+AGENT_FROM_TRANSCRIPT = "transcript"
+
+
+@dataclass(frozen=True)
+class Subagent:
+    """A subagent of a session, as a hook row names it (ENG-150).
+
+    Claude Code raises a subagent's compaction as a SessionStart under the
+    parent's session id and main transcript path; `agent_id` is the id
+    Claude Code gives the subagent (its transcript's name after
+    ``agent-``), `agent_type` its agent name when known, `found_by` where
+    the identity was read. Its rows are recorded under the session id
+    with `fields`, and its shows and segments are its own scope's."""
+
+    agent_id: str
+    agent_type: str | None = None
+    found_by: str = AGENT_FROM_PAYLOAD
+
+    @classmethod
+    def from_payload(
+        cls, agent_id: str | None, agent_type: str | None = None
+    ) -> Subagent | None:
+        """The subagent a hook payload names, or None: an ``agent_type``
+        alone names the main thread's agent (``claude --agent``), not a
+        subagent."""
+        if not agent_id:
+            return None
+        return cls(agent_id=agent_id, agent_type=agent_type or None)
+
+    def fields(self) -> dict[str, str]:
+        """What every row recorded for the subagent carries."""
+        out = {AGENT_FIELD: self.agent_id, "agent_from": self.found_by}
+        if self.agent_type:
+            out["agent_type"] = self.agent_type
+        return out
+
+
+def agent_of(event: Mapping[str, Any]) -> str | None:
+    """The subagent a row belongs to (its ``agent_id``), or None for the
+    session's own row."""
+    value = event.get(AGENT_FIELD)
+    return value if isinstance(value, str) and value else None
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +373,11 @@ def _replay(entry: _SessionRecall, event: Mapping[str, Any], stamp: datetime) ->
 
 
 def rebuild_session(
-    store: Store, key: tuple[str, str], *, now: datetime
+    store: Store,
+    key: tuple[str, str],
+    *,
+    now: datetime,
+    agent_id: str | None = None,
 ) -> _SessionRecall:
     """A session's cooldown computed from the log: what a restarted
     daemon, the in-process CLI path, or the daemon after a day idle knows
@@ -338,13 +398,19 @@ def rebuild_session(
     `review_unanswered` names roots counted for the whole session; a
     `turn_audited` stamps the session's start. Any other `use` under the
     session (the hook's attribution of a real retrieval) is not the
-    recall's and is skipped before it can stamp the session's start."""
+    recall's and is skipped before it can stamp the session's start.
+
+    The scope is the session's own, or with `agent_id` that subagent's
+    (ENG-150): a row carrying an ``agent_id`` is read only by the scope of
+    that subagent, and a row carrying none only by the session's."""
     harness, session_id = key
     entry: _SessionRecall | None = None
     review_roots: set[str] = set()
     for event in store.session_events_of_kinds(session_id, _STATE_KINDS):
         named = event.get("harness")
         if isinstance(named, str) and named != harness:
+            continue
+        if agent_of(event) != agent_id:
             continue
         stamp = parse_event_ts(event.get("ts"))
         if stamp is None:
@@ -376,18 +442,26 @@ class RecallState:
     The daemon holds one for its lifetime and calls it from worker
     threads. The in-process CLI path builds a fresh one per call and holds
     nothing between calls. The store each call passes is the caller's own
-    connection; the state holds none."""
+    connection; the state holds none.
+
+    A state built with `agent_id` is that subagent's scope of each session
+    it is asked about (ENG-150): rebuilt from the session's rows carrying
+    the subagent's id and nothing else. A subagent raises no hook but its
+    SessionStart, so nothing holds one: the SessionStart that names a
+    subagent builds its scope fresh, as the CLI path builds a session's."""
 
     def __init__(
         self,
         *,
         max_sessions: int = STATE_MAX_SESSIONS,
         idle_seconds: int = STATE_IDLE_SECONDS,
+        agent_id: str | None = None,
     ) -> None:
         self._lock = threading.Lock()
         self._sessions: OrderedDict[tuple[str, str], _SessionRecall] = OrderedDict()
         self._max_sessions = max_sessions
         self._idle_seconds = idle_seconds
+        self._agent_id = agent_id
 
     # -- sessions -------------------------------------------------------------
 
@@ -415,7 +489,7 @@ class RecallState:
                 held.last_seen = now
                 self._sessions.move_to_end(key)
                 return
-        rebuilt = rebuild_session(store, key, now=now)
+        rebuilt = rebuild_session(store, key, now=now, agent_id=self._agent_id)
         with self._lock:
             held = self._sessions.get(key)
             if held is None:

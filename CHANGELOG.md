@@ -385,6 +385,32 @@ the candidates' testing.
   `src/bettermemory/handlers/write_gates.py`,
   `src/bettermemory/handlers/episode_write.py`, `SECURITY.md`,
   `docs/api.md`, `docs/internals.md`)
+- **A SessionStart whose payload names a subagent is answered in the
+  subagent's own scope.** Claude Code raises a subagent's compaction as
+  a SessionStart under the session's id and main transcript path, and
+  the hook answered it as the session's: on 2026-10-28 a 13-line brief
+  went into a subagent while the session held a compact signal no
+  marker of its own would answer and counted the brief's ids as shown
+  in its segment, which its prompt recall then held as
+  `seen_in_segment` (3 of the 14 owner compact SessionStarts since
+  rs-v6 were a subagent's). The daemon and the in-process
+  `bettermemory session-start` now pass the payload's `agent_id` and
+  `agent_type` to the brief (the hooks reference's common fields for
+  the agent a hook fires in; `agent_type` alone names the main thread's
+  `--agent` and stays the session's). A SessionStart that names a
+  subagent opens its segment, holds its signal and claims its brief in
+  a scope of its own, rebuilt from the session's rows that carry its
+  id, on the markers of the subagent's own transcript
+  (`<dir>/<session>/subagents/agent-<id>.jsonl`); its rows are recorded
+  under the session's id with `agent_id`, `agent_type` and
+  `agent_from`, and the session's segment, signal and shows are left as
+  they were. The brief is the existing one. This path waits for a
+  client that names the subagent: no Claude Code build read (2.1.296,
+  2.1.309) fills `agent_id` on a SessionStart, so the compaction those
+  builds send is still answered as the session's. A row without
+  `agent_id` reads as before. (`src/bettermemory/recall.py`,
+  `src/bettermemory/recall_state.py`, `src/bettermemory/recall_brief.py`,
+  `src/bettermemory/daemon.py`, `src/bettermemory/cli/session_start_cmd.py`)
 
 #### Known limitations
 

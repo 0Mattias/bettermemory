@@ -10,7 +10,8 @@ before this package is imported; this subcommand is the same body run in
 process, for a caller with no daemon.
 
 It reads the SessionStart payload from stdin when one is piped
-(`session_id`, `source`, `cwd`, `transcript_path`); `--session-id` and
+(`session_id`, `source`, `cwd`, `transcript_path`, and the `agent_id` and
+`agent_type` of a subagent the hook fires in); `--session-id` and
 `--source` stand in for it by hand. Without a session id it prints
 nothing: the brief is recorded at show time as a `session_brief` event
 under the session it was shown to, and an unrecorded injection is the
@@ -253,6 +254,8 @@ def _build_context_block(
             source=source or text("source"),
             harness=text("harness"),
             transcript_path=text("transcript_path"),
+            agent_id=text("agent_id"),
+            agent_type=text("agent_type"),
             cwd=Path(cwd) if cwd else None,
             config=config,
             store=store,

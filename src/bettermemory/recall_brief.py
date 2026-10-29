@@ -4,8 +4,10 @@
 here: the label gate (`_delivered`), the ranking by the owner's words
 (`_ranked`, `_ranked_by`) and why a withheld record was withheld
 (`_suppressed_reason`); `render_brief` prints them. `_marker_near`
-reads the compaction marker near a compact SessionStart, and
-`orphan_notice` is the data-loss line a brief leads with.
+reads the compaction marker near a compact SessionStart,
+`_subagent_transcript` names a subagent's own transcript beside the
+session's (ENG-150), and `orphan_notice` is the data-loss line a brief
+leads with.
 `_select_brief` stays in `recall`, where a test patches it. `recall`
 re-exports every name here a caller imports from it. This module lives
 apart from `recall.py` to keep each module under the package's
@@ -16,6 +18,7 @@ and `recall_admission`, never `recall`, and `recall` imports it.
 from __future__ import annotations
 
 import os
+import re
 import shlex
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -219,6 +222,47 @@ def _marker_near(transcript_path: str | None, at: datetime) -> CompactMarker | N
     return compact_marker(
         path, near=at, window=timedelta(seconds=COMPACT_MARKER_WINDOW_SECONDS)
     )
+
+
+# A subagent's id as Claude Code names its transcript (``agent-<id>.jsonl``,
+# seventeen hex characters on every file seen), bounded and kept to the
+# characters a file name may take as it is: an id outside it names no file.
+_AGENT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
+
+
+def _subagents_folder(transcript_path: str | None) -> Path | None:
+    """Where Claude Code keeps the session's subagent transcripts: beside
+    the session's own transcript ``<dir>/<session>.jsonl``, the folder
+    ``<dir>/<session>/subagents`` (the hooks reference names it for
+    SubagentStop's ``agent_transcript_path``; a workflow's agents sit one
+    level down, in ``workflows/<run>/``). None without a transcript path."""
+    if not transcript_path:
+        return None
+    path = Path(transcript_path).expanduser()
+    return path.parent / path.stem / "subagents"
+
+
+def _subagent_transcript(transcript_path: str | None, agent_id: str) -> str | None:
+    """The transcript of the subagent `agent_id` of the session whose own
+    transcript is `transcript_path`: ``subagents/agent-<agent_id>.jsonl``,
+    or a workflow's ``subagents/workflows/<run>/agent-<agent_id>.jsonl``
+    when only that one is there, the first when neither is yet; None
+    without a transcript path, or for an id `_AGENT_ID` does not take."""
+    folder = _subagents_folder(transcript_path)
+    if folder is None or _AGENT_ID.fullmatch(agent_id) is None:
+        return None
+    name = (
+        f"{agent_id}.jsonl"
+        if agent_id.startswith("agent-")
+        else f"agent-{agent_id}.jsonl"
+    )
+    direct = folder / name
+    if direct.is_file():
+        return str(direct)
+    for nested in sorted(folder.glob(f"workflows/*/{name}")):
+        if nested.is_file():
+            return str(nested)
+    return str(direct)
 
 
 #: The most characters a path in the orphan notice takes; a longer one

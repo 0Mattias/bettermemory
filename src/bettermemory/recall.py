@@ -123,6 +123,7 @@ from .recall_brief import (
     _marker_near,
     _ranked,
     _ranked_by,
+    _subagent_transcript,
     _suppressed_reason,
     orphan_notice as orphan_notice,
     render_brief,
@@ -146,6 +147,7 @@ from .recall_state import (
     _DELIVERED_PROVENANCE as _DELIVERED_PROVENANCE,
     RecallState,
     SegmentView as SegmentView,
+    Subagent,
     _str_ids,
     is_settlement,
     rebuild_session as rebuild_session,
@@ -500,9 +502,15 @@ def confirm_compaction(
     now: datetime,
     origin: Origin | None = None,
     cwd: Path | None = None,
+    agent: Subagent | None = None,
 ) -> SegmentView | None:
     """Resolve the session's pending compact signal, if it holds one,
     against the transcript: the segment a compaction opened, or None.
+
+    With `agent`, `state` is that subagent's scope and `transcript_path`
+    its own transcript: the segment opened is the subagent's, its row
+    carries the subagent (`Subagent.fields`), and no Stop ever settles a
+    subagent's shows, so the segment it leaves is not settled.
 
     Every hook reads the segment after this: the SessionStart, the prompt
     recall and the Stop. A compact SessionStart rarely reads its own
@@ -529,14 +537,15 @@ def confirm_compaction(
     if opened is None:
         return None
     caller = origin if origin is not None else _origin.capture_caller(cwd)
-    settle_unused(
-        store=store,
-        state=state,
-        key=key,
-        now=now,
-        worktree_root=caller.worktree_root,
-        triggered_from=triggered_from,
-    )
+    if agent is None:
+        settle_unused(
+            store=store,
+            state=state,
+            key=key,
+            now=now,
+            worktree_root=caller.worktree_root,
+            triggered_from=triggered_from,
+        )
     Recorder(
         store=store,
         session_id=key[1],
@@ -552,6 +561,7 @@ def confirm_compaction(
         marker=opened.marker,
         opened_at=isoformat_utc(at),
         rule=RULE,
+        **(agent.fields() if agent is not None else {}),
     )
     return opened
 
@@ -562,6 +572,8 @@ def session_brief(
     source: str | None = None,
     harness: str | None = None,
     transcript_path: str | None = None,
+    agent_id: str | None = None,
+    agent_type: str | None = None,
     cwd: Path | None = None,
     origin: Origin | None = None,
     config: Config | None = None,
@@ -606,6 +618,18 @@ def session_brief(
     ``marker_absent``), so the segment, or the pending signal, is read
     back after a restart and on the in-process path, which rebuilds the
     state from the log on every call.
+
+    A SessionStart whose payload names a subagent (`agent_id`, ENG-150) is
+    the subagent's: Claude Code raises a subagent's compaction under the
+    parent's session id and main transcript path. Its segment is opened,
+    its signal held and its brief claimed in the subagent's own scope (a
+    `RecallState` scoped to the id, rebuilt from the session's rows that
+    carry it), on the markers of the subagent's own transcript
+    (`_subagent_transcript`), and every row it records carries the
+    subagent (`Subagent.fields`); `state`, the session's, is neither read
+    nor changed, so the session keeps its segment, holds no signal and
+    counts none of the brief's ids. The brief is the existing one, ranked
+    by the owner's words in `transcript_path` as the session's is.
 
     One line leads whatever is shown, or stands alone, while the store
     was created fresh after a daemon saved the one it lost
@@ -654,22 +678,30 @@ def session_brief(
     now = now or utcnow()
     key = (harness or DEFAULT_HARNESS, str(session_id))
     opened_by = source if source in _SESSION_SOURCES else "startup"
+    agent = Subagent.from_payload(agent_id, agent_type)
+    marker_path = transcript_path
+    if agent is not None:
+        # A subagent's SessionStart (ENG-150): its own scope, read from the
+        # log, on its own transcript's markers; the session's is untouched.
+        state = RecallState(agent_id=agent.agent_id)
+        marker_path = _subagent_transcript(transcript_path, agent.agent_id)
     confirm_compaction(
         store=store,
         state=state,
         key=key,
-        transcript_path=transcript_path,
+        transcript_path=marker_path,
         cfg=cfg,
         triggered_from="session_hook",
         now=now,
         origin=origin,
         cwd=cwd,
+        agent=agent,
     )
-    marker = _marker_near(transcript_path, now) if opened_by == "compact" else None
+    marker = _marker_near(marker_path, now) if opened_by == "compact" else None
     view, opened = state.open_segment(
         store, key, source=opened_by, now=now, marker=marker
     )
-    if opened and cfg.telemetry.enabled:
+    if opened and cfg.telemetry.enabled and agent is None:
         settle_unused(
             store=store,
             state=state,
@@ -683,6 +715,8 @@ def session_brief(
     compaction: dict[str, Any] = {}
     if opened_by == "compact":
         compaction = {"marker": view.marker} if opened else {"marker_absent": True}
+    if agent is not None:
+        compaction.update(agent.fields())
     result = _brief_in_segment(
         key=key,
         view=view,
@@ -779,7 +813,8 @@ def _brief_in_segment(
     construction, on a ``startup`` for a session the state has not seen
     it is empty too, and a ``resume``, like a ``compact`` without its
     marker, keeps what its segment showed. `compaction` (the compact's
-    ``marker`` or ``marker_absent``) rides on the row. A brief with
+    ``marker`` or ``marker_absent``, and the subagent's fields when the
+    brief is a subagent's) rides on the row. A brief with
     nothing left to print still records its row, with no ids and
     `omitted` naming the selection's, so the log shows the rule acted and
     on what; nothing is recorded when the selection itself is empty.
