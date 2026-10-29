@@ -77,7 +77,7 @@ import difflib
 import json
 import sqlite3
 import unicodedata
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -602,6 +602,189 @@ def record_history(store: Store, record_id: str) -> RecordHistory:
         return _read_history(store, record_id)
 
 
+@dataclass
+class _RecordWalk:
+    """What `_read_history` carries from one of the record's own rows to the next."""
+
+    record_kind: str | None = None
+    previous: Mapping[str, Any] | None = None
+    previous_body: str | None = None
+    previous_seq: int | None = None
+    homed: bool = False
+    last_record_kind: str | None = None
+
+
+def _record_row(
+    walk: _RecordWalk,
+    index: int,
+    row: LogRow,
+    payload: dict[str, Any],
+    base: dict[str, Any],
+    adjacent: Callable[[int, int], tuple[str, dict[str, Any]] | None],
+    verifier: _RowVerifier,
+) -> HistoryRow:
+    """Read one of the record's own rows, carrying its versions in ``walk``; returns the row's history line."""
+    action = row.kind
+    actor: dict[str, Any] | None = None
+    changed: tuple[str, ...] = ()
+    detail: dict[str, Any] = {}
+    diff: str | None = None
+    before = adjacent(index, -1)
+    after = adjacent(index, 1)
+    if row.kind in _VERSION_KINDS:
+        prefix = row.kind.split("_", 1)[0]
+        record = dict(_mapping(payload.get(prefix)) or {})
+        walk.record_kind = "episode" if prefix == "episode" else "memory"
+        body = record.get("body")
+        body = body if isinstance(body, str) else ""
+        if walk.previous is not None:
+            changed = _changed(walk.previous, record)
+        if body != walk.previous_body:
+            diff = _body_diff(
+                walk.previous_body,
+                body,
+                old="(none)"
+                if walk.previous_seq is None
+                else f"seq {walk.previous_seq}",
+                new=f"seq {row.seq}",
+            )
+        author = _mapping(record.get("actor"))
+        if author:
+            actor = dict(author)
+        # A label other than `local` is worth a word: the record
+        # came in through an import, or from another machine.
+        label = payload.get("provenance")
+        if label not in (None, LOCAL):
+            detail["provenance"] = label
+        if row.kind == "memory_put":
+            if before is not None and before[0] == "tombstone_delete":
+                action = "restored"
+            elif walk.previous is None:
+                action = "imported" if label == IMPORTED else "created"
+            elif after is not None and after[0] == "verification_put":
+                action = "verified"
+            elif changed and set(changed) <= _CORROBORATION_FIELDS:
+                action = "corroborated"
+            else:
+                action = "updated"
+        elif row.kind == "tombstone_put":
+            _set(detail, reason=record.get("removed_reason"))
+            removing = before is not None and before[0] == "memory_delete"
+            action = "tombstoned" if removing or walk.previous is None else "updated"
+        else:
+            action = "created" if walk.previous is None else "updated"
+        walk.previous, walk.previous_body, walk.previous_seq = (
+            record,
+            body,
+            row.seq,
+        )
+    elif row.kind == "memory_delete":
+        walk.record_kind = walk.record_kind or "memory"
+        tombstoning = after is not None and after[0] == "tombstone_put"
+        action = "removed" if tombstoning else "deleted"
+    elif row.kind == "tombstone_delete":
+        walk.record_kind = walk.record_kind or "memory"
+        restoring = after is not None and after[0] == "memory_put"
+        action = "restored" if restoring else "pruned"
+    elif row.kind == "episode_delete":
+        walk.record_kind = walk.record_kind or "episode"
+        action = "pruned"
+    elif row.kind == "verification_put":
+        action = "verification"
+        _set(
+            detail,
+            machine_id=payload.get("machine_id"),
+            verified_head=payload.get("verified_head"),
+        )
+    elif row.kind == "verification_delete":
+        action = "verification_removed"
+        _set(detail, machine_id=payload.get("machine_id"))
+    elif row.kind == "home_put":
+        home = _mapping(payload.get("home")) or {}
+        action = "moved" if walk.homed else "homed"
+        walk.homed = True
+        _set(
+            detail,
+            project=home.get("project"),
+            checkout=home.get("checkout"),
+            rule=home.get("rule"),
+        )
+    elif row.kind == "home_delete":
+        action = "unhomed"
+    elif row.kind == "standing_put":
+        standing = _mapping(payload.get("standing")) or {}
+        action = "standing"
+        _set(
+            detail,
+            probability=standing.get("probability"),
+            source=standing.get("source"),
+            answered_by=standing.get("answered_by"),
+        )
+    elif row.kind == "standing_delete":
+        action = "standing_removed"
+    elif row.kind == CAPTURE_MEMBER:
+        action = "captured"
+        _set(
+            detail,
+            batch=payload.get("batch"),
+            joined_by=payload.get("joined_by"),
+        )
+    elif row.kind == "import_put":
+        action = "import"
+        _set(detail, source=payload.get("source"))
+    if row.kind in _VERSION_KINDS or row.kind in _RECORD_DELETES:
+        walk.last_record_kind = row.kind
+    return HistoryRow(
+        **base,
+        role=RECORD,
+        action=action,
+        verified=verifier.verified(row),
+        actor=actor,
+        actor_source=None if actor is None else ACTOR_FROM_RECORD,
+        changed=changed,
+        detail=detail,
+        diff=diff,
+    )
+
+
+def _link_change_rows(
+    row: LogRow,
+    payload: dict[str, Any],
+    base: dict[str, Any],
+    subject: str,
+    record_id: str,
+    links_by_source: dict[str, set[str]],
+    verifier: _RowVerifier,
+) -> list[HistoryRow]:
+    """Report the links to the record that a linking record's version adds or drops; returns those rows."""
+    rows: list[HistoryRow] = []
+    now = _link_types(row.kind, payload, record_id)
+    was = links_by_source.get(subject, set())
+    links_by_source[subject] = now
+    for link_type in sorted(now - was):
+        action = "superseded_by" if link_type == "supersedes" else "linked_from"
+        rows.append(
+            HistoryRow(
+                **base,
+                role=REFERENCE,
+                action=action,
+                verified=verifier.verified(row),
+                detail={"source": subject, "type": link_type},
+            )
+        )
+    for link_type in sorted(was - now):
+        rows.append(
+            HistoryRow(
+                **base,
+                role=REFERENCE,
+                action="unlinked",
+                verified=verifier.verified(row),
+                detail={"source": subject, "type": link_type},
+            )
+        )
+    return rows
+
+
 def _read_history(store: Store, record_id: str) -> RecordHistory:
     verifier = _RowVerifier(store)
     found, linking = _with_linking_versions(
@@ -625,12 +808,7 @@ def _read_history(store: Store, record_id: str) -> RecordHistory:
         return row.kind, payload
 
     rows: list[HistoryRow] = []
-    record_kind: str | None = None
-    previous: Mapping[str, Any] | None = None
-    previous_body: str | None = None
-    previous_seq: int | None = None
-    homed = False
-    last_record_kind: str | None = None
+    walk = _RecordWalk()
     links_by_source: dict[str, set[str]] = {}
 
     for index, (row, payload) in enumerate(found):
@@ -655,122 +833,8 @@ def _read_history(store: Store, record_id: str) -> RecordHistory:
             continue
         subject = _subject(row.kind, payload)
         if subject == record_id:
-            action = row.kind
-            actor: dict[str, Any] | None = None
-            changed: tuple[str, ...] = ()
-            detail: dict[str, Any] = {}
-            diff: str | None = None
-            before = adjacent(index, -1)
-            after = adjacent(index, 1)
-            if row.kind in _VERSION_KINDS:
-                prefix = row.kind.split("_", 1)[0]
-                record = dict(_mapping(payload.get(prefix)) or {})
-                record_kind = "episode" if prefix == "episode" else "memory"
-                body = record.get("body")
-                body = body if isinstance(body, str) else ""
-                if previous is not None:
-                    changed = _changed(previous, record)
-                if body != previous_body:
-                    diff = _body_diff(
-                        previous_body,
-                        body,
-                        old="(none)" if previous_seq is None else f"seq {previous_seq}",
-                        new=f"seq {row.seq}",
-                    )
-                author = _mapping(record.get("actor"))
-                if author:
-                    actor = dict(author)
-                # A label other than `local` is worth a word: the record
-                # came in through an import, or from another machine.
-                label = payload.get("provenance")
-                if label not in (None, LOCAL):
-                    detail["provenance"] = label
-                if row.kind == "memory_put":
-                    if before is not None and before[0] == "tombstone_delete":
-                        action = "restored"
-                    elif previous is None:
-                        action = "imported" if label == IMPORTED else "created"
-                    elif after is not None and after[0] == "verification_put":
-                        action = "verified"
-                    elif changed and set(changed) <= _CORROBORATION_FIELDS:
-                        action = "corroborated"
-                    else:
-                        action = "updated"
-                elif row.kind == "tombstone_put":
-                    _set(detail, reason=record.get("removed_reason"))
-                    removing = before is not None and before[0] == "memory_delete"
-                    action = "tombstoned" if removing or previous is None else "updated"
-                else:
-                    action = "created" if previous is None else "updated"
-                previous, previous_body, previous_seq = record, body, row.seq
-            elif row.kind == "memory_delete":
-                record_kind = record_kind or "memory"
-                tombstoning = after is not None and after[0] == "tombstone_put"
-                action = "removed" if tombstoning else "deleted"
-            elif row.kind == "tombstone_delete":
-                record_kind = record_kind or "memory"
-                restoring = after is not None and after[0] == "memory_put"
-                action = "restored" if restoring else "pruned"
-            elif row.kind == "episode_delete":
-                record_kind = record_kind or "episode"
-                action = "pruned"
-            elif row.kind == "verification_put":
-                action = "verification"
-                _set(
-                    detail,
-                    machine_id=payload.get("machine_id"),
-                    verified_head=payload.get("verified_head"),
-                )
-            elif row.kind == "verification_delete":
-                action = "verification_removed"
-                _set(detail, machine_id=payload.get("machine_id"))
-            elif row.kind == "home_put":
-                home = _mapping(payload.get("home")) or {}
-                action = "moved" if homed else "homed"
-                homed = True
-                _set(
-                    detail,
-                    project=home.get("project"),
-                    checkout=home.get("checkout"),
-                    rule=home.get("rule"),
-                )
-            elif row.kind == "home_delete":
-                action = "unhomed"
-            elif row.kind == "standing_put":
-                standing = _mapping(payload.get("standing")) or {}
-                action = "standing"
-                _set(
-                    detail,
-                    probability=standing.get("probability"),
-                    source=standing.get("source"),
-                    answered_by=standing.get("answered_by"),
-                )
-            elif row.kind == "standing_delete":
-                action = "standing_removed"
-            elif row.kind == CAPTURE_MEMBER:
-                action = "captured"
-                _set(
-                    detail,
-                    batch=payload.get("batch"),
-                    joined_by=payload.get("joined_by"),
-                )
-            elif row.kind == "import_put":
-                action = "import"
-                _set(detail, source=payload.get("source"))
-            if row.kind in _VERSION_KINDS or row.kind in _RECORD_DELETES:
-                last_record_kind = row.kind
             rows.append(
-                HistoryRow(
-                    **base,
-                    role=RECORD,
-                    action=action,
-                    verified=verifier.verified(row),
-                    actor=actor,
-                    actor_source=None if actor is None else ACTOR_FROM_RECORD,
-                    changed=changed,
-                    detail=detail,
-                    diff=diff,
-                )
+                _record_row(walk, index, row, payload, base, adjacent, verifier)
             )
             continue
         if _names_as_event(row.kind, payload, record_id):
@@ -809,30 +873,11 @@ def _read_history(store: Store, record_id: str) -> RecordHistory:
         if row.kind in _LINKING_KINDS and subject in linking:
             # A version of a record that links here: report the links to
             # this record it adds or drops against its version before.
-            now = _link_types(row.kind, payload, record_id)
-            was = links_by_source.get(subject, set())
-            links_by_source[subject] = now
-            for link_type in sorted(now - was):
-                action = "superseded_by" if link_type == "supersedes" else "linked_from"
-                rows.append(
-                    HistoryRow(
-                        **base,
-                        role=REFERENCE,
-                        action=action,
-                        verified=verifier.verified(row),
-                        detail={"source": subject, "type": link_type},
-                    )
+            rows.extend(
+                _link_change_rows(
+                    row, payload, base, subject, record_id, links_by_source, verifier
                 )
-            for link_type in sorted(was - now):
-                rows.append(
-                    HistoryRow(
-                        **base,
-                        role=REFERENCE,
-                        action="unlinked",
-                        verified=verifier.verified(row),
-                        detail={"source": subject, "type": link_type},
-                    )
-                )
+            )
             continue
         if row.kind == "conflict_put":
             conflict = _mapping(payload.get("conflict")) or {}
@@ -854,12 +899,12 @@ def _read_history(store: Store, record_id: str) -> RecordHistory:
                     )
                 )
 
-    state, provenance = _state(store, record_id, last_record_kind)
-    if state in ("active", "tombstoned") and record_kind is None:
-        record_kind = _table_kind(store, record_id)
+    state, provenance = _state(store, record_id, walk.last_record_kind)
+    if state in ("active", "tombstoned") and walk.record_kind is None:
+        walk.record_kind = _table_kind(store, record_id)
     return RecordHistory(
         record_id=record_id,
-        record_kind=record_kind,
+        record_kind=walk.record_kind,
         state=state,
         provenance=provenance,
         key_present=store.can_verify,
