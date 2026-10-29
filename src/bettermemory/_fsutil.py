@@ -245,10 +245,10 @@ def atomic_write_bytes(
     ``<path>.<random>.tmp`` files in the parent directory.
 
     The parent directory is created (``parents=True, exist_ok=True``)
-    if missing — fresh-install callers often write under user-home
-    paths (default-config under ``~/.config``, MCP client config under
-    ``~/.claude.json``, sync ``.gitignore``) that may not exist yet on
-    a first run. NOTE the ``cli export -o`` caller is the exception: it
+    if missing — fresh-install callers write under user-home paths that
+    may not exist yet on a first run (init's MCP client configs, such as
+    ``~/.cursor/mcp.json`` or ``~/.config/Claude/claude_desktop_config.json``).
+    NOTE the ``cli export -o`` caller is the exception: it
     pre-checks ``out_path.parent`` in ``_cli_export`` and raises
     ``FileNotFoundError`` on a missing/non-directory parent BEFORE
     reaching this helper (Y1), so a typo'd ``-o`` path surfaces a loud

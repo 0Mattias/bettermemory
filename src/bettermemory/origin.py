@@ -890,8 +890,8 @@ def _git_remote_url_and_alternates(cwd: Path) -> tuple[str | None, tuple[str, ..
     # <mirror>`) would flip every subsequent capture to the mirror URL and
     # hide all previously written memories for the repo. `get-url` returns
     # the FIRST configured URL — the canonical fetch URL — and also expands
-    # `url.<base>.insteadOf` aliases to the URL git actually fetches from
-    # (same idiom sync.py uses). It exits non-zero when the remote doesn't
+    # `url.<base>.insteadOf` aliases to the URL git actually fetches
+    # from. It exits non-zero when the remote doesn't
     # exist, so `_git` maps that to None.
     #
     # The alternates are every RAW configured URL for the SAME remote

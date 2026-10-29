@@ -831,7 +831,8 @@ class TestFlockPosixWaitIsUnbounded:
 # `init.py`'s user MCP config writer (`~/.claude.json`, blast radius =
 # every MCP server the user had registered) and `sync.py`'s `.gitignore`
 # writer (truncated gitignore → next `sync push` commits event logs and
-# lockfiles to the remote). Both now route through `atomic_write_bytes`.
+# lockfiles to the remote). Both moved to `atomic_write_bytes`; sync.py
+# has since been removed, and init.py's config writers still use it.
 # These tests pin the contract end-to-end: the bytes land, the rename
 # is the durability boundary, the parent fsync fires, the mode is
 # applied if requested, and a mid-write failure cleans up the tmp.
@@ -846,9 +847,9 @@ class TestAtomicWriteBytes:
 
     def test_creates_parent_directories(self, tmp_path: Path) -> None:
         """A nested path under a non-existent parent directory works
-        (parents=True, exist_ok=True). Bytes-level callers — init.py and
-        sync.py — write under user-home paths that may not exist on a
-        fresh install."""
+        (parents=True, exist_ok=True). init.py writes a client's MCP
+        config under a user-home directory the client may not have made
+        on a fresh install."""
         path = tmp_path / "a" / "b" / "c.txt"
         atomic_write_bytes(path, b"nested")
         assert path.read_bytes() == b"nested"

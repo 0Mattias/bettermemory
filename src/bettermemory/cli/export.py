@@ -304,9 +304,9 @@ def _write_export(
         # Pre-check the parent is an existing directory. `atomic_write_bytes`
         # would otherwise silently create the parent tree via
         # `parent.mkdir(parents=True, exist_ok=True)` — that auto-mkdir
-        # is intentional for fresh-install callers (init.py creating
-        # ~/.claude.json under a missing ~/.config, sync.py creating a
-        # .gitignore under a fresh sync root) but wrong here: a user
+        # is intentional for fresh-install callers (init.py writing a
+        # client's MCP config, such as ~/.cursor/mcp.json, under a
+        # directory the client has not made yet) but wrong here: a user
         # who typed `bettermemory export -o /typod/path/backup.json`
         # wants a loud error, not a silently-created
         # /typod/path/ tree with their backup buried inside. Pre-3.2.1
