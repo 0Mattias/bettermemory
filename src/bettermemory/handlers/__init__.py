@@ -12,8 +12,9 @@ The MCP-facing surface, the `ToolHandlers` class, lives in
 `_handlers.py` as a thin facade: it captures the dependency references
 (`config`, `store`, `sessions`, `recorder`, `responses`) once per server
 and exposes one bound method per served tool that delegates straight to
-the module function here. `builder._register_tools` imports the `DESC_*`
-constants from this package so the wiring layer stays a short index.
+the module function here. `_handlers` also reads the `DESC_*` constants
+from this package and re-exports them, and `builder._register_tools`
+takes them from `_handlers`, so the wiring layer stays a short index.
 """
 
 from __future__ import annotations
