@@ -457,8 +457,22 @@ def _cli_log_export(
     # it again, the rows the restore handed its seqs to are skipped, and
     # nothing above would say so.
     for rewind in rewinds_across(store.keys_dir, store.store_id, since):
-        sys.stderr.write(
-            printable(
+        if rewind["from_seq"] is None:
+            # A restore onto a host that held no copy of the store: where
+            # the replaced log ended is not known here.
+            said = (
+                f"bettermemory log export: a restore at {rewind['restored_at']} "
+                f"put the log back to seq {rewind['to_seq']} on a host that held "
+                "no copy of the store, so where the log it replaced ended is not "
+                f"known here, and --since-seq {since} is past seq "
+                f"{rewind['to_seq']}: a cursor taken before that restore skips "
+                f"the new rows after seq {rewind['to_seq']} up to seq {since}; "
+                f"export them with --since-seq {rewind['to_seq']} (if they were "
+                "exported after the restore, this repeats for every cursor past "
+                "that seq; the batches' prev_mac link tells the two apart)"
+            )
+        else:
+            said = (
                 f"bettermemory log export: a restore at {rewind['restored_at']} "
                 f"rewound the log from seq {rewind['from_seq']} to seq "
                 f"{rewind['to_seq']}, and --since-seq {since} lies between: a "
@@ -468,8 +482,7 @@ def _cli_log_export(
                 f"the restore, this repeats until the cursor passes seq "
                 f"{rewind['from_seq']})"
             )
-            + "\n"
-        )
+        sys.stderr.write(printable(said) + "\n")
     if out is None:
         raise SystemExit(0)
     if args.json:

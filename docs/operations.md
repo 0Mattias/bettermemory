@@ -534,9 +534,11 @@ it is another store. So does a cursor inside the range a `backup
 restore` rewound (the restore record beside the head says from which seq
 to which): a cursor taken before the restore would skip the new rows
 the restore handed those seqs to, and the warning names the
-`--since-seq` to export them from. The cursor is a seq, so the export
-cannot tell such a cursor from one taken after the restore; the SIEM's
-link check below can, and is the one to rely on. Or stream stdout into a collector (Vector, Fluent
+`--since-seq` to export them from. A restore onto a host that held no
+copy of the store cannot know where the replaced log ended, so there
+the export warns every cursor past the restored head. The cursor is a
+seq, so the export cannot tell such a cursor from one taken after the
+restore; the SIEM's link check below can, and is the one to rely on. Or stream stdout into a collector (Vector, Fluent
 Bit). The output is
 deterministic: the same range of the same log gives the same bytes. On
 Windows, stdout gets CRLF line ends and `--out` writes LF.

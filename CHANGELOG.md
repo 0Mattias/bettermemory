@@ -2218,6 +2218,28 @@ follows the candidates' testing.
   directory` at that directory`. A store file the user hard-linked on
   purpose is refused the same way. (`src/bettermemory/backup.py`,
   `SECURITY.md`, `docs/operations.md`, `tests/test_bundle_guard.py`)
+- **A restore onto a host with no copy of the store still warns a
+  rewound cursor.** A restore recorded where the log it replaced ended
+  from the head checkpoint and from the store at the restore's path, so
+  a restore into a directory that held no copy, with the head checkpoint
+  gone, recorded neither end, and a restore onto a host that held no copy
+  at all could not know one; `log export` then warned of nothing, and a
+  cursor taken before the restore skipped the new rows the restore handed
+  the rewound seqs to. The restore now also reads the log's end from the
+  store file the key ring is bound to (`<store_id>.path`) when that file
+  holds the store and is not the one at the restore's path, and records
+  where it read it: the plan's and the record's `log_end_before` is
+  `{seq, path}`. A record that names neither end, a restore onto a host
+  with no copy, now reads as a rewind from an unknown seq: `log export`
+  warns every cursor past the restored head, naming the seq to export
+  again from, and says the range is not known here. This closes the
+  9.0.0rc12 note that a restore onto a host that held no copy of the
+  store knows no such range and warns of none. A record entry whose end
+  is there and does not read as a seq is still no rewind.
+  (`src/bettermemory/backup.py`, `src/bettermemory/audit_export.py`,
+  `src/bettermemory/cli/log_cmd.py`, `docs/api.md`,
+  `docs/operations.md`, `tests/test_restore_rewind.py`,
+  `tests/test_log_export.py`)
 
 #### Known limitations
 

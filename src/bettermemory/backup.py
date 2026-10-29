@@ -1132,6 +1132,39 @@ def _current_store_id(store_file: Path) -> str | None:
     return None if row is None else str(row[0])
 
 
+def _replaced_log_end(
+    store_file: Path, store_id: str, current_store_id: str | None, bound: Path | None
+) -> dict[str, Any] | None:
+    """Where the log this restore replaces ended, as ``{seq, path}`` (the
+    file it was read from), or None when no copy of the store on this host
+    says.
+
+    The store at `store_file` when it holds `store_id`; else the file the
+    key ring is bound to (`bound`) when that is another file that holds
+    it: a restore into another store directory while the store the bundle
+    was taken from is still there, whose log is the one the restore
+    rewinds the head checkpoint from. The record keeps it beside the head
+    the restore replaced (`audit_export.rewinds_across` reads the later of
+    the two), so a head checkpoint that was missing or behind the log
+    still leaves the rewound range known. A store file with another id
+    is another store's log and says nothing of this one's. With neither,
+    and no head checkpoint, the host held no copy of the store, and the
+    record says so by naming neither end."""
+    sources = [store_file] if current_store_id == store_id else []
+    if bound is not None and current_store_id != store_id:
+        with contextlib.suppress(OSError):
+            elsewhere = not (
+                store_file.exists() and os.path.samefile(bound, store_file)
+            )
+            if elsewhere and _current_store_id(bound) == store_id:
+                sources.append(bound)
+    for source in sources:
+        end = _log_end(source)
+        if end is not None:
+            return {"seq": end, "path": str(source)}
+    return None
+
+
 def _key_actions(
     live: KeyRing, bundle: KeyRing, needed: Sequence[str], final: str
 ) -> list[dict[str, Any]]:
@@ -1522,15 +1555,15 @@ def restore_bundle(
         aside = _aside_base(store_file, stamp)
         before = live.read_head()
         current_store_id = _current_store_id(store_file)
-        # The replaced log's end counts only when it is this store's log.
-        log_end = _log_end(store_file) if current_store_id == store_id else None
         origin = parse_origin(verification["origin"])
         origin_before = live.read_origin()
         try:
-            binding_before = _path_str(live.read_binding())
+            bound = live.read_binding()
         except OSError:
-            binding_before = None
+            bound = None
+        binding_before = _path_str(bound)
         binding_after = str(store_file.resolve())
+        log_end = _replaced_log_end(store_file, store_id, current_store_id, bound)
         record = restore_record_path(keys_root, store_id)
         report["plan"] = {
             "current_store_id": current_store_id,
@@ -1547,6 +1580,7 @@ def restore_bundle(
                 else {"seq": before.seq, "mac": before.mac},
                 "after": {"seq": head.seq, "mac": head.mac},
             },
+            "log_end_before": log_end,
             "origin": {
                 "before": _origin_dict(origin_before),
                 "after": _origin_dict(origin),
@@ -1564,6 +1598,9 @@ def restore_bundle(
             return report
         swapped = [False]
         stack.callback(_release_restore_lock, held, report, swapped)
+        # Read again now that no process has the store open: a writer that
+        # closed after the plan was read may have moved the log on.
+        log_end = _replaced_log_end(store_file, store_id, current_store_id, bound)
         report["status"] = FAILED
         moved: list[dict[str, str]] = report["moved_aside"]
         try:
@@ -1631,7 +1668,7 @@ def restore_bundle(
                     "replaced_store_id": report["plan"]["current_store_id"],
                     "head_before": report["head"]["before"],
                     "head_after": report["head"]["after"],
-                    "log_end_before": None if log_end is None else {"seq": log_end},
+                    "log_end_before": log_end,
                     "origin_before": report["origin"]["before"],
                     "origin_after": report["origin"]["after"],
                     "binding_before": report["binding"]["before"],

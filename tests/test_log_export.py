@@ -902,7 +902,7 @@ def test_a_rewind_is_read_off_the_later_of_its_two_ends(tmp_path: Path) -> None:
         "not json",
         "[]",
         '{"restores": {}}',
-        '{"restores": [1, {"head_before": null, "head_after": {"seq": 1}}]}',
+        '{"restores": [1, {"head_before": null, "head_after": null}]}',
         '{"restores": [{"head_before": {"seq": "9"}, "head_after": {"seq": 1}}]}',
     ],
 )

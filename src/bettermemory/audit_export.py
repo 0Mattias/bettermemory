@@ -629,9 +629,17 @@ def rewinds_across(
     the caller's warning says so; only a cursor that carried the row's
     MAC could tell the two apart. The log ended at the later of the head
     the restore replaced (``head_before``) and the replaced store's last
-    log seq (``log_end_before``), so a head checkpoint that was missing or
-    behind the log does not hide the range. A record that is missing or
-    does not read, or an entry with neither end, is no rewind."""
+    log seq (``log_end_before``, read from the store the restore replaced
+    or from the store file the key ring was bound to), so a head
+    checkpoint that was missing or behind the log does not hide the range.
+
+    An entry with neither end is a restore onto a host that held no copy
+    of the store: no head checkpoint, and no store file with its id where
+    it was restored or where its key ring was bound. Where the replaced
+    log ended is not known here, so every cursor past the restored head
+    may predate it: such an entry rewinds from an unknown seq, and
+    ``from_seq`` is None. A record that is missing or does not read, or
+    an entry whose end is there and is not a seq, is no rewind."""
     from .backup import restore_record_path
 
     path = restore_record_path(keys_dir, store_id)
@@ -646,16 +654,19 @@ def rewinds_across(
             continue
         after = entry.get("head_after")
         to_seq = after.get("seq") if isinstance(after, dict) else None
-        ends = [
-            end.get("seq")
-            for end in (entry.get("head_before"), entry.get("log_end_before"))
-            if isinstance(end, dict)
-        ]
+        befores = (entry.get("head_before"), entry.get("log_end_before"))
+        ends = [end.get("seq") for end in befores if isinstance(end, dict)]
         known = [seq for seq in ends if type(seq) is int]
-        if type(to_seq) is not int or not known:
+        if type(to_seq) is not int:
             continue
-        from_seq = max(known)
-        if to_seq < since_seq <= from_seq:
+        if known:
+            from_seq: int | None = max(known)
+        elif all(end is None for end in befores):
+            from_seq = None
+        else:
+            # An end that is there and does not read as a seq.
+            continue
+        if to_seq < since_seq and (from_seq is None or since_seq <= from_seq):
             found.append(
                 {
                     "restored_at": str(entry.get("restored_at")),
