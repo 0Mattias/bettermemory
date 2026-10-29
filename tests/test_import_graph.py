@@ -378,9 +378,10 @@ def test_every_moved_name_is_importable_from_hook(home: str, name: str) -> None:
 def test_the_seams_that_left_hook_are_gone(name: str) -> None:
     """The Stop and the recall read the caller's origin through
     `origin.capture_caller` and run the probe and the interrupted-turn
-    settlement from `recall_settle`, which `hook` reads through `recall`
-    inside the functions that call them, so `hook` binds none of these
-    four names: a test that patches one on `hook` fails at the patch
-    instead of patching a name nothing reads."""
+    settlement from `recall_settle`, which `hook` reads inside the
+    functions that call them (the probe from `recall_settle`, the
+    settlement through `recall`), so `hook` binds none of these four
+    names: a test that patches one on `hook` fails at the patch instead
+    of patching a name nothing reads."""
     with pytest.raises(AttributeError, match=f"no attribute {name!r}"):
         getattr(hook, name)

@@ -15,6 +15,17 @@ This module lives apart from `recall.py` to keep each module under the
 package's 2,000-line bound (ENG-97); from the family it imports
 `recall_admission`, `recall_settle` and `recall_state`, never `recall`,
 and `recall` imports it.
+
+Where to patch. The probe is read through `recall_settle` at call time
+(`recall_settle._probe_message`), where `hook`'s Stop audit reads it too,
+so a patch on `recall_settle._probe_message` reaches the prompt hook and
+the Stop audit alike. `settle_interrupted` and `previous_audit_at`
+(`recall_settle`), `Recorder` (`events`), `_delivery_membership` and
+`_rc3_admitted` (`recall_admission`), and `RULE` and `STATE_IDLE_SECONDS`
+(`recall_state`) are bound here at import from those modules: a patch
+that must reach the prompt hook's reads of them targets this module, and
+a patch on `recall`'s re-export of one reaches `recall`'s own readers and
+`hook`'s, not these.
 """
 
 from __future__ import annotations
@@ -40,7 +51,8 @@ from .membership import POOL_PREFILTER, PROMPT_RECALL, Resolution
 from .models import Memory
 from .origin import Origin
 from .recall_admission import _delivery_membership, _rc3_admitted
-from .recall_settle import _probe_message, previous_audit_at, settle_interrupted
+from . import recall_settle
+from .recall_settle import previous_audit_at, settle_interrupted
 from .recall_state import (
     RULE,
     STATE_IDLE_SECONDS,
@@ -152,7 +164,7 @@ def _prompt_probe(
     excluded_scopes: set[str],
 ) -> MissReport:
     """Take the turn and its log window; return the probe's report on its words."""
-    return _probe_message(
+    return recall_settle._probe_message(
         cfg=turn.cfg,
         store=turn.store,
         user_message=turn.query,

@@ -146,7 +146,6 @@ from .recall_prompt import (
     _settle_before_probe,
 )
 from .recall_settle import (
-    _probe_message as _probe_message,
     previous_audit_at,
     review_unanswered,
     settle_interrupted,

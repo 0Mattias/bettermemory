@@ -1,6 +1,6 @@
 """The prompt recall (`recall.prompt_recall`): the UserPromptSubmit surface.
 
-The probe is the audit's (`recall._probe_message`), unchanged, so this file
+The probe is the audit's (`recall_settle._probe_message`), unchanged, so this file
 does not re-test ranking. What it pins is delivery: the prompt the probe
 reads (pasted blocks removed, 2,000 characters), the floor and the
 acknowledgment gate, the candidate gates and their recorded reasons, up

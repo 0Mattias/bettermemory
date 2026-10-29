@@ -19,7 +19,7 @@ store identified by `BETTERMEMORY_DIR` (or the usual resolution
 rules). The UserPromptSubmit half (`prompt_main` /
 `run_prompt_recall`) is a delegate of `recall.prompt_recall`, which
 runs the SAME probe over the prompt being submitted (before the turn,
-via the shared `recall._probe_message`) and delivers up to three pointers to
+via the shared `recall_settle._probe_message`) and delivers up to three pointers to
 the hits it ranks, under the recall surface's own per-session cooldown.
 The session brief, the SessionStart surface, lives in `recall.py` too.
 
@@ -665,7 +665,7 @@ def _stop_probe(
     worktree_root: str | None,
 ) -> MissReport:
     """Take the owner's prompt (None for none) and the pool; return the report."""
-    from .recall import _probe_message
+    from .recall_settle import _probe_message
 
     if user_message is None:
         return no_owner_prompt_report(
