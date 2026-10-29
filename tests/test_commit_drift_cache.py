@@ -194,10 +194,10 @@ def _stamp(
 ) -> None:
     """`mark_verified` with the stamp's instant pinned, so the fixtures'
     commit dates fall on a known side of it."""
-    import bettermemory.store as store_module
+    import bettermemory.store_records as store_records
 
     with monkeypatch.context() as patch:
-        patch.setattr(store_module, "utcnow", lambda: at)
+        patch.setattr(store_records, "utcnow", lambda: at)
         store.mark_verified(
             memory_id, verified_head=verified_head, verified_paths=verified_paths
         )

@@ -50,6 +50,8 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 import bettermemory.handlers as handlers_pkg
 import bettermemory.store as store_module
+import bettermemory.store_records as store_records
+import bettermemory.store_rows as store_rows
 from bettermemory._handlers import KeptWriteRefusal, RefusedError, RetryableRefusal
 from bettermemory.config import BehaviorConfig, Config, StorageConfig
 from bettermemory.events import Recorder
@@ -104,14 +106,14 @@ def written(store: Store) -> Memory:
 
 
 @pytest.fixture
-def meeting(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], None]:
+def meeting(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[str], None]]:
     """Arm the meeting point for a thread by name: its next read of a
     record waits there until the other armed thread has read too, or
     `MEETING_SECONDS`."""
     barrier = threading.Barrier(2)
     armed: set[str] = set()
     lock = threading.Lock()
-    real = store_module._row_to_memory
+    real = store_rows._row_to_memory
 
     def meet(row: sqlite3.Row) -> Memory:
         name = threading.current_thread().name
@@ -125,13 +127,14 @@ def meeting(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], None]:
                 pass
         return real(row)
 
-    monkeypatch.setattr(store_module, "_row_to_memory", meet)
+    monkeypatch.setattr(store_records, "_row_to_memory", meet)
 
     def arm(name: str) -> None:
         with lock:
             armed.add(name)
 
-    return arm
+    yield arm
+    assert len(armed) < 2, "premise: a writer read through the patched reader"
 
 
 def _race(
@@ -253,12 +256,12 @@ _CHILD = r"""
 import json, sys, time
 from pathlib import Path
 
-import bettermemory.store as store_module
+import bettermemory.store_records as store_records
 from bettermemory.store import ConcurrentUpdateError, Store
 
 op, path, keys, memory_id, sync, me, other, session, seconds, busy = sys.argv[1:11]
 sync = Path(sync)
-real = store_module._row_to_memory
+real = store_records._row_to_memory
 armed = []
 
 
@@ -272,7 +275,7 @@ def meet(row):
     return real(row)
 
 
-store_module._row_to_memory = meet
+store_records._row_to_memory = meet
 store = Store.open(path, keys_dir=keys)
 store.set_busy_timeout(float(busy))
 snapshot = store.load_one(memory_id)
@@ -342,6 +345,9 @@ def _two_processes(
         out, err = child.communicate(timeout=120)
         assert child.returncode == 0, err
         outcomes.append(json.loads(out.strip().splitlines()[-1]))
+    assert any((sync / name).exists() for name in names), (
+        "premise: a child read through the patched reader"
+    )
     return outcomes[0], outcomes[1]
 
 
