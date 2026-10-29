@@ -188,6 +188,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # bench/: scratch_store
+from scratch_store import scratch_store  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[2]
 QUESTIONS = ROOT / "bench" / "retrieval" / "questions.jsonl"
 PYTHON = sys.executable
@@ -350,7 +353,6 @@ async def in_process_search(
     from bettermemory.config import BehaviorConfig, Config, ScopesConfig, StorageConfig
     from bettermemory.server import build_server
     from bettermemory.session import SessionState
-    from bettermemory.store import Store
 
     os.environ["BETTERMEMORY_KEYS_DIR"] = str(scratch / "keys")
     config = Config(
@@ -359,7 +361,7 @@ async def in_process_search(
         scopes=ScopesConfig(),
     )
     server = build_server(
-        config=config, store=Store(scratch / "store"), state=SessionState()
+        config=config, store=scratch_store(scratch / "store"), state=SessionState()
     )
     for q in qs[:3]:
         await server.call_tool("memory_search", {"query": q, "max_results": 5})
@@ -823,9 +825,9 @@ def answer_standing(scratch: Path, ids: list[str]) -> int:
     while the daemon is down: BRIEF_STANDING_PROBABILITY, source asked,
     answered by this bench. Returns how many were answered."""
     from bettermemory.standing import SOURCE_ASKED
-    from bettermemory.store import StandingAnswer, Store
+    from bettermemory.store import StandingAnswer
 
-    store = Store(scratch / "store", keys_dir=scratch / "keys")
+    store = scratch_store(scratch / "store", scratch / "keys")
     answer = StandingAnswer(
         BRIEF_STANDING_PROBABILITY, SOURCE_ASKED, "bench/daemon/latency.py"
     )
@@ -1450,7 +1452,6 @@ def run_write_arm(
     )
     from bettermemory.server import build_server
     from bettermemory.session import SessionState
-    from bettermemory.store import Store
 
     refuse_live_store(scratch)
     store_dir = scratch / "store"
@@ -1472,7 +1473,7 @@ def run_write_arm(
             behavior=BehaviorConfig(),
             scopes=ScopesConfig(),
         )
-        store = Store(store_dir)
+        store = scratch_store(store_dir)
         server = build_server(config=config, store=store, state=SessionState())
         gate_check = check_workload(store, config, bodies)
         timings = asyncio.run(_write_pass(server_call(server), warm, timed, clock))
@@ -1826,13 +1827,12 @@ def run_stop_arm(*, v8: Path, scratch: Path, n: int) -> dict[str, Any]:
         os.environ[name] = env[name]
     from bettermemory import capture_hook
     from bettermemory.config import CaptureConfig, Config, StorageConfig
-    from bettermemory.store import Store
 
     config = Config(
         storage=StorageConfig(directory=str(scratch / "store")),
         capture=CaptureConfig(stop_checkpoint=True, daily_cap=100_000),
     )
-    store = Store(scratch / "store")
+    store = scratch_store(scratch / "store")
     decision: list[float] = []
     decided = Counter[str]()
     for index, payload in enumerate(linked("1111")):

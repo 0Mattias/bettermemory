@@ -18,6 +18,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # bench/: scratch_store
+from scratch_store import scratch_store  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[2]
 PYTHON = sys.executable
 RESULTS = Path(__file__).resolve().parent / "results"
@@ -65,7 +68,6 @@ class World:
         from bettermemory.config import Config, StorageConfig
         from bettermemory.events import Recorder
         from bettermemory.session import SessionState
-        from bettermemory.store import Store
 
         keys = os.environ.get("BETTERMEMORY_KEYS_DIR")
         if not keys:
@@ -74,7 +76,7 @@ class World:
             raise SystemExit("World needs scratch_env first: no scratch keys directory")
         self.root = root
         self.config = Config(storage=StorageConfig(directory=str(root)))
-        self.store = Store(root, keys_dir=Path(keys))
+        self.store = scratch_store(root, Path(keys))
         self.state = SessionState()
         self.server = build_server(
             config=self.config,

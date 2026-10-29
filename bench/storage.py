@@ -51,6 +51,9 @@ from bettermemory.config import BehaviorConfig  # noqa: E402
 from bettermemory.search import search as run_search  # noqa: E402
 from bettermemory.store import Store  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # bench/: scratch_store
+from scratch_store import scratch_store  # noqa: E402
+
 
 # ---------------------------------------------------------------------------
 # Synthetic-corpus generation
@@ -129,7 +132,7 @@ def _run_size(n: int, *, search_repeats: int, load_repeats: int) -> dict[str, An
     try:
         # The key goes under the bench directory and is removed with it,
         # never under the user's keys directory (ENG-106).
-        store = Store(bench_dir, keys_dir=bench_dir / "keys")
+        store = scratch_store(bench_dir, bench_dir / "keys")
 
         # Populate — separately timed so we can report write throughput too.
         t0 = time.perf_counter()

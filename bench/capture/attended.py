@@ -32,6 +32,9 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _common  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # bench/: scratch_store
+from scratch_store import scratch_store  # noqa: E402
+
 FIXTURE = _common.ROOT / "tests" / "fixtures" / "v8" / "store"
 TRANSCRIPT_BYTES = 1024 * 1024
 ATTENDED_ENV = "CLAUDE_CODE_SESSION_ATTENDED"
@@ -74,9 +77,8 @@ def _hook(session: str, transcript: Path, env_value: str | None, claim: str | No
 
 def _opens(store_dir: Path) -> dict[str, int]:
     from bettermemory import capture
-    from bettermemory.store import Store
 
-    store = Store(store_dir)
+    store = scratch_store(store_dir)
     try:
         out: dict[str, int] = {}
         for batch in capture.batches(store):

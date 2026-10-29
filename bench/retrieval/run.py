@@ -107,6 +107,9 @@ from bettermemory.handlers.search import resolve_search_pool  # noqa: E402
 from bettermemory.search import search as run_search  # noqa: E402
 from bettermemory.store import Store  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # bench/: scratch_store
+from scratch_store import scratch_store  # noqa: E402
+
 _HERE = Path(__file__).resolve().parent
 CORPUS = _HERE / "corpus.jsonl"
 QUESTIONS = _HERE / "questions.jsonl"
@@ -304,7 +307,7 @@ def build_store(
     root: Path, corpus_path: Path, *, pad_to: int | None
 ) -> tuple[dict[str, str], int]:
     """Write the corpus into `root`. Returns (slug -> memory id, corpus size)."""
-    store = Store(root, keys_dir=scratch_keys(root))
+    store = scratch_store(root, scratch_keys(root))
     slug_to_id: dict[str, str] = {}
     n = 0
     for row in _read_jsonl(corpus_path):
@@ -1025,7 +1028,7 @@ def main() -> int:
     root = Path(tempfile.mkdtemp(prefix="bm-retrieval-"))
     try:
         slug_to_id, corpus_n = build_store(root, corpus_path, pad_to=args.pad_to)
-        store = Store(root, keys_dir=scratch_keys(root))
+        store = scratch_store(root, scratch_keys(root))
         # Both arms start from this one store: the off arm gets the whole
         # thing up front, the on arm lets production choose per query.
         memories = store.load_all()

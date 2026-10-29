@@ -69,6 +69,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Protocol
+import sys  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # bench/: scratch_store
+from scratch_store import scratch_store  # noqa: E402
 
 _ROOT = Path(__file__).resolve().parents[2]
 SCOPE = "projects:halden"
@@ -444,14 +448,13 @@ class BetterMemoryAdapter:
         from bettermemory.config import load_config
         from bettermemory.events import Recorder
         from bettermemory.session import SessionRegistry
-        from bettermemory.store import Store
 
         cfg = load_config(cfg_path)
         if cfg.resolved_directory() != self.root:
             raise SystemUnavailable(
                 f"config resolved {cfg.resolved_directory()} instead of the scratch store"
             )
-        store = Store(self.root, keys_dir=self.scratch / "keys")
+        store = scratch_store(self.root, self.scratch / "keys")
         sessions = SessionRegistry()
         self._session_id = sessions.for_request(None).session_id
         recorder = Recorder(

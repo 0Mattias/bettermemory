@@ -2525,10 +2525,21 @@ follows the candidates' testing.
   store-creating entry point under a fake home with no keys directory
   named and finds the user's keys directory still absent; the swarm,
   integrity and migration harnesses, which already named one, are
-  pinned beside them. (`bench/storage.py`, `bench/retrieval/run.py`,
-  `bench/parity/run.py`, `bench/daemon/latency.py`,
-  `bench/capture/_common.py`, `bench/toolcost/run.py`,
-  `tests/test_bench_keys.py`, `tests/test_bench_toolcost.py`)
+  pinned beside them. Every store a bench builds or reopens goes through
+  one helper, `bench/scratch_store.scratch_store`, which names the keys
+  directory (the caller's, the scratch environment's, or `keys` beside
+  the store) and refuses the user's default one; the capture undo,
+  attended and one-call runs and three latency arms, which leaned on the
+  environment, use it too, and a test reads every bench's source and
+  fails on a `Store(...)`, `Store.create` or `Store.open_or_create`
+  outside it, a `Store.open` that may rekey, or a `migrate_v8` that names
+  no keys directory. (`bench/scratch_store.py`, `bench/storage.py`,
+  `bench/swarm.py`, `bench/retrieval/run.py`, `bench/parity/run.py`,
+  `bench/daemon/latency.py`, `bench/capture/_common.py`,
+  `bench/capture/one_call.py`, `bench/capture/attended.py`,
+  `bench/capture/undo.py`, `bench/integrity/adapters.py`,
+  `bench/toolcost/run.py`, `tests/test_bench_keys.py`,
+  `tests/test_bench_toolcost.py`)
 - **A new store whose keys directory is a symbolic link to nothing is
   refused in one line (ENG-93).** A keys directory kept on a volume that
   is not mounted right now is a link to nothing. An existing store's

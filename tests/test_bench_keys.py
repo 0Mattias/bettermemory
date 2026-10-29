@@ -14,6 +14,7 @@ child gets the sandbox's keys directory in `test_bench_toolcost`.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import os
@@ -210,3 +211,80 @@ def test_the_migration_harness_keeps_its_key_in_its_scratch_directory(
     )
     harness.run_migration(tmp_path / "run", harness.FIXTURE)
     assert len(_key_files(tmp_path / "run" / "keys")) == 1
+
+
+#: Bench directories that hold data, not benches, and are not read here.
+_PROTECTED = ("integrity/v1/", "decisions/data/", "decisions/results/")
+
+
+def _bench_sources() -> list[Path]:
+    return [
+        path
+        for path in sorted(_BENCH.rglob("*.py"))
+        if not path.relative_to(_BENCH).as_posix().startswith(_PROTECTED)
+    ]
+
+
+def _store_calls_without_scratch_keys(path: Path) -> list[str]:
+    """Each call in ``path`` that builds a store other than through
+    `scratch_store`: `Store(...)`, `Store.create(...)`,
+    `Store.open_or_create(...)`; a `Store.open(...)` that may rekey (one
+    with ``allow_rekey=False`` opens an existing store and never writes a
+    key); a `migrate_v8(...)` that names no ``keys_dir``."""
+    found: list[str] = []
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        names = {k.arg for k in node.keywords}
+        no_rekey = any(
+            k.arg == "allow_rekey"
+            and isinstance(k.value, ast.Constant)
+            and k.value.value is False
+            for k in node.keywords
+        )
+        where = f"{path.relative_to(_BENCH).as_posix()}:{node.lineno}"
+        if isinstance(func, ast.Name) and func.id == "Store":
+            found.append(where)
+        elif (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "Store"
+        ):
+            if func.attr in ("create", "open_or_create") or (
+                func.attr == "open" and not no_rekey
+            ):
+                found.append(where)
+        elif isinstance(func, ast.Name) and func.id == "migrate_v8":
+            if "keys_dir" not in names:
+                found.append(where)
+    return found
+
+
+def test_every_bench_builds_its_stores_through_scratch_store() -> None:
+    """No bench key lands in the user's keys directory, for every bench:
+    each store a bench builds or reopens goes through
+    `bench/scratch_store.scratch_store`, which names its keys directory,
+    rather than wherever the environment happened to point (cold review
+    L4)."""
+    sources = _bench_sources()
+    assert _BENCH / "scratch_store.py" in sources
+    offenders = [
+        where
+        for path in sources
+        if path.name != "scratch_store.py"
+        for where in _store_calls_without_scratch_keys(path)
+    ]
+    assert offenders == [], offenders
+
+
+def test_scratch_store_names_a_scratch_keys_directory(
+    user_keys: Path, tmp_path: Path
+) -> None:
+    helper = _load("bench_keys_scratch_store", _BENCH / "scratch_store.py")
+    with pytest.raises(SystemExit, match="the user's keys directory"):
+        helper.scratch_store(tmp_path / "refused" / "store", user_keys)
+    with helper.scratch_store(tmp_path / "bench" / "store") as store:
+        store.write(content="the bench cache holds 3 entries", scopes=["infra"])
+        store_id = store.store_id
+    assert _key_files(tmp_path / "bench" / "keys") == [f"{store_id}.key"]

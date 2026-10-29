@@ -61,6 +61,9 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _common  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # bench/: scratch_store
+from scratch_store import scratch_store  # noqa: E402
+
 FIXTURE = _common.ROOT / "tests" / "fixtures" / "v8" / "store"
 SCOPES = ["projects:acme"]
 SCORES = {"unsafe": 0.0, "secret": 0.0, "standing": 0.0}
@@ -564,12 +567,11 @@ def oc_p5(scratch: Path) -> dict[str, Any]:
     from latency import import_copy  # type: ignore[import-not-found]
 
     from bettermemory.mirror import MIRROR_MARKER
-    from bettermemory.store import Store
     from bettermemory.v8 import TOMBSTONE_DIR
 
     store_dir = scratch / "p5"
     import_copy(FIXTURE, store_dir)
-    store = Store(store_dir)
+    store = scratch_store(store_dir)
     for seed in (BACKUP_OLD, DEPLOY_OLD):
         store.write(content=seed, scopes=SCOPES)
     conflicts_before = sorted(str(c["id"]) for c in store.list_conflicts())
@@ -598,7 +600,7 @@ def oc_p5(scratch: Path) -> dict[str, Any]:
     removed = len(old.keys() - rest.keys())
     verify = _common.cli("log", "verify", "--json")
     verify_doc = json.loads(verify.stdout) if verify.stdout.strip() else {}
-    store = Store(store_dir)
+    store = scratch_store(store_dir)
     conflicts_after = sorted(str(c["id"]) for c in store.list_conflicts())
     store.close()
     identical = differing == 0 and added == 0 and removed == 0

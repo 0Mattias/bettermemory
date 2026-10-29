@@ -80,9 +80,11 @@ from bettermemory.store import (  # noqa: E402
     ConcurrentUpdateError,
     MemoryNotFoundError,
     NotTombstonedError,
-    Store,
     TombstonedError,
 )
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # bench/: scratch_store
+from scratch_store import scratch_store  # noqa: E402
 
 # A small shared vocabulary so seeded bodies and agent writes carry
 # overlapping terms — searches then do real ranking work instead of
@@ -129,7 +131,7 @@ def _agent(args: tuple[str, str, int, int, int, bool]) -> dict[str, Any]:
     aggregate.
     """
     root, keys_dir, agent_id, num_ops, seed, record_events = args
-    store = Store(Path(root), keys_dir=Path(keys_dir))
+    store = scratch_store(Path(root), Path(keys_dir))
     recorder = (
         Recorder(store=store, session_id=f"agent-{agent_id}") if record_events else None
     )
@@ -235,7 +237,7 @@ def _seed_corpus(root: Path, keys_dir: Path, n: int, seed: int) -> None:
     """Single-process pre-seed so agent searches have real content to
     rank from op one."""
     rng = random.Random(seed)
-    with Store(root, keys_dir=keys_dir) as store:
+    with scratch_store(root, keys_dir) as store:
         for _ in range(n):
             store.write(content=_body(rng, -1), scopes=["seed"])
 
@@ -268,7 +270,7 @@ def _check_invariants(
     if not all(isinstance(r, dict) and "tally" in r for r in results):
         problems.append("an agent process crashed or returned a bad result")
 
-    with Store(root, keys_dir=keys_dir) as store:
+    with scratch_store(root, keys_dir) as store:
         loaded = store.load_all()
         rows = store.count_memories()
         if len(loaded) != rows:

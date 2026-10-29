@@ -46,6 +46,9 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _common  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # bench/: scratch_store
+from scratch_store import scratch_store  # noqa: E402
+
 CAPTURE_N = 10
 CAPTURE_SEED = 20261013
 FIXTURE = _common.ROOT / "tests" / "fixtures" / "v8" / "store"
@@ -106,7 +109,6 @@ def run_store(name: str, v8_root: Path, scratch: Path, bodies: list[str]) -> dic
     from latency import import_copy  # type: ignore[import-not-found]
 
     from bettermemory.mirror import MIRROR_MARKER
-    from bettermemory.store import Store
     from bettermemory.v8 import TOMBSTONE_DIR
 
     store_dir = scratch / f"{name}-store"
@@ -145,7 +147,7 @@ def run_store(name: str, v8_root: Path, scratch: Path, bodies: list[str]) -> dic
     for memory_id in ids:
         proc = _common.cli("tombstones", "restore", memory_id, "--json")
         restored += proc.returncode == 0
-    store = Store(store_dir)
+    store = scratch_store(store_dir)
     back = 0
     for memory_id, body in zip(ids, bodies, strict=True):
         try:

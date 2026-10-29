@@ -77,6 +77,9 @@ from bettermemory.search import search as run_search  # noqa: E402
 from bettermemory.search import tokenizer_fingerprint  # noqa: E402
 from bettermemory.store import Store  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # bench/: scratch_store
+from scratch_store import scratch_store  # noqa: E402
+
 RETRIEVAL = _ROOT / "bench" / "retrieval"
 CORPUS = RETRIEVAL / "corpus.jsonl"
 QUESTIONS = RETRIEVAL / "questions.jsonl"
@@ -173,7 +176,7 @@ def build_store(root: Path, corpus_path: Path) -> dict[str, str]:
     if root.exists() and any(root.iterdir()):
         raise SystemExit(f"refusing to build into a non-empty directory: {root}")
     ids: dict[str, str] = {}
-    with Store(root, keys_dir=scratch_keys(root)) as store:
+    with scratch_store(root, scratch_keys(root)) as store:
         for ordinal, row in enumerate(_read_jsonl(corpus_path)):
             created = BASE_CREATED + timedelta(seconds=ordinal)
             memory = Memory(
@@ -303,7 +306,7 @@ def run_public(
     limit: int | None = None,
 ) -> dict[str, Any]:
     slug_to_id = build_store(root, corpus_path)
-    store = Store(root, keys_dir=scratch_keys(root))
+    store = scratch_store(root, scratch_keys(root))
     full = store.load_all()
     questions = _read_jsonl(questions_path)
     if limit is not None:
