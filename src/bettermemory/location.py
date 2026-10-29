@@ -118,7 +118,6 @@ from .location_git import (
     RepositoryHistory,
     _clear_above,
     _common_of,
-    _config_values,
     _discover,
     _Git,
     _gitfile_target,
@@ -130,6 +129,7 @@ from .location_git import (
     bounded_read,
     bounded_reads,
     gitfile_refusal,
+    remote_urls,
 )
 from .location_git import (
     _GIT_TIMEOUT_SECONDS as _GIT_TIMEOUT_SECONDS,
@@ -588,17 +588,10 @@ def _capture_uncached(
             )
     head, branch = _resolve_head(git)
     tips = _ref_tips(git)
-    values = _config_values(os.path.join(git.common_dir, "config"))
     base = git.root or git.git_dir
-    keys = sorted(
-        {
-            k
-            for (section, _sub, key), urls in values.items()
-            if section == "remote" and key == "url"
-            for k in (remote_key(u, base) for u in urls)
-            if k
-        }
-    )
+    # Each remote as written and as its insteadOf rewrites it (ENG-160).
+    urls = remote_urls(git.common_dir, git.git_dir)
+    keys = sorted({k for k in (remote_key(u, base) for u in urls) if k})
     token, written, status = _token_fields(git, write_token=write_token)
     walk_root = git.root if git.root is not None else git.git_dir
     walk, files, errors = _walk_files(real, walk_root)

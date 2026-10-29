@@ -430,8 +430,12 @@ key, the shallow marker, the token, the init stamps (`description` and
 manifest of a commit-less checkout or folder project. Commits and blobs
 are read from loose objects, pack indexes and packs (`gitobjects.py`),
 with `git cat-file --batch-check` only where that reader reports itself
-incomplete. Nothing reads repository configuration, so git's
-`safe.directory` refusal never applies. A `.git` file is followed only
+incomplete. Repository configuration (the remote URLs, `core.worktree`
+and `core.bare`, the files `include.path` and `includeIf "gitdir:"`
+name, and the global config's `url.<base>.insteadOf`; ENG-160) is read
+as bytes by the module's own bounded parser, never through git, so
+git's `safe.directory` refusal never applies; the system config is not
+read. A `.git` file is followed only
 where git's own pointers say the folder is its git directory's working
 tree (ENG-158): a linked worktree's git directory registered at
 `<common>/worktrees/<name>` that names the file back, a git directory
@@ -451,7 +455,7 @@ fact:
 | H | holds witness commits of the project | the project's bounded witness set, asked of the history reader in one batch | one witness: asks once |
 | Hf | holds commits with a witness's fingerprint (sha256 of the author and committer lines and the message) | the repository's commits, where no witness commit is held | with H and Hb, one history witness |
 | Hb | holds the file contents of witness commits: at least 2 blobs and half of one witness's sample | up to 8 blobs per witness | counts only beside H, Hf or R; never with a project file alone |
-| R | names a remote key of the project | every remote URL in the config file, not only `origin`; a `file://` or path remote names the views seen there | one witness: asks once |
+| R | names a remote key of the project | every remote URL in the config file and the files it includes, not only `origin`, each keyed as written and as the longest `insteadOf` prefix rewrites it; a `file://` or path remote names the views seen there | one witness: asks once |
 | D | names a remote declared for the project in a shallow clone | `declared_remotes`, written by a `join` answering a remote-only question in a shallow clone | counts for a shallow caller |
 | F | carries a project file bound to the project | `bettermemory.toml` at the repository's root | one witness: asks once; with R, two only where history cannot speak (unborn, shallow) |
 | T | carries the checkout token of one of the project's checkouts | `info/bettermemory` in the git directory | two only when caller and project are both commit-less and no live checkout carries it; dropped when history disagrees |

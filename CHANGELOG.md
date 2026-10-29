@@ -1102,6 +1102,29 @@ the candidates' testing.
   of that path: a capture that finds one in flight waits on it within its
   own budget, and one past the budget defers at once.
   (`src/bettermemory/location.py`)
+- **A repository's git config is read as git reads it.** The capture's
+  own config reader dropped a config over its 1 MiB bound whole, every
+  remote with it, followed no includes, and applied no
+  `url.<base>.insteadOf`, so a remote spelled with an alias keyed apart
+  from a clone of the URL it stands for (ENG-160). A config over the
+  bound is now read to its last whole line within it; `include.path` and
+  `includeIf "gitdir:"` (and `gitdir/i:`) are followed as git follows
+  them, matched with git's path globbing, and an include naming a FIFO or
+  a device is not waited on; each remote is keyed as written and as the
+  longest `insteadOf` prefix in the global or the repository's config
+  rewrites it. A `.git` file's target whose config cannot be read whole
+  (over the bound, an include unreadable or nested past git's depth of
+  10, or one under an `onbranch:` or `hasconfig:` condition that names
+  the working tree) is refused rather than followed. Following includes
+  is bounded: an include past git's depth, or one naming a file it is
+  read from (a cycle, which git follows to its depth and refuses), stops
+  the read, as do the includes past 64 files read in all (a file
+  included again counted again); the values read before stand and the
+  config reads as incomplete. A config naming itself in four include
+  lines stops at its first include, where a reader bounded by depth
+  alone reads it about 1.4 million times (38 s).
+  (`src/bettermemory/location_git.py`, `docs/internals.md`,
+  `src/bettermemory/location.py`)
 
 #### Known limitations
 
@@ -1203,6 +1226,17 @@ the candidates' testing.
   sighting (one new checkout, then silent, no duplicate, with birth time
   and without); the re-mint of a checkout already recorded as superseded
   on another machine was not exercised.
+- **The capture reads the global and the repository's git config, not
+  the system's.** A remote alias or include set only in the system
+  config (`/etc/gitconfig`, or git for Windows' own) is not applied, so
+  a remote spelled with such an alias keys apart from a clone of the URL
+  it stands for, as every remote did before (ENG-160). A change to the
+  global config (a new `insteadOf`) reaches a cached capture at the
+  repository's next signature change (its HEAD, refs, remotes or token),
+  not at once. And keying a remote as `insteadOf` rewrites it as well as
+  written can make an alias clone and a full-URL clone, kept as two
+  projects before, both candidates by their remote: they are one
+  repository, and the ladder asks.
 
 ### 9.0.0rc13
 
