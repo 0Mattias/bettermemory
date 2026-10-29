@@ -35,8 +35,10 @@ nothing. `bettermemory security audit` grades the modes and owners.
 | The managed config | `/Library/Application Support/bettermemory/managed.toml` on macOS, `/etc/bettermemory/managed.toml` on Linux and other POSIX systems; on Windows no file, the registry value `HKLM\SOFTWARE\Policies\bettermemory\ManagedConfig` | nothing | root-owned `0644`; on Cygwin and MSYS no folder from `/` down that another account can write, or it is refused; on Windows the key's default access, which only administrators can write |
 | Backup bundles | `backups/<UTC stamp>/` in the store directory | `backup create --out DIR` | directory `0700`, files `0600` |
 
-`<hash>` is derived from the store's path, so each store has its own
-daemon and files. The key, the head and the origin anchor are what make
+`<hash>` is derived from the store file's canonical path (since
+9.0.0rc14: links resolved, and on a volume that folds case each name as
+the volume holds it), so each store has its own daemon and files, and
+two spellings of one store share them. The key, the head and the origin anchor are what make
 the store's provenance checkable: keep the keys directory out of the
 store directory, out of git working trees and out of synced folders, and
 back it up on its own (below). The `.head.lock`, `.origin.lock` and

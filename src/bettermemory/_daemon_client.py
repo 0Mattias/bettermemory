@@ -52,6 +52,7 @@ connection it opens the same way (`shim._ProvingBackend`).
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import hmac
 import http.client
@@ -212,9 +213,75 @@ def resolve_state_dir() -> Path:
     return Path(platformdirs.user_state_dir("bettermemory"))
 
 
+def _folded_entry(directory: str, name: str, entries: list[str]) -> str | None:
+    """The entry of ``directory`` that ``name`` reaches under another
+    spelling (another case, or another Unicode normalization, on a
+    directory that folds them: macOS's default volumes, a FAT, exFAT or SMB
+    mount), or None when ``name`` reaches nothing there. Told by the entry
+    being the same file as ``name`` (`os.lstat`'s device and inode)."""
+    import unicodedata
+
+    def folded(text: str) -> str:
+        return unicodedata.normalize("NFC", text).casefold()
+
+    try:
+        reached = os.lstat(os.path.join(directory, name))
+    except OSError:
+        return None
+    for entry in entries:
+        if folded(entry) != folded(name):
+            continue
+        try:
+            found = os.lstat(os.path.join(directory, entry))
+        except OSError:
+            continue
+        if (found.st_dev, found.st_ino) == (reached.st_dev, reached.st_ino):
+            return entry
+    return None
+
+
+@functools.lru_cache(maxsize=64)
+def canonical_store_path(store_path: str) -> str:
+    """The one spelling of the store file `store_path` that the daemon's
+    file names are derived from (`state_file_for`), so that two spellings
+    of one store share one daemon lock, spawn lock and state file, and two
+    clients that spell it apart cannot start two daemons on it (ENG-93).
+
+    `os.path.realpath` (no symbolic link, no ``..``), then, on POSIX, each
+    component spelled as its directory lists it, where that directory folds
+    case or normalization (`_folded_entry`); on Windows `realpath` already
+    gives the case the volume holds. A component that is not there, and
+    everything under it, is kept as spelled, as is one under a directory
+    this user cannot list. A spelling that is already canonical keeps the
+    name it had before this rule, so a daemon of the release before finds
+    and is found under the same file names. Cached per process: the store
+    path is one per process for a client, and the walk lists a directory
+    per component."""
+    real = os.path.realpath(store_path)
+    if sys.platform == "win32":
+        return real
+    anchor, *parts = Path(real).parts
+    current = anchor
+    for index, name in enumerate(parts):
+        try:
+            entries = os.listdir(current)
+        except OSError:
+            return os.path.join(current, *parts[index:])
+        if name not in entries:
+            spelled = _folded_entry(current, name, entries)
+            if spelled is None:
+                return os.path.join(current, *parts[index:])
+            name = spelled
+        current = os.path.join(current, name)
+    return current
+
+
 def state_file_for(state_dir: Path, store_path: Path | str) -> Path:
-    """The state file of the daemon that serves `store_path`."""
-    digest = hashlib.sha256(str(store_path).encode("utf-8")).hexdigest()[:16]
+    """The state file of the daemon that serves `store_path`, named after
+    the store path's canonical spelling (`canonical_store_path`); its lock,
+    spawn lock and log are named after it."""
+    canonical = canonical_store_path(os.fspath(store_path))
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
     return Path(state_dir) / f"daemon-{digest}.json"
 
 
@@ -1653,6 +1720,7 @@ __all__ = [
     "STORE_FILENAME",
     "Started",
     "acquire_lock",
+    "canonical_store_path",
     "daemon_env_for",
     "daemon_process_env",
     "enter_state_dir",

@@ -2528,9 +2528,34 @@ follows the candidates' testing.
   line it replaces did. (`src/bettermemory/store_keys.py`,
   `src/bettermemory/store.py`, `docs/api.md`,
   `tests/test_store_create_keys_dir.py`)
+- **Two spellings of one store share one daemon lock (ENG-93).** The
+  daemon's state file, lock, spawn lock and log were named after a hash
+  of the store path as the client spelled it, so two clients spelling
+  one store apart (another case of a directory on macOS's or Windows'
+  case-folding volumes, a path through a symbolic link) took two locks
+  and could start two daemons on one store.
+  `_daemon_client.state_file_for` now hashes the path's canonical
+  spelling (`canonical_store_path`): `os.path.realpath`, then on POSIX
+  each component as its directory lists it where the directory folds
+  case or Unicode normalization (told by the entry being the same file);
+  on Windows `realpath` already gives the volume's case. A spelling that
+  is already canonical, which is what the config's resolution gives on a
+  case-sensitive volume or under the case the volume holds, keeps the
+  name it had, so a daemon and a client of the release before still find
+  each other. (`src/bettermemory/_daemon_client.py`,
+  `docs/operations.md`, `tests/test_daemon_lock_spelling.py`)
 
 #### Known limitations
 
+- **A store file that is not there yet keeps its daemon's name as
+  spelled.** The canonical spelling of a daemon's files reads each name
+  from the directory that holds it, and a store file not yet created has
+  no entry there: two clients spelling it in two cases on a volume that
+  folds case still name two locks until the first open creates it, and
+  agree from then on. A client of the release before that spells a store
+  through a symbolic link or in a case the volume does not hold names
+  other files than this release's daemon does.
+  (`src/bettermemory/_daemon_client.py`)
 - **The key ring's binding is trust on first use on upgrade.** A ring
   from before rc13 has no `<store_id>.path`, and the first owner's open
   after the upgrade binds it to the file it opens. When that is a file
