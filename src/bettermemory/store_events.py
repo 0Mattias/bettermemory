@@ -47,7 +47,9 @@ from .store_schema import (
     SCHEMA,
     _NOT_TELEMETRY,
 )
+from .store_index import tokenizer_drift
 from .store_rows import (
+    INDEX_TEXT_COLUMNS,
     _ROW_COLUMNS,
     _apply_mutation,
     _event_from_columns,
@@ -530,7 +532,15 @@ def refold(self: Store) -> dict[str, Any]:
     skipped. The membership tables are folded by the same replay and
     reported under ``membership``, table by table; a membership table
     the live store lacks (a read-only store an earlier build created)
-    reads as empty."""
+    reads as empty.
+
+    The replay spells each memory's index text (`INDEX_TEXT_COLUMNS`)
+    with this build's tokenizer, so the live rows' text is compared only
+    while meta names that tokenizer: then an edit of the text alone reads
+    as one of the row. While meta names another (a store an older build
+    wrote, before its owner's open re-spells it,
+    `store_index.rebuild_index`), the two columns are left out on both
+    sides, so a tokenizer change never reads as tampering (ENG-100)."""
     scratch = sqlite3.connect(":memory:", isolation_level=None)
     scratch.row_factory = sqlite3.Row
     problems: list[dict[str, Any]] = []
@@ -565,9 +575,13 @@ def refold(self: Store) -> dict[str, Any]:
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             )
         }
+        spelled_elsewhere = tokenizer_drift(self._conn) is not None
         for table in (*FOLDED_TABLES, *MEMBERSHIP_TABLES):
-            live = _table_rows(self._conn, table) if table in present else {}
-            folded = _table_rows(scratch, table)
+            skip = (
+                INDEX_TEXT_COLUMNS if spelled_elsewhere and table == "memories" else ()
+            )
+            live = _table_rows(self._conn, table, skip=skip) if table in present else {}
+            folded = _table_rows(scratch, table, skip=skip)
             unaccounted = sorted(
                 (_key_label(table, k) for k, v in live.items() if folded.get(k) != v),
                 key=str,

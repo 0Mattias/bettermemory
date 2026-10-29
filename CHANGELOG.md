@@ -1824,6 +1824,19 @@ follows the candidates' testing.
   tokenizing. (`src/bettermemory/store_index.py`,
   `src/bettermemory/store.py`, `src/bettermemory/log.py`,
   `docs/internals.md`, `docs/api.md`, `tests/test_store_tokenizer.py`)
+- **A tokenizer change no longer reads as tampering.** The fold replays
+  every memory with this build's tokenizer and compared each live row's
+  stored index text with that spelling, so a store an older tokenizer
+  spelled read `tampered` in `log verify`, every memory `unaccounted`,
+  under every open that does not re-spell it: a reader's `log verify`,
+  `backup verify` of a bundle taken before the upgrade. `refold` now
+  leaves `body_fts` and `scopes_fts` out on both sides while meta names
+  another tokenizer than this build's (`store_index.tokenizer_drift`);
+  while it names this build's they are compared as before, so an edit of
+  a row's index text alone (a memory hidden from search, or put before
+  queries it does not answer) still reads tampered.
+  (`src/bettermemory/store_events.py`, `src/bettermemory/store_rows.py`,
+  `docs/internals.md`, `tests/test_store_tokenizer.py`)
 
 #### Known limitations
 
@@ -2111,6 +2124,14 @@ follows the candidates' testing.
   segment, so the rows after it verify. Each such write also reads the
   ring's current key file once. A reader's checking key
   (`can_verify`) is still the one its open read.
+- **An edit of meta's tokenizer fingerprint lets an edit of a memory's
+  index text pass a reader's `log verify` until the owner's next open.**
+  The fold leaves a memory's index text out while meta names another
+  tokenizer than this build's, and meta is not authenticated: an editor
+  of the file who changes both can hide a memory from search, and a
+  reader's `log verify` reads the store ok, until the owner's next
+  writing open re-spells every row from its body.
+  (`src/bettermemory/store_events.py`)
 
 ### 9.0.0rc13
 

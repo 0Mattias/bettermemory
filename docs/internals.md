@@ -1241,7 +1241,14 @@ there first, sets each row's two columns from its body and scopes (only
 the rows whose text changes are written), rebuilds the FTS5 table from
 them (`'rebuild'`), sets `meta`, and appends one `index_rebuilt` control
 row naming why, both fingerprints and the counts. No record changes, and
-the fold applies no `index_rebuilt` row. A rebuild that cannot write
+the fold applies no `index_rebuilt` row. The fold (`store_events.refold`)
+spells the index text with this build's tokenizer as it replays, so it
+compares a row's `body_fts` and `scopes_fts` only while `meta` names that
+tokenizer, where an edit of the text alone reads as tampering; while
+`meta` names another, both columns are left out on both sides, and a
+tokenizer change never reads as tampering. `meta` is not authenticated,
+so an edit of its fingerprint with a row's text reads ok to a reader
+until the owner's next open re-spells the row. A rebuild that cannot write
 (busy, full) is logged and the open goes on. Every other open (read-only,
 read-only by its versions, or not the owner's: a worker's `reopen`,
 `backup verify`'s copy) re-spells nothing, logs one warning a process

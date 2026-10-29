@@ -21,7 +21,7 @@ import hashlib
 import json
 import math
 import sqlite3
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Any
 
@@ -146,6 +146,13 @@ def _links_json(links: Iterable[MemoryLink]) -> str:
         [link.model_dump(mode="json", exclude_none=True) for link in links]
     )
 
+
+#: A memory row's index text: its body and its space-joined scopes as the
+#: tokenizer of the build that wrote the row spelled them
+#: (`search.fts_index_text`), which the FTS5 table indexes. Derived, not
+#: recorded: no log row carries it, and the fold compares it only while
+#: meta names this build's tokenizer (`store_events.refold`, ENG-100).
+INDEX_TEXT_COLUMNS = ("body_fts", "scopes_fts")
 
 _MEMORY_COLUMNS = (
     "id",
@@ -731,7 +738,7 @@ def _known_columns() -> dict[str, tuple[str, ...]]:
 
 
 def _table_rows(
-    conn: sqlite3.Connection, table: str
+    conn: sqlite3.Connection, table: str, *, skip: Collection[str] = ()
 ) -> dict[tuple[Any, ...], tuple[Any, ...]]:
     """Every row of a folded table keyed by its key columns, over the
     columns this build's schema gives the table (`_known_columns`), named
@@ -741,11 +748,14 @@ def _table_rows(
     (ENG-107): this build's fold cannot produce it, so reading it made
     every row of the table differ and an older `log verify` report the
     store tampered. Reading by name also keeps the two sides aligned when
-    a table holds its columns in another order than the schema's."""
+    a table holds its columns in another order than the schema's. The
+    columns in `skip` are not read either: the fold passes a memory's
+    index text there while meta names another tokenizer than the one the
+    fold spells it with (`INDEX_TEXT_COLUMNS`, ENG-100)."""
     have = [str(r[1]) for r in conn.execute(f"PRAGMA table_info({table})")]
     known = _known_columns().get(table)
     order = have if known is None else [c for c in known if c in have]
-    columns = [c for c in order if c != "rowid"]
+    columns = [c for c in order if c != "rowid" and c not in skip]
     keys = _TABLE_KEYS[table]
     out: dict[tuple[Any, ...], tuple[Any, ...]] = {}
     for row in conn.execute(f"SELECT {', '.join(columns)} FROM {table}"):

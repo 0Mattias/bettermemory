@@ -309,3 +309,88 @@ def test_a_store_whose_key_is_elsewhere_is_not_respelled(
         assert _found(store) == {word: [] for word in BODIES}
     assert _stored(path) == (OLD_FINGERPRINT, 0)
     assert "it was opened without the store's key" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# The fold reads a tokenizer change as no tampering
+# ---------------------------------------------------------------------------
+
+
+def _edit(path: Path, sql: str, *params: object) -> None:
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute(sql, params)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_a_store_another_tokenizer_spelled_verifies_before_and_after_its_rebuild(
+    tmp_path: Path, keys_dir: Path
+) -> None:
+    """A reader's `log verify` (read-only, so no rebuild) of a store an
+    older tokenizer spelled reads ok, every memory accounted for: the
+    replay spells the index text with this build's tokenizer, and while
+    meta names another the fold leaves those columns out. After the
+    owner's open re-spells it, `log verify` and a fold read ok again,
+    now comparing them."""
+    path, ids = _old_store(tmp_path, keys_dir)
+    with Store.open(path, read_only=True) as reader:
+        report = reader.log_verify()
+        assert report["status"] == "ok", report["fold"]["tables"]["memories"]
+        assert report["unaccounted_ids"] == []
+        assert reader.refold()["status"] == "ok"
+    with Store.open(path, keys_dir=keys_dir, allow_rekey=True) as store:
+        assert _found(store) == {word: [ids[word]] for word in BODIES}
+        assert store.log_verify()["status"] == "ok"
+        fold = store.refold()
+        assert fold["status"] == "ok"
+        assert fold["tables"]["memories"]["rows"] == len(BODIES)
+    with Store.open(path, read_only=True) as reader:
+        assert reader.log_verify()["status"] == "ok"
+
+
+def test_an_edit_of_a_rows_index_text_under_this_builds_tokenizer_reads_tampered(
+    tmp_path: Path, keys_dir: Path
+) -> None:
+    """While meta names this build's tokenizer the fold compares the
+    index text, so text that no longer spells the row's body (a memory
+    hidden from search, or put in front of queries it does not answer)
+    names that row unaccounted."""
+    path = tmp_path / "store" / STORE_FILENAME
+    with Store.create(path, keys_dir=keys_dir) as store:
+        memory = store.write(content=BODIES["postgres"], scopes=["global"])
+    _edit(path, "UPDATE memories SET body_fts = 'nothing here' WHERE id = ?", memory.id)
+    with Store.open(path, read_only=True) as reader:
+        report = reader.log_verify()
+    assert report["status"] == "tampered"
+    assert report["unaccounted_ids"] == [memory.id]
+
+
+def test_under_another_tokenizer_the_fold_leaves_the_index_text_out(
+    tmp_path: Path, keys_dir: Path
+) -> None:
+    """meta naming another tokenizer is the only state in which the fold
+    leaves the text out; an edit of the record itself still reads
+    tampered, and the owner's next open re-spells the text, so an edit
+    of it does not outlast that open."""
+    path, ids = _old_store(tmp_path, keys_dir)
+    _edit(
+        path,
+        "UPDATE memories SET body_fts = 'nothing here' WHERE id = ?",
+        ids["postgres"],
+    )
+    with Store.open(path, read_only=True) as reader:
+        assert reader.log_verify()["status"] == "ok"
+    with Store.open(path, keys_dir=keys_dir, allow_rekey=True) as store:
+        assert _found(store)["postgres"] == [ids["postgres"]]
+        assert store.log_verify()["status"] == "ok"
+    _edit(
+        path,
+        "UPDATE memories SET body = 'a body the log never held' WHERE id = ?",
+        ids["terraform"],
+    )
+    with Store.open(path, read_only=True) as reader:
+        report = reader.log_verify()
+    assert report["status"] == "tampered"
+    assert report["unaccounted_ids"] == [ids["terraform"]]
