@@ -27,24 +27,10 @@ if TYPE_CHECKING:
     from ..store import Store
 
 
-def add_subparser(
-    sub: argparse._SubParsersAction[argparse.ArgumentParser],
-) -> argparse.ArgumentParser:
-    """Register the ``log`` subparser and its ``verify``, ``export`` and
-    ``anchor`` commands."""
-    help_text = (
-        "The bettermemory 9 store's hash-chained log. `log verify` checks "
-        "every row's MAC against the key kept outside the store, the chain "
-        "between rows, the head checkpoint against the last row, the origin "
-        "anchor against the row where this host's history begins, and every "
-        "table against a replay of the log. Exit 0 when the log verifies, "
-        "1 when it is tampered or cannot be verified. `log export` writes "
-        "the log as JSON Lines for an audit pipeline, `log anchor` takes an "
-        "anchor to keep off this host for `log verify --anchor`, and `log "
-        "accept-history` accepts a replaced history on the record."
-    )
-    parser = sub.add_parser("log", help=help_text, description=help_text)
-    log_sub = parser.add_subparsers(dest="log_cmd")
+def _add_verify_parser(
+    log_sub: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    """Register ``log verify`` and its flags on the log subparsers; returns nothing."""
     verify_text = (
         "Verify the log: MACs, chain, head, the origin anchor and fold, and "
         "every --anchor given. The origin anchor, kept beside the key outside "
@@ -84,6 +70,12 @@ def add_subparser(
             "Repeat for several files. Without it the report is unchanged."
         ),
     )
+
+
+def _add_export_parser(
+    log_sub: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    """Register ``log export`` and its flags on the log subparsers; returns nothing."""
     export_text = (
         "Write the log as JSON Lines, one object per row in seq order, for "
         "a SIEM or an audit archive: seq, ts, kind, class, session, actor, "
@@ -155,6 +147,12 @@ def add_subparser(
             "always JSON Lines."
         ),
     )
+
+
+def _add_anchor_parser(
+    log_sub: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    """Register ``log anchor`` and its flags on the log subparsers; returns nothing."""
     anchor_text = (
         "Take an anchor of the log: the store id, the last row's seq and "
         "MAC, a SHA-256 over every row's MAC up to it, and the time. Keep it "
@@ -184,6 +182,12 @@ def add_subparser(
             "is printed as JSON either way."
         ),
     )
+
+
+def _add_accept_history_parser(
+    log_sub: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    """Register ``log accept-history`` and its flags on the log subparsers; returns nothing."""
     accept_text = (
         "Accept the store file's history as it stands, on the record, when "
         "the origin anchor reads origin_mismatch or unverifiable or the head "
@@ -213,6 +217,30 @@ def add_subparser(
     accept.add_argument(
         "--json", action="store_true", help="Emit the report as JSON instead of text."
     )
+
+
+def add_subparser(
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> argparse.ArgumentParser:
+    """Register the ``log`` subparser and its ``verify``, ``export`` and
+    ``anchor`` commands."""
+    help_text = (
+        "The bettermemory 9 store's hash-chained log. `log verify` checks "
+        "every row's MAC against the key kept outside the store, the chain "
+        "between rows, the head checkpoint against the last row, the origin "
+        "anchor against the row where this host's history begins, and every "
+        "table against a replay of the log. Exit 0 when the log verifies, "
+        "1 when it is tampered or cannot be verified. `log export` writes "
+        "the log as JSON Lines for an audit pipeline, `log anchor` takes an "
+        "anchor to keep off this host for `log verify --anchor`, and `log "
+        "accept-history` accepts a replaced history on the record."
+    )
+    parser = sub.add_parser("log", help=help_text, description=help_text)
+    log_sub = parser.add_subparsers(dest="log_cmd")
+    _add_verify_parser(log_sub)
+    _add_export_parser(log_sub)
+    _add_anchor_parser(log_sub)
+    _add_accept_history_parser(log_sub)
     return parser
 
 
