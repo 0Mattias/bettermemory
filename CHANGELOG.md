@@ -67,6 +67,18 @@ the candidates' testing.
   `bettermemory.recall` 253 ms and 251 ms (median of three cold runs
   each). (`src/bettermemory/sessions.py`, `src/bettermemory/recall.py`,
   `src/bettermemory/hook.py`, `src/bettermemory/origin.py`)
+- **The location capture's readers move to `location_git`.** `location.py`
+  was 2,648 lines, over the 2,000-line bound for a module. The vocabulary
+  and bounds, git's discovery and config reader, the `Capture` model with
+  its token codec, the HEAD, ref, stamp and manifest readers and the
+  history reader (`RepositoryHistory`, `walk`) now live in
+  `location_git.py` (954 lines), unchanged. `location.py` (1,789 lines)
+  keeps the capture, its cache, the witness exchange and the resolution,
+  and re-exports every moved name a caller reads, so no import path
+  changes. The new module imports only the standard library and the
+  readers the hook client already loads, and the hook client's import
+  allow-list names it. (`src/bettermemory/location.py`,
+  `src/bettermemory/location_git.py`, `tests/test_membership_capture.py`)
 
 #### Fixed
 

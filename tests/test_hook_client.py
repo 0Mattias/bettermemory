@@ -179,6 +179,7 @@ _HOOK_MODULES = frozenset(
 #: library's TOML reader, which only they use.
 _CAPTURE_MODULES = (
     "bettermemory.location",
+    "bettermemory.location_git",
     "bettermemory.gitobjects",
     "bettermemory.checkout_token",
     "bettermemory.project_file",
