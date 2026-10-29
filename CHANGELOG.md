@@ -1094,6 +1094,14 @@ the candidates' testing.
   first (ENG-160). Each lock now counts the threads that hold it or wait
   for it, and only one no thread has taken is evicted.
   (`src/bettermemory/location.py`)
+- **One fetch of an evicted file is in flight at a time.** A capture
+  that met a file a provider holds elsewhere read it on a new thread,
+  waited the fetch budget and left the read running, and each later
+  capture started another: a provider that never answers gathered a
+  blocked thread per capture (ENG-160). The fetch is now a bounded read
+  of that path: a capture that finds one in flight waits on it within its
+  own budget, and one past the budget defers at once.
+  (`src/bettermemory/location.py`)
 
 #### Known limitations
 

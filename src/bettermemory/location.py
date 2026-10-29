@@ -296,16 +296,16 @@ def _fetch(path: str, budget: float) -> bool:
     """Ask the provider for an evicted file: a read on a worker thread,
     which makes the provider download it, waited on for `budget` seconds.
     A fetch that outruns the budget keeps running; the caller defers
-    (design 3.1, D19)."""
-    done = threading.Event()
+    (design 3.1, D19). One fetch of a path is in flight at a time
+    (`bounded_read`, ENG-160): a capture that finds one waits on it within
+    its own budget, and one past the budget defers at once, where each
+    capture started another read on another thread."""
 
-    def run() -> None:
+    def read() -> None:
         with contextlib.suppress(OSError):
             _read_one(path)
-        done.set()
 
-    threading.Thread(target=run, name="bettermemory-fetch", daemon=True).start()
-    if not done.wait(budget):
+    if bounded_read(path, "fetch", read, budget) is UNANSWERED:
         return False
     try:
         return not _evicted(os.stat(path))
