@@ -11,9 +11,9 @@ part way meets a store whose keys or head are not yet the restored
 file's, and the owner's opener may rekey it or create a new store where
 the file was moved away. The daemon and the spawn locks keep a daemon
 out (`backup._daemon_locks`); this module keeps out everything else that
-writes: `bettermemory serve`, the shim's in-process fallback, the CLI's
-writing commands and the in-process hooks, which all open the store
-through `store._connect`.
+writes: `bettermemory serve`, the shim's in-process fallback and the
+CLI's writing commands, which all open the store through
+`store._connect`.
 
 Two halves, each closing one order of the race.
 

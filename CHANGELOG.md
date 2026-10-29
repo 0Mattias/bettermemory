@@ -608,6 +608,27 @@ follows the candidates' testing.
   `src/bettermemory/audit_export.py`, `docs/api.md`,
   `docs/operations.md`, `tests/test_restore_row.py`,
   `tests/test_backup.py`)
+- **The hook words have one implementation, the hook client.**
+  `bettermemory session-start`, `audit-turn` and `prompt-recall`, the 8.x
+  names an installed hooks.json may still run, go to the hook client
+  from the console, as `bettermemory hook session-start|stop|prompt`
+  does: the process entry point routes them before the CLI loads. The
+  in-process bodies the CLI registered under the same three words ran
+  only for a caller of `cli.main` itself (`bettermemory.server:main`, a
+  script, the tests). Those bodies, their three modules and
+  `cli._common.exit_if_bundle_store` are removed; `cli.main` now routes
+  the four words to the hook client before its parser runs
+  (`_entry.route_hook_word`), so `bettermemory.server:main` reaches the
+  daemon as the console does, and `bettermemory --help` lists `hook`
+  without the three aliases. The bodies carried a bundle and
+  restore-record check the console's hooks never ran; Known limitations
+  says what a hook does during a restore. `hook.main`,
+  `hook.prompt_main` and `hook.run_prompt_recall`, which the bodies
+  called, stay for the tests that drive the audit and the recall in
+  process. (`src/bettermemory/_entry.py`,
+  `src/bettermemory/cli/__init__.py`, `src/bettermemory/cli/_common.py`,
+  `src/bettermemory/hook.py`, `docs/api.md`, `docs/internals.md`,
+  `tests/test_hook_words.py`, `tests/test_cli_smoke.py`)
 
 #### Fixed
 
@@ -782,10 +803,9 @@ follows the candidates' testing.
   state and its rebuild agree. A signal no transcript answers stays
   held as before; the rule's failure modes are under Known limitations.
   A payload that does name the subagent is answered in the subagent's
-  own scope from the start: the daemon and the in-process
-  `bettermemory session-start` now pass the payload's `agent_id` and
-  `agent_type` to the brief (the hooks reference's common fields for
-  the agent a hook fires in; `agent_type` alone names the main thread's
+  own scope from the start: the daemon now passes the payload's
+  `agent_id` and `agent_type` to the brief (the hooks reference's
+  common fields for the agent a hook fires in; `agent_type` alone names the main thread's
   `--agent` and stays the session's), and a SessionStart that names a
   subagent opens its segment, holds its signal and claims its brief in
   a scope of its own, rebuilt from the session's rows that carry its
@@ -797,8 +817,7 @@ follows the candidates' testing.
   segment 1 and the session's own segment 1 no longer read as one. A
   row without these fields reads as before. (`src/bettermemory/recall.py`,
   `src/bettermemory/recall_state.py`, `src/bettermemory/recall_brief.py`,
-  `src/bettermemory/recall_counters.py`, `src/bettermemory/daemon.py`,
-  `src/bettermemory/cli/session_start_cmd.py`)
+  `src/bettermemory/recall_counters.py`, `src/bettermemory/daemon.py`)
 - **The security audit builds no key ring from a store id this build never
   writes.** The audit took meta's `store_id` as the store file gave it
   and built the key ring from it, so a store whose id was a path and a
@@ -2430,10 +2449,8 @@ follows the candidates' testing.
   is running; try again when it has finished`, exit 75 (EX_TEMPFAIL),
   apart from `log verify`'s 1. A record a restore that did not finish
   left refuses no read: the store is read as it stands, which is what
-  to check before `backup unlock --yes`. The prompt and turn hooks read
-  the record too, and end, exit 0, with the refusal their store's open
-  would get instead of starting a daemon on every prompt that exits on
-  it. (`src/bettermemory/restore_lock.py`,
+  to check before `backup unlock --yes`.
+  (`src/bettermemory/restore_lock.py`,
   `src/bettermemory/cli/_common.py`, `docs/api.md`,
   `docs/operations.md`, `tests/test_restore_lock.py`)
 - **A store reached through a hard link to a bundle's snapshot is
@@ -2921,7 +2938,7 @@ follows the candidates' testing.
   place through its `-shm`, which every reader of a WAL database writes
   its read marks into.
 - **Not every reader opens read-only yet.** `export`, `membership
-  export`, `session-start`, `migrate v8 --dry-run` and `backup`'s own
+  export`, `migrate v8 --dry-run` and `backup`'s own
   checks still open the store through the writing opener without a
   rekey, and so still switch a rollback-journal file to WAL and add the
   membership tables; their modules were outside this change. The
@@ -3047,6 +3064,13 @@ follows the candidates' testing.
   row; the record beside the head keeps the entry, and the writing open
   that later runs the step does not add one. (A bundle that needs a
   later writer than the restoring build is refused instead.)
+- **A hook run during a restore starts a daemon the restore refuses.**
+  The hook client reads no restore record: while a restore runs, or
+  after one that did not finish, each hook starts a daemon whose open
+  refuses the store, the daemon exits 1, and the hook ends, exit 0, with
+  one stderr line quoting the refusal from the daemon's log. The check
+  that ends a hook first (`restore_lock.writes_refused`) ran only in the
+  in-process hook bodies, which no console command reached.
 
 ### 9.0.0rc13
 

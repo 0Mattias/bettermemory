@@ -531,7 +531,7 @@ def _blackhole_stdout() -> None:
     """Point stdout's descriptor at /dev/null after the reader went away,
     so the interpreter's own flush at exit does not fail again and
     overrule the exit code (the recipe from the `signal` docs' SIGPIPE
-    note, as `session_start_cmd` uses it). Silent when stdout has no real
+    note, as `_daemon_client`'s hook client does). Silent when stdout has no real
     descriptor (a capture object, an embedding host)."""
     try:
         fd = sys.stdout.fileno()

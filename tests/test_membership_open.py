@@ -1,17 +1,15 @@
 """The migration's run at open (design 8.6) at every entry point that
-opens the store: the CLI's context, the daemon, `bettermemory serve`, the
-session-start hook of the path with no daemon, and the recall's own open on
-the in-process prompt-recall path.
+opens the store: the CLI's context, the daemon, `bettermemory serve`, and
+the recall's own open on the in-process prompt-recall path
+(`hook.prompt_main`, which no command reaches; the tests drive it).
 
 Each test builds a store whose records carry origins as rc3 recorded them
 and no home, in a repository made under the test's directory, and opens it
 through one entry point: the open homes every record, and a second open of
-the migrated store writes nothing (the log's row count is unchanged). The
-session-start hook logs the run and prints nothing on stderr; a store
-opened without its key is left as it is, and the next open with the key
-migrates it. Without a machine id (`location.process_machine` raises
-OSError) each entry point logs one line, opens the store as it is, and the
-next open migrates. Two foreground starts of the daemon on one store run
+the migrated store writes nothing (the log's row count is unchanged).
+`serve` logs the run and prints nothing on stderr. Without a machine id
+(`location.process_machine` raises OSError) each entry point logs one
+line, opens the store as it is, and the next open migrates. Two foreground starts of the daemon on one store run
 the migration once. `bettermemory prompt-recall` with a daemon opens no
 store before it posts (design 8.9: the per-prompt path pays no migration
 check). Git runs with no user or system configuration and a fixed author.
@@ -19,7 +17,6 @@ check). Git runs with no user or system configuration and a fixed author.
 
 from __future__ import annotations
 
-import argparse
 import io
 import json
 import logging
@@ -40,7 +37,8 @@ import pytest
 from bettermemory import __version__, _daemon_client, _entry, location
 from bettermemory import daemon as _daemon
 from bettermemory._daemon_client import health, read_state, shutdown_daemon
-from bettermemory.cli import _common, prompt_recall_cmd, session_start_cmd
+from bettermemory import hook
+from bettermemory.cli import _common
 from bettermemory.cli import serve as serve_cmd
 from bettermemory.config import ENV_DIR_OVERRIDE, KEYS_DIR_ENV, load_config
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
@@ -242,23 +240,15 @@ def open_serve(monkeypatch: pytest.MonkeyPatch) -> Callable[[], None]:
     return serve_cmd.run_serve
 
 
-def open_session_start() -> None:
-    """The in-process session-start body with no session id: it opens the
-    store and records nothing of its own."""
-    assert session_start_cmd._build_context_block() is None
-
-
-@pytest.fixture(params=["cli_context", "serve", "session_start"])
+@pytest.fixture(params=["cli_context", "serve"])
 def entry(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[tuple[str, Callable[[], None]]]:
     name = str(request.param)
     if name == "cli_context":
         yield name, open_cli_context
-    elif name == "serve":
-        yield name, open_serve(monkeypatch)
     else:
-        yield name, open_session_start
+        yield name, open_serve(monkeypatch)
 
 
 def test_each_entry_point_migrates_at_open_and_writes_nothing_after(
@@ -269,8 +259,8 @@ def test_each_entry_point_migrates_at_open_and_writes_nothing_after(
 ) -> None:
     """Design 8.6: the first open homes every record in one run and one
     ``membership_migrated`` row; a second open of the migrated store
-    writes nothing. The CLI says so on stderr in one line; `serve` and the
-    session-start hook log it, and the hook prints nothing on stderr."""
+    writes nothing. The CLI says so on stderr in one line; `serve` logs
+    it and prints nothing on stderr."""
     name, open_store = entry
     assert unhomed_count(left.path) == left.records
     caplog.set_level(logging.INFO)
@@ -311,7 +301,7 @@ def test_each_entry_point_without_a_machine_id_opens_and_migrates_next_time(
     """Design 8.6 at an open where this process has no machine id: one log
     line, the entry point runs on the store as it is, and the next open
     with a machine id migrates."""
-    name, open_store = entry
+    _name, open_store = entry
     real = location.process_machine
 
     def no_machine() -> Any:
@@ -326,32 +316,9 @@ def test_each_entry_point_without_a_machine_id_opens_and_migrates_next_time(
     assert log_rows(left.path) == rows
     lines = [r for r in caplog.records if "no machine id" in r.getMessage()]
     assert len(lines) == 1, [r.getMessage() for r in caplog.records]
-    expected = logging.INFO if name == "session_start" else logging.WARNING
-    assert lines[0].levelno == expected
+    assert lines[0].levelno == logging.WARNING
     monkeypatch.setattr(location, "process_machine", real)
     open_store()
-    assert unhomed_count(left.path) == 0
-    assert migrated_rows(left.path) == 1
-
-
-def test_a_hook_leaves_a_store_opened_without_its_key(
-    left: Left,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """The session-start hook opens the store without a rekey: a store
-    whose key is not on this machine opens for reading and is not migrated;
-    the next open with a key (here the CLI's, which re-keys) migrates it."""
-    elsewhere = tmp_path / "other-keys"
-    elsewhere.mkdir()
-    monkeypatch.setenv(KEYS_DIR_ENV, str(elsewhere))
-    rows = log_rows(left.path)
-    open_session_start()
-    assert unhomed_count(left.path) == left.records
-    assert log_rows(left.path) == rows
-    assert "membership" not in capsys.readouterr().err
-    open_cli_context()
     assert unhomed_count(left.path) == 0
     assert migrated_rows(left.path) == 1
 
@@ -514,12 +481,10 @@ def test_prompt_recall_with_a_daemon_opens_no_store_before_it_posts(
 def prompt_recall_in_process(
     monkeypatch: pytest.MonkeyPatch, repo: Path, session: str
 ) -> None:
-    """`prompt_recall_cmd.run`, the path with no daemon, on a prompt in
-    `repo`: the recall opens the store itself (`recall._open_store`)."""
+    """`hook.prompt_main`, the path with no daemon, on a prompt in `repo`:
+    the recall opens the store itself (`recall._open_store`)."""
     _prompt_payload(monkeypatch, repo, session)
-    with pytest.raises(SystemExit) as exited:
-        prompt_recall_cmd.run(argparse.Namespace(prompt=None, session_id=None))
-    assert exited.value.code == 0
+    assert hook.prompt_main([]) == 0
 
 
 def test_prompt_recall_in_process_migrates_an_unhomed_store_once(

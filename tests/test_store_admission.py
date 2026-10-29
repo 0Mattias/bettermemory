@@ -971,19 +971,6 @@ except SystemExit as exc:
 print(json.dumps({"elapsed": time.perf_counter() - started, "outcome": outcome}))
 """
 )
-_HOOK = (
-    _IMPORTS
-    + """
-from bettermemory.cli import session_start_cmd
-started = time.perf_counter()
-try:
-    block = session_start_cmd._build_context_block(session_id="s1", source="startup")
-    outcome = f"block {block!r}"
-except Exception as exc:
-    outcome = f"{type(exc).__name__}: {exc}"
-print(json.dumps({"elapsed": time.perf_counter() - started, "outcome": outcome}))
-"""
-)
 
 
 def _child_env(tmp_path: Path) -> dict[str, str]:
@@ -1095,14 +1082,11 @@ def test_the_daemons_open_refuses_it(repo: Path, tmp_path: Path, poison: str) ->
 def test_the_session_start_hook_refuses_it(
     repo: Path, tmp_path: Path, poison: str
 ) -> None:
-    """The in-process hook path (`session-start`, which records the brief
-    it shows as a log row): refused, timed, and as a command it prints no
-    block and exits 0 with one stderr note, as every hook failure does."""
+    """`session-start` from the console, the hook client: the daemon it
+    starts refuses the store, and the hook prints no block and exits 0
+    with one stderr note naming the refusal, as every hook failure does."""
     path = _poisoned(repo, poison)
     before = _snapshot(path)
-    outcome = _reported(_HOOK, repo, tmp_path)["outcome"]
-    assert isinstance(outcome, str)
-    assert outcome.startswith("StoreRefusedError") and "not a store" in outcome
     done = _run(
         [sys.executable, "-m", "bettermemory", "session-start", "--session-id", "s1"],
         cwd=repo,

@@ -317,26 +317,6 @@ def test_the_shim_still_warns_first_when_its_fallback_fails_another_way(
     assert "serving the store in-process" in caplog.text
 
 
-@pytest.mark.parametrize(
-    "argv",
-    [
-        ["session-start", "--session-id", "s1"],
-        ["prompt-recall", "--prompt", "deploy steps", "--session-id", "s1"],
-        ["audit-turn", "--session-id", "s1", "--dry-run"],
-    ],
-)
-def test_an_in_process_hook_command_still_exits_0(
-    unreadable: Unreadable,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    argv: list[str],
-) -> None:
-    """A hook never fails its turn, a key it cannot read included."""
-    assert _run_cli(argv, monkeypatch) == 0
-    assert "Traceback" not in capsys.readouterr().err
-    unreadable.assert_nothing_rekeyed()
-
-
 def test_the_line_stays_one_line_whatever_the_reason_holds(tmp_path: Path) -> None:
     """The reason quotes a link's target, a name anyone who can write the
     keys directory chose: a line break in it is printed as an escape."""

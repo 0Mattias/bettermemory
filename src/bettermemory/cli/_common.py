@@ -137,10 +137,8 @@ def exit_if_bundle_file(
     """End the command, before anything opens `path`, when it is a file of
     a backup bundle (`backup.bundle_refusal`): the refusal on stderr after
     `prefix`, and `exit_code`. For the paths with no parser to report
-    through: the CLI's writing commands (`cli_context`), `serve`, the
-    shim, and the in-process hook commands, which pass 0 since a hook
-    must never fail its turn. The default, 1, is the code a writing
-    command gives for a store it cannot open, as `exit_if_unmigrated_v8`
+    through: the CLI's writing commands (`cli_context`), `serve` and
+    the shim. The default, 1, is the code a writing command gives for a store it cannot open, as `exit_if_unmigrated_v8`
     gives for a directory it must not create one in."""
     from ..backup import bundle_refusal
 
@@ -178,8 +176,7 @@ def exit_if_key_unreadable(
     `serve`, the shim's in-process fallback and `up --foreground` reach,
     and `membership migrate`), each with its command's code for a store it
     cannot open: 1 by default, the code `cli_context` gives a bundle's
-    store. The in-process hook commands never come here: a hook never
-    fails its turn, and they report and exit 0 as they always did."""
+    store."""
     try:
         yield
     except KeyUnreadableError as exc:
@@ -202,28 +199,6 @@ def open_owner_store(path: Path) -> Store:
         except StoreRefusedError as exc:
             sys.stderr.write(f"bettermemory: {exc}\n")
             raise SystemExit(1) from None
-
-
-def exit_if_bundle_store(*, prefix: str, exit_code: int = 0) -> None:
-    """`exit_if_bundle_file` for the store the config resolves, for the
-    in-process hook commands (`session-start`, `prompt-recall`,
-    `audit-turn`), which must never raise: exit 0 by default, and a
-    config that does not load is left to the command, which reports it
-    its own way. A store a restore holds, or one a restore did not
-    finish, ends the hook the same way with the refusal its open would
-    get (`restore_lock.writes_refused`), before it starts a daemon whose
-    open would end in that refusal on every prompt."""
-    from ..restore_lock import writes_refused
-
-    try:
-        path = load_config().resolved_directory() / STORE_FILENAME
-    except Exception:  # noqa: BLE001 - the hook command reports its own config
-        return
-    exit_if_bundle_file(path, exit_code=exit_code, prefix=prefix)
-    refusal = writes_refused(path)
-    if refusal is not None:
-        sys.stderr.write(f"{prefix}: {refusal}\n")
-        raise SystemExit(exit_code)
 
 
 @dataclass(frozen=True)

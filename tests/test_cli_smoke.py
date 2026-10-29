@@ -20,10 +20,7 @@ tests; the subprocess tests pass it through `env=`.
 
 from __future__ import annotations
 
-import io
 import json
-import os
-import shutil
 import sqlite3
 import subprocess
 import sys
@@ -36,9 +33,7 @@ import yaml
 
 from bettermemory import store as store_module
 from bettermemory.config import Config, load_config
-from bettermemory.identity import ENV_WORKSPACE
-from bettermemory.models import Memory, utcnow
-from bettermemory.origin import Origin
+from bettermemory.models import utcnow
 from bettermemory.server import main as cli_main
 from bettermemory.store import STORE_FILENAME, Store
 
@@ -555,11 +550,15 @@ def test_unknown_subcommand_exits_nonzero(
 def _all_registered_subcommands() -> list[str]:
     """Every subcommand in `_build_parser`'s registry, so the `--help`
     smoke sweep below can never drift out of sync with the CLI again (a
-    hardcoded list here sat at 12 of 17 entries for several releases)."""
+    hardcoded list here sat at 12 of 17 entries for several releases).
+    Less `hook`, which the registry lists for `bettermemory --help`
+    alone: a hook word goes to the hook client before the parser runs
+    (`_entry.route_hook_word`, tests/test_hook_words.py)."""
+    from bettermemory._daemon_client import HOOK_WORDS
     from bettermemory.cli import _build_parser
 
     _, subparsers = _build_parser()
-    return sorted(subparsers)
+    return sorted(set(subparsers) - HOOK_WORDS)
 
 
 @pytest.mark.parametrize("subcmd", _all_registered_subcommands())
@@ -988,9 +987,15 @@ def test_subparser_registry_matches_main_dispatch() -> None:
     import ast
     import inspect
 
+    from bettermemory._daemon_client import HOOK_WORDS
     from bettermemory.cli import _build_parser, main
 
     _, subparsers = _build_parser()
+    # `hook` is registered for `--help` alone: `main` hands every hook
+    # word to the hook client before the parser runs
+    # (`_entry.route_hook_word`), so it has no arm.
+    assert set(subparsers) & HOOK_WORDS == {"hook"}
+    subparsers = {k: v for k, v in subparsers.items() if k not in HOOK_WORDS}
     main_src = inspect.getsource(main)
     tree = ast.parse(main_src)
     arms: set[str] = set()
@@ -1023,598 +1028,11 @@ def test_subparser_registry_matches_main_dispatch() -> None:
 
 
 # ---------------------------------------------------------------------------
-# `bettermemory session-start` — the session brief, in process.
-#
-# Claude Code injects a SessionStart hook's stdout verbatim into the model's
-# context, which makes two properties load-bearing in ways ordinary CLI
-# subcommands' aren't:
-#
-#   1. The command records exactly what it showed and nothing else: one
-#      `session_brief` row per shown brief, stamped
-#      `triggered_from="session_hook"` (a member of
-#      `sessions._OUT_OF_PROCESS_TRIGGERS`) and recorded under the harness's
-#      own session id, so `sessions._latest_in_process_session` skips it (no
-#      anchor hijack) and it publishes no session that turn audits cannot
-#      accompany. An empty brief records nothing.
-#   2. Stdout is the brief and nothing else. A diagnostic line printed on
-#      the wrong stream is indistinguishable, to the model, from content it
-#      should act on.
-#
-# Everything else here pins the degrade-to-silence gates.
+# `bettermemory session-start` from the console: the 8.x alias of
+# `bettermemory hook session-start`, which the process entry point hands to
+# the hook client (`_entry.route_hook_word`). The brief itself is pinned
+# through `recall.session_brief` (tests/test_recall_brief.py).
 # ---------------------------------------------------------------------------
-
-_BRIEF_SESSION = "transcript-cli-brief"
-
-
-def _stand_in_scratch_checkout(
-    monkeypatch: pytest.MonkeyPatch, here: Path, *, seen: bool = True
-) -> None:
-    """Declare a scratch repository at `here` as the command's workspace
-    (`BETTERMEMORY_WORKSPACE`, which the caller's resolution reads ahead
-    of the process cwd; design 3.1): the command resolves its caller's
-    membership there, and a first sight writes the checkout token into
-    this scratch repository's git directory, never into one pytest runs
-    in (conftest's `scratch_session` fails any capture outside the
-    session's scratch directory). With `seen`
-    the checkout is resolved as two earlier sessions would have (its
-    first sight, then the sighting that records its token as present),
-    so its first-sight line (L2) is not part of what these tests read
-    (`test_session_start_leads_with_the_first_sight_line` does) and the
-    command's own resolution writes no row."""
-    from bettermemory.location import resolve_here
-
-    here.mkdir(exist_ok=True)
-    if shutil.which("git") is not None:
-        env = {
-            **os.environ,
-            "GIT_CONFIG_GLOBAL": os.devnull,
-            "GIT_CONFIG_NOSYSTEM": "1",
-        }
-        subprocess.run(
-            ["git", "init", "-q", str(here)], check=True, capture_output=True, env=env
-        )
-    monkeypatch.setenv(ENV_WORKSPACE, str(here))
-    if seen:
-        with Store(load_config().resolved_directory()) as store:
-            for _ in range(2):
-                resolve_here(store, Config(), str(here))
-
-
-def _pin_brief_caller(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, seen: bool = True
-) -> Origin:
-    """Stand the command's caller in `_FIXTURE_REPO_HERE` at a scratch
-    checkout directory, whatever directory pytest runs from: the brief
-    points only at memories written in the caller's repository. Call it
-    after `_seeded_store`, which names the store the command opens."""
-    here = tmp_path / "checkout-here"
-    _stand_in_scratch_checkout(monkeypatch, here, seen=seen)
-    caller = Origin(cwd=str(here), repo=_FIXTURE_REPO_HERE, worktree_root=str(here))
-    monkeypatch.setattr("bettermemory.origin.capture_caller", lambda *a, **k: caller)
-    return caller
-
-
-def _briefable(
-    store: Store,
-    caller: Origin,
-    content: str = "alpha one durable fact",
-    *,
-    homed: bool = True,
-) -> Memory:
-    """A memory the brief shows: written in the caller's checkout and
-    verified now. Its body cites no path, so no git runs for it. It is
-    homed as the write path homes a record (design 8.5): in the checkout
-    the caller's resolution names, which `_stand_in_scratch_checkout` has
-    seen, so resolving it again writes no row and the store holds no
-    record for the migration at open (design 8.6) to home. With `homed`
-    False it is written as rc3 wrote it, with no home."""
-    from bettermemory.location import resolve_here
-
-    home = None
-    if homed:
-        home = resolve_here(store, Config(), caller.cwd or caller.worktree_root).home
-        assert home is not None and home.checkout is not None
-    written = store.write(content=content, scopes=["tools"], origin=caller, home=home)
-    return store.mark_verified(written.id)
-
-
-def _log_snapshot(store: Store) -> list[object]:
-    """Every row of the store's hash-chained log, in order.
-
-    Row-level rather than "parse the events and count them": the
-    assertion is that the command is inert on this store, and every
-    write, an event and a mutation alike, appends a row here.
-    """
-    return list(store.log_rows())
-
-
-def _run_session_start(
-    monkeypatch: pytest.MonkeyPatch, storage: Path, *extra: str
-) -> pytest.ExceptionInfo[SystemExit]:
-    """Invoke the subcommand and assert the always-exit-0 contract."""
-    with pytest.raises(SystemExit) as exc:
-        _run_main(["session-start", *extra], monkeypatch=monkeypatch, storage=storage)
-    assert exc.value.code == 0, (
-        f"session-start must always exit 0 — a non-zero exit surfaces as a "
-        f"hook-error banner at session open; got {exc.value.code!r}"
-    )
-    return exc
-
-
-def test_session_start_records_its_brief_and_hijacks_no_anchor(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """The negative mandate the counts block lived by became a positive
-    one: a shown brief is recorded, as exactly one `session_brief` row,
-    and that row cannot become the anchor the turn audit attributes
-    against. The guard reads `sessions._latest_in_process_session` itself,
-    the walk the old mandate protected."""
-    from bettermemory.events import Recorder
-    from bettermemory.sessions import _latest_in_process_session
-
-    store = _seeded_store(tmp_path, monkeypatch)
-    caller = _pin_brief_caller(monkeypatch, tmp_path)
-    memory = _briefable(store, caller)
-    Recorder(store=store, session_id="a-prior-session").record(
-        "search", query="anything", returned=[]
-    )
-    before = _log_snapshot(store)
-
-    _run_session_start(monkeypatch, tmp_path, "--session-id", _BRIEF_SESSION)
-
-    assert memory.id in capsys.readouterr().out
-    after = _log_snapshot(store)
-    assert after[: len(before)] == before
-    events = list(store.iter_events())
-    (brief,) = [e for e in events if e["kind"] == "session_brief"]
-    assert brief["session"] == _BRIEF_SESSION
-    assert brief["triggered_from"] == "session_hook"
-    assert brief["ids"] == [memory.id]
-    assert len(after) == len(before) + 1
-    assert _latest_in_process_session(events) == "a-prior-session"
-
-
-def test_session_start_without_a_session_records_and_prints_nothing(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """No session id, no brief: an injection with no session to record it
-    under is the unlogged injection the recall surface never makes."""
-    store = _seeded_store(tmp_path, monkeypatch)
-    _briefable(store, _pin_brief_caller(monkeypatch, tmp_path))
-    before = _log_snapshot(store)
-    _run_session_start(monkeypatch, tmp_path)
-    assert capsys.readouterr().out == ""
-    assert _log_snapshot(store) == before
-
-
-def test_session_start_source_never_reaches_for_the_recorder(tmp_path: Path) -> None:
-    """The recording lives in one place.
-
-    The brief's one event is recorded by `recall.session_brief`, behind
-    its telemetry gate and its out-of-process stamp. This command module
-    reads its own source to stay a shell around that body: no `Recorder`
-    name, no `.record(...)` call, anywhere in it — including the branches
-    a test store never reaches (an unreadable store, an OSError degrade).
-    """
-    import ast
-    import inspect
-
-    from bettermemory.cli import session_start_cmd
-
-    tree = ast.parse(inspect.getsource(session_start_cmd))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Name):
-            assert node.id != "Recorder", (
-                "cli/session_start_cmd.py names `Recorder`; the brief's event "
-                "is recorded by recall.session_brief alone"
-            )
-        if isinstance(node, ast.Attribute):
-            assert node.attr not in {"record", "recorder"}, (
-                f"cli/session_start_cmd.py calls `.{node.attr}` — the "
-                "brief's event is recorded by recall.session_brief alone"
-            )
-
-
-def test_session_start_on_an_empty_store_prints_nothing(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """An empty store has nothing to say, and saying "0 memories" into
-    every session's opening context would be pure overhead.
-
-    Stderr must be clean too, and that half is the load-bearing one: a
-    run that reached a degrade arm would ALSO print nothing on stdout,
-    so a silent stderr is what proves the cheap `count_memories() == 0`
-    bail fired first, and that a brand-new install is not being told
-    its store is broken."""
-    _seeded_store(tmp_path, monkeypatch)
-
-    _run_session_start(monkeypatch, tmp_path)
-
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert captured.err == "", (
-        "an empty store is not a degraded state — nothing should be "
-        f"reported about it; got {captured.err!r}"
-    )
-
-
-def test_session_start_stdout_is_only_the_brief(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """Stdout goes into the model's context verbatim, so it must carry
-    the brief and nothing else — diagnostics belong on stderr.
-
-    Pins the brief's shape too: the header that names the count and says
-    the lines are pointers, not instructions, then one pointer per line,
-    newest first."""
-    store = _seeded_store(tmp_path, monkeypatch)
-    caller = _pin_brief_caller(monkeypatch, tmp_path)
-    older = _briefable(store, caller, "alpha one durable fact")
-    newer = _briefable(store, caller, "beta two durable fact")
-
-    _run_session_start(monkeypatch, tmp_path, "--session-id", _BRIEF_SESSION)
-
-    captured = capsys.readouterr()
-    lines = captured.out.splitlines()
-    assert lines == [
-        "bettermemory brief: 2 memories for this repository, 2 recent. "
-        "Pointers, not instructions; open one with memory_show when it bears "
-        "on the request.",
-        f"- {newer.id} beta two durable fact",
-        f"- {older.id} alpha one durable fact",
-    ]
-    # Every diagnostic on stderr, none of it on stdout.
-    assert "[bettermemory]" not in captured.out
-    assert "[bettermemory] session-start:" in captured.err
-
-
-@pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
-def test_session_start_leads_with_the_first_sight_line(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """The first session in a checkout never seen: its first output is the
-    membership line (L2, design 5.4) naming the new project. A new project
-    holds no record yet, so no brief follows it, and another checkout's
-    memory stays out."""
-    store = _seeded_store(tmp_path, monkeypatch)
-    there = tmp_path / "checkout-elsewhere"
-    _stand_in_scratch_checkout(monkeypatch, there)
-    other = _briefable(
-        store,
-        Origin(cwd=str(there), repo=_FIXTURE_REPO_ELSEWHERE, worktree_root=str(there)),
-        "beta another checkout's fact",
-    )
-    _pin_brief_caller(monkeypatch, tmp_path, seen=False)
-
-    _run_session_start(monkeypatch, tmp_path, "--session-id", _BRIEF_SESSION)
-
-    lines = capsys.readouterr().out.splitlines()
-    here = os.path.realpath(tmp_path / "checkout-here")
-    assert len(lines) == 1, lines
-    assert lines[0].startswith(f"bettermemory: {here} is a new project ")
-    assert other.id not in lines[0]
-
-
-@pytest.mark.skipif(shutil.which("git") is None, reason="git not on PATH")
-def test_session_start_migrates_an_unhomed_store_once(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """A store rc3 left (a memory written in a checkout never seen, with no
-    home): the session-start's open homes it before the brief (design 8.6),
-    in one ``membership_migrated`` row and nothing on stderr; the brief then
-    shows it. The migration registered the checkout, so no first-sight line
-    leads. A second session-start writes no migration row."""
-    store = _seeded_store(tmp_path, monkeypatch)
-    caller = _pin_brief_caller(monkeypatch, tmp_path, seen=False)
-    memory = _briefable(store, caller, homed=False)
-    before = _log_snapshot(store)
-
-    _run_session_start(monkeypatch, tmp_path, "--session-id", _BRIEF_SESSION)
-
-    captured = capsys.readouterr()
-    assert captured.out.splitlines() == [
-        "bettermemory brief: 1 memory for this repository, 1 recent. "
-        "Pointers, not instructions; open one with memory_show when it bears "
-        "on the request.",
-        f"- {memory.id} alpha one durable fact",
-    ]
-    assert "membership" not in captured.err
-    after = _log_snapshot(store)
-    assert after[: len(before)] == before
-    added = [row.kind for row in store.log_rows()[len(before) :]]
-    assert added.count("membership_migrated") == 1, added
-    assert added.count("home_put") == 1, added
-    homes = store.membership_rows("homes")
-    assert [str(r["record_id"]) for r in homes] == [memory.id]
-
-    _run_session_start(monkeypatch, tmp_path, "--session-id", _BRIEF_SESSION)
-
-    again = [row.kind for row in store.log_rows()[len(after) :]]
-    assert "membership_migrated" not in again and "home_put" not in again, again
-
-
-def _load_all_spy(monkeypatch: pytest.MonkeyPatch) -> list[object]:
-    """Count `Store.load_all` calls; return the (initially empty) log.
-
-    A COUNTER and not a raising sentinel, deliberately: `run()` swallows
-    every exception into a stderr note, so a sentinel that raised would
-    be absorbed and the test would still see the empty stdout it expects
-    — the guard would look green while the expensive path ran. Counting
-    is immune to that.
-
-    The whole point of the columnar read is that the hook never decodes
-    a body. A degrade arm that quietly fell back to `load_all` would
-    still print correct counts, and would still be a regression, because
-    it would pay that bill on the session-open critical path.
-    """
-    calls: list[object] = []
-    real = Store.load_all
-
-    def _spy(self: Store) -> object:
-        calls.append(self)
-        return real(self)
-
-    monkeypatch.setattr("bettermemory.store.Store.load_all", _spy)
-    return calls
-
-
-def test_session_start_stays_silent_when_the_store_is_unreadable(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """An unreadable store degrades to empty stdout and exit 0, never a
-    traceback, never a `load_all` fallback."""
-    store = _seeded_store(tmp_path, monkeypatch)
-    store.write(content="alpha one", scopes=["tools"])
-    store.close()
-    store.path.write_bytes(b"not a sqlite database" * 40)
-    load_all_calls = _load_all_spy(monkeypatch)
-
-    _run_session_start(monkeypatch, tmp_path)
-
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert "session-start skipped:" in captured.err
-    assert load_all_calls == [], (
-        "the unreadable-store arm fell back to Store.load_all instead of "
-        "degrading to silence"
-    )
-
-
-class _FailingStdout:
-    """A stdout that fails the way a hook's real one can.
-
-    `write` and `flush` are separately riggable because they fail at
-    different moments: the encode happens in `write`, while an OS-level
-    write error (closed pipe, full disk) surfaces only when the buffer
-    is handed to the descriptor.
-
-    `fileno` raises on purpose. It keeps the salvage in
-    `_blackhole_stdout` away from the test process's real descriptor 1
-    (dup2-ing /dev/null over it would blind the rest of the run), and it
-    doubles as the proof that a stdout with no descriptor — which is
-    every captured or embedded one — cannot make the salvage itself the
-    thing that breaks the exit-0 contract.
-    """
-
-    def __init__(self, *, write_error: Exception | None = None) -> None:
-        self._write_error = write_error
-        self.flush_error: Exception | None = None
-        self.written: list[str] = []
-
-    def write(self, text: str) -> int:
-        if self._write_error is not None:
-            raise self._write_error
-        self.written.append(text)
-        return len(text)
-
-    def flush(self) -> None:
-        if self.flush_error is not None:
-            raise self.flush_error
-
-    def fileno(self) -> int:
-        raise io.UnsupportedOperation("fileno")
-
-
-def test_session_start_exits_0_when_the_stdout_write_fails(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """The always-exit-0 contract has to cover the WRITE, not just the read.
-
-    It did not, and the failure was reachable rather than theoretical:
-    `PYTHONIOENCODING=ascii bettermemory session-start` exited 1 with a
-    `UnicodeEncodeError` traceback on an em dash in the block — i.e. a
-    hook-error banner at session open, the exact outcome
-    the command's broad `except` exists to prevent. Encoding is the
-    cheapest way to reproduce it; a closed pipe and a full disk raise
-    from the same `print`.
-    """
-    store = _seeded_store(tmp_path, monkeypatch)
-    _briefable(store, _pin_brief_caller(monkeypatch, tmp_path), "alpha — one fact")
-    stdout = _FailingStdout(
-        write_error=UnicodeEncodeError("ascii", "—", 0, 1, "ordinal not in range(128)")
-    )
-    monkeypatch.setattr(sys, "stdout", stdout)
-
-    _run_session_start(monkeypatch, tmp_path, "--session-id", _BRIEF_SESSION)
-
-    # stderr is still pytest's, so the degrade note is capturable even
-    # though stdout is the fake.
-    err = capsys.readouterr().err
-    assert "could not write the context block" in err
-    assert "UnicodeEncodeError" in err
-    assert stdout.written == [], "the failing write must not be retried"
-
-
-def test_session_start_flushes_the_block_inside_the_guard(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """A buffered write that is never flushed escapes the guard entirely.
-
-    `print` alone only fills the buffer, so a broken pipe or a full disk
-    surfaces during the interpreter's shutdown flush — after every
-    handler is gone, where CPython prints "Exception ignored on flushing
-    sys.stdout" and exits **120** regardless of the `SystemExit(0)` the
-    command raised. Measured directly: a short block down a closed pipe
-    exits 120 without an in-guard flush and 0 with one.
-
-    So the assertion is not just "exit 0" (which a command that never
-    flushed would also satisfy, by never noticing) — it is that the
-    failure was SEEN, on stderr, while the guard was still up.
-    """
-    store = _seeded_store(tmp_path, monkeypatch)
-    _briefable(store, _pin_brief_caller(monkeypatch, tmp_path))
-    stdout = _FailingStdout()
-    stdout.flush_error = BrokenPipeError(32, "Broken pipe")
-    monkeypatch.setattr(sys, "stdout", stdout)
-
-    _run_session_start(monkeypatch, tmp_path, "--session-id", _BRIEF_SESSION)
-
-    err = capsys.readouterr().err
-    assert "could not write the context block" in err, (
-        "the block was written but never flushed inside the guard — the "
-        "write error would land in the shutdown flush and exit 120"
-    )
-    assert "BrokenPipeError" in err
-    assert stdout.written, "the block itself should still have been attempted"
-
-
-# Two projects on the same host, deliberately: `repos_match` compares
-# (host, owner, name), so same-host/different-name is both the shape a
-# real multi-project store has and the shape a filter that only looked
-# at the host would wrongly admit.
-_FIXTURE_REPO_HERE = "git@github.com:example/here.git"
-_FIXTURE_REPO_ELSEWHERE = "git@github.com:example/elsewhere.git"
-
-
-def _out_of_scope_store(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> tuple[Store, Origin]:
-    """A store whose every memory belongs to somebody else's workspace.
-
-    Returns the store and the origin the command will capture, so a
-    caller can add the in-scope rows it wants on top.
-
-    One row per half of the filter the command binds:
-
-    * a different repository — `repos_match` rejects it, and
-    * the SAME repository in a different worktree — `worktrees_match`
-      rejects it. That is the leakage `origin.worktree_root` exists to
-      stop, and it is invisible to a repo-only fixture.
-
-    All three checkout directories are real, and that is load-bearing:
-    `worktrees_match` degrades to repo-level matching when the recorded
-    root is POSITIVELY GONE (a since-deleted ephemeral worktree must not
-    become invisible forever), so a made-up path would be ADMITTED and
-    the sibling row would prove nothing.
-
-    `origin.capture` is pinned rather than inherited from wherever pytest
-    was invoked, because the command captures the CALLER's origin at run
-    time: a suite that read the real cwd could not seed a matching
-    memory deterministically, and — run from outside any git checkout —
-    would get `repo=None`, which switches the whole filter off and makes
-    every assertion below vacuous.
-    """
-    store = _seeded_store(tmp_path, monkeypatch)
-    here = tmp_path / "checkout-here"
-    elsewhere = tmp_path / "checkout-elsewhere"
-    sibling = tmp_path / "checkout-here-sibling"
-    for path in (elsewhere, sibling):
-        path.mkdir()
-    _stand_in_scratch_checkout(monkeypatch, here)
-
-    caller = Origin(repo=_FIXTURE_REPO_HERE, worktree_root=str(here))
-    monkeypatch.setattr("bettermemory.origin.capture", lambda cwd=None: caller)
-
-    store.write(
-        content="another project's deploy note",
-        scopes=["projects:elsewhere"],
-        origin=Origin(repo=_FIXTURE_REPO_ELSEWHERE, worktree_root=str(elsewhere)),
-    )
-    store.write(
-        content="a note from the sibling worktree",
-        scopes=["projects:sibling"],
-        origin=Origin(repo=_FIXTURE_REPO_HERE, worktree_root=str(sibling)),
-    )
-    return store, caller
-
-
-def test_session_start_points_only_into_this_repository(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """The brief names memories written in THIS repository, and that is
-    the whole point: another repository's notes and a sibling worktree's
-    stay out, and so does a global note, which the search's auto-scope
-    admits but the brief, a statement about this repository, does not."""
-    store, caller = _out_of_scope_store(tmp_path, monkeypatch)
-    for memory in store.load_all():
-        store.mark_verified(memory.id)
-    monkeypatch.setattr("bettermemory.origin.capture_caller", lambda *a, **k: caller)
-    here = _briefable(store, caller, "this project's note")
-    store.mark_verified(
-        store.write(content="a global preference", scopes=["personal-context"]).id
-    )
-
-    _run_session_start(monkeypatch, tmp_path, "--session-id", _BRIEF_SESSION)
-
-    captured = capsys.readouterr()
-    lines = captured.out.splitlines()
-    assert lines[1:] == [f"- {here.id} this project's note"]
-    assert "another project's deploy note" not in captured.out
-    assert "sibling worktree" not in captured.out
-    assert "global preference" not in captured.out
-
-
-def test_session_start_stays_silent_when_nothing_is_in_scope(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """A populated store with nothing for THIS repository says nothing.
-
-    The second emptiness gate, and the one the store-is-empty test cannot
-    reach: here the store has fresh memories and the selection is empty
-    only after the repository rule. A header over zero pointers would be
-    true and useless, and cost every session.
-
-    Silent stderr as well, for the same reason the empty-store test
-    demands it: this is a normal state, not a degraded one, and a
-    diagnostic here would also mean some earlier gate fired instead of
-    this one.
-    """
-    store, caller = _out_of_scope_store(tmp_path, monkeypatch)
-    for memory in store.load_all():
-        store.mark_verified(memory.id)
-    monkeypatch.setattr("bettermemory.origin.capture_caller", lambda *a, **k: caller)
-
-    _run_session_start(monkeypatch, tmp_path, "--session-id", _BRIEF_SESSION)
-
-    captured = capsys.readouterr()
-    assert captured.out == "", (
-        f"an empty brief must not be published; got {captured.out!r}"
-    )
-    assert captured.err == "", (
-        f"nothing in scope is not a degraded state; got {captured.err!r}"
-    )
 
 
 @_skip_without_install
@@ -1627,21 +1045,21 @@ def test_session_start_stays_silent_when_nothing_is_in_scope(
     ),
 )
 def test_session_start_exits_0_when_the_reader_hung_up(tmp_path: Path) -> None:
-    """The `_blackhole_stdout` salvage, guarded where it actually bites.
+    """The hook client's `_blackhole_stdout` salvage, guarded where it
+    actually bites.
 
     Catching the write error and exiting 0 is not sufficient on its own:
     a failed flush leaves the bytes in the buffer, so CPython's own
     shutdown flush retries them, fails again, and overrules the exit
-    code with 120 — after `run` has already returned SystemExit(0).
-    Redirecting the descriptor at /dev/null is what empties that retry,
-    and nothing in-process can observe it because the bug lives in
-    interpreter shutdown, past the last line any in-process test runs.
+    code with 120 — after `hook_main` has already returned 0. Pointing
+    stdout at /dev/null is what empties that retry, and nothing
+    in-process can observe it because the bug lives in interpreter
+    shutdown, past the last line any in-process test runs.
 
-    Hence a subprocess, and hence a closed pipe rather than the encoding
-    trick the in-process test uses: the UnicodeEncodeError path fails
-    before the bytes are buffered, so it exits 0 with or without the
-    salvage and would pin nothing. Verified by mutation — deleting the
-    `os.dup2` and running this exact shape returns 120.
+    Hence a subprocess, and hence a closed pipe rather than an encoding
+    error: the UnicodeEncodeError path fails before the bytes are
+    buffered, so it exits 0 with or without the salvage and would pin
+    nothing.
 
     A hook whose command exits 120 shows the user an error banner at
     session open, which is the one outcome this command must never

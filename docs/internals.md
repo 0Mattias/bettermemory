@@ -848,7 +848,7 @@ It runs at the first open by an upgraded build (`ensure_migrated`, when a
 record has no home): the daemon at its start, under the store's lock and
 before it binds its port, logging one line with the totals; `bettermemory
 serve`, logged; every CLI command through `cli_context`, with one line on
-stderr; the in-process hook commands, logged at info and never on stderr.
+stderr.
 `bettermemory membership import` homes the records its document names
 first and runs it after. A store opened without its key is left as it
 is, and a process with no machine id logs one line and opens the store as

@@ -28,9 +28,9 @@ source of a load-time cycle in ``serve.py``.
 from __future__ import annotations
 
 import argparse
+import sys
 
 from . import (
-    audit_turn_cmd,
     backup_cmd,
     capture_cmd,
     completion_cmd,
@@ -49,7 +49,6 @@ from . import (
     memory_move_cmd,
     migrate,
     project_cmd,
-    prompt_recall_cmd,
     recall_cmd,
     rename_scope,
     review_cmd,
@@ -57,20 +56,18 @@ from . import (
     security_cmd,
     serve,
     service_cmd,
-    session_start_cmd,
     stats_cmd,
     tombstones,
     try_cmd,
 )
 
 # Several CLI modules carry a ``_cmd`` suffix (``cli/health_cmd.py``,
-# ``cli/audit_turn_cmd.py``, ``cli/session_start_cmd.py`` and their
-# kin). The handler side keeps the established "strip the memory_
-# prefix" convention (``handlers/health.py``), and a bare
-# ``cli/health.py`` beside it made a grep for the name return both
-# files with no hint at which was which. The suffix keeps the basenames
-# apart; the subcommand strings (``bettermemory health``,
-# ``bettermemory audit-turn`` and the rest) are unchanged.
+# ``cli/review_cmd.py`` and their kin). The handler side keeps the
+# established "strip the memory_ prefix" convention
+# (``handlers/health.py``), and a bare ``cli/health.py`` beside it made
+# a grep for the name return both files with no hint at which was
+# which. The suffix keeps the basenames apart; the subcommand strings
+# (``bettermemory health`` and the rest) are unchanged.
 
 
 def _build_parser() -> tuple[
@@ -130,9 +127,6 @@ def _build_parser() -> tuple[
         "project": project_cmd.add_subparser(sub),
         "memory": memory_move_cmd.add_subparser(sub),
         "membership": membership_cmd.add_subparser(sub),
-        "audit-turn": audit_turn_cmd.add_subparser(sub),
-        "session-start": session_start_cmd.add_subparser(sub),
-        "prompt-recall": prompt_recall_cmd.add_subparser(sub),
         "eval": eval_cmd.add_subparser(sub),
         "review": review_cmd.add_subparser(sub),
         "capture": capture_cmd.add_subparser(sub),
@@ -158,10 +152,12 @@ def _build_parser() -> tuple[
 def _add_hook_subparser(
     sub: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> argparse.ArgumentParser:
-    """`bettermemory hook <event>`, listed here for `--help`. The process
-    entry point (`_entry.main`) dispatches the hook words to
-    `_daemon_client.hook_main` before this package is imported, so the
-    parser arm below is reached only by an in-process caller."""
+    """`bettermemory hook <event>`, listed here for `--help` and nothing
+    else. The hook words (`_daemon_client.HOOK_WORDS`: ``hook`` and its
+    8.x aliases ``session-start``, ``audit-turn`` and ``prompt-recall``)
+    go to `_daemon_client.hook_main` before any parser runs, from the
+    process entry point and from `main` alike (`_entry.route_hook_word`),
+    so the parser never dispatches one."""
     parser = sub.add_parser(
         "hook",
         help=(
@@ -184,7 +180,13 @@ def main() -> None:
     local daemon (``bettermemory``); ``bettermemory serve`` runs the
     in-process stdio server. Subcommands provide offline tooling:
     ``bettermemory health`` prints the aggregate report, mirroring the
-    ``memory_admin`` health action in human-readable form."""
+    ``memory_admin`` health action in human-readable form. The hook
+    words go to the hook client before the parser runs, as from the
+    process entry point (`_entry.route_hook_word`), so they have one
+    implementation whoever calls this."""
+    from .._entry import route_hook_word
+
+    route_hook_word(sys.argv[1:])
     parser, subparsers = _build_parser()
     args = parser.parse_args()
 
@@ -206,20 +208,6 @@ def main() -> None:
     if cmd == "serve":
         serve.run_serve()
         return
-    if cmd == "hook":
-        from .._daemon_client import hook_main
-
-        words = ["hook", args.event]
-        if args.quiet:
-            words.append("--quiet")
-        if args.dry_run:
-            words.append("--dry-run")
-        for flag in ("transcript_path", "session_id", "prompt"):
-            value = getattr(args, flag)
-            if value is not None:
-                words += ["--" + flag.replace("_", "-"), value]
-        raise SystemExit(hook_main(words))
-
     # Dispatch table. The two-parser convention (root + subparser) for
     # the multi-level commands mirrors the original server.main:
     # ``parser.error(…)`` should report the root prog name on validation
@@ -260,15 +248,6 @@ def main() -> None:
         return
     if cmd == "membership":
         membership_cmd.run(args, sub_parser=subparsers["membership"])
-        return
-    if cmd == "audit-turn":
-        audit_turn_cmd.run(args)
-        return
-    if cmd == "session-start":
-        session_start_cmd.run(args)
-        return
-    if cmd == "prompt-recall":
-        prompt_recall_cmd.run(args)
         return
     if cmd == "eval":
         eval_cmd.run(args, sub_parser=subparsers["eval"])

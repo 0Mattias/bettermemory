@@ -133,31 +133,6 @@ def test_a_command_refuses_a_bundle_as_its_store(
     assert not (tmp_path / "mirror").exists()
 
 
-@pytest.mark.parametrize(
-    "argv",
-    [
-        ["session-start", "--session-id", "s1"],
-        ["prompt-recall", "--prompt", "deploy steps", "--session-id", "s1"],
-        ["audit-turn", "--session-id", "s1", "--dry-run"],
-    ],
-)
-def test_an_in_process_hook_command_refuses_a_bundle_and_exits_0(
-    bundle: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    argv: list[str],
-) -> None:
-    """A hook never fails its turn: exit 0, nothing on stdout (the
-    model's context), the refusal on stderr, and the bundle unopened."""
-    before = _tree(bundle)
-    monkeypatch.setenv("BETTERMEMORY_DIR", str(bundle))
-    assert _run_cli(argv, monkeypatch) == 0
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert "backup bundle" in captured.err
-    _assert_untouched(bundle, before)
-
-
 def test_the_writing_commands_context_refuses_a_bundle(
     bundle: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -350,7 +325,6 @@ def linked_dir(bundle: Path, tmp_path: Path) -> Path:
         (["log", "verify"], 1),
         (["stats"], 2),
         (["backup", "create"], 1),
-        (["session-start", "--session-id", "s1"], 0),
     ],
 )
 def test_a_configured_store_that_is_a_hard_link_to_a_bundle_is_refused(

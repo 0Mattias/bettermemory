@@ -965,8 +965,8 @@ def run_prompt_recall(
     transcript_path: str | None = None,
     harness: str | None = None,
 ) -> str | None:
-    """UserPromptSubmit entry point for the in-process CLI path: the block
-    `recall.prompt_recall` returns, or None when it shows nothing (the
+    """UserPromptSubmit entry point for the in-process path (`prompt_main`):
+    the block `recall.prompt_recall` returns, or None when it shows nothing (the
     caller prints nothing and Claude Code adds nothing).
 
     A delegate kept under its 8.x name so `prompt_main` and its callers
@@ -988,7 +988,9 @@ def run_prompt_recall(
 
 
 def prompt_main(argv: list[str] | None = None) -> int:
-    """CLI entry point wired into `bettermemory prompt-recall`.
+    """The prompt recall in process. No command reaches it: the console's
+    `prompt-recall` is an alias of `bettermemory hook prompt`, which the
+    daemon serves (`_entry.route_hook_word`).
 
     Reads the Claude Code UserPromptSubmit payload from stdin
     (`{session_id, transcript_path, cwd, hook_event_name, prompt}`),
@@ -1252,7 +1254,9 @@ def _pending_retrievals(
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point wired into `bettermemory audit-turn`.
+    """The Stop audit in process. No command reaches it: the console's
+    `audit-turn` is an alias of `bettermemory hook stop`, which the daemon
+    serves (`_entry.route_hook_word`).
 
     Defaults to reading the Claude Code Stop hook payload from
     stdin. Use `--transcript-path` + `--session-id` to drive the
