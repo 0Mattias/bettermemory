@@ -326,6 +326,113 @@ def _normalize_for_compare(raw: str) -> str:
         return raw
 
 
+def _claim_key(path: str) -> str:
+    """The identity of a claimed path in a read's seen, absent and verified
+    sets: the ``~``-expanded path resolved without requiring it to exist
+    (a non-strict ``realpath``), in this platform's case
+    (``os.path.normcase``).
+
+    One form for every set, so identity and containment read the same
+    path (ENG-162). The containment test resolves (`_resolves_under`), and
+    the sets keyed on the lexical `_normalize_for_compare`, so with a root
+    spelled ``/tmp/x`` (a link to ``/private/tmp/x`` on macOS) and an
+    absence attested as ``/private/tmp/x/src/gone.py``, the attestation
+    pass read the file ``expected_absent`` while the citation pass, keyed
+    on ``/tmp/x/src/gone.py``, read the same file again and reported it
+    ``claim_anchored_missing``, the one path signal that escalates a
+    verdict. On Windows a short 8.3 name or another case of a component
+    is the same mismatch, and ``normcase`` folds the case.
+
+    Resolved at read time, never memoised with a body's parse: what a
+    link points to is the disk's, not the body's. A spelling this
+    platform cannot read as absolute (a Windows drive path read on POSIX)
+    keeps its expanded spelling: resolving it would join it onto the
+    working directory. A path that cannot be resolved (an embedded NUL)
+    keeps its expanded spelling too, and a spelling the path gate refuses
+    (`_refused_spelling`) is never resolved: on Windows ``\\\\host\\x`` is
+    absolute, and resolving it opens the host (ENG-164). A read keys its
+    paths through `_ClaimKeys`, which keys each path once."""
+    if not path:
+        return ""
+    if _refused_spelling(path):
+        return os.path.normcase(path)
+    expanded = os.path.expanduser(path)
+    if not os.path.isabs(expanded):
+        return os.path.normcase(expanded)
+    try:
+        return os.path.normcase(os.path.realpath(expanded))
+    except (OSError, ValueError):
+        return os.path.normcase(expanded)
+
+
+class _ClaimKeys:
+    """`_claim_key` for one read: each path keyed once, and off Windows
+    each directory on the way resolved once.
+
+    A read keys the same paths in several passes (the body's candidates,
+    the attestations, the citations, the seen set each pass dedupes
+    against), and a non-strict ``realpath`` makes one ``lstat`` per
+    component. Keyed afresh at each use, a read of a record nine
+    directories deep made about 400 ``lstat`` calls where the lexical keys
+    before ENG-162 made none, and each one is a call that blocks on a
+    mount that stopped answering. Here a path is keyed once per read and,
+    on POSIX, resolved as ``posixpath.realpath`` resolves it, one
+    component at a time on top of its parent's memoised resolution: a
+    directory the read's paths share is resolved once, and each further
+    component costs one ``lstat`` (is it a link). A link is resolved by
+    ``realpath`` itself. Windows resolves a path through one handle open
+    (``GetFinalPathNameByHandle``), not per component, so there each path
+    is resolved by ``realpath`` once per read. Never shared across reads:
+    what a link points to is the disk's, read when the claims are read.
+    A refused spelling (`_refused_spelling`) is never resolved."""
+
+    def __init__(self) -> None:
+        self._keys: dict[str, str] = {}
+        self._resolved: dict[str, str] = {}
+
+    def __call__(self, path: str) -> str:
+        key = self._keys.get(path)
+        if key is None:
+            key = self._keys[path] = self._key(path)
+        return key
+
+    def _key(self, path: str) -> str:
+        if not path:
+            return ""
+        if _refused_spelling(path):
+            return os.path.normcase(path)
+        expanded = os.path.expanduser(path)
+        if not os.path.isabs(expanded):
+            return os.path.normcase(expanded)
+        try:
+            if os.name == "nt":
+                return os.path.normcase(os.path.realpath(expanded))
+            return os.path.normcase(self._resolve(expanded))
+        except (OSError, ValueError):
+            return os.path.normcase(expanded)
+
+    def _resolve(self, path: str) -> str:
+        """``os.path.realpath(path)`` for an absolute POSIX `path`, its
+        parent read from the memo."""
+        held = self._resolved.get(path)
+        if held is not None:
+            return held
+        parent, name = os.path.split(path)
+        if not name:
+            resolved = (
+                os.path.realpath(path) if parent == path else self._resolve(parent)
+            )
+        elif name == ".":
+            resolved = self._resolve(parent)
+        elif name == "..":
+            resolved = os.path.dirname(self._resolve(parent))
+        else:
+            joined = os.path.join(self._resolve(parent), name)
+            resolved = os.path.realpath(joined) if os.path.islink(joined) else joined
+        self._resolved[path] = resolved
+        return resolved
+
+
 # ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------

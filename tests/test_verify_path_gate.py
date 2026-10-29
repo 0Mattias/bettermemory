@@ -301,3 +301,16 @@ def test_no_commit_anchor_carries_a_hostile_spelling(
     assert not [a for a in anchors if HOST in a]
     assert "src/real.py" in anchors
     assert stat_spy == []
+
+
+def test_the_claim_keys_never_resolve_a_refused_spelling(
+    stat_spy: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A spelling the gate refuses is keyed as spelled: on Windows each of
+    these is absolute, and resolving one opens the host."""
+    monkeypatch.setattr(os.path, "isabs", ntpath.isabs)
+    keys = verify_candidates._ClaimKeys()
+    for spelled in WINDOWS_ABSOLUTE:
+        assert verify_candidates._claim_key(spelled) == os.path.normcase(spelled)
+        assert keys(spelled) == os.path.normcase(spelled)
+    assert stat_spy == []

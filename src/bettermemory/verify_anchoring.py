@@ -30,6 +30,8 @@ from .verify_candidates import (
     _MAX_ANCHORED_CITATION_STATS,
     _RELATIVE_CITATION_RE,
     _bounded_scan_text,
+    _claim_key,
+    _ClaimKeys,
     _escapes_root,
     _extract_candidates,
     _is_multi_segment_routelike,
@@ -37,6 +39,7 @@ from .verify_candidates import (
     _normalize_candidate,
     _normalize_for_compare,
     _path_exists,
+    _refused_spelling,
 )
 
 if TYPE_CHECKING:
@@ -670,7 +673,7 @@ def detect_path_drift(
 
     # Run verified_paths through the same trim/validate pipeline the body
     # candidates pass through (`_normalize_candidate`) before the
-    # `_normalize_for_compare` pass that handles `~`-expansion. Without
+    # `_claim_key` pass that handles `~`-expansion. Without
     # this, an attestation like `/etc/foo.conf,` (extracted from prose
     # with a trailing comma) would not match the body candidate
     # `/etc/foo.conf` (already trimmed) — the audit flagged the
@@ -680,8 +683,9 @@ def detect_path_drift(
     # `absent_paths` goes through the identical pipeline for the same
     # reason — the two attestation lists must match body candidates by
     # the same rules or the asymmetry bug returns on the absent axis.
-    verified_set = _normalize_attestations(verified_paths)
-    absent_set = _normalize_attestations(absent_paths)
+    keys = _ClaimKeys()
+    verified_set = _normalize_attestations(verified_paths, keys)
+    absent_set = _normalize_attestations(absent_paths, keys)
 
     checked: list[str] = []
     missing: list[str] = []
@@ -695,9 +699,14 @@ def detect_path_drift(
     verified: list[str] = []
     expected_absent: list[str] = []
     dropped_as_route: list[str] = []
+    # The claims read so far, by `_claim_key`: two spellings of one file
+    # (through a link, or the scan's lexical dedup missing an alias) are
+    # one claim and land once. Every pass below dedupes against this one
+    # set, and every key comes from the read's one `_ClaimKeys`.
+    seen: set[str] = set()
     for path, drop_if_missing, bare_spaced in candidates:
         exists = _path_exists(path)
-        norm = _normalize_for_compare(path)
+        norm = keys(path)
         # An attestation pins the citation: a path the caller explicitly
         # named in `verified_paths` / `verified_absent_paths` is proven to
         # be the complete, intended claim, which resolves any extraction
@@ -719,9 +728,11 @@ def detect_path_drift(
                 # paths never take this branch — the author delimited
                 # those precisely, so a miss there is real drift.)
                 prefix = path.split(" ", 1)[0]
-                if _path_exists(prefix) and prefix not in checked:
+                prefix_key = keys(prefix)
+                if _path_exists(prefix) and prefix_key not in seen:
+                    seen.add(prefix_key)
                     checked.append(prefix)
-                    if _normalize_for_compare(prefix) in verified_set:
+                    if prefix_key in verified_set:
                         verified.append(prefix)
                 continue
             if drop_if_missing:
@@ -769,8 +780,9 @@ def detect_path_drift(
                 # can equal.
                 dropped_as_route.append(path)
                 continue
-        if path in checked:
+        if norm in seen:
             continue
+        seen.add(norm)
         checked.append(path)
         if not exists:
             if norm in absent_set:
@@ -828,6 +840,8 @@ def detect_path_drift(
         claim_anchored=claim_anchored,
         verified=verified,
         expected_absent=expected_absent,
+        seen=seen,
+        keys=keys,
     )
     # Attestations FIRST, citations second: an attested path is the
     # caller's reviewed claim and carries the `verified` /
@@ -842,6 +856,8 @@ def detect_path_drift(
             checked=checked,
             missing=missing,
             claim_anchored=claim_anchored,
+            seen=seen,
+            keys=keys,
         )
     return PathDriftReport(
         checked=tuple(checked),
@@ -869,10 +885,12 @@ class _AnchoredRead:
         self.reasons: list[str] = []
         self.present_absent: list[str] = []
         self.seen: set[str] = set()
+        self.keys = _ClaimKeys()
 
     def first(self, path: str) -> bool:
-        """Mark `path` read; False when a pass already read it."""
-        norm = _normalize_for_compare(path)
+        """Mark `path` read; False when a pass already read it, under any
+        spelling of it (`_claim_key`, through the read's `keys`)."""
+        norm = self.keys(path)
         if norm in self.seen:
             return False
         self.seen.add(norm)
@@ -928,11 +946,11 @@ def _detect_anchored(
     in that loop. What changes is only where a claim is read and whether
     the read convicts."""
     out = _AnchoredRead()
-    verified_set = _normalize_attestations(verified_paths)
-    absent_set = _normalize_attestations(absent_paths)
+    verified_set = _normalize_attestations(verified_paths, out.keys)
+    absent_set = _normalize_attestations(absent_paths, out.keys)
 
     for path, drop_if_missing, bare_spaced in _extract_candidates(body):
-        norm = _normalize_for_compare(path)
+        norm = out.keys(path)
         attested = norm in verified_set or norm in absent_set
         target, rule = anchor.absolute(path)
         if target is None:
@@ -950,7 +968,7 @@ def _detect_anchored(
                 prefix = target.split(" ", 1)[0]
                 if _path_exists(prefix) and out.first(prefix):
                     out.checked.append(prefix)
-                    if _normalize_for_compare(path.split(" ", 1)[0]) in verified_set:
+                    if out.keys(path.split(" ", 1)[0]) in verified_set:
                         out.verified.append(prefix)
                 continue
             if drop_if_missing:
@@ -1002,44 +1020,28 @@ def _read_attestations(
     An absolute attestation under no recorded view keeps its old reading:
     checked here only when it resolves inside the root, else by the body
     pass when the body cites it. With no root, every relative attestation
-    reads unconfirmed with the anchor's rule."""
+    reads unconfirmed with the anchor's rule. Whether an attestation is an
+    absence is read by its target's `_claim_key`, so an absence attested
+    under one spelling of a file is the absence of the file under any."""
     root = Path(anchor.root) if anchor.root is not None else None
-    absent_raw = {raw.strip() for raw in absent_paths if raw and raw.strip()}
-    for raw in (*verified_paths, *absent_paths):
-        spelled = raw.strip() if raw else ""
-        if not spelled:
+    reads: list[tuple[_AttestationRead, bool]] = []
+    for listed_absent, paths in ((False, verified_paths), (True, absent_paths)):
+        for raw in paths:
+            found = _attestation_read(anchor, root, raw)
+            if found is not None:
+                reads.append((found, listed_absent))
+    absent = {
+        out.keys(found.path) for found, listed in reads if listed and found.readable
+    }
+    for found, _listed in reads:
+        if not found.readable:
+            if out.first(found.path):
+                out.unconfirm(found.path, found.rule)
             continue
-        is_absent = spelled in absent_raw
-        if _is_absolute_attestation(spelled):
-            normalized = _normalize_candidate(spelled)
-            if normalized is None:
-                continue
-            target, rule = anchor.absolute(normalized)
-            if target is None:
-                if out.first(normalized):
-                    out.unconfirm(normalized, rule)
-                continue
-            if rule == "absolute" and (
-                root is None or not _resolves_under(target, root)
-            ):
-                continue
-            convicting = rule in CONVICTING_ANCHORS
-        else:
-            if _escapes_root(spelled):
-                # Refused before the root is read: with no root, an
-                # unrefused relative attestation is still reported, and a
-                # refused one is not a citation on any reader (ENG-164).
-                continue
-            if root is None:
-                if out.first(spelled):
-                    out.unconfirm(spelled, anchor.rule)
-                continue
-            joined = _join_under(root, spelled)
-            if joined is None:
-                continue
-            target, rule, convicting = joined, anchor.rule, anchor.convicting
+        target, rule, convicting = found.path, found.rule, found.convicting
         if not out.first(target):
             continue
+        is_absent = out.keys(target) in absent
         if _path_exists(target):
             if not is_absent:
                 out.checked.append(target)
@@ -1054,6 +1056,51 @@ def _read_attestations(
             out.expected_absent.append(target)
         else:
             out.miss(target, convicting=convicting, reason=rule, claim=True)
+
+
+@dataclass(frozen=True)
+class _AttestationRead:
+    """Where one attestation is read (`_attestation_read`): the path, the
+    rule it is read under and whether an absence there convicts; or, when
+    not `readable`, the spelling that reads unconfirmed with `rule`."""
+
+    path: str
+    rule: str
+    convicting: bool
+    readable: bool = True
+
+
+def _attestation_read(
+    anchor: ClaimAnchor, root: Path | None, raw: str
+) -> _AttestationRead | None:
+    """Where `_read_attestations` reads the attestation `raw`, or None when
+    it reads nothing there (an empty or refused spelling, or an absolute
+    path under no recorded view that does not resolve inside the root).
+    The path gate runs first, before the root is read: with no root a
+    relative attestation reads unconfirmed under its own spelling, keyed
+    by `_claim_key`, so a refused one would be reported and, on Windows,
+    resolved (ENG-164)."""
+    spelled = raw.strip() if raw else ""
+    if not spelled or _refused_spelling(spelled):
+        return None
+    if _is_absolute_attestation(spelled):
+        normalized = _normalize_candidate(spelled)
+        if normalized is None:
+            return None
+        target, rule = anchor.absolute(normalized)
+        if target is None:
+            return _AttestationRead(normalized, rule, False, readable=False)
+        if rule == "absolute" and (root is None or not _resolves_under(target, root)):
+            return None
+        return _AttestationRead(target, rule, rule in CONVICTING_ANCHORS)
+    if _escapes_root(spelled):
+        return None
+    if root is None:
+        return _AttestationRead(spelled, anchor.rule, False, readable=False)
+    joined = _join_under(root, spelled)
+    if joined is None:
+        return None
+    return _AttestationRead(joined, anchor.rule, anchor.convicting)
 
 
 def _read_citations(anchor: ClaimAnchor, body: str, out: _AnchoredRead) -> None:
@@ -1093,6 +1140,8 @@ def _check_anchored_attestations(
     claim_anchored: list[str],
     verified: list[str],
     expected_absent: list[str],
+    seen: set[str],
+    keys: Callable[[str], str],
 ) -> None:
     """Existence-check the attestations anchored to the memory's worktree:
     relative spellings, plus absolute ones that resolve inside it.
@@ -1129,7 +1178,6 @@ def _check_anchored_attestations(
     if worktree_root is None:
         return
     root = Path(worktree_root)
-    seen = {_normalize_for_compare(p) for p in checked}
 
     def _anchored(raw: str) -> str | None:
         # Delegate the absolute/relative split to `_is_absolute_attestation`
@@ -1173,7 +1221,7 @@ def _check_anchored_attestations(
     # back empty and every intentionally-absent attestation would read as
     # drift — the escape hatch inverted into a permanent false alarm.
     absent_set = {
-        _normalize_for_compare(anchored)
+        keys(anchored)
         for anchored in (_anchored(raw) for raw in absent_paths)
         if anchored is not None
     }
@@ -1188,7 +1236,7 @@ def _check_anchored_attestations(
         resolved = _anchored(raw)
         if resolved is None:
             continue
-        norm = _normalize_for_compare(resolved)
+        norm = keys(resolved)
         if norm in seen:
             continue
         seen.add(norm)
@@ -1335,6 +1383,8 @@ def _check_anchored_citations(
     checked: list[str],
     missing: list[str],
     claim_anchored: list[str],
+    seen: set[str],
+    keys: Callable[[str], str],
 ) -> None:
     """Existence-check RELATIVE citations in body prose against `root`.
 
@@ -1386,7 +1436,6 @@ def _check_anchored_citations(
     exactly the thing the verdict is allowed to escalate on. If the
     filter is ever loosened, this append is what has to be re-argued.
     """
-    seen = {_normalize_for_compare(p) for p in checked}
     stats = 0
     for match in _RELATIVE_CITATION_RE.finditer(_bounded_scan_text(body)):
         if stats >= _MAX_ANCHORED_CITATION_STATS:
@@ -1397,7 +1446,7 @@ def _check_anchored_citations(
         resolved = _join_under(root, cited)
         if resolved is None:
             continue
-        norm = _normalize_for_compare(resolved)
+        norm = keys(resolved)
         if norm in seen:
             continue
         seen.add(norm)
@@ -1595,11 +1644,14 @@ def _unverifiable_at(
     return bad
 
 
-def _normalize_attestations(paths: tuple[str, ...] | list[str]) -> set[str]:
-    """Trim/validate/`~`-expand an attestation list into a comparison set —
-    the shared pipeline for `verified_paths` and `absent_paths` (see the
-    call-site comment in `detect_path_drift` for why both lists must run
-    through the exact same normalisation as the body candidates)."""
+def _normalize_attestations(
+    paths: tuple[str, ...] | list[str], keys: Callable[[str], str] = _claim_key
+) -> set[str]:
+    """Trim/validate an attestation list into a set of claim keys
+    (`_claim_key`, through a read's `keys`) — the shared pipeline for
+    `verified_paths` and `absent_paths` (see the call-site comment in
+    `detect_path_drift` for why both lists must run through the exact same
+    normalisation as the body candidates)."""
     out: set[str] = set()
     for raw in paths:
         if not raw:
@@ -1607,6 +1659,6 @@ def _normalize_attestations(paths: tuple[str, ...] | list[str]) -> set[str]:
         candidate = _normalize_candidate(raw)
         if candidate is None:
             continue
-        out.add(_normalize_for_compare(candidate))
+        out.add(keys(candidate))
     out.discard("")
     return out

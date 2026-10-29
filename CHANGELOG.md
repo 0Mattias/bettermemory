@@ -1199,6 +1199,22 @@ the candidates' testing.
   claim is addressable. Such a memory now counts 1 after one falsifying
   commit and 0 after unrelated ones, on both bases.
   (`src/bettermemory/verify.py`)
+- **One claimed file reads once, under any spelling of it.** The path
+  reads keyed a claim's identity on a lexical spelling while the test
+  that admits an absolute attestation under the root resolves links, so
+  the two could disagree about one file. With a root spelled through a
+  link (macOS's `/tmp` for `/private/tmp`, `/var` for `/private/var`)
+  and an absence attested under the resolved spelling, the attestation
+  read the file as expected absent and the body's relative citation of
+  it, keyed on the root's spelling, read it again as a claim-anchored
+  miss, which escalates the verdict: an attested removal convicted the
+  record. On Windows a short 8.3 name or another case of a component did
+  the same. Every set a read keeps (seen, absent, verified) now keys on
+  one form, a non-strict `realpath` in the platform's case, at a recorded
+  root and at a claim anchor, and an absence attested under one spelling
+  covers the file under any.
+  (`src/bettermemory/verify_candidates.py`,
+  `src/bettermemory/verify_anchoring.py`)
 
 #### Known limitations
 
