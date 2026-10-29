@@ -21,7 +21,7 @@ from ..claims import check_claim, claim_reason_is_indeterminate, load_claims
 from ..models import Memory
 from ..origin import head_sha
 from ..store import ConcurrentUpdateError, MemoryNotFoundError, TombstonedError
-from ..symbols import check_symbol_citations
+from ..symbols import SymbolDriftReport, check_symbol_citations
 from ..time_utils import isoformat_utc
 from ..verify import (
     Anchoring,
@@ -377,28 +377,14 @@ def _stamp(
     return memory
 
 
-DESC_MEMORY_VERIFY = (
-    "Attest a memory after checking a claim against ground truth; resets "
-    "last_verified_at. `verified_paths` resolve now and are anchored for "
-    "drift; `verified_absent_paths` are absent on purpose; `claims` "
-    "replaces the checked bindings. "
-    "Refused without evidence when nothing cited resolves."
-)
-
-
-async def memory_verify(
-    deps: ToolHandlers,
-    id: str,
-    note: str | None = None,
-    verified_paths: list[str] | None = None,
-    verified_commits: list[str] | None = None,
-    verified_versions: list[str] | None = None,
-    verified_absent_paths: list[str] | None = None,
-    claims: list[str] | None = None,
-    ctx: Context | None = None,
-) -> dict[str, Any]:
-    state = deps.sessions.for_request(ctx)
-    _advance_turn(state, deps.recorder)
+def _check_verify_args(
+    note: str | None,
+    verified_paths: list[str] | None,
+    verified_commits: list[str] | None,
+    verified_versions: list[str] | None,
+    verified_absent_paths: list[str] | None,
+) -> None:
+    """Take the call's note and verified_* lists; return None, raising on a bad one."""
     if note is not None and not isinstance(note, str):
         raise ValueError("note must be a string if provided")
     if note is not None and len(note) > _NOTE_MAX_LEN:
@@ -430,6 +416,10 @@ async def memory_verify(
                     f"{_MAX_VERIFIED_ITEM_LEN}. Attestations are short "
                     "path/commit/version strings, not prose."
                 )
+
+
+def _load_verify_snapshot(deps: ToolHandlers, memory_id: str) -> Memory:
+    """Take the record's id; return its current snapshot, a gone record as ValueError."""
     # W8: load the current snapshot to capture `last_verified_at` for
     # the optimistic-concurrency CAS in `Store.mark_verified`. The
     # snapshot fingerprint is what the under-lock recheck compares
@@ -437,12 +427,53 @@ async def memory_verify(
     # the store-level write, the CAS fires and we surface a structured
     # stale response. Mirror of the W2 `memory_update` flow.
     try:
-        snapshot = deps.store.load_one(id)
+        return deps.store.load_one(memory_id)
     except TombstonedError as exc:
         raise ValueError(str(exc)) from exc
     except MemoryNotFoundError as exc:
         raise ValueError(str(exc)) from exc
 
+
+def _verify_read_site(
+    deps: ToolHandlers, memory_id: str, snapshot: Memory
+) -> tuple[str | None, Anchoring | None, Caller | None, ClaimAnchor | None, str | None]:
+    """Take the record and its snapshot; return origin root, anchoring, caller, anchor, live root."""
+    # Where the claims are read (design 3.6). A homed record's anchor comes
+    # from the membership model and the caller's resolution: its home
+    # checkout's live view, a stand-in, or nothing. A record with no home
+    # row is read where its origin recorded it, as before the migration
+    # homes it (design 8.6), and is homed by this verify at the caller's
+    # resolution when that is the tree it was read at (design 2.1, 8.1); a
+    # caller outside that tree is not resolved, as nothing here reads it.
+    homed = has_home(deps.store, memory_id)
+    origin_root = None if homed else _record_root(snapshot, None)
+    anchoring: Anchoring | None = None
+    caller: Caller | None = None
+    if homed or _within(request_cwd(), origin_root):
+        anchoring, caller = caller_anchoring(deps.store, deps.config)
+    anchor = anchoring.for_record(memory_id) if anchoring is not None else None
+    # The root relative claims are read at, live: the anchor's, else the
+    # recorded worktree when it is a directory here.
+    live_root = (
+        anchor.root
+        if anchor is not None
+        else (
+            origin_root
+            if origin_root is not None and _worktree_root_is_live(origin_root)
+            else None
+        )
+    )
+    return origin_root, anchoring, caller, anchor, live_root
+
+
+def _refuse_unseen_attestations(
+    verified_paths: list[str] | None,
+    snapshot: Memory,
+    origin_root: str | None,
+    anchor: ClaimAnchor | None,
+    live_root: str | None,
+) -> None:
+    """Take the passed list, the snapshot and where it is read; return None, raising on unseen paths."""
     # An attestation naming a path this machine cannot see is not evidence.
     # Before this check, `mark_verified` performed no verification of any
     # kind — it stamped `last_verified_at` and copied the caller's lists
@@ -470,31 +501,6 @@ async def memory_verify(
     # `verified_paths=None` carries the stored list onto a fresh stamp, so
     # it is gated below as well, with synced-store scoping
     # (`_refuse_unverifiable_stored_attestations`).
-    # Where the claims are read (design 3.6). A homed record's anchor comes
-    # from the membership model and the caller's resolution: its home
-    # checkout's live view, a stand-in, or nothing. A record with no home
-    # row is read where its origin recorded it, as before the migration
-    # homes it (design 8.6), and is homed by this verify at the caller's
-    # resolution when that is the tree it was read at (design 2.1, 8.1); a
-    # caller outside that tree is not resolved, as nothing here reads it.
-    homed = has_home(deps.store, id)
-    origin_root = None if homed else _record_root(snapshot, None)
-    anchoring: Anchoring | None = None
-    caller: Caller | None = None
-    if homed or _within(request_cwd(), origin_root):
-        anchoring, caller = caller_anchoring(deps.store, deps.config)
-    anchor = anchoring.for_record(id) if anchoring is not None else None
-    # The root relative claims are read at, live: the anchor's, else the
-    # recorded worktree when it is a directory here.
-    live_root = (
-        anchor.root
-        if anchor is not None
-        else (
-            origin_root
-            if origin_root is not None and _worktree_root_is_live(origin_root)
-            else None
-        )
-    )
     if verified_paths:
         # A RELATIVE attestation is judged against the memory's tree, and a
         # root this machine cannot see cannot say a path under it is
@@ -527,6 +533,14 @@ async def memory_verify(
             list(snapshot.verified_paths), origin_root, anchor=anchor
         )
 
+
+def _verify_claims(
+    claims: list[str] | None,
+    snapshot: Memory,
+    origin_root: str | None,
+    anchor: ClaimAnchor | None,
+) -> list[str] | None:
+    """Take the passed claims and the snapshot; return the claims to store, refusing false ones."""
     # Claims are the one attestation the tool can CHECK, so it does — in
     # both directions. A newly-passed list goes through the same
     # declare-time oracle memory_write runs (false ⇒ refused; `[]` is
@@ -558,44 +572,16 @@ async def memory_verify(
         )
     elif snapshot.claims:
         _refuse_stale_stored_claims(snapshot.claims, origin_root, anchor=anchor)
+    return normalized_claims
 
-    # The stamp has to name something it checked when there is something
-    # to check. Evidence is what this call attests or what a `None`
-    # preserves from the record; an explicit `[]` is a clear, not evidence.
-    _refuse_evidence_free_stamp(
-        id,
-        snapshot.body,
-        origin_root,
-        attests_paths=bool(verified_paths)
-        or (verified_paths is None and bool(snapshot.verified_paths)),
-        attests_absence=bool(verified_absent_paths)
-        or (verified_absent_paths is None and bool(snapshot.verified_absent_paths)),
-        declares_claims=bool(claims) or (claims is None and bool(snapshot.claims)),
-        anchor=anchor,
-    )
 
-    # Symbol citations in the body, AST-checked against the memory's own
-    # tree. ADVISORY, and structurally so: the result is attached to this
-    # response and read by nothing else. No staleness verdict, no drift
-    # leg, no health rollup consumes it, and none may until a benchmark
-    # measures its precision on real prose; the reach measurement in
-    # `tests/test_symbol_existence.py` is the reason to be cautious, not
-    # the reason to be confident.
-    #
-    # Computed from the SNAPSHOT rather than from the object `mark_verified`
-    # returns, so the evidence and the attestation describe the same
-    # revision of the prose: `mark_verified` never edits a body, but a
-    # concurrent `memory_update` between the two reads would otherwise let
-    # this report describe prose the caller never attested to.
-    #
-    # In the handler, not the store: `Store.mark_verified` is a policy-free
-    # persistence primitive (pinned by
-    # `test_mark_verified_does_not_itself_check_path_existence`), and this
-    # is policy in the same sense the attestation refusal above is.
-    symbol_drift = check_symbol_citations(
-        snapshot.body, worktree_root=origin_root, anchor=anchor
-    )
-
+def _verified_head(
+    snapshot: Memory,
+    anchoring: Anchoring | None,
+    anchor: ClaimAnchor | None,
+    origin_root: str | None,
+) -> str | None:
+    """Take the snapshot and where it was read; return the HEAD the stamp names, or None."""
     # The stamp's anchor: the commit the tree the checks above read stands
     # at, so the record says which tree state it was verified at and the
     # commit-drift leg can count from there in reachability space. None
@@ -606,7 +592,7 @@ async def memory_verify(
     # names a repository and a tree is stamped at the home checkout's live
     # view, and a read that does not convict stamps nothing.
     if anchor is not None:
-        verified_head = (
+        return (
             head_sha(Path(anchor.root))
             if anchor.convicting
             and anchor.root is not None
@@ -615,18 +601,35 @@ async def memory_verify(
             and _record_root(snapshot, anchoring) is not None
             else None
         )
-    else:
-        verified_head = (
-            head_sha(Path(origin_root))
-            if origin_root is not None
-            and snapshot.origin is not None
-            and snapshot.origin.repo is not None
-            and _worktree_root_is_live(origin_root)
-            else None
-        )
+    return (
+        head_sha(Path(origin_root))
+        if origin_root is not None
+        and snapshot.origin is not None
+        and snapshot.origin.repo is not None
+        and _worktree_root_is_live(origin_root)
+        else None
+    )
 
+
+def _stamp_or_stale(
+    deps: ToolHandlers,
+    memory_id: str,
+    caller: Caller | None,
+    snapshot: Memory,
+    *,
+    anchoring: Anchoring | None,
+    anchor: ClaimAnchor | None,
+    live_root: str | None,
+    verified_paths: list[str] | None,
+    verified_commits: list[str] | None,
+    verified_versions: list[str] | None,
+    verified_absent_paths: list[str] | None,
+    claims: list[str] | None,
+    verified_head: str | None,
+) -> Memory | dict[str, Any]:
+    """Take the stamp's inputs; return the stamped record, or the stale payload on a lost CAS."""
     try:
-        memory = _stamp(
+        return _stamp(
             deps,
             caller,
             snapshot,
@@ -637,7 +640,7 @@ async def memory_verify(
             verified_commits=verified_commits,
             verified_versions=verified_versions,
             verified_absent_paths=verified_absent_paths,
-            claims=normalized_claims,
+            claims=claims,
             verified_head=verified_head,
         )
     except TombstonedError as exc:
@@ -677,7 +680,16 @@ async def memory_verify(
         # returns a clean "failed to verify memory <id>: …" rather than a bare
         # OSError — mirrors remove.py/restore.py and Store.mark_verified's
         # documented handler-boundary contract.
-        raise ValueError(f"failed to verify memory {id}: {exc}") from exc
+        raise ValueError(f"failed to verify memory {memory_id}: {exc}") from exc
+
+
+def _verify_response(
+    deps: ToolHandlers,
+    memory: Memory,
+    note: str | None,
+    symbol_drift: SymbolDriftReport,
+) -> dict[str, Any]:
+    """Take the stamped record, the note and the symbol report; return the response, after its event."""
     # The event field is conditional so the default verify event keeps its
     # exact shape — and so a non-zero count in the log means the check
     # actually fired on real prose. That count is the only telemetry a
@@ -722,6 +734,97 @@ async def memory_verify(
             )
         response["symbol_drift"] = advisory
     return response
+
+
+DESC_MEMORY_VERIFY = (
+    "Attest a memory after checking a claim against ground truth; resets "
+    "last_verified_at. `verified_paths` resolve now and are anchored for "
+    "drift; `verified_absent_paths` are absent on purpose; `claims` "
+    "replaces the checked bindings. "
+    "Refused without evidence when nothing cited resolves."
+)
+
+
+async def memory_verify(
+    deps: ToolHandlers,
+    id: str,
+    note: str | None = None,
+    verified_paths: list[str] | None = None,
+    verified_commits: list[str] | None = None,
+    verified_versions: list[str] | None = None,
+    verified_absent_paths: list[str] | None = None,
+    claims: list[str] | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    state = deps.sessions.for_request(ctx)
+    _advance_turn(state, deps.recorder)
+    _check_verify_args(
+        note, verified_paths, verified_commits, verified_versions, verified_absent_paths
+    )
+    snapshot = _load_verify_snapshot(deps, id)
+    origin_root, anchoring, caller, anchor, live_root = _verify_read_site(
+        deps, id, snapshot
+    )
+    _refuse_unseen_attestations(
+        verified_paths, snapshot, origin_root, anchor, live_root
+    )
+    normalized_claims = _verify_claims(claims, snapshot, origin_root, anchor)
+
+    # The stamp has to name something it checked when there is something
+    # to check. Evidence is what this call attests or what a `None`
+    # preserves from the record; an explicit `[]` is a clear, not evidence.
+    _refuse_evidence_free_stamp(
+        id,
+        snapshot.body,
+        origin_root,
+        attests_paths=bool(verified_paths)
+        or (verified_paths is None and bool(snapshot.verified_paths)),
+        attests_absence=bool(verified_absent_paths)
+        or (verified_absent_paths is None and bool(snapshot.verified_absent_paths)),
+        declares_claims=bool(claims) or (claims is None and bool(snapshot.claims)),
+        anchor=anchor,
+    )
+
+    # Symbol citations in the body, AST-checked against the memory's own
+    # tree. ADVISORY, and structurally so: the result is attached to this
+    # response and read by nothing else. No staleness verdict, no drift
+    # leg, no health rollup consumes it, and none may until a benchmark
+    # measures its precision on real prose; the reach measurement in
+    # `tests/test_symbol_existence.py` is the reason to be cautious, not
+    # the reason to be confident.
+    #
+    # Computed from the SNAPSHOT rather than from the object `mark_verified`
+    # returns, so the evidence and the attestation describe the same
+    # revision of the prose: `mark_verified` never edits a body, but a
+    # concurrent `memory_update` between the two reads would otherwise let
+    # this report describe prose the caller never attested to.
+    #
+    # In the handler, not the store: `Store.mark_verified` is a policy-free
+    # persistence primitive (pinned by
+    # `test_mark_verified_does_not_itself_check_path_existence`), and this
+    # is policy in the same sense the attestation refusal above is.
+    symbol_drift = check_symbol_citations(
+        snapshot.body, worktree_root=origin_root, anchor=anchor
+    )
+    verified_head = _verified_head(snapshot, anchoring, anchor, origin_root)
+    outcome = _stamp_or_stale(
+        deps,
+        id,
+        caller,
+        snapshot,
+        anchoring=anchoring,
+        anchor=anchor,
+        live_root=live_root,
+        verified_paths=verified_paths,
+        verified_commits=verified_commits,
+        verified_versions=verified_versions,
+        verified_absent_paths=verified_absent_paths,
+        claims=normalized_claims,
+        verified_head=verified_head,
+    )
+    if isinstance(outcome, dict):
+        return outcome
+    return _verify_response(deps, outcome, note, symbol_drift)
 
 
 __all__ = ["DESC_MEMORY_VERIFY", "memory_verify"]
