@@ -1112,9 +1112,10 @@ after those settlements and before the interrupted turns' walk.
 recall, and re-exports its family: the per-session state and cooldown
 (`recall_state.py`), the caller's admission (`recall_admission.py`),
 the brief's ranking and render (`recall_brief.py`), the prompt recall's
-steps that read the log, probe and record its rows (`recall_prompt.py`)
-and the probe both hooks run with the Stop's settlement
-(`recall_settle.py`);
+steps that read the log, probe and record its rows (`recall_prompt.py`),
+the probe both hooks run with the Stop's settlement
+(`recall_settle.py`) and what a hook endpoint answers
+(`recall_result.py`);
 `standing.py` says what is standing and `in_force.py` what is in force
 at delivery;
 `owner_prompt.py` is the one definition of an owner prompt; `verdict.py`

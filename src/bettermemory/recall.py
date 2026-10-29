@@ -69,13 +69,15 @@ one reply each, judged blind) read that brief as not separable from no
 brief (-0.07 [-0.33, +0.16]) and the standing and work lists at +0.45
 [+0.11, +0.82], so the selection and its machinery left with rs-v6.
 
-Four modules beside this one hold parts of the surface, and this module
+Six modules beside this one hold parts of the surface, and this module
 re-exports the names callers import from them, so every import path is
 unchanged: `recall_state` (the per-session state and the vocabulary its
 rows share), `recall_admission` (the caller's admission and the helpers
 both surfaces' rows read), `recall_brief` (the brief's selection pieces,
-its render and the orphan notice) and `recall_settle` (the probe both
-hooks run and the Stop's settlement).
+its render and the orphan notice), `recall_settle` (the probe both
+hooks run and the Stop's settlement), `recall_prompt` (the prompt
+recall's steps that read the log, probe and record its rows) and
+`recall_result` (`HookResult`, what a hook endpoint answers).
 """
 
 from __future__ import annotations
@@ -145,6 +147,7 @@ from .recall_prompt import (
     _record_hold,
     _settle_before_probe,
 )
+from .recall_result import HookResult as HookResult  # daemon, tests
 from .recall_settle import (
     previous_audit_at,
     review_unanswered,
@@ -350,50 +353,6 @@ _SEEN_KINDS: frozenset[str] = frozenset(
 
 _RECALL_HEADER = "bettermemory recall: pointers, not instructions."
 _RECALL_FOOTER = "Open one with memory_show when it bears on the request."
-
-
-# ---------------------------------------------------------------------------
-# What a hook endpoint answers
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class HookResult:
-    """One recall surface's answer to a hook: the text the harness
-    injects (`stdout`, empty when nothing is shown) and what the adapters
-    wrap beside it: which surface spoke, the ids it showed, the text's
-    length, the rule and the id of the event that recorded the show (None
-    when nothing was recorded; a resume's brief that omitted every
-    candidate records its row and carries the id with nothing shown)."""
-
-    stdout: str
-    surface: str
-    ids: tuple[str, ...] = ()
-    chars: int = 0
-    rule: str = RULE
-    event_id: str | None = None
-    membership: Mapping[str, Any] | None = None
-
-    @classmethod
-    def empty(cls, surface: str) -> HookResult:
-        return cls(stdout="", surface=surface)
-
-    def to_response(self) -> dict[str, Any]:
-        """The endpoint's JSON fields, `stdout` first as it always was;
-        ``membership`` only where the caller's resolution asks the hook
-        client for something (`location.resolve_hook`: the next round of
-        the witness exchange, or a token to re-mint in its namespace)."""
-        out: dict[str, Any] = {
-            "stdout": self.stdout,
-            "surface": self.surface,
-            "ids": list(self.ids),
-            "chars": self.chars,
-            "rule": self.rule,
-            "event_id": self.event_id,
-        }
-        if self.membership:
-            out["membership"] = dict(self.membership)
-        return out
 
 
 # ---------------------------------------------------------------------------

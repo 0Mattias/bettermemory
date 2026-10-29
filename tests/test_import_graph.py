@@ -44,6 +44,7 @@ RECALL_FAMILY: tuple[str, ...] = (
     "bettermemory.recall_brief",
     "bettermemory.recall_settle",
     "bettermemory.recall_prompt",
+    "bettermemory.recall_result",
 )
 
 #: The edges that must not exist, of any kind: a module-level import, an
