@@ -394,3 +394,34 @@ def test_under_another_tokenizer_the_fold_leaves_the_index_text_out(
         report = reader.log_verify()
     assert report["status"] == "tampered"
     assert report["unaccounted_ids"] == [ids["terraform"]]
+
+
+# ---------------------------------------------------------------------------
+# The fingerprint is pinned
+# ---------------------------------------------------------------------------
+
+#: `search.tokenizer_fingerprint()` as this build's tokenizer computes it.
+TOKENIZER_FINGERPRINT = (
+    "70bc8e2452b87298538b81bca1cf9039b867734e2aed1078aba4deceb6be6797"
+)
+
+
+def test_the_tokenizer_fingerprint_is_pinned() -> None:
+    """A change to the token stream the index stores is a step of its own.
+
+    When this fails, something in `search_lexicon` changed the index-side
+    token stream (`tokenize`, its folds, stopword lists or stemmer rules,
+    the CJK segmentation, `_expand_kebab`) or the probe corpus
+    (`_FINGERPRINT_PROBES`). That is allowed, but every store's owner's
+    next open then re-spells its whole index under the write lock
+    (`store_index.rebuild_index`, about 0.5 s per 5,000 memories as
+    measured for ENG-100), and until then a reader's search misses the
+    rows the old tokenizer spelled. Before updating the literal: measure
+    the rebuild on the change, name the change and the re-spelling it
+    causes in the CHANGELOG, and make sure the change is meant; then set
+    `TOKENIZER_FINGERPRINT` to the value this assertion prints."""
+    computed = tokenizer_fingerprint.__wrapped__()
+    assert computed == TOKENIZER_FINGERPRINT, (
+        f"the tokenizer's fingerprint is now {computed}: see this test's docstring"
+    )
+    assert tokenizer_fingerprint() == computed

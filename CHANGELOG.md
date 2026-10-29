@@ -1837,6 +1837,15 @@ follows the candidates' testing.
   queries it does not answer) still reads tampered.
   (`src/bettermemory/store_events.py`, `src/bettermemory/store_rows.py`,
   `docs/internals.md`, `tests/test_store_tokenizer.py`)
+- **A change to the tokenizer's token stream needs a deliberate step.**
+  `search.tokenizer_fingerprint()` names the spelling every store's
+  index is kept in, and since the owner's open re-spells a store whose
+  fingerprint differs (above), a change to the stream costs every store
+  a rebuild under its write lock and its readers the old rows until
+  then. Nothing pinned the value; a test now does, as a literal, and its
+  docstring says what a change needs before the literal is updated: the
+  rebuild measured on the change and the change named in the CHANGELOG.
+  (`tests/test_store_tokenizer.py`)
 
 #### Known limitations
 
