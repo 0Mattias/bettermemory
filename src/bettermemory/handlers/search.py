@@ -71,9 +71,14 @@ from ..verdict import memory_verdict
 from ._shared import Context, _advance_turn, _attach_use_tokens, caller_anchoring
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from .._handlers import ToolHandlers
     from ..admission import Admission
     from ..config import BehaviorConfig
+    from ..models import MemoryHit
+    from ..origin import Origin
+    from ..verify import Anchoring
 
 
 DESC_MEMORY_SEARCH = (
@@ -280,6 +285,46 @@ def resolve_search_pool(
     memories, prefilter_saturated, prefiltered = load_search_candidates(
         store, query, scopes, client=client_filter, model=model_filter
     )
+    memories, prefiltered = _guard_cap_starvation(
+        store,
+        memories,
+        prefilter_saturated,
+        prefiltered,
+        scopes=scopes,
+        excluded=excluded,
+        admission=admission,
+        client_filter=client_filter,
+        model_filter=model_filter,
+        min_survivors=min_survivors,
+    )
+    _corpus_stats = _corpus_stats_provider(
+        store,
+        scopes=scopes,
+        excluded=excluded,
+        admission=admission,
+        client_filter=client_filter,
+        model_filter=model_filter,
+    )
+    return SearchPool(
+        memories=memories,
+        corpus_stats_provider=_corpus_stats if prefiltered else None,
+    )
+
+
+def _guard_cap_starvation(
+    store: Store,
+    memories: list[Any],
+    prefilter_saturated: bool,
+    prefiltered: bool,
+    *,
+    scopes: list[str] | None,
+    excluded: set[str],
+    admission: Admission | None,
+    client_filter: str | None,
+    model_filter: str | None,
+    min_survivors: int,
+) -> tuple[list[Any], bool]:
+    """Take the loaded pool and its flags; return it (the corpus if starved), prefiltered."""
     # The actor filters are absent here on purpose. They are the one
     # class of filter the prefilter SQL applies itself, so a saturated
     # slice is already 50 rows that PASS them and there is no post-cap
@@ -304,6 +349,19 @@ def resolve_search_pool(
             # later keeps the claim tied to the assignment that makes it
             # true.
             prefiltered = False
+    return memories, prefiltered
+
+
+def _corpus_stats_provider(
+    store: Store,
+    *,
+    scopes: list[str] | None,
+    excluded: set[str],
+    admission: Admission | None,
+    client_filter: str | None,
+    model_filter: str | None,
+) -> Callable[[list[str]], CorpusStats | None]:
+    """Take the pool's filters; return the BM25 corpus-statistics lookup bound to them."""
 
     def _corpus_stats(terms: list[str]) -> CorpusStats | None:
         def _admit(memory_scopes: list[str], home: str | None, actor: Any) -> bool:
@@ -326,10 +384,7 @@ def resolve_search_pool(
         size, body_df, scope_df = resolved
         return CorpusStats(size=size, body_df=body_df, scope_df=scope_df)
 
-    return SearchPool(
-        memories=memories,
-        corpus_stats_provider=_corpus_stats if prefiltered else None,
-    )
+    return _corpus_stats
 
 
 async def memory_search(
@@ -356,24 +411,7 @@ async def memory_search(
 
     state = deps.sessions.for_request(ctx)
     _advance_turn(state, deps.recorder)
-    # The request clamp. Same helper — so the same range — the audit
-    # producers reach through `default_search_width`; when the request
-    # omits `max_results` the two paths are then reading one expression
-    # over one value.
-    if max_results is None:
-        max_results = deps.config.behavior.default_max_results
-    max_results = clamp_search_width(max_results)
-
-    # Resolve search mode: per-call override > config default > "hybrid".
-    # Validation happens via the Literal narrowing in search() — any
-    # other value will raise ValueError at the dispatch boundary,
-    # which the handler propagates to the caller as a tool error.
-    resolved_mode = mode or deps.config.behavior.search_mode or "hybrid"
-    if resolved_mode not in ("keyword", "bm25", "hybrid"):
-        raise ValueError(
-            f"unknown search mode {resolved_mode!r}; "
-            "must be one of: keyword, bm25, hybrid"
-        )
+    max_results, resolved_mode = _request_width_and_mode(deps, max_results, mode)
     if scopes:
         scopes = [validate_scope(s) for s in scopes]
     if exclude_scopes:
@@ -401,6 +439,127 @@ async def memory_search(
     admission = Admission.of(surface, caller)
     links = admission.on(LINKS)
 
+    prior_boundary = _prior_session_boundary(deps, since_prior_session)
+    memories, corpus_stats_provider = _candidate_pool(
+        deps,
+        query,
+        since_prior_session=since_prior_session,
+        prior_boundary=prior_boundary,
+        scopes=scopes,
+        excluded=excluded,
+        admission=admission,
+        client=client,
+        model=model,
+        max_results=max_results,
+    )
+    hits, matched_leg = _rank_pool(
+        deps,
+        memories,
+        query,
+        scopes=scopes,
+        excluded=excluded,
+        admission=admission,
+        client=client,
+        model=model,
+        max_results=max_results,
+        resolved_mode=resolved_mode,
+        since_prior_session=since_prior_session,
+        corpus_stats_provider=corpus_stats_provider,
+        anchoring=anchoring,
+    )
+    # Pin one `now` for the whole response so the verification verdict
+    # is consistent across hits — the alternative (let each helper
+    # call utcnow()) could land different status labels on adjacent
+    # hits if we crossed a day boundary mid-loop.
+    now = utcnow()
+    out = [deps.responses.hit_to_dict(h, now=now) for h in hits]
+    _attach_hit_signals(
+        deps,
+        out,
+        hits,
+        memories,
+        matched_leg,
+        current_origin=current_origin,
+        links=links,
+    )
+    _attach_hit_relations(
+        deps, out, hits, memories, links=links, excluded=excluded, now=now
+    )
+    expansion = _expand_top_hit(
+        deps,
+        out,
+        hits,
+        expand_top,
+        current_origin=current_origin,
+        now=now,
+        anchoring=anchoring,
+        links=links,
+    )
+
+    # Issue use-tokens after every other field is in place so the
+    # bookkeeping reflects the canonical response shape the model
+    # is about to act on.
+    _attach_use_tokens(out, state)
+
+    _record_search(
+        deps,
+        out,
+        hits,
+        query=query,
+        scopes=scopes,
+        exclude_scopes=exclude_scopes,
+        client=client,
+        model=model,
+        max_results=max_results,
+        expand_top=expand_top,
+        expansion=expansion,
+        auto_scope=auto_scope,
+        surface=surface,
+        admission=admission,
+        since_prior_session=since_prior_session,
+        prior_boundary=prior_boundary,
+    )
+    return out
+
+
+class _TopExpansion(NamedTuple):
+    """What the top hit's expansion produced, for the `search` event."""
+
+    expanded_id: str | None
+    drift_missing: int
+    commit_drift_status: str | None
+    commits_since_verify: int | None
+
+
+def _request_width_and_mode(
+    deps: ToolHandlers, max_results: int | None, mode: str | None
+) -> tuple[int, str]:
+    """Take the request's width and mode; return the clamped width and the mode."""
+    # The request clamp. Same helper — so the same range — the audit
+    # producers reach through `default_search_width`; when the request
+    # omits `max_results` the two paths are then reading one expression
+    # over one value.
+    if max_results is None:
+        max_results = deps.config.behavior.default_max_results
+    max_results = clamp_search_width(max_results)
+
+    # Resolve search mode: per-call override > config default > "hybrid".
+    # Validation happens via the Literal narrowing in search() — any
+    # other value will raise ValueError at the dispatch boundary,
+    # which the handler propagates to the caller as a tool error.
+    resolved_mode = mode or deps.config.behavior.search_mode or "hybrid"
+    if resolved_mode not in ("keyword", "bm25", "hybrid"):
+        raise ValueError(
+            f"unknown search mode {resolved_mode!r}; "
+            "must be one of: keyword, bm25, hybrid"
+        )
+    return max_results, resolved_mode
+
+
+def _prior_session_boundary(
+    deps: ToolHandlers, since_prior_session: bool
+) -> datetime | None:
+    """Take the request's flag; return the prior session's boundary, or None."""
     # Prior-session boundary filter (loop-iteration entry path).
     # When set, narrow candidates to memories whose `updated` is
     # at/after the latest event-log timestamp from a session_id
@@ -426,7 +585,23 @@ async def memory_search(
             deps.store.iter_events(),
             deps.recorder.session_for_request(),
         )
+    return prior_boundary
 
+
+def _candidate_pool(
+    deps: ToolHandlers,
+    query: str,
+    *,
+    since_prior_session: bool,
+    prior_boundary: datetime | None,
+    scopes: list[str] | None,
+    excluded: set[str],
+    admission: Admission,
+    client: str | None,
+    model: str | None,
+    max_results: int,
+) -> tuple[list[Any], Callable[[list[str]], CorpusStats | None] | None]:
+    """Take the request; return the candidate pool and its corpus-statistics lookup."""
     # Candidate pool. Two paths:
     #
     # 1. `since_prior_session=True`: bypass the FTS5 prefilter and
@@ -484,7 +659,26 @@ async def memory_search(
         )
         memories = pool.memories
         corpus_stats_provider = pool.corpus_stats_provider
+    return memories, corpus_stats_provider
 
+
+def _rank_pool(
+    deps: ToolHandlers,
+    memories: list[Any],
+    query: str,
+    *,
+    scopes: list[str] | None,
+    excluded: set[str],
+    admission: Admission,
+    client: str | None,
+    model: str | None,
+    max_results: int,
+    resolved_mode: str,
+    since_prior_session: bool,
+    corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None,
+    anchoring: Anchoring,
+) -> tuple[list[MemoryHit], dict[str, str]]:
+    """Take the pool and the request; return the ranked hits and each hit's leg."""
     # Filled by `run_search` with `{memory_id: lexical|expansion}` for
     # the returned hits — see `search.search`'s `matched_leg_out` note for
     # why the leg travels as an out-parameter rather than a `MemoryHit`
@@ -516,13 +710,20 @@ async def memory_search(
         # reads it (design 3.6), so a non-top hit and memory_show agree.
         anchoring=anchoring,
     )
-    # Pin one `now` for the whole response so the verification verdict
-    # is consistent across hits — the alternative (let each helper
-    # call utcnow()) could land different status labels on adjacent
-    # hits if we crossed a day boundary mid-loop.
-    now = utcnow()
-    out = [deps.responses.hit_to_dict(h, now=now) for h in hits]
+    return hits, matched_leg
 
+
+def _attach_hit_signals(
+    deps: ToolHandlers,
+    out: list[dict[str, Any]],
+    hits: list[MemoryHit],
+    memories: list[Any],
+    matched_leg: dict[str, str],
+    *,
+    current_origin: Origin,
+    links: Admission,
+) -> None:
+    """Take the response rows; stamp each hit's leg, commit drift and provenance."""
     # `matched_leg`: which ranker surfaced each hit. Additive and
     # OMITTED when there is no leg (browse mode ranks nothing), so a
     # consumer pinned to the existing key set never meets a surprise
@@ -560,6 +761,18 @@ async def memory_search(
     # has not classified the row; never read from the file.
     deps.responses.attach_provenance(out, store=deps.store)
 
+
+def _attach_hit_relations(
+    deps: ToolHandlers,
+    out: list[dict[str, Any]],
+    hits: list[MemoryHit],
+    memories: list[Any],
+    *,
+    links: Admission,
+    excluded: set[str],
+    now: datetime,
+) -> None:
+    """Take the response rows; attach recent negative outcomes and link relations."""
     # Per-hit `recent_negative_outcomes` (T2.3): walk the event log
     # once for the recent window and annotate any hit that was
     # ignored or contradicted AND not since validated. The lookup is
@@ -646,6 +859,19 @@ async def memory_search(
             excluded_scopes=excluded,
         )
 
+
+def _expand_top_hit(
+    deps: ToolHandlers,
+    out: list[dict[str, Any]],
+    hits: list[MemoryHit],
+    expand_top: bool,
+    *,
+    current_origin: Origin,
+    now: datetime,
+    anchoring: Anchoring,
+    links: Admission,
+) -> _TopExpansion:
+    """Take the response rows; expand the top hit in place and return what it did."""
     # Optional auto-expansion of the top hit. Conservative: only fires
     # when the top hit clearly wins, so the model doesn't get hosed with
     # full bodies it didn't really need.
@@ -770,12 +996,34 @@ async def memory_search(
                 # narrowed. See `verdict_from_signals`.
                 out[0]["staleness_verdict"] = shown.staleness_verdict
             expanded_id = memory.id
+    return _TopExpansion(
+        expanded_id=expanded_id,
+        drift_missing=expanded_drift_missing,
+        commit_drift_status=expanded_commit_drift_status,
+        commits_since_verify=expanded_commits_since_verify,
+    )
 
-    # Issue use-tokens after every other field is in place so the
-    # bookkeeping reflects the canonical response shape the model
-    # is about to act on.
-    _attach_use_tokens(out, state)
 
+def _record_search(
+    deps: ToolHandlers,
+    out: list[dict[str, Any]],
+    hits: list[MemoryHit],
+    *,
+    query: str,
+    scopes: list[str] | None,
+    exclude_scopes: list[str] | None,
+    client: str | None,
+    model: str | None,
+    max_results: int,
+    expand_top: bool,
+    expansion: _TopExpansion,
+    auto_scope: bool,
+    surface: str,
+    admission: Admission,
+    since_prior_session: bool,
+    prior_boundary: datetime | None,
+) -> None:
+    """Take the served rows and the request; record the `search` event row."""
     from .._response import isoformat_optional
     from ..admission import admitted_nothing
 
@@ -821,10 +1069,10 @@ async def memory_search(
         matched_leg=[h.get("matched_leg") for h in out],
         query_unique=_query_unique,
         expand_top=expand_top,
-        expanded_id=expanded_id,
-        expanded_drift_missing=expanded_drift_missing,
-        expanded_commit_drift_status=expanded_commit_drift_status,
-        expanded_commits_since_verify=expanded_commits_since_verify,
+        expanded_id=expansion.expanded_id,
+        expanded_drift_missing=expansion.drift_missing,
+        expanded_commit_drift_status=expansion.commit_drift_status,
+        expanded_commits_since_verify=expansion.commits_since_verify,
         auto_scope=auto_scope,
         membership_surface=surface,
         **(
@@ -836,7 +1084,6 @@ async def memory_search(
         prior_session_boundary=isoformat_optional(prior_boundary),
         **search_extra,
     )
-    return out
 
 
 __all__ = [
