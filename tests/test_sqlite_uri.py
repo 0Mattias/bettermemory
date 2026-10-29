@@ -33,6 +33,7 @@ import pytest
 from bettermemory import backup, posture
 from bettermemory import daemon as daemon_module
 from bettermemory import store as store_module
+from bettermemory import store_keys
 from bettermemory._fsutil import sqlite_file_uri
 from bettermemory.store import CREATED_AFTER_ORPHANS, STORE_FILENAME, Store
 
@@ -284,7 +285,7 @@ def _run_site(site: str, path: Path, store_id: str) -> None:
 
 
 SITES: dict[str, ModuleType] = {
-    "store": store_module,
+    "store": store_keys,
     "posture": posture,
     "backup": backup,
     "daemon": daemon_module,
@@ -312,7 +313,7 @@ def _read_then_run_site(site: str, named: Path, path: Path, store_id: str) -> No
 def test_every_query_opener_names_its_file_through_the_helper(
     site: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The key ring binding check (`store._store_id_at`), the posture
+    """The key ring binding check (`store_keys._store_id_at`), the posture
     audit's meta read, the backup's read-only reads and the daemon's
     store-moved check each build their URI with `sqlite_file_uri`, for
     the file they were given. Each runs after a read through the helper,

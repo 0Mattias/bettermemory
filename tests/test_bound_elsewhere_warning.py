@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pytest
 
-from bettermemory import store as store_module
+from bettermemory import store_keys
 from bettermemory.log import KeyRing
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.store import STORE_FILENAME, Store
@@ -52,7 +52,7 @@ def _memory(body: str) -> Memory:
 @pytest.fixture(autouse=True)
 def fresh_guard(monkeypatch: pytest.MonkeyPatch) -> None:
     """Each test starts with no pair warned about in this process."""
-    monkeypatch.setattr(store_module, "_BOUND_ELSEWHERE_WARNED", set())
+    monkeypatch.setattr(store_keys, "_BOUND_ELSEWHERE_WARNED", set())
 
 
 @pytest.fixture
@@ -218,7 +218,8 @@ def test_two_opens_at_once_log_one_warning(
     one DEBUG line between them, not two warnings."""
     path, _store_id = home
     copy = _copy(path, tmp_path / "repo" / STORE_FILENAME)
-    monkeypatch.setattr(store_module, "_BOUND_ELSEWHERE_WARNED", _MeetingSet())
+    guard = _MeetingSet()
+    monkeypatch.setattr(store_keys, "_BOUND_ELSEWHERE_WARNED", guard)
     failures: list[BaseException] = []
 
     def open_copy() -> None:
@@ -235,6 +236,7 @@ def test_two_opens_at_once_log_one_warning(
         for thread in threads:
             thread.join(timeout=30)
     assert failures == []
+    assert guard._callers == 2, "premise: both opens asked the patched guard"
     assert len(_bound_lines(caplog, logging.WARNING)) == 1
     assert len(_bound_lines(caplog, logging.DEBUG)) == 1
 

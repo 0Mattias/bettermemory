@@ -1521,7 +1521,7 @@ def restore_bundle(
             }
             # The ring's keys, head and anchor are the restored file's now;
             # a binding left on another file that holds the store id would
-            # open this one for reading only (`store._claim_key_ring`).
+            # open this one for reading only (`store_keys._claim_key_ring`).
             report["binding"] = {
                 "before": _path_str(live.rebind_store(store_file)),
                 "after": binding_after,

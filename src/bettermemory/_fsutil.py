@@ -662,7 +662,7 @@ def sqlite_file_uri(path: PurePath) -> str:
     """The SQLite ``file:`` URI naming the absolute path ``path``, for
     ``sqlite3.connect(uri, uri=True)`` with the caller's query (``mode=ro``,
     ``immutable=1``, ``mode=rw``) appended after a ``?``. Every opener that
-    hands SQLite a query parameter builds its URI here: `store._store_id_at`
+    hands SQLite a query parameter builds its URI here: `store_keys._store_id_at`
     (the key ring binding check), `posture.read_meta`,
     `backup._read_only_uri` and the daemon's store-moved check
     (`daemon._tell_successor`).

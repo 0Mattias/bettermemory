@@ -324,7 +324,7 @@ bindings) or when the bound file no longer holds this store id; and
 (`KeyRing.rebind_store`), on the record. A reader never writes it.
 
 - The bound file's id is read without opening it as a store
-  (`store._store_id_at`): `immutable=1`, or `mode=ro` first when its
+  (`store_keys._store_id_at`): `immutable=1`, or `mode=ro` first when its
   `-wal` and `-shm` are present, so a store a running daemon just
   created, whose tables are still only in its WAL, is seen. The URI is
   `_fsutil.sqlite_file_uri`'s, as for every open that passes SQLite a
@@ -353,11 +353,11 @@ bindings) or when the bound file no longer holds this store id; and
   WARNING on the `bettermemory.store` logger names both files and the
   remedy (move or remove one store, or delete `<store_id>.path`). The
   WARNING comes once per process for each (store file, bound file)
-  pair, both resolved (`store._BOUND_ELSEWHERE_WARNED`, tested and added
-  under one lock, since worker connections open at once), and later
-  opens of the pair log the line at DEBUG; a spelling `resolve` does
-  not fold (a case variant on macOS, where `resolve` keeps the case it
-  is given; on Windows it reads the case on disk) is a new pair. A
+  pair, both resolved (`store_keys._BOUND_ELSEWHERE_WARNED`, tested and
+  added under one lock, since worker connections open at once), and
+  later opens of the pair log the line at DEBUG; a spelling `resolve`
+  does not fold (a case variant on macOS, where `resolve` keeps the case
+  it is given; on Windows it reads the case on disk) is a new pair. A
   reader whose key matches asks the same (`KeyRing.bound_elsewhere`),
   since a reader with the key can write (the session-start hook records
   the brief it shows), and opens the same way.
