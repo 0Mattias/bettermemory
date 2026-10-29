@@ -669,7 +669,7 @@ def test_removed_keys_and_loader_fallbacks_warn(env: Env) -> None:
     removed = check.details["removed_keys"]
     assert "[telemetry] max_bytes (removed in 9.0.0)" in removed
     assert "[consolidate] (removed in 9.0.0)" in removed
-    assert any("endorsement_debt_ratio_threshold" in key for key in removed)
+    assert "[behavior] endorsement_debt_ratio_threshold (removed in 9.0.0)" in removed
     assert any("search_mode" in notice for notice in check.details["notices"])
     assert "removed key" in check.summary
 

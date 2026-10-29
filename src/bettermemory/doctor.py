@@ -451,8 +451,8 @@ def _config_notices() -> Iterator[list[str]]:
 
 
 def removed_keys(data: Mapping[str, Any]) -> list[str]:
-    """The keys and sections a parsed config sets that a release removed or
-    renamed, from the loader's own registries, so the two cannot disagree.
+    """The keys and sections a parsed config sets that a release removed,
+    from the loader's own registries, so the two cannot disagree.
     The loader ignores them with a once-per-process notice, which a second
     load in the same process would not repeat; these are read every time."""
     from . import config as _config
@@ -475,12 +475,6 @@ def removed_keys(data: Mapping[str, Any]) -> list[str]:
     for name, (removed_in, _why) in sections.items():
         if name in data:
             found.append(f"[{name}] (removed in {removed_in})")
-    behavior = data.get("behavior")
-    if isinstance(behavior, Mapping) and "endorsement_debt_ratio_threshold" in behavior:
-        found.append(
-            "[behavior] endorsement_debt_ratio_threshold (renamed "
-            "cold_endorsement_ratio_threshold in 3.2.0)"
-        )
     return found
 
 

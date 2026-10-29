@@ -397,8 +397,8 @@ def test_errors_and_notices_in_the_text_name_the_registry_value(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A removed key and a renamed one are notices keyed on the source,
-    which for a registry value has no path to resolve."""
+    """Removed keys are notices keyed on the source, which for a registry
+    value has no path to resolve."""
     monkeypatch.setattr(_config, "_DEPRECATED_KEY_WARNED_PATHS", set())
     removed = next(iter(_config._REMOVED_BEHAVIOR_KEYS))
     windows.set(
@@ -407,7 +407,7 @@ def test_errors_and_notices_in_the_text_name_the_registry_value(
     )
     with caplog.at_level(logging.WARNING, logger="bettermemory.config"):
         loaded = load_config(_user_config(tmp_path))
-    assert loaded.behavior.cold_endorsement_ratio_threshold == 0.5
+    assert loaded.behavior.cold_endorsement_ratio_threshold == 0.0
     notices = _notices(caplog)
     assert any(removed in n and _LABEL in n for n in notices), notices
     assert any("endorsement_debt_ratio_threshold" in n and _LABEL in n for n in notices)

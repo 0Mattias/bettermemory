@@ -629,6 +629,19 @@ follows the candidates' testing.
   `src/bettermemory/cli/__init__.py`, `src/bettermemory/cli/_common.py`,
   `src/bettermemory/hook.py`, `docs/api.md`, `docs/internals.md`,
   `tests/test_hook_words.py`, `tests/test_cli_smoke.py`)
+- **`[behavior] endorsement_debt_ratio_threshold` is a removed key.**
+  3.2.0 renamed it `cold_endorsement_ratio_threshold`, and the loader
+  went on reading the old name as the new one behind a deprecation
+  notice. At 9.0 the old name loads as every removed key does: the line
+  is ignored, with one notice per config that says it was removed in
+  9.0.0 and names `cold_endorsement_ratio_threshold`, and `bettermemory
+  config check` reports it as `removed`, so the `renamed` finding code
+  is gone; `doctor`'s config check lists it with the removed keys. A
+  config that still sets it gets the default threshold, 0.0, until the
+  line is renamed. (`src/bettermemory/config.py`,
+  `src/bettermemory/cli/config_cmd.py`, `src/bettermemory/doctor.py`,
+  `tests/test_config.py`, `tests/test_config_cmd.py`,
+  `tests/test_managed_config.py`)
 
 #### Fixed
 

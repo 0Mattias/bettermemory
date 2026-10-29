@@ -1079,17 +1079,11 @@ def default_config_path() -> Path:
     return Path(platformdirs.user_config_dir("bettermemory")) / CONFIG_FILENAME
 
 
-# T9: 3.2.0 renamed `endorsement_debt_ratio_threshold` ->
-# `cold_endorsement_ratio_threshold` (commit 7346ecc) with no alias, so a
-# user upgrading from 3.1.x with the old key in their TOML silently lost
-# the threshold (fell back to the 0.0 default). This shim accepts the
-# old key, maps it to the new field, and emits a one-shot per-(path,key)
-# deprecation warning. Once per process: a long-lived server
-# (`bettermemory serve`) that rereads config on signal shouldn't spam the
-# log on every reload, but two distinct config paths in the same process
-# each get their own warning. Drop this shim no earlier than 3.4.x — long
-# enough that any 3.1.x user has seen the deprecation warning at least
-# once. The removed-key notice below shares the set, keyed `<key>+removed`.
+# The one-shot guard of the config notices: (resolved config, key) pairs
+# already reported. Once per process: a long-lived server that rereads
+# config shouldn't spam the log on every reload, but two distinct config
+# paths in the same process each get their own notice. The removed-key
+# notice keys it `<key>+removed`.
 _DEPRECATED_KEY_WARNED_PATHS: set[tuple[ConfigSource, str]] = set()
 
 
@@ -1147,6 +1141,12 @@ _REMOVED_BEHAVIOR_KEYS: dict[str, tuple[str, str]] = {
         "9.0.0",
         "the prompt recall delivers in the caller's project by default now; "
         '`prompt_recall = "everywhere"` widens it and `"off"` stops it',
+    ),
+    "endorsement_debt_ratio_threshold": (
+        "9.0.0",
+        "it was renamed `cold_endorsement_ratio_threshold` in 3.2.0 and read "
+        "under that name until 9.0; set `cold_endorsement_ratio_threshold` "
+        "to keep the threshold",
     ),
 }
 
@@ -1218,10 +1218,9 @@ def _warn_removed_key(
 
     Removed keys use the log lane, like the deprecation notices that
     preceded them — the operator who set the line reads server logs,
-    not Python's warnings channel — with the same one-shot `(resolved
-    path, key)` guard as `_apply_legacy_endorsement_debt_alias`, so a
-    long-lived server that rereads config on signal does not repeat
-    itself. The `[behavior]` guard key keeps its historical shape
+    not Python's warnings channel — with a one-shot `(resolved path,
+    key)` guard (`_DEPRECATED_KEY_WARNED_PATHS`), so a long-lived server
+    that rereads config on signal does not repeat itself. The `[behavior]` guard key keeps its historical shape
     (`<key>+removed`); the other sections carry their name in it.
     """
     guard_key = (
@@ -1263,8 +1262,8 @@ def _drop_removed_keys(
         return
     resolved = _resolved_for_guard(config_path)
     for key in present:
-        # Popped, as the legacy alias pops its stale key, so the dict the
-        # loader reads below holds only settings that still exist.
+        # Popped, so the dict the loader reads below holds only settings
+        # that still exist.
         section_raw.pop(key)
         removed_in, why = registry[key]
         _warn_removed_key(
@@ -1291,80 +1290,6 @@ def _drop_removed_sections(data: dict[str, Any], config_path: ConfigSource) -> N
             _warn_removed_key(
                 section=name, key=key, removed_in=removed_in, why=why, resolved=resolved
             )
-
-
-def _apply_legacy_endorsement_debt_alias(
-    behavior_raw: dict[str, object], config_path: ConfigSource
-) -> None:
-    """Translate the pre-3.2 `endorsement_debt_ratio_threshold` key to
-    its 3.2 successor `cold_endorsement_ratio_threshold` in place.
-
-    Four cases:
-
-    1. Only the old key present -> copy the value under the new key and
-       emit a one-shot DEPRECATION warning pointing at both names.
-    2. Only the new key present -> no-op.
-    3. Both present -> the new key wins (last writer wins on intent;
-       the user clearly added it explicitly). Emit a STRONGER one-shot
-       warning telling them to delete the stale old key.
-    4. Neither present -> no-op.
-
-    The (config_path, key) key on the warned-set lets a process serving
-    multiple memory directories surface each config's drift separately.
-    Best-effort key resolution (`_resolved_for_guard`): resolving collapses
-    symlinks so two `load_config` calls naming the same file via
-    different paths share one warning; a path that cannot be resolved
-    (deleted out from under us between the `open()` and here) keys the
-    guard as given, so the one-shot guard still works for the common case.
-    """
-    old_key = "endorsement_debt_ratio_threshold"
-    new_key = "cold_endorsement_ratio_threshold"
-    if old_key not in behavior_raw:
-        return
-
-    resolved = _resolved_for_guard(config_path)
-
-    import logging
-
-    log = logging.getLogger("bettermemory.config")
-
-    if new_key in behavior_raw:
-        # Both keys present: the new one wins. Stronger nudge — the user
-        # is carrying dead config that's silently doing nothing.
-        guard_key = (resolved, f"{old_key}+both")
-        if guard_key not in _DEPRECATED_KEY_WARNED_PATHS:
-            _DEPRECATED_KEY_WARNED_PATHS.add(guard_key)
-            log.warning(
-                "bettermemory: TOML config at %s sets BOTH the legacy "
-                "`%s` and its 3.2.0 replacement `%s` under [behavior]. "
-                "The new key wins; the legacy key is being ignored. "
-                "Delete `%s` from your TOML to silence this warning.",
-                resolved,
-                old_key,
-                new_key,
-                old_key,
-            )
-        # Drop the legacy key so downstream code sees a clean dict.
-        behavior_raw.pop(old_key, None)
-        return
-
-    # Old key only: migrate the value and warn once.
-    behavior_raw[new_key] = behavior_raw.pop(old_key)
-    guard_key = (resolved, old_key)
-    if guard_key not in _DEPRECATED_KEY_WARNED_PATHS:
-        _DEPRECATED_KEY_WARNED_PATHS.add(guard_key)
-        log.warning(
-            "bettermemory: TOML config at %s uses the deprecated "
-            "`%s` key under [behavior]. The key was renamed to `%s` "
-            "in 3.2.0; the legacy name still works for now but will "
-            "be dropped in a future release. Rename "
-            "`%s` to `%s` in your TOML to silence this warning.",
-            resolved,
-            old_key,
-            new_key,
-            old_key,
-            new_key,
-        )
 
 
 def read_config_file(path: Path) -> dict[str, Any]:
@@ -1471,9 +1396,8 @@ def _apply_managed(
 
     The managed file is parsed first, alone and through the same code as
     config.toml (`_config_from_data`), so its values get the loader's
-    located errors naming the managed file, its removed keys their
-    notices, and its legacy alias the translation; what is left in
-    `managed_data` afterwards names only settings that exist. A malformed
+    located errors naming the managed file and its removed keys their
+    notices; what is left in `managed_data` afterwards names only settings that exist. A malformed
     value there fails the load, as a malformed config.toml does: a pin
     that cannot be read is never skipped.
 
@@ -1519,17 +1443,6 @@ def _apply_managed(
         known = {f.name for f in fields(target)}
         keys.extend((section, key) for key in section_raw if key in known)
 
-    # The user's legacy alias is translated before the pinned keys are
-    # dropped, as the managed file's was above: a user line spelled with
-    # the old name is then the successor's line, so a pinned successor
-    # drops it unread (a mistyped value cannot fail the load) and its
-    # notice fires. Left untranslated, `_config_from_data` below would
-    # move it under the successor and parse it. Idempotent, so the
-    # second call there finds nothing to do.
-    user_behavior = data.get("behavior")
-    if isinstance(user_behavior, dict):
-        _apply_legacy_endorsement_debt_alias(user_behavior, config_path)
-
     defaults = Config()
     for section, key in keys:
         user_section = data.get(section)
@@ -1570,8 +1483,8 @@ def _apply_managed(
 #: applies. `prompt_recall` is the one key a shipped config.toml spelled in
 #: a form the loader now translates: v3.41.0 to v8.0.0 wrote ``true``, which
 #: reads as ``"project"``, the default. Not here, on purpose:
-#: `endorsement_debt_ratio_threshold` is a renamed key, translated to its
-#: successor before the comparison, its value unchanged; a pre-4.0
+#: `endorsement_debt_ratio_threshold`, renamed in 3.2.0, is a removed key
+#: (`_REMOVED_BEHAVIOR_KEYS`), dropped unread; a pre-4.0
 #: ``search_mode = "semantic"`` named a mode 4.0 removed, which the loader
 #: replaces with the default through the fallback a typo takes, so it
 #: spells no current value; ``search_mode = "keyword"``, which 2.x wrote,
@@ -1785,8 +1698,8 @@ def _config_from_data(data: dict[str, Any], config_path: ConfigSource) -> Config
 
     `config_path` locates every error and notice: the user's config.toml,
     or the managed file when `_apply_managed` parses that one. Mutates
-    `data` as it reads it: the legacy alias is translated and removed
-    keys and sections are dropped, so a caller reading `data` afterwards
+    `data` as it reads it: removed keys and sections are dropped, so a
+    caller reading `data` afterwards
     sees only settings that still exist.
     """
     from .config_sections import (
@@ -1806,12 +1719,6 @@ def _config_from_data(data: dict[str, Any], config_path: ConfigSource) -> Config
     capture_raw = _section_table(data, "capture", config_path)
     membership_raw = _section_table(data, "membership", config_path)
     security_raw = _section_table(data, "security", config_path)
-
-    # T9: back-compat for the 3.1.x -> 3.2.0 TOML key rename. Mutates
-    # `behavior_raw` so the `behavior_raw.get(...)` lookups in
-    # `config_sections._behavior_config` pick up the legacy value
-    # under the new key.
-    _apply_legacy_endorsement_debt_alias(behavior_raw, config_path)
 
     # Keys and sections a major removed: ignored with a one-time notice
     # per key, so a config written for the previous line still loads.

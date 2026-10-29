@@ -550,12 +550,12 @@ def test_show_labels_a_value_the_loader_could_not_read_as_the_default() -> None:
     assert '# default (your config\'s "ture" is ignored)' in text
 
 
-def test_show_counts_a_legacy_spelling_as_the_users(tmp_path: Path) -> None:
+def test_show_does_not_count_a_removed_spelling_as_the_users(tmp_path: Path) -> None:
     _write_user("[behavior]\nendorsement_debt_ratio_threshold = 0.25\n")
     entry = config_cmd.show_report()["settings"]["behavior"][
         "cold_endorsement_ratio_threshold"
     ]
-    assert entry == {"value": 0.25, "source": "user"}
+    assert entry == {"value": 0.0, "source": "default"}
 
 
 def test_show_with_no_config_file_shows_the_managed_pins(
@@ -820,7 +820,7 @@ def test_a_forbid_acknowledge_that_is_not_a_list_is_the_loaders_error() -> None:
     assert "brackets" in finding["message"]
 
 
-def test_removed_and_renamed_lines_are_warnings() -> None:
+def test_removed_lines_are_warnings() -> None:
     report = _check(
         "[behavior]\ncorroboration_boost = true\n"
         "endorsement_debt_ratio_threshold = 0.1\n"
@@ -828,33 +828,31 @@ def test_removed_and_renamed_lines_are_warnings() -> None:
         "[proposals]\nenabled = true\n"
     )
     assert _codes(report) == [
-        ("warning", "renamed", "behavior", "endorsement_debt_ratio_threshold"),
         ("warning", "removed", "behavior", "corroboration_boost"),
+        ("warning", "removed", "behavior", "endorsement_debt_ratio_threshold"),
         ("warning", "removed", "telemetry", "max_bytes"),
         ("warning", "removed", "proposals", None),
     ]
-    assert "8.0.0" in report["findings"][1]["message"]
+    assert "8.0.0" in report["findings"][0]["message"]
 
 
-def test_both_spellings_of_the_renamed_key_name_the_stale_one() -> None:
-    report = _check(
+def test_the_pre_3_2_threshold_key_is_removed_and_names_its_successor() -> None:
+    """The old name beside the new one, and with a value that would not
+    parse: each is one removed line, its value never read, and the
+    finding names the key it was renamed to."""
+    for text in (
         "[behavior]\nendorsement_debt_ratio_threshold = 0.1\n"
-        "cold_endorsement_ratio_threshold = 0.2\n"
-    )
-    finding = _only(report)
-    assert (finding["code"], finding["key"]) == (
-        "renamed",
-        "endorsement_debt_ratio_threshold",
-    )
-    assert finding["suggestion"] == "delete endorsement_debt_ratio_threshold"
-
-
-def test_a_renamed_key_with_a_bad_value_is_checked_under_its_new_name() -> None:
-    report = _check("[behavior]\nendorsement_debt_ratio_threshold = 'abc'\n")
-    assert _codes(report) == [
-        ("warning", "renamed", "behavior", "endorsement_debt_ratio_threshold"),
-        ("error", "invalid_value", "behavior", "cold_endorsement_ratio_threshold"),
-    ]
+        "cold_endorsement_ratio_threshold = 0.2\n",
+        "[behavior]\nendorsement_debt_ratio_threshold = 'abc'\n",
+    ):
+        finding = _only(_check(text))
+        assert (finding["code"], finding["key"]) == (
+            "removed",
+            "endorsement_debt_ratio_threshold",
+        )
+        message = finding["message"]
+        assert "renamed `cold_endorsement_ratio_threshold` in 3.2.0" in message
+        assert finding["suggestion"] == "delete the line"
 
 
 def test_a_section_that_is_not_a_table_is_an_error_in_the_check() -> None:

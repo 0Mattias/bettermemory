@@ -324,30 +324,29 @@ def test_a_removed_key_in_the_managed_file_gets_its_notice(
     assert str(managed_config_path.resolve()) in removed[0]
 
 
-def test_the_legacy_alias_pins_its_successor(
+def test_a_managed_files_pre_3_2_threshold_key_pins_nothing(
     tmp_path: Path, managed_config_path: Path
 ) -> None:
+    """The pre-3.2 name is a removed key in the managed file too: dropped
+    with its notice, it pins nothing, and the user's line is in force."""
     managed_config_path.write_text(
         "[behavior]\nendorsement_debt_ratio_threshold = 0.25\n", encoding="utf-8"
     )
     loaded = load_config(
         _user_config(tmp_path, "[behavior]\ncold_endorsement_ratio_threshold = 0.5\n")
     )
-    assert loaded.behavior.cold_endorsement_ratio_threshold == 0.25
-    assert loaded.managed_keys == frozenset(
-        {"behavior.cold_endorsement_ratio_threshold"}
-    )
+    assert loaded.behavior.cold_endorsement_ratio_threshold == 0.5
+    assert loaded.managed_keys == frozenset()
 
 
-def test_a_users_legacy_alias_of_a_pinned_key_is_ignored_with_its_notice(
+def test_a_users_pre_3_2_threshold_key_under_a_pin_is_a_removed_key(
     tmp_path: Path,
     managed_config_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The user's file spells the pinned key by its pre-3.2 name. The
-    line is the successor's, so it is dropped unread like any pinned
-    line: a value that would not parse cannot fail the load, and the
-    pinned-key notice names the setting it lost to."""
+    """The user's file spells the pinned key by its pre-3.2 name: the line
+    is a removed key, dropped unread (a value that would not parse cannot
+    fail the load) with the removal notice, and the pin is in force."""
     managed_config_path.write_text(
         "[behavior]\ncold_endorsement_ratio_threshold = 0.25\n", encoding="utf-8"
     )
@@ -358,9 +357,11 @@ def test_a_users_legacy_alias_of_a_pinned_key_is_ignored_with_its_notice(
             )
         )
     assert loaded.behavior.cold_endorsement_ratio_threshold == 0.25
-    notices = [r.getMessage() for r in caplog.records if "pins" in r.getMessage()]
+    notices = [
+        r.getMessage() for r in caplog.records if "was removed" in r.getMessage()
+    ]
     assert len(notices) == 1, notices
-    assert "[behavior] `cold_endorsement_ratio_threshold`" in notices[0]
+    assert "`endorsement_debt_ratio_threshold`" in notices[0]
 
 
 def test_the_shipped_example_loads_as_a_managed_file(

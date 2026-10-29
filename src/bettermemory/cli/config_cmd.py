@@ -33,7 +33,7 @@ Three subcommands, each with ``--json``:
   the scope grammar, which no write can carry; a `[daemon] port` outside
   0..65535, which the daemon cannot bind). Warnings are lines the config
   loads past: an unknown section or key, with a did-you-mean from difflib;
-  a key or section a release removed or renamed; a value that did not
+  a key or section a release removed; a value that did not
   parse and fell back to the default; a value clamped where it is read; a
   `[storage] directory` under a system directory.
   Notes are user lines a managed pin overrides. Exit 0 when there is
@@ -96,14 +96,6 @@ DEFAULT = "default"
 USER = "user"
 MANAGED = "managed"
 
-#: The legacy spellings the loader still reads, as (section, old) -> new
-#: (`config._apply_legacy_endorsement_debt_alias`).
-_ALIASES: dict[tuple[str, str], str] = {
-    ("behavior", "endorsement_debt_ratio_threshold"): (
-        "cold_endorsement_ratio_threshold"
-    ),
-}
-
 #: The ports a socket can bind; anything else makes `daemon.bind` raise
 #: OverflowError before the fallback to an ephemeral port can run.
 _PORT_MAX = 65535
@@ -147,8 +139,7 @@ def _default(section: str, key: str) -> Any:
 
 def raw_settings(data: Mapping[str, Any] | None) -> dict[tuple[str, str], Any]:
     """The settings one parsed file sets, as (section, key) -> the value as
-    written, for the keys the loader reads. A legacy spelling counts as
-    its successor, which wins when both are written, as in the loader."""
+    written, for the keys the loader reads."""
     if data is None:
         return {}
     catalogue = settings_catalogue()
@@ -157,9 +148,6 @@ def raw_settings(data: Mapping[str, Any] | None) -> dict[tuple[str, str], Any]:
         table = data.get(section)
         if not isinstance(table, dict):
             continue
-        for (alias_section, old), new in _ALIASES.items():
-            if alias_section == section and old in table and new not in table:
-                found[(section, new)] = table[old]
         for key in keys:
             if key in table:
                 found[(section, key)] = table[key]
@@ -558,7 +546,7 @@ class Finding:
     """One line of `check`'s report.
 
     `code` is stable for scripts: unreadable, not_a_table, unknown_section,
-    unknown_key, removed, renamed, invalid_value, unknown_acknowledge_name,
+    unknown_key, removed, invalid_value, unknown_acknowledge_name,
     fallback, clamped, invalid_scope, port_out_of_range, privileged_port,
     system_directory, pinned, does_not_load. `file` is the role of the file the line is in
     (``user`` or ``managed``), None for the load as a whole. `message` is
@@ -971,7 +959,7 @@ def _section_findings(
     pinned: Mapping[tuple[str, str], Any],
     managed_path: _config.ConfigSource,
 ) -> list[Finding]:
-    """Every line of one known section: removed, renamed, unknown, pinned
+    """Every line of one known section: removed, unknown, pinned
     by the managed file (in the user's file), or a value to check. A
     pinned line is noted unless it reads as the pin, compared as the
     loader's own notice compares it (`config.line_reads_as_pin`), so
@@ -979,37 +967,6 @@ def _section_findings(
     ``"true"`` is not."""
     findings: list[Finding] = []
     lines = dict(table)
-    for (alias_section, old), new in _ALIASES.items():
-        if alias_section != section or old not in lines:
-            continue
-        if new in lines:
-            findings.append(
-                Finding(
-                    WARNING,
-                    "renamed",
-                    file.role,
-                    section,
-                    old,
-                    f"[{section}] sets both {old} and {new}, the name it took in "
-                    f"3.2.0; {new} is in force and {old} is ignored.",
-                    f"delete {old}",
-                )
-            )
-            del lines[old]
-        else:
-            findings.append(
-                Finding(
-                    WARNING,
-                    "renamed",
-                    file.role,
-                    section,
-                    old,
-                    f"[{section}] {old} was renamed {new} in 3.2.0; it still "
-                    "reads as the new name for now.",
-                    f"rename it to {new}",
-                )
-            )
-            lines[new] = lines.pop(old)
     removed = _removed_keys(section)
     for key, value in lines.items():
         if key in removed:
@@ -1282,7 +1239,7 @@ def add_subparser(
 
     check_text = (
         "Check config.toml and the managed file: unknown sections and keys "
-        "(with a did-you-mean), removed and renamed keys, values that do not "
+        "(with a did-you-mean), removed keys, values that do not "
         "load or fall back to the default, [scopes] allowed entries outside "
         "the scope grammar, [policy] forbid_acknowledge names, the [daemon] "
         "port range, and your lines a managed pin overrides. Exit 0 when "
