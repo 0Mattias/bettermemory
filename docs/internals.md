@@ -1129,7 +1129,9 @@ migration. `cli/project_cmd.py`, `cli/memory_move_cmd.py` and
 **Offline.** `migrate_v8.py` reads an 8.x directory through the frozen
 readers in `v8.py` and writes the store; `mirror.py` writes the store
 back out as that directory, with `_frontmatter.py` as the markdown
-codec; `rollback.py` removes one actor's writes and leaves everyone
+codec and `mirror_format.py` holding the v8 file names and frontmatter
+it writes, which the migration shares, so the mirror imports neither v8
+module and stays when they go; `rollback.py` removes one actor's writes and leaves everyone
 else's; `init.py` and `_install_hints.py` are client onboarding.
 
 **Operations.** The commands an operator runs, every one of them

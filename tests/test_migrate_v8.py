@@ -31,24 +31,24 @@ import pytest
 from bettermemory.eval import compute_report, render_report_markdown
 from bettermemory.log import MIGRATE_V8, STORE_CREATED
 from bettermemory.migrate_v8 import MigrationReport, inventory, migrate
-from bettermemory.mirror import (
+from bettermemory.mirror import write_mirror
+from bettermemory.mirror_format import (
+    EPISODES_DIR,
+    TOMBSTONE_DIR,
     active_filename_for_tombstone,
+    memory_filename,
     tombstone_filename,
-    write_mirror,
 )
 from bettermemory.models import Episode, Memory
 from bettermemory.store import IMPORTED, STORE_FILENAME, Store
 from bettermemory.v8 import (
-    EPISODES_DIR,
     EVENT_LOG_FILENAME,
     INDEX_FILENAME,
-    TOMBSTONE_DIR,
     iter_active,
     iter_all_events,
     iter_session_ids,
     iter_tombstones,
     list_by_session,
-    memory_filename,
     parse_memory_file,
 )
 

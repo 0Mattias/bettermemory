@@ -109,7 +109,7 @@ def run_store(name: str, v8_root: Path, scratch: Path, bodies: list[str]) -> dic
     from latency import import_copy  # type: ignore[import-not-found]
 
     from bettermemory.mirror import MIRROR_MARKER
-    from bettermemory.v8 import TOMBSTONE_DIR
+    from bettermemory.mirror_format import TOMBSTONE_DIR
 
     store_dir = scratch / f"{name}-store"
     report = import_copy(v8_root, store_dir)

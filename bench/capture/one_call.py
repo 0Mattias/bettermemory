@@ -567,7 +567,7 @@ def oc_p5(scratch: Path) -> dict[str, Any]:
     from latency import import_copy  # type: ignore[import-not-found]
 
     from bettermemory.mirror import MIRROR_MARKER
-    from bettermemory.v8 import TOMBSTONE_DIR
+    from bettermemory.mirror_format import TOMBSTONE_DIR
 
     store_dir = scratch / "p5"
     import_copy(FIXTURE, store_dir)

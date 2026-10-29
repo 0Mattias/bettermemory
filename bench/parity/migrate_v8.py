@@ -59,12 +59,15 @@ if str(_ROOT / "src") not in sys.path:
 
 from bettermemory.eval import compute_report, render_report_markdown  # noqa: E402
 from bettermemory.migrate_v8 import inventory, migrate  # noqa: E402
-from bettermemory.mirror import tombstone_filename, write_mirror  # noqa: E402
+from bettermemory.mirror import write_mirror  # noqa: E402
+from bettermemory.mirror_format import (  # noqa: E402
+    EPISODES_DIR,
+    TOMBSTONE_DIR,
+    tombstone_filename,
+)
 from bettermemory.store import STORE_FILENAME, Store  # noqa: E402
 from bettermemory.v8 import (  # noqa: E402
-    EPISODES_DIR,
     INDEX_FILENAME,
-    TOMBSTONE_DIR,
     iter_active,
     iter_active_memory_paths,
     iter_all_events,

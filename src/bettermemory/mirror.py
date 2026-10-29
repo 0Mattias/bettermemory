@@ -7,11 +7,13 @@ directory, the greppable and git-able mirror the plan promised: each
 active memory at its v8 filename, each tombstone under ``.tombstones/``,
 each episode under ``episodes/<session_id>/``. The renderers produce the
 bytes the v8 writers produced (``Store._write_path``, ``Store.tombstone``,
-``EpisodeStore._write_path``), from the frontmatter shapes frozen in
-``bettermemory.v8``, which is what makes a migrated store's mirror
-byte-identical to the directory it came from; the tests pin each renderer
-against the golden fixture those writers produced at 8.0.0
-(``tests/fixtures/v8``).
+``EpisodeStore._write_path``), from the names and frontmatter shapes
+frozen in ``bettermemory.mirror_format``, which is what makes a migrated
+store's mirror byte-identical to the directory it came from; the tests
+pin each renderer against the golden fixture those writers produced at
+8.0.0 (``tests/fixtures/v8``). The mirror is a 9.x export and imports
+nothing from ``v8`` or ``migrate_v8``, the 8.x import that a later
+release deletes (``tests/test_v8_import_graph.py``).
 
 A mirror is derived, so the target has rules. It must be absent, empty,
 or a directory this module made before, which it marks with
@@ -34,19 +36,17 @@ from typing import Any
 
 from . import _frontmatter as frontmatter
 from ._fsutil import atomic_write_bytes, ensure_owner_only_dir
-from .models import Episode, Memory, MemoryLink, TombstonedMemory
-from .store import STORE_FILENAME, Store
-from .time_utils import isoformat_utc
-from .v8 import (
+from .mirror_format import (
     EPISODES_DIR,
     TOMBSTONE_DIR,
-    active_filename_for_tombstone,
     episode_metadata,
-    is_legacy_tombstone_name,
     memory_filename,
     memory_metadata,
     tombstone_filename,
 )
+from .models import Episode, Memory, MemoryLink, TombstonedMemory
+from .store import STORE_FILENAME, Store
+from .time_utils import isoformat_utc
 
 MIRROR_MARKER = ".mirror.json"
 _MARKER_VERSION = 1
@@ -292,12 +292,8 @@ __all__ = [
     "MIRROR_MARKER",
     "MirrorRefused",
     "MirrorReport",
-    "active_filename_for_tombstone",
-    "is_legacy_tombstone_name",
-    "memory_filename",
     "render_episode",
     "render_memory",
     "render_tombstone",
-    "tombstone_filename",
     "write_mirror",
 ]

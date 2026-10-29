@@ -2746,10 +2746,10 @@ follows the candidates' testing.
   v8 markdown directory and its derived index describe the SQLite
   store, and so does `bettermemory export`'s warning, which blamed
   malformed frontmatter and sent the user to read `.tombstones/` by
-  hand: it says the tombstones changed while the export read them (a restore
-  landed between its count and its read) and to run it again;
-  `_decorators.py`, which nothing imported, is deleted; the
-  design the membership code cites by number is in the repository as
+  hand: it says the tombstones changed while the export read them (a
+  restore landed between its count and its read) and to run it again;
+  `_decorators.py`, which nothing imported, is deleted; the design the
+  membership code cites by number is in the repository as
   `docs/membership-design.md`, redacted, with
   `tests/test_design_citations.py` holding every `design N.N` and
   `decision Dn` or `Bn` citation in src, tests, docs and the root
@@ -2757,18 +2757,31 @@ follows the candidates' testing.
   appendix entry the document holds, every item of a list
   (`design 3.5, 8.2`, `design 2.1, decision D13`) and across a wrapped
   comment, and the document's own `section N.N` references to its
-  sections; and
-  `tests/test_v8_import_graph.py` pins that no module but `v8.py`,
-  `migrate_v8.py` and `cli/migrate.py` (which exists only for `migrate
-  v8`) imports the first two, apart from `mirror.py`, which imports
-  `v8` today and which it names.
+  sections. The v8 file names and the frontmatter renderers the mirror
+  writes with, with the key orders that pin them, moved from `v8.py` to
+  `mirror_format.py`, which `mirror.py`, `v8.py` and `migrate_v8.py`
+  import, so `export --mirror`, a 9.x export, takes nothing from the
+  v8 migration modules and no module reaches one of their names through
+  it; the benches take `TOMBSTONE_DIR` from there too. And
+  `tests/test_v8_import_graph.py` pins, across src, bench and tools,
+  that nothing imports `v8.py` or `migrate_v8.py` but the two modules,
+  `cli/migrate.py` (which exists only for `migrate v8`), the parity
+  bench (which records that command's round trip) and the latency
+  bench (which seeds its stores through it), and that the mirror holds
+  no name of theirs.
   (`src/bettermemory/models.py`, `src/bettermemory/_response.py`,
   `src/bettermemory/_fsutil.py`, `src/bettermemory/backup.py`,
   `src/bettermemory/init.py`, `src/bettermemory/cli/_common.py`,
   `src/bettermemory/cli/export.py`, `src/bettermemory/handlers/`,
-  `src/bettermemory/_decorators.py`, `docs/membership-design.md`,
-  `docs/internals.md`, `CONTRIBUTING.md`, `tests/test_export.py`,
-  `tests/test_design_citations.py`, `tests/test_v8_import_graph.py`)
+  `src/bettermemory/_decorators.py`, `src/bettermemory/mirror_format.py`,
+  `src/bettermemory/mirror.py`, `src/bettermemory/v8.py`,
+  `src/bettermemory/migrate_v8.py`, `bench/capture/one_call.py`,
+  `bench/capture/undo.py`, `bench/parity/migrate_v8.py`,
+  `docs/membership-design.md`, `docs/internals.md`, `CONTRIBUTING.md`,
+  `tests/test_export.py`, `tests/test_design_citations.py`,
+  `tests/test_v8_import_graph.py`, `tests/test_export_mirror.py`,
+  `tests/test_migrate_v8.py`, `tests/test_capture_undo.py`,
+  `tests/fixtures/v8/generate.py`)
 
 #### Known limitations
 

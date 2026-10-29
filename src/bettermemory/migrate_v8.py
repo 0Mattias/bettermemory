@@ -47,6 +47,12 @@ from pathlib import Path
 from typing import Any
 
 from .log import canonical_payload
+from .mirror_format import (
+    EPISODES_DIR,
+    TOMBSTONE_DIR,
+    active_filename_for_tombstone,
+    is_legacy_tombstone_name,
+)
 from .models import Episode, Memory, TombstonedMemory
 from .store import (
     IMPORTED,
@@ -59,7 +65,6 @@ from .time_utils import isoformat_utc
 from .v8 import (
     ARCHIVE_PREFIX,
     CONFLICTS_FILENAME,
-    EPISODES_DIR,
     EVENT_LOG_FILENAME,
     INDEX_FILENAME,
     INGEST_WATERMARK_FILENAME,
@@ -70,9 +75,6 @@ from .v8 import (
     QUARANTINE_FILENAME,
     SEGMENT_TEMPLATE,
     SHARD_COUNT,
-    TOMBSTONE_DIR,
-    active_filename_for_tombstone,
-    is_legacy_tombstone_name,
     iter_active,
     iter_active_memory_paths,
     iter_all_events,

@@ -1,5 +1,4 @@
-"""The v8 store's file formats, frozen: the readers the migration uses and
-the metadata order the mirror writes.
+"""The v8 store's file formats, frozen: the readers the migration uses.
 
 bettermemory 8 kept a store as a directory of files. bettermemory 9 keeps
 it in one SQLite file (``store``), and the modules that ran the
@@ -7,9 +6,12 @@ directory (``store``, ``index``, ``events``, ``episodes``, ``conflicts``,
 ``quarantine``) are retired. Two commands still need the directory's
 formats: ``bettermemory migrate v8`` (``migrate_v8``) reads one into the
 store, and ``bettermemory export --mirror`` (``mirror``) writes the store
-back out as one, byte for byte. This module holds what they need, copied
-from the v8 modules as they stood at 8.0.0. It reads files and renders
-frontmatter; it never writes, locks, indexes or records.
+back out as one, byte for byte. This module holds the readers the
+migration needs, copied from the v8 modules as they stood at 8.0.0; the
+names and the frontmatter the mirror writes, which the migration shares,
+are in ``mirror_format``, so that the mirror, a 9.x export, imports
+nothing from here. It reads files; it never writes, locks, indexes or
+records.
 
 The layout under a store root::
 
@@ -30,13 +32,14 @@ The layout under a store root::
 Memories, tombstones and episodes are markdown files with a YAML
 frontmatter block, read and written through ``_frontmatter``, whose dump
 sorts the keys. Which keys a file carries, and in what shape, is the
-writers' decision, reproduced by ``memory_metadata`` and
-``episode_metadata``; that is what lets a record rendered from the store
-come out with the bytes the v8 writer produced. Events are one JSON
-object per line; the readers here tolerate every corruption the v8
-readers tolerated and merge the sources in the same order. The golden
-fixture under ``tests/fixtures/v8`` is a directory the v8 writers produced
-at 8.0.0; the tests pin the readers and the renderers against its files.
+writers' decision, reproduced by ``mirror_format.memory_metadata`` and
+``mirror_format.episode_metadata``; that is what lets a record rendered
+from the store come out with the bytes the v8 writer produced. Events
+are one JSON object per line; the readers here tolerate every
+corruption the v8 readers tolerated and merge the sources in the same
+order. The golden fixture under ``tests/fixtures/v8`` is a directory the
+v8 writers produced at 8.0.0; the tests pin these readers and the
+mirror's renderers against its files.
 """
 
 from __future__ import annotations
@@ -56,7 +59,8 @@ from typing import Any
 
 from . import _frontmatter as frontmatter
 from .conflicts import ConflictCandidate
-from .identity import SOURCE_PROCESS_CWD, Actor
+from .identity import Actor
+from .mirror_format import EPISODES_DIR, TOMBSTONE_DIR
 from .models import (
     SCHEMA_VERSION,
     Category,
@@ -66,8 +70,6 @@ from .models import (
     MemoryLink,
     Source,
     TombstonedMemory,
-    build_filename,
-    make_slug,
 )
 from .origin import Origin, is_full_commit_sha
 from .time_utils import ensure_utc, parse_event_ts
@@ -79,8 +81,6 @@ log = logging.getLogger("bettermemory.v8")
 # The layout
 # ---------------------------------------------------------------------------
 
-TOMBSTONE_DIR = ".tombstones"
-EPISODES_DIR = "episodes"
 INDEX_FILENAME = ".index.sqlite"
 
 EVENT_LOG_FILENAME = ".events.jsonl"
@@ -117,51 +117,6 @@ PATTERNS_FILENAME = ".episode_patterns.jsonl"
 # I/O error on one file. The v8 readers skipped on the same width so that
 # one bad file never blinded a read of the rest of the store.
 PARSE_SKIP_EXCEPTIONS: tuple[type[Exception], ...] = (Exception,)
-
-
-# ---------------------------------------------------------------------------
-# Names
-# ---------------------------------------------------------------------------
-
-TOMBSTONE_SUFFIX = ".tombstone.md"
-# The name `Store.tombstone` wrote: the active stem, the id, the suffix.
-# Before 2.6.4 the id was left out; those names still load by their id.
-_ID_TOMBSTONE_RE = re.compile(
-    r"^(?P<stem>.+)\.(?P<id>[0-9A-HJKMNP-TV-Z]{26})\.tombstone\.md$"
-)
-
-
-def memory_filename(memory: Memory) -> str:
-    """The name `Store.write` gave a new record: the date, the slug and the
-    full lowercase id. The id is embedded whole so the name is unique by
-    construction; older files with a short or no id suffix still load,
-    since the readers key off the `id` field, never the name."""
-    return build_filename(
-        memory.created, f"{make_slug(memory.body)}-{memory.id.lower()}"
-    )
-
-
-def tombstone_filename(active_filename: str, memory_id: str) -> str:
-    """The name `Store.tombstone` gave a removed record's file."""
-    stem = active_filename[:-3] if active_filename.endswith(".md") else active_filename
-    return f"{stem}.{memory_id}{TOMBSTONE_SUFFIX}"
-
-
-def active_filename_for_tombstone(name: str) -> str:
-    """The active filename a tombstone's name was made from, the id and
-    the suffix stripped; a name that is not a tombstone's is returned as
-    it is."""
-    match = _ID_TOMBSTONE_RE.match(name)
-    if match is not None:
-        return match.group("stem") + ".md"
-    if name.endswith(TOMBSTONE_SUFFIX):
-        return name[: -len(TOMBSTONE_SUFFIX)] + ".md"
-    return name
-
-
-def is_legacy_tombstone_name(name: str) -> bool:
-    """A tombstone named before 2.6.4, without the id."""
-    return name.endswith(TOMBSTONE_SUFFIX) and _ID_TOMBSTONE_RE.match(name) is None
 
 
 # ---------------------------------------------------------------------------
@@ -438,146 +393,6 @@ def iter_tombstones(root: Path | str) -> Iterator[tuple[Path, TombstonedMemory]]
         except PARSE_SKIP_EXCEPTIONS:
             continue
         yield path, dead
-
-
-# ---------------------------------------------------------------------------
-# Frontmatter the writers produced
-# ---------------------------------------------------------------------------
-
-# The keys a memory file can carry, in the order the writer assembled
-# them (the dump then sorts them). The first seven are always present;
-# the rest only when set, so a record with nothing optional keeps the
-# shape it had before those fields existed.
-MEMORY_METADATA_KEYS: tuple[str, ...] = (
-    "schema_version",
-    "id",
-    "created",
-    "updated",
-    "scopes",
-    "confidence",
-    "source",
-    "origin",
-    "actor",
-    "last_verified_at",
-    "category",
-    "corroborations",
-    "last_corroborated",
-    "verified_paths",
-    "verified_commits",
-    "verified_versions",
-    "verified_absent_paths",
-    "claims",
-    "verified_head",
-    "links",
-)
-# A tombstone appends these to the active record's keys.
-TOMBSTONE_METADATA_KEYS: tuple[str, ...] = (
-    "removed",
-    "removed_reason",
-    "removed_session",
-)
-# The keys an episode file can carry, in the order the writer assembled
-# them (the dump then sorts them). The first four are always present;
-# `scopes`, `takeaway`, `origin`, `is_floor` and `swarm_id` only when set.
-EPISODE_METADATA_KEYS: tuple[str, ...] = (
-    "schema_version",
-    "id",
-    "session_id",
-    "created",
-    "scopes",
-    "takeaway",
-    "origin",
-    "is_floor",
-    "swarm_id",
-)
-
-
-def memory_metadata(memory: Memory) -> dict[str, object]:
-    """The frontmatter mapping `Store._write_path` persisted for `memory`
-    (its keys are `MEMORY_METADATA_KEYS`). Optional fields are left out
-    while unset: no `last_verified_at: null`, no empty lists, no zero
-    rollup, so a plain record's file is the pre-field shape. The
-    process-cwd origin `source` stays implicit, being the only channel
-    that existed before the field; a declared channel (`header`, `env`,
-    `roots`) is written. `actor` is written only when it carries
-    something. Each link is a plain mapping with the enum's value as its
-    `type`."""
-    meta: dict[str, object] = {
-        "schema_version": SCHEMA_VERSION,
-        "id": memory.id,
-        "created": memory.created,
-        "updated": memory.updated,
-        "scopes": list(memory.scopes),
-        "confidence": memory.confidence.value,
-        "source": memory.source.value,
-    }
-    if memory.origin is not None:
-        origin_dict = memory.origin.model_dump(mode="json", exclude_none=True)
-        if origin_dict.get("source") == SOURCE_PROCESS_CWD:
-            del origin_dict["source"]
-        if origin_dict:
-            meta["origin"] = origin_dict
-    if memory.actor is not None:
-        actor_dict = memory.actor.to_record()
-        if actor_dict:
-            meta["actor"] = actor_dict
-    if memory.last_verified_at is not None:
-        meta["last_verified_at"] = memory.last_verified_at
-    if memory.category is not None:
-        meta["category"] = memory.category.value
-    if memory.corroborations:
-        meta["corroborations"] = memory.corroborations
-    if memory.last_corroborated is not None:
-        meta["last_corroborated"] = memory.last_corroborated
-    if memory.verified_paths:
-        meta["verified_paths"] = list(memory.verified_paths)
-    if memory.verified_commits:
-        meta["verified_commits"] = list(memory.verified_commits)
-    if memory.verified_versions:
-        meta["verified_versions"] = list(memory.verified_versions)
-    if memory.verified_absent_paths:
-        meta["verified_absent_paths"] = list(memory.verified_absent_paths)
-    if memory.claims:
-        meta["claims"] = list(memory.claims)
-    if memory.verified_head:
-        meta["verified_head"] = memory.verified_head
-    if memory.links:
-        meta["links"] = [
-            {
-                "type": link.type.value,
-                "target_id": link.target_id,
-                **({"note": link.note} if link.note is not None else {}),
-            }
-            for link in memory.links
-        ]
-    return meta
-
-
-def episode_metadata(episode: Episode) -> dict[str, object]:
-    """The frontmatter mapping `EpisodeStore._write_path` persisted for
-    `episode` (its keys are `EPISODE_METADATA_KEYS`). The optional keys
-    appear only when set: `is_floor` only on a floor, `swarm_id` only on
-    a swarm member, so a plain episode keeps the shape it had before
-    those keys existed."""
-    meta: dict[str, object] = {
-        "schema_version": SCHEMA_VERSION,
-        "id": episode.id,
-        "session_id": episode.session_id,
-        "created": episode.created,
-    }
-    if episode.scopes:
-        meta["scopes"] = list(episode.scopes)
-    if episode.takeaway is not None:
-        meta["takeaway"] = episode.takeaway
-    if episode.origin is not None:
-        origin_dict = episode.origin.model_dump(mode="json", exclude_none=True)
-        if origin_dict:
-            meta["origin"] = origin_dict
-    if episode.is_floor:
-        meta["is_floor"] = True
-    if episode.swarm_id is not None:
-        meta["swarm_id"] = episode.swarm_id
-    return meta
 
 
 # ---------------------------------------------------------------------------
@@ -1091,12 +906,9 @@ __all__ = [
     "ARCHIVE_PREFIX",
     "ARCHIVE_SUFFIX",
     "CONFLICTS_FILENAME",
-    "EPISODES_DIR",
-    "EPISODE_METADATA_KEYS",
     "EVENT_LOG_FILENAME",
     "INDEX_FILENAME",
     "INGEST_WATERMARK_FILENAME",
-    "MEMORY_METADATA_KEYS",
     "PARSE_SKIP_EXCEPTIONS",
     "PATTERNS_FILENAME",
     "PENDING_WRITES_FILENAME",
@@ -1106,12 +918,6 @@ __all__ = [
     "ROTATING_SUFFIX",
     "SEGMENT_TEMPLATE",
     "SHARD_COUNT",
-    "TOMBSTONE_DIR",
-    "TOMBSTONE_METADATA_KEYS",
-    "TOMBSTONE_SUFFIX",
-    "active_filename_for_tombstone",
-    "episode_metadata",
-    "is_legacy_tombstone_name",
     "iter_active",
     "iter_active_memory_paths",
     "iter_all_events",
@@ -1122,12 +928,9 @@ __all__ = [
     "load_conflicts",
     "load_quarantine",
     "load_watermark_sources",
-    "memory_filename",
-    "memory_metadata",
     "parse_episode_file",
     "parse_memory_file",
     "parse_tombstone_file",
     "quarantined_names",
     "session_dir",
-    "tombstone_filename",
 ]

@@ -27,14 +27,21 @@ from bettermemory import _frontmatter as frontmatter
 from bettermemory.mirror import (
     MIRROR_MARKER,
     MirrorRefused,
-    active_filename_for_tombstone,
-    is_legacy_tombstone_name,
-    memory_filename,
     render_episode,
     render_memory,
     render_tombstone,
-    tombstone_filename,
     write_mirror,
+)
+from bettermemory.mirror_format import (
+    EPISODE_METADATA_KEYS,
+    EPISODES_DIR,
+    MEMORY_METADATA_KEYS,
+    TOMBSTONE_DIR,
+    TOMBSTONE_METADATA_KEYS,
+    active_filename_for_tombstone,
+    is_legacy_tombstone_name,
+    memory_filename,
+    tombstone_filename,
 )
 from bettermemory.models import (
     Confidence,
@@ -45,11 +52,6 @@ from bettermemory.models import (
 )
 from bettermemory.store import STORE_FILENAME, Store
 from bettermemory.v8 import (
-    EPISODE_METADATA_KEYS,
-    EPISODES_DIR,
-    MEMORY_METADATA_KEYS,
-    TOMBSTONE_DIR,
-    TOMBSTONE_METADATA_KEYS,
     iter_active_memory_paths,
     iter_session_ids,
     iter_tombstone_paths,

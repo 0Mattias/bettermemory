@@ -58,6 +58,7 @@ if str(_ROOT / "src") not in sys.path:
 
 from bettermemory.conflicts import ConflictCandidate  # noqa: E402
 from bettermemory.identity import Actor  # noqa: E402
+from bettermemory.mirror_format import active_filename_for_tombstone  # noqa: E402
 from bettermemory.models import (  # noqa: E402
     Category,
     Confidence,
@@ -74,7 +75,6 @@ from bettermemory.v8 import (  # noqa: E402
     PATTERNS_FILENAME,
     PENDING_WRITES_FILENAME,
     PROPOSALS_FILENAME,
-    active_filename_for_tombstone,
     iter_all_events,
 )
 

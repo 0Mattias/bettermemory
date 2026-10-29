@@ -16,8 +16,8 @@ import pytest
 from bettermemory import capture, capture_review
 from bettermemory.log import CAPTURE_UNDO, LogRow
 from bettermemory.mirror import MIRROR_MARKER, write_mirror
+from bettermemory.mirror_format import TOMBSTONE_DIR
 from bettermemory.models import LinkType, MemoryLink
-from bettermemory.v8 import TOMBSTONE_DIR
 
 from .test_capture_batch import World, _fixed_origin  # noqa: F401
 from .test_capture_batch import world as world  # noqa: F401
