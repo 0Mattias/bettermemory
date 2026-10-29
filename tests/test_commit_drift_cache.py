@@ -756,7 +756,7 @@ def test_a_head_that_leaves_and_returns_during_the_attach_stores_nothing(
         return walk
 
     def read_away_then_return(cwd: Any, pathspecs: Any, **kwargs: Any) -> Any:
-        if "src/app.py" not in pathspecs:
+        if not any(spec.endswith("src/app.py") for spec in pathspecs):
             return real_log(cwd, pathspecs, **kwargs)
         leave()
         try:

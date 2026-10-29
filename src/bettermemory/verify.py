@@ -101,6 +101,7 @@ caps, the candidate scans and the body parse memo) and `verify_anchoring`
 from __future__ import annotations
 
 import bisect
+import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -642,6 +643,42 @@ class ResolvedCommitDrift:
     basis: str = BASIS_AUTHOR_DATE
 
 
+def _literal_pathspecs(specs: Sequence[str]) -> list[str]:
+    """`specs` spelled so git reads each as the path it names, never as a
+    pattern: the ``:(literal)`` magic on each (ENG-183).
+
+    A spec is a repository path (`resolve_repo_pathspecs`, a claimed
+    path), and git reads a plain one as a pattern: ``src/foo[1].py`` also
+    matched ``src/foo1.py``, and a file named ``:(glob)**`` matched every
+    commit, so the author-date logs over-counted where the reachable walk
+    (`ReachableWalk.shas_touching`, which compares paths) did not, and
+    the two bases disagreed about one memory. Every log, phantom check
+    and patch stream this module runs over a spec takes it through here;
+    the walk keeps the plain specs it compares.
+
+    Where the environment already makes git read every pathspec
+    literally (``GIT_LITERAL_PATHSPECS``), git reads no magic either and
+    would take the prefix as part of the name, so the specs pass as they
+    stand."""
+    if _git_bool(os.environ.get("GIT_LITERAL_PATHSPECS")):
+        return list(specs)
+    return [f":(literal){spec}" for spec in specs]
+
+
+def _git_bool(value: str | None) -> bool:
+    """A boolean environment variable as git reads it: unset or empty is
+    false, ``true`` / ``yes`` / ``on`` and a nonzero integer are true."""
+    if value is None:
+        return False
+    word = value.strip().lower()
+    if word in ("true", "yes", "on"):
+        return True
+    try:
+        return int(word) != 0
+    except ValueError:
+        return False
+
+
 def _weak_tier_evaluation(
     cwd: Path,
     shas: list[str],
@@ -672,7 +709,9 @@ def _weak_tier_evaluation(
     """
     if len(shas) > MAX_PATCH_STREAM_COMMITS:
         return [], None
-    stream = commit_patch_stream(cwd, shas, specs, toplevel=toplevel)
+    stream = commit_patch_stream(
+        cwd, shas, _literal_pathspecs(specs), toplevel=toplevel
+    )
     if stream is None:
         return [], None
     index = build_binding_index(stream)
@@ -752,8 +791,10 @@ def resolve_commit_drift(
     method-body churn from nagging; a file the memory cites but never
     claims keeps the conservative default. Fallbacks all point the same
     direction as the incumbent's: git failure on either half degrades to
-    the unfiltered/any-touch count, never to silence.
+    the unfiltered/any-touch count, never to silence. A claim whose path
+    the path gate refuses is not read (`_gated_claims`).
     """
+    claims = _gated_claims(claims)
     if walk is not None:
         return _resolve_reachable(
             cwd=cwd, walk=walk, anchors=anchors, claims=claims, toplevel=toplevel
@@ -778,6 +819,23 @@ def resolve_commit_drift(
     if count is None:
         return None
     return ResolvedCommitDrift(count)
+
+
+def _gated_claims(claims: Sequence[Claim]) -> list[Claim]:
+    """`claims` less every claim whose path the path gate refuses
+    (`_escapes_root`, which holds `_refused_spelling`): a network or
+    device spelling, a NUL byte, a URL, a rooted or drive-qualified path,
+    or one that climbs out of the repository.
+
+    A claimed path becomes a git pathspec, and git on Windows resolves
+    each component of an absolute pathspec outside the worktree, so a
+    claim on ``//host/share/x.py`` opened the host (ENG-164); a ``..``
+    claim made git exit 128, and the count fell back to the repo-wide
+    one. Declaration refuses only a backslash, and `load_claims` keeps a
+    hand-edited frontmatter entry, so the read side gates what reaches
+    git. Claimed paths are toplevel-relative by construction, so no
+    claim the oracle declared is refused here."""
+    return [claim for claim in claims if not _escapes_root(claim.rel_path)]
 
 
 def _claim_legs(
@@ -889,7 +947,7 @@ def _resolve_reachable(
         )
     combined = list(dict.fromkeys((*ungoverned, *governed)))
     touching = commit_author_timestamps_touching_pathspecs(
-        cwd, combined, toplevel=toplevel
+        cwd, _literal_pathspecs(combined), toplevel=toplevel
     )
     if touching is None:
         # Git couldn't run the classification log — never under-count on
@@ -940,7 +998,7 @@ def _resolve_with_claims(
 
     if ungoverned:
         pairs = commit_author_sha_pairs_touching_pathspecs(
-            cwd, ungoverned, toplevel=toplevel
+            cwd, _literal_pathspecs(ungoverned), toplevel=toplevel
         )
         if pairs is None:
             return conservative
@@ -954,7 +1012,7 @@ def _resolve_with_claims(
         # an empty pathspec list, which read as "git could not answer"
         # and fell back to the repo-wide count.
         gpairs = commit_author_sha_pairs_touching_pathspecs(
-            cwd, governed, toplevel=toplevel
+            cwd, _literal_pathspecs(governed), toplevel=toplevel
         )
         if gpairs is None:
             return conservative
@@ -1046,8 +1104,10 @@ def resolve_commit_drift_count(
     author timestamps give the exact count, and an EMPTY log is itself the
     phantom signal — no spec ever appeared in history — so the separate
     existence probe is gone. A since-deleted cited file still resolves as
-    real, since its removal commit keeps it in the log.
+    real, since its removal commit keeps it in the log. A claim whose
+    path the path gate refuses is not read (`_gated_claims`).
     """
+    claims = _gated_claims(claims)
     if walk is not None:
         reachable = _resolve_reachable(
             cwd=cwd, walk=walk, anchors=anchors, claims=claims, toplevel=toplevel
@@ -1076,7 +1136,7 @@ def resolve_commit_drift_count(
         # claims are real but not about this repo's code.
         return None
     touching = commit_author_timestamps_touching_pathspecs(
-        cwd, specs, toplevel=toplevel
+        cwd, _literal_pathspecs(specs), toplevel=toplevel
     )
     if touching is None:
         # Git couldn't run the path-filtered log — never under-count on
@@ -1189,12 +1249,13 @@ def _quiescent_drift_applicable(
             # branch's unfiltered fallback.
             return True
         specs = resolved
-    governed = claim_paths(list(claims)) if claims else []
+    gated = _gated_claims(claims)
+    governed = claim_paths(gated) if gated else []
     combined = list(dict.fromkeys((*specs, *governed)))
     if not combined:
         return False
     touching = commit_author_timestamps_touching_pathspecs(
-        cwd, combined, toplevel=toplevel
+        cwd, _literal_pathspecs(combined), toplevel=toplevel
     )
     if touching is None:
         # Git couldn't run the path-filtered log — could-not-ask never

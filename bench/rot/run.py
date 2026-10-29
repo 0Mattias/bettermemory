@@ -954,7 +954,10 @@ def memoized_git_reads() -> Generator[dict[str, int]]:
             )
         calls["hits"] += 1
         stamps: list[datetime] = []
-        for spec in pathspecs:
+        for literal in pathspecs:
+            # The shipped log takes each spec with the `:(literal)` magic
+            # (`verify._literal_pathspecs`); the index is read literally.
+            spec = literal.removeprefix(":(literal)")
             exact = index.get(spec)
             if exact is not None:
                 # A path is a file OR a directory in git, never both, so an

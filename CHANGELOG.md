@@ -1243,6 +1243,22 @@ the candidates' testing.
   go), so the `$HOME`, `${HOME}`, `~` and absolute spellings of one file
   are one anchor and each counts the commit, on both bases.
   (`src/bettermemory/verify.py`)
+- **A claimed path named like a pattern counts its own commits.** The
+  commit-drift logs handed each cited, attested or claimed path to git as
+  a plain pathspec, which git reads as a pattern: `src/foo[1].py` also
+  counted the commits that touched only `src/foo1.py`, and a file named
+  `:(glob)**` counted every commit. The reachable basis, which compares
+  paths, did not, so one memory read two counts depending on its basis.
+  Every log, phantom check and patch stream the drift legs run now takes
+  each path with git's `:(literal)` magic, which outranks
+  `GIT_GLOB_PATHSPECS`; under `GIT_LITERAL_PATHSPECS`, where git reads
+  every pathspec literally and no magic, the paths pass as they stand.
+  A claimed path the path gate refuses (a network or device spelling, or
+  one rooted elsewhere or climbing out of the repository, which a
+  hand-edited claim can carry) no longer reaches git at all. The rot
+  benchmark's memoised stand-in for the path-filtered log reads the
+  magic too.
+  (`src/bettermemory/verify.py`, `bench/rot/run.py`)
 
 #### Known limitations
 
