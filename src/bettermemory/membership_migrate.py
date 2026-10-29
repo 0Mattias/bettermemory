@@ -62,6 +62,7 @@ import os
 import re
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -106,6 +107,12 @@ _RECORD_KINDS = (
 # ``verified_commits`` often carry it (decision B19), of git's shortest
 # abbreviation and up.
 _SHA = re.compile(r"[0-9a-f]{4,64}")
+#: How long `_Run._probe` waits for a recorded path: a liveness read's
+#: bound (`location.PROBE_BUDGET`) and the fetch of an evicted HEAD or
+#: config the capture may make within it (`location.FETCH_BUDGET`).
+_PROBE_BUDGET = location.PROBE_BUDGET + location.FETCH_BUDGET
+#: Probes `_Run.prefetch` runs at once, as `Membership.prefetch_liveness`.
+_PROBE_WORKERS = 8
 # A full object id (SHA-1 or SHA-256): what a witness row carries.
 _FULL_SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 
@@ -333,19 +340,23 @@ def migrate(
             dry_run=dry_run, kept="nothing to home", machine=identity.id
         )
     run = _Run(store, identity, now=now, write_token=write_token, strict=strict)
-    if store.in_batch:
-        return run.run(dry_run=False)
-    if not dry_run:
-        with store.batch():
+    with run.model.liveness_held():
+        if store.in_batch:
             return run.run(dry_run=False)
-    made: list[MigrationReport] = []
-    try:
-        with store.batch():
-            made.append(run.run(dry_run=True))
-            raise _RolledBack
-    except _RolledBack:
-        pass
-    return made[0]
+        # What the run reads of the disk is read first, bounded, outside the
+        # transaction, and enters it as values (ENG-156).
+        run.prefetch()
+        if not dry_run:
+            with store.batch():
+                return run.run(dry_run=False)
+        made: list[MigrationReport] = []
+        try:
+            with store.batch():
+                made.append(run.run(dry_run=True))
+                raise _RolledBack
+        except _RolledBack:
+            pass
+        return made[0]
 
 
 def run_command(*, dry_run: bool) -> None:
@@ -559,6 +570,10 @@ class _Run:
         self.homed: Counter[str] = Counter()
         self.per_root: dict[str, Counter[str]] = defaultdict(Counter)
         self.resolved_cwd: dict[str, mb.Resolution | None] = {}
+        #: Each path's probe, by path and whether it is to be a top level:
+        #: read once per run (`_probe`), most of them before its transaction
+        #: (`prefetch`).
+        self.probed: dict[tuple[str, bool], _Probe] = {}
 
     # -- rows --------------------------------------------------------------
 
@@ -695,7 +710,93 @@ class _Run:
 
     # -- probing -----------------------------------------------------------
 
+    def prefetch(self) -> None:
+        """Read what the run reads of the disk before its transaction
+        (ENG-156): the probe of every recorded root and of every rootless
+        record's cwd, the liveness of the views the ladder reads for those
+        found live (`Membership.prefetch_liveness`), and the liveness and
+        probe of this machine's checkouts (`_live_set`). Each read is
+        bounded (`_probe`, `location.path_liveness`) and they run in
+        parallel, so a store whose roots sit on a hung mount costs one
+        budget here, without the store's write lock, and the transaction
+        reads the values. A read the run makes that is not here is made in
+        the transaction, bounded the same way."""
+        try:
+            records = self._unhomed()
+            roots = {
+                _norm(root)
+                for rec in records
+                if (root := _text(rec.origin, "worktree_root")) is not None
+            }
+            cwds = {
+                _norm(cwd)
+                for rec in records
+                if _text(rec.origin, "worktree_root") is None
+                and (cwd := _text(rec.origin, "cwd")) is not None
+            }
+            jobs = [(r, True) for r in sorted(roots)] + [
+                (c, False) for c in sorted(cwds)
+            ]
+            self._probe_all(jobs)
+            plan: list[tuple[mb.Checkout, mb.View]] = []
+            for path, at_root in jobs:
+                probe = self.probed.get((path, at_root))
+                if probe is not None and probe.state == LIVE and probe.capture:
+                    plan.extend(
+                        self.model._liveness_plan(self._location(probe.capture))
+                    )
+            mine = [
+                k
+                for k in self.model.checkouts()
+                if k.machine == self.machine
+                and k.kind in (mb.PRIMARY, mb.LINKED)
+                and not k.legacy
+            ]
+            plan.extend((k, v) for k in mine for v in k.views_on(self.machine))
+            self.model.prefetch_liveness(plan)
+            live = [self.model.live_view(k) for k in mine]
+            self._probe_all([(p, True) for p in live if p is not None])
+        except Exception:  # noqa: BLE001 - the transaction reads what is missing
+            return
+
+    def _probe_all(self, jobs: Sequence[tuple[str, bool]]) -> None:
+        """`_probe` of each (path, at_root) not probed yet, in parallel."""
+        todo = list(
+            dict.fromkeys(
+                (_norm(p), at_root)
+                for p, at_root in jobs
+                if (_norm(p), at_root) not in self.probed
+            )
+        )
+        if not todo:
+            return
+        with ThreadPoolExecutor(
+            max_workers=min(_PROBE_WORKERS, len(todo)),
+            thread_name_prefix="bettermemory-migration-probe",
+        ) as pool:
+            for _ in pool.map(lambda job: self._probe(job[0], at_root=job[1]), todo):
+                pass
+
     def _probe(self, path: str, *, at_root: bool) -> _Probe:
+        """What `path` holds now (`_read_probe`), read once per run and
+        bounded by `_PROBE_BUDGET` (`location.bounded_read`, ENG-156): a
+        path that does not answer in time (a hung network mount) is
+        UNREACHABLE, unknown and never gone, and a path whose read is still
+        in flight past the bound answers so at once."""
+        key = (_norm(path), at_root)
+        hit = self.probed.get(key)
+        if hit is None:
+            got = location.bounded_read(
+                key[0],
+                ("migration_probe", at_root),
+                lambda: self._read_probe(path, at_root=at_root),
+                _PROBE_BUDGET,
+            )
+            hit = _Probe(UNREACHABLE) if got is location.UNANSWERED else got
+            self.probed[key] = hit
+        return hit
+
+    def _read_probe(self, path: str, *, at_root: bool) -> _Probe:
         """What `path` holds now, read without writing: LIVE when it is a
         repository (with `at_root`, one whose top level it is) or a folder
         project; GONE when nothing is there; UNREACHABLE when the OS could

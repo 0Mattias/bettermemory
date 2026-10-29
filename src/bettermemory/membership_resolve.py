@@ -20,6 +20,7 @@ import dataclasses
 import json
 from collections import defaultdict
 from collections.abc import Callable, Collection, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 from .membership_lines import (
@@ -74,10 +75,12 @@ from .membership_records import (
     Resolution,
     S,
     T,
+    View,
     manifest_match,
     _HISTORY,
     _basename,
     _dir_key,
+    _live_key,
     _norm,
     _same_number,
     _same_path,
@@ -267,12 +270,133 @@ def resolve(self: Membership, loc: Location, *, strict: bool = False) -> Resolut
     """The ladder of design 3.2 for one location, in one store
     transaction. `strict` is the A3 switch (decision D8,
     ``membership.strict``): a join resting on history without F or B
-    asks."""
-    with self._call():
-        res = self._settle_unresolved(loc, self._resolve(loc, strict))
-        rows = tuple(self._rows)
-        remint = self._remint is not None
+    asks. The liveness of the recorded views the ladder may read is read
+    first, outside the transaction and bounded (`prefetch_liveness`,
+    ENG-156), and enters it as values: a view on a hung mount reads
+    unreachable without holding the store's write lock."""
+    with self.liveness_held():
+        if not self._store.in_batch:
+            self.prefetch_liveness(self._liveness_plan(loc))
+        with self._call():
+            res = self._settle_unresolved(loc, self._resolve(loc, strict))
+            rows = tuple(self._rows)
+            remint = self._remint is not None
     return dataclasses.replace(res, rows=rows, remint_token=remint)
+
+
+def _liveness_plan(self: Membership, loc: Location) -> list[tuple[Checkout, View]]:
+    """The recorded views on this machine whose liveness the ladder may
+    read for `loc`, read from the tables before its transaction (ENG-156):
+    a known checkout's views when `loc` is a new path of it (a view added
+    or moved); else the checkouts of its object store (S: git's pointers
+    read a live view), those at its path (B), those carrying its token
+    (T), those of the project its file names (the folder rungs) and, for a
+    commit-less caller, every checkout of a project with no witness (C).
+    A view the ladder reads that is not here is read in the transaction,
+    bounded the same way; a question the client must answer first (the
+    witness exchange) ends the plan where it stands."""
+    if loc.state == UNREADABLE:
+        return []
+    pairs: dict[tuple[str, str], tuple[Checkout, View]] = {}
+
+    def add(ks: Collection[Checkout]) -> None:
+        for k in ks:
+            if k.kind == UNRESOLVED:
+                continue
+            for v in k.views_on(self.machine):
+                pairs.setdefault((k.id, v.path), (k, v))
+
+    path = loc.root or loc.cwd
+    try:
+        self._projects = None
+        k, _how = self._by_object(loc)
+        if k is not None:
+            if not any(_same_path(v.path, path) for v in k.views_on(loc.machine)):
+                add([k])
+            return list(pairs.values())
+        common = loc.common_object_key
+        if common is not None:
+            for column in ("common", "object"):
+                add(
+                    self._checkouts(
+                        where={
+                            "machine": loc.machine,
+                            f"{column}_device": common.device,
+                            f"{column}_inode": common.inode,
+                        }
+                    )
+                )
+        rows = self._store.membership_rows(
+            "checkout_views", where={"machine": loc.machine, "path": _norm(path)}
+        )
+        if rows:
+            add(self._checkouts(column_in=("id", [r["checkout"] for r in rows])))
+        if loc.token:
+            add(self._checkouts(where={"token": loc.token}))
+        rf = loc.root_file
+        bound = self._file_binding(rf.id) if rf is not None else None
+        if bound is not None:
+            add(self._checkouts_of(bound))
+        if not loc.born and not loc.token and loc.manifest is not None:
+            witnessed = {self._canon(str(r["project"])) for r in self._witness_rows()}
+            bare = [p.id for p in self.projects() if p.id not in witnessed]
+            if bare:
+                add(
+                    [
+                        x
+                        for x in self._checkouts(column_in=("project", bare))
+                        if x.machine == loc.machine
+                    ]
+                )
+    except Exception:  # noqa: BLE001 - the ladder reads what the plan missed
+        pass
+    return list(pairs.values())
+
+
+def prefetch_liveness(self: Membership, pairs: Sequence[tuple[Checkout, View]]) -> None:
+    """Read the liveness of `pairs` now, outside any transaction, and keep
+    each value for the span `liveness_held` opened (ENG-156): the
+    resolution or the migration reads them as values inside its
+    transaction. The default liveness reads them in turn on one thread,
+    each bounded by `location.PROBE_BUDGET` (`location.path_liveness_many`:
+    a thread per read cost more than the read); one given to the model is
+    read in a pool. A read that raises (a client's view question not yet
+    answered) is left to the transaction, where it raises as before."""
+    live = self._live
+    if live is None:
+        return
+    todo = list(
+        {
+            _live_key(k, v): (k, v) for k, v in pairs if _live_key(k, v) not in live
+        }.values()
+    )
+    if not todo:
+        return
+    got: list[tuple[tuple[object, ...], str | None]]
+    if self._liveness_many is not None:
+        states = self._liveness_many(todo)
+        got = [(_live_key(k, v), s) for (k, v), s in zip(todo, states, strict=True)]
+    else:
+
+        def read(pair: tuple[Checkout, View]) -> tuple[tuple[object, ...], str | None]:
+            k, v = pair
+            try:
+                return _live_key(k, v), self._liveness(k, v)
+            except Exception:  # noqa: BLE001 - read again in the transaction
+                return _live_key(k, v), None
+
+        with ThreadPoolExecutor(
+            max_workers=min(_PREFETCH_WORKERS, len(todo)),
+            thread_name_prefix="bettermemory-liveness",
+        ) as pool:
+            got = list(pool.map(read, todo))
+    for key, state in got:
+        if state is not None:
+            live[key] = state
+
+
+#: Reads of a given liveness `prefetch_liveness` runs at once.
+_PREFETCH_WORKERS = 8
 
 
 def _resolve(self: Membership, loc: Location, strict: bool) -> Resolution:

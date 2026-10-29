@@ -500,6 +500,23 @@ class Checkout:
         return max(self.views, key=lambda v: v.order) if self.views else None
 
 
+def _live_key(k: Checkout, v: View) -> tuple[object, ...]:
+    """What a view's liveness depends on (`Liveness`, ENG-156): the path
+    and machine, and the checkout's recorded objects, token, last HEAD and
+    init stamps; a value read for one key answers for that key only."""
+    return (
+        k.id,
+        k.kind,
+        k.object_key,
+        k.common_object_key,
+        k.token,
+        k.last_head,
+        k.stamps,
+        v.machine,
+        v.path,
+    )
+
+
 @dataclass(frozen=True)
 class Project:
     """A set of checkouts and its evidence (design 2.1). ``merged_into``

@@ -100,8 +100,11 @@ from .location_git import (
     NO_MACHINE,
     OUTSIDE,
     PRIMARY,
+    PROBE_BUDGET,
     REF_TIPS_MAX,
+    NOT_READ,
     REPO,
+    UNANSWERED,
     WALK_LIMIT,
     Capture,
     Key,
@@ -117,6 +120,8 @@ from .location_git import (
     _manifest,
     _ref_tips,
     _resolve_head,
+    bounded_read,
+    bounded_reads,
     gitfile_refusal,
 )
 from .location_git import (
@@ -149,9 +154,11 @@ __all__ = [
     "NO_MACHINE",
     "OUTSIDE",
     "PRIMARY",
+    "PROBE_BUDGET",
     "REF_TIPS_MAX",
     "REPO",
     "TOKEN_VERSION",
+    "UNANSWERED",
     "WALK_LIMIT",
     "AnsweredHistory",
     "AnsweredLiveness",
@@ -162,6 +169,7 @@ __all__ = [
     "NeedWitnesses",
     "RepositoryHistory",
     "answer",
+    "bounded_read",
     "capture",
     "capture_location",
     "capture_token",
@@ -169,6 +177,7 @@ __all__ = [
     "forget_session",
     "object_key",
     "path_liveness",
+    "path_liveness_many",
     "probe",
     "process_machine",
     "remote_key",
@@ -1113,20 +1122,58 @@ def path_liveness(checkout: Checkout, view: View) -> str:
     model reads by default: what the view's path holds now (`view_state`)
     against the checkout's recorded object, token, last HEAD and init
     stamps, so a view is live by the same witness O that keeps the
-    checkout at rung 2 (design 2.2, decision B18)."""
+    checkout at rung 2 (design 2.2, decision B18). The read is bounded by
+    `PROBE_BUDGET` (`bounded_read`, ENG-156): a path that does not answer in
+    time (a hung network mount) reads ``unreachable``, unknown and never
+    gone."""
+    path, what, read = _liveness_read(checkout, view)
+    state = bounded_read(path, what, read, PROBE_BUDGET)
+    return "unreachable" if state is UNANSWERED else str(state)
+
+
+def path_liveness_many(pairs: Sequence[tuple[Checkout, View]]) -> list[str | None]:
+    """`path_liveness` of each (checkout, view), the reads run in turn on
+    one worker thread, each bounded by `PROBE_BUDGET` (`bounded_reads`):
+    the model's batch read before its transaction (ENG-156). None where a
+    read raised or another thread was reading it, for the caller to read
+    alone."""
+    got = bounded_reads([_liveness_read(k, v) for k, v in pairs], PROBE_BUDGET)
+    return [
+        "unreachable" if g is UNANSWERED else None if g is NOT_READ else str(g)
+        for g in got
+    ]
+
+
+def _liveness_read(
+    checkout: Checkout, view: View
+) -> tuple[str, Any, Callable[[], str]]:
+    """The bounded read `path_liveness` makes: the view's path, what the
+    read depends on, and the read."""
     key = checkout.object_key
     common = checkout.common_object_key
-    return view_state(
-        view.path,
+    recorded_key = None if key is None else (key.device, key.inode, key.birth)
+    common_key = None if common is None else (common.device, common.inode, common.birth)
+    what = (
         checkout.kind,
-        None if key is None else (key.device, key.inode, key.birth),
+        recorded_key,
         checkout.token,
-        last_head=checkout.last_head,
-        stamps=checkout.stamps,
-        common_key=None
-        if common is None
-        else (common.device, common.inode, common.birth),
+        checkout.last_head,
+        tuple(tuple(s) for s in checkout.stamps),
+        common_key,
     )
+
+    def read() -> str:
+        return view_state(
+            view.path,
+            checkout.kind,
+            recorded_key,
+            checkout.token,
+            last_head=checkout.last_head,
+            stamps=checkout.stamps,
+            common_key=common_key,
+        )
+
+    return view.path, what, read
 
 
 def _asked_head(value: Any) -> str | None:

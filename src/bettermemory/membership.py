@@ -82,7 +82,7 @@ from . import (
     membership_queries,
     membership_resolve,
 )
-from .location import continuity, path_liveness
+from .location import continuity, path_liveness, path_liveness_many
 from .membership_lines import (
     line_boundary_added,
     line_boundary_dropped,
@@ -210,6 +210,7 @@ from .membership_records import (
     _LIVE_STATES,
     _basename,
     _common_by_pointer,
+    _live_key,
     _dir_key,
     _norm,
     _path_under,
@@ -233,6 +234,11 @@ from .time_utils import isoformat_utc, parse_event_ts
 if TYPE_CHECKING:
     from .log import LogRow
     from .machine import MachineIdentity
+
+#: The location's own liveness, as imported: a model reading it reads many
+#: views at once through `path_liveness_many`; a test that swaps the name
+#: here for its own reader is read one view at a time.
+_PATH_LIVENESS = path_liveness
 
 # ---------------------------------------------------------------------------
 # The model over the store
@@ -262,12 +268,20 @@ class Membership:
         self._store = store
         self.machine = machine
         self._liveness: Liveness = liveness or path_liveness
+        #: The default liveness reads many views on one thread, each bounded
+        #: (`location.path_liveness_many`); any other is read in a pool.
+        self._liveness_many: (
+            Callable[[Sequence[tuple[Checkout, View]]], list[str | None]] | None
+        ) = path_liveness_many if self._liveness is _PATH_LIVENESS else None
         self._token_writer = token_writer
         self._now = now
         self._session = session
         self._projects: dict[str, Project] | None = None
         self._rows: list[int] = []
         self._remint: str | None = None
+        #: Liveness read before the write transaction (ENG-156), by what
+        #: each read: None outside a resolution or a `liveness_held` span.
+        self._live: dict[tuple[object, ...], str] | None = None
 
     @classmethod
     def open(
@@ -859,7 +873,7 @@ class Membership:
         newest = max(views, key=lambda v: v.order)
         if newest.machine != self.machine:
             return OTHER_MACHINE
-        return self._liveness(k, newest)
+        return self._live_state(k, newest)
 
     def live_view(self, k: Checkout) -> str | None:
         """The newest view of the checkout on this machine that holds it
@@ -868,9 +882,41 @@ class Membership:
         if k.kind == UNRESOLVED:
             return None
         for v in sorted(k.views_on(self.machine), key=lambda v: -v.order):
-            if self._liveness(k, v) in _LIVE_STATES:
+            if self._live_state(k, v) in _LIVE_STATES:
                 return v.path
         return None
+
+    def _live_state(self, k: Checkout, v: View) -> str:
+        """What the view's path holds now (`Liveness`): the value read
+        before the transaction when there is one (`prefetch_liveness`,
+        ENG-156), else read now through the model's liveness, which bounds
+        a read of a path (`location.path_liveness`). A value is kept for
+        the span that read it, keyed on what the read depends on
+        (`_live_key`), so a checkout re-keyed meanwhile is read again."""
+        key = _live_key(k, v)
+        if self._live is not None:
+            hit = self._live.get(key)
+            if hit is not None:
+                return hit
+        state = self._liveness(k, v)
+        if self._live is not None:
+            self._live[key] = state
+        return state
+
+    @contextlib.contextmanager
+    def liveness_held(self) -> Iterator[None]:
+        """Keep the liveness this model reads (`prefetch_liveness` and
+        every read after it) for the span, as values: a resolution and the
+        migration read their views before their transaction and decide
+        inside it (ENG-156). A span inside another keeps the outer one's."""
+        if self._live is not None:
+            yield
+            return
+        self._live = {}
+        try:
+            yield
+        finally:
+            self._live = None
 
     def _touch_view(self, k: Checkout, loc: Location) -> Checkout:
         """A sighting of a known checkout: a new path adds a view
@@ -901,7 +947,7 @@ class Membership:
                     k, views=tuple(fresh if x is v else x for x in k.views)
                 )
             return k
-        live_old = [v for v in here if self._liveness(k, v) in _LIVE_STATES]
+        live_old = [v for v in here if self._live_state(k, v) in _LIVE_STATES]
         moved = bool(here) and not live_old
         self._event(
             "checkout_moved" if moved else "checkout_view_added",
@@ -1154,6 +1200,8 @@ class Membership:
     _subproject = membership_resolve._subproject
     _resolve_folder = membership_resolve._resolve_folder
     _declared_folder = membership_resolve._declared_folder
+    _liveness_plan = membership_resolve._liveness_plan
+    prefetch_liveness = membership_resolve.prefetch_liveness
 
     # -- proposals ------------------------------------------------------------------------------
 

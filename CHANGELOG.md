@@ -972,6 +972,37 @@ the candidates' testing.
   `src/bettermemory/membership_resolve.py`, `docs/internals.md`,
   `src/bettermemory/location.py`, `src/bettermemory/membership.py`,
   `src/bettermemory/membership_records.py`)
+- **A recorded path on a hung mount no longer stalls every writer.** A
+  view's liveness (does the checkout still live at this path?) and the
+  migration's probe of every recorded root read the filesystem at paths
+  recorded earlier, with no time bound and inside the one `BEGIN
+  IMMEDIATE` of the resolution or the migration. A view on a
+  hard-mounted NFS export or a dropped SMB share that stopped answering
+  held the store's write lock for as long as the mount hung, and every
+  hook, MCP write and CLI command waited behind it (ENG-156). Each read
+  of a recorded path is now bounded (`location.bounded_read`,
+  `PROBE_BUDGET` 0.5 s for a liveness read, 0.8 s for the migration's
+  probe, whose capture may fetch an evicted file), and one read of a
+  path is in flight at a time, so a path whose read is still blocked
+  answers at once. A resolution reads the liveness of the views its
+  ladder may read before its transaction (`prefetch_liveness`, in turn
+  on one thread, each read bounded: a thread per read cost ten times the
+  read), and the migration probes its roots, its rootless records'
+  folders and this machine's checkouts the same way; the transaction
+  reads the values. A path that does not answer in time reads
+  `unreachable`, unknown and never gone. Measured with a view whose stat
+  blocks: before, the resolution held the write lock until the stat
+  returned; now it completes in 0.5 s and another connection takes the
+  lock while the stat is blocked. Without a hung path the cost is within
+  this machine's noise: a commit-less first sight with 50 commit-less
+  projects recorded (50 liveness reads) took 6.8 to 12.2 ms over four
+  runs before and 9.7 to 13.9 ms now, its write transaction 4.3 to
+  7.9 ms before and 4.3 to 5.8 ms now; a known repository's steady
+  resolution reads nothing more. (`src/bettermemory/location_git.py`,
+  `src/bettermemory/location.py`, `src/bettermemory/membership.py`,
+  `src/bettermemory/membership_resolve.py`,
+  `src/bettermemory/membership_records.py`,
+  `src/bettermemory/membership_migrate.py`)
 
 #### Known limitations
 
@@ -1048,6 +1079,17 @@ the candidates' testing.
   unbounded walk). Asking is the safe side; the question names the bound
   it read (ENG-151). Reading newest witnesses first (committer date or
   generation numbers) is filed.
+- **Each hung recorded path costs its own probe budget once.** The
+  bound on a read of a recorded path is per path: a resolution reads its
+  views in turn, and each path that does not answer costs one
+  `PROBE_BUDGET` (0.5 s) the first time it is read, then answers
+  `unreachable` at once while its read is still blocked. Six commit-less
+  projects with every view on a hung mount made the next commit-less
+  first sight take 3.04 s, with the store's write lock free throughout,
+  and the one after it 0.07 s; with the hook's 15 s timeout, about 30
+  distinct views on one dropped share time out the first prompt after
+  the outage (ENG-156). A budget per resolution, or stalled paths
+  grouped by mount, is filed.
 
 ### 9.0.0rc13
 
