@@ -62,9 +62,11 @@ def _hook(
     )
 
 
-def _briefable_repo(tmp_path: Path) -> Path:
+def _briefable_repo(
+    tmp_path: Path, content: str = "prefer short release notes in this project"
+) -> Path:
     """A git repository holding one memory the session brief shows:
-    written there and verified, its body citing no path."""
+    written there and verified, its body (`content`) citing no path."""
     from bettermemory.origin import capture
 
     from .test_verdict import _repo
@@ -72,7 +74,7 @@ def _briefable_repo(tmp_path: Path) -> Path:
     repo = _repo(tmp_path)
     with Store(tmp_path / "store") as store:
         written = store.write(
-            content="prefer short release notes in this project",
+            content=content,
             scopes=["projects:foo"],
             origin=capture(repo),
         )
@@ -105,6 +107,36 @@ def test_session_start_prints_the_block_through_the_daemon(
     alias = _hook(["session-start"], daemon_env, {**payload, "session_id": "sess_2"})
     assert alias.returncode == 0, alias.stderr
     assert alias.stdout == result.stdout
+
+
+def test_a_block_stdout_cannot_encode_is_one_stderr_line_and_exit_0(
+    tmp_path: Path, daemon_env: dict[str, str]
+) -> None:
+    """The client's write-failure arm on an encode error: a stdout that
+    cannot encode the block (`PYTHONIOENCODING=ascii` against a memory
+    with a non-ASCII line) raises UnicodeEncodeError at the write, and the
+    arm turns it into the hook's one stderr line; the hook exits 0 and
+    prints nothing. The daemon is started first under the usual encoding,
+    so only the hook's own stdout is ASCII. (A reader that hung up, in
+    test_cli_smoke, pins the arm's stdout salvage, which an encode error
+    never needs: it fails before a byte is buffered.)"""
+    repo = _briefable_repo(tmp_path, content="prefer naïve release notes here")
+    assert _cli(["up", "--port", "0"], daemon_env).returncode == 0
+    _wait_running(tmp_path)
+    payload = {"cwd": str(repo), "session_id": "sess_ascii", "source": "startup"}
+    shown = _hook(["hook", "session-start"], daemon_env, payload)
+    assert "naïve" in shown.stdout, shown.stderr
+    ascii_env = {**daemon_env, "PYTHONIOENCODING": "ascii"}
+    result = _hook(
+        ["hook", "session-start"], ascii_env, {**payload, "session_id": "sess_2"}
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+    assert result.stderr.startswith(
+        "bettermemory hook session-start: could not write the context block: "
+        "UnicodeEncodeError"
+    ), result.stderr
+    assert len(result.stderr.splitlines()) == 1, result.stderr
 
 
 def test_hook_starts_the_daemon_when_none_answers(
@@ -887,6 +919,28 @@ def test_the_hook_forwards_attended_only_for_exactly_1(
     assert ("attended" in sent) is forwarded
     if forwarded:
         assert sent["attended"] == "1"
+
+
+def test_the_hook_forwards_a_subagents_id_and_type_as_read(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """A subagent's SessionStart payload names it (`agent_id`,
+    `agent_type`); the client posts both as it read them, and the daemon
+    decides what a subagent is shown (test_recall_subagent)."""
+    payload = {"session_id": "s", "agent_id": "a-7", "agent_type": "Explore"}
+    sent, _ = _run_client(
+        monkeypatch,
+        capsys,
+        tmp_path,
+        attended=None,
+        reply={"stdout": ""},
+        payload=payload,
+        argv=("hook", "session-start"),
+    )
+    assert (sent["agent_id"], sent["agent_type"]) == ("a-7", "Explore")
+    assert sent["session_id"] == "s"
 
 
 def test_the_hook_prints_hook_output_alone_even_under_quiet(
