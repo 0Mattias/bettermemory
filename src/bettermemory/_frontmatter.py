@@ -43,9 +43,10 @@ _DELIM = "---"
 # to a memory-pinning blob during parse. Memory frontmatter is dozens
 # to a few hundred bytes per record in normal use; capping the YAML
 # region at 64 KB neutralises the DoS without rejecting any real
-# memory file. The store widens its trust boundary once `sync pull`
-# is in use (a remote can push files into the memory directory), so
-# the cap is no longer purely a defence against local mistakes.
+# memory file. 8.x's store widened its trust boundary once `sync pull`
+# was in use (a remote could push files into the memory directory), so
+# the cap was no longer purely a defence against local mistakes; 9.x
+# reads these files only from a v8 directory `migrate v8` imports.
 _MAX_YAML_BYTES = 64 * 1024
 
 # File-level cap on `_frontmatter.load`. The previous `read_text()`
@@ -59,8 +60,10 @@ _MAX_YAML_BYTES = 64 * 1024
 _MAX_FILE_BYTES = 1024 * 1024
 
 # Headroom reserved below the read cap for content-admitting writes, so any
-# record we ACCEPT as active can still be tombstoned or renamed and stay
-# readable. `Store.tombstone` re-dumps a loaded record with `removed` /
+# record 8.x's store ACCEPTED as active could still be tombstoned or renamed
+# and stay readable; the export mirror, the one 9.x caller of `dumps`,
+# passes the full read cap instead. 8.x's `Store.tombstone` re-dumped a
+# loaded record with `removed` /
 # `removed_reason` / `removed_session` appended, and `rename_scope` may swap
 # in a longer scope string; those maintenance re-dumps must be allowed up to
 # the full `_MAX_FILE_BYTES` (a tombstone over the read cap would be silently
@@ -404,9 +407,11 @@ def _dump_yaml(post: Post, max_yaml_bytes: int) -> str:
     # its (alias-free) expansion. The `_MAX_YAML_BYTES` check below is a
     # post-hoc backstop — it only fires after the whole expanded string is
     # already in memory — so on its own it neither bounds peak memory nor the
-    # CPU spent expanding. This bounded walk is the actual guard. (Untrusted
-    # metadata reaches here via every re-dump of loaded raw frontmatter:
-    # store.tombstone / restore / rename_scope, migrate.migrate_origin_in_…)
+    # CPU spent expanding. This bounded walk is the actual guard. (In 8.x
+    # untrusted metadata reached here via every re-dump of loaded raw
+    # frontmatter: store.tombstone / restore / rename_scope,
+    # migrate.migrate_origin_in_…; in 9.x the export mirror renders the
+    # store's records through here.)
     _guard_dump_expansion(post.metadata)
     yaml_text = yaml.dump(
         post.metadata,
@@ -433,18 +438,19 @@ def _dump_yaml(post: Post, max_yaml_bytes: int) -> str:
     # Additional, tighter YAML ceiling, opted into per call. This fires ONLY
     # when a caller passes a reduced `max_yaml_bytes` (strictly under the flat
     # cap checked above), so it never weakens the flat enforcement, and a caller
-    # that passes nothing skips it entirely. It gives the frontmatter-YAML axis
-    # the removal-budget reservation the file axis already has, on BOTH of that
-    # axis's arms: admission (`store._yaml_admission_cap`, mirroring
-    # `_MAX_WRITE_BYTES`) and lifecycle re-dump
-    # (`store._lifecycle_redump_yaml_cap`, mirroring `store._lifecycle_redump_cap`).
-    # Either way, a record cannot be grown to within the removal-metadata budget
-    # of `_MAX_YAML_BYTES` and stranded un-removable — its tombstone re-dump
-    # could not fit the `removed:` metadata under the flat YAML cap even after
-    # the adaptive trim. The message below says "lifecycle" because that arm
-    # shipped first (dde864f); the admission arm (645d909) raises it too, so a
-    # `memory_update` that over-fills `links` sees it on a content-admitting
-    # write rather than on a re-dump.
+    # that passes nothing skips it entirely. It gave 8.x's store the
+    # removal-budget reservation on the frontmatter-YAML axis that the file
+    # axis already had, on BOTH of that axis's arms: admission (8.x's
+    # `store._yaml_admission_cap`, mirroring `_MAX_WRITE_BYTES`) and lifecycle
+    # re-dump (`store._lifecycle_redump_yaml_cap`, mirroring
+    # `store._lifecycle_redump_cap`). Either way, a record could not be grown
+    # to within the removal-metadata budget of `_MAX_YAML_BYTES` and stranded
+    # un-removable — its tombstone re-dump could not fit the `removed:`
+    # metadata under the flat YAML cap even after the adaptive trim. No 9.x
+    # caller passes a reduced ceiling. The message below says "lifecycle"
+    # because that arm shipped first (dde864f); the admission arm (645d909)
+    # raises it too, so a `memory_update` that over-fills `links` sees it on a
+    # content-admitting write rather than on a re-dump.
     if max_yaml_bytes < _MAX_YAML_BYTES and yaml_bytes > max_yaml_bytes:
         raise ValueError(
             f"frontmatter YAML exceeds {max_yaml_bytes}-byte lifecycle cap "
@@ -498,19 +504,26 @@ def dumps(
     byte-for-byte (modulo the alias-suppression policy above, which only
     affects metadata dicts where two fields share the same object).
 
+    In 9.x the one caller is the export mirror (`mirror._dump`), which
+    passes `max_file_bytes=_MAX_FILE_BYTES` and no YAML ceiling, so it
+    re-renders a record as 8.x admitted it. The callers the rest of this
+    docstring names were 8.x's store, which wrote each record as a file
+    through here.
+
     `max_file_bytes` bounds the total serialized size. It defaults to
     `_MAX_WRITE_BYTES` (the read cap minus maintenance headroom) so any
-    accepted record can later be tombstoned/renamed and stay readable;
-    the lifecycle re-dump paths (`store.tombstone` / `rename_scope`) pass
-    `_MAX_FILE_BYTES` to use the full read cap for that bounded growth.
+    record 8.x accepted could later be tombstoned/renamed and stay
+    readable; its lifecycle re-dump paths (`store.tombstone` /
+    `rename_scope`) passed `_MAX_FILE_BYTES` to use the full read cap for
+    that bounded growth.
 
     `max_yaml_bytes` is the analogous bound on just the frontmatter-YAML
     region. The signature default is the flat `_MAX_YAML_BYTES` — but that says
     only what an argument-less caller gets, NOT that a first write is
     unaffected, which is what this docstring inferred until
-    `store._yaml_admission_cap` (645d909) made the inference false. A reduced
-    ceiling now reaches here from TWO sources, keyed on what the write DOES
-    rather than on which function performs it:
+    `store._yaml_admission_cap` (645d909) made the inference false. In 8.x a
+    reduced ceiling reached here from TWO sources, keyed on what the write
+    DID rather than on which function performed it:
 
       * `store._yaml_admission_cap()` — `Store._write_path`'s own default, so
         every write that ADMITS content (`Store.write`, `Store.update`) arrives
@@ -526,14 +539,14 @@ def dumps(
         but keyed on the record's CURRENT frontmatter, so a record already past
         the ceiling freezes there rather than being refused outright.
 
-    A caller that passes nothing takes the flat cap, which is what the re-dumps
-    that must not become refusable want — `store.tombstone` (it adaptively trims
-    its own removal metadata to fit rather than lean on a ceiling),
-    `store.restore`, `rename_scope`'s tombstone branch — and what `episodes`
-    wants, being written once and never tombstoned, so it reserves nothing for a
-    removal that never comes. Neither reduced ceiling can RELAX the flat cap: both
-    are `<= _MAX_YAML_BYTES`, and `_dump_yaml`'s second check fires only for a
-    ceiling that comes in strictly under it.
+    A caller that passes nothing takes the flat cap, which is what 8.x's
+    re-dumps that must not become refusable wanted — `store.tombstone` (it
+    adaptively trimmed its own removal metadata to fit rather than lean on a
+    ceiling), `store.restore`, `rename_scope`'s tombstone branch — and what
+    `episodes` wanted, being written once and never tombstoned, so it
+    reserved nothing for a removal that never comes. Neither reduced ceiling
+    can RELAX the flat cap: both are `<= _MAX_YAML_BYTES`, and `_dump_yaml`'s
+    second check fires only for a ceiling that comes in strictly under it.
     """
     yaml_text = _dump_yaml(post, max_yaml_bytes)
     # Normalise CRLF to LF, the missing half of the pair `loads` has always
@@ -556,7 +569,8 @@ def dumps(
     #
     # A lone `\r` not followed by a newline survives both sides untouched: it
     # is content, not a line terminator this format knows about. Like the
-    # `rstrip` below, this normalises PRESENTATION, not content.
+    # trailing `rstrip` `normalise_body` ends with, this normalises
+    # PRESENTATION, not content.
     body = normalise_body(post.content)
     final = f"{_DELIM}\n{yaml_text}\n{_DELIM}\n\n{body}"
     _check_file_cap(final, max_file_bytes)
