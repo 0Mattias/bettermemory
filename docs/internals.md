@@ -101,7 +101,8 @@ validated ships as declared claims on `memory_write` / `memory_verify`.
   and correctable; a body that reads as one while filed as `fact` is
   refused until it is relabelled.
 - Write gates instead of trust: durability check (rejects transient
-  state), credential check (rejects secret-shaped tokens), duplicate
+  state), credential check (rejects secret-shaped tokens),
+  control-token check (rejects chat-template control tokens), duplicate
   and tombstone dedup, scope-mismatch check.
 - Write-time supersession (`supersession.py`): a claim-sized write that
   carries a change cue and diverges on a value from a stored claim about
@@ -870,14 +871,15 @@ declared claims against the worktree (`claims.py`) and any declared
 `supersedes` list. It then runs the gate chain, the gates of
 `handlers/write_gates.py`: `credentials.py`
 (secret-shaped strings; its `secret_spans` is what the log's query
-redaction shares), the capture gates on a capture write (the rules in
-`durability.py`, and a body an undo reverted before), `durability.py`
-(structural durability), the user-claim check, `scope_match.py`
-(scope mismatch against the caller's repo), and duplicate and
-tombstone dedup. `review.py` then puts the write review's questions
-to the caller. `supersession.py` decides whether the write replaces a
-stored statement; the review runs it to build its related set, and
-the commit runs it when the review did not. A cue-less divergence is
+redaction shares), the control-token check (a model's chat-template
+delimiters, which the episode write runs too), the capture gates on a
+capture write (the rules in `durability.py`, and a body an undo reverted
+before), `durability.py` (structural durability), the user-claim check,
+`scope_match.py` (scope mismatch against the caller's repo), and
+duplicate and tombstone dedup. `review.py` then puts the write review's
+questions to the caller. `supersession.py` decides whether the write
+replaces a stored statement; the review runs it to build its related set,
+and the commit runs it when the review did not. A cue-less divergence is
 filed in the conflicts queue (`conflicts.py`). A write that passes lands
 in `store.py` as one signed log row and one table row in one
 transaction, with `log.py` signing the row and keeping the chain.

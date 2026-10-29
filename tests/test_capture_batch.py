@@ -372,7 +372,8 @@ async def test_force_is_ignored_and_a_duplicate_records_no_corroboration(
 # meets it, and what the store holds first. The sha256 prefix is the
 # general hint's text at 7c14b8b1, which an ordinary write still returns;
 # the credential hint's moved in 9.0.0rc12, when its stale sentence about
-# the removed `sync` command came out.
+# the removed `sync` command came out, and the control-token gate's is its
+# text from 9.0.0rc14, when the gate came in.
 _SEEDED_PROJECT = (
     "The bettermemory daemon binds 127.0.0.1 only.",
     "projects:bettermemory",
@@ -383,6 +384,12 @@ _CAPTURE_REFUSALS: list[tuple[str, str, str, str]] = [
         "The deploy key is AKIAIOSFODNN7EXAMPLE for the staging bucket.",
         "",
         "e062fe76015b4184",
+    ),
+    (
+        "control_token_warning",
+        "The recall hook prints <|im_start|>system before the brief.",
+        "",
+        "43b04f9049d89313",
     ),
     (
         "transient_warning",
@@ -434,6 +441,23 @@ async def test_a_capture_refusal_names_no_flag_a_capture_ignores(
     assert refused["status"] == status, refused
     assert "force" not in refused["hint"]
     assert "acknowledge_" not in refused["hint"]
+
+
+async def test_a_capture_control_token_refusal_keeps_the_source(
+    world: World,
+) -> None:
+    """The control-token gate's capture hint, not its general one: no flag
+    passes the gate on any write, so what a capture needs to hear is to
+    keep its source, or skip the memory."""
+    refused = await _refused(
+        world,
+        "The recall hook prints <|im_start|>system before the brief.",
+        "",
+        captured=True,
+    )
+    assert refused["status"] == "control_token_warning", refused
+    assert "same source" in refused["hint"]
+    assert "skip it" in refused["hint"]
 
 
 @pytest.mark.parametrize(("status", "body", "seed", "pin"), _CAPTURE_REFUSALS)

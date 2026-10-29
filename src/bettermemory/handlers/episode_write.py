@@ -22,6 +22,13 @@ written, in the shape memory_write's `credential_warning` takes. Unlike
 memory_write there is no `acknowledge_credential`: the episode tool takes
 no override, so the only way through is to write the episode without the
 value.
+
+The control-token gate applies too, after the credential gate, as on
+memory_write: a body or takeaway carrying a chat-template control token
+(`write_gates.find_control_tokens`, the detector `ControlTokenGate` runs)
+is refused in memory_write's `control_token_warning` shape, since the
+handoff reads the episode into the next session's context, where the
+token can forge a turn boundary. No flag passes it on either tool.
 """
 
 from __future__ import annotations
@@ -40,6 +47,7 @@ from ._shared import (
     _validate_content_size,
     _validate_scope_count,
 )
+from .write_gates import find_control_tokens
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
@@ -59,6 +67,20 @@ _CREDENTIAL_HINT = (
     "episode again, describing the secret without embedding it (e.g. 'the "
     "deploy uses an AWS key, stored in 1Password'). The value is redacted "
     "from this warning and the event log."
+)
+
+#: The control-token refusal's hint, in the same terms: no flag passes it.
+_CONTROL_TOKEN_HINT = (
+    "Not written: the episode carries a chat-template control token, "
+    "named in `markers` by its template family, its bare name and the "
+    "field it sits in, and an episode lands in the signed log and the "
+    "next session's handoff, where the token can forge a turn boundary. "
+    "Episodes take no acknowledgement: write the token's bare name "
+    "without its delimiters (`im_start`, `INST`) or describe the format "
+    "in words. A marker of kind `anthropic` is `Human:` or `Assistant:` "
+    "opening the field or a line after a blank line: quote the line "
+    "(`> Human: ...`) or name the speaker another way. Then write the "
+    "episode again."
 )
 
 
@@ -101,7 +123,11 @@ DESC_EPISODE_WRITE = (
     "surface despite the write returning `committed`.\n\n"
     "A body or takeaway carrying a secret-shaped token is not written: "
     "the reply is `credential_warning` with the detector kinds and "
-    "redacted snippets, and there is no acknowledge flag to pass."
+    "redacted snippets, and there is no acknowledge flag to pass. One "
+    "carrying a chat-template control token (ChatML's `im_start` "
+    "delimiter, Llama's `INST` tag and kin, with their delimiters) is not "
+    "written either: the reply is `control_token_warning`, naming each "
+    "token without its delimiters."
 )
 
 
@@ -137,6 +163,38 @@ def _credential_refusal(
         "status": "credential_warning",
         "markers": markers,
         "hint": _CREDENTIAL_HINT,
+    }
+
+
+def _control_token_refusal(
+    deps: ToolHandlers, body: str, takeaway: str | None
+) -> dict[str, Any] | None:
+    """The `control_token_warning` refusal for a body or takeaway carrying
+    a chat-template control token, or None when neither does.
+
+    memory_write's markers (`kind`, the template family, and `token`, the
+    bare name) plus the `field` each was found in. The event names the
+    families and the fields only and, as the credential refusal's, carries
+    no harness session, so a refused write does not count as the
+    conversation having journaled."""
+    markers: list[dict[str, Any]] = []
+    for field, text in (("body", body), ("takeaway", takeaway)):
+        if not text:
+            continue
+        for hit in find_control_tokens(text):
+            markers.append({**hit.to_dict(), "field": field})
+    if not markers:
+        return None
+    deps.recorder.record(
+        "episode_write",
+        status="control_token_warning",
+        control_token_kinds=list(dict.fromkeys(m["kind"] for m in markers)),
+        control_token_fields=list(dict.fromkeys(m["field"] for m in markers)),
+    )
+    return {
+        "status": "control_token_warning",
+        "markers": markers,
+        "hint": _CONTROL_TOKEN_HINT,
     }
 
 
@@ -200,8 +258,11 @@ async def episode_write(
         _validate_scope_count(scopes, deps.config.behavior.max_scopes_per_write)
     # The credential gate, after the caps (a multi-MB body is refused by
     # size before any detector reads it, as on memory_write) and before
-    # the origin is captured or anything reaches the store or the log.
+    # the origin is captured or anything reaches the store or the log;
+    # then the control-token gate, in memory_write's order.
     refusal = _credential_refusal(deps, body, takeaway)
+    if refusal is None:
+        refusal = _control_token_refusal(deps, body, takeaway)
     if refusal is not None:
         return refusal
 

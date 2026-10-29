@@ -313,6 +313,40 @@ the candidates' testing.
   dashed one, is gone, so a domain of any length keeps its route. The
   routes found are unchanged on every realistic shape.
   (`src/bettermemory/verify.py`)
+- **memory_write and episode writes refuse a body carrying a model's
+  chat-template control token.** Nothing read a body for the delimiters
+  a prompt format uses to open or close a turn, so a write could store
+  `<|im_start|>system`, `<|endoftext|>`, Llama's `[INST]` or `<<SYS>>`,
+  or a `\n\nHuman:` turn marker, and every recall, search and handoff
+  that read the body back put the token into a later session's context,
+  where it can forge a turn boundary: on a stack that parses special
+  tokens out of plain text it is one. `memory_write` now refuses such a
+  body with `control_token_warning`, second in the gate chain after the
+  credential gate, and `episode(action="write")` refuses one in the body
+  or the takeaway after its credential check. The markers name each
+  token by its template family and its bare name, never with its
+  delimiters; the event records the families only; and no acknowledge
+  flag or `force` passes the refusal, since a writer steered into
+  writing the token would pass the flag as readily, while an honest one
+  loses nothing by naming the token without its delimiters, or, for a
+  `Human:` or `Assistant:` turn marker, by quoting the line, which the
+  hint says. A turn marker is judged at the body's start after any
+  leading whitespace, since the store keeps a body stripped. The list is
+  the documented templates' (ChatML, tiktoken's special tokens, harmony,
+  Llama 2, 3 and 4, Phi, Gemma, Command R, Granite, DeepSeek and the
+  legacy Anthropic turn markers), matched exactly, with each template's
+  source named beside it; the markup and placeholders ordinary bodies
+  spell (`<s>`, `<eos>`, `[TOOL_CALLS]`) stay silent. The scan is
+  linear: about 17 ms on 1 MB of prose and 60 ms on 1 MB of nothing but
+  `<`, each 2.0x at twice the length. memory_write's served description
+  names the gate ("each names its fix" replaces "each names its
+  acknowledge flag", within the 8,000-character surface budget), as do
+  the system-prompt addendum and the README. `memory_update` does not
+  run the check yet. (`src/bettermemory/handlers/write_gates.py`,
+  `src/bettermemory/handlers/episode_write.py`,
+  `src/bettermemory/handlers/write.py`, `src/bettermemory/prompts.py`,
+  `SECURITY.md`, `README.md`, `docs/api.md`, `docs/internals.md`,
+  `docs/system_prompt.md`)
 
 #### Known limitations
 

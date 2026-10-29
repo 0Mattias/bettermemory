@@ -3384,8 +3384,10 @@ async def test_dedup_match_carries_metadata(server: Any) -> None:
 # Ordered-tuple pin for `_WRITE_GATES` — the WriteGate strategy chain
 # `memory_write` (handlers/write.py) runs. ORDER IS LOAD-BEARING and the
 # comment above `_WRITE_GATES` in handlers/write_gates.py documents the
-# rationale: transient before dedup so a transient parent doesn't route
-# the writer to `memory_update`; scope-mismatch before dedup so a write
+# rationale: credential first and control-token second, so a secret or a
+# chat-template control token is refused before any later gate records
+# body-derived data; transient before dedup so a transient parent doesn't
+# route the writer to `memory_update`; scope-mismatch before dedup so a write
 # tagged for a different scope doesn't get a duplicate hit; the two
 # dedup gates last because everything before them rejects on the body
 # alone.
@@ -3397,7 +3399,8 @@ async def test_dedup_match_carries_metadata(server: Any) -> None:
 #     transient parent;
 #   * dropping `CredentialGate` from the tuple silently lets
 #     secret-shaped writes through (the gate fires only because it's in
-#     the chain);
+#     the chain), and dropping `ControlTokenGate` lets a body carrying
+#     a model's turn delimiters into every later session's context;
 #   * any reorder changes which gate fires first when multiple would
 #     reject, changing the user-visible response.
 #
@@ -3417,7 +3420,8 @@ async def test_dedup_match_carries_metadata(server: Any) -> None:
 # expected tuple in the same commit. Treat any drift as a deliberate
 # security/correctness decision that requires re-reading the
 # `_WRITE_GATES` rationale: would the new ordering still refuse a
-# secret before any other gate records the body? Still bounce a
+# secret, and then a control token, before any other gate records the
+# body? Still bounce a
 # transient-parent write before routing the writer to update? If
 # yes, update both. If unsure, don't reorder.
 #
@@ -3425,7 +3429,7 @@ async def test_dedup_match_carries_metadata(server: Any) -> None:
 # in `_WRITE_GATES` (a plausible "performance" reorder that puts
 # cheaper checks first) fails
 # `test_write_gates_match_expected_types_in_order` (tuple inequality
-# — sequences differ at index 3 / 4). Revert restores green.
+# — sequences differ at index 6 / 7). Revert restores green.
 def test_write_gates_match_expected_types_in_order() -> None:
     """Guard so additions, deletions, AND reorders of ``_WRITE_GATES``
     (the ordered WriteGate strategy chain ``memory_write`` runs, in
@@ -3435,7 +3439,10 @@ def test_write_gates_match_expected_types_in_order() -> None:
     The comment above ``_WRITE_GATES`` in ``write_gates.py`` documents the
     invariant: ``CredentialGate`` fires FIRST so a secret is refused
     before any later gate records body-derived data alongside it in
-    the event log; transient/user-claim/scope-mismatch gates fire
+    the event log, and ``ControlTokenGate`` SECOND for the same reason
+    (it refuses a chat-template control token on the body alone, with
+    no flag, and an acknowledged secret does not carry one past it);
+    transient/user-claim/scope-mismatch gates fire
     BEFORE dedup so (a) a transient-parent write isn't routed to
     ``memory_update``, (b) a scope-mismatched write doesn't get a
     misleading duplicate hit, (c) a body re-categorized as ``user-inference`` isn't routed to
@@ -3448,7 +3455,7 @@ def test_write_gates_match_expected_types_in_order() -> None:
     update both the source AND this expected tuple in the same
     commit, AND re-read the ``_WRITE_GATES`` rationale to confirm
     the new ordering still preserves: credential-first,
-    transient-before-dedup, user-claim-before-dedup,
+    control-token-second, transient-before-dedup, user-claim-before-dedup,
     scope-before-dedup, and dedup-last."""
     from bettermemory.handlers.write import (
         CaptureRulesGate,
@@ -3461,11 +3468,14 @@ def test_write_gates_match_expected_types_in_order() -> None:
         UserClaimGate,
         _WRITE_GATES,
     )
+    from bettermemory.handlers.write_gates import ControlTokenGate
 
     # The two capture gates pass every write but a capture's, and on a
-    # capture they run right after credential (tests/test_capture_batch.py).
+    # capture they run right after credential and control-token
+    # (tests/test_capture_batch.py).
     expected: tuple[type, ...] = (
         CredentialGate,
+        ControlTokenGate,
         CaptureRulesGate,
         PreviouslyUndoneGate,
         TransientGate,

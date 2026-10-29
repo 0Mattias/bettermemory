@@ -119,8 +119,8 @@ DESC_MEMORY_WRITE = (
     "Store a durable fact; call it proactively. `scopes`: narrow tags "
     "(projects:<name>, tools), never general. `category`: fact, "
     "user-inference (about the user) or ambient (context, never cited). "
-    "Gates refuse transient state, secrets, user claims filed as fact, "
-    "scope mismatch and duplicates; each names its acknowledge flag. "
+    "Gates refuse transient state, secrets, control tokens, user claims "
+    "filed as fact, scope mismatch and duplicates; each names its fix. "
     "`claims`: path or path::symbol bindings watched for drift. "
     "`supersedes`: ids this replaces."
 )
@@ -197,6 +197,13 @@ _CAPTURE_REFUSAL_HINTS: dict[str, str] = {
         "Not written. The body holds a secret-shaped value (an API key, "
         "private key, token or password). Leave the value out of the body "
         "and write it again with the same source, or skip it."
+    ),
+    "control_token_warning": (
+        "Not written. The body holds a model's chat-template control token. "
+        "Write the token's bare name without its delimiters, or leave it "
+        "out; for a `Human:` or `Assistant:` line (kind `anthropic`), quote "
+        "the line or name the speaker another way. Write it again with the "
+        "same source, or skip it."
     ),
     "transient_warning": (
         "Not written. The body holds state that will not be true in a week. "

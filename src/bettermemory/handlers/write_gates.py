@@ -1,11 +1,13 @@
 """The write-gate chain `memory_write` runs before the review.
 
 `GateContext`, the `Continue` and `Reject` results, the `WriteGate` base,
-its eight gates and `_WRITE_GATES`, the order they run in; the user-claim
+its nine gates and `_WRITE_GATES`, the order they run in; the user-claim
 detector (`_find_user_claims`, which `memory_update` shares) with its
-sentence and list patterns; and the shared chain, `GateDeps`, `GateBundle`
-and `apply_write_gates`. `handlers.write` re-exports every name here that
-a caller imports from it, so no import path changes.
+sentence and list patterns; the control-token detector
+(`find_control_tokens`, which `episode_write` shares); and the shared
+chain, `GateDeps`, `GateBundle` and `apply_write_gates`.
+`handlers.write` re-exports every name here that a caller imports from
+it, so no import path changes.
 
 The gates live apart from `handlers.write` to keep each module under the
 package's 2,000-line bound (ENG-96). `handlers.write` imports this module
@@ -185,6 +187,248 @@ class CredentialGate(WriteGate):
                 "scopes": gc.payload["scopes"],
                 "forced": False,
                 "credential_kinds": [h.kind for h in gc.credential_hits],
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
+# Model-control tokens
+# ---------------------------------------------------------------------------
+#
+# The delimiters a model's chat template uses to open or close a turn,
+# name a role or end the text. Every body the store keeps is read back
+# into a later session's context (the recall hook, `memory_search`, the
+# episode handoff), and a body that carries one can forge a turn boundary
+# there: on a stack that parses special tokens out of plain text it IS
+# the boundary, and to any model it reads as one. The legacy turn markers
+# reach a model raw only where a body is read as plain text (the export
+# mirror, which writes `---\n\n<body>`, or a CLI listing piped to a
+# model); tool results carry them JSON-escaped, and the hooks' pointers
+# flatten newlines. The ChatML note that introduced `<|im_start|>` names
+# the hazard as injection from input carrying special-token syntax, and
+# tiktoken's `encode` refuses such text unless the caller allows the
+# token. So does this gate, with no flag: a body about a template loses
+# nothing by naming the token without its delimiters (`im_start`), or by
+# quoting a `Human:` line, and a flag the model can pass is no defence
+# against a writer that was steered into writing the token.
+#
+# The tokens are the documented templates', matched exactly (a tokenizer
+# reads them case-sensitively) and filed by family, the `kind` a refusal
+# names. A token two families share is filed under the first:
+#
+# - chatml: `<|im_start|>` and `<|im_end|>` (OpenAI's ChatML note; Qwen's
+#   template) and `<|im_sep|>` (Phi-4's model card).
+# - openai: the special tokens tiktoken defines
+#   (`tiktoken_ext/openai_public.py`): `<|endoftext|>`, `<|startoftext|>`,
+#   `<|endofprompt|>` and the three fill-in-the-middle tokens.
+# - harmony: gpt-oss's response format (OpenAI's harmony guide):
+#   `<|start|>`, `<|end|>`, `<|message|>`, `<|channel|>`,
+#   `<|constrain|>`, `<|return|>`, `<|call|>`. Phi-3's `<|end|>` is this
+#   one.
+# - llama3: Meta's Llama 3.1 prompt format: `<|begin_of_text|>`,
+#   `<|end_of_text|>`, `<|start_header_id|>`, `<|end_header_id|>`,
+#   `<|eot_id|>`, `<|eom_id|>`, `<|python_tag|>`,
+#   `<|finetune_right_pad_id|>`. Granite's `<|end_of_text|>` is this one.
+# - llama4: the Llama 4 text format's own: `<|header_start|>`,
+#   `<|header_end|>`, `<|eot|>`.
+# - llama2: `[INST]`, `[/INST]`, `<<SYS>>` and `<</SYS>>`, the
+#   `SPECIAL_TAGS` of Meta's Llama 2 `generation.py`; Mistral's
+#   tokenization guide documents the same instruction pair.
+# - phi: Phi-3's model card: `<|system|>`, `<|user|>`, `<|assistant|>`.
+# - gemma: Gemma's prompt structure: `<start_of_turn>`, `<end_of_turn>`.
+# - command-r: Cohere's Command R template: `<|START_OF_TURN_TOKEN|>`,
+#   `<|END_OF_TURN_TOKEN|>`, `<|SYSTEM_TOKEN|>`, `<|USER_TOKEN|>`,
+#   `<|CHATBOT_TOKEN|>`.
+# - granite: IBM Granite 3's chat template: `<|start_of_role|>`,
+#   `<|end_of_role|>`, `<|tool_call|>`.
+# - deepseek: DeepSeek-V3's chat template (its `tokenizer_config.json`),
+#   spelled with the fullwidth bar and `▁`: the sentence's begin and end,
+#   the `User` and `Assistant` turns and nine tool-call delimiters.
+# - anthropic: the legacy Text Completions turn markers `\n\nHuman:` and
+#   `\n\nAssistant:` (the Python SDK's `HUMAN_PROMPT` and `AI_PROMPT`),
+#   at a body's start, after any leading whitespace (the store keeps a
+#   body stripped, so `  Human:` is stored opening with `Human:`), or
+#   after a blank line.
+#
+# Left out on purpose, each because ordinary text spells it: `<s>` and
+# `</s>` (Llama 2's and Mistral's sentence tokens, and HTML's
+# strikethrough tags), Gemma's `<bos>` and `<eos>` (the notation of every
+# paper about tokenizers), Qwen's `<think>` and `<tool_call>` tags, and
+# Mistral's later bracketed tokens (`[TOOL_CALLS]`, `[AVAILABLE_TOOLS]`,
+# `[SYSTEM_PROMPT]` and kin), which read as a template's placeholders and
+# which the bracket shape below cannot match anyway (its name class holds
+# no `_`). The Llama 4 vision format's image tokens mark where an image
+# sits and open no turn.
+_CONTROL_TOKENS: dict[str, tuple[str, ...]] = {
+    "chatml": ("<|im_start|>", "<|im_end|>", "<|im_sep|>"),
+    "openai": (
+        "<|endoftext|>",
+        "<|startoftext|>",
+        "<|endofprompt|>",
+        "<|fim_prefix|>",
+        "<|fim_middle|>",
+        "<|fim_suffix|>",
+    ),
+    "harmony": (
+        "<|start|>",
+        "<|end|>",
+        "<|message|>",
+        "<|channel|>",
+        "<|constrain|>",
+        "<|return|>",
+        "<|call|>",
+    ),
+    "llama3": (
+        "<|begin_of_text|>",
+        "<|end_of_text|>",
+        "<|start_header_id|>",
+        "<|end_header_id|>",
+        "<|eot_id|>",
+        "<|eom_id|>",
+        "<|python_tag|>",
+        "<|finetune_right_pad_id|>",
+    ),
+    "llama4": ("<|header_start|>", "<|header_end|>", "<|eot|>"),
+    "llama2": ("[INST]", "[/INST]", "<<SYS>>", "<</SYS>>"),
+    "phi": ("<|system|>", "<|user|>", "<|assistant|>"),
+    "gemma": ("<start_of_turn>", "<end_of_turn>"),
+    "command-r": (
+        "<|START_OF_TURN_TOKEN|>",
+        "<|END_OF_TURN_TOKEN|>",
+        "<|SYSTEM_TOKEN|>",
+        "<|USER_TOKEN|>",
+        "<|CHATBOT_TOKEN|>",
+    ),
+    "granite": ("<|start_of_role|>", "<|end_of_role|>", "<|tool_call|>"),
+    "deepseek": (
+        "<｜begin▁of▁sentence｜>",
+        "<｜end▁of▁sentence｜>",
+        "<｜User｜>",
+        "<｜Assistant｜>",
+        "<｜tool▁calls▁begin｜>",
+        "<｜tool▁calls▁end｜>",
+        "<｜tool▁call▁begin｜>",
+        "<｜tool▁call▁end｜>",
+        "<｜tool▁sep｜>",
+        "<｜tool▁outputs▁begin｜>",
+        "<｜tool▁outputs▁end｜>",
+        "<｜tool▁output▁begin｜>",
+        "<｜tool▁output▁end｜>",
+    ),
+}
+#: Each listed token's family.
+_CONTROL_TOKEN_KIND: dict[str, str] = {
+    token: kind for kind, tokens in _CONTROL_TOKENS.items() for token in tokens
+}
+#: The family of the legacy turn markers, which `_CONTROL_TOKEN_RE` reads
+#: by their own shape rather than from the table.
+_TURN_MARKER_KIND = "anthropic"
+
+# One pattern reads every delimiter shape the table uses, each with a
+# bounded bare name, and the table decides: a match whose token no family
+# lists (`<b>`, `[X]`, `<|foo|>`) is passed over. Linear time: every
+# attempt starts on an opening delimiter (`<`, `[`, a newline or the
+# body's start), a name is at most 32 characters of a class that holds
+# neither its closing delimiter nor any opening one, so an attempt reads
+# at most 37 characters (`<</` and `>>` around 32), and the two
+# unbounded runs before a turn marker, the body's leading whitespace and
+# the blank line's spaces, are read from the body's start and from the
+# newline before them, and from no other start. The leading whitespace
+# is read because the store keeps a body stripped: `  Human:` is stored
+# opening with `Human:`. About 17 ms on 1 MB of prose and 60 ms on 1 MB
+# of nothing but `<`, the costliest opener, each 2.0x at twice the
+# length (measured by hand; `test_a_hostile_body_is_read_in_linear_time`
+# pins a 2 s ceiling). A shape match the table passes over hides no
+# listed token, since its name holds no opening delimiter.
+_CONTROL_TOKEN_RE = re.compile(
+    r"<\|(?P<pipe>[A-Za-z_]{1,32})\|>"
+    r"|<｜(?P<wide>[^｜<>\[\]\s]{1,32})｜>"
+    r"|<<(?P<double>/?[A-Z]{1,32})>>"
+    r"|<(?P<angle>[a-z_]{1,32})>"
+    r"|\[(?P<bracket>/?[A-Z]{1,32})\]"
+    r"|(?:\A\s*|\n[ \t]*\r?\n)(?P<turn>Human|Assistant):"
+)
+
+
+@dataclass(frozen=True)
+class ControlTokenHit:
+    """One control token a body carries: its family, and its bare name,
+    the token without its delimiters (`im_start`, `/INST`, `Human`), so a
+    refusal names the token without handing it back to the caller."""
+
+    kind: str
+    token: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {"kind": self.kind, "token": self.token}
+
+
+def find_control_tokens(text: str) -> list[ControlTokenHit]:
+    """Every listed control token in `text`, once each, in the order the
+    body first carries them; empty when it carries none.
+
+    The detector `ControlTokenGate` runs over a memory body and
+    `episode_write` over an episode's body and takeaway."""
+    hits: dict[tuple[str, str], ControlTokenHit] = {}
+    for match in _CONTROL_TOKEN_RE.finditer(text):
+        name = match.lastgroup
+        if name is None:
+            continue
+        if name == "turn":
+            kind: str | None = _TURN_MARKER_KIND
+        else:
+            kind = _CONTROL_TOKEN_KIND.get(match.group(0))
+        if kind is None:
+            continue
+        bare = match.group(name)
+        hits.setdefault((kind, bare), ControlTokenHit(kind=kind, token=bare))
+    return list(hits.values())
+
+
+#: The refusal's hint. No flag passes the gate, so the hint names the
+#: remedies and no flag: the bare name for a delimited token, and for a
+#: turn marker, which has no delimiters to drop, a quoted line.
+_CONTROL_TOKEN_HINT = (
+    "Not written: the body carries a chat-template control token, named "
+    "in `markers` by its template family and its bare name. A stored body "
+    "is read back into later sessions' context, where the token can forge "
+    "a turn boundary, so no flag passes this refusal. Write the token's "
+    "bare name without its delimiters (`im_start`, `INST`) or describe the "
+    "format in words. A marker of kind `anthropic` is `Human:` or "
+    "`Assistant:` opening the body or a line after a blank line: quote the "
+    "line (`> Human: ...`) or name the speaker another way. Then write it "
+    "again."
+)
+
+
+class ControlTokenGate(WriteGate):
+    """Refuse a body that carries a model-control token, with no
+    acknowledge flag (see `_CONTROL_TOKENS` for the list and its sources).
+
+    Second in the chain, right after `CredentialGate` and for the same
+    reason: it refuses on the body alone, before any later gate records
+    body-derived data (a transient marker, a claim phrase, a matched id)
+    in the event log. Its own event names the families only. After the
+    credential gate rather than before it, so a body carrying both a
+    secret and a token hears about the secret, the graver of the two,
+    first; an acknowledged secret does not carry a token past this gate.
+    """
+
+    def evaluate(self, deps: GateDeps, gc: GateContext) -> GateResult:
+        hits = find_control_tokens(gc.payload["content"])
+        if not hits:
+            return Continue()
+        return Reject(
+            response={
+                "status": "control_token_warning",
+                "markers": [h.to_dict() for h in hits],
+                "hint": _CONTROL_TOKEN_HINT,
+            },
+            event_kwargs={
+                "status": "control_token_warning",
+                "scopes": gc.payload["scopes"],
+                "forced": False,
+                "control_token_kinds": list(dict.fromkeys(h.kind for h in hits)),
             },
         )
 
@@ -624,16 +868,22 @@ class PreviouslyUndoneGate(WriteGate):
 
 # Order matters: credential before everything so a secret is refused
 # before any other gate records body-derived data in the event log;
-# transient before dedup so the writer isn't routed to memory_update on a
-# transient parent; user-claim next to transient because both classify the
-# BODY, and before dedup for the same reason transient is (a re-categorized
-# re-issue must not be routed to memory_update on a mis-filed parent);
-# scope-mismatch before dedup so the writer doesn't get a
-# duplicate hit on a memory tagged for a different scope. The two capture
-# gates pass every write but a capture's; on a capture they run right
-# after credential, so the bar is what a capture hears about first.
+# control-token second, for the same reason (it too refuses on the body
+# alone, with no flag, and its event names the template families only),
+# and after credential so a body carrying both hears about the secret
+# first; transient before dedup so the writer isn't routed to
+# memory_update on a transient parent; user-claim next to transient
+# because both classify the BODY, and before dedup for the same reason
+# transient is (a re-categorized re-issue must not be routed to
+# memory_update on a mis-filed parent); scope-mismatch before dedup so
+# the writer doesn't get a duplicate hit on a memory tagged for a
+# different scope. The two capture gates pass every write but a
+# capture's; on a capture they run right after credential and
+# control-token, so the bar is what a capture hears about first once its
+# body holds no secret and no control token.
 _WRITE_GATES: tuple[WriteGate, ...] = (
     CredentialGate(),
+    ControlTokenGate(),
     CaptureRulesGate(),
     PreviouslyUndoneGate(),
     TransientGate(),

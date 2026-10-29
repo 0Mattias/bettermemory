@@ -134,6 +134,10 @@ The gates do the policing, so writing freely is safe:
   logged);
 - the credential gate refuses secret-shaped tokens; describe the secret
   instead, or pass acknowledge_credential=True (logged, kind only);
+- the control-token gate refuses a model's chat-template tokens
+  (ChatML's im_start or Llama's INST written with their delimiters, a
+  Human: line after a blank line); write the bare name or quote the
+  line; no flag passes it;
 - the user-claim gate refuses a first-person claim filed as fact;
   re-file it as user-inference;
 - dedup against the active set and the tombstones catches paraphrases;

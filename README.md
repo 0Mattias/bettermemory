@@ -62,11 +62,11 @@ start beside the old files and says why.
   standing memories in force and the memories the conversation so far
   bears on, eight of each at most, and up to three matching memories
   from the project on each prompt.
-- Writes pass gates for transient state, secret-shaped tokens and
-  near-duplicates, then a review: the model sees the stored statements
-  the write resembles and answers four questions before anything is
-  written. Claims about you are stored labelled as inferences. No
-  second model is involved.
+- Writes pass gates for transient state, secret-shaped tokens, a
+  model's chat-template control tokens and near-duplicates, then a
+  review: the model sees the stored statements the write resembles and
+  answers four questions before anything is written. Claims about you
+  are stored labelled as inferences. No second model is involved.
 - Session capture is off by default. With
   `[capture] stop_checkpoint = true` in `config.toml`, the Stop hook
   asks the model in the session to save what each 12,000 tokens of
