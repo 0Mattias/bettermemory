@@ -73,7 +73,9 @@ from . import _install_hints, claude_paths
 
 if TYPE_CHECKING:
     from .config import Config
+    from .log import Head, KeyRing
     from .store_index import IndexReport
+    from .store_keys import KeyState
 
 OK = "ok"
 WARN = "warn"
@@ -830,6 +832,80 @@ def check_restore(ctx: _Context) -> Check:
     return Check("restore", status, summary, remedy, details)
 
 
+def _missing_store_checks(
+    directory: Path, path: Path, details: dict[str, Any]
+) -> list[Check]:
+    """Check a store directory with no store file in it; returns the store and key checks."""
+    from .store import STORE_FILENAME, holds_v8_files
+
+    if path.exists():
+        return [
+            Check(
+                "store",
+                FAIL,
+                f"{path} is not a file",
+                f"move whatever is at {path} aside",
+                details,
+            ),
+            _not_checked("key", "the store does not open", "fix the store first"),
+        ]
+    if holds_v8_files(directory):
+        return [
+            Check(
+                "store",
+                FAIL,
+                f"{directory} holds a bettermemory 8 store and no "
+                f"{STORE_FILENAME}: no daemon starts there",
+                "run `bettermemory migrate v8` to import it",
+                details,
+            ),
+            Check("key", OK, "no store yet; its key is written with it"),
+        ]
+    return [
+        Check(
+            "store",
+            OK,
+            f"no store yet at {path}; the first session creates it",
+            None,
+            details,
+        ),
+        Check("key", OK, "no store yet; its key is written with it"),
+    ]
+
+
+def _key_check(
+    keyring: KeyRing,
+    state: KeyState,
+    status: dict[str, Any],
+    head: Head | None,
+    tail: Any,
+) -> Check:
+    """Check the key the open read and, when it is present, the head against the log's last row; returns the key check."""
+    from .store import KEY_PRESENT
+
+    key_details: dict[str, Any] = {
+        "keys_dir": str(keyring.keys_dir),
+        **state.details(),
+        "head_seq": status["head_seq"],
+    }
+    if state.state == KEY_PRESENT:
+        head_finding = _head_finding(
+            head_seq=None if head is None else head.seq,
+            head_mac=None if head is None else head.mac,
+            tail=None if tail is None else (int(tail[0]), str(tail[1])),
+            head_path=keyring.head_path(),
+        )
+        key_check = _from_findings(
+            "key",
+            [] if head_finding is None else [head_finding],
+            ok_summary=state.summary,
+            details=key_details,
+        )
+    else:
+        key_check = Check("key", FAIL, state.summary, state.remedy, key_details)
+    return key_check
+
+
 def check_store(ctx: _Context) -> list[Check]:
     """The store file (`store`) and its key (`key`), from one read-only
     open. A missing store is the first-run state, not a fault: the first
@@ -840,11 +916,9 @@ def check_store(ctx: _Context) -> list[Check]:
     finding does: ok only when the key is present, a failure naming the
     remedy when it is unreadable, missing, foreign or bound elsewhere."""
     from .store import (
-        KEY_PRESENT,
         SCHEMA_VERSION,
         STORE_FILENAME,
         Store,
-        holds_v8_files,
     )
     from .store_index import index_report
 
@@ -855,39 +929,7 @@ def check_store(ctx: _Context) -> list[Check]:
     path = ctx.directory / STORE_FILENAME
     details: dict[str, Any] = {"path": str(path)}
     if not path.is_file():
-        if path.exists():
-            return [
-                Check(
-                    "store",
-                    FAIL,
-                    f"{path} is not a file",
-                    f"move whatever is at {path} aside",
-                    details,
-                ),
-                _not_checked("key", "the store does not open", "fix the store first"),
-            ]
-        if holds_v8_files(ctx.directory):
-            return [
-                Check(
-                    "store",
-                    FAIL,
-                    f"{ctx.directory} holds a bettermemory 8 store and no "
-                    f"{STORE_FILENAME}: no daemon starts there",
-                    "run `bettermemory migrate v8` to import it",
-                    details,
-                ),
-                Check("key", OK, "no store yet; its key is written with it"),
-            ]
-        return [
-            Check(
-                "store",
-                OK,
-                f"no store yet at {path}; the first session creates it",
-                None,
-                details,
-            ),
-            Check("key", OK, "no store yet; its key is written with it"),
-        ]
+        return _missing_store_checks(ctx.directory, path, details)
     bundle = _bundle_check(path, details)
     if bundle is not None:
         return bundle
@@ -961,26 +1003,7 @@ def check_store(ctx: _Context) -> list[Check]:
         ),
         details=details,
     )
-    key_details: dict[str, Any] = {
-        "keys_dir": str(keyring.keys_dir),
-        **state.details(),
-        "head_seq": status["head_seq"],
-    }
-    if state.state == KEY_PRESENT:
-        head_finding = _head_finding(
-            head_seq=None if head is None else head.seq,
-            head_mac=None if head is None else head.mac,
-            tail=None if tail is None else (int(tail[0]), str(tail[1])),
-            head_path=keyring.head_path(),
-        )
-        key_check = _from_findings(
-            "key",
-            [] if head_finding is None else [head_finding],
-            ok_summary=state.summary,
-            details=key_details,
-        )
-    else:
-        key_check = Check("key", FAIL, state.summary, state.remedy, key_details)
+    key_check = _key_check(keyring, state, status, head, tail)
     return [store_check, key_check]
 
 
