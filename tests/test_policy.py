@@ -438,7 +438,7 @@ def test_an_unknown_policy_name_is_a_located_error(tmp_path: Path) -> None:
         _load(tmp_path, '[policy]\nforbid_acknowledge = ["secrets"]\n')
     message = str(excinfo.value)
     assert str(tmp_path / "config.toml") in message
-    assert "'secrets'" in message
+    assert '"secrets"' in message
     assert "credential, transient, scope_mismatch, user_claim, truncation" in message
 
 
@@ -454,7 +454,7 @@ def test_a_prefixed_name_is_refused_with_the_bare_one(tmp_path: Path) -> None:
         ("[policy]\nforbid_acknowledge = [1]\n", "a string (in a list)"),
         ('[policy]\nforbid_force = "ture"\n', "true or false"),
         ("[policy]\nforbid_force = 1\n", "true or false"),
-        ("policy = true\n", "[policy] = True must be a table"),
+        ("policy = true\n", "[policy] = true must be a table"),
     ],
 )
 def test_malformed_policy_values_fail_the_load(

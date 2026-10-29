@@ -2700,6 +2700,20 @@ follows the candidates' testing.
   admin share does not answer here"), then the passed and skipped
   counts. (`.github/workflows/ci.yml`,
   `tests/test_ci_workflow_windows_paths.py`)
+- **The loader prints a misplaced value as TOML, as `config check`
+  does.** The warning for a `[daemon]`, `[capture]` or `[membership]`
+  section written as a scalar, the error for any other section written
+  as one, and the error for a key given a value of the wrong type (a
+  table where a number belongs, say) printed the value as Python writes
+  it: `daemon = 'x'`, `[policy] = True`, `port = {'a': 1}`. They print it
+  as config.toml writes it: `daemon = "x"`, `[policy] = true`,
+  `port = {a = 1}`. The spelling is `config.toml_spelling`, the renderer
+  `bettermemory config check` used for its own findings, moved into the
+  loader so both share it; it now also writes a table inline and the
+  infinities as `inf`, where it wrote JSON. (`src/bettermemory/config.py`,
+  `src/bettermemory/cli/config_cmd.py`, `tests/test_config.py`,
+  `tests/test_config_cmd.py`, `tests/test_managed_windows.py`,
+  `tests/test_policy.py`)
 
 #### Known limitations
 

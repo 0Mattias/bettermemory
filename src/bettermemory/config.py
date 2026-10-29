@@ -29,6 +29,7 @@ through it when it runs, so a patch here reaches it.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tomllib
@@ -780,17 +781,55 @@ def _coerce_bool(value: object, default: bool) -> bool:
     return default
 
 
+_BARE_KEY_CHARS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
+)
+_INF = float("inf")
+
+
+def toml_spelling(value: object) -> str:
+    """`value` as config.toml writes it: a string in double quotes with
+    JSON's escapes, which are TOML's, ``true`` and ``false``, a number
+    (``inf`` and ``nan`` as TOML spells them), a list in brackets and a
+    table inline (``{port = 1}``). A date or time is its own text. The
+    loader's messages and `bettermemory config check` both print a value
+    through it, so a line reads as it is written in the file."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float) and (value != value or abs(value) == _INF):
+        return "nan" if value != value else ("inf" if value > 0 else "-inf")
+    if isinstance(value, (int, float, str)):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(toml_spelling(item) for item in value) + "]"
+    if isinstance(value, dict):
+        pairs = (
+            f"{_toml_key(key)} = {toml_spelling(item)}" for key, item in value.items()
+        )
+        return "{" + ", ".join(pairs) + "}"
+    return str(value)
+
+
+def _toml_key(key: object) -> str:
+    """A table key bare when TOML allows it bare, quoted otherwise."""
+    text = str(key)
+    if text and set(text) <= _BARE_KEY_CHARS:
+        return text
+    return json.dumps(text, ensure_ascii=False)
+
+
 def _malformed_config_msg(
     label: str, value: object, config_path: ConfigSource | None, expected: str
 ) -> str:
     """Clear, located error for a mistyped config value — names the
     section/key, the offending value, and the file, so a bad TOML entry
-    fails with ``malformed config in <path>: [section] key = '…' must be
+    fails with ``malformed config in <path>: [section] key = "…" must be
     <expected>`` instead of an opaque stdlib ``int()``/``float()``
     traceback escaping ``load_config`` (which crashes ``bettermemory
     serve`` startup with no hint at the culprit key)."""
     where = f" in {config_path}" if config_path is not None else ""
-    return f"malformed config{where}: {label} = {value!r} must be {expected}"
+    shown = toml_spelling(value)
+    return f"malformed config{where}: {label} = {shown} must be {expected}"
 
 
 def _coerce_int(
@@ -1681,12 +1720,12 @@ def _section_table(
         import logging
 
         logging.getLogger("bettermemory.config").warning(
-            "bettermemory: TOML config at %s writes `%s = %r` where a [%s] "
+            "bettermemory: TOML config at %s writes `%s = %s` where a [%s] "
             "section belongs. The line is ignored and the section's defaults "
             "are in force; write its settings under a [%s] header.",
             resolved,
             name,
-            raw,
+            toml_spelling(raw),
             name,
             name,
         )
@@ -1699,8 +1738,7 @@ def _config_from_data(data: dict[str, Any], config_path: ConfigSource) -> Config
     `config_path` locates every error and notice: the user's config.toml,
     or the managed file when `_apply_managed` parses that one. Mutates
     `data` as it reads it: removed keys and sections are dropped, so a
-    caller reading `data` afterwards
-    sees only settings that still exist.
+    caller reading `data` afterwards sees only settings that still exist.
     """
     from .config_sections import (
         _behavior_config,

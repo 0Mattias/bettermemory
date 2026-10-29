@@ -492,12 +492,12 @@ def show_report() -> dict[str, Any]:
 
 
 def _shown(value: object) -> str:
-    """A value as config.toml spells it (near enough): JSON's spelling of
-    strings, booleans, numbers and lists is TOML's. A TOML date or time
-    has no JSON form and is written as its own text."""
+    """A value as config.toml spells it (`config.toml_spelling`, which the
+    loader's own messages print through too); a key with no value is
+    ``(not set)``."""
     if value is None:
         return "(not set)"
-    return json.dumps(value, ensure_ascii=False, default=str)
+    return _config.toml_spelling(value)
 
 
 def render_show(report: Mapping[str, Any]) -> str:

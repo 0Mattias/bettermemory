@@ -739,7 +739,7 @@ def test_a_value_the_loader_refuses_is_an_error_without_the_file_prefix() -> Non
     report = _check("[daemon]\nport = 'x'\n")
     finding = _only(report)
     assert (finding["level"], finding["code"]) == ("error", "invalid_value")
-    assert finding["message"].startswith("[daemon] port = 'x' must be an integer")
+    assert finding["message"].startswith('[daemon] port = "x" must be an integer')
     assert str(_user_path()) not in finding["message"]
     assert report["loads"] is False
     assert report["exit_code"] == 1

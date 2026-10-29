@@ -504,6 +504,77 @@ def test_the_threshold_key_by_its_3_2_name_still_works(
 
 
 # ---------------------------------------------------------------------------
+# A value in a message is printed as config.toml writes it
+# ---------------------------------------------------------------------------
+
+# (value, its TOML spelling): a string, an integer, a boolean and a list.
+_SPELLINGS = [
+    ("x", '"x"'),
+    ('say "hi"', r'"say \"hi\""'),
+    (5, "5"),
+    (True, "true"),
+    (False, "false"),
+    (["a", 1, True], '["a", 1, true]'),
+]
+
+
+@pytest.mark.parametrize(("value", "spelled"), _SPELLINGS)
+def test_a_value_is_spelled_as_config_toml_writes_it(
+    value: object, spelled: str
+) -> None:
+    """`config.toml_spelling` writes TOML, which TOML reads back as the
+    same value, and `bettermemory config check` prints a value through the
+    same function."""
+    from bettermemory import config as _cfg
+    from bettermemory.cli import config_cmd
+
+    assert _cfg.toml_spelling(value) == spelled
+    assert tomllib.loads(f"v = {spelled}\n")["v"] == value
+    assert config_cmd._shown(value) == spelled
+
+
+def test_a_table_and_the_infinities_are_spelled_as_toml() -> None:
+    from bettermemory import config as _cfg
+
+    table = {"port": 1, "a b": "x"}
+    spelled = _cfg.toml_spelling(table)
+    assert spelled == '{port = 1, "a b" = "x"}'
+    assert tomllib.loads(f"v = {spelled}\n")["v"] == table
+    assert _cfg.toml_spelling(float("inf")) == "inf"
+    assert _cfg.toml_spelling(float("-inf")) == "-inf"
+    assert _cfg.toml_spelling(1.5) == "1.5"
+
+
+@pytest.mark.parametrize(("value", "spelled"), _SPELLINGS)
+def test_the_scalar_section_warning_prints_the_line_as_toml(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, value: object, spelled: str
+) -> None:
+    """`daemon = "x"` is warned about as `daemon = "x"`, never as the
+    Python repr `daemon = 'x'` or `daemon = True`."""
+    _reset_deprecated_key_guard()
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(f"daemon = {spelled}\n", encoding="utf-8")
+    with caplog.at_level("WARNING", logger="bettermemory.config"):
+        load_config(config_path)
+    (warning,) = [
+        r.getMessage() for r in caplog.records if "section belongs" in r.getMessage()
+    ]
+    assert f"writes `daemon = {spelled}` where a [daemon] section belongs" in warning
+
+
+def test_a_refused_section_and_a_key_given_a_table_print_toml(tmp_path: Path) -> None:
+    """The located errors print the line as TOML too: a section that
+    refuses a scalar, and a scalar key written as a table."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('security = "on"\n', encoding="utf-8")
+    with pytest.raises(ValueError, match=r'\[security\] = "on" must be a table'):
+        load_config(config_path)
+    config_path.write_text("[daemon]\nport = {number = 1}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"\[daemon\] port = \{number = 1\} must be"):
+        load_config(config_path)
+
+
+# ---------------------------------------------------------------------------
 # Config.resolved_directory: the resolution decision tree
 # ---------------------------------------------------------------------------
 

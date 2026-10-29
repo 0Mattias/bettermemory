@@ -677,7 +677,7 @@ def test_config_check_strips_the_registry_label_from_a_value_error(
     report = config_cmd.check_report()
     [finding] = [f for f in report["findings"] if f["code"] == "invalid_value"]
     assert finding["file"] == "managed"
-    assert finding["message"].startswith("[daemon] port = 'high' must be")
+    assert finding["message"].startswith('[daemon] port = "high" must be')
 
 
 # ---------------------------------------------------------------------------
