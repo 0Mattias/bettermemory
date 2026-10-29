@@ -32,10 +32,18 @@ PACKAGE = "bettermemory"
 SOURCE = Path(bettermemory.__file__).resolve().parent
 
 #: The edges that must not exist, of any kind: a module-level import, an
-#: import inside a function, or one under `TYPE_CHECKING`.
+#: import inside a function, or one under `TYPE_CHECKING`. The modules
+#: split out of `recall` (ENG-96) are held to the same edges as `recall`.
 FORBIDDEN: dict[str, frozenset[str]] = {
     "bettermemory.recall": frozenset({"bettermemory.hook"}),
-    "bettermemory.sessions": frozenset({"bettermemory.recall", "bettermemory.hook"}),
+    "bettermemory.recall_state": frozenset({"bettermemory.hook"}),
+    "bettermemory.sessions": frozenset(
+        {
+            "bettermemory.recall",
+            "bettermemory.recall_state",
+            "bettermemory.hook",
+        }
+    ),
 }
 
 #: The module-level import cycles the package holds, each as the sorted
