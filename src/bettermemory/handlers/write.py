@@ -854,8 +854,15 @@ def _review_fields(
     declared_ids: list[str],
     standing_ids: list[str],
     said: bool,
-) -> tuple[dict[str, Any], list[_review.RelatedEntry]]:
-    """Take the decision and the payload; return the row's review fields and the pending entries."""
+) -> tuple[
+    dict[str, Any],
+    list[_review.RelatedEntry],
+    StandingAnswer | None,
+    _CaptureWrite | None,
+]:
+    """Take the decision and the payload; return the review fields, pending, standing, capture."""
+    standing: StandingAnswer | None = None
+    capture: _CaptureWrite | None = None
     review_fields: dict[str, Any] = {
         "review_id": review_id,
         "review_answers": answers.to_event(),
@@ -864,10 +871,9 @@ def _review_fields(
     if answers.standing is not None and decision.action == _review.ACTION_COMMIT:
         # The fourth answer is stored beside the record, in its own
         # transaction (unit RS-F7 part 1): the record is never written
-        # without the answer its review gave.
-        payload["standing"] = _standing.answer_of(
-            answers.standing, _standing.SOURCE_REVIEW
-        )
+        # without the answer its review gave. `_reviewed_write` puts it on
+        # the payload.
+        standing = _standing.answer_of(answers.standing, _standing.SOURCE_REVIEW)
     if decision.action == _review.ACTION_COMMIT and decision.restated:
         # A commit that also restates (unit D1b): the ids only, kept on the
         # log so these commits can be counted. They get no corroboration.
@@ -876,7 +882,7 @@ def _review_fields(
     if deferred and captured is not None and decision.action == _review.ACTION_COMMIT:
         pending = list(related.only(missing).entries)
         review_fields["relations_pending"] = missing
-        payload["capture"] = replace(
+        capture = replace(
             captured,
             review=_capture.deferred_review(
                 review_id=review_id,
@@ -893,7 +899,7 @@ def _review_fields(
                 said=said,
             ),
         )
-    return review_fields, pending
+    return review_fields, pending, standing, capture
 
 
 def _review_refusal(
@@ -1061,7 +1067,7 @@ def _reviewed_write(
         standing_ids=standing_ids,
         said=words is not None,
     )
-    review_fields, pending = _review_fields(
+    review_fields, pending, standing, capture = _review_fields(
         payload,
         answers,
         related,
@@ -1075,6 +1081,12 @@ def _reviewed_write(
         standing_ids=standing_ids,
         said=words is not None,
     )
+    # The commit reads both from the payload: the review's standing answer,
+    # stored beside the record, and the capture with its deferred review.
+    if standing is not None:
+        payload["standing"] = standing
+    if capture is not None:
+        payload["capture"] = capture
     refusal = _review_refusal(
         deps,
         state,
