@@ -478,8 +478,9 @@ To restore:
    current is retired, not deleted), installs the bundle's origin anchor
    or removes a stale one, rewinds the head checkpoint, binds the key
    ring to the restored file, appends the rewind and the binding before
-   and after to `<store_id>.backup_restore.json`, and runs `log verify`
-   on the result. Exit 0 only when that verifies.
+   and after to `<store_id>.backup_restore.json`, appends the same entry
+   to the restored log as a signed `store_restored` row, and runs `log
+   verify` on the result. Exit 0 only when that verifies.
 
 A restore that is killed, or fails after it swapped the store file in,
 leaves its record, `memory.sqlite.restore-lock`: every writing open then
@@ -560,6 +561,10 @@ What to alert on:
   restored head.
 - **`kind: "rekey"`** rows, which a healthy store writes only when its
   key is replaced.
+- **`kind: "store_restored"`** rows: a `backup restore` put the store
+  back to a bundle. Its `head_after` is the seq it was put back to; rows
+  the SIEM holds past that seq are history the restore replaced, and
+  the batch carrying the row does not link to them.
 
 The export is a trail, not a verdict: it does not see a deleted tail, a
 table edited without a log row, or a foreign segment. `log verify` is the

@@ -506,6 +506,15 @@ def render_restore(report: dict[str, Any]) -> str:
                 + (f"recorded in {record}" if record else "the rewind not recorded")
             )
         lines.extend(_anchor_lines(report, plan, done=done))
+    row = report.get("row")
+    if row is not None:
+        lines.append(f"  store_restored row appended at seq {row['seq']}")
+    elif status == "restored":
+        lines.append(
+            "  no store_restored row: this build opens the restored store for "
+            "reading only (a schema step waits on it), and the restore record "
+            "keeps the entry"
+        )
     log = report["log"]
     if log is not None:
         lines.append(f"  log verify of the restored store: {log['status']}")

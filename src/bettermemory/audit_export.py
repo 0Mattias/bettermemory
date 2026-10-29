@@ -17,8 +17,8 @@ The line schema (``bettermemory.audit/1``), one JSON object per row:
 * ``seq``, ``ts`` (the row's stamp, UTC ISO 8601 with a ``Z``),
   ``session`` (the row's session column, or null) and ``kind``;
 * ``class``: ``mutation`` (a row the fold applies to a table, membership
-  tables included), ``control`` (`store_created`, `rekey`, `migrate_v8`
-  and the capture rows), ``membership`` (the membership observability
+  tables included), ``control`` (`store_created`, `rekey`, `migrate_v8`,
+  `store_restored` and the capture rows), ``membership`` (the membership observability
   rows) or ``telemetry`` (everything else);
 * ``actor``: the actor block the row itself carries (a telemetry row's
   ``actor``), or null;

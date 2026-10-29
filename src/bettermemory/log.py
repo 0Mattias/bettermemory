@@ -172,6 +172,12 @@ CONTROL_KINDS = frozenset({STORE_CREATED, REKEY, MIGRATE_V8}) | CAPTURE_KINDS
 INDEX_REBUILT = "index_rebuilt"
 CONTROL_KINDS = CONTROL_KINDS | {INDEX_REBUILT}
 
+# `store_restored`: `backup restore` put the store back to a bundle's
+# snapshot. The restore appends it to the restored log, under the key it
+# made current, with what its record keeps (`backup.restore_bundle`).
+STORE_RESTORED = "store_restored"
+CONTROL_KINDS = CONTROL_KINDS | {STORE_RESTORED}
+
 # A retired key is filed under the first characters of its fingerprint.
 _RETIRED_PREFIX_CHARS = 16
 
@@ -1389,6 +1395,7 @@ __all__ = [
     "REKEY",
     "STORE_CREATED",
     "STORE_ID_PATTERN",
+    "STORE_RESTORED",
     "TAMPER_PROBLEMS",
     "ChainReport",
     "ChainTrust",

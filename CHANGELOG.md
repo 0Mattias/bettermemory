@@ -461,6 +461,32 @@ follows the candidates' testing.
   output does not show the origin anchor a restore replaces.
   (`src/bettermemory/cli/backup_cmd.py`, `docs/api.md`,
   `docs/operations.md`, `tests/test_restore_text.py`)
+- **A restore writes a signed `store_restored` row to the restored log.**
+  What a restore did was kept only in `<store_id>.backup_restore.json`
+  beside the head, on the host that ran it: `log export` shipped nothing
+  of it, a record's `memory history` jumped back with no word of why, and
+  nothing signed said a restore happened. `backup restore --yes` now
+  appends a `store_restored` control row (a new kind in `log.py`'s
+  `CONTROL_KINDS`) after the bundle's head, carrying its record's entry
+  and `engine_version`, signed under the key it made current, before it
+  runs `log verify`, which checks the row as any other. The head
+  checkpoint moves on to it as after any write (the record's `head_after`
+  stays the bundle's head, where the rewound range ends), and the
+  report's new `row` is its `{seq, mac}`. `log export` ships it with
+  `class: "control"`, and `memory history` shows it in the history of
+  every record older than it, as a fourth role, `store`, action
+  `rewound`, with `bundle_created_at`, `to_seq` and the `from_seq` the
+  replaced log reached when the restore knew it. A restore whose row
+  cannot be appended reports itself failed. A restored store this build
+  opens for reading only (one waiting on a schema step this build runs)
+  writes nothing, so it gets no row: the record keeps the entry, and the
+  text output says `no store_restored row` where it otherwise names the
+  row's seq. (`src/bettermemory/log.py`,
+  `src/bettermemory/cli/backup_cmd.py`,
+  `src/bettermemory/backup.py`, `src/bettermemory/history.py`,
+  `src/bettermemory/audit_export.py`, `docs/api.md`,
+  `docs/operations.md`, `tests/test_restore_row.py`,
+  `tests/test_backup.py`)
 
 #### Fixed
 

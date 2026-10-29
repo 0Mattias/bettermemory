@@ -91,8 +91,10 @@ history it does not hold; the next writing open anchors it again), binds
 the key ring to the restored file (`KeyRing.rebind_store`: its keys, head
 and anchor are now that file's, and a ring left bound to a store file
 elsewhere would open the restored one for reading only), records the
-rewind in ``<store_id>.backup_restore.json`` beside the head, and runs
-`log_verify` on the restored store, which must read ``ok``.
+rewind in ``<store_id>.backup_restore.json`` beside the head, appends a
+``store_restored`` control row carrying the same entry to the restored
+log (`_append_restore_row`), and runs `log_verify` on the restored
+store, which must read ``ok``.
 
 The order is chosen for what a failure leaves. The file swap is the step
 most likely to fail (Windows refuses to rename a file another process has
@@ -127,7 +129,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ._fsutil import (
     atomic_write_bytes,
@@ -144,6 +146,7 @@ from .config import STORE_FILENAME
 from .log import (
     REKEY,
     STORE_ID_PATTERN,
+    STORE_RESTORED,
     Head,
     HistoryOrigin,
     KeyRing,
@@ -155,6 +158,9 @@ from .log import (
     same_mac,
 )
 from .time_utils import isoformat_utc
+
+if TYPE_CHECKING:
+    from .store import Store
 
 #: The manifest's ``format`` and the highest ``format_version`` this build
 #: reads. A change a reader of version 1 would misread bumps the version.
@@ -1256,6 +1262,38 @@ def _path_str(path: Path | None) -> str | None:
     return None if path is None else str(path)
 
 
+def _append_restore_row(
+    store: Store, entry: Mapping[str, Any]
+) -> dict[str, Any] | None:
+    """Append the ``store_restored`` control row to the restored store's
+    log and return it as ``{seq, mac}``: the restore record's `entry` and
+    this build's version, signed under the key the restore made current.
+    None, and nothing written, when this build opens the restored store
+    for reading only (``PRAGMA query_only``: a store waiting on a schema
+    step this build runs, `store_steps.run_steps`, or one whose versions
+    keep this build to reading): such a store writes nothing until it is
+    opened for writing, and the record keeps the entry.
+
+    The record beside the head says what a restore did only on the host
+    that ran it, and only while the keys directory keeps it; the row puts
+    it on the log itself, chained after the bundle's head, so `log
+    export` ships it to a SIEM as a ``control`` row, `memory history`
+    shows it in the history of every record older than it, and `log
+    verify` checks its MAC as any row's. It is written through the
+    store's own transaction, so the head checkpoint moves to it as after
+    any write (the record's ``head_after`` stays the bundle's head, where
+    the rewound range ends). A store that cannot append (its key is not
+    held) raises, and the restore reports itself failed."""
+    from . import __version__
+
+    if store.conn.execute("PRAGMA query_only").fetchone()[0]:
+        return None
+    payload = {**entry, "engine_version": __version__}
+    with store._transaction() as tx:
+        row = store._append(tx, STORE_RESTORED, payload, session=None)
+    return {"seq": row.seq, "mac": row.mac}
+
+
 def _append_record(path: Path, entry: Mapping[str, Any], stamp: str) -> None:
     """Add `entry` to the rewind record at `path`. A record that does not
     parse is moved aside, not overwritten, and a new one started."""
@@ -1514,6 +1552,7 @@ def restore_bundle(
         "origin": None,
         "binding": None,
         "record": None,
+        "row": None,
         "log": None,
         "lock": None,
     }
@@ -1674,38 +1713,36 @@ def restore_bundle(
                 "before": _path_str(live.rebind_store(store_file)),
                 "after": binding_after,
             }
-            _append_record(
-                record,
-                {
-                    "restored_at": head.ts,
-                    "bundle": str(bundle),
-                    "bundle_created_at": verification["created_at"],
-                    "store": str(store_file),
-                    "store_id": store_id,
-                    "replaced_store_id": report["plan"]["current_store_id"],
-                    "head_before": report["head"]["before"],
-                    "head_after": report["head"]["after"],
-                    "log_end_before": log_end,
-                    "origin_before": report["origin"]["before"],
-                    "origin_after": report["origin"]["after"],
-                    "binding_before": report["binding"]["before"],
-                    "binding_after": report["binding"]["after"],
-                    "moved_aside": report["moved_aside"],
-                    "keys_installed": [a["fingerprint"] for a in actions],
-                    "trusted_bundle_key": trusted_key,
-                },
-                stamp,
-            )
+            entry: dict[str, Any] = {
+                "restored_at": head.ts,
+                "bundle": str(bundle),
+                "bundle_created_at": verification["created_at"],
+                "store": str(store_file),
+                "store_id": store_id,
+                "replaced_store_id": report["plan"]["current_store_id"],
+                "head_before": report["head"]["before"],
+                "head_after": report["head"]["after"],
+                "log_end_before": log_end,
+                "origin_before": report["origin"]["before"],
+                "origin_after": report["origin"]["after"],
+                "binding_before": report["binding"]["before"],
+                "binding_after": report["binding"]["after"],
+                "moved_aside": report["moved_aside"],
+                "keys_installed": [a["fingerprint"] for a in actions],
+                "trusted_bundle_key": trusted_key,
+            }
+            _append_record(record, entry, stamp)
             report["record"] = str(record)
             held.mark(stage="verifying the restored store")
             restored = _store.Store.open(
                 store_file, keys_dir=keys_root, allow_rekey=False
             )
             try:
+                report["row"] = _append_restore_row(restored, entry)
                 report["log"] = restored.log_verify()
             finally:
                 restored.close()
-        except (OSError, sqlite3.Error, BackupError, ValueError) as exc:
+        except (OSError, sqlite3.Error, BackupError, ValueError, RuntimeError) as exc:
             report["detail"] = f"{exc.__class__.__name__}: {exc}"
             return report
         if report["log"]["status"] == OK:

@@ -1005,10 +1005,12 @@ def test_restore_on_a_machine_without_the_key_installs_it_from_the_bundle(
         assert stat.S_IMODE(installed.stat().st_mode) == 0o600
     assert _run_cli(["log", "verify"], monkeypatch) == 0
 
-    # The owner's opener finds the store's own key: no rekey row.
+    # The owner's opener finds the store's own key: no rekey row. The
+    # bundle's three rows, then the restore's own.
     with Store.open_or_create(new_store) as opened:
         assert [r.kind for r in opened.log_rows()].count(REKEY) == 0
-        assert len(opened.log_rows()) == 3
+        assert len(opened.log_rows()) == 4
+        assert opened.log_rows()[-1].kind == "store_restored"
 
 
 def test_restore_makes_the_bundles_key_current_and_retires_a_later_one(

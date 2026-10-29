@@ -9,7 +9,7 @@ the telemetry rows of the tool calls behind them (``write``, ``update``,
 the actor of the request. This module finds those rows, says what each
 one did to the record, and checks each row's MAC.
 
-Three roles a row can play:
+Four roles a row can play:
 
 * ``record``: a row that changed the record or what sits beside it (its
   home, its standing answer, this host's verification stamp, the capture
@@ -26,6 +26,12 @@ Three roles a row can play:
   link, ``linked_from`` otherwise, ``unlinked`` when it goes) and a
   conflict filed against it. A link is reported when it appears and
   when it goes, not on every later put of the record that carries it.
+* ``store``: a ``store_restored`` row after the record's first row: a
+  `backup restore` put the whole store back to a bundle's snapshot, so
+  what the record became in the log the restore replaced, past the
+  bundle's head, is not on this log. Its detail names the bundle's
+  creation, the seq the log was put back to and, when the restore knew
+  it, the seq the replaced log reached.
 
 Reads, such as a search that returned the record or a `memory_show` of
 it, are not history and are left out, as is any row whose payload names
@@ -71,7 +77,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from .log import CAPTURE_MEMBER, REKEY, LogRow, compute_mac, same_mac
+from .log import CAPTURE_MEMBER, REKEY, STORE_RESTORED, LogRow, compute_mac, same_mac
 from .store import IMPORTED, LOCAL, UNACCOUNTED, Store
 
 FORMAT = "bettermemory-history"
@@ -81,6 +87,7 @@ FORMAT_VERSION = 1
 RECORD = "record"
 EVENT = "event"
 REFERENCE = "reference"
+STORE = "store"
 
 # Where a row's actor came from: the request that made it (a telemetry
 # row), or the record's own author (a put row's record).
@@ -383,6 +390,57 @@ def _with_linking_versions(
     return [parsed[seq] for seq in sorted(parsed)], sources
 
 
+def _with_restores(
+    store: Store, found: list[tuple[LogRow, dict[str, Any] | None]]
+) -> list[tuple[LogRow, dict[str, Any] | None]]:
+    """`found` with every ``store_restored`` row after its first row merged
+    in, in log order (the ``log_by_kind`` index finds them). A restore
+    before the record's first row put back a store the record was not
+    yet in, and is not its history."""
+    if not found:
+        return found
+    rows = {row.seq: (row, payload) for row, payload in found}
+    for raw in store.conn.execute(
+        "SELECT seq, ts, session, kind, payload, prev_mac, mac FROM log "
+        "WHERE kind = ? AND seq > ? ORDER BY seq",
+        (STORE_RESTORED, found[0][0].seq),
+    ):
+        row = LogRow(
+            int(raw[0]),
+            str(raw[1]),
+            None if raw[2] is None else str(raw[2]),
+            str(raw[3]),
+            str(raw[4]),
+            str(raw[5]),
+            str(raw[6]),
+        )
+        rows.setdefault(row.seq, (row, _payload(row)))
+    return [rows[seq] for seq in sorted(rows)]
+
+
+def _restore_detail(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """A ``store_restored`` row's detail: when the bundle was made, the seq
+    the restore put the log back to, and the seq the replaced log reached
+    (the later of the head it replaced and the replaced store's last row,
+    as `audit_export.rewinds_across` reads them), when it knew one."""
+    after = _mapping(payload.get("head_after")) or {}
+    ends = [
+        end.get("seq")
+        for end in (
+            _mapping(payload.get("head_before")),
+            _mapping(payload.get("log_end_before")),
+        )
+        if end is not None
+    ]
+    known = [seq for seq in ends if type(seq) is int]
+    return _set(
+        {},
+        bundle_created_at=payload.get("bundle_created_at"),
+        to_seq=after.get("seq"),
+        from_seq=max(known) if known else None,
+    )
+
+
 def _payload(row: LogRow) -> dict[str, Any] | None:
     try:
         payload = json.loads(row.payload)
@@ -506,6 +564,7 @@ def _read_history(store: Store, record_id: str) -> RecordHistory:
     found, linking = _with_linking_versions(
         store, record_id, _rows_naming(store, record_id)
     )
+    found = _with_restores(store, found)
 
     def adjacent(
         index: int, step: int, subject: str = record_id
@@ -540,6 +599,17 @@ def _read_history(store: Store, record_id: str) -> RecordHistory:
             "session": row.session,
             "kind": row.kind,
         }
+        if row.kind == STORE_RESTORED:
+            rows.append(
+                HistoryRow(
+                    **base,
+                    role=STORE,
+                    action="rewound",
+                    verified=verifier.verified(row),
+                    detail=_restore_detail(payload),
+                )
+            )
+            continue
         subject = _subject(row.kind, payload)
         if subject == record_id:
             action = row.kind
@@ -872,6 +942,7 @@ __all__ = [
     "FORMAT_VERSION",
     "RECORD",
     "REFERENCE",
+    "STORE",
     "HistoryRow",
     "RecordHistory",
     "printable",
