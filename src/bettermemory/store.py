@@ -83,6 +83,8 @@ from it. A method a module beside this one holds is a function of
   answers and tombstones, and the corroboration check.
 - `store_journal`: the episode journal's methods, its TTL prune and the
   health report's gauge.
+- `store_tables`: verifications, conflicts, imports and quarantine: a put,
+  a list and a delete each.
 """
 
 from __future__ import annotations
@@ -161,13 +163,10 @@ from .store_schema import (
     SCHEMA_VERSION,
     SYNCED,
     UNACCOUNTED,
-    _CONFLICT_COLUMNS,
-    _IMPORT_COLUMNS,
     _MEMBERSHIP_BY_TABLE,
     _MEMBERSHIP_SPECS as _MEMBERSHIP_SPECS,
     _NOT_TELEMETRY,
     _PROVENANCE_BATCH,
-    _QUARANTINE_COLUMNS,
     _STORE_ID_PATTERN,
     ConcurrentUpdateError,
     EpisodeVolume,
@@ -208,7 +207,6 @@ from .store_rows import (
     _scopes_text as _scopes_text,
     _sort_rows,
     _table_rows as _table_rows,
-    _verification_row,
     body_sha256 as body_sha256,
     event_import_payload,
 )
@@ -225,6 +223,7 @@ from .store_records import (
     CORROBORATION_CHECK_SQL as CORROBORATION_CHECK_SQL,
 )
 from . import store_journal as _journal
+from . import store_tables as _tables
 
 log = logging.getLogger("bettermemory.store")
 
@@ -1630,167 +1629,19 @@ class Store:
     prune_episode_sessions = _journal.prune_episode_sessions
     episode_volume = _journal.episode_volume
 
-    # -- verifications ------------------------------------------------------
-
-    def put_verification(
-        self,
-        memory_id: str,
-        *,
-        verified_at: datetime,
-        machine_id: str | None = None,
-        verified_head: str | None = None,
-        verified_paths: Sequence[str] = (),
-        verified_commits: Sequence[str] = (),
-        verified_versions: Sequence[str] = (),
-        verified_absent_paths: Sequence[str] = (),
-        session: str | None = None,
-    ) -> None:
-        """This host's stamp on a record (``machine_id`` None until the
-        per-machine identity of phase 3 fills it). One row per memory and
-        machine; a later stamp replaces the earlier."""
-        payload = {
-            "memory_id": memory_id,
-            "machine_id": machine_id,
-            "verified_at": _iso(verified_at),
-            "verified_head": verified_head,
-            "verified_paths": list(verified_paths),
-            "verified_commits": list(verified_commits),
-            "verified_versions": list(verified_versions),
-            "verified_absent_paths": list(verified_absent_paths),
-        }
-        with self._transaction() as tx:
-            self._mutate(tx, "verification_put", payload, session=session)
-
-    def verifications_for(
-        self, memory_ids: Sequence[str]
-    ) -> dict[str, list[dict[str, Any]]]:
-        out: dict[str, list[dict[str, Any]]] = {}
-        ids = list(dict.fromkeys(memory_ids))
-        for start in range(0, len(ids), _PROVENANCE_BATCH):
-            batch = ids[start : start + _PROVENANCE_BATCH]
-            placeholders = ",".join("?" * len(batch))
-            for row in self._conn.execute(
-                "SELECT * FROM verifications "
-                f"WHERE memory_id IN ({placeholders}) ORDER BY memory_id, machine_id",
-                batch,
-            ):
-                out.setdefault(str(row["memory_id"]), []).append(_verification_row(row))
-        return out
-
-    def delete_verification(
-        self,
-        memory_id: str,
-        *,
-        machine_id: str | None = None,
-        session: str | None = None,
-    ) -> None:
-        with self._transaction() as tx:
-            found = tx.execute(
-                "SELECT 1 FROM verifications WHERE memory_id = ? "
-                "AND COALESCE(machine_id, '') = COALESCE(?, '')",
-                (memory_id, machine_id),
-            ).fetchone()
-            if found is None:
-                raise NotFoundError((memory_id, machine_id))
-            self._mutate(
-                tx,
-                "verification_delete",
-                {"memory_id": memory_id, "machine_id": machine_id},
-                session=session,
-            )
-
-    # -- conflicts, imports, quarantine ------------------------------------
-
-    def put_conflict(
-        self, record: Mapping[str, Any], *, session: str | None = None
-    ) -> None:
-        conflict = {c: record.get(c) for c in _CONFLICT_COLUMNS}
-        for required in ("id", "a_id", "b_id"):
-            if not conflict[required]:
-                raise ValueError(f"a conflict needs {required}")
-        with self._transaction() as tx:
-            self._mutate(tx, "conflict_put", {"conflict": conflict}, session=session)
-
-    def list_conflicts(self) -> list[dict[str, Any]]:
-        return [
-            {c: row[c] for c in _CONFLICT_COLUMNS}
-            for row in self._conn.execute(
-                f"SELECT {', '.join(_CONFLICT_COLUMNS)} FROM conflicts ORDER BY created, id"
-            )
-        ]
-
-    def delete_conflict(self, conflict_id: str, *, session: str | None = None) -> None:
-        with self._transaction() as tx:
-            self._require_row(tx, "conflicts", "id", conflict_id)
-            self._mutate(tx, "conflict_delete", {"id": conflict_id}, session=session)
-
-    def put_import(
-        self,
-        source: str,
-        *,
-        content_hash: str,
-        imported_at: str,
-        memory_id: str | None = None,
-        session: str | None = None,
-    ) -> None:
-        payload = {
-            "source": source,
-            "content_hash": content_hash,
-            "imported_at": imported_at,
-            "memory_id": memory_id,
-        }
-        with self._transaction() as tx:
-            self._mutate(tx, "import_put", payload, session=session)
-
-    def list_imports(self) -> list[dict[str, Any]]:
-        return [
-            {c: row[c] for c in _IMPORT_COLUMNS}
-            for row in self._conn.execute(
-                f"SELECT {', '.join(_IMPORT_COLUMNS)} FROM imports ORDER BY source"
-            )
-        ]
-
-    def delete_import(self, source: str, *, session: str | None = None) -> None:
-        with self._transaction() as tx:
-            self._require_row(tx, "imports", "source", source)
-            self._mutate(tx, "import_delete", {"source": source}, session=session)
-
-    def put_quarantine(
-        self,
-        name: str,
-        *,
-        reason: str,
-        at: str,
-        detail: str | None = None,
-        remote: str | None = None,
-        size: int | None = None,
-        sha256: str | None = None,
-        session: str | None = None,
-    ) -> None:
-        payload = {
-            "name": name,
-            "reason": reason,
-            "detail": detail,
-            "remote": remote,
-            "at": at,
-            "size": size,
-            "sha256": sha256,
-        }
-        with self._transaction() as tx:
-            self._mutate(tx, "quarantine_put", payload, session=session)
-
-    def list_quarantine(self) -> list[dict[str, Any]]:
-        return [
-            {c: row[c] for c in _QUARANTINE_COLUMNS}
-            for row in self._conn.execute(
-                f"SELECT {', '.join(_QUARANTINE_COLUMNS)} FROM quarantine ORDER BY name"
-            )
-        ]
-
-    def delete_quarantine(self, name: str, *, session: str | None = None) -> None:
-        with self._transaction() as tx:
-            self._require_row(tx, "quarantine", "name", name)
-            self._mutate(tx, "quarantine_delete", {"name": name}, session=session)
+    # Verifications, conflicts, imports and quarantine (store_tables.py).
+    put_verification = _tables.put_verification
+    verifications_for = _tables.verifications_for
+    delete_verification = _tables.delete_verification
+    put_conflict = _tables.put_conflict
+    list_conflicts = _tables.list_conflicts
+    delete_conflict = _tables.delete_conflict
+    put_import = _tables.put_import
+    list_imports = _tables.list_imports
+    delete_import = _tables.delete_import
+    put_quarantine = _tables.put_quarantine
+    list_quarantine = _tables.list_quarantine
+    delete_quarantine = _tables.delete_quarantine
 
     # -- membership (design 8.5) --------------------------------------------
     #
