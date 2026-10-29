@@ -1,4 +1,4 @@
-"""memory_scope_disable / memory_scope_enable — symmetric pair.
+"""`memory_admin(action="disable_scope" | "enable_scope")`: a symmetric pair.
 
 The two handlers are tiny and inverse, so they share a module rather
 than each getting their own file. ``memory_scope_disable`` excludes a

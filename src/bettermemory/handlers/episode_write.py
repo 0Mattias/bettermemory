@@ -1,17 +1,17 @@
-"""episode_write MCP tool — handler implementation + DESC.
+"""`episode(action="write")`: a journal-shaped write to the episode tier.
 
 Episodes are the sibling-to-memory primitive for journal-shaped writes
 the durability gate (`durability.TRANSIENT_PHRASE_MARKERS`) explicitly
 rejects on `memory_write`: loop-iteration state, "what we tried",
 run-local takeaways that need to survive one context reset but aren't
-durable facts. Stored at `<root>/episodes/<session_id>/<ulid>.md`,
-TTL-pruned (default 30 days) on each write so the directory stays
-bounded without a separate cleanup pass.
+durable facts. Stored as rows of the store's `episodes` table; each
+write prunes the sessions past the TTL (default 30 days), so the
+table stays bounded without a separate cleanup pass.
 
-Episode content is excluded from `memory_search`, `memory_health`,
-`memory_list` — the write here lands in a sibling subtree the memory
-iterators never see. `memory_health` reports the subtree's aggregate
-volume (`episode_volume`) and nothing else about it.
+Episode content is excluded from `memory_search` and the health report
+— the write here lands in a table of its own that the memory reads
+never see. The health report gives the table's aggregate volume
+(`episode_volume`) and nothing else about it.
 
 The durability gate does not apply here; the credential gate does. An
 episode body and takeaway land in the store and in the signed log's
@@ -160,11 +160,11 @@ async def episode_write(
     swarm_id: str | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Handler body for the `episode_write` MCP tool.
+    """Handler body for `episode(action="write")`.
 
     Captures `session_id` from the recorder (the process-wide id every
     event in the log is tagged with), captures origin via the same
-    shim the other handlers use, prunes old session dirs as a cheap
+    shim the other handlers use, prunes old sessions as a cheap
     side-effect of the write path, and returns the committed episode
     summary.
     """

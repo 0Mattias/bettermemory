@@ -1,4 +1,4 @@
-"""memory_rename_scope MCP tool — bulk-rename a scope tag."""
+"""`memory_admin(action="rename_scope")`: bulk-rename a scope tag."""
 
 from __future__ import annotations
 

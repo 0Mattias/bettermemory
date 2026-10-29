@@ -1,9 +1,9 @@
-"""memory_conflicts MCP tool — handler implementation + DESC.
+"""`memory_admin(action="conflicts")`: list the conflict queue and rule on a pair.
 
 The corpus-inference arbitration surface. The server detects
 memory-vs-memory disagreement candidates mechanically (high dedup-scan
 similarity + a polarity flip or numeric divergence — see
-`conflicts.py`); this tool is where the model LISTS them with both
+`conflicts.py`); this action is where the model LISTS them with both
 bodies inline, and rules on each pair:
 
 - verdict="contradiction": the pair genuinely disagrees. A
@@ -35,7 +35,7 @@ the contradiction branch does.
 Scans run here (`scan=True`), the one caller of
 `conflicts.scan_conflicts`. 8.x also scanned on every applying
 consolidate pass, so its queue filled itself during curation; 9.0
-removed that pass, and a scan is now a call to this tool.
+removed that pass, and a scan is now a call to this action.
 """
 
 from __future__ import annotations

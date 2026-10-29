@@ -1,4 +1,4 @@
-"""episode_handoff MCP tool — handler implementation + DESC.
+"""`episode(action="handoff")`: the prior session's takeaways in this checkout.
 
 The read counterpart to `episode_write`. Surfaces the most-recent N
 takeaways from the prior session in the same checkout, designed as
@@ -6,7 +6,7 @@ the FIRST MCP call at a /loop iteration entry. Closes the "no
 forced-read at iteration entry" gap the audit identified: opt-in
 `memory_search` works for stateless iterations, but iterations that
 depend on prior-iteration state need a primitive that says "what did
-the last session conclude here?" — that's this tool.
+the last session conclude here?" — that's this action.
 
 When `prior_session_id` is omitted, the handler resolves it from the
 store's episodes of other sessions through `Membership.handoff` (design
@@ -52,29 +52,10 @@ Returns `None`-rich shape so the caller can distinguish:
   clean read-only tick — the on-disk shape can't prove which). The
   `note` also distinguishes this shape from the "no prior session at
   all" case. E2 fix + rewind (episode-handoff-chain).
-- "immediately-prior session's takeaway was PROMOTED out" — a third
-  cause of both empty shapes above: `episode_promote` DELETES the
-  source episode when the durable write commits (immediately, or via
-  `memory_write_confirm` on the deferred pending path), so a healthy
-  handoff → episode_write → episode_promote session ends floor-only on
-  disk, and a write → promote session that never called handoff ends
-  zero-episode. Byte-identical on disk to the crash / clean-tick
-  shapes, but the EVENT LOG distinguishes it: the session's
-  `episode_write` event carries the episode id, and a matching
-  COMMITTED `episode_promote` (or a `write_confirm` event carrying an
-  `episode_id`, stamped by the deferred confirm path, any session's)
-  proves the deletion path. A bare pending promote is not proof — it
-  may have been cancelled (a `write_cancel` now stamps the kept episode's
-  id, the negative-proof counterpart) or expired, leaving the episode for
-  a later prune to remove. When the proving signal is present the note
-  says the takeaway was promoted into a durable memory (find it via
-  memory_search) instead of hedging crash-or-empty. When a bare pending
-  trace exists with NEITHER a commit proof NOR a cancel proof — an old
-  log written before those id stamps existed, or a still-open/expired
-  pending — the outcome is genuinely unprovable from the log, and the
-  note HEDGES ("a promotion was staged, its outcome can't be confirmed
-  here") rather than asserting a promotion OR falsely claiming nothing
-  was journaled.
+- 8.x had a third cause of both empty shapes: `episode_promote`
+  deleted the source episode when its durable write committed, and
+  the note said the takeaway was promoted when the log proved it.
+  9.x has no promote, and the handoff reads no promote rows.
 - "prior sessions exist but every takeaway is scope-hidden" — the
   most-recent session of this checkout has REAL takeaways that are
   all hidden by this session's `memory_scope_disable` set, and no
@@ -101,9 +82,9 @@ False), and never for an unaccounted episode whatever the caller
 passed: this is the reflexive first call of every loop iteration, so a
 file dropped into a legitimate session's directory must not land whole
 in context at entry. The takeaway and the scopes stay, with the label
-beside them; `episode_search(ids=[...])` is the explicit read that
-serves a body beside its label. The evidence is read for the emitted
-rows only (`Store.episode_provenance`).
+beside them. (8.x served a body beside its label through an explicit
+read, `episode_search(ids=[...])`, which 9.x does not have.) The
+evidence is read for the emitted rows only (`Store.episode_provenance`).
 
 At handler entry the implementation writes a session-tag FLOOR
 episode for the current session BEFORE doing anything else, homed to
@@ -323,16 +304,15 @@ def _emit_episodes(
     if resolved_session_id is not None:
         # An explicit `prior_session_id` flows in verbatim (the
         # auto-resolution branch in `_auto_pick` only ever assigns a
-        # session_id that already round-tripped through `list_by_session`).
-        # A caller-supplied id — e.g. a child agent passed a mistyped or
-        # path-shaped parent id — can fail `_session_dir`'s
-        # `[A-Za-z0-9_-]` validator with a ValueError. On the /loop
-        # iteration-entry hot path that should degrade to the graceful
-        # `episodes: []` shape, not surface a raw ValueError, matching
-        # how the auto-resolution walk (`_auto_pick`) and `episode_search`
-        # handle an invalid session_id. The validator fails closed, so
-        # this is not a traversal — just a loud-vs-quiet failure-mode
-        # choice, and quiet is what every other episode read does.
+        # session id read from the store's episode rows). 8.x read a
+        # session's directory, and a caller-supplied id — e.g. a child
+        # agent passed a mistyped or path-shaped parent id — failed
+        # `_session_dir`'s `[A-Za-z0-9_-]` validator with a ValueError;
+        # the store reads the rows by a bound parameter, so such an id
+        # finds none. On the /loop iteration-entry hot path a ValueError
+        # the read raises (a row that does not parse as an `Episode`)
+        # still degrades to the graceful `episodes: []` shape rather
+        # than surfacing raw: quiet is what every other episode read does.
         try:
             all_eps = deps.store.episodes_by_session(resolved_session_id)
         except ValueError:
@@ -375,8 +355,8 @@ def _emit_episodes(
             label = labels.get(ep.id, UNACCOUNTED)
             # `body` is present only on request and never for an
             # unaccounted episode: the takeaway and the scopes travel
-            # with the label beside them, the body stays on disk for the
-            # explicit read (`episode_search(ids=[...])`). Omitted, not
+            # with the label beside them, and the body stays in the store
+            # (8.x left it for `episode_search(ids=[...])`). Omitted, not
             # emptied, so a caller branches on `"body" in row`.
             deliver_body = include_bodies and label != UNACCOUNTED
             episodes.append(
@@ -467,7 +447,7 @@ async def episode_handoff(
     include_bodies: bool = False,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Handler body for the `episode_handoff` MCP tool.
+    """Handler body for `episode(action="handoff")`.
 
     Auto-resolves the prior session by walking the event log when
     `prior_session_id` is None. Caps `max_episodes` at 50 to keep the
@@ -533,7 +513,7 @@ async def episode_handoff(
     _write_entry_floor(deps, caller)
 
     # Session-disabled scopes hide episodes uniformly across the read
-    # surface, the same contract `memory_search` / `memory_list` honor. For
+    # surface, the same contract `memory_search` honors. For
     # handoff the filter cascades into the session selection too: a
     # session whose episodes are ALL scope-suppressed behaves as if it
     # wrote nothing, so auto-resolution skips it and adopts the

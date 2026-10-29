@@ -1,4 +1,4 @@
-"""memory_list_tombstones MCP tool — list removed memories for curation."""
+"""`memory_admin(action="tombstones")`: list removed memories for curation."""
 
 from __future__ import annotations
 

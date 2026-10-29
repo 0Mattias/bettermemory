@@ -1,4 +1,4 @@
-"""memory_restore MCP tool — bring a tombstoned memory back to active."""
+"""`memory_admin(action="restore")`: bring a tombstoned memory back to active."""
 
 from __future__ import annotations
 
