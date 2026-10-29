@@ -2045,9 +2045,9 @@ def _git_variable_names(text: bytes, tmp_path: Path) -> set[bytes] | None:
 def test_the_config_reader_names_the_variables_git_reads(
     text: bytes, tmp_path: Path
 ) -> None:
-    """`origin._config_variable_names` reads a config file as git's parser
-    does (config.c): sections and their quoted or dotted subsections, keys
-    with or without a value, comments, quoted and continued values, CRLF
+    """`origin_gitfiles._config_variable_names` reads a config file as git's
+    parser does (config.c): sections and their quoted or dotted subsections,
+    keys with or without a value, comments, quoted and continued values, CRLF
     and a byte order mark, and it refuses the files git refuses."""
     assert origin._config_variable_names(text) == _git_variable_names(text, tmp_path)
 

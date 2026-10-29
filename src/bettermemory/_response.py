@@ -109,10 +109,10 @@ SIMILAR_HITS_SHOWN = 5
 # memory's anchors (derived from its body and verified_paths) and its
 # declared claims as stored, the verify instant, the stamp's recorded head,
 # for a hit with a governed claim the attribute files its patch stream
-# reads (`origin.attribute_files_signature` and
-# `origin.gitattributes_signature`; None for every other hit, which reads
-# none), and the files beside the history its git reads
-# (`origin.walk_files_signature`: the repository's config and, under
+# reads (`origin_gitfiles.attribute_files_signature` and
+# `origin_gitfiles.gitattributes_signature`; None for every other hit, which
+# reads none), and the files beside the history its git reads
+# (`origin_gitfiles.walk_files_signature`: the repository's config and, under
 # extensions.worktreeConfig, its config.worktree, whose log.follow reaches
 # a single-pathspec log and log.showRoot the walk, the
 # working tree's .gitmodules, whose ignore settings reach the walk, and the
@@ -194,7 +194,7 @@ def _files_held(
     gave, `chains` what `gitattributes_signature` gave for each set of
     governed files, `walk_files` what `walk_files_signature` gave, and
     `directories` the stamps those three recorded of the directories that
-    hold the files (`origin.directories_held`), which move when a file
+    hold the files (`origin_gitfiles.directories_held`), which move when a file
     there was created and removed in between, absent both times. A part
     that keyed nothing (never read, or None) is not read again."""
     if repository is not _UNREAD and repository is not None:
@@ -252,8 +252,8 @@ class _DriftPass:
     files its patch stream reads (the ``.gitattributes`` on each
     governed file's path, ``info/attributes``, the global attributes
     file and the repository's ``config``); and for every hit, the files
-    beside the history its git reads (`origin.walk_files_signature`: the
-    repository's ``config`` and, under ``extensions.worktreeConfig``,
+    beside the history its git reads (`origin_gitfiles.walk_files_signature`:
+    the repository's ``config`` and, under ``extensions.worktreeConfig``,
     its ``config.worktree``, where ``log.follow`` reaches a
     single-pathspec log and ``log.showRoot`` the walk, the working
     tree's ``.gitmodules``, where a submodule's ``ignore`` reaches the
@@ -263,7 +263,7 @@ class _DriftPass:
     mode, or its absence, so a write, a replacement, a creation, a
     removal or a chmod changes the key; the index's entry is keyed on
     its mode and object, read from the index in-process
-    (`origin._index_gitmodules`, once per state of the index). A
+    (`origin_gitfiles._index_gitmodules`, once per state of the index). A
     governed path that is a directory or a pattern, a ``config`` that
     names an attributes file or tree, sets ``log.follow`` (the patch
     stream would read the attributes of a rename source's path; the
@@ -338,7 +338,7 @@ class _DriftPass:
     (the root, a keyed ``.gitattributes`` chain's directories, the
     global attributes file's nearest existing ancestor), the search
     that held it keeps nothing, and every such search pays its cold
-    cost (`origin._hold_directory`).
+    cost (`origin_gitfiles._hold_directory`).
     """
 
     def __init__(self, cwd: Path, caller_repo: str, admission: DriftScope) -> None:
@@ -1130,8 +1130,8 @@ class ResponseBuilder:
         CPU), and a handful of stats of the attribute files for a hit with a
         governed claim (its memo key). Once per search, about a dozen stats
         more for the files beside the history
-        (`origin.walk_files_signature`) and the directories that hold the
-        keyed files; and where a hit resolves, `githead.signature` before
+        (`origin_gitfiles.walk_files_signature`) and the directories that hold
+        the keyed files; and where a hit resolves, `githead.signature` before
         the first resolution, and the signature, the keyed files and the
         directories again at the end. Plus, for every hit that reaches the
         narrowing (count > 0 AND at least one claim anchor or declared
