@@ -83,7 +83,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections import OrderedDict, deque
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -92,12 +92,7 @@ from typing import Any
 from . import identity
 from . import origin as _origin
 from . import standing as _standing
-from .audit import (
-    REAUDIT_DEDUP_WINDOW_SECONDS,
-    MissHit,
-    prompt_recall_fields,
-    recall_held_fields,
-)
+from .audit import MissReport
 from .config import Config, load_config
 from .events import (
     HARNESS_SESSION_FIELD,
@@ -140,6 +135,15 @@ from .recall_brief import (
     orphan_notice as orphan_notice,
     render_brief,
 )
+from .recall_prompt import (
+    _Chosen,
+    _prompt_probe,
+    _prompt_window,
+    _PromptTurn,
+    _record_delivery,
+    _record_hold,
+    _settle_before_probe,
+)
 from .recall_settle import (
     _probe_message as _probe_message,
     previous_audit_at,
@@ -166,11 +170,7 @@ from .recall_state import (
     is_settlement,
     rebuild_session as rebuild_session,
 )
-from .sessions import (
-    _disabled_scopes_from_events,
-    bridged_session,
-    joined_sessions,
-)
+from .sessions import joined_sessions
 from .store import LOCAL, Store, TrustRow
 from .time_utils import isoformat_utc, parse_event_ts
 from .transcript import owner_words
@@ -180,6 +180,7 @@ from .location import Exchange
 from .membership import (
     POOL_PREFILTER,
     PROMPT_RECALL,
+    Membership,
     SEARCH_UNSCOPED,
     SESSION_BRIEF,
     Resolution,
@@ -1376,7 +1377,106 @@ def prompt_recall(
     ``"project"`` rc3's project test, under ``"everywhere"`` rc3's
     auto-scope), less any pointer the render or the cooldown dropped from
     this delivery."""
-    empty = HookResult.empty("prompt_recall")
+    resolved = _prompt_turn(
+        HookResult.empty("prompt_recall"),
+        prompt=prompt,
+        session_id=session_id,
+        harness=harness,
+        prompt_id=prompt_id,
+        transcript_path=transcript_path,
+        cwd=cwd,
+        origin=origin,
+        config=config,
+        store=store,
+        now=now,
+        posted=posted,
+        resolution=resolution,
+    )
+    if isinstance(resolved, HookResult):
+        return resolved
+    turn, empty = resolved
+    state = state if state is not None else RecallState()
+    confirm_compaction(
+        store=turn.store,
+        state=state,
+        key=turn.key,
+        transcript_path=transcript_path,
+        cfg=turn.cfg,
+        triggered_from="prompt_hook",
+        now=turn.now,
+        origin=turn.caller,
+    )
+    view = state.segment(turn.store, turn.key, now=turn.now)
+    own_since, recent, server_session, excluded_scopes = _prompt_window(turn, view)
+    _settle_before_probe(turn, recent, server_session, excluded_scopes)
+    report = _prompt_probe(turn, recent, server_session, excluded_scopes)
+
+    def recorded_hold(cause: str, entries: Sequence[Mapping[str, str]]) -> HookResult:
+        """Take why nothing was delivered; record it (`recall_held`), return empty."""
+        _record_hold(turn, report, view.segment, cause, entries)
+        return empty
+
+    if report.verdict == "no_signal":
+        return recorded_hold("no_signal", [])
+    if not report.top_hits:
+        return recorded_hold("no_hits", [])
+    # The hits through the PROMPT_RECALL surface
+    # (`Membership.admit_recall`, which writes `recall_suppressed` when it
+    # withholds every one of them, design 4 failure 8).
+    model = turn.admission.model
+    if model is None or turn.resolution is None:
+        return empty
+    chosen, suppressed, rc3_candidates = _choose_hits(
+        turn, report, view, model, turn.resolution, own_since=own_since, recent=recent
+    )
+    if not chosen:
+        return recorded_hold("every_hit_held", suppressed)
+    return _deliver_recall(
+        turn, report, state, chosen, suppressed, rc3_candidates, recorded_hold
+    )
+
+
+def _caller_resolution(
+    resolution: Resolution | None,
+    *,
+    store: Store,
+    cfg: Config,
+    cwd: Path | None,
+    origin: Origin | None,
+    posted: Mapping[str, Any] | None,
+    session_id: str,
+) -> Resolution | Exchange | None:
+    """Take the caller's resolution, if it holds one; return it or the hook's own."""
+    caller_resolution: Resolution | Exchange | None = resolution
+    if caller_resolution is None:
+        caller_resolution = _resolve_caller(
+            store=store,
+            cfg=cfg,
+            cwd=cwd,
+            origin=origin,
+            posted=posted,
+            session_id=session_id,
+        )
+    return caller_resolution
+
+
+def _prompt_turn(
+    empty: HookResult,
+    *,
+    prompt: str,
+    session_id: str,
+    harness: str | None,
+    prompt_id: str | None,
+    transcript_path: str | None,
+    cwd: Path | None,
+    origin: Origin | None,
+    config: Config | None,
+    store: Store | None,
+    now: datetime | None,
+    posted: Mapping[str, Any] | None,
+    resolution: Resolution | None,
+) -> tuple[_PromptTurn, HookResult] | HookResult:
+    """Take `prompt_recall`'s arguments; return (turn, empty) or an early answer."""
     cfg = config or load_config(None)
     mode = cfg.behavior.prompt_recall
     if mode not in ("project", "everywhere"):
@@ -1393,16 +1493,15 @@ def prompt_recall(
         # nothing is probed, recorded or claimed, and no id is held for the
         # rest of the segment on its account (RS-F1, RS-F5).
         return empty
-    caller_resolution: Resolution | Exchange | None = resolution
-    if caller_resolution is None:
-        caller_resolution = _resolve_caller(
-            store=store,
-            cfg=cfg,
-            cwd=cwd,
-            origin=origin,
-            posted=posted,
-            session_id=str(session_id),
-        )
+    caller_resolution = _caller_resolution(
+        resolution,
+        store=store,
+        cfg=cfg,
+        cwd=cwd,
+        origin=origin,
+        posted=posted,
+        session_id=str(session_id),
+    )
     if isinstance(caller_resolution, Exchange):
         return HookResult(
             stdout="",
@@ -1442,139 +1541,65 @@ def prompt_recall(
         # PROMPT_RECALL admits nothing for a caller outside any project
         # (design 3.5): nothing to probe for.
         return empty
-
-    state = state if state is not None else RecallState()
-    confirm_compaction(
+    turn = _PromptTurn(
         store=store,
-        state=state,
+        cfg=cfg,
+        mode=mode,
+        query=query,
+        resolution=caller_resolution,
+        surface=surface,
+        admission=admission,
+        remint=remint,
+        now=now,
         key=key,
+        caller=caller,
+        prompt_id=prompt_id,
         transcript_path=transcript_path,
-        cfg=cfg,
-        triggered_from="prompt_hook",
-        now=now,
-        origin=caller,
     )
-    view = state.segment(store, key, now=now)
-    recent_cut = now - timedelta(seconds=REAUDIT_DEDUP_WINDOW_SECONDS)
-    # A first segment began with the session; a later one when its
-    # compact or clear opened it (`_seen_in_log` says why the cuts differ).
-    own_since = (
-        view.started_at
-        if view.segment > 0
-        else now - timedelta(seconds=STATE_IDLE_SECONDS)
-    )
-    recent = list(store.events_since(recent_cut))
-    # The conversation's in-process rows: the harness join first (tool
-    # events stamped with this session id), the worktree bridge only
-    # when nothing is stamped with it.
-    server_session = bridged_session(
-        recent, harness_session=key[1], worktree_root=caller.worktree_root
-    )
-    excluded_scopes = _disabled_scopes_from_events(
-        recent, worktree_root=caller.worktree_root, server_session=server_session
-    )
-    # Best effort, as every settlement is: a past turn's audit never costs
-    # this prompt its recall.
-    try:
-        settle_interrupted(
-            store=store,
-            cfg=cfg,
-            session_id=key[1],
-            transcript_path=transcript_path,
-            # An interrupted turn's row is a Stop's row: its probe draws
-            # under the Stop's prefilter in both modes, so the verdict
-            # does not depend on which hook settled the turn.
-            admission=admission.on(POOL_PREFILTER),
-            excluded_scopes=excluded_scopes,
-            recent=recent,
-            server_session=server_session,
-            worktree_root=caller.worktree_root,
-            now=now,
-            previous_audit=previous_audit_at(store, key[1], now=now),
-            triggered_from="prompt_hook",
-            exclude_prompt_id=None,
-        )
-    except Exception as exc:  # noqa: BLE001 - logged, never raised at the hook
-        log.warning(
-            "interrupted turns not settled at the prompt: %s: %s",
-            exc.__class__.__name__,
-            exc,
-        )
-    report = _probe_message(
-        cfg=cfg,
-        store=store,
-        user_message=query,
-        session_id=key[1],
-        server_session=server_session,
-        # The pool is drawn under the hooks' prefilter for "project" and
-        # under the unscoped search's admission for "everywhere", so a
-        # record the delivery may not admit never takes a rank.
-        admission=admission.on(POOL_PREFILTER)
-        if surface == PROMPT_RECALL
-        else admission,
-        excluded_scopes=excluded_scopes,
-        recent=recent,
-        worktree_root=caller.worktree_root,
-        now=now,
-    )
+    return turn, empty
 
-    def recorded_hold(cause: str, entries: Sequence[Mapping[str, str]]) -> HookResult:
-        """Nothing delivered: the `recall_held` row says why (RS-F7 part 6),
-        a measurement row (`events.RowClass`), built only when it is
-        recorded."""
-        recorder = Recorder(
-            store=store,
-            session_id=key[1],
-            enabled=cfg.telemetry.enabled,
-            worktree_root=caller.worktree_root,
-        )
-        if recorder.records("recall_held"):
-            fields = recall_held_fields(
-                report,
-                session_id=key[1],
-                probe_mode=cfg.behavior.search_mode or "hybrid",
-                cause=cause,
-                held=entries,
-                rule=RULE,
-                segment=view.segment,
-                prompt_id=prompt_id,
-                transcript_path=transcript_path,
-                harness=key[0],
-            )
-            fields["admission"] = surface
-            fields.update(_delivery_membership(caller_resolution, admission))
-            recorder.record("recall_held", **fields)
-        return empty
 
-    if report.verdict == "no_signal":
-        return recorded_hold("no_signal", [])
-    if not report.top_hits:
-        return recorded_hold("no_hits", [])
-    # The hits through the PROMPT_RECALL surface
-    # (`Membership.admit_recall`, which writes `recall_suppressed` when it
-    # withholds every one of them, design 4 failure 8).
-    model = admission.model
-    if model is None or caller_resolution is None:
-        return empty
-    turn = model.admit_recall(
-        caller_resolution,
-        [hit.id for hit in report.top_hits],
-        admission=surface,
-    )
-    admitted_here = set(turn.delivered)
-    withheld = dict(turn.suppressed)
-
+def _seen_in_segment(
+    turn: _PromptTurn,
+    view: SegmentView,
+    own_since: datetime,
+    recent: list[dict[str, Any]],
+) -> set[str]:
+    """Take the turn, its segment and log window; return the ids it has seen."""
+    key, caller = turn.key, turn.caller
     sessions = {key[1]} | joined_sessions(
         recent, harness_session=key[1], worktree_root=caller.worktree_root
     )
-    seen = set(view.shown) | _seen_in_log(
-        store.events_of_kinds(_SEEN_KINDS, since=min(own_since, view.started_at)),
+    return set(view.shown) | _seen_in_log(
+        turn.store.events_of_kinds(_SEEN_KINDS, since=min(own_since, view.started_at)),
         since=view.started_at,
         own_since=own_since,
         sessions=sessions,
         worktree_root=caller.worktree_root,
         harness_session=key[1],
     )
+
+
+def _choose_hits(
+    turn: _PromptTurn,
+    report: MissReport,
+    view: SegmentView,
+    model: Membership,
+    resolution: Resolution,
+    *,
+    own_since: datetime,
+    recent: list[dict[str, Any]],
+) -> tuple[list[_Chosen], list[dict[str, str]], list[Memory]]:
+    """Take the probe's hits; return (chosen, held entries, rc3's candidates)."""
+    store, admission = turn.store, turn.admission
+    admitted = model.admit_recall(
+        resolution,
+        [hit.id for hit in report.top_hits],
+        admission=turn.surface,
+    )
+    admitted_here = set(admitted.delivered)
+    withheld = dict(admitted.suppressed)
+    seen = _seen_in_segment(turn, view, own_since, recent)
     hit_ids = [hit.id for hit in report.top_hits]
     # What is in force (RS-F7 part 3): an admitted hit some admitted
     # record supersedes yields its slot to its head; a head shown in its
@@ -1587,7 +1612,7 @@ def prompt_recall(
     memories = {memory.id: memory for memory in store.load_many(wanted)}
     trust = store.trust_rows(wanted)
     contradicted = _unless_standing(store, admission, store.contradicted_at(wanted))
-    chosen: list[tuple[MissHit, Memory, TrustRow, InForce | None]] = []
+    chosen: list[_Chosen] = []
     suppressed: list[dict[str, str]] = []
     # The hits every gate but the admission passes, in rank order: the
     # candidates rc3's rule is asked about for the rc3_admitted column
@@ -1645,10 +1670,20 @@ def prompt_recall(
             continue
         assert row is not None and memory is not None
         chosen.append((hit, memory, row, forced_entry))
-    if not chosen:
-        return recorded_hold("every_hit_held", suppressed)
+    return chosen, suppressed, rc3_candidates
 
-    marks = disputed_marks(store.pending_conflict_pairs())
+
+def _deliver_recall(
+    turn: _PromptTurn,
+    report: MissReport,
+    state: RecallState,
+    chosen: list[_Chosen],
+    suppressed: list[dict[str, str]],
+    rc3_candidates: list[Memory],
+    hold: Callable[[str, Sequence[Mapping[str, str]]], HookResult],
+) -> HookResult:
+    """Take the chosen hits; return the block claimed and recorded, or a hold."""
+    marks = disputed_marks(turn.store.pending_conflict_pairs())
     pointers = [
         RecallPointer(
             id=memory.id,
@@ -1666,15 +1701,17 @@ def prompt_recall(
     ]
     block, shown_ids = render_recall_block(pointers)
     if not shown_ids:
-        return recorded_hold(
+        return hold(
             "nothing_rendered", [{"id": p.id, "reason": "cap"} for p in pointers]
         )
     # The cooldown decides atomically: a concurrent prompt of the same
     # session may have shown some of these ids since `view` was read.
     event_id = generate_ulid()
-    claimed, segment = state.claim_delivery(key, shown_ids, now=now, event_id=event_id)
+    claimed, segment = state.claim_delivery(
+        turn.key, shown_ids, now=turn.now, event_id=event_id
+    )
     if not claimed:
-        return recorded_hold(
+        return hold(
             "segment_claimed",
             [{"id": memory_id, "reason": "seen_in_segment"} for memory_id in shown_ids],
         )
@@ -1682,52 +1719,22 @@ def prompt_recall(
         kept = set(claimed)
         block, shown_ids = render_recall_block([p for p in pointers if p.id in kept])
         if not shown_ids:
-            return recorded_hold(
+            return hold(
                 "nothing_rendered",
                 [{"id": p.id, "reason": "cap"} for p in pointers if p.id in kept],
             )
-    recorder = Recorder(
-        store=store,
-        session_id=key[1],
-        enabled=cfg.telemetry.enabled,
-        worktree_root=caller.worktree_root,
-    )
-    fields = prompt_recall_fields(
+    fields = _record_delivery(
+        turn,
         report,
-        session_id=key[1],
-        probe_mode=cfg.behavior.search_mode or "hybrid",
-        injected_chars=len(block),
-        delivered_reason=mode,
+        state,
+        block=block,
         shown_ids=shown_ids,
-        suppressed=suppressed,
-        rule=RULE,
+        event_id=event_id,
         segment=segment,
-        prompt_id=prompt_id,
-        transcript_path=transcript_path,
-        harness=key[0],
+        chosen=chosen,
+        suppressed=suppressed,
+        rc3_candidates=rc3_candidates,
     )
-    fields["event_id"] = event_id
-    # The admission the delivery was decided under (decision B21).
-    fields["admission"] = surface
-    fields.update(_delivery_membership(caller_resolution, admission))
-    # A pointer the render or the cooldown dropped is dropped whatever the
-    # admission, so the column leaves it out as well.
-    dropped = {hit.id for hit, _memory, _row, _forced in chosen} - set(shown_ids)
-    fields["rc3_admitted"] = [
-        memory_id
-        for memory_id in _rc3_admitted(
-            rc3_candidates, caller, project_only=surface == PROMPT_RECALL
-        )
-        if memory_id not in dropped
-    ]
-    try:
-        recorder.record("prompt_recall", **fields)
-    except BaseException:
-        # The delivery's row could not land, so nothing is delivered and
-        # the claim goes with the session's held state (`RecallState.
-        # forget`), read back from the log, which never saw it.
-        state.forget(key)
-        raise
     return HookResult(
         stdout=block,
         surface="prompt_recall",
@@ -1735,5 +1742,5 @@ def prompt_recall(
         chars=len(block),
         rule=RULE,
         event_id=str(fields["event_id"]),
-        membership=remint,
+        membership=turn.remint,
     )

@@ -35,7 +35,7 @@ from .conftest import shielded_child_env
 PACKAGE = "bettermemory"
 SOURCE = Path(bettermemory.__file__).resolve().parent
 
-#: `recall` and the modules split out of it (ENG-96): `hook` imports them
+#: `recall` and the modules split out of it (ENG-96, ENG-97): `hook` imports them
 #: only inside the functions that call them, and `sessions` never.
 RECALL_FAMILY: tuple[str, ...] = (
     "bettermemory.recall",
@@ -43,6 +43,7 @@ RECALL_FAMILY: tuple[str, ...] = (
     "bettermemory.recall_admission",
     "bettermemory.recall_brief",
     "bettermemory.recall_settle",
+    "bettermemory.recall_prompt",
 )
 
 #: The edges that must not exist, of any kind: a module-level import, an
