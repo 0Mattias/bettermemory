@@ -80,8 +80,9 @@ DEFAULT_SILENT_MISS_LIMIT = 20
 _WILSON_Z = 1.96
 
 # Token shapes accepted by ``parse_since``: ``\\d+[smhd]`` or the literal
-# ``"all"``. Bounded by the same arithmetic that bounds ``timedelta``,
-# so we don't bother with an upper-bound check beyond rejecting zero.
+# ``"all"``. ``parse_since`` refuses a span ``timedelta`` cannot hold;
+# ``parse_window_bound`` refuses one that reaches back past
+# ``_EARLIEST_START``.
 _SINCE_PATTERN = re.compile(r"^(?P<value>\d+)(?P<unit>[smhd])$")
 _SINCE_UNIT_TO_SECONDS = {
     "s": 1,
@@ -89,6 +90,13 @@ _SINCE_UNIT_TO_SECONDS = {
     "h": 3600,
     "d": 86400,
 }
+
+# The earliest start a relative bound may reach back to: the calendar's
+# first day plus one, so a caller's own `now`, read a moment before the
+# parse, still subtracts the span without leaving the calendar. The day
+# is slack, not evidence: any margin longer than the gap between a
+# caller's `now` and the parse would do.
+_EARLIEST_START = datetime.min.replace(tzinfo=timezone.utc) + timedelta(days=1)
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +269,11 @@ def parse_timestamp_utc(spec: str, *, flag: str) -> datetime:
     """Parse an absolute ISO-8601 timestamp with an explicit UTC offset
     (``Z`` or ``+HH:MM``) into an aware UTC datetime. A timestamp with no
     offset is refused: the live window is stated in UTC, and a local
-    reading would shift it by the reader's offset."""
+    reading would shift it by the reader's offset. So is one the calendar
+    cannot hold once read in UTC (``0001-01-01T00:00:00+02:00`` is the
+    last two hours of the year 0, ``9999-12-31T23:00:00-02:00`` the first
+    hour of the year 10000): `astimezone` raises `OverflowError` there,
+    which is turned into the `ValueError` that names the flag."""
     raw = spec.strip()
     if raw.endswith(("Z", "z")):
         raw = raw[:-1] + "+00:00"
@@ -277,26 +289,54 @@ def parse_timestamp_utc(spec: str, *, flag: str) -> datetime:
             f"{flag}: {spec!r} has no UTC offset; add 'Z' (for example "
             f"{spec.strip()}Z)."
         )
-    return parsed.astimezone(timezone.utc)
+    try:
+        return parsed.astimezone(timezone.utc)
+    except OverflowError as exc:
+        raise ValueError(
+            f"{flag}: {spec.strip()!r} lies outside the calendar once read in "
+            "UTC; pick a time inside it."
+        ) from exc
 
 
 def parse_window_bound(
-    spec: str | None, *, flag: str = "--since"
+    spec: str | None, *, flag: str = "--since", now: datetime | None = None
 ) -> timedelta | datetime | None:
     """Parse a `--since` or `--until` value: a relative span
     (``Ns``/``Nm``/``Nh``/``Nd``, read back from now), ``all`` or empty
     for no bound (None), or an absolute ISO-8601 UTC timestamp. Raises
-    ``ValueError`` with a hint for anything else."""
+    ``ValueError`` with a hint for anything else.
+
+    Every bound returned is one ``resolve_window`` can hold as of `now`
+    (the current time when None). A relative span that reaches back past
+    ``_EARLIEST_START`` is refused: ``timedelta`` holds it, but `now`
+    minus it leaves the calendar, and the subtraction raised
+    ``OverflowError`` outside the callers' error handling. An absolute
+    ``--since`` later than `now` is refused too: it names a window that
+    has not started, which read as an empty one in silence. A later
+    ``--until`` stays accepted; it only says "up to now"."""
     if spec is None or spec.strip() in ("", "all"):
         return None
+    current = now if now is not None else datetime.now(timezone.utc)
     if _SINCE_PATTERN.fullmatch(spec.strip()):
-        return parse_since(spec.strip())
+        span = parse_since(spec.strip())
+        if span is not None and span > current - _EARLIEST_START:
+            raise ValueError(
+                f"{flag}: {spec.strip()!r} reaches back past the year 1. "
+                "Pick a smaller window (or 'all' for no time filter)."
+            )
+        return span
     if not any(ch.isdigit() for ch in spec) or "-" not in spec:
         raise ValueError(
             f"{flag}: expected 'Ns'/'Nm'/'Nh'/'Nd', 'all', or an ISO-8601 UTC "
             f"timestamp such as 2026-10-01T00:00:00Z, got {spec!r}."
         )
-    return parse_timestamp_utc(spec, flag=flag)
+    bound = parse_timestamp_utc(spec, flag=flag)
+    if flag == "--since" and bound > current:
+        raise ValueError(
+            f"{flag}: {spec.strip()!r} is later than now, so the window would "
+            "hold nothing yet. Pick a past time, a span such as '30d', or 'all'."
+        )
+    return bound
 
 
 def resolve_window(

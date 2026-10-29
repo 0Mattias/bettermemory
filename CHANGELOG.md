@@ -861,6 +861,22 @@ the candidates' testing.
   definition of `cold_endorsement_memories` now states it.
   (`src/bettermemory/health_model.py`, `src/bettermemory/health_stats.py`,
   `src/bettermemory/eval.py`, `docs/eval.md`, `docs/api.md`)
+- **`eval`, `review samples` and `recall review` refuse a `--since` or
+  `--until` the window cannot hold.** A span longer than the calendar
+  reaches back, such as `--since 1000000d`, parsed, and the window's
+  start (now minus the span) then raised an `OverflowError` outside the
+  commands' error handling, so the user got a traceback instead of a
+  usage error. An absolute `--since` later than now parsed too and
+  named a window that had not started, which every mode reported as an
+  empty one without a word. The bound parser now refuses both with a
+  usage error (exit 2) naming the flag; the longest span it accepts
+  reaches back to the calendar's second day, 739,915 days on
+  2026-10-28. It names the flag too for a timestamp the calendar holds
+  only until it is read in UTC (`0001-01-01T00:00:00+02:00`,
+  `9999-12-31T23:00:00-02:00`), which was refused as "date value out of
+  range" with no flag named. A later `--until` stays accepted, since it
+  only says "up to now". (`src/bettermemory/eval_model.py`,
+  `src/bettermemory/cli/eval.py`)
 
 #### Known limitations
 

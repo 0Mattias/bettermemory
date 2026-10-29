@@ -299,13 +299,14 @@ def _cli_eval(
 
     now = datetime.now(timezone.utc)
     try:
-        window_since = parse_window_bound(since_spec, flag="--since")
-        window_until = parse_window_bound(until_spec, flag="--until")
+        window_since = parse_window_bound(since_spec, flag="--since", now=now)
+        window_until = parse_window_bound(until_spec, flag="--until", now=now)
     except (ValueError, OverflowError) as exc:
-        # `parse_since` already maps an out-of-range value's OverflowError
-        # to ValueError; the OverflowError arm here is defence-in-depth so
-        # a future change to the parser can't leak a raw traceback past
-        # this clean-error path.
+        # `parse_window_bound` maps every bound it cannot hold to
+        # ValueError, so `resolve_window` below, outside this arm, only
+        # sees bounds it can subtract; the OverflowError arm is
+        # defence-in-depth so a future change to the parser can't leak a
+        # raw traceback past this clean-error path.
         parser.error(str(exc))
         return  # pragma: no cover — parser.error raises SystemExit
     window_start, window_end = resolve_window(window_since, window_until, now=now)
