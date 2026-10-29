@@ -45,6 +45,7 @@ if TYPE_CHECKING:
         Proposal,
         Resolution,
     )
+    from ..project_file import ProjectFile, ProjectFileError
     from ._common import CliContext
 
 
@@ -641,43 +642,18 @@ def _new() -> None:
     )
 
 
-def _init(*, new: bool, rebind: bool, name: str | None, boundary: bool) -> None:
-    from .. import location, project_file
-    from ..membership import (
-        FOLDER,
-        GLOBAL,
-        GLOBAL_OUTCOME,
-        SUBPROJECT_CONTRADICTION,
-        Declaration,
-    )
+def _init_position(
+    model: Membership,
+    res: Resolution,
+    cwd: str,
+    existing: ProjectFile | ProjectFileError | None,
+    rebind: bool,
+    path: Path,
+) -> tuple[Checkout | None, bool, str | None]:
+    """Place the folder in its checkout, refusing what init cannot; returns the checkout, below-root and binding."""
+    from .. import project_file
+    from ..membership import GLOBAL, GLOBAL_OUTCOME
 
-    ctx = context()
-    # The resolution first, so the model reads the projects it minted.
-    cwd, res = caller(ctx)
-    model = open_model(ctx)
-    directory = Path(cwd)
-    path = directory / project_file.PROJECT_FILE_NAME
-    display = name or directory.name or cwd
-    existing = project_file.parse(path) if path.exists() else None
-    if isinstance(existing, project_file.ProjectFile):
-        names = f' (it names "{existing.name}", {existing.id})'
-    elif existing is not None:
-        names = f" ({existing.detail})"
-    else:
-        names = ""
-    if rebind and existing is None:
-        refuse(f"no {path} to rebind; `bettermemory project init` writes one")
-    if existing is not None and not (new or rebind):
-        refuse(
-            f"{path} exists{names}; keep this checkout's project: bettermemory "
-            "project init --rebind; a project of its own: bettermemory project init "
-            "--new"
-        )
-    # A replaced file keeps its boundary; `--boundary` sets one anywhere (B9).
-    boundary = boundary or (
-        isinstance(existing, project_file.ProjectFile) and existing.boundary
-    )
-    fence = ", a boundary: nothing crosses it" if boundary else ""
     if res.checkout is None and res.outcome != GLOBAL_OUTCOME:
         refuse(f"{_said(res)}; nothing changed")
     k = model.checkout(res.checkout) if res.checkout is not None else None
@@ -711,6 +687,15 @@ def _init(*, new: bool, rebind: bool, name: str | None, boundary: bool) -> None:
             f"project join {bound}; a part with an id of its own: bettermemory "
             "project init --new; nothing changed"
         )
+    return k, below, bound
+
+
+def _init_proposal(
+    model: Membership, k: Checkout | None, new: bool, below: bool, cwd: str
+) -> Proposal | None:
+    """Find the open question ``--new`` answers here; returns it, or None."""
+    from ..membership import SUBPROJECT_CONTRADICTION
+
     pr: Proposal | None = None
     if k is not None and new:
         asked = _open_on(model, k.id)
@@ -728,9 +713,26 @@ def _init(*, new: bool, rebind: bool, name: str | None, boundary: bool) -> None:
         else:
             others = [x for x in asked if x.kind != SUBPROJECT_CONTRADICTION]
             pr = others[0] if others else None
-    kept = bound if below and rebind else None
-    part = below and pr is None and kept is None
-    enclosing = res.project if part else None
+    return pr
+
+
+def _print_init_plan(
+    model: Membership,
+    k: Checkout | None,
+    existing: ProjectFile | ProjectFileError | None,
+    path: Path,
+    names: str,
+    display: str,
+    cwd: str,
+    boundary: bool,
+    enclosing: str | None,
+    new: bool,
+    pr: Proposal | None,
+    kept: str | None,
+) -> None:
+    """Print what ``project init`` is about to write and declare; returns nothing."""
+    from ..membership import FOLDER
+
     verb = "replaces" if existing is not None else "writes"
     shape = f'name "{display}"' + (", a boundary" if boundary else "")
     print(f"bettermemory project init {verb} {path}{names} with a new id ({shape})")
@@ -768,6 +770,104 @@ def _init(*, new: bool, rebind: bool, name: str | None, boundary: bool) -> None:
             f"  bound to project {named(model, kept or k.project)} of checkout "
             f"{k.id} at {_where(k)}"
         )
+
+
+def _print_init_done(
+    ctx: CliContext,
+    model: Membership,
+    done: Declared,
+    k: Checkout,
+    path: Path,
+    written: ProjectFile,
+    enclosing: str | None,
+    boundary: bool,
+    fence: str,
+    new: bool,
+    pr: Proposal | None,
+    lifted: bool,
+) -> None:
+    """Print what ``project init`` wrote and what it is bound to; returns nothing."""
+    from ..membership import FOLDER
+
+    if enclosing is not None:
+        kind = "a folder project" if k.kind == FOLDER else "a sub-project"
+        print(
+            f"bettermemory: wrote {path} ({written.id}), {kind} "
+            f"{named(model, done.project)} of {named(model, enclosing)}"
+            + (
+                fence
+                if boundary
+                else ": a session here gets its own and its parents' memories, "
+                "never a sibling's"
+            )
+            + (
+                f"; checkout {k.id} keeps project {named(model, k.project)}"
+                if new
+                else ""
+            )
+            + "; commit it so every clone and CI runner finds it"
+        )
+        return
+    answered = f"; question {pr.id} answered" if pr is not None else ""
+    if lifted:
+        fence = ", no longer a boundary"
+    print(
+        f"bettermemory: wrote {path} ({written.id}), bound to project "
+        f"{named(model, done.project)}{fence}{answered}{_token_said(ctx, done)}; "
+        "commit it so every clone and CI runner finds the project"
+    )
+
+
+def _init(*, new: bool, rebind: bool, name: str | None, boundary: bool) -> None:
+    from .. import location, project_file
+    from ..membership import Declaration
+
+    ctx = context()
+    # The resolution first, so the model reads the projects it minted.
+    cwd, res = caller(ctx)
+    model = open_model(ctx)
+    directory = Path(cwd)
+    path = directory / project_file.PROJECT_FILE_NAME
+    display = name or directory.name or cwd
+    existing = project_file.parse(path) if path.exists() else None
+    if isinstance(existing, project_file.ProjectFile):
+        names = f' (it names "{existing.name}", {existing.id})'
+    elif existing is not None:
+        names = f" ({existing.detail})"
+    else:
+        names = ""
+    if rebind and existing is None:
+        refuse(f"no {path} to rebind; `bettermemory project init` writes one")
+    if existing is not None and not (new or rebind):
+        refuse(
+            f"{path} exists{names}; keep this checkout's project: bettermemory "
+            "project init --rebind; a project of its own: bettermemory project init "
+            "--new"
+        )
+    # A replaced file keeps its boundary; `--boundary` sets one anywhere (B9).
+    boundary = boundary or (
+        isinstance(existing, project_file.ProjectFile) and existing.boundary
+    )
+    fence = ", a boundary: nothing crosses it" if boundary else ""
+    k, below, bound = _init_position(model, res, cwd, existing, rebind, path)
+    pr = _init_proposal(model, k, new, below, cwd)
+    kept = bound if below and rebind else None
+    part = below and pr is None and kept is None
+    enclosing = res.project if part else None
+    _print_init_plan(
+        model,
+        k,
+        existing,
+        path,
+        names,
+        display,
+        cwd,
+        boundary,
+        enclosing,
+        new,
+        pr,
+        kept,
+    )
     keeps = None if part else model.canonical(kept or (k.project if k else None))
     lifted = (
         rebind and not boundary and keeps is not None and model.project(keeps).boundary
@@ -824,32 +924,8 @@ def _init(*, new: bool, rebind: bool, name: str | None, boundary: bool) -> None:
         )
     )
     location.forget(cwd)
-    if enclosing is not None:
-        kind = "a folder project" if k.kind == FOLDER else "a sub-project"
-        print(
-            f"bettermemory: wrote {path} ({written.id}), {kind} "
-            f"{named(model, done.project)} of {named(model, enclosing)}"
-            + (
-                fence
-                if boundary
-                else ": a session here gets its own and its parents' memories, "
-                "never a sibling's"
-            )
-            + (
-                f"; checkout {k.id} keeps project {named(model, k.project)}"
-                if new
-                else ""
-            )
-            + "; commit it so every clone and CI runner finds it"
-        )
-        return
-    answered = f"; question {pr.id} answered" if pr is not None else ""
-    if lifted:
-        fence = ", no longer a boundary"
-    print(
-        f"bettermemory: wrote {path} ({written.id}), bound to project "
-        f"{named(model, done.project)}{fence}{answered}{_token_said(ctx, done)}; "
-        "commit it so every clone and CI runner finds the project"
+    _print_init_done(
+        ctx, model, done, k, path, written, enclosing, boundary, fence, new, pr, lifted
     )
 
 
