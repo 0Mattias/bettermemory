@@ -4,7 +4,9 @@
 both of them read) imports neither, at module level, inside a function
 or under `TYPE_CHECKING`: `hook` is the recall surface's CLI shim and
 imports `recall`, never the reverse. The modules split out of `recall`
-(ENG-96) are held to the same edges. `hook` keeps every session-join
+(ENG-96) are held to the same edges, and each module split out of
+`posture`, `doctor`, `origin` or `location` imports nothing from the
+parent that re-exports it. `hook` keeps every session-join
 name that moved out of it importable under its old path; the probe and
 the settlement live in `recall_settle`, read from `recall`, and `hook`
 binds neither. No import cycle runs at module level anywhere in the
@@ -59,6 +61,18 @@ FORBIDDEN: dict[str, frozenset[str]] = {
     ),
     "bettermemory.sessions": frozenset({*RECALL_FAMILY, "bettermemory.hook"}),
 }
+
+#: Each module split out of a parent that imports it at module level and
+#: re-exports its names, with that parent. The child imports nothing from
+#: the parent of any kind, so its docstring's import direction holds and
+#: no import the child defers into a function can close a cycle later.
+SPLIT_PARENTS: tuple[tuple[str, str], ...] = (
+    ("bettermemory.posture_sandbox", "bettermemory.posture"),
+    ("bettermemory.doctor_model", "bettermemory.doctor"),
+    ("bettermemory.doctor_store", "bettermemory.doctor"),
+    ("bettermemory.origin_model", "bettermemory.origin"),
+    ("bettermemory.location_witness", "bettermemory.location"),
+)
 
 #: The module-level import cycles the package holds, each as the sorted
 #: modules of one strongly connected component. Empty when this file was
@@ -344,6 +358,47 @@ def test_importing_a_module_loads_none_of_the_others(
         env=shielded_child_env(),
     )
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(("child", "parent"), SPLIT_PARENTS)
+def test_a_split_module_imports_nothing_from_its_parent(
+    child: str, parent: str, edges: list[Edge]
+) -> None:
+    """A module split out of `parent` has no import of `parent` at module
+    level, inside a function or under `TYPE_CHECKING`, and in a fresh
+    interpreter importing it leaves `parent` unloaded. The first half
+    catches an import deferred into a function, which the second never
+    runs."""
+    found = [
+        f"{edge.source}:{edge.line} -> {edge.target}"
+        for edge in edges
+        if edge.source == child and edge.target == parent
+    ]
+    assert found == [], found
+    code = f"import sys\nimport {child}\nassert {parent!r} not in sys.modules\n"
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=shielded_child_env(),
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_a_split_module_s_deferred_import_of_its_parent_is_an_edge() -> None:
+    """Premise: an import of the parent inside one of the child's
+    functions is an edge of the graph the test above reads, one that
+    does not run on import."""
+    known = _modules()
+    child = known["bettermemory.doctor_store"]
+    tree = ast.parse("def check() -> None:\n    from .doctor import Check\n")
+    found = [
+        (target, module_level)
+        for node, module_level in _imports(tree.body, module_level=True)
+        for target in _targets(node, child, known)
+    ]
+    assert found == [("bettermemory.doctor", False)]
 
 
 def test_no_module_level_import_cycle(edges: list[Edge]) -> None:
