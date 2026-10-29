@@ -220,8 +220,13 @@ not alert.
 `doctor` checks the install, that the config loads, which rule chose
 the store, whether a restore of it runs or did not finish, the store
 and its key, the store file's pages and its search index, the daemon,
-the Claude Code and other client wiring, and the disk, each `ok`,
-`warn` or `fail` with a one-line fix. `security audit` covers what `doctor` leaves out: file modes and
+the Claude Code and other client wiring, the disk, and the keys
+directory for key rings whose store is gone, each `ok`, `warn` or
+`fail` with a one-line fix.
+`doctor --clear-orphan-keys` deletes those rings; it keeps every ring
+whose store cannot be told gone (a path this user cannot read, a volume
+or share that is not mounted, a ring that names no store file), so run
+it again once a volume is back. `security audit` covers what `doctor` leaves out: file modes and
 owners, the key against the store, git working trees and synced folders,
 and Claude Code's sandbox settings. `config check` grades the contents
 of `config.toml` and the managed config: a typo `doctor` cannot see, such

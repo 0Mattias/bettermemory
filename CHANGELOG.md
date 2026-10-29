@@ -129,6 +129,29 @@ follows the candidates' testing.
   (`src/bettermemory/key_lifecycle.py`, `src/bettermemory/cli/log_cmd.py`,
   `src/bettermemory/log.py`, `docs/api.md`, `tests/test_accept_history.py`,
   `tests/test_log_export.py`)
+- **`bettermemory doctor` names the key rings whose store is gone, and
+  `--clear-orphan-keys` deletes them (ENG-106).** One keys directory
+  serves every store on the host, and a store deleted with its directory
+  left its ring behind (keys, head, anchor, binding), with nothing to
+  tell it from a live one but reading each binding by hand. The new
+  `orphan_keys` check, last in the list, reads each ring's binding and
+  the store id the bound file holds, without opening it as a store
+  (`store_keys._store_id_at`), and warns when a bound file is gone or
+  holds another store or none. `--clear-orphan-keys` deletes those
+  rings, each read again under its binding's lock first, so an owner's
+  open of a store moved there in the meantime keeps it. Kept whatever is
+  asked: a ring whose store file this user cannot read; one whose
+  nearest existing directory is a filesystem root, `/Volumes`, `/mnt`,
+  `/media`, `/run/media` or a user's directory under the last two,
+  where a volume or share that is not mounted would be; a ring that
+  names no store file (from before 9.0.0rc13); one a daemon still
+  serves; and the ring of the store doctor checks. A store moved by hand
+  and not opened since reads as gone, and the remedy names `key adopt
+  --yes` for it. Without the flag doctor still writes nothing.
+  (`src/bettermemory/key_lifecycle.py`, `src/bettermemory/doctor.py`,
+  `src/bettermemory/cli/doctor_cmd.py`, `docs/api.md`,
+  `docs/operations.md`, `docs/installation.md`,
+  `tests/test_doctor_orphan_keys.py`)
 
 #### Changed
 

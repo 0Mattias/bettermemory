@@ -26,7 +26,10 @@ would hide the fault it was run for, so this module reads only:
   read-only open never meets, and fails the `restore` check;
 - the daemon is asked `GET /health` and nothing else; its state file is
   read, never removed, and no daemon is started or stopped;
-- client and Claude Code settings files are read, never patched.
+- client and Claude Code settings files are read, never patched;
+- the keys directory is listed and each key ring's binding read, and
+  nothing in it changes unless `--clear-orphan-keys` is given, which
+  deletes the rings whose store is gone (`check_orphan_keys`).
 
 The read-only open writes nothing to the store file or beside it
 (`store_schema.connect_read_only`, 9.0.0rc14): no WAL switch, no chmod,
@@ -42,7 +45,7 @@ A check whose input an earlier check could not establish (the store when
 the config does not load) answers `warn` with a "not checked" summary:
 the earlier check already carries the failure. Posture (file modes,
 owners, the sandbox settings) is `bettermemory security audit`'s, which
-the last check points at rather than duplicating.
+the security check points at rather than duplicating.
 """
 
 from __future__ import annotations
@@ -94,6 +97,7 @@ CHECK_IDS: tuple[str, ...] = (
     "clients",
     "disk",
     "security",
+    "orphan_keys",
 )
 
 #: The modules a running daemon imports that the CLI's own start does not:
@@ -1648,6 +1652,28 @@ def check_security() -> Check:
     )
 
 
+def check_orphan_keys(ctx: _Context, *, clear: bool = False) -> Check:
+    """Key rings in the keys directory whose store is gone
+    (`key_lifecycle.survey_rings`): a warning naming `--clear-orphan-keys`.
+    With ``clear`` they are deleted first (`key_lifecycle.clear_orphan_rings`,
+    under ``details["cleared"]``) and the survey reads what is left. A ring
+    whose store cannot be told gone, or that names no store file, is kept
+    and counted; the ring of the store this run checks is in use."""
+    from .key_lifecycle import clear_orphan_rings, survey_rings
+    from .store import STORE_FILENAME
+
+    current = None if ctx.directory is None else ctx.directory / STORE_FILENAME
+    details: dict[str, Any] = {}
+    if clear:
+        details["cleared"] = clear_orphan_rings(current)
+    survey = survey_rings(current)
+    details.update(survey.to_dict())
+    remedy = survey.remedy()
+    return Check(
+        "orphan_keys", OK if remedy is None else WARN, survey.summary(), remedy, details
+    )
+
+
 # ---------------------------------------------------------------------------
 # The run
 # ---------------------------------------------------------------------------
@@ -1713,13 +1739,16 @@ def _safe_cwd() -> Path | None:
         return None
 
 
-def run_checks(*, cwd: Path | None = None) -> list[Check]:
+def run_checks(
+    *, cwd: Path | None = None, clear_orphan_keys: bool = False
+) -> list[Check]:
     """Every check, in `CHECK_IDS` order. `cwd` is the directory the store
     rule and Claude Code's project files (`.claude/settings*.json`,
     `.mcp.json`, the local scope in the global config) are read from
     (default: this process's). The `clients` check reads the paths
     `init.KNOWN_CLIENTS` names, whose project-scoped ones `init` places at
-    the process's own cwd."""
+    the process's own cwd. ``clear_orphan_keys`` deletes the key rings
+    whose store is gone, at the `orphan_keys` check."""
     ctx = _Context(cwd=_safe_cwd() if cwd is None else cwd)
     checks: list[Check] = []
     checks += _guarded(("install",), lambda: [check_install()])
@@ -1733,6 +1762,9 @@ def run_checks(*, cwd: Path | None = None) -> list[Check]:
     checks += _guarded(("clients",), lambda: [check_clients(ctx)])
     checks += _guarded(("disk",), lambda: [check_disk(ctx)])
     checks += _guarded(("security",), lambda: [check_security()])
+    checks += _guarded(
+        ("orphan_keys",), lambda: [check_orphan_keys(ctx, clear=clear_orphan_keys)]
+    )
     return checks
 
 

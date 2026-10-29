@@ -36,6 +36,11 @@ The refusals, by command (each returns ``refused`` with the reason in
 
 `adopt`, `rotate` and `accept_history` without ``apply`` return the plan
 (``planned``) and change nothing.
+
+`survey_rings` and `clear_orphan_rings` are `bettermemory doctor`'s
+``orphan_keys`` check and its ``--clear-orphan-keys``: the key rings whose
+store is gone, and their deletion, which keeps every ring whose store
+cannot be told gone.
 """
 
 from __future__ import annotations
@@ -47,6 +52,7 @@ import os
 import re
 import sqlite3
 from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -65,6 +71,7 @@ from .log import (
     KEY_IMPORTED,
     ORIGIN_UNVERIFIABLE,
     REKEY,
+    STORE_ID_PATTERN,
     Head,
     HistoryOrigin,
     KeyRing,
@@ -1155,6 +1162,330 @@ def _put_back(
             ring.rebind_store(binding)
 
 
+# ---------------------------------------------------------------------------
+# Orphaned key rings (`bettermemory doctor --clear-orphan-keys`)
+# ---------------------------------------------------------------------------
+
+#: How a key ring in the keys directory stands with its store
+#: (`ring_standing`). ``orphaned``: the store file it is bound to is gone,
+#: or holds another store or none; `clear_orphan_rings` deletes it.
+#: ``in_use``: that file holds its store, a daemon serves that file, or it
+#: is the ring of the store doctor checks. ``unreachable``: whether the
+#: store is gone cannot be told (a path this user cannot read, or one whose
+#: nearest existing directory is a filesystem root or a mount directory,
+#: where a volume or share that is not mounted now would be). ``unbound``:
+#: it names no store file (a ring from before 9.0.0rc13, or a binding that
+#: does not read). Only ``orphaned`` rings are ever deleted.
+RING_ORPHANED = "orphaned"
+RING_IN_USE = "in_use"
+RING_UNREACHABLE = "unreachable"
+RING_UNBOUND = "unbound"
+
+#: The directories volumes and shares are mounted in. A store file whose
+#: nearest existing directory is one of these, a user's directory right
+#: under ``/media`` or ``/run/media``, or a filesystem root may be on a
+#: volume that is only unplugged.
+_MOUNT_DIRS = frozenset({"/Volumes", "/mnt", "/media", "/run/media"})
+_USER_MOUNT_DIRS = frozenset({"/media", "/run/media"})
+
+
+@dataclass(frozen=True)
+class RingStanding:
+    """One key ring in the keys directory, how it stands with its store
+    and why, and the names of its files there."""
+
+    store_id: str
+    state: str
+    bound_to: Path | None
+    reason: str
+    files: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "store_id": self.store_id,
+            "state": self.state,
+            "bound_to": None if self.bound_to is None else str(self.bound_to),
+            "reason": self.reason,
+            "files": list(self.files),
+        }
+
+
+def _ring_ids(root: Path) -> list[str]:
+    """The store ids the keys directory holds files of, sorted: every
+    entry named ``<store_id>.<anything>``. [] when there is no keys
+    directory; OSError when it cannot be listed."""
+    try:
+        names = os.listdir(root)
+    except FileNotFoundError:
+        return []
+    ids = {name.partition(".")[0] for name in names if "." in name}
+    return sorted(i for i in ids if STORE_ID_PATTERN.fullmatch(i))
+
+
+def _ring_paths(root: Path, store_id: str) -> list[Path]:
+    """Every file of the ring ``store_id`` under ``root``: its keys, head,
+    anchor and binding, their lock sidecars and its restore record. The id
+    is 32 hex digits (`KeyRing`), so it globs as itself."""
+    return sorted(p for p in root.glob(f"{store_id}.*") if not p.is_dir())
+
+
+def _nearest_directory(path: Path) -> Path | None:
+    """The nearest ancestor of ``path`` that exists, or None when none
+    does (a drive or a share that is not there). OSError when one cannot
+    be read to tell."""
+    for parent in path.parents:
+        try:
+            os.stat(parent)
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        return parent
+    return None
+
+
+def _maybe_unmounted(directory: Path | None) -> bool:
+    """Whether a store file that is gone, under ``directory`` as its
+    nearest existing directory, may be on a volume or share that is not
+    mounted now rather than deleted."""
+    if directory is None or directory.parent == directory:
+        return True
+    return (
+        directory.as_posix() in _MOUNT_DIRS
+        or directory.parent.as_posix() in _USER_MOUNT_DIRS
+    )
+
+
+def _daemon_serves(state_dir: Path, store_file: Path) -> bool:
+    """Whether a daemon holds the lock of ``store_file``: one still serving
+    a deleted store goes on writing its ring's head. Taken for an instant
+    and given back; a lock file that is not there is held by nobody and is
+    not created. A lock that cannot be tried is taken as held."""
+    from . import _daemon_client as client
+
+    lock = client.lock_file_for(state_dir, store_file)
+    try:
+        if not lock.is_file():
+            return False
+        handle = client.try_lock(lock)
+    except OSError:
+        return True
+    if handle is None:
+        return True
+    client.release_lock(handle)
+    return False
+
+
+def ring_standing(
+    root: Path, store_id: str, *, keep: frozenset[str], state_dir: Path
+) -> RingStanding:
+    """How the key ring ``store_id`` under ``root`` stands with its store
+    (`RING_ORPHANED` and the others), read without writing: the binding,
+    the store id the bound file holds (`store_keys._store_id_at`, which
+    reads it without opening it as a store), the daemon lock of that file
+    and, for a file that is gone, the nearest directory on its way.
+    ``keep`` names store ids that are in use whatever the binding says."""
+    ring = KeyRing(root, store_id)
+    files = tuple(p.name for p in _ring_paths(root, store_id))
+
+    def standing(state: str, reason: str, bound: Path | None = None) -> RingStanding:
+        return RingStanding(store_id, state, bound, reason, files)
+
+    if store_id in keep:
+        return standing(RING_IN_USE, "it is the key ring of the store doctor checks")
+    try:
+        bound = ring.read_binding()
+    except OSError as exc:
+        return standing(
+            RING_UNREACHABLE, f"its binding {ring.binding_path()} cannot be read: {exc}"
+        )
+    if bound is None:
+        return standing(
+            RING_UNBOUND,
+            "it names no store file (a key ring from before 9.0.0rc13, or a "
+            "binding that does not read)",
+        )
+    try:
+        held = _store_id_at(bound)
+        if held == store_id:
+            return standing(RING_IN_USE, f"{bound} holds its store", bound)
+        if _daemon_serves(state_dir, bound):
+            return standing(RING_IN_USE, f"a bettermemory daemon serves {bound}", bound)
+        if held is not None:
+            return standing(RING_ORPHANED, f"{bound} holds another store", bound)
+        real = Path(os.path.realpath(bound))
+        if os.path.lexists(real):
+            return standing(RING_ORPHANED, f"{bound} holds no store", bound)
+        nearest = _nearest_directory(real)
+    except OSError as exc:
+        return standing(
+            RING_UNREACHABLE,
+            f"{bound} cannot be read to tell whether the store is there: {exc}",
+            bound,
+        )
+    if _maybe_unmounted(nearest):
+        where = "no directory" if nearest is None else str(nearest)
+        return standing(
+            RING_UNREACHABLE,
+            f"{bound} is not there and the nearest directory on its way is {where}: "
+            "it may be on a volume or share that is not mounted now",
+            bound,
+        )
+    return standing(RING_ORPHANED, f"{bound} is gone", bound)
+
+
+@dataclass(frozen=True)
+class RingSurvey:
+    """Every key ring in the keys directory and how it stands
+    (`survey_rings`), with the store ids taken as in use."""
+
+    keys_dir: Path
+    rings: tuple[RingStanding, ...]
+    keep: frozenset[str]
+
+    def of(self, state: str) -> list[RingStanding]:
+        return [ring for ring in self.rings if ring.state == state]
+
+    def summary(self) -> str:
+        """One line: the orphaned rings, or that there are none, and the
+        rings kept because their store cannot be told gone."""
+        orphaned = len(self.of(RING_ORPHANED))
+        total = len(self.rings)
+        rings = f"{total} key ring{'' if total == 1 else 's'} under {self.keys_dir}"
+        if orphaned == 1:
+            line = f"{rings}: 1 belongs to a store that is gone"
+        elif orphaned:
+            line = f"{rings}: {orphaned} belong to stores that are gone"
+        elif total:
+            line = f"{rings}, none orphaned"
+        else:
+            line = f"no key rings under {self.keys_dir}"
+        kept = [
+            f"{len(found)} {what}"
+            for found, what in (
+                (self.of(RING_UNREACHABLE), "whose store cannot be reached now"),
+                (self.of(RING_UNBOUND), "whose binding names no store file"),
+            )
+            if found
+        ]
+        if kept:
+            line += f"; kept: {' and '.join(kept)}"
+        return line
+
+    def remedy(self) -> str | None:
+        if not self.of(RING_ORPHANED):
+            return None
+        return (
+            "run `bettermemory doctor --clear-orphan-keys` to delete them; a store "
+            "moved by hand and not opened since reads as gone, so run `bettermemory "
+            "key adopt --yes` with BETTERMEMORY_DIR naming its directory first to "
+            "keep its key ring"
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "keys_dir": str(self.keys_dir),
+            "rings": len(self.rings),
+            "in_use": len(self.of(RING_IN_USE)),
+            "orphaned": [ring.to_dict() for ring in self.of(RING_ORPHANED)],
+            "unreachable": [ring.to_dict() for ring in self.of(RING_UNREACHABLE)],
+            "unbound": [ring.store_id for ring in self.of(RING_UNBOUND)],
+        }
+
+
+def survey_rings(
+    store_file: Path | None,
+    *,
+    keys_dir: Path | None = None,
+    state_dir: Path | None = None,
+) -> RingSurvey:
+    """Every key ring in the keys directory and how it stands with its
+    store (`ring_standing`). The ring of the store at ``store_file`` (the
+    one doctor checks) is in use whatever its binding says. Reads only;
+    OSError when the keys directory cannot be listed."""
+    root = keys_root(keys_dir)
+    keep: set[str] = set()
+    if store_file is not None:
+        with contextlib.suppress(OSError):
+            current = _store_id_at(Path(store_file))
+            if current is not None:
+                keep.add(current)
+    state = _state_root(state_dir)
+    kept = frozenset(keep)
+    rings = tuple(
+        ring_standing(root, store_id, keep=kept, state_dir=state)
+        for store_id in _ring_ids(root)
+    )
+    return RingSurvey(root, rings, kept)
+
+
+def _clear_ring(
+    root: Path, store_id: str, *, keep: frozenset[str], state_dir: Path
+) -> tuple[RingStanding, list[str] | None]:
+    """Read the ring ``store_id`` again under its binding's lock, as
+    `log.KeyRing.bind_store` writes a binding, and delete its files when it
+    still reads orphaned: an owner's open of a store moved to a new path in
+    the meantime binds the ring first, or waits for this. The standing, and
+    the names deleted (None when it no longer read orphaned). The lock
+    sidecar goes after the lock is given back."""
+    ring = KeyRing(root, store_id)
+    binding = ring.binding_path()
+    lock = binding.with_suffix(binding.suffix + ".lock")
+    with flock_excl(binding):
+        standing = ring_standing(root, store_id, keep=keep, state_dir=state_dir)
+        if standing.state != RING_ORPHANED:
+            return standing, None
+        removed: list[str] = []
+        for path in _ring_paths(root, store_id):
+            if path != lock:
+                path.unlink(missing_ok=True)
+                removed.append(path.name)
+    with contextlib.suppress(OSError):
+        lock.unlink(missing_ok=True)
+        removed.append(lock.name)
+    return standing, removed
+
+
+def clear_orphan_rings(
+    store_file: Path | None,
+    *,
+    keys_dir: Path | None = None,
+    state_dir: Path | None = None,
+) -> dict[str, Any]:
+    """`bettermemory doctor --clear-orphan-keys`: delete every key ring in
+    the keys directory whose store is gone (`survey_rings`, `RING_ORPHANED`)
+    with all its files: keys, head, anchor, binding, lock sidecars and
+    restore record. A ring whose store cannot be told gone, that names no
+    store file, or that a daemon or the store at ``store_file`` holds is
+    never deleted; each orphaned one is read again under its binding's lock
+    first (`_clear_ring`). What was deleted (``cleared``), what read
+    otherwise the second time (``kept``) and what could not be deleted
+    (``failed``, with the error)."""
+    survey = survey_rings(store_file, keys_dir=keys_dir, state_dir=state_dir)
+    state = _state_root(state_dir)
+    cleared: list[dict[str, Any]] = []
+    kept: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
+    for first in survey.of(RING_ORPHANED):
+        try:
+            standing, removed = _clear_ring(
+                survey.keys_dir, first.store_id, keep=survey.keep, state_dir=state
+            )
+        except OSError as exc:
+            failed.append(
+                {"store_id": first.store_id, "error": f"{type(exc).__name__}: {exc}"}
+            )
+            continue
+        if removed is None:
+            kept.append(standing.to_dict())
+        else:
+            cleared.append({**standing.to_dict(), "files": removed})
+    return {
+        "keys_dir": str(survey.keys_dir),
+        "cleared": cleared,
+        "kept": kept,
+        "failed": failed,
+    }
+
+
 __all__ = [
     "DONE",
     "EXIT_CODES",
@@ -1163,14 +1494,23 @@ __all__ = [
     "FAILED",
     "PLANNED",
     "REFUSED",
+    "RING_IN_USE",
+    "RING_ORPHANED",
+    "RING_UNBOUND",
+    "RING_UNREACHABLE",
     "UNCHANGED",
+    "RingStanding",
+    "RingSurvey",
     "accept_history",
     "adopt_ring",
+    "clear_orphan_rings",
     "daemon_locks",
     "describe",
     "export_keys",
     "import_keys",
     "keys_root",
     "read_key_file",
+    "ring_standing",
     "rotate_key",
+    "survey_rings",
 ]
