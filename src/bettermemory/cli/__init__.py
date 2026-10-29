@@ -41,6 +41,7 @@ from . import (
     eval as eval_cmd,
     export,
     health_cmd,
+    index_cmd,
     init as init_cmd,
     log_cmd,
     membership_cmd,
@@ -123,6 +124,7 @@ def _build_parser() -> tuple[
         "rollback": rollback.add_subparser(sub),
         "episodes": episodes.add_subparser(sub),
         "log": log_cmd.add_subparser(sub),
+        "index": index_cmd.add_subparser(sub),
         "project": project_cmd.add_subparser(sub),
         "memory": memory_move_cmd.add_subparser(sub),
         "membership": membership_cmd.add_subparser(sub),
@@ -244,6 +246,9 @@ def main() -> None:
         return
     if cmd == "log":
         log_cmd.run(args, sub_parser=subparsers["log"])
+        return
+    if cmd == "index":
+        index_cmd.run(args, sub_parser=subparsers["index"])
         return
     if cmd == "project":
         project_cmd.run(args, sub_parser=subparsers["project"])

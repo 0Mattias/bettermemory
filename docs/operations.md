@@ -213,6 +213,19 @@ project, scope, client and model, and the activity of the last `--since`
 days, from aggregate SQL with no MAC checked; it is the growth report,
 not a check.
 
+`bettermemory index rebuild` is the repair for the store's search index
+(ENG-100): it spells every memory's index text again from its body and
+scopes with this build's tokenizer, rebuilds the FTS5 table from those
+columns and records one `index_rebuilt` log row, in one write
+transaction. No record changes, so `log verify` reads the store as
+before. It writes, so it is not in the table above: run it where a check
+names it. It opens the store as the writing commands do, so the daemon
+may keep running; the rebuild holds the store's write lock for its
+length (0.53 s for 5,000 memories as measured for ENG-100), and a write
+that waits past its busy timeout is refused as busy and can be retried.
+It exits 1, changing nothing, when the store cannot be written: busy,
+full, or open for reading only by its versions.
+
 What the daemon's log and the clients say when something is wrong:
 
 - **"Invalid Host header" (421) or "Invalid Origin header" (403).** A

@@ -44,6 +44,22 @@ The store's schema gains one index, added at the first open of an older
 store. It is a release candidate like the thirteenth; the stable 9.0.0
 follows the candidates' testing.
 
+#### Added
+
+- **`bettermemory index rebuild` repairs the search index.** Nothing
+  rebuilt the FTS5 index of a store whose index had drifted from its
+  rows (a memory it lost, an entry for text no row carries), so search
+  kept missing the memory, or offering it, until the row was next
+  written. The command spells every memory's index text again from its
+  body and scopes, rebuilds the FTS5 table from it and records one
+  `index_rebuilt` row (reason `repair`), in one write transaction under
+  the write lock; no record changes. Exit 1, nothing changed, on a store
+  it cannot write. A command of its own rather than `doctor
+  --rebuild-index`: doctor reads only, by contract, so that inspecting a
+  store never changes what it inspects. (`src/bettermemory/cli/index_cmd.py`,
+  `src/bettermemory/cli/__init__.py`, `src/bettermemory/store_index.py`,
+  `docs/api.md`, `docs/operations.md`, `tests/test_index_integrity.py`)
+
 #### Changed
 
 - **`recall` no longer imports `hook`.** The session join

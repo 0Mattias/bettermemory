@@ -15,7 +15,8 @@ the package's 2,000-line bound (ENG-96); it imports `store_schema` and
 The index's own integrity (ENG-100) is here too: the tokenizer the stored
 index text is spelled by, compared at every open with this build's
 (`reconciles_tokenizer`, the one line `Store.open` carries), and the
-re-spelling an owner's open runs when they differ (`rebuild_index`).
+re-spelling an owner's open runs when they differ (`rebuild_index`),
+which `bettermemory index rebuild` runs on demand (`cli/index_cmd.py`).
 """
 
 from __future__ import annotations
@@ -419,8 +420,10 @@ def contradicted_at(self: Store, memory_ids: Sequence[str]) -> dict[str, datetim
 TOKENIZER_FINGERPRINT_KEY = "tokenizer_fingerprint"
 
 #: Why an index was spelled again, as its `index_rebuilt` row says: an
-#: owner's open found it spelled by another tokenizer than this build's.
+#: owner's open found it spelled by another tokenizer than this build's,
+#: or `bettermemory index rebuild` was run.
 REBUILT_FOR_TOKENIZER = "tokenizer"
+REBUILT_FOR_REPAIR = "repair"
 
 _P = ParamSpec("_P")
 
@@ -471,7 +474,7 @@ def tokenizer_drift(conn: sqlite3.Connection) -> tuple[str | None, str] | None:
     return None if stored == live else (stored, live)
 
 
-def _cannot_write(store: Store) -> str | None:
+def cannot_write(store: Store) -> str | None:
     """Why this connection may not re-spell the index, or None when it
     may: it holds the key the log row is signed with, it was not opened
     read-only, and its versions let it write (``PRAGMA query_only`` off,
@@ -495,7 +498,7 @@ def _tell_drift(path: Path, stored: str | None, live: str, why: str) -> None:
         "store %s: its search index is spelled by tokenizer %s and this "
         "build's is %s; this open does not re-spell it (%s), so a search may "
         "miss memories until the owner's next writing open does (the "
-        "daemon's start, or any writing command)",
+        "daemon's start, any writing command, or `bettermemory index rebuild`)",
         path,
         (stored or "none")[:16],
         live[:16],
@@ -507,14 +510,14 @@ def settle_tokenizer(store: Store, *, owner: bool) -> IndexRebuild | None:
     """Compare the tokenizer `store`'s index is spelled by with this
     build's, and when they differ re-spell it at the owner's writing open
     (`owner`, the open's ``allow_rekey``, on a connection that may write:
-    `_cannot_write`), or else say so once (`_tell_drift`) and leave it.
+    `cannot_write`), or else say so once (`_tell_drift`) and leave it.
     The rebuild never fails the open: a store it cannot write logs why
     and opens as it stands. Returns the rebuild, or None."""
     drift = tokenizer_drift(store.conn)
     if drift is None:
         return None
     stored, live = drift
-    why = _cannot_write(store) or (None if owner else "not the owner's writing open")
+    why = cannot_write(store) or (None if owner else "not the owner's writing open")
     if why is not None:
         _tell_drift(store.path, stored, live, why)
         return None
@@ -524,7 +527,8 @@ def settle_tokenizer(store: Store, *, owner: bool) -> IndexRebuild | None:
         log.warning(
             "store %s: its search index is spelled by tokenizer %s and this "
             "build's is %s, and re-spelling it failed (%s); a search may miss "
-            "memories until a later writing open re-spells it",
+            "memories until a later writing open re-spells it, or "
+            "`bettermemory index rebuild` does",
             store.path,
             (stored or "none")[:16],
             live[:16],
