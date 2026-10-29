@@ -241,12 +241,11 @@ def find_binary() -> str:
         return str(Path(binary).resolve())
 
     candidate = Path(sys.argv[0])
-    # Require the argv0 basename to actually be the bettermemory binary —
-    # mirrors the guard in doctor._check_binary_on_path. Under
-    # `python -m bettermemory …`, argv[0] is the package's `__main__.py`,
-    # whose path matches no MCP client's console-script entry; returning it
-    # would make doctor flag every correct config as a "stale binary path".
-    # Fall through to the bare-string fallback in that case instead.
+    # Require the argv0 basename to actually be the bettermemory binary.
+    # Under `python -m bettermemory …`, argv[0] is the package's
+    # `__main__.py`, which no client can run as a server command;
+    # returning it would write that path into the client's config. Fall
+    # through to the bare-string fallback in that case instead.
     if (
         candidate.is_absolute()
         and candidate.exists()
@@ -387,8 +386,10 @@ def command_launches_bettermemory(
 ) -> bool:
     """Recognize whether an ``mcpServers`` entry's ``command``/``args`` pair
     launches *our* server. Init's legacy-migration gate and doctor's
-    stale-path scan share this ONE definition so the two can't drift into
-    disagreeing about what "a bettermemory entry" is.
+    `clients` and `claude_code` checks (`doctor.launches_bettermemory`,
+    which adds two shapes that no longer run anything) share this ONE
+    definition so the two can't drift into disagreeing about what "a
+    bettermemory entry" is.
 
     Any one of these shapes matches:
 
@@ -1485,8 +1486,8 @@ def read_server_entries(
     `mcp_servers` for Hermes. An empty file, a non-object root or an
     absent key read as an empty map — nothing registered — while a file
     that does not parse raises ValueError, so `doctor` can tell "nothing
-    here" from "cannot read", the distinction its `unreadable` finding
-    exists for. OSError and UnicodeDecodeError propagate untouched.
+    here" from "cannot read", the distinction its `clients` check's
+    "cannot be read" finding exists for. OSError and UnicodeDecodeError propagate untouched.
     `max_bytes` bounds the read (`claude_paths.read_settings_text`) for a
     file a repository ships; a file over it raises ValueError unread.
     Anything but a regular file (a FIFO, a link to a terminal) raises

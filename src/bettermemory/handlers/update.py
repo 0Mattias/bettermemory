@@ -996,12 +996,11 @@ def _commit_update(
             ),
         }
     except OSError as exc:
-        # A genuine disk-level failure in the atomic write path (ENOSPC on
-        # the tmp write/rename, EIO, EACCES). Surface as a structured
-        # ValueError so the MCP tool boundary returns a clean "failed to
-        # update memory <id>: …" rather than leaking a bare OSError — matches
-        # what handlers/remove.py and handlers/restore.py do, and what
-        # Store.update's docstring promises the handler boundary does.
+        # A disk-level failure under the store's write (ENOSPC, EIO,
+        # EACCES). Surface as a structured ValueError so the MCP tool
+        # boundary returns a clean "failed to update memory <id>: …" rather
+        # than leaking a bare OSError — matches what handlers/remove.py and
+        # handlers/restore.py do.
         raise ValueError(f"failed to update memory {id}: {exc}") from exc
     return updated, None
 

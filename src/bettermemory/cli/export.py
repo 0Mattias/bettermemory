@@ -457,49 +457,24 @@ def _cli_export(
     removed / removed_reason / removed_session.
 
     The two `skipped_*_files` counts are ALWAYS present, including on a
-    clean store where both are 0. Each is a two-walk delta — files on
-    disk, minus the records the reader handed back — which is the same
-    quantity doctor's memory_parse_health reports as `details["skipped"]`,
-    and it is named after that walk rather than after a diagnosis for the
-    same reason doctor is: the delta says the loader skipped the file, not
-    why. Malformed frontmatter and a `schema_version` newer than this
-    install (a `sync pull` from a machine on a newer bettermemory) are
-    indistinguishable from a count, so neither these keys nor the warning
-    claim the file "did not parse". `store.count_unparseable_memory_files`
-    is where that stronger claim lives; it parses every file to earn it,
-    and an export deliberately does not pay for a second parse of a store
-    it has just read.
-
-    The store's readers (`load_all`, `load_tombstones`) swallow every
-    per-file failure, so without these counts a short export is
-    indistinguishable from a small store — the worst failure mode a
-    backup has: invisible at capture time, discovered when the source is
-    gone. A key that appears only on failure is a key no consumer
-    bothers to read, so both are unconditional and a consumer can assert
-    `== 0` rather than remember to probe for absence.
+    clean store where both are 0, so a consumer can assert `== 0` rather
+    than remember to probe for absence. `format_version: 1` froze them
+    when the store was a directory of files and each was the files on
+    disk minus the records the reader handed back. The store is one
+    SQLite file now and its readers (`load_all`, `load_tombstones`)
+    return every row its table holds or raise, so `skipped_active_files`
+    is always 0, and `skipped_tombstone_files` is the tombstone count
+    read before the load minus the rows the load returned: non-zero only
+    when a `memory_restore` lands between the two reads.
     `skipped_tombstone_files` is `null`, not 0, when --no-tombstones was
     passed: that half was never examined, and reporting 0 there would
     assert an absence nobody checked.
 
-    Round-trippability is therefore CONDITIONAL, not absolute: a future
-    `bettermemory import` can recreate active records and tombstones
-    from this document with no loss **only when both skipped counts are
-    0**. When either is non-zero the document is a partial capture of
-    the store — the skipped files are not represented anywhere in it,
-    not even as placeholders, and `tombstoned_memories: []` under a
-    non-zero `skipped_tombstone_files` means "none survived the read",
-    not "none exist". `bettermemory doctor`'s memory_parse_health
-    re-reads the store and names the offending ACTIVE files; nothing
-    anywhere COUNTS a skipped tombstone, so a non-zero
-    `skipped_tombstone_files` is a number this command is alone in
-    reporting and the reader inspects `.tombstones/` by hand. The
-    directory itself is not unread — doctor's `auto_memory_stranded`
-    check calls `store.load_tombstones()` for ingest dedup (when a
-    Claude Code auto-memory dir exists for the cwd) — but that reader
-    swallows every per-file failure and returns only what parsed, so a
-    file it dropped leaves no trace on that surface: it silently widens
-    the set of sources that check calls stranded rather than reporting
-    itself.
+    Round-trippability is therefore conditional: a consumer can recreate
+    the active records and tombstones from this document with no loss
+    only when both skipped counts are 0. When either is non-zero the
+    document is a partial capture of the store, the missing rows are not
+    represented in it, and the export says so on stderr.
     `--strict` turns any non-zero count into a non-zero exit for
     scripted backups; the default stays exit 0 with a
     stderr warning so existing cron callers do not start failing on an

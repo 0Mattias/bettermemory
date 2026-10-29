@@ -272,10 +272,10 @@ def cli_context(*, migrate: bool = True) -> CliContext:
     config = load_config()
     directory = config.resolved_directory()
     exit_if_bundle_file(directory / STORE_FILENAME)
-    # Entry point for every CLI command routed through here: provision
-    # and run the startup checks. `bettermemory doctor` builds its own
-    # Stores with the pure constructor instead, so inspecting a store
-    # cannot rebuild the index it was asked to inspect.
+    # Entry point for every CLI command routed through here: the owner's
+    # writing open. `bettermemory doctor` opens the store read-only
+    # instead (`Store.open(..., read_only=True)`), so inspecting a store
+    # cannot rekey it or re-spell the index it was asked to inspect.
     store = open_owner_store(directory / STORE_FILENAME)
     if migrate:
         try:
@@ -365,9 +365,9 @@ def cli_recorder(
     `[telemetry] enabled = false` turns the log off here too, and the
     rotation cap and verbatim-query redaction follow the same config.
     Every CLI path that creates or rewrites a memory records through
-    this, because the provenance derivation at `index.rebuild` joins on
-    those events: a mutation that records nothing reads as unaccounted
-    on the next rebuild.
+    this: a write or an update is a state row (`events.RowClass`), one a
+    product module reads back, so a CLI mutation that recorded nothing
+    would be missing from every reader of the log.
 
     `attribution` is required and must carry the admin prefix
     `eval.is_admin_recorded_event` reads: a CLI run records under a

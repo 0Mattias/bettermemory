@@ -222,8 +222,9 @@ def _apply_show_trust_and_standing(
     # synced record whose stamp this host never made reads
     # `verification.status: "remote"` and spot_check_required.
     if trust_unavailable:
-        # The index could not be read, so the rule below has nothing to
-        # read: neither the label nor whether this host made the stamp.
+        # The store was opened without its key, so the rule below has
+        # nothing to read: neither the label nor whether this host made
+        # the stamp.
         # `provenance: null` alone said "not classified yet", which is a
         # different and benign state; this says the question could not
         # be asked, and demotes a stamp of unknown origin.
@@ -248,9 +249,9 @@ def _apply_show_trust_and_standing(
 def _links_payload(deps: ToolHandlers, memory: Any) -> dict[str, Any]:
     """Build the `links` + `reverse_links` payload for memory_show.
 
-    Forward `links` come from the memory's own frontmatter. Reverse
-    `reverse_links` are computed by querying the FTS5 index's
-    `memory_links` table — every memory that links AT this id is
+    Forward `links` come from the record itself. Reverse
+    `reverse_links` come from the store's `memory_links` table
+    (`Store.links_with_status`): every memory that links AT this id is
     a row keyed on `target_id`, so the lookup is O(k) on the
     number of reverse links rather than O(N) on the store size.
     Surfaced so a retrieval consumer sees the relationship both
@@ -265,67 +266,13 @@ def _links_payload(deps: ToolHandlers, memory: Any) -> dict[str, Any]:
     links carry `source_id` so the consumer can navigate to the linking
     memory; forward links carry `target_id`.
 
-    Fallback: if the index file doesn't exist (fresh install, just
-    deleted) OR exists but reports zero indexed rows,
-    `links_for_with_status` returns empty lists with
-    `indexed_count == 0` and we walk the active set once. That matches
-    the same fallback shape `_handlers.load_search_candidates` uses —
-    search keeps working through a torn-down index, just slower.
-
-    The present-but-empty case is the post-upgrade window: a
-    `SCHEMA_VERSION` bump makes `_ensure_schema` drop+recreate the
-    index tables EMPTY on the first index op after the upgrade (the
-    index FILE still exists, `indexed_count` resets to 0) and the
-    rows refill lazily per-write or via `bettermemory reindex`. An
-    `exists()`-only guard would let the lookup return `[]` and emit
-    NO reverse_links for affected memories through that window, even
-    though the linking data is intact on disk. Routing the
-    zero-row case to `load_all` too keeps reverse_links correct
-    while the index repopulates.
-
-    The count alone can't see the whole window, though: incremental
-    Store hooks repopulate touched memories, so `indexed_count` climbs
-    back above zero while the migration's `needs_rebuild` flag is still
-    set and untouched legacy sources' `memory_links` rows are still
-    missing. Flag-set is therefore treated exactly like a zero count —
-    discard the (possibly partial) index answer and take the `load_all`
-    scan — mirroring the `needs_rebuild` gate
-    `_handlers.load_search_candidates` applies on the search surface.
-
-    `links_for_with_status` returns the inbound links AND the
-    `indexed_count` / `needs_rebuild` meta pair from a SINGLE index
-    open — the unusable-index signals ride the connection the inbound
-    query already holds. That keeps the common populated-but-no-inbound
-    `memory_show` (most memories are not link targets) to ONE index
-    open: a non-zero count with the flag clear proves the index is
-    usable, so we return empty reverse_links with no second
-    connection. A zero count (index absent or empty) or a set flag
-    (rebuild pending) triggers the `load_all` scan.
-
-    A torn / truncated `.index.sqlite` raises `sqlite3.DatabaseError`,
-    an on-disk schema_version newer than this reader raises
-    `index.IndexVersionError`, a poisoned non-integer meta row (a
-    hand-edited or foreign-tool-written index) raises `ValueError`
-    from the `int()` reads (`_ensure_schema`'s version check, the
-    helper's own `indexed_count` read), and a store root that lost its
-    write bit raises `OSError` when `_ensure_schema`'s migration
-    branch has to O_CREAT the `.index.sqlite.lock` flock sidecar —
-    all four surface out of `links_for_with_status` (it opens +
-    `_ensure_schema`s the file), NOT as `indexed_count == 0`. We catch
-    all four and route to the same zero-row `load_all` fallback:
-    unparseable meta IS corruption (`index.status()` classifies it the
-    same — and declares the same `OSError` class load-bearing for its
-    never-raises contract), the index is a regenerable best-effort
-    cache, and the canonical `.md` bodies are intact (still readable —
-    the root kept its read bit), so the show must degrade gracefully
-    rather than hard-crash for every id until reindex — mirroring the
-    corruption tolerance `_handlers.load_search_candidates` already gets
-    from the tolerant `index.status()`.
-
-    The dict also carries `provenance`, always present and None whenever
-    the index cannot answer, read on the same open as the inbound query.
-    `memory_show` lifts it into its own slot; it rides here so the label
-    costs no extra connection on the hot path.
+    The same read returns the record's trust row, so the dict also
+    carries `provenance` (always present; None when the store holds no
+    trust row for the id or was opened without its key), the private
+    `_verified_locally_at` (this host's verification stamp) and
+    `_trust_unavailable` (the store has no key, `Store.has_key`).
+    `memory_show` lifts them into its own slots and applies the trust
+    rule, or `apply_trust_unavailable` in its place.
     """
 
     out: dict[str, Any] = {}
@@ -338,12 +285,6 @@ def _links_payload(deps: ToolHandlers, memory: Any) -> dict[str, Any]:
             }
             for link in memory.links
         ]
-    # Whether the index could be read at all — the except arm below is
-    # one way it cannot; an absent file, which `links_for_with_status`
-    # reports as the same `(…, 0, False, None, None)` an unclassified
-    # row gets, is the other. `os.path.exists`, not `Path.exists()`,
-    # for the usual re-raise reason; one stat beside the open the links
-    # query already pays.
     _outbound, inbound, trust = deps.store.links_with_status(memory.id)
     trust_unavailable = not deps.store.has_key
     out["provenance"] = trust.provenance if trust is not None else None

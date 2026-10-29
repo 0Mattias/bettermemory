@@ -67,24 +67,13 @@ from .verify import (
     verdict_from_signals,
 )
 
-# The recommendation a stamped row carries when the index could not be
-# read (`ResponseBuilder.apply_trust_unavailable`). One string each, so
-# the three read surfaces and the tests say the same thing.
+# The recommendation a stamped row carries when the store was opened
+# without its key (`ResponseBuilder.apply_trust_unavailable`). One
+# string, so the read surfaces and the tests say the same thing.
 TRUST_UNAVAILABLE_RECOMMENDATION = (
     "This machine does not hold the store's key, so whether this host "
     "made this stamp is unknown. Spot-check a claim before relying on "
     "the memory; `bettermemory log verify` reports the same condition."
-)
-# The same state with a different CAUSE and a different repair. A
-# version-skewed index is intact; this process is older than whatever
-# last migrated it, which is every long-lived server's state between a
-# schema bump and a client restart. `reindex` cannot resolve that in
-# either direction, so telling the user to run it is worse than saying
-# nothing — it sends them to repair data that was never damaged.
-TRUST_UNAVAILABLE_SCHEMA_SKEW_RECOMMENDATION = (
-    "The index is newer than this process can read, so whether this host "
-    "made this stamp is unknown. Restart the client to load the upgraded "
-    "package, then read again."
 )
 
 

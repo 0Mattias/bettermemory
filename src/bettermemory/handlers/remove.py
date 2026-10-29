@@ -39,13 +39,10 @@ async def memory_remove(
     except MemoryNotFoundError as exc:
         raise ValueError(str(exc)) from exc
     except OSError as exc:
-        # W1 closes the most common race path (FileNotFoundError under a
-        # concurrent tombstone) by converting it to TombstonedError inside
-        # `Store.tombstone`. Bare OSError can still surface from genuine
-        # disk-level failures during the tombstone write or unlink (EIO
-        # mid-write, ENOSPC during the rename, EACCES on the unlink, …).
-        # Surface as ValueError so the MCP tool boundary returns a clean
-        # structured error rather than letting the bare OSError leak.
+        # A disk-level failure under the store's write (ENOSPC, EIO,
+        # EACCES). Surface as ValueError so the MCP tool boundary returns
+        # a clean structured error rather than letting the bare OSError
+        # leak.
         raise ValueError(f"failed to tombstone memory {id}: {exc}") from exc
     except ValueError as exc:
         # Reachable when even the adaptively-trimmed removal metadata (empty

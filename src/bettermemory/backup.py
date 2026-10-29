@@ -70,8 +70,10 @@ rewinds the head to the bundle's on the record instead. In order: it
 refuses a store file that is itself inside a bundle (its snapshot would be
 replaced); it takes the store's daemon lock and the spawn lock
 (`_daemon_client.lock_file_for` and `spawn_lock_file_for`), refusing while
-anything holds either, so no daemon serves mid-restore and no hook, `up` or
-newly started shim spawns one (each spawns through `ensure_daemon`, under the spawn lock); it
+anything holds either, so no daemon serves mid-restore and none starts: a
+hook, `up` or a newly started shim spawns through `ensure_daemon`, under the
+spawn lock, and a running shim's reconnect (`_daemon_client.start_and_wait`)
+starts none while another process holds the daemon lock; it
 verifies the bundle and refuses one that does not verify, save a
 ``self_signed`` one the caller said to trust (``trust_bundle_key``);
 without ``apply`` it stops there with the plan. With it, it takes the

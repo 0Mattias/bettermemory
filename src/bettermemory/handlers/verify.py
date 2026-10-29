@@ -675,11 +675,10 @@ def _stamp_or_stale(
             ),
         }
     except OSError as exc:
-        # Genuine disk-level failure in the atomic write path (ENOSPC, EIO,
+        # A disk-level failure under the store's write (ENOSPC, EIO,
         # EACCES). Surface as a structured ValueError so the MCP boundary
         # returns a clean "failed to verify memory <id>: …" rather than a bare
-        # OSError — mirrors remove.py/restore.py and Store.mark_verified's
-        # documented handler-boundary contract.
+        # OSError — mirrors remove.py/restore.py.
         raise ValueError(f"failed to verify memory {memory_id}: {exc}") from exc
     return stamped, None
 

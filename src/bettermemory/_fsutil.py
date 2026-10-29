@@ -3,8 +3,9 @@
 Two concerns live here, both narrow:
 
 **Durability (`fsync_file`, `fsync_dir`, `atomic_write_bytes`).** The
-store's write path is `write to .tmp → rename to target`. POSIX
-guarantees the rename itself is atomic, but the rename only updates
+small files beside the store (the key ring's key, head, origin and
+binding files, the machine id, configs, export and mirror output) are
+written `write to .tmp → rename to target`. POSIX guarantees the rename itself is atomic, but the rename only updates
 the directory entry; the page cache holding the file's bytes (and the
 directory's own metadata) can still be lost on power loss between the
 rename returning and the kernel flushing dirty pages. Without an
@@ -27,19 +28,13 @@ exists, the data backing it never reached disk.
   accepting the harmless world-readable instant between rename and
   chmod), `mode_before_rename` fchmods the tmp fd BEFORE the rename
   (privacy-critical 0o600 payloads — no world-readable window at the
-  visible name). The privacy-critical frontmatter writers route
-  through the `mode_before_rename` form: `_atomic_write_post` (the
-  store's Post writer) and `episodes._write_path` both serialise a
-  `frontmatter.Post` to bytes and delegate here (Q29), so the
-  durable-private-write discipline has one definition instead of three
-  hand-rolled copies. One writer stays bespoke because it isn't a
-  plain-bytes-in-memory caller: `events._compress_rotating` streams
-  gzip in 64 KB chunks straight to the archive (buffering the whole
-  compressed output in memory just to reach this helper would defeat
-  the streaming). It already performs its own before-rename fchmod.
-  The plain callers that pass neither mode
-  — `config.py`'s default-config writer, `cli/export.py`'s `-o` output
-  writer, and `sync.py`'s `.gitignore` writer — inherit
+  visible name). The privacy-critical writers route through the
+  `mode_before_rename` form: the key ring (`log.py`), the machine id,
+  the key lifecycle, backup bundles and the v8 mirror's memory and
+  episode files, so the durable-private-write discipline has one
+  definition. The plain callers that pass neither mode (`config.py`'s
+  default-config writer, `cli/export.py`'s `-o` output writer, the
+  membership export and the service units) inherit
   `NamedTemporaryFile`'s 0o600 default, which is strictly safe
   (owner-only) for these owner-scoped files. `init.py`'s client-config
   writer passes `mode_before_rename` with the mode the file had, so a
@@ -222,16 +217,15 @@ def atomic_write_bytes(
       instant between rename and chmod is harmless when the bytes aren't
       private. Its caller is `project_file.write` with `rebind=True`,
       which passes 0o644 for a `bettermemory.toml` the user commits. The
-      config, export and sync writers pass neither mode and inherit the
+      config and export writers pass neither mode and inherit the
       tmp's 0o600 default (strictly safe for those owner-scoped files);
       init's client-config writer passes ``mode_before_rename`` with the
       mode the file had, and a new config gets the 0o600 default.
     * ``mode_before_rename`` — applied via ``os.fchmod`` on the tmp file
       descriptor BEFORE the rename, plus a defensive post-rename
       ``os.chmod`` fallback. Use for privacy-critical payloads (the
-      0o600 memory/episode bodies that ``_atomic_write_post`` and
-      ``episodes._write_path`` route through this helper for) so the
-      file is never world-readable at the visible path even for an
+      0o600 key ring files, and the memory and episode files the v8
+      mirror writes) so the file is never world-readable at the visible path even for an
       instant. Both the fchmod and the fallback are best-effort
       (suppressed ``OSError``); Windows has no POSIX mode bits and
       ``os.fchmod`` is absent from typeshed there, so the fchmod is
@@ -507,9 +501,8 @@ def flock_excl(
     operator logs. Pre-3.0.0 the no-op was permanent and silent.
 
     The lockfile is created with ``0o600`` mode (POSIX) or default
-    Windows mode bits (Windows ignores POSIX bits anyway) so the
-    cross-host ``sync push`` posture doesn't leak it as world-readable
-    on POSIX hosts.
+    Windows mode bits (Windows ignores POSIX bits anyway), so it is
+    never world-readable on POSIX hosts.
 
     This is the SINGLE definition. ``log.py`` (the key ring's head,
     origin and binding files) and ``backup.py`` both take their locks

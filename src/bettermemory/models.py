@@ -16,29 +16,23 @@ from .origin import Origin, is_full_commit_sha
 
 
 # ---------------------------------------------------------------------------
-# On-disk schema version
+# The v8 file format's schema version
 # ---------------------------------------------------------------------------
 #
-# Every memory and tombstone written by this version of bettermemory carries
-# `schema_version: <SCHEMA_VERSION>` in its YAML frontmatter. Readers default
-# to `1` when the field is missing — that's the implicit version of memories
-# written before this constant existed (additive-fields-only era).
+# bettermemory 8 kept each memory, tombstone and episode as a markdown file
+# whose YAML frontmatter carried `schema_version: <SCHEMA_VERSION>`; a file
+# without the field is version 1, the format predating it. bettermemory 9
+# keeps records in one SQLite file, whose format version is
+# `store_schema.SCHEMA_VERSION`, and reads this constant only through the
+# frozen v8 readers and renderers (`v8`): `bettermemory migrate v8` reads a
+# v8 directory with them, and `bettermemory export --mirror` (`mirror`)
+# writes the store back out as one, stamping this version.
 #
-# Forward-compatibility rule: a reader that encounters a schema_version
-# strictly greater than its own SCHEMA_VERSION raises ValueError on load.
-# `Store.load_all` and friends catch ValueError and skip the file (silently —
-# the skip path emits no log line), so a user who downgrades bettermemory
-# after writing some memories with a newer minor sees those memories disappear
-# from the retrieval surface (rather than the reader silently misinterpreting
-# them under the wrong field semantics). `bettermemory doctor`'s
-# `memory_parse_health` check is what surfaces the count gap explicitly.
-#
-# Backward-compatibility rule: minor bumps within a major version
-# (1 → 1+, ...) are additive-only — new optional fields, never renamed
-# fields, never removed fields, never re-defined semantics. A *major* bump
-# (1 → 2) is reserved for breaking format changes and ships with a
-# `bettermemory migrate` subcommand that walks the store and rewrites the
-# frontmatter into the new shape. Until that day, the constant stays at 1.
+# A file whose schema_version is greater than this constant raises
+# ValueError in the v8 readers rather than being read under the wrong field
+# semantics. The migration leaves such a file out, and its report counts
+# the memory and tombstone files it left out as `unparseable`. The v8
+# format is frozen, so the constant stays at 1.
 
 SCHEMA_VERSION: int = 1
 
