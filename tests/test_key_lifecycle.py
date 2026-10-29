@@ -302,6 +302,31 @@ def test_import_of_keys_held_already_changes_nothing(
     assert _rows(path, KEY_IMPORTED) == []
 
 
+def test_a_retired_copy_of_the_missing_key_imports_back_as_current(
+    tmp_path: Path, keys_dir: Path
+) -> None:
+    """The store's key is missing while the ring holds a retired copy of
+    it (what a rotation that failed inside its transaction left before
+    9.0.0rc14's fold): the store reads missing and its remedy names `key
+    import`, so the import files the key as the current one rather than
+    answering that the ring holds it already (cold review M2)."""
+    path, store_id = _store(tmp_path / "home")
+    ring = _ring(keys_dir, store_id)
+    key = ring.load_current()
+    assert key is not None
+    out = tmp_path / "kept.json"
+    assert lifecycle.export_keys(path, out)["status"] == "done"
+    ring.retired_path(fingerprint(key)).write_bytes(key)
+    ring.current_path().unlink()
+    assert lifecycle.describe(path)["status"] == "missing"
+    report = lifecycle.import_keys(path, out)
+    assert report["status"] == "done", report
+    assert report["keys"] == [{"fingerprint": fingerprint(key), "action": "current"}]
+    assert ring.load_current() == key
+    assert _rows(path, REKEY) == []
+    assert _verify(path) == "ok"
+
+
 # ---------------------------------------------------------------------------
 # a ring bound elsewhere, and adopt
 # ---------------------------------------------------------------------------

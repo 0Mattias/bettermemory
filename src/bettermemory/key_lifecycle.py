@@ -526,16 +526,15 @@ def import_keys(
     installs: list[tuple[dict[str, Any], bytes]] = []
     for key in keys:
         own = fingerprint(key)
-        if own in held:
+        # The store's own key, when it reads missing or foreign, goes back as
+        # the current key even when the ring holds a retired copy of it.
+        current = own == state.expected and state.state in (KEY_MISSING, KEY_FOREIGN)
+        if own in held and not current:
             plan.append({"fingerprint": own, "action": "held"})
-        elif not _signs_a_segment(segments, key):
+        elif own not in held and not _signs_a_segment(segments, key):
             plan.append({"fingerprint": own, "action": "signs_nothing"})
         else:
-            slot = (
-                "current"
-                if own == state.expected and state.state in (KEY_MISSING, KEY_FOREIGN)
-                else "retired"
-            )
+            slot = "current" if current else "retired"
             entry = {"fingerprint": own, "action": slot}
             plan.append(entry)
             installs.append((entry, key))
