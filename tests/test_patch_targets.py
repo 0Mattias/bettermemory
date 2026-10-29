@@ -26,6 +26,12 @@ only inside a function, where no parameter or local of the same name
 shadows it, since a load made as the module is imported (an alias, a
 decorator, a default) ran before any patch was placed.
 
+A module split out of a parent that imports it and re-exports its names
+(`SPLIT_PARENTS`) must not bind a name patched on that parent and read it
+as it runs: the parent and the split module would each read their own
+binding, and a patch on the parent's would miss the moved readers while
+the parent's own reads let the rules above pass it.
+
 A known limit: a patch that names its target through a variable
 (`setattr(module, name, value)` over a list of names) is read by none of
 the rules here. Three such sites predate them, in
@@ -46,6 +52,8 @@ from typing import Any
 import pytest
 
 import bettermemory
+
+from .test_import_graph import SPLIT_PARENTS
 
 PACKAGE = "bettermemory"
 SOURCE = Path(bettermemory.__file__).resolve().parent
@@ -822,3 +830,64 @@ def _reads_of_tree(tree: ast.Module, current: str) -> _Reads:
     reads = _Reads(_bindings(tree, current, False), current, False)
     reads.visit(tree)
     return reads
+
+
+# ---------------------------------------------------------------------------
+# Split readers: a parent and the modules split out of it (ENG-96)
+# ---------------------------------------------------------------------------
+
+
+def _split_misses(module: str, name: str) -> list[str]:
+    """The modules split out of `module` (`SPLIT_PARENTS`) that bind `name`
+    as they are imported and read that binding as one of their functions
+    runs, so a patch on `module.name` misses their readers."""
+    missed: list[str] = []
+    for child, parent in SPLIT_PARENTS:
+        if parent != module:
+            continue
+        tree = _tree(MODULES[child])
+        reads = _call_time_reads(tree, child, False)
+        if name in reads.names and name in _bound_at_import(tree.body):
+            missed.append(child)
+    return missed
+
+
+def test_no_patch_on_a_parent_misses_a_split_module_s_readers() -> None:
+    """A patch on `module.name` reaches the readers `module.name` had
+    before a split: no module split out of `module` binds `name` as it is
+    imported and reads it as one of its functions runs. Where one does,
+    the parent and the split module each read their own binding, the
+    patch replaces the parent's alone, and the moved readers keep the
+    original, though the parent's own reads make the first two rules pass
+    it."""
+    missed: list[str] = []
+    for top in PATCHING:
+        for path in _files(top):
+            for line, module, name in _patch_sites(path):
+                for child in _split_misses(module, name):
+                    rel = path.relative_to(ROOT).as_posix()
+                    missed.append(
+                        f"{rel}:{line} patches {module}.{name}, but {child} "
+                        f"binds {name} as it is imported and reads it as it runs"
+                    )
+    assert missed == [], "\n".join(missed)
+
+
+@pytest.mark.parametrize(
+    ("module", "name", "child"),
+    [
+        (f"{PACKAGE}.doctor", "_not_checked", f"{PACKAGE}.doctor_store"),
+        (f"{PACKAGE}.doctor", "_worst", f"{PACKAGE}.doctor_model"),
+        (f"{PACKAGE}.posture", "Finding", f"{PACKAGE}.posture_sandbox"),
+        (f"{PACKAGE}.location", "NeedWitnesses", f"{PACKAGE}.location_witness"),
+    ],
+)
+def test_the_rule_refuses_a_patch_on_a_name_a_split_module_binds(
+    module: str, name: str, child: str
+) -> None:
+    """Planted: a patch on each of these names, as a test could place it on
+    the parent, is one the rule above refuses, naming the split module
+    whose readers it would miss; a name only the parent binds is not."""
+    assert child in _split_misses(module, name)
+    # The control: `run_checks` is doctor's own, bound by no split module.
+    assert _split_misses(f"{PACKAGE}.doctor", "run_checks") == []
