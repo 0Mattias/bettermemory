@@ -666,14 +666,6 @@ def check_store_location(ctx: _Context) -> Check:
 # ---------------------------------------------------------------------------
 
 
-def _key_remedy(key_path: Path) -> str:
-    return (
-        f"restore the key file to {key_path}, or set BETTERMEMORY_KEYS_DIR to the "
-        "directory that holds it; otherwise the next write from this machine "
-        "rekeys the store and its earlier rows stay unverifiable"
-    )
-
-
 def _open_remedy(path: Path, exc: Exception) -> str:
     """The fix for a store `Store.open` refused, by what refused it. Only
     a file SQLite cannot read as a database, or one without its identity,
@@ -803,9 +795,13 @@ def check_store(ctx: _Context) -> list[Check]:
     """The store file (`store`) and its key (`key`), from one read-only
     open. A missing store is the first-run state, not a fault: the first
     session creates it. A directory that holds an un-migrated 8.x store
-    and no store file is one: a daemon refuses to start there."""
-    from .log import KeyUnreadableError
+    and no store file is one: a daemon refuses to start there. The key
+    check renders the state the open read (`store.Store.key_state`,
+    `store_keys.key_state`) in its words, as posture's ``key.match``
+    finding does: ok only when the key is present, a failure naming the
+    remedy when it is unreadable, missing, foreign or bound elsewhere."""
     from .store import (
+        KEY_PRESENT,
         SCHEMA_VERSION,
         STORE_FILENAME,
         Store,
@@ -871,23 +867,12 @@ def check_store(ctx: _Context) -> list[Check]:
     with store:
         status = store.status()
         orphans = store.store_orphans()
-        meta = store.meta()
         keyring = store.keyring
-        expected = meta.get("key_fingerprint", "")
-        unreadable: KeyUnreadableError | None = None
-        try:
-            current = keyring.load_current()
-        except KeyUnreadableError as exc:
-            # There and unreadable (`log.KeyUnreadableError`): the store
-            # opened for reading without it, and the check says so below.
-            current, unreadable = None, exc
-        has_key = store.has_key
+        state = store.key_state
         head = keyring.read_head()
         tail = store.conn.execute(
             "SELECT seq, mac FROM log ORDER BY seq DESC LIMIT 1"
         ).fetchone()
-    from .log import fingerprint
-
     details.update(
         {
             "store_id": status["store_id"],
@@ -935,14 +920,12 @@ def check_store(ctx: _Context) -> list[Check]:
         ),
         details=details,
     )
-    key_path = keyring.current_path()
     key_details: dict[str, Any] = {
         "keys_dir": str(keyring.keys_dir),
-        "key_path": str(key_path),
-        "expected_fingerprint": expected,
+        **state.details(),
         "head_seq": status["head_seq"],
     }
-    if has_key:
+    if state.state == KEY_PRESENT:
         head_finding = _head_finding(
             head_seq=None if head is None else head.seq,
             head_mac=None if head is None else head.mac,
@@ -952,37 +935,11 @@ def check_store(ctx: _Context) -> list[Check]:
         key_check = _from_findings(
             "key",
             [] if head_finding is None else [head_finding],
-            ok_summary=f"the key at {key_path} matches the store ({expected[:16]})",
+            ok_summary=state.summary,
             details=key_details,
         )
-    elif unreadable is not None:
-        key_check = Check(
-            "key",
-            FAIL,
-            f"the key at {key_path} is there and cannot be read "
-            f"({unreadable.reason}): the log cannot be verified, "
-            "and every writing open of the store fails until it can",
-            "make it readable to this account again (owner-only, 0600)",
-            key_details,
-        )
-    elif current is None:
-        key_check = Check(
-            "key",
-            FAIL,
-            f"no key for this store at {key_path}: the log cannot be verified",
-            _key_remedy(key_path),
-            key_details,
-        )
     else:
-        key_details["found_fingerprint"] = fingerprint(current)
-        key_check = Check(
-            "key",
-            FAIL,
-            f"the key at {key_path} is not this store's ({fingerprint(current)[:16]}, "
-            f"expected {expected[:16]}): the log cannot be verified",
-            _key_remedy(key_path),
-            key_details,
-        )
+        key_check = Check("key", FAIL, state.summary, state.remedy, key_details)
     return [store_check, key_check]
 
 

@@ -48,7 +48,8 @@ with the same store id, a copy of the store in another directory say,
 opens for reading only while the bound file still holds that id (or
 cannot be read to tell): it writes nothing to the key ring, refuses
 every write, and logs a warning
-naming both files. To move a store, move the file; the next owner's
+naming both files; `doctor`'s key check fails and `security audit`
+reports `key.match` high in the same words ("bound elsewhere"). To move a store, move the file; the next owner's
 open of it rebinds the ring, since the old path no longer holds the
 store. Two files with one store id cannot both be written on one host:
 to hand the ring to the other one, move or remove the bound file, or
@@ -286,8 +287,10 @@ What the daemon's log and the clients say when something is wrong:
   starts as the link, so a link to a volume not mounted fails there in
   the same line.
   Make it readable to this account again (`0600`), or mount the volume.
-- **"store ... carries store id ..., and the key ring under ... belongs
-  to the store at ...; this one opens for reading only".** Two store
+- **"store ...: the key ring under ... is bound elsewhere: it belongs
+  to the store at ..., which still holds store id ...; every open of
+  this file is read-only".** `doctor` and `security audit` say the
+  same for the file (since 9.0.0rc14). Two store
   files carry one store id, and the key ring is bound to the other one
   (Files and modes, above). Move or remove one of them, or delete the
   `<store_id>.path` the message names. A process logs it once for each

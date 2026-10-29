@@ -88,7 +88,7 @@ from .config import (
     STORE_FILENAME,
     Config,
 )
-from .log import STORE_ID_PATTERN, KeyRing, KeyUnreadableError, fingerprint
+from .log import STORE_ID_PATTERN, KeyRing
 
 if TYPE_CHECKING:
     from .store_schema import StoreRefusedError
@@ -580,7 +580,11 @@ def _key(
     refused: StoreRefusedError | None = None,
 ) -> Finding:
     """The key is present under the keys directory and its fingerprint is
-    the one the store records. A store file every opener refuses
+    the one the store records, read as `Store.open` and doctor read it
+    (`store_keys.key_state`) and said in the same words: ok only when
+    present, high when unreadable, missing, foreign or bound elsewhere
+    (a copy whose key ring belongs to its original, which every owner's
+    open serves read-only). A store file every opener refuses
     (`refused`, `read_meta`) is this check's one finding instead: its meta
     was not read, so there is no key to look for."""
     present, unreachable = _presence(store_file)
@@ -637,85 +641,36 @@ def _key(
             path=str(store_file),
             fix="bettermemory log verify reads the whole store and names the problem",
         )
-    expected = meta.get("key_fingerprint", "")
-    key_path = keyring.current_path()
+    from .store_keys import KEY_FOREIGN, KEY_PRESENT, key_state
+
+    # The state `Store.open` and doctor read, in the same words: quiet
+    # here, since the audit reports it as this finding.
+    state = key_state(keyring, store_file, meta.get("key_fingerprint", ""), warn=False)
     retired = keyring.retired_paths()
     details: dict[str, Any] = {
         "store_id": keyring.store_id,
-        "key_fingerprint": expected,
-        "key_path": str(key_path),
+        "key_fingerprint": state.expected,
         "retired_keys": len(retired),
+        **state.details(),
     }
-    lost = (
-        "the next owner open (the daemon, a hook, the CLI) writes a new key and "
-        "rekeys the log, and the rows signed before it stay unverifiable for good"
-    )
-    unreadable: KeyUnreadableError | None = None
-    try:
-        key = keyring.load_current()
-    except KeyUnreadableError as exc:
-        # There and unreadable, a symbolic link to nothing among them: the
-        # owner's opener fails on it rather than rekey (`log.load_current`).
-        key, unreadable = None, exc
-    key_present, key_unreachable = _presence(key_path)
-    if key is None and (
-        unreadable is not None or key_present or key_unreachable is not None
-    ):
-        if unreadable is not None:
-            where = f"is there ({unreadable.reason})"
-        elif key_present:
-            where = "exists"
-        else:
-            where = f"cannot be looked for ({key_unreachable})"
-        return Finding(
-            "key.match",
-            "high",
-            f"the key at {key_path} {where} and this account cannot read it: "
-            "the log cannot be verified here, and every owner open (the daemon, "
-            "a hook, the CLI) fails until it can; nothing is rekeyed over it",
-            path=str(key_path),
-            fix=(
-                "make it readable to this account again (owner-only, 0600), "
-                "and the volume a link to it points into mounted"
-            ),
-            details=details,
+    if state.state == KEY_FOREIGN:
+        details["retired_match"] = (
+            keyring.key_for_fingerprint(state.expected) is not None
         )
-    if key is None:
+    if state.state != KEY_PRESENT:
         return Finding(
             "key.match",
             "high",
-            f"no key for store {keyring.store_id} under {keys_dir}: the log "
-            f"cannot be verified here, and {lost}",
-            path=str(key_path),
-            fix=(
-                f"restore {key_path.name} into {keys_dir} from where it was kept, "
-                "or point BETTERMEMORY_KEYS_DIR at the directory that holds it, "
-                "before anything opens the store"
-            ),
-            details=details,
-        )
-    held = fingerprint(key)
-    details["held_fingerprint"] = held
-    if held != expected:
-        details["retired_match"] = keyring.key_for_fingerprint(expected) is not None
-        return Finding(
-            "key.match",
-            "high",
-            f"the key at {key_path} (fingerprint {held[:16]}) is not the store's "
-            f"(fingerprint {expected[:16]}): {lost}",
-            path=str(key_path),
-            fix=(
-                "find the key whose fingerprint the store records and put it "
-                "back; `bettermemory log verify` shows which segments verify"
-            ),
+            state.summary,
+            path=str(state.key_path),
+            fix=state.remedy,
             details=details,
         )
     return Finding(
         "key.match",
         "ok",
-        f"key present and matches the store (fingerprint {held[:16]}); "
-        f"{len(retired)} retired key(s) held",
-        path=str(key_path),
+        f"{state.summary}; {len(retired)} retired key(s) held",
+        path=str(state.key_path),
         details=details,
     )
 

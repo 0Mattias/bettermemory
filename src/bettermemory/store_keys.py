@@ -1,15 +1,20 @@
 """The key checks a store open makes, and the key ring's binding to one file.
 
-`Store.open` checks whether a key signs a segment of the log
-(`_signs_a_segment`) and reads the ring's current key (`_current_key`).
-The owner's opener claims the ring for its file (`_claim_key_ring`); a
-reader whose key matches asks whether the ring is bound to another file
-still holding the store id (`_key_ring_elsewhere`), read without opening
-it as a store (`_store_id_at`), warned about once per pair of files
-(`_warn_bound_elsewhere`). Also `configured_strict_provenance`. It logs as
-`bettermemory.store`. `store` re-exports every name a caller reads; a test
-that patches `_BOUND_ELSEWHERE_WARNED` patches this module. It lives apart
-from `store.py` to keep each module under the package's 2,000-line bound
+A store file's key is in one of five states (`key_state`, `KeyState`):
+present, unreadable, missing, foreign, or bound elsewhere (the key ring
+belongs to another store file that still holds the store id). `Store.open`,
+doctor's `key` check and posture's `key.match` finding all read it through
+`key_state`, and all three say it in its words (`KeyState.summary`,
+`KeyState.remedy`). The owner's opener claims the ring for its file
+(`_claim_key_ring`); every other reader asks whether the ring is bound to
+another file still holding the store id (`_key_ring_elsewhere`), read
+without opening it as a store (`_store_id_at`), warned about once per pair
+of files (`_warn_bound_elsewhere`). `Store.open` also checks whether a key
+signs a segment of the log (`_signs_a_segment`). Also
+`configured_strict_provenance`. It logs as `bettermemory.store`. `store`
+re-exports every name a caller reads; a test that patches
+`_BOUND_ELSEWHERE_WARNED` patches this module. It lives apart from
+`store.py` to keep each module under the package's 2,000-line bound
 (ENG-96), and of the store modules imports only `store_schema`, for the
 check a bound file is admitted by (`store_schema.admit_store`).
 """
@@ -22,7 +27,9 @@ import sqlite3
 import stat
 import threading
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from ._fsutil import sqlite_file_uri
 from .log import KeyRing, KeyUnreadableError, Segment, fingerprint, row_verifies
@@ -45,22 +52,6 @@ def _signs_a_segment(segments: Sequence[Segment], key: bytes) -> bool:
         and row_verifies(key, segment.first_row)
         for segment in segments
     )
-
-
-def _current_key(keyring: KeyRing, path: Path, *, writing: bool) -> bytes | None:
-    """The key ring's current key for the store at ``path`` (`open`). A key
-    file that is there and cannot be read (`log.KeyUnreadableError`) fails
-    the owner's open, naming the file: read as a missing key it would be
-    replaced and the log rekeyed, for a failure that may pass in a moment.
-    A reader opens without it, as it opens without a missing key, and says
-    why in the log."""
-    try:
-        return keyring.load_current()
-    except KeyUnreadableError as exc:
-        if writing:
-            raise
-        log.warning("store %s opens without its key: %s", path, exc)
-        return None
 
 
 # SQLite's primary result codes that, from the query, answer what a file
@@ -210,73 +201,96 @@ def _resolved_for_guard(path: Path) -> Path:
         return path
 
 
+def _bound_words(
+    keyring: KeyRing, store_id: str, other: Path, unread: str | None
+) -> tuple[str, str]:
+    """What a store file whose key ring is bound to ``other`` is told, as
+    a summary and a remedy: the warning (`_warn_bound_elsewhere`), the
+    refusal of a write (`KeyState.refusal`), doctor's ``key`` check and
+    posture's ``key.match`` finding all say these words (`KeyState`)."""
+    holds = (
+        f"which could not be read to tell whether it still holds store id "
+        f"{store_id} ({unread})"
+        if unread is not None
+        else f"which still holds store id {store_id}"
+    )
+    summary = (
+        f"the key ring under {keyring.keys_dir} is bound elsewhere: it belongs "
+        f"to the store at {other}, {holds}; every open of this file is "
+        "read-only, and nothing is rekeyed or written"
+    )
+    remedy = (
+        f"move or remove one of the two stores, or delete {keyring.binding_path()} "
+        "to bind the key ring to this one"
+    )
+    return summary, remedy
+
+
+def _sentence(text: str) -> str:
+    return text[:1].upper() + text[1:]
+
+
 def _warn_bound_elsewhere(
-    keyring: KeyRing, path: Path, store_id: str, other: Path, unread: Sequence[str]
+    keyring: KeyRing, path: Path, store_id: str, other: Path, unread: str | None
 ) -> None:
     """Say in the log that the key ring is another store file's, naming both
-    files and the remedy (`_claim_key_ring`, `_key_ring_elsewhere`): a
-    warning the first time this process opens ``path`` while the ring is
-    bound to ``other``, the same line at DEBUG on every later open of the
-    pair (`_BOUND_ELSEWHERE_WARNED`). Every open still reads the binding
-    and still opens for reading only; only the repetition is quieter."""
+    files and the remedy in the state's words (`_bound_words`): a warning
+    the first time this process opens ``path`` while the ring is bound to
+    ``other``, the same line at DEBUG on every later open of the pair
+    (`_BOUND_ELSEWHERE_WARNED`). Every open still reads the binding and
+    still opens for reading only; only the repetition is quieter."""
     guard_key = (_resolved_for_guard(path), _resolved_for_guard(other))
     with _BOUND_ELSEWHERE_LOCK:
         first = guard_key not in _BOUND_ELSEWHERE_WARNED
         _BOUND_ELSEWHERE_WARNED.add(guard_key)
     level = logging.WARNING if first else logging.DEBUG
-    holds = (
-        f"which could not be read to tell whether it still holds that id ({unread[-1]})"
-        if unread
-        else "which still holds that id"
-    )
-    log.log(
-        level,
-        "store %s carries store id %s, and the key ring under %s belongs to "
-        "the store at %s, %s; this one opens for reading only, and nothing is "
-        "rekeyed or written. Move or remove one of the two stores, or delete %s "
-        "to bind the key ring to this one",
-        path,
-        store_id,
-        keyring.keys_dir,
-        other,
-        holds,
-        keyring.binding_path(),
-    )
+    summary, remedy = _bound_words(keyring, store_id, other, unread)
+    log.log(level, "store %s: %s. %s", path, summary, _sentence(remedy))
 
 
-def _key_ring_elsewhere(keyring: KeyRing, path: Path, store_id: str) -> Path | None:
+def _key_ring_elsewhere(
+    keyring: KeyRing, path: Path, store_id: str, *, warn: bool = True
+) -> tuple[Path | None, str | None]:
     """The other store file the key ring is bound to when it still holds
-    this store id, for a reader's open whose key matches (`open`), else
-    None; reads the binding and writes nothing. A reader's open with the
-    key can write (the session-start hook records the brief it shows, and
-    a worker connection writes as its owner does), so on a second file
-    with the bound store's id it would sign rows with that store's key and
-    move its head past that store's log. A binding that cannot be read is
-    none, as it was before rings were bound."""
+    this store id, for a reader's open (`key_state`), else None, and why
+    that file could not be read to tell when it could not; reads the
+    binding and writes nothing. A reader's open with the key can write
+    (the session-start hook records the brief it shows, and a worker
+    connection writes as its owner does), so on a second file with the
+    bound store's id it would sign rows with that store's key and move its
+    head past that store's log; a reader without the key is told the same,
+    so every reader of the file says one state. A binding that cannot be
+    read is none, as it was before rings were bound."""
     holds, unread = _bound_store_check(store_id)
     try:
         other = keyring.bound_elsewhere(path, holds_store=holds)
     except OSError:
-        return None
-    if other is not None:
-        _warn_bound_elsewhere(keyring, path, store_id, other, unread)
-    return other
+        return None, None
+    if other is None:
+        return None, None
+    why = unread[-1] if unread else None
+    if warn:
+        _warn_bound_elsewhere(keyring, path, store_id, other, why)
+    return other, why
 
 
-def _claim_key_ring(keyring: KeyRing, path: Path, store_id: str) -> Path | None:
+def _claim_key_ring(
+    keyring: KeyRing, path: Path, store_id: str, *, warn: bool = True
+) -> tuple[Path | None, str | None]:
     """Claim the key ring for the store file ``path``, the owner's opener's
-    first step (`open`): bind the ring to it when it is bound to no file,
-    or to one that no longer holds this store id (moved, deleted, another
-    store there), and return None; return the other store file when the
-    ring is bound to one that still does, or that cannot be read to tell,
-    and is not this file under another spelling (`log.KeyRing.bind_store`).
-    That file is the ring's store: its key, head and anchor are that
-    file's, and an open of a second file with its id (a copy in another
-    directory, or a file made to borrow a known id) must not retire the
-    key, write a new one, set meta, move the head or write the anchor, all
-    of which the owner's opener would otherwise do. A ring whose binding
-    cannot be read or written is said in the log and the open goes on, as
-    it did before rings were bound; the binding is left as it is."""
+    first step (`key_state`): bind the ring to it when it is bound to no
+    file, or to one that no longer holds this store id (moved, deleted,
+    another store there), and return None; return the other store file
+    when the ring is bound to one that still does, or that cannot be read
+    to tell (and why, as the second item), and is not this file under
+    another spelling (`log.KeyRing.bind_store`). That file is the ring's
+    store: its key, head and anchor are that file's, and an open of a
+    second file with its id (a copy in another directory, or a file made
+    to borrow a known id) must not retire the key, write a new one, set
+    meta, move the head or write the anchor, all of which the owner's
+    opener would otherwise do. A ring whose binding cannot be read or
+    written is said in the log and the open goes on, as it did before
+    rings were bound; the binding is left as it is."""
     holds, unread = _bound_store_check(store_id)
     try:
         binding = keyring.bind_store(path, holds_store=holds)
@@ -287,11 +301,13 @@ def _claim_key_ring(keyring: KeyRing, path: Path, store_id: str) -> Path | None:
             keyring.keys_dir,
             exc,
         )
-        return None
+        return None, None
     if binding.elsewhere:
         assert binding.previous is not None
-        _warn_bound_elsewhere(keyring, path, store_id, binding.previous, unread)
-        return binding.previous
+        why = unread[-1] if unread else None
+        if warn:
+            _warn_bound_elsewhere(keyring, path, store_id, binding.previous, why)
+        return binding.previous, why
     if binding.written and binding.previous is not None:
         log.info(
             "store %s: the key ring under %s was bound to %s, which no longer "
@@ -301,7 +317,211 @@ def _claim_key_ring(keyring: KeyRing, path: Path, store_id: str) -> Path | None:
             binding.previous,
             store_id,
         )
-    return None
+    return None, None
+
+
+# ---------------------------------------------------------------------------
+# The key's state (ENG-174)
+# ---------------------------------------------------------------------------
+
+#: The five states of a store file's key, as `key_state` reads them.
+KEY_PRESENT = "present"
+KEY_UNREADABLE = "unreadable"
+KEY_MISSING = "missing"
+KEY_FOREIGN = "foreign"
+KEY_BOUND_ELSEWHERE = "bound_elsewhere"
+KEY_STATES = (
+    KEY_PRESENT,
+    KEY_UNREADABLE,
+    KEY_MISSING,
+    KEY_FOREIGN,
+    KEY_BOUND_ELSEWHERE,
+)
+
+
+@dataclass(frozen=True)
+class KeyState:
+    """A store file's key, as `key_state` read it, and the words every
+    reader says it in (`summary`, `remedy`): `Store.open` keeps it
+    (`Store.key_state`) and refuses a write in them (`refusal`); doctor's
+    ``key`` check and posture's ``key.match`` finding render them. Only
+    ``present`` signs. A reader opens the other four for reading only;
+    the owner's opener fails on an unreadable key, writes nothing to a
+    file whose ring is bound elsewhere, and rekeys a missing or foreign
+    key (or keeps a foreign one that signs a segment of the log).
+
+    ``expected`` is the fingerprint the store's meta records, ``key`` the
+    ring's current key (never in the repr), ``error`` why it could not be
+    read, ``bound_to`` the store file the ring belongs to when that is
+    another, and ``unread`` why that file could not be read to tell
+    whether it still holds the store."""
+
+    state: str
+    keyring: KeyRing
+    store_file: Path
+    expected: str
+    key: bytes | None = field(default=None, repr=False)
+    error: KeyUnreadableError | None = None
+    bound_to: Path | None = None
+    unread: str | None = None
+
+    @property
+    def key_path(self) -> Path:
+        return self.keyring.current_path()
+
+    @property
+    def held(self) -> str | None:
+        """The fingerprint of the key the ring holds, or None."""
+        return None if self.key is None else fingerprint(self.key)
+
+    @property
+    def summary(self) -> str:
+        key_path, expected = self.key_path, self.expected[:16]
+        if self.state == KEY_PRESENT:
+            return f"the key at {key_path} matches the store (fingerprint {expected})"
+        if self.state == KEY_UNREADABLE:
+            reason = "unknown" if self.error is None else self.error.reason
+            return (
+                f"the key at {key_path} is there and this account cannot read it "
+                f"({reason}): the log cannot be verified here, and every owner "
+                "open (the daemon, a hook, the CLI) fails until it can; nothing "
+                "is rekeyed over it"
+            )
+        if self.state == KEY_MISSING:
+            return (
+                f"no key for this store at {key_path}: the log cannot be verified "
+                "here, and the next owner open (the daemon, a hook, the CLI) "
+                "writes a new key and rekeys the log, so the rows signed before "
+                "it stay unverifiable"
+            )
+        if self.state == KEY_FOREIGN:
+            return (
+                f"the key at {key_path} (fingerprint {(self.held or '')[:16]}) is "
+                f"not the store's (fingerprint {expected}): the log cannot be "
+                "verified here, and the next owner open keeps it only if it signs "
+                "a segment of the log, and otherwise retires it, writes a new key "
+                "and rekeys the log"
+            )
+        return self._bound()[0]
+
+    @property
+    def remedy(self) -> str | None:
+        """What to do, or None when the key is present."""
+        if self.state == KEY_PRESENT:
+            return None
+        if self.state == KEY_UNREADABLE:
+            return (
+                "make it readable to this account again (owner-only, 0600), and "
+                "the volume a link to it points into mounted"
+            )
+        if self.state == KEY_MISSING:
+            return (
+                f"restore {self.key_path.name} into {self.keyring.keys_dir} from "
+                "where it was kept, or point BETTERMEMORY_KEYS_DIR at the "
+                "directory that holds it, before anything opens the store for "
+                "writing"
+            )
+        if self.state == KEY_FOREIGN:
+            return (
+                "find the key whose fingerprint the store records and put it "
+                "back; `bettermemory log verify` shows which segments verify"
+            )
+        return self._bound()[1]
+
+    def _bound(self) -> tuple[str, str]:
+        assert self.bound_to is not None
+        return _bound_words(
+            self.keyring, self.keyring.store_id, self.bound_to, self.unread
+        )
+
+    def refusal(self, path: Path) -> str:
+        """Why a connection opened in this state refuses a write: the
+        summary and remedy every reader says, and, for a missing or foreign
+        key, the API's other way out, an owner's open, which writes a new key
+        and starts a new chain segment (an unreadable key fails that open,
+        and a ring bound elsewhere keeps it read-only)."""
+        remedy = self.remedy or "open it from the process that owns the store"
+        owner = (
+            " If the key is lost for good, open it with allow_rekey=True from the "
+            "process that owns the store, which writes a new key and starts a new "
+            "chain segment."
+            if self.state in (KEY_MISSING, KEY_FOREIGN)
+            else ""
+        )
+        return (
+            f"store {path} is open for reading only: {self.summary}. "
+            f"{_sentence(remedy)}.{owner}"
+        )
+
+    def details(self) -> dict[str, Any]:
+        """The state's facts, for a check's or a finding's details."""
+        out: dict[str, Any] = {
+            "key_state": self.state,
+            "key_path": str(self.key_path),
+            "expected_fingerprint": self.expected,
+        }
+        if self.held is not None:
+            out["held_fingerprint"] = self.held
+        if self.error is not None:
+            out["reason"] = self.error.reason
+        if self.bound_to is not None:
+            out["bound_to"] = str(self.bound_to)
+            out["binding_path"] = str(self.keyring.binding_path())
+        return out
+
+
+def key_state(
+    keyring: KeyRing,
+    store_file: Path,
+    expected: str,
+    *,
+    claim: bool = False,
+    warn: bool = True,
+) -> KeyState:
+    """The state of the key for the store file ``store_file``, whose meta
+    records the fingerprint ``expected``: the one reading `Store.open`,
+    doctor and posture share, in this order.
+
+    1. unreadable: the key file is there and cannot be read
+       (`log.KeyUnreadableError`). The owner's opener (``claim``) raises
+       it, naming the file: read as a missing key it would be replaced
+       and the log rekeyed, for a failure that may pass in a moment. A
+       reader opens without it.
+    2. bound elsewhere: the key ring is bound to another store file that
+       still holds this store id, or cannot be read to tell. The owner's
+       opener claims the ring first (`_claim_key_ring`), binding it to
+       this file when it is bound to none or to a file that no longer
+       holds the id; every other reader only reads the binding
+       (`_key_ring_elsewhere`). Read whatever the key is: a copy carries
+       its original's fingerprint, so its key matches, and every open of
+       it is read-only.
+    3. missing: no key file.
+    4. foreign: a key whose fingerprint is not ``expected``.
+    5. present: the key ``expected`` names.
+
+    ``warn`` says an unreadable key and the binding in the log, as an open
+    does; doctor and posture read quietly and render the state."""
+    try:
+        key = keyring.load_current()
+    except KeyUnreadableError as exc:
+        if claim:
+            raise
+        if warn:
+            log.warning("store %s opens without its key: %s", store_file, exc)
+        return KeyState(KEY_UNREADABLE, keyring, store_file, expected, error=exc)
+    reads = _claim_key_ring if claim else _key_ring_elsewhere
+    other, unread = reads(keyring, store_file, keyring.store_id, warn=warn)
+    if other is not None:
+        state = KEY_BOUND_ELSEWHERE
+    elif key is None:
+        state = KEY_MISSING
+    elif fingerprint(key) != expected:
+        state = KEY_FOREIGN
+    else:
+        state = KEY_PRESENT
+    return KeyState(
+        state, keyring, store_file, expected, key=key, bound_to=other, unread=unread
+    )
 
 
 def configured_strict_provenance() -> bool:

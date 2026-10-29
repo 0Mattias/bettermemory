@@ -1005,9 +1005,9 @@ def test_a_foreign_key_fails_naming_both_fingerprints(env: Env) -> None:
     key_path.write_bytes(b"\x01" * 32)
     check = env.checks()["key"]
     assert check.status == "fail"
-    assert "is not this store's" in check.summary
+    assert "is not the store's" in check.summary
     assert check.details["expected_fingerprint"] == expected
-    assert check.details["found_fingerprint"] != expected
+    assert check.details["held_fingerprint"] != expected
 
 
 # ---------------------------------------------------------------------------

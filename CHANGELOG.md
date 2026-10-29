@@ -1631,6 +1631,35 @@ follows the candidates' testing.
   `src/bettermemory/daemon.py`, `src/bettermemory/cli/_common.py`,
   `SECURITY.md`, `docs/api.md`, `docs/operations.md`,
   `tests/test_store_admission.py`)
+- **A store's key reads as one state, said in one set of words, by the
+  open, `doctor` and `security audit`.** Each read the key its own way:
+  on a copy of a store whose key ring is bound to the original, `doctor`
+  said the key was "not this store's (c8c8..., expected c8c8...)", the
+  same fingerprint twice, and advised restoring it, and the audit's
+  `key.match` said ok, while every owner's open of the copy refused its
+  writes. `store_keys.key_state` now reads the state once, in this order:
+  `unreadable` (the key file is there and cannot be read; the owner's
+  open still fails on it), `bound_elsewhere` (the ring belongs to another
+  file that still holds the store id, or cannot be read to tell; read
+  whatever the key is, since a copy's key matches), `missing`, `foreign`
+  and `present`. `KeyState` carries the summary and remedy every reader
+  says: `Store.open` keeps it (`Store.key_state`) and a refused write's
+  `RuntimeError` quotes it (and, for a missing or foreign key, still
+  names an owner's open with `allow_rekey=True`), `doctor`'s `key` check
+  renders it (ok only
+  when present, else a failure) and the audit's `key.match` finding
+  renders it (ok only when present, else high), each with the state in
+  `details["key_state"]`. On the copy all three now say the ring "is
+  bound elsewhere", name the original and advise moving or removing one
+  store or deleting the `<store_id>.path` they name. A reader's open
+  without the key now reads the binding too, so it logs the same
+  warning, once per pair of files. Doctor's foreign-key detail
+  `found_fingerprint` is now `held_fingerprint`, the audit's name.
+  (`src/bettermemory/store_keys.py`, `src/bettermemory/store.py`,
+  `src/bettermemory/doctor.py`, `src/bettermemory/posture.py`,
+  `SECURITY.md`, `docs/api.md`, `docs/operations.md`,
+  `tests/test_key_state.py`, `tests/test_doctor.py`,
+  `tests/test_keyring_binding.py`)
 
 #### Known limitations
 

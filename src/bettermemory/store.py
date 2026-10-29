@@ -197,9 +197,10 @@ from .store_rows import (
     event_import_payload,
 )
 from .store_keys import (
+    KEY_PRESENT as KEY_PRESENT,
+    KeyState as KeyState,
     _claim_key_ring,
-    _current_key,
-    _key_ring_elsewhere,
+    key_state as key_state,
     _signs_a_segment,
     _store_id_at as _store_id_at,
     configured_strict_provenance as configured_strict_provenance,
@@ -410,6 +411,9 @@ class Store:
     # still holds this store id (`_claim_key_ring`): this connection then
     # writes nothing, and says why. None otherwise.
     _bound_elsewhere: Path | None
+    # The key's state as this connection's open read it (`key_state`),
+    # present once it holds a key to sign with; None only inside `_adopt`.
+    _key_state: KeyState | None
     _store_id: str
     _last_appended: LogRow | None
     # How many `_transaction` entries are open on this connection: 0 when
@@ -467,6 +471,7 @@ class Store:
         )
         self._read_key = opened._read_key
         self._bound_elsewhere = opened._bound_elsewhere
+        self._key_state = opened._key_state
 
     def _adopt(
         self,
@@ -484,6 +489,7 @@ class Store:
         self._key = key
         self._read_key = None
         self._bound_elsewhere = None
+        self._key_state = None
         self._store_id = store_id
         self._last_appended = None
         self._tx_depth = 0
@@ -512,6 +518,10 @@ class Store:
         self._adopt(
             path, conn, keyring, key, store_id, strict_provenance=strict_provenance
         )
+        if key is not None:
+            self._key_state = KeyState(
+                KEY_PRESENT, keyring, path, fingerprint(key), key=key
+            )
         return self
 
     @classmethod
@@ -641,7 +651,9 @@ class Store:
 
         A key file that is there and cannot be read fails the owner's open
         (`log.KeyUnreadableError`) instead of being replaced; a reader
-        opens without it.
+        opens without it. Which of these the key is, the open reads once
+        through `store_keys.key_state` and keeps (`key_state`), in the
+        words doctor and posture say it in, and a write it refuses says.
 
         ``strict_provenance`` is ``[security] strict_provenance`` for this
         connection; None (the default) reads it from the config the first
@@ -673,21 +685,16 @@ class Store:
                 Path(keys_dir) if keys_dir is not None else resolve_keys_dir(),
                 store_id,
             )
-            key = _current_key(keyring, path, writing=allow_rekey)
-            matches = key is not None and fingerprint(key) == expected
             # The owner's opener first claims the key ring for this file
-            # (`_claim_key_ring`): one that is bound to another file still
-            # holding this store id is that file's, and this open writes
-            # nothing to it or with it. A reader whose key matches would
-            # sign with it too, and asks the same, writing no binding
-            # (`_key_ring_elsewhere`); one without the key writes nothing.
-            if allow_rekey:
-                elsewhere = _claim_key_ring(keyring, path, store_id)
-            elif matches:
-                elsewhere = _key_ring_elsewhere(keyring, path, store_id)
-            else:
-                elsewhere = None
-            if matches and elsewhere is None:
+            # (`store_keys._claim_key_ring`): one that is bound to another
+            # file still holding this store id is that file's, and this
+            # open writes nothing to it or with it. A reader asks the same,
+            # writing no binding, since a reader whose key matches would
+            # sign with it too (`store_keys.key_state`).
+            state = key_state(keyring, path, expected, claim=allow_rekey)
+            key, elsewhere = state.key, state.bound_to
+            matches = key is not None and fingerprint(key) == expected
+            if state.state == KEY_PRESENT:
                 store = cls._bind(
                     path,
                     conn,
@@ -710,6 +717,7 @@ class Store:
                     strict_provenance=strict_provenance,
                 )
                 reader._bound_elsewhere = elsewhere
+                reader._key_state = state
                 # Meta's fingerprint is only what the file says. When this
                 # machine has a history of the store (its key ring holds
                 # an origin anchor for it, or its key signs a segment of
@@ -1112,6 +1120,15 @@ class Store:
         return self._key is not None
 
     @property
+    def key_state(self) -> KeyState:
+        """The state of this file's key (`store_keys.key_state`), as this
+        connection's open read it, or present once it holds a key to sign
+        with (an owner's open that rekeyed or reclaimed the store). Doctor
+        renders it; posture reads the same function."""
+        assert self._key_state is not None
+        return self._key_state
+
+    @property
     def can_verify(self) -> bool:
         """Whether this connection checks pointers into the log: it holds
         the key it writes with, or, opened for reading with meta naming a
@@ -1351,22 +1368,8 @@ class Store:
         ts: str | None = None,
     ) -> LogRow:
         if self._key is None:
-            if self._bound_elsewhere is not None:
-                raise RuntimeError(
-                    f"store {self._path} is open for reading only: the key ring "
-                    f"under {self._keyring.keys_dir} belongs to the store at "
-                    f"{self._bound_elsewhere}, which still holds store id "
-                    f"{self._store_id}. Move or remove one of the two stores, or "
-                    f"delete {self._keyring.binding_path()} to bind the key ring "
-                    f"to this one."
-                )
-            raise RuntimeError(
-                f"store {self._path} is open for reading only: no key under "
-                f"{self._keyring.keys_dir} matches its fingerprint. Put the "
-                f"store's key back there, or open it with allow_rekey=True from "
-                f"the process that owns the store to write a new key and start a "
-                f"new chain segment."
-            )
+            # In the words the open read the key's state in (`key_state`).
+            raise RuntimeError(self.key_state.refusal(self._path))
         row = append_row(
             conn, key=self._key, kind=kind, payload=payload, session=session, ts=ts
         )
@@ -1824,6 +1827,7 @@ class Store:
             if other._key is not None:
                 other._read_key, other._key = other._key, None
             other._bound_elsewhere = self._bound_elsewhere
+            other._key_state = self._key_state
         return other
 
     def _event_from_raw(self, raw: sqlite3.Row) -> dict[str, Any] | None:

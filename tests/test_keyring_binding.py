@@ -486,7 +486,7 @@ def test_doctor_names_an_unreadable_key(
     }
     assert checks["store"].status == doctor.OK
     assert checks["key"].status == doctor.FAIL
-    assert "cannot be read" in checks["key"].summary
+    assert "cannot read it" in checks["key"].summary
 
 
 def test_posture_names_an_unreadable_key(
