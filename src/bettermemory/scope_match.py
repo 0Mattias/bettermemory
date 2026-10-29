@@ -122,34 +122,15 @@ class ScopeMismatchReport:
         return bool(self.matches)
 
 
-def detect_scope_mismatch(
-    *,
+def _project_name_matches(
     body: str,
-    declared_scopes: list[str],
+    declared: set[str],
     project_scopes: set[str],
     project_roots: dict[str, str],
-) -> ScopeMismatchReport:
-    """Scan `body` for evidence that `declared_scopes` is mis-tagged.
-
-    `project_scopes` is the set of every ``projects:<name>`` scope the
-    store has seen (active or tombstoned). `project_roots` maps each
-    such scope to its inferred filesystem root prefix (the most
-    common ``origin.cwd`` for memories under that scope). Either map
-    being empty just disables the corresponding check; the function
-    never raises.
-
-    Returns a `ScopeMismatchReport`. An empty report (`has_mismatch`
-    False) means no mismatch surfaced — the write should proceed.
-    """
-    declared = set(declared_scopes)
-    matches: list[ScopeMismatchEntry] = []
-    suggested: set[str] = set()
-
-    if not body:
-        return ScopeMismatchReport(matches=(), suggested_scopes=())
-
-    # Pass 1: project-name token matches.
-    #
+    found: tuple[list[ScopeMismatchEntry], set[str]],
+) -> tuple[list[ScopeMismatchEntry], set[str]]:
+    """Match undeclared project names in `body`; return matches and suggestions."""
+    matches, suggested = found
     # For each `projects:<name>` scope, look for `<name>` as a
     # whole-token match in the body. The boundary semantics mirror the
     # project-root pass's trailing guard: alphanumerics plus `-`, `_`,
@@ -208,6 +189,144 @@ def detect_scope_mismatch(
         suggested.add(scope)
         if len(matches) >= _MAX_MATCHES:
             break
+    return matches, suggested
+
+
+def _project_root_matches(
+    body: str,
+    declared: set[str],
+    project_roots: dict[str, str],
+    found: tuple[list[ScopeMismatchEntry], set[str]],
+) -> tuple[list[ScopeMismatchEntry], set[str]]:
+    """Match undeclared project roots in `body`; return matches and suggestions."""
+    matches, suggested = found
+    declared_roots = {project_roots[s] for s in declared if project_roots.get(s)}
+    # Folded twin of `declared_roots` for the identity check below
+    # only. The raw set keeps each declared root's ORIGINAL spelling
+    # because `_declared_root_covers` probes the body verbatim with
+    # it (and via `_home_alias`, whose tail is spelling-preserving).
+    folded_declared_roots = {
+        _fold_altsep(dr, os.sep, os.altsep) for dr in declared_roots
+    }
+    # Lowercased twin of the folded twin, for the case-modulo leg of
+    # the same identity check. Pure string prep — whether a
+    # case-variant pair really names one directory is decided by a
+    # filesystem probe at the comparison, never assumed.
+    lowered_declared_roots = {fdr.lower() for fdr in folded_declared_roots}
+    for scope, root in sorted(project_roots.items()):
+        if scope in declared or scope in suggested:
+            continue
+        if not root:
+            continue
+        folded_root = _fold_altsep(root, os.sep, os.altsep)
+        if folded_root in folded_declared_roots:
+            # The candidate's inferred root names the same directory
+            # as a declared scope's root — byte-identical, or (on
+            # Windows) the same path in the other separator family,
+            # which a hand-edited or cross-machine-synced store can
+            # carry. Monorepo sub-projects sharing one checkout, or
+            # a foreign scope whose memories were written from the
+            # declared project's cwd. The declared tag already
+            # explains any path under that root; the colliding
+            # scope carries zero discriminating signal. Byte
+            # equality here lost the suppression whenever the two
+            # spellings diverged — the same raw-comparison class
+            # `_home_alias` shed, failing toward noise instead of
+            # silence.
+            continue
+        if folded_root.lower() in lowered_declared_roots and _home_ignores_case(root):
+            # CASE leg of the same identity check, mirroring the
+            # byte-then-probe pairing of `verify._is_under_home`:
+            # the folded comparison above settles every store on its
+            # own, and only a case-modulo collision asks the
+            # filesystem (`_home_ignores_case` — generic over any
+            # path despite its name) whether the candidate's own
+            # spelling resolves case-insensitively. On a folding
+            # volume (Windows NTFS, default macOS APFS) a re-cased
+            # spelling — the lowercase drive letter some shells
+            # record into a synced store — names the SAME directory,
+            # and byte membership kept losing this suppression
+            # exactly like the separator gap above. The probe fails
+            # closed: a candidate directory absent from the local
+            # filesystem (a store synced from another machine)
+            # cannot be probed and keeps byte semantics — the
+            # deliberate residue of probe-don't-assume, disclosed
+            # here rather than papered over with a platform guess.
+            continue
+        # Substring match — if the body contains the project root as
+        # a literal substring (absolute, or tilde-contracted when the
+        # root lives under the home directory — the most common
+        # prose spelling for home paths), that's the cue. Cheaper
+        # than a path extractor that has to handle backticks vs.
+        # bare paths (the durability module already does that for
+        # path drift; duplicating it here would be over-engineering
+        # for a quieter signal). False positives are tempered by the
+        # boundary checks on either side (see
+        # `_find_root_occurrence`): a root like `projects:foo`'s
+        # `/.../foo` must not over-match a sibling tree
+        # `/.../foobar/...` or `/.../foo-bar/...` whose last segment
+        # merely shares the prefix.
+        contracted = False
+        hit = _find_root_occurrence(body, root)
+        if hit is None and (alias := _home_alias(root)) is not None:
+            hit = _find_root_occurrence(body, alias)
+            contracted = True
+        if hit is None:
+            continue
+        idx, end = hit
+        if _declared_root_covers(
+            body, idx, root, declared_roots, contracted=contracted
+        ):
+            # A declared scope's root extends the candidate root at
+            # this very match (nested project trees): the cited path
+            # is most specifically covered by a project the write
+            # already carries, so demanding the parent/ancestor
+            # scope adds nothing.
+            continue
+        evidence = _trim_evidence(body, idx, end)
+        matches.append(
+            ScopeMismatchEntry(
+                kind="project_root",
+                evidence=evidence,
+                suggested_scope=scope,
+            )
+        )
+        suggested.add(scope)
+        if len(matches) >= _MAX_MATCHES:
+            break
+    return matches, suggested
+
+
+def detect_scope_mismatch(
+    *,
+    body: str,
+    declared_scopes: list[str],
+    project_scopes: set[str],
+    project_roots: dict[str, str],
+) -> ScopeMismatchReport:
+    """Scan `body` for evidence that `declared_scopes` is mis-tagged.
+
+    `project_scopes` is the set of every ``projects:<name>`` scope the
+    store has seen (active or tombstoned). `project_roots` maps each
+    such scope to its inferred filesystem root prefix (the most
+    common ``origin.cwd`` for memories under that scope). Either map
+    being empty just disables the corresponding check; the function
+    never raises.
+
+    Returns a `ScopeMismatchReport`. An empty report (`has_mismatch`
+    False) means no mismatch surfaced — the write should proceed.
+    """
+    declared = set(declared_scopes)
+    matches: list[ScopeMismatchEntry] = []
+    suggested: set[str] = set()
+
+    if not body:
+        return ScopeMismatchReport(matches=(), suggested_scopes=())
+
+    # Pass 1: project-name token matches.
+    matches, suggested = _project_name_matches(
+        body, declared, project_scopes, project_roots, (matches, suggested)
+    )
 
     # Pass 2: project-root path matches.
     #
@@ -217,102 +336,9 @@ def detect_scope_mismatch(
     # (typical until enough memories have been written under
     # `projects:*` scopes for the inference to converge).
     if len(matches) < _MAX_MATCHES and project_roots:
-        declared_roots = {project_roots[s] for s in declared if project_roots.get(s)}
-        # Folded twin of `declared_roots` for the identity check below
-        # only. The raw set keeps each declared root's ORIGINAL spelling
-        # because `_declared_root_covers` probes the body verbatim with
-        # it (and via `_home_alias`, whose tail is spelling-preserving).
-        folded_declared_roots = {
-            _fold_altsep(dr, os.sep, os.altsep) for dr in declared_roots
-        }
-        # Lowercased twin of the folded twin, for the case-modulo leg of
-        # the same identity check. Pure string prep — whether a
-        # case-variant pair really names one directory is decided by a
-        # filesystem probe at the comparison, never assumed.
-        lowered_declared_roots = {fdr.lower() for fdr in folded_declared_roots}
-        for scope, root in sorted(project_roots.items()):
-            if scope in declared or scope in suggested:
-                continue
-            if not root:
-                continue
-            folded_root = _fold_altsep(root, os.sep, os.altsep)
-            if folded_root in folded_declared_roots:
-                # The candidate's inferred root names the same directory
-                # as a declared scope's root — byte-identical, or (on
-                # Windows) the same path in the other separator family,
-                # which a hand-edited or cross-machine-synced store can
-                # carry. Monorepo sub-projects sharing one checkout, or
-                # a foreign scope whose memories were written from the
-                # declared project's cwd. The declared tag already
-                # explains any path under that root; the colliding
-                # scope carries zero discriminating signal. Byte
-                # equality here lost the suppression whenever the two
-                # spellings diverged — the same raw-comparison class
-                # `_home_alias` shed, failing toward noise instead of
-                # silence.
-                continue
-            if folded_root.lower() in lowered_declared_roots and _home_ignores_case(
-                root
-            ):
-                # CASE leg of the same identity check, mirroring the
-                # byte-then-probe pairing of `verify._is_under_home`:
-                # the folded comparison above settles every store on its
-                # own, and only a case-modulo collision asks the
-                # filesystem (`_home_ignores_case` — generic over any
-                # path despite its name) whether the candidate's own
-                # spelling resolves case-insensitively. On a folding
-                # volume (Windows NTFS, default macOS APFS) a re-cased
-                # spelling — the lowercase drive letter some shells
-                # record into a synced store — names the SAME directory,
-                # and byte membership kept losing this suppression
-                # exactly like the separator gap above. The probe fails
-                # closed: a candidate directory absent from the local
-                # filesystem (a store synced from another machine)
-                # cannot be probed and keeps byte semantics — the
-                # deliberate residue of probe-don't-assume, disclosed
-                # here rather than papered over with a platform guess.
-                continue
-            # Substring match — if the body contains the project root as
-            # a literal substring (absolute, or tilde-contracted when the
-            # root lives under the home directory — the most common
-            # prose spelling for home paths), that's the cue. Cheaper
-            # than a path extractor that has to handle backticks vs.
-            # bare paths (the durability module already does that for
-            # path drift; duplicating it here would be over-engineering
-            # for a quieter signal). False positives are tempered by the
-            # boundary checks on either side (see
-            # `_find_root_occurrence`): a root like `projects:foo`'s
-            # `/.../foo` must not over-match a sibling tree
-            # `/.../foobar/...` or `/.../foo-bar/...` whose last segment
-            # merely shares the prefix.
-            contracted = False
-            hit = _find_root_occurrence(body, root)
-            if hit is None and (alias := _home_alias(root)) is not None:
-                hit = _find_root_occurrence(body, alias)
-                contracted = True
-            if hit is None:
-                continue
-            idx, end = hit
-            if _declared_root_covers(
-                body, idx, root, declared_roots, contracted=contracted
-            ):
-                # A declared scope's root extends the candidate root at
-                # this very match (nested project trees): the cited path
-                # is most specifically covered by a project the write
-                # already carries, so demanding the parent/ancestor
-                # scope adds nothing.
-                continue
-            evidence = _trim_evidence(body, idx, end)
-            matches.append(
-                ScopeMismatchEntry(
-                    kind="project_root",
-                    evidence=evidence,
-                    suggested_scope=scope,
-                )
-            )
-            suggested.add(scope)
-            if len(matches) >= _MAX_MATCHES:
-                break
+        matches, suggested = _project_root_matches(
+            body, declared, project_roots, (matches, suggested)
+        )
 
     return ScopeMismatchReport(
         matches=tuple(matches),
