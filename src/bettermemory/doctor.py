@@ -73,6 +73,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import _install_hints, claude_paths
+
+# The checks' model lives in `doctor_model` and the store and key checks
+# in `doctor_store`; neither imports anything from here. The model's
+# names (the statuses, `Check`, `Finding`, `_worst`, `_from_findings`,
+# `_not_checked`) are not patch points: this module, `doctor_model` and
+# `doctor_store` each read their own binding, so a patch on one module's
+# name misses the others' readers. They are pure values and builders,
+# defined in `doctor_model`; a test drives a check through the findings
+# it is fed, not by patching them.
 from .doctor_model import (
     EXIT_CODES as EXIT_CODES,
     FAIL as FAIL,

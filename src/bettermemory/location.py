@@ -147,7 +147,11 @@ from .location_git import (
 )
 
 # The witness exchange's messages live in `location_witness`, which
-# imports nothing from here.
+# imports nothing from here. The names both modules read are not patch
+# points: `NeedWitnesses` (defined there, raised by its readers, caught
+# in `resolve_hook` here), `_FULL_HASH` (from `location_git`) and the
+# `checkout_token` module are bound in each, so a patch on one module's
+# binding misses the other's readers.
 from .location_witness import (
     AnsweredHistory as AnsweredHistory,  # tests/test_location_reachable.py
     AnsweredLiveness as AnsweredLiveness,  # tests/test_membership_resolution.py

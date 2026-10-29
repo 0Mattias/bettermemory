@@ -88,6 +88,11 @@ from .config import (
     Config,
 )
 from .log import STORE_ID_PATTERN, KeyRing
+
+# The Claude Code sandbox check lives in `posture_sandbox`, which imports
+# nothing from here. `Finding`, defined there, is not a patch point: the
+# checks here and the sandbox check each read their own binding, so a
+# patch on either module's `Finding` misses the other's readers.
 from .posture_sandbox import (
     Finding as Finding,  # every check's result; tests/test_posture*.py
     _claude,
