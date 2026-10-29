@@ -155,6 +155,14 @@ the candidates' testing.
   `src/bettermemory/config.py`, `src/bettermemory/_frontmatter.py`,
   `src/bettermemory/init.py`, `tests/test_frontmatter.py`,
   `tests/test_sqlite_uri.py`, `tests/test_import_graph.py`)
+- **A test pins every module of the package under 2,000 lines.** The
+  bound the splits of `store`, `membership`, `handlers.write`, `recall`,
+  `verify`, `search`, `origin`, `eval`, `health` and `location` were
+  made to is now asserted over every file under `src/bettermemory`, so
+  a module that grows past it fails the suite and is split, not excused.
+  With `store.py` at 1,926 lines the package passes for the first time;
+  the largest modules are `_response.py` (1,985) and `origin.py` (1,978).
+  (`tests/test_module_bounds.py`)
 - **`search.py` is split into five modules.** The ranker keeps `search()`,
   the fusion, the snippet and token caches and the conversational rerank,
   and goes from 4,305 lines to 1,686. Beside it, `search_lexicon` holds
