@@ -44,7 +44,7 @@ HAND_EDITS = re.compile(
         ("missing", "bettermemory key import FILE"),
         ("foreign", "bettermemory key import FILE"),
         ("bound_elsewhere", "bettermemory key adopt --yes"),
-        ("unclaimed", "bettermemory log accept-history --yes"),
+        ("unclaimed", "bettermemory key adopt --yes"),
     ],
 )
 def test_each_remedy_names_its_command_and_no_deletion(
@@ -63,6 +63,11 @@ def test_each_remedy_names_its_command_and_no_deletion(
     remedy = read.remedy
     assert remedy is not None
     assert command in remedy
+    if state == "unclaimed":
+        # Run on a stale copy, accept-history would hand it the ring
+        # (cold review L1).
+        assert "accept-history" not in remedy
+        assert "bettermemory key show" in remedy
     assert "delete" not in remedy.lower()
     assert "put it back" not in remedy
 

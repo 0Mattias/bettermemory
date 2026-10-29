@@ -143,7 +143,9 @@ def test_a_second_file_does_not_take_an_unbound_ring(
         assert state.state == "unclaimed"
         assert why in state.summary
         assert state.remedy is not None
-        assert "log accept-history --yes" in state.remedy
+        assert "bettermemory key adopt --yes" in state.remedy
+        assert "accept-history" not in state.remedy
+        assert "at seq" in state.remedy
         with pytest.raises(RuntimeError, match="open for reading only"):
             owner.put_memory(_memory("refused"))
     assert "is bound to no store file yet" in caplog.text

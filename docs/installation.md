@@ -355,9 +355,14 @@ its fix.
 - **A store "opens for reading only" because the key ring "is bound to
   no store file yet and holds a history this file does not carry"**: a
   key ring from before 9.0.0rc13 is bound only to the file that carries
-  its history. Open that store first, which binds the ring to it; if
-  this file is that store and its history was replaced on purpose,
-  `bettermemory log accept-history --yes` accepts it on the record.
+  its history; the message names it by the anchor's and the head's
+  seqs, and `bettermemory key show` in a store's directory says whether
+  it is that file. Open that store first, which binds the ring to it, or
+  run `bettermemory key adopt --yes` from its directory, which binds it
+  on the record and refuses a file that does not carry the history.
+  `bettermemory log accept-history --yes` is only for a store whose
+  history was replaced on purpose and that no other file with its id
+  carries: run on a stale copy, it hands that copy the ring.
 - **`bettermemory log verify` reports `tampered`**: a log row fails its
   MAC, the chain is broken, or a table holds a row no log row produced.
   `--json` names the rows. Nothing repairs a tampered store in place;

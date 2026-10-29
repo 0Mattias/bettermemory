@@ -535,14 +535,27 @@ class KeyState:
             )
         if self.state == KEY_UNCLAIMED:
             return (
-                "open the store this key ring belongs to first, whose first "
-                "writing open binds the ring to it; if this file is that store "
-                "and its history was replaced on purpose (copied over from "
-                "another machine, or an older copy put back), `bettermemory log "
-                "accept-history --yes` accepts it on the record and binds the key "
-                "ring to this file"
+                "this key ring belongs with the store file whose log "
+                f"{self._history()} (`bettermemory key show` in a store's "
+                "directory says whether it is that file): open that store first, "
+                "whose first writing open binds the ring to it, or run "
+                "`bettermemory key adopt --yes` with BETTERMEMORY_DIR naming its "
+                "directory, which binds the ring to it on the record and refuses "
+                "a file that does not carry that history"
             )
         return self._bound()[1]
+
+    def _history(self) -> str:
+        """What the store file an unclaimed ring belongs with carries: the
+        row at the origin anchor's seq and the head's seq, as the ring
+        records them."""
+        marks: list[str] = []
+        fit = self.unfit
+        if fit is not None and fit.origin.seq is not None:
+            marks.append(f"carries its origin anchor's row at seq {fit.origin.seq}")
+        if fit is not None and fit.head is not None:
+            marks.append(f"reaches its head checkpoint at seq {fit.head.seq}")
+        return " and ".join(marks) or "carries the history it records"
 
     def _bound(self) -> tuple[str, str]:
         assert self.bound_to is not None

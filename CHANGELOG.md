@@ -2577,9 +2577,12 @@ follows the candidates' testing.
   nothing and opens such a file as a reader with writes refused, as do
   its worker connections (`KeyState.withheld`); a reader with the key
   opens without it; doctor's `key` check and the audit's `key.match`
-  finding say it in the same words, whose remedy names opening the
-  ring's store first, or `log accept-history --yes` for a store whose
-  history was replaced on purpose. `key export` and `key import` refuse
+  finding say it in the same words, whose remedy names the store the
+  ring belongs with (the file whose log carries the anchor's row and
+  reaches the head, by seq, which `key show` there confirms) and opening
+  it first or `key adopt --yes` there, which refuses a file that does
+  not carry that history; it never names `log accept-history`, which run
+  on a stale copy would hand it the ring. `key export` and `key import` refuse
   it. A ring with neither an anchor nor a head is bound on first use, as
   before, and a binding that cannot be read is kept, as a bound file
   that cannot be read keeps the ring. (`src/bettermemory/store_keys.py`,

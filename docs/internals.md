@@ -380,9 +380,11 @@ or when the bound file no longer holds this store id; and
   `unclaimed`, read before the claim: the owner's open binds nothing,
   rekeys nothing and opens as a reader with writes refused, as do its
   worker connections (`KeyState.withheld`), and a reader with the key
-  opens without it too; a WARNING names the reason and the remedy (open
-  the ring's store first, or `log accept-history --yes` for a store whose
-  history was replaced on purpose), once per process for the pair of
+  opens without it too; a WARNING names the reason and the remedy (the
+  store the ring belongs with, by the anchor's and the head's seqs: open
+  it first, or `key adopt --yes` there, which refuses a file that does
+  not carry the history; never `log accept-history` on this file, which
+  would hand it the ring), once per process for the pair of
   the file and the binding path. A ring with neither an anchor nor a head
   is bound on first use, as before. Without a connection (`security
   audit`) the file is read through a read-only one.
