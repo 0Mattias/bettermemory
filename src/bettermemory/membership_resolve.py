@@ -95,7 +95,7 @@ if TYPE_CHECKING:
     from .membership import Membership
 
 
-# -- the tally ----------------------------------------------------------------------
+# -- the tally --------------------------------------------------------------------------
 
 
 def _tally(
@@ -267,7 +267,7 @@ def _strength(
     return n
 
 
-# -- the ladder ----------------------------------------------------------------------
+# -- the ladder --------------------------------------------------------------------------
 
 
 def resolve(self: Membership, loc: Location, *, strict: bool = False) -> Resolution:
@@ -1020,7 +1020,7 @@ def _display_name(self: Membership, loc: Location) -> str:
     return _basename(loc.root or loc.cwd)
 
 
-# -- what a sighting adds -------------------------------------------------------------
+# -- what a sighting adds -----------------------------------------------------------------
 
 
 def _observe(
@@ -1162,7 +1162,7 @@ def _observe(
     return updated, lines
 
 
-# -- nested project files ---------------------------------------------------------------
+# -- nested project files -------------------------------------------------------------------
 
 
 def _subproject_line(
@@ -1265,7 +1265,7 @@ def _subproject(
     return (parent if parent != pid else None), lines
 
 
-# -- plain folders -----------------------------------------------------------------------
+# -- plain folders ---------------------------------------------------------------------------
 
 
 def _resolve_folder(

@@ -66,7 +66,7 @@ if TYPE_CHECKING:
     from .membership import Membership
 
 
-# -- declarations (design 8.8) ---------------------------------------------------------
+# -- declarations (design 8.8) -------------------------------------------------------------
 
 
 def declare(self: Membership, decl: Declaration) -> Declared:
@@ -567,7 +567,7 @@ def _move_record(self: Membership, record_id: str, target: str, by: str) -> str:
     return dst
 
 
-# -- writes where nothing could be read (decision B6) --------------------------------
+# -- writes where nothing could be read (decision B6) ------------------------------------
 
 
 def unresolved_home(

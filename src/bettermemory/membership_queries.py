@@ -71,7 +71,7 @@ def homes(self: Membership, record_ids: Sequence[str]) -> dict[str, Home]:
     }
 
 
-# -- surfaces -------------------------------------------------------------------------------
+# -- surfaces -----------------------------------------------------------------------------------
 
 
 def admit_recall(
@@ -127,7 +127,7 @@ def first_output(self: Membership, res: Resolution) -> list[str]:
     return lines
 
 
-# -- run-state and anchoring (design 3.6) ------------------------------------------------
+# -- run-state and anchoring (design 3.6) ----------------------------------------------------
 
 
 def handoff(
@@ -273,7 +273,7 @@ def translate(
     return _rebase(path, v.path, target), how
 
 
-# -- health ---------------------------------------------------------------------------------
+# -- health -------------------------------------------------------------------------------------
 
 
 def retire_quiet(self: Membership, *, quiet: timedelta = RETIRE_AFTER) -> list[str]:

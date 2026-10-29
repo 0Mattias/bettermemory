@@ -1539,7 +1539,7 @@ class Membership:
                 "token_reminted", checkout=k.id, status=status, written=bool(token)
             )
 
-    # -- writes where nothing could be read (decision B6) --------------------------------
+    # -- record counts -------------------------------------------------------------------
 
     def _record_counts(self, project_id: str) -> tuple[int, int]:
         """(memories, episodes) whose homes name the project."""

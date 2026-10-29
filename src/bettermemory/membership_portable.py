@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from .membership import Membership
 
 
-# -- export and import (design 8.7, E27) ----------------------------------------------
+# -- export and import (design 8.7, E27) --------------------------------------------------
 
 
 def portable_identity(
