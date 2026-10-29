@@ -39,6 +39,12 @@ from .test_recall_prompt import PromptWorld
 
 SESSION = "transcript-recall"
 
+# What a 0.5 s budget may take under a held lock on a loaded runner: the
+# bound proves the budget against the unbounded wait (two tries of the
+# 5 s busy timeout, about 10 s), and SQLite's busy wait overshoots it on
+# a starved CI host (a macOS runner read 1.6 s against a bound of 1.0).
+BUDGET_BOUND_SECONDS = 3.0
+
 # The harness's name for each hook event, by the client's.
 _HARNESS_EVENTS = {
     "session-start": "SessionStart",
@@ -128,7 +134,7 @@ def test_a_recall_under_a_held_lock_fails_within_its_budget(
         with pytest.raises(StoreBusy) as raised:
             world.recall(state=state)
     (elapsed,) = waited
-    assert elapsed < 1.0, elapsed
+    assert elapsed < BUDGET_BOUND_SECONDS, elapsed
     said = str(raised.value)
     assert "the store was busy, so the recall was not shown" in said
     assert "`bettermemory doctor`" in said
@@ -153,7 +159,7 @@ def test_a_brief_under_a_held_lock_fails_within_its_budget(
                 store=world.store,
                 state=RecallState(),
             )
-    assert time.monotonic() - started < 2.0
+    assert time.monotonic() - started < BUDGET_BOUND_SECONDS
 
 
 def test_no_try_begins_past_the_deadline(store: Store) -> None:
