@@ -157,7 +157,6 @@ from .log import (
     fingerprint,
     last_row,
     parse_origin,
-    same_mac as same_mac,
 )
 from .time_utils import isoformat_utc
 

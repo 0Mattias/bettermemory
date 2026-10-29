@@ -25,6 +25,7 @@ from bettermemory import (
     anchor,
     audit_export,
     backup,
+    backup_verify,
     history,
     log,
     store_provenance,
@@ -159,7 +160,7 @@ def test_the_package_has_one_mac_comparison() -> None:
         and node.name == "same_mac"
     ]
     assert defined == ["log.py"]
-    for module in (anchor, audit_export, backup, history, store_provenance):
+    for module in (anchor, audit_export, backup_verify, history, store_provenance):
         assert module.same_mac is log.same_mac, module.__name__
     # The kept comparison is the one the export and the anchor check need:
     # a non-ASCII column reads as a mismatch, not a TypeError.
