@@ -307,43 +307,16 @@ def _admit_capture(
     )
 
 
-async def memory_write(
+def _check_write_policy(
     deps: ToolHandlers,
-    content: str,
-    scopes: list[str],
-    confidence: str = "medium",
-    source: str = "explicit-statement",
-    force: bool = False,
-    acknowledge_transient: bool = False,
-    acknowledge_scope_mismatch: bool = False,
-    acknowledge_credential: bool = False,
-    acknowledge_user_claim: bool = False,
-    category: str = "fact",
-    claims: list[str] | None = None,
-    supersedes: list[str] | None = None,
-    review: dict[str, Any] | None = None,
-    ctx: Context | None = None,
-) -> dict[str, Any]:
-    """Validate the payload, run the gate chain, then the review: return
-    the first gate's refusal, a review to answer, or the review's
-    decision. With the review's thresholds unset, a write that passes the
-    gates commits."""
-    from .. import _handlers as _h
-
-    state = deps.sessions.for_request(ctx)
-    _advance_turn(state, deps.recorder)
-    # A capture write (`source="capture:<token>"`) joins the open batch its
-    # token names, or is refused before anything else runs. On a capture
-    # `force` and every acknowledge flag are ignored: no flag passes the
-    # capture bar, and a captured memory never skips a gate.
-    captured: _CaptureWrite | None = None
-    token = _capture.token_of(source)
-    if token is not None:
-        refused, captured = _admit_capture(deps, state, token, scopes)
-        if refused is not None:
-            return refused
-        force = acknowledge_transient = acknowledge_scope_mismatch = False
-        acknowledge_credential = acknowledge_user_claim = False
+    *,
+    force: bool,
+    acknowledge_transient: bool,
+    acknowledge_scope_mismatch: bool,
+    acknowledge_credential: bool,
+    acknowledge_user_claim: bool,
+) -> None:
+    """Take the call's force and acknowledge flags; return None, raising a policy refusal."""
     # `[policy]` (policy.py): a flag the install forbids refuses the whole
     # call, before anything is validated or written. Checked after the
     # capture block, whose flags are already cleared, so a capture is
@@ -364,6 +337,23 @@ async def memory_write(
     except _policy.PolicyRefusal as refused:
         deps.recorder.record("write", **refused.event_fields())
         raise
+
+
+def _write_payload(
+    deps: ToolHandlers,
+    *,
+    content: str,
+    scopes: list[str],
+    confidence: str,
+    source: str,
+    category: str,
+    captured: _CaptureWrite | None,
+    claims: list[str] | None,
+    supersedes: list[str] | None,
+) -> dict[str, Any]:
+    """Take the call's arguments; return the validated payload with origin, actor, claims, links."""
+    from .. import _handlers as _h
+
     payload = _validate_write_payload(
         content=content,
         scopes=scopes,
@@ -415,34 +405,42 @@ async def memory_write(
     # ride the payload to the commit, which sets them unchanged.
     if supersedes:
         payload["links"] = _validate_declared_supersedes(deps, supersedes)
+    return payload
 
-    gc = GateContext(
-        payload=payload,
-        force=force,
-        acknowledge_transient=acknowledge_transient,
-        acknowledge_scope_mismatch=acknowledge_scope_mismatch,
-        acknowledge_credential=acknowledge_credential,
-        acknowledge_user_claim=acknowledge_user_claim,
-        capture=captured.batch if captured is not None else None,
-    )
 
-    decision = apply_write_gates(deps, gc)
-    if decision is not None:
-        # Recurrence-as-evidence: a duplicate rejection IS the stored
-        # claim re-entering a conversation. Record the corroboration
-        # on the matched memory (once per session per memory) before
-        # the reject event goes out, so the event carries the id. Not
-        # for a capture: the model restating its own context is not an
-        # independent recurrence, and the bump would change a record an
-        # undo of the batch could not restore.
-        if decision.response.get("status") == "duplicate" and captured is None:
-            _corroborate_duplicate(deps, state, decision)
-        if captured is not None:
-            decision.event_kwargs.setdefault("capture_batch", captured.batch.batch)
-            _capture_refusal_hint(decision.response)
-        deps.recorder.record("write", **decision.event_kwargs)
-        return decision.response
+def _refuse_gated_write(
+    deps: ToolHandlers,
+    state: SessionState,
+    decision: Reject,
+    captured: _CaptureWrite | None,
+) -> dict[str, Any]:
+    """Take a gate's refusal; return its response, after the corroboration and the event."""
+    # Recurrence-as-evidence: a duplicate rejection IS the stored
+    # claim re-entering a conversation. Record the corroboration
+    # on the matched memory (once per session per memory) before
+    # the reject event goes out, so the event carries the id. Not
+    # for a capture: the model restating its own context is not an
+    # independent recurrence, and the bump would change a record an
+    # undo of the batch could not restore.
+    if decision.response.get("status") == "duplicate" and captured is None:
+        _corroborate_duplicate(deps, state, decision)
+    if captured is not None:
+        decision.event_kwargs.setdefault("capture_batch", captured.batch.batch)
+        _capture_refusal_hint(decision.response)
+    deps.recorder.record("write", **decision.event_kwargs)
+    return decision.response
 
+
+def _commit_args(
+    gc: GateContext,
+    *,
+    force: bool,
+    acknowledge_transient: bool,
+    acknowledge_scope_mismatch: bool,
+    acknowledge_credential: bool,
+    acknowledge_user_claim: bool,
+) -> _CommitArgs:
+    """Take the passed gates' context and the flags; return what the commit is handed."""
     # Capture which markers (if any) were overridden by
     # `acknowledge_transient` — feeds the override-rate signal in the
     # event log so we can tell whether a marker is producing too many
@@ -478,7 +476,7 @@ async def memory_write(
         else []
     )
 
-    commit = _CommitArgs(
+    return _CommitArgs(
         related=gc.related,
         removed_related=gc.removed_related,
         forced=force,
@@ -486,6 +484,85 @@ async def memory_write(
         credentials_acknowledged=credentials_acknowledged,
         user_claims_acknowledged=user_claims_acknowledged,
         scope_mismatches_acknowledged=scope_mismatches_acknowledged,
+    )
+
+
+async def memory_write(
+    deps: ToolHandlers,
+    content: str,
+    scopes: list[str],
+    confidence: str = "medium",
+    source: str = "explicit-statement",
+    force: bool = False,
+    acknowledge_transient: bool = False,
+    acknowledge_scope_mismatch: bool = False,
+    acknowledge_credential: bool = False,
+    acknowledge_user_claim: bool = False,
+    category: str = "fact",
+    claims: list[str] | None = None,
+    supersedes: list[str] | None = None,
+    review: dict[str, Any] | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    """Validate the payload, run the gate chain, then the review: return
+    the first gate's refusal, a review to answer, or the review's
+    decision. With the review's thresholds unset, a write that passes the
+    gates commits."""
+    state = deps.sessions.for_request(ctx)
+    _advance_turn(state, deps.recorder)
+    # A capture write (`source="capture:<token>"`) joins the open batch its
+    # token names, or is refused before anything else runs. On a capture
+    # `force` and every acknowledge flag are ignored: no flag passes the
+    # capture bar, and a captured memory never skips a gate.
+    captured: _CaptureWrite | None = None
+    token = _capture.token_of(source)
+    if token is not None:
+        refused, captured = _admit_capture(deps, state, token, scopes)
+        if refused is not None:
+            return refused
+        force = acknowledge_transient = acknowledge_scope_mismatch = False
+        acknowledge_credential = acknowledge_user_claim = False
+    _check_write_policy(
+        deps,
+        force=force,
+        acknowledge_transient=acknowledge_transient,
+        acknowledge_scope_mismatch=acknowledge_scope_mismatch,
+        acknowledge_credential=acknowledge_credential,
+        acknowledge_user_claim=acknowledge_user_claim,
+    )
+    payload = _write_payload(
+        deps,
+        content=content,
+        scopes=scopes,
+        confidence=confidence,
+        source=source,
+        category=category,
+        captured=captured,
+        claims=claims,
+        supersedes=supersedes,
+    )
+
+    gc = GateContext(
+        payload=payload,
+        force=force,
+        acknowledge_transient=acknowledge_transient,
+        acknowledge_scope_mismatch=acknowledge_scope_mismatch,
+        acknowledge_credential=acknowledge_credential,
+        acknowledge_user_claim=acknowledge_user_claim,
+        capture=captured.batch if captured is not None else None,
+    )
+
+    decision = apply_write_gates(deps, gc)
+    if decision is not None:
+        return _refuse_gated_write(deps, state, decision, captured)
+
+    commit = _commit_args(
+        gc,
+        force=force,
+        acknowledge_transient=acknowledge_transient,
+        acknowledge_scope_mismatch=acknowledge_scope_mismatch,
+        acknowledge_credential=acknowledge_credential,
+        acknowledge_user_claim=acknowledge_user_claim,
     )
 
     # The review runs after every gate, so a duplicate, a previously
@@ -673,45 +750,12 @@ def _issue_review(
     return response
 
 
-def _reviewed_write(
+def _review_chain(
     deps: ToolHandlers,
-    state: SessionState,
-    *,
-    payload: dict[str, Any],
-    commit: _CommitArgs,
-    review: dict[str, Any] | None,
-    tau: _review.Tau,
-    active_snapshot: list[Memory] | None,
-) -> dict[str, Any]:
-    """The review after the gates: issue one, or decide on its answers.
-
-    The cue code runs once, inside `related_for`, and its report is the
-    one the commit uses. A teaching error raises `ValueError` and writes
-    nothing.
-    """
-    from ..admission import Admission
-    from ..membership import REVIEW_STRATA
-
-    answers = _review.parse_answers(review)
-    active = active_snapshot if active_snapshot is not None else deps.store.load_all()
-    declared_ids = [str(link["target_id"]) for link in payload.get("links") or []]
-    # The related set is the writing caller's REVIEW_STRATA admission
-    # (design 3.5), resolved once here and kept in the payload for the
-    # commit, which homes the record by the same resolution.
-    caller = _payload_caller(deps, payload)
-    admission = Admission.of(REVIEW_STRATA, caller)
-    related = _review.related_for(
-        deps.store,
-        payload["content"],
-        behavior=deps.config.behavior,
-        excluded_scopes=frozenset(state.disabled_scopes),
-        admission=admission,
-        active=active,
-        exclude_ids=declared_ids,
-    )
-    if answers is None:
-        return _issue_review(deps, related, parent_review_id=None)
-
+    answers: _review.ReviewAnswers,
+    related: _review.RelatedSet,
+) -> tuple[_review.Chain | None, str | None]:
+    """Take the answers and the related set; return the open chain and a stray review_id."""
     # Only a review_id whose chain the log holds open takes the call's
     # answer. One the log does not hold (fabricated, or from another
     # store) or one a write row already answered would leave a write no
@@ -729,46 +773,46 @@ def _reviewed_write(
         else:
             stray_id = answers.review_id
     _review.check_answered_ids(answers, allowed)
+    return chain, stray_id
 
-    # A score at or above its threshold refuses whatever the relation
-    # answers say, so it needs no coverage; anything else is decided only
-    # when every related id is answered. A capture write that carries its
-    # scores without a review_id is the exception: it commits now, and the
-    # ids it left unanswered wait for the batch's closing call.
-    refused = answers.secret >= tau.secret or answers.unsafe >= tau.unsafe
-    missing = [i for i in related.ids if i not in answers.relation]
-    captured: _CaptureWrite | None = payload.get("capture")
-    deferred = (
-        bool(missing)
-        and not refused
-        and captured is not None
-        and answers.review_id is None
-    )
-    if missing and not refused and not deferred:
-        return _issue_review(
-            deps,
-            related.only(missing),
-            parent_review_id=chain.root if chain is not None else None,
-            sent_review_id=stray_id,
-        )
 
+def _decided_review_id(
+    deps: ToolHandlers,
+    answers: _review.ReviewAnswers,
+    related: _review.RelatedSet,
+    *,
+    chain: _review.Chain | None,
+    stray_id: str | None,
+    deferred: bool,
+) -> str:
+    """Take the answers and their chain; return the review_id the decision is filed under."""
     if chain is not None and answers.review_id is not None:
-        review_id = answers.review_id
-    else:
-        # Pre-answered: decided without an open review. Recorded as a
-        # review so the counters see it.
-        review_id = generate_ulid()
-        _record_review_issued(
-            deps,
-            review_id=review_id,
-            related_ids=related.ids,
-            pre_answered=True,
-            parent_review_id=None,
-            response_chars=None,
-            sent_review_id=stray_id,
-            deferred=deferred,
-        )
+        return answers.review_id
+    # Pre-answered: decided without an open review. Recorded as a
+    # review so the counters see it.
+    review_id = generate_ulid()
+    _record_review_issued(
+        deps,
+        review_id=review_id,
+        related_ids=related.ids,
+        pre_answered=True,
+        parent_review_id=None,
+        response_chars=None,
+        sent_review_id=stray_id,
+        deferred=deferred,
+    )
+    return review_id
 
+
+def _standing_guard(
+    deps: ToolHandlers,
+    caller: Caller,
+    answers: _review.ReviewAnswers,
+    related: _review.RelatedSet,
+    declared_ids: list[str],
+    missing: list[str],
+) -> tuple[list[str], list[str], _guard.Words | None]:
+    """Take the review's answers and ids; return the standing ids, those replaced, the words."""
     # The standing records the write could conflict with or replace, of
     # every record it touches, admitted or not (unit RS-F7 part 5: the
     # guard reads every record, since admission decides delivery, not who
@@ -793,16 +837,25 @@ def _reviewed_write(
         if rests and not conflicted
         else None
     )
-    decision = _review.apply_review(
-        answers,
-        related,
-        tau=tau,
-        write_claim_sized=_supersession.claim_sized(payload["content"]),
-        write_supersession=deps.config.behavior.write_supersession,
-        declared_ids=declared_ids,
-        standing_ids=standing_ids,
-        said=words is not None,
-    )
+    return standing_ids, rests, words
+
+
+def _review_fields(
+    payload: dict[str, Any],
+    answers: _review.ReviewAnswers,
+    related: _review.RelatedSet,
+    decision: _review.ReviewDecision,
+    *,
+    review_id: str,
+    tau: _review.Tau,
+    captured: _CaptureWrite | None,
+    deferred: bool,
+    missing: list[str],
+    declared_ids: list[str],
+    standing_ids: list[str],
+    said: bool,
+) -> tuple[dict[str, Any], list[_review.RelatedEntry]]:
+    """Take the decision and the payload; return the row's review fields and the pending entries."""
     review_fields: dict[str, Any] = {
         "review_id": review_id,
         "review_answers": answers.to_event(),
@@ -837,10 +890,24 @@ def _reviewed_write(
                 declared=declared_ids,
                 pending=missing,
                 standing=standing_ids,
-                said=words is not None,
+                said=said,
             ),
         )
+    return review_fields, pending
 
+
+def _review_refusal(
+    deps: ToolHandlers,
+    state: SessionState,
+    *,
+    payload: dict[str, Any],
+    commit: _CommitArgs,
+    related: _review.RelatedSet,
+    decision: _review.ReviewDecision,
+    review_fields: dict[str, Any],
+    admission: Admission,
+) -> dict[str, Any] | None:
+    """Take the review's decision; return the refusal it calls for, or None for a commit."""
     if decision.action == _review.ACTION_SECRET:
         deps.recorder.record(
             "write",
@@ -912,6 +979,114 @@ def _reviewed_write(
             _corroborate_duplicate(deps, state, reject)
         deps.recorder.record("write", **reject.event_kwargs)
         return reject.response
+    return None
+
+
+def _reviewed_write(
+    deps: ToolHandlers,
+    state: SessionState,
+    *,
+    payload: dict[str, Any],
+    commit: _CommitArgs,
+    review: dict[str, Any] | None,
+    tau: _review.Tau,
+    active_snapshot: list[Memory] | None,
+) -> dict[str, Any]:
+    """The review after the gates: issue one, or decide on its answers.
+
+    The cue code runs once, inside `related_for`, and its report is the
+    one the commit uses. A teaching error raises `ValueError` and writes
+    nothing.
+    """
+    from ..admission import Admission
+    from ..membership import REVIEW_STRATA
+
+    answers = _review.parse_answers(review)
+    active = active_snapshot if active_snapshot is not None else deps.store.load_all()
+    declared_ids = [str(link["target_id"]) for link in payload.get("links") or []]
+    # The related set is the writing caller's REVIEW_STRATA admission
+    # (design 3.5), resolved once here and kept in the payload for the
+    # commit, which homes the record by the same resolution.
+    caller = _payload_caller(deps, payload)
+    admission = Admission.of(REVIEW_STRATA, caller)
+    related = _review.related_for(
+        deps.store,
+        payload["content"],
+        behavior=deps.config.behavior,
+        excluded_scopes=frozenset(state.disabled_scopes),
+        admission=admission,
+        active=active,
+        exclude_ids=declared_ids,
+    )
+    if answers is None:
+        return _issue_review(deps, related, parent_review_id=None)
+
+    chain, stray_id = _review_chain(deps, answers, related)
+
+    # A score at or above its threshold refuses whatever the relation
+    # answers say, so it needs no coverage; anything else is decided only
+    # when every related id is answered. A capture write that carries its
+    # scores without a review_id is the exception: it commits now, and the
+    # ids it left unanswered wait for the batch's closing call.
+    refused = answers.secret >= tau.secret or answers.unsafe >= tau.unsafe
+    missing = [i for i in related.ids if i not in answers.relation]
+    captured: _CaptureWrite | None = payload.get("capture")
+    deferred = (
+        bool(missing)
+        and not refused
+        and captured is not None
+        and answers.review_id is None
+    )
+    if missing and not refused and not deferred:
+        return _issue_review(
+            deps,
+            related.only(missing),
+            parent_review_id=chain.root if chain is not None else None,
+            sent_review_id=stray_id,
+        )
+
+    review_id = _decided_review_id(
+        deps, answers, related, chain=chain, stray_id=stray_id, deferred=deferred
+    )
+    standing_ids, rests, words = _standing_guard(
+        deps, caller, answers, related, declared_ids, missing
+    )
+    decision = _review.apply_review(
+        answers,
+        related,
+        tau=tau,
+        write_claim_sized=_supersession.claim_sized(payload["content"]),
+        write_supersession=deps.config.behavior.write_supersession,
+        declared_ids=declared_ids,
+        standing_ids=standing_ids,
+        said=words is not None,
+    )
+    review_fields, pending = _review_fields(
+        payload,
+        answers,
+        related,
+        decision,
+        review_id=review_id,
+        tau=tau,
+        captured=captured,
+        deferred=deferred,
+        missing=missing,
+        declared_ids=declared_ids,
+        standing_ids=standing_ids,
+        said=words is not None,
+    )
+    refusal = _review_refusal(
+        deps,
+        state,
+        payload=payload,
+        commit=commit,
+        related=related,
+        decision=decision,
+        review_fields=review_fields,
+        admission=admission,
+    )
+    if refusal is not None:
+        return refusal
 
     response = _commit_write(
         deps,
