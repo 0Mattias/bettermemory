@@ -44,7 +44,7 @@ from typing import Any
 
 import pytest
 
-from bettermemory import backup
+from bettermemory import backup, store_schema
 from bettermemory import log as chain
 from bettermemory import store as store_module
 from bettermemory._fsutil import sqlite_file_uri
@@ -1095,9 +1095,9 @@ def test_a_key_ring_holds_a_store_id_and_nothing_else(tmp_path: Path, bad: str) 
 
 
 def test_the_key_ring_and_the_store_agree_on_the_store_id_shape() -> None:
-    """`store._STORE_ID_PATTERN` (what `Store.open` refuses a store by) and
+    """`store_schema._STORE_ID_PATTERN` (what `Store.open` refuses a store by) and
     `log.STORE_ID_PATTERN` (what a key ring holds) are one shape. The ring's
     module holds the pattern because `store` imports `log`; until `store`
     reads it from there, this pins the two together."""
-    assert chain.STORE_ID_PATTERN.pattern == store_module._STORE_ID_PATTERN.pattern
-    assert chain.STORE_ID_PATTERN.flags == store_module._STORE_ID_PATTERN.flags
+    assert chain.STORE_ID_PATTERN.pattern == store_schema._STORE_ID_PATTERN.pattern
+    assert chain.STORE_ID_PATTERN.flags == store_schema._STORE_ID_PATTERN.flags

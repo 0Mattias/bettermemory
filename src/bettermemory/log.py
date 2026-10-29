@@ -174,7 +174,7 @@ _RETIRED_PREFIX_CHARS = 16
 #: says, so a ring is built for no other shape: an id holding a separator,
 #: ``..`` or a glob would have the ring read and write keys, the head and
 #: the binding wherever the id points, and its retired-key glob walk from
-#: there. ``store._STORE_ID_PATTERN``, which `Store.open` refuses a store
+#: there. ``store_schema._STORE_ID_PATTERN``, which `Store.open` refuses a store
 #: by, must equal this one; a test pins the two together.
 STORE_ID_PATTERN = re.compile(r"[0-9a-f]{32}")
 
