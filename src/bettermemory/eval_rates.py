@@ -76,9 +76,9 @@ class _EvalWalk:
     # post-pass resolution against the invalidation markers below —
     # counting them inline would let a marker later in the log arrive
     # too late to retract an already-counted event. Same
-    # buffer-then-resolve shape as ``health._StatsAccumulator``.
+    # buffer-then-resolve shape as ``health_stats._StatsAccumulator``.
     audit_telemetry: list[dict[str, Any]] = field(default_factory=list)
-    # The two escape hatches health.py's rollups honor, mirrored here
+    # The two escape hatches health_stats.py's rollups honor, mirrored here
     # so the eval CLI and memory_health agree
     # over the same event stream: `silent_miss_cutoff` wipes all miss
     # telemetry before its `cutoff_ts`; `miss_ack` retracts one
@@ -156,14 +156,14 @@ def _count_use(
     is_settlement: Callable[[dict[str, Any]], bool],
 ) -> None:
     """Count one in-window use event's applies into ``walk``."""
-    # Tiering via the shared `health.endorsement_tier`: None for
+    # Tiering via the shared `health_model.endorsement_tier`: None for
     # an outcome other than applied, else `applied_tier`'s auto /
     # hook / model, with the strict `auto is True` identity
     # comparison (a stray truthy `auto=1` / `auto="true"` reads
     # as NON-auto, same as missing/None, so we never silently
     # relabel borderline data as the server closing the loop).
     # Shared rather than re-derived here: `eval.compute_eval` and
-    # `health._StatsAccumulator._handle_use` publish the same
+    # `health_stats._StatsAccumulator._handle_use` publish the same
     # split under different names, and the per-memory tallies
     # below are the cold-endorsement bucket health lists too.
     tier = _endorsement_tier(ev)
@@ -279,13 +279,14 @@ def _walk_eval_events(
         # filter: both are global markers, so a cutoff/ack whose own ts falls
         # outside the window still applies to in-window telemetry.
         # Without the exemption a windowed run would silently drop the
-        # marker and over-count events health.py's rollups (which walk
+        # marker and over-count events health_stats.py's rollups (which walk
         # the whole log) have already invalidated.
         if kind == "silent_miss_cutoff":
             # Latest `cutoff_ts` wins; an earlier cutoff seen later in
             # the log cannot shrink the invalidated window — same
-            # max-semantics as `health._handle_silent_miss_cutoff`. A
-            # malformed `cutoff_ts` parses to None and is ignored.
+            # max-semantics as
+            # `health_stats._StatsAccumulator._handle_silent_miss_cutoff`.
+            # A malformed `cutoff_ts` parses to None and is ignored.
             parsed_cutoff = _parse_ts(ev.get("cutoff_ts"))
             if parsed_cutoff is not None and (
                 walk.latest_miss_cutoff is None
@@ -338,7 +339,7 @@ def _resolve_audit_telemetry(
     tally = _AuditTally()
     # Resolve the buffered audit telemetry. An event invalidated by the
     # latest cutoff (ts strictly before `cutoff_ts`; an unparseable ts
-    # drops too once a cutoff exists — `health._count_post_cutoff`'s
+    # drops too once a cutoff exists — `health_stats._count_post_cutoff`'s
     # conservative read) is dropped from EVERYTHING: the miss-capable
     # and no_signal denominators, the numerator, the threshold-rule
     # tracking, and the inline triage buffer — as if it were never
@@ -348,7 +349,7 @@ def _resolve_audit_telemetry(
     # wasn't the false positive (the audit ran, the probe found
     # something, the model acknowledged the verdict — or the memory
     # was later removed), so the denominator keeps its turn — filters
-    # #2 and #3 of `health._silent_miss_stats`.
+    # #2 and #3 of `health_stats._silent_miss_stats`.
     for ev in walk.audit_telemetry:
         if walk.latest_miss_cutoff is not None:
             ts = _parse_ts(ev.get("ts"))
@@ -360,7 +361,7 @@ def _resolve_audit_telemetry(
                 continue
             # `no_signal` audits (empty store, gated probe, semantic model
             # unavailable) are not miss-capable turns; counting them dilutes
-            # silent_miss_rate's denominator. Mirrors health.py's
+            # silent_miss_rate's denominator. Mirrors health_stats.py's
             # `no_signal_total` split (round 88) so a config stuck at
             # permanent no_signal reads as "probe declined", not "healthy".
             if ev.get("verdict") == "no_signal":

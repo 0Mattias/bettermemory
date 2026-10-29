@@ -116,7 +116,7 @@ def render_text(report: EvalReport) -> str:
         if report.cold_endorsement_memories_total > 10:
             lines.append(f"  … plus {report.cold_endorsement_memories_total - 10} more")
     elif report.cold_endorsement_suppressed:
-        # The one shared sentence (`health._HOOKLESS_REASON`) so this
+        # The one shared sentence (`health_model._HOOKLESS_REASON`) so this
         # renderer, memory_health and `bettermemory health` cannot drift
         # into different explanations of the same silence.
         lines.append("")

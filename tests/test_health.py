@@ -2853,7 +2853,7 @@ def test_cold_endorsement_to_dict_shape() -> None:
 # Registry-vs-handler-methods parity for `_StatsAccumulator` (Class 7 —
 # closed by this commit).
 #
-# `_StatsAccumulator._HANDLERS` (in `health.py`) is a class-level
+# `_StatsAccumulator._HANDLERS` (in `health_stats.py`) is a class-level
 # `dict[str, Callable]` that routes each event `kind` to a sibling
 # `_handle_<kind>` instance method. `handle_event` consumes the table by
 # `_HANDLERS.get(kind)` and `handler is not None` — events whose kind is
@@ -2915,7 +2915,8 @@ def test_handlers_table_matches_handle_methods() -> None:
     registry_keys = set(_StatsAccumulator._HANDLERS)
     assert registry_keys == handler_methods, (
         "_StatsAccumulator._HANDLERS keys / _handle_* methods drifted; "
-        "see health.py:_StatsAccumulator._HANDLERS (the dispatch table) "
+        "see health_stats.py:_StatsAccumulator._HANDLERS (the dispatch "
+        "table) "
         "and the sibling _handle_* methods on the same class. "
         f"registry-only={registry_keys - handler_methods} "
         "(would AttributeError on first event of that kind); "

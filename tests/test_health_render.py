@@ -1,4 +1,5 @@
-"""`health.render_text` escapes what the store and the log hand it (ENG-168).
+"""`health_render.render_text` escapes what the store and the log hand it
+(ENG-168).
 
 A summary, a scope, a marker, an actor's spelling and a repo or work tree
 come from a store an editor can write and a log a client stamps, so an

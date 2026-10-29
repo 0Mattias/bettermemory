@@ -128,7 +128,7 @@ async def test_memory_health_window_days_filters_dead_and_cold(
     # under its own `ts` through `import_event`), and one Stop-hook
     # `turn_audited` row, because the report refuses to call anything
     # dead weight on a store where nothing was ever in a position to
-    # record an apply (`health.is_hook_telemetry_event`). The hook row
+    # record an apply (`health_model.is_hook_telemetry_event`). The hook row
     # records no apply against any memory, so the memory under test
     # stays retrieved-never-applied.
     aged_store = Store(tmp_path / "aged")

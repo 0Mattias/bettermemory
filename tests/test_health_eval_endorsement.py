@@ -1,6 +1,6 @@
 """Health and eval read cold endorsement under one definition (ENG-170, G5).
 
-`health.endorsement_tier` decides which `use` events feed a memory's
+`health_model.endorsement_tier` decides which `use` events feed a memory's
 per-memory applied tallies, and both `compute_health` and `compute_eval`
 read it: a shown pointer's settlement (`recall.settle_shown`, a `use`
 naming the surface that showed it) is a recorded use of the memory, so a

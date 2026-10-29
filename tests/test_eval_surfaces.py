@@ -378,7 +378,7 @@ def test_the_surface_leaves_the_trio_as_it_was() -> None:
     left out of applied_total and the helped numerator, so the published
     series stays one. A settlement is a recorded use of its memory, so it
     takes that memory out of the cold-endorsement bucket, as it does in
-    the health report (`health.endorsement_tier`, ENG-170): the bucket
+    the health report (`health_model.endorsement_tier`, ENG-170): the bucket
     loses the settled memories and nothing else changes."""
     from bettermemory.eval import compute_eval
 

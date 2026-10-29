@@ -39,7 +39,7 @@ DEFAULT_SINCE_SPEC = "30d"
 # baked in here that look like sloppiness but aren't:
 #
 # 1. Value-duplication of the literal ``30``. The same integer lives at
-#    ``health._COLD_ENDORSEMENT_MIN_RETRIEVALS``, and that copy is the
+#    ``health_model._COLD_ENDORSEMENT_MIN_RETRIEVALS``, and that copy is the
 #    canonical one — it carries the derivation (calibrated 2026-08-30:
 #    (1-p)^N against the dogfood log's pooled explicit-endorse rate
 #    *per search delivery*, picking the smallest N with
@@ -174,10 +174,10 @@ class RateCI:
 @dataclass
 class ColdEndorsementMemoriesRow:
     """One memory the ranker keeps surfacing that the model never
-    deliberately endorses. Mirrors ``health.MemoryStats`` minimally —
+    deliberately endorses. Mirrors ``health_model.MemoryStats`` minimally —
     we only carry what the eval renderer needs. ``retrieval_count``
     is SEARCH deliveries only, the same basis as
-    ``health.MemoryStats.retrieval_count`` (which only
+    ``health_model.MemoryStats.retrieval_count`` (which only
     ``_handle_search`` bumps) — see ``search_delivery_count`` in
     ``compute_eval`` for why ``list`` / ``show`` don't count here."""
 
@@ -519,7 +519,8 @@ def _canonical_top_hit_id(ev: dict[str, Any]) -> str | None:
     of the first entry in the canonical ``top_hits`` payload, or None
     when the shape is malformed or legacy.
 
-    Mirrors the ``top_hit_id`` half of ``health._parse_silent_miss_event``
+    Mirrors the ``top_hit_id`` half of
+    ``health_stats._parse_silent_miss_event``
     exactly — canonical-only, NO ``top_hit_ids`` fallback. The legacy
     fallback in ``_silent_miss_from_event`` exists for the renderer's
     ``top_missed_id`` display; using it for the tombstone filter would

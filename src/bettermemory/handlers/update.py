@@ -483,8 +483,8 @@ def _gate_body_edit(
     # either reads cut off or it does not.
     truncation_acknowledged = False
     # Fourth gate's override evidence, spelled `markers_acknowledged` because
-    # that is the field the write path already records and health.py already
-    # consumes — one grep covers both surfaces.
+    # that is the field the write path already records and health_stats.py
+    # already consumes — one grep covers both surfaces.
     markers_acknowledged: list[str] = []
     refusal: dict[str, Any] | None = None
     if content is not None:

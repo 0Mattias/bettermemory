@@ -90,8 +90,8 @@ async def test_acknowledge_transient_commits_and_records_the_override(
 ) -> None:
     """The escape mirrors the write side, and the success event carries
     `markers_acknowledged` — the same field write.py records and
-    health.py consumes, so one grep covers both surfaces' override
-    rates."""
+    health_stats.py consumes, so one grep covers both surfaces'
+    override rates."""
     server, store = server_with_events
     mid = await _seed_fact(server)
     edited = await _call(

@@ -70,11 +70,11 @@ reply. The per-memory companion in the health report is
 30` and zero explicit applies: retrieved often, never visibly used.
 `bettermemory eval` publishes the same bucket under the same contract:
 one floor (the 2026-08-30 recalibration of
-`health._COLD_ENDORSEMENT_MIN_RETRIEVALS`, derived as `(1-p)^N` against
+`health_model._COLD_ENDORSEMENT_MIN_RETRIEVALS`, derived as `(1-p)^N` against
 the store's own explicit-endorse rate per search delivery; parity with
 eval's default is test-pinned), one counting basis (search deliveries
 only; `memory_show` occurrences feed the rate denominators but not
-the floor), one definition of a use (`health.endorsement_tier`: every
+the floor), one definition of a use (`health_model.endorsement_tier`: every
 applied `use`, a pointer's settlement included, since the settlement is
 the Stop finding the memory in the reply; only the three rates leave the
 settlement out), and one honesty gate (with zero

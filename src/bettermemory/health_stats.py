@@ -273,9 +273,10 @@ class _StatsAccumulator:
         # event exactly once and the predicate is two dict reads.
         self._hook_telemetry_events = 0
         # `eval.is_admin_recorded_event`, bound at construction through
-        # a deferred import: eval.py imports `health.applied_tier` at
-        # module scope, so a module-level import here would be a cycle.
-        # By the time an accumulator is constructed both modules are
+        # a deferred import: eval.py and eval_rates.py import from
+        # `health` at module scope (`_HOOKLESS_REASON`,
+        # `endorsement_tier`), so a module-level import here would be a
+        # cycle. By the time an accumulator is constructed both modules are
         # fully initialised, and binding once keeps `handle_event` —
         # which runs for every row in the log — free of repeated import
         # machinery. Calling the predicate, rather than re-spelling

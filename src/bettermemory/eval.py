@@ -25,7 +25,7 @@ Three rates the existing event log makes computable today:
   Audits the probe declined are excluded from the denominator and
   reported separately as ``turns_no_signal``, so a probe stuck at
   "declined" can't read as a healthy 0% miss rate. Both sides honor
-  the same invalidation markers ``health.py``'s rollups honor: a
+  the same invalidation markers ``health_stats``' rollups honor: a
   ``silent_miss_cutoff`` event (a bulk acknowledgement, written by
   ``memory_admin(action="acknowledge_miss", before=...)``; 8.x wrote it
   with ``consolidate --acknowledge-misses-before``) drops every earlier
@@ -37,7 +37,7 @@ Three rates the existing event log makes computable today:
   denominator keeps its turn. When the caller passes
   ``tombstoned_ids``, a miss whose canonical top-hit memory has been
   tombstoned drops from the numerator (and the triage buffer) the
-  same way — ``health._silent_miss_stats``' filter #2 — while both
+  same way — ``health_stats._silent_miss_stats``' filter #2 — while both
   denominator buckets keep their turns. The opt-in-retrieval
   contract's blind spot: turns where the model should have searched
   but didn't.
@@ -65,7 +65,7 @@ split they have always had (published, with recorded baselines);
 ``applied_model`` / ``applied_hook`` decompose the explicit half so a
 consumer can tell a deliberate ``memory_record_use`` call from the
 Stop hook's containment match without reaching into the raw events.
-The tiering itself is ``health.applied_tier`` — one derivation, two
+The tiering itself is ``health_model.applied_tier`` — one derivation, two
 surfaces.
 """
 
@@ -211,12 +211,12 @@ class EvalReport:
     # Honesty gate on the bucket above (2026-08-30, parity with
     # health's `telemetry_coverage.cold_endorsement_suppressed`): True
     # when the walked log carries zero Stop-hook settlement telemetry
-    # (`health.is_hook_telemetry_event`, counted over the WHOLE log —
+    # (`health_model.is_hook_telemetry_event`, counted over the WHOLE log —
     # not the window — matching health's "did settlement
     # telemetry EVER reach this log" semantics), in which case the rows
     # and total above are empty BY CONSTRUCTION, not because the store
     # is clean. Serialised under `cold_endorsement_memories` with the
-    # shared `health._HOOKLESS_REASON` sentence so the two surfaces
+    # shared `health_model._HOOKLESS_REASON` sentence so the two surfaces
     # cannot explain the same silence two different ways.
     cold_endorsement_suppressed: bool = False
 
@@ -253,7 +253,7 @@ class EvalReport:
     # not by "the model called memory_record_use". Reading the former
     # as deliberate endorsement overstates the model's engagement with
     # memory, which is precisely the metric this module exists to
-    # measure honestly. Tiering is `health.applied_tier`, shared so the
+    # measure honestly. Tiering is `health_model.applied_tier`, shared so the
     # two surfaces cannot derive three tiers two ways.
     applied_model: int = 0
     applied_hook: int = 0
@@ -431,7 +431,7 @@ def compute_eval(
     the ``since`` window, as health reads them over the whole log.
     Streams carrying no markers count exactly as before.
 
-    ``tombstoned_ids`` mirrors ``health._silent_miss_stats``' filter
+    ``tombstoned_ids`` mirrors ``health_stats._silent_miss_stats``' filter
     #2: a ``search_miss`` whose canonical top-hit id
     (``top_hits[0].id``) is in the set drops from the numerator and
     the triage buffer — once the memory is gone the miss is no longer
@@ -457,7 +457,7 @@ def compute_eval(
     ``retrieval_occurrences`` but not the floor — see the
     ``search_delivery_count`` comment in ``eval_rates._EvalWalk``),
     and the bucket rides the same Stop-hook telemetry honesty gate: on
-    a log with zero ``health.is_hook_telemetry_event`` rows — measured
+    a log with zero ``health_model.is_hook_telemetry_event`` rows — measured
     over the whole log, not the window — the rows are skipped entirely
     and ``cold_endorsement_suppressed`` says so, because
     ``explicit_applied_count == 0`` is uninformative when nothing was
@@ -655,7 +655,7 @@ def _resolve_sweep_buffer(
     """Drop the rows the latest cutoff retracts; returns the replayable rows and the legacy count."""
     # Resolve against the cutoff: an invalidated event (ts strictly
     # before `cutoff_ts`; an unparseable ts drops too once a cutoff
-    # exists — `health._count_post_cutoff`'s conservative read)
+    # exists — `health_stats._count_post_cutoff`'s conservative read)
     # vanishes from the replay set AND the legacy footnote, as if it
     # were never logged. With no cutoff in the stream this loop is the
     # identity split the pre-buffer inline code performed.
