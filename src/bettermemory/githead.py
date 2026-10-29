@@ -74,6 +74,7 @@ __all__ = [
     "GitDir",
     "Signature",
     "Stamp",
+    "discovery_moved",
     "find_gitdir",
     "gitdir_at",
     "head_bytes",
@@ -539,6 +540,13 @@ def locate(start: Path, *, walk: bool = True) -> GitDir | None:
         return None
 
 
+def discovery_moved() -> bool:
+    """Whether a variable that moves git's discovery (`_DISCOVERY_ENV`) is
+    set: git may then read another repository than the one `locate`
+    names."""
+    return any(name in os.environ for name in _DISCOVERY_ENV)
+
+
 def _entry_above(start: Path) -> bool:
     """Whether `start` or a directory above it holds a ``.git`` or a
     ``HEAD`` entry, up to the filesystem's root. A stat that fails for any
@@ -565,7 +573,7 @@ def _located(start: Path) -> GitDir | None:
     ``HEAD`` entry sits in `start` or above it (`_entry_above`), since git
     may find a repository there that `locate` does not read: above a
     ``.git`` it skips, or in a directory that is itself a git directory."""
-    if any(name in os.environ for name in _DISCOVERY_ENV):
+    if discovery_moved():
         raise _Unsettled
     found = locate(start)
     if found is None and _entry_above(start):

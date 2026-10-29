@@ -897,7 +897,7 @@ def test_commit_drift_count_git_cost_shape(
         annotated = sum(1 for hit in out if "commit_drift_count" in hit)
         # The one per-search call: the unfiltered author-date log. The repo
         # root the per-hit narrowing reuses is read from the files.
-        assert calls[0][:2] == ("log", "--format=%aI")
+        assert calls[0][:2] == ("log", "--format=%at")
         rev_parse = any(call[0] == "rev-parse" for call in calls)
         assert rev_parse is not _FILES_ANSWER_HEAD
         # Warm: the same search again forks nothing and reads the same hits.
@@ -1042,7 +1042,7 @@ def test_commit_drift_count_quiescent_anchored_hits_pay_one_classification_log(
     out, calls = attach()
     counts = [hit["commit_drift_count"] for hit in out if "commit_drift_count" in hit]
     assert counts == [0, 0, 0]
-    assert calls[0][:2] == ("log", "--format=%aI")
+    assert calls[0][:2] == ("log", "--format=%at")
     assert any(call[0] == "rev-parse" for call in calls) is not _FILES_ANSWER_HEAD
     assert len(calls) == _PER_SEARCH_FORKS + 3
     warm, warm_calls = attach()
@@ -2209,7 +2209,7 @@ def test_commit_drift_count_git_cost_shape_for_reachability_hits(
         out, calls = attach()
         # The one per-search call: the unfiltered author-date log. The repo
         # root and the head the walks are keyed on are read from the files.
-        assert calls[0][:2] == ("log", "--format=%aI")
+        assert calls[0][:2] == ("log", "--format=%at")
         rev_parse = any(call[0] == "rev-parse" for call in calls)
         assert rev_parse is not _FILES_ANSWER_HEAD
         annotated = {

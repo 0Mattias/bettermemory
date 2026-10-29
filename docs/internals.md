@@ -922,7 +922,9 @@ the config, the index's `.gitmodules` entry and the file signatures
 those memos key on, and `origin_remote.py` parses the remote URL);
 `_response.py` and `origin.py` memoise the commit-drift work per
 repository root and commit HEAD names, which `githead.py`
-reads from the repository files without a git process; `search.py`
+reads from the repository files without a git process (`origin_history.py`
+keeps the whole-history author dates, which a moved head extends with
+the commits it adds); `search.py`
 memoises the token streams per body and scopes. Every cache registers
 its clearer with `_caches.py`, and `_caches.clear_all` empties them.
 

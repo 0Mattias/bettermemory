@@ -25,7 +25,15 @@ from typing import Any
 
 import pytest
 
-from bettermemory import _caches, _response, githead, origin, origin_gitfiles, verify
+from bettermemory import (
+    _caches,
+    _response,
+    githead,
+    origin,
+    origin_gitfiles,
+    origin_history,
+    verify,
+)
 from bettermemory._response import ResponseBuilder
 from bettermemory.admission import CountedRecords
 from bettermemory.config import Config, StorageConfig
@@ -244,8 +252,20 @@ def _by_id(out: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {hit["id"]: hit for hit in out}
 
 
+#: The log that reads a head's whole history, and the one that reads what a
+#: head adds to an earlier head's (`origin._extended_author_timestamps`).
+_WHOLE_HISTORY = ("log", "--format=%at")
+_EXTENSION = ("log", "--boundary", "--format=%m%H %at")
+
+
 def _whole_history_logs(calls: list[tuple[str, ...]]) -> list[tuple[str, ...]]:
-    return [c for c in calls if c[:2] == ("log", "--format=%aI") and "--" not in c]
+    """The author-date reads of a head's history in `calls`, whole or
+    extended from an earlier head's."""
+    return [
+        c
+        for c in calls
+        if (c[:2] == _WHOLE_HISTORY or c[:3] == _EXTENSION) and "--" not in c
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -353,7 +373,10 @@ def test_a_commit_moves_the_head_and_the_next_attach_counts_again(
     _commit(repo, "post 2", when=_T2, files={"notes0.md": "a2\n"})
     second, calls = _attach(store.load_all(), caller, monkeypatch)
     assert _by_id(second)[memory_id]["commit_drift_count"] == 2
-    assert len(_whole_history_logs(calls)) == 1, "the new head's history is read once"
+    logs = _whole_history_logs(calls)
+    assert len(logs) == 1, "the new head's history is read once"
+    if _FILES:
+        assert logs[0][:3] == _EXTENSION, "only what the new head adds"
 
 
 def test_a_new_stamp_is_a_new_key(
@@ -764,9 +787,14 @@ def test_a_head_that_leaves_and_returns_during_the_attach_stores_nothing(
 def test_the_memos_are_registered_with_the_cache_registry() -> None:
     """Each memo is emptied by a registered clearer that takes its lock."""
     assert _response._clear_drift_memo in _caches._CLEARERS
-    assert origin._clear_timestamps_memo in _caches._CLEARERS
+    assert origin_history._clear_timestamps_memo in _caches._CLEARERS
     assert origin._clear_walk_memo in _caches._CLEARERS
-    assert (_response._DRIFT_MEMO_CAP, origin._TIMESTAMPS_MEMO_CAP) == (5000, 16)
+    assert (_response._DRIFT_MEMO_CAP, origin_history._TIMESTAMPS_MEMO_CAP) == (
+        5000,
+        16,
+    )
+    assert origin_history._TIMESTAMPS_MEMO_SLOTS == 2_000_000
+    assert origin_history._FAILURE_SECONDS == 60.0
     assert origin._WALK_MEMO_CAP == 128
 
 
@@ -854,9 +882,9 @@ def test_where_the_files_do_not_settle_the_head_git_answers_the_same(
         from_git, calls = _attach(memories, caller, monkeypatch)
         assert from_git == from_files
         assert ("rev-parse", "--show-toplevel", "HEAD") in calls
-        assert ("log", "--format=%aI", "HEAD") in calls
+        assert (*_WHOLE_HISTORY, "HEAD") in calls
     assert len(_response._DRIFT_MEMO) == 0
-    assert len(origin._TIMESTAMPS_MEMO) == 0
+    assert len(origin_history._TIMESTAMPS_MEMO) == 0
 
 
 @files_only
@@ -985,7 +1013,20 @@ def test_the_root_is_spelled_the_way_git_prints_it(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@files_only
+@pytest.fixture(params=["posix", "off-posix"])
+def discovery(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str:
+    """The leg a whole-history test runs on: githead's discovery as POSIX
+    reads it, or declining as it does off POSIX and in another account's
+    repository, where the memo is keyed by what `githead.locate` reads
+    (review Ob, G2). A host that is not POSIX has only the second."""
+    if request.param == "off-posix":
+        monkeypatch.setattr(githead, "_POSIX", False)
+    elif os.name != "posix":
+        pytest.skip("off POSIX the host's own leg is the off-posix one")
+    return str(request.param)
+
+
+@pytest.mark.usefixtures("discovery")
 def test_the_whole_history_is_memoised_per_root_and_head(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1004,47 +1045,200 @@ def test_the_whole_history_is_memoised_per_root_and_head(
     again = origin.commit_author_timestamps(repo / "src")
     assert first == [_T0]
     assert again is first
-    assert calls == [("log", "--format=%aI", head)], (
-        "the log names the head it is keyed on"
-    )
+    assert calls == [(*_WHOLE_HISTORY, head)], "the log names the head it is keyed on"
 
     moved = _commit(repo, "post", when=_T1)
     calls.clear()
     after = origin.commit_author_timestamps(repo)
     assert after == [_T0, _T1]
-    assert calls == [("log", "--format=%aI", moved)]
+    assert calls == [(*_EXTENSION, f"{head}..{moved}")], (
+        "the moved head reads only the commits it adds"
+    )
+    assert after[0] is first[0], "and shares the earlier head's dates"
     assert first == [_T0], "the earlier head's list is its own"
+    assert list(origin_history._TIMESTAMPS_MEMO) == [
+        (str(repo.resolve()), head),
+        (str(repo.resolve()), moved),
+    ]
 
 
-def test_a_failed_whole_history_read_is_not_memoised(
+def _history_calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, ...]]:
+    """Every git process spawned from here on, by its arguments."""
+    calls: list[tuple[str, ...]] = []
+    real_run = subprocess.run
+
+    def spy(argv: Any, *args: Any, **kwargs: Any) -> Any:
+        calls.append(_git_args(argv))
+        return real_run(argv, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", spy)
+    return calls
+
+
+@pytest.mark.usefixtures("discovery")
+@pytest.mark.parametrize("move", ["switch", "back", "rewrite"])
+def test_a_head_that_does_not_descend_reads_its_whole_history(
+    move: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The earlier head is no ancestor of the new one, so the commits the
+    new head reaches are not the earlier head's and its additions: a branch
+    switched to one that forked before it, a head moved back, a commit
+    amended. The log of the range lists no earlier head on its boundary,
+    and the new head's history is read whole, and counts as it would
+    uncached."""
+    repo = _repo(tmp_path)
+    base = _commit(repo, "seed", when=_T0)
+    _commit(repo, "main 1", when=_T1)
+    if move == "switch":
+        _git(repo, "checkout", "-q", "-b", "side", base)
+        _commit(repo, "side 1", when=_T2)
+    tip = _git(repo, "rev-parse", "HEAD")
+    assert len(origin.commit_author_timestamps(repo) or []) == 2
+    if move == "switch":
+        _git(repo, "checkout", "-q", "main")
+    elif move == "back":
+        _git(repo, "reset", "-q", "--hard", base)
+    else:
+        _git(repo, "commit", "-q", "--amend", "--allow-empty", "-m", "amended")
+    moved = _git(repo, "rev-parse", "HEAD")
+    assert moved != tip
+    calls = _history_calls(monkeypatch)
+    got = origin.commit_author_timestamps(repo)
+    whole = _whole_history_logs(calls)
+    assert whole[-1] == (*_WHOLE_HISTORY, moved)
+    _caches.clear_all()
+    assert got == origin.commit_author_timestamps(repo)
+
+
+@pytest.mark.usefixtures("discovery")
+@pytest.mark.parametrize("history", ["shallow", "graft", "replace"])
+def test_a_head_after_the_history_files_moved_reads_its_whole_history(
+    history: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A shallow file, a graft or a replacement ref changes which commits a
+    head reaches without moving it, so an entry read before such a change
+    is no base for a head read after it (`origin_history.history_guard`)."""
+    repo = _repo(tmp_path)
+    seed = _commit(repo, "seed", when=_T0)
+    second = _commit(repo, "second", when=_T1)
+    assert origin.commit_author_timestamps(repo) == [_T0, _T1]
+    if history == "shallow":
+        (repo / ".git" / "shallow").write_bytes(f"{second}\n".encode())
+    elif history == "graft":
+        (repo / ".git" / "info").mkdir(exist_ok=True)
+        (repo / ".git" / "info" / "grafts").write_bytes(f"{second}\n".encode())
+    else:
+        _git(repo, "replace", "--graft", second)
+    moved = _commit(repo, "third", when=_T2)
+    calls = _history_calls(monkeypatch)
+    got = origin.commit_author_timestamps(repo)
+    assert _whole_history_logs(calls) == [(*_WHOLE_HISTORY, moved)]
+    assert got == [_T1, _T2], "the history git reaches now, without the seed"
+    assert seed not in _git(repo, "log", "--format=%H", moved)
+
+
+@pytest.mark.usefixtures("discovery")
+def test_a_failed_whole_history_read_is_remembered_for_a_minute(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """A read that fails is not retried by every row that needs it: for a
+    minute the same root and head answer None with no process, counting
+    the failure on the calling thread as the read did, so no caller keeps
+    a value it computed from the fallback. Then it is read again."""
+    clock = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
     repo = _repo(tmp_path)
     _commit(repo, "seed", when=_T0)
     real_run = subprocess.run
+    spawned: list[tuple[str, ...]] = []
 
     def times_out(argv: Any, *args: Any, **kwargs: Any) -> Any:
+        spawned.append(_git_args(argv))
         raise subprocess.TimeoutExpired(argv, kwargs.get("timeout", 5.0))
 
     monkeypatch.setattr(subprocess, "run", times_out)
     assert origin.commit_author_timestamps(repo) is None
+    assert len(spawned) == 1
     monkeypatch.setattr(subprocess, "run", real_run)
+    calls = _history_calls(monkeypatch)
+    for _ in range(3):
+        failed = origin.failed_git_calls()
+        assert origin.commit_author_timestamps(repo) is None
+        assert origin.failed_git_calls() == failed + 1
+    assert calls == []
+    clock[0] += origin_history._FAILURE_SECONDS
     assert origin.commit_author_timestamps(repo) == [_T0]
+    assert len(_whole_history_logs(calls)) == 1
 
 
-@files_only
+@pytest.mark.usefixtures("discovery")
 def test_the_whole_history_memo_is_bounded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(origin, "_TIMESTAMPS_MEMO_CAP", 1)
+    monkeypatch.setattr(origin_history, "_TIMESTAMPS_MEMO_CAP", 1)
     first = _repo(tmp_path, "first")
     second = _repo(tmp_path, "second")
     _commit(first, "seed", when=_T0)
     _commit(second, "seed", when=_T1)
     assert origin.commit_author_timestamps(first) == [_T0]
     assert origin.commit_author_timestamps(second) == [_T1]
-    assert len(origin._TIMESTAMPS_MEMO) == 1
+    assert len(origin_history._TIMESTAMPS_MEMO) == 1
     assert origin.commit_author_timestamps(first) == [_T0]
+
+
+@pytest.mark.usefixtures("discovery")
+def test_the_whole_history_memo_is_bounded_in_dates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The entries hold at most `_TIMESTAMPS_MEMO_SLOTS` dates together, the
+    oldest going first, and a history longer than that is returned and not
+    kept."""
+    monkeypatch.setattr(origin_history, "_TIMESTAMPS_MEMO_SLOTS", 3)
+    first = _repo(tmp_path, "first")
+    second = _repo(tmp_path, "second")
+    _commit(first, "one", when=_T0)
+    _commit(first, "two", when=_T1)
+    _commit(second, "one", when=_T1)
+    _commit(second, "two", when=_T2)
+    assert origin.commit_author_timestamps(first) == [_T0, _T1]
+    assert origin.commit_author_timestamps(second) == [_T1, _T2]
+    assert [key[0] for key in origin_history._TIMESTAMPS_MEMO] == [
+        str(second.resolve())
+    ]
+    _commit(second, "three", when=_NOW)
+    _commit(second, "four", when=_NOW)
+    assert len(origin.commit_author_timestamps(second) or []) == 4
+    assert [len(e.dates) for e in origin_history._TIMESTAMPS_MEMO.values()] == [2]
+
+
+@pytest.mark.usefixtures("discovery")
+def test_a_history_past_the_date_budget_is_remembered_as_a_failed_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A history longer than `_TIMESTAMPS_MEMO_SLOTS` is returned and not
+    kept, and its root and head are remembered as a failed read's are: for
+    a minute the rows that ask again answer None with no process, counting
+    the failure, where each would read the history whole again (review Ob,
+    D3). Then it is read again."""
+    clock = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(origin_history, "_TIMESTAMPS_MEMO_SLOTS", 1)
+    repo = _repo(tmp_path)
+    _commit(repo, "one", when=_T0)
+    head = _commit(repo, "two", when=_T1)
+    calls = _history_calls(monkeypatch)
+    assert origin.commit_author_timestamps(repo) == [_T0, _T1]
+    assert _whole_history_logs(calls) == [(*_WHOLE_HISTORY, head)]
+    assert not origin_history._TIMESTAMPS_MEMO
+    calls.clear()
+    for _ in range(3):
+        failed = origin.failed_git_calls()
+        assert origin.commit_author_timestamps(repo) is None
+        assert origin.failed_git_calls() == failed + 1
+    assert calls == []
+    clock[0] += origin_history._FAILURE_SECONDS
+    assert origin.commit_author_timestamps(repo) == [_T0, _T1]
+    assert _whole_history_logs(calls) == [(*_WHOLE_HISTORY, head)]
 
 
 def test_the_walk_runs_to_the_head_it_is_keyed_on(tmp_path: Path) -> None:
@@ -3173,17 +3367,17 @@ def test_the_whole_history_memo_touches_a_hit_under_its_lock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The read is stubbed, so the other thread inserts at once."""
-    monkeypatch.setattr(origin, "_TIMESTAMPS_MEMO_CAP", 1)
+    monkeypatch.setattr(origin_history, "_TIMESTAMPS_MEMO_CAP", 1)
     monkeypatch.setattr(origin, "_read_author_timestamps", lambda cwd, revision: [_T0])
     touched = (Path("/touched"), "a" * 40)
     evicting = (Path("/evicting"), "b" * 40)
     first = origin.commit_author_timestamps(touched[0], located=touched)
     memo = _Interleaved(
-        origin._TIMESTAMPS_MEMO,
+        origin_history._TIMESTAMPS_MEMO,
         (str(touched[0]), touched[1]),
         lambda: origin.commit_author_timestamps(evicting[0], located=evicting),
     )
-    monkeypatch.setattr(origin, "_TIMESTAMPS_MEMO", memo)
+    monkeypatch.setattr(origin_history, "_TIMESTAMPS_MEMO", memo)
     assert origin.commit_author_timestamps(touched[0], located=touched) is first
     memo.others[0].join()
     assert memo.errors == []

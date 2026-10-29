@@ -57,7 +57,7 @@ from typing import TypeAlias
 from pydantic import BaseModel, PrivateAttr
 
 from . import _git as _git_runner
-from . import _caches, githead, identity
+from . import _caches, githead, identity, origin_history
 
 # The repository files read in-process live in `origin_gitfiles`, which
 # imports nothing from here. The plain imports are `__all__`'s names and
@@ -1457,28 +1457,12 @@ def resolve_repo_pathspecs(
 def _instant(stamp: datetime) -> float:
     """Absolute-instant sort key for timezone-aware author timestamps.
 
-    One `utcoffset()` per element instead of one per comparison. See
-    `commit_author_timestamps` for why that matters here.
+    One `utcoffset()` per element instead of one per comparison: `%aI`
+    keeps each author's own UTC offset, so a list parsed from it carries
+    many distinct tzinfo objects and CPython's same-tzinfo comparison fast
+    path never fires. Same ordering either way; both are the instant.
     """
     return stamp.timestamp()
-
-
-# The whole-history author dates, memoised per (root, head): the log names
-# the head by its hash, whose history never changes, and a commit landing
-# moves the head and so the key. A process serves the few checkouts its
-# callers stand in, so the bound is small. A None is never stored. The
-# lock makes each look-up-and-touch and each insert-and-evict atomic; the
-# log runs outside it. Registered with `_caches`, which empties it before
-# each test.
-_TIMESTAMPS_MEMO_CAP = 16
-_TIMESTAMPS_MEMO: OrderedDict[tuple[str, str], list[datetime]] = OrderedDict()
-_TIMESTAMPS_MEMO_LOCK = threading.Lock()
-
-
-@_caches.register
-def _clear_timestamps_memo() -> None:
-    with _TIMESTAMPS_MEMO_LOCK:
-        _TIMESTAMPS_MEMO.clear()
 
 
 def commit_author_timestamps(
@@ -1500,48 +1484,70 @@ def commit_author_timestamps(
     = 82s of a 90s scipy run. Sorting here happens once per git
     invocation, beside the fork+exec that already dominates the call.
 
-    Sorting on the instant, not the datetime: `%aI` preserves each
-    author's own UTC offset, so the list carries thousands of DISTINCT
-    tzinfo objects and CPython's same-tzinfo comparison fast path never
-    fires — without the key every comparison makes a Python-level
-    `utcoffset()` call. Same ordering either way; both are the absolute
-    instant.
+    Read as ``%at``, the author date's seconds, each date built in UTC
+    (`origin_history.author_dates`): the instant ``%aI`` names, with one tzinfo for the
+    whole list, so the comparisons a sort and a bisect make take CPython's
+    same-tzinfo fast path, and a date holds 56 bytes with its slot where
+    one parsed with its author's own offset held about 106.
 
     Used by the health rollup to count commits-since for many memories
     from one git invocation; a per-memory ``git rev-list --count`` would
     otherwise pay a fork+exec for every row.
 
-    MEMOISED per (root, head) (`_TIMESTAMPS_MEMO`). `located` is the root
+    MEMOISED per (root, head) (`origin_history`). `located` is the root
     and the head as the caller already resolved them for `cwd`; without
     it they are read from the repository's files
     (`toplevel_and_head_from_files`). The log then names the head by its
     hash, so the list stored under a head is that head's history even if
-    a commit lands while git runs. Where the files do not settle the pair
-    and the caller passed none, the log runs from HEAD uncached. A hit
-    returns the stored list itself: every caller only bisects it. The key
-    does not see a history rewritten under an unchanged head: a shallow
-    clone deepened in place, a ``git replace`` ref or a graft reads the
-    earlier walk until the head moves.
+    a commit lands while git runs. A head whose repository holds an entry
+    for an earlier head reads only what it adds (`_extended_author_
+    timestamps`, one ``<earlier>..<head>`` log) where the earlier head is
+    its ancestor and the files that change which commits a head reaches
+    read as they did (`origin_history.history_guard`); elsewhere it reads
+    its whole history. A read that fails is remembered for the key for a
+    minute: a call meanwhile returns None without a process and counts the
+    failure on the calling thread (`failed_git_calls`), as the read did, so
+    a caller that keeps a value only when no git call failed keeps none
+    from it. Where the files git's discovery reads do not settle the pair
+    and the caller passed none (off POSIX, in another account's
+    repository), the root and the head are those `githead.locate` reads
+    (`origin_history.located_key`), kept and extended alike; only where
+    those do not settle it either does the log run from HEAD, uncached. A
+    history longer than the memo's budget (`origin_history.remember`) is
+    returned, and remembered as a failed read is, so the calls of the next
+    minute answer None without reading it again. A hit returns the stored
+    list itself: every caller only bisects it. The key does not see a
+    history rewritten under an unchanged head (a ``git replace`` ref or a
+    graft written while the head stays), which reads the earlier walk
+    until the head moves.
     """
     if cwd is None:
         return None
     if located is None:
         located = toplevel_and_head_from_files(cwd)
-    if located is None:
+    key = (
+        origin_history.located_key(cwd)
+        if located is None
+        else (str(located[0]), located[1])
+    )
+    if key is None:
         return _read_author_timestamps(cwd, "HEAD")
-    key = (str(located[0]), located[1])
-    with _TIMESTAMPS_MEMO_LOCK:
-        stored = _TIMESTAMPS_MEMO.get(key)
-        if stored is not None:
-            _TIMESTAMPS_MEMO.move_to_end(key)
-            return stored
-    stamps = _read_author_timestamps(cwd, located[1])
-    if stamps is not None:
-        with _TIMESTAMPS_MEMO_LOCK:
-            _TIMESTAMPS_MEMO[key] = stamps
-            while len(_TIMESTAMPS_MEMO) > _TIMESTAMPS_MEMO_CAP:
-                _TIMESTAMPS_MEMO.popitem(last=False)
-    return stamps
+    stored, failed = origin_history.recall(key)
+    if stored is not None:
+        return stored
+    if failed:
+        _git_runner.note_failed()
+        return None
+    guard = origin_history.history_guard(Path(key[0]))
+    base = None if guard is None else origin_history.base_for(key[0], guard)
+    dates = None
+    if base is not None:
+        dates = _extended_author_timestamps(cwd, base[0], base[1], key[1])
+    if dates is None:
+        dates = _read_author_timestamps(cwd, key[1])
+    if dates is None or not origin_history.remember(key, dates, guard):
+        origin_history.remember_failure(key)
+    return dates
 
 
 def _read_author_timestamps(cwd: Path, revision: str) -> list[datetime] | None:
@@ -1555,25 +1561,52 @@ def _read_author_timestamps(cwd: Path, revision: str) -> list[datetime] | None:
     # on a slow host (observed: the windows-latest CI runner) times out,
     # collapsing a real count into the omitted/conservative branch. Same
     # ceiling `commit_patch_stream` already runs at.
-    raw = _git(cwd, "log", "--format=%aI", revision, timeout=5.0)
+    raw = _git(cwd, "log", "--format=%at", revision, timeout=5.0)
     if raw is None:
         return None
-    out: list[datetime] = []
-    for line in raw.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            ts = datetime.fromisoformat(line)
-        except ValueError:
-            continue
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
-        out.append(ts)
-    if not out:
+    out = origin_history.author_dates(
+        [
+            value
+            for line in raw.splitlines()
+            if (value := origin_history.seconds(line)) is not None
+        ]
+    )
+    return out or None
+
+
+def _extended_author_timestamps(
+    cwd: Path, base_head: str, base: list[datetime], head: str
+) -> list[datetime] | None:
+    """`base`, the ascending author dates of `base_head`'s history, with the
+    dates of the commits `head` reaches and `base_head` does not, where
+    `base_head` is an ancestor of `head`: ``git log --boundary
+    <base_head>..<head>``, whose boundary holds `base_head` exactly then
+    (`_walk_reachable` reads the same mark). The list is new and shares
+    `base`'s dates. None, and the caller reads the history whole, where
+    `base_head` is no ancestor (a switched or rewritten branch, a head that
+    moved back, an object gone) or git did not answer; a non-zero exit is
+    not counted as a failure, since the whole read follows it."""
+    result = _git_result(
+        cwd,
+        "log",
+        "--boundary",
+        "--format=%m%H %at",
+        f"{base_head}..{head}",
+        timeout=5.0,
+    )
+    if result is None or result.returncode != 0:
         return None
-    out.sort(key=_instant)
-    return out
+    added: list[int] = []
+    reaches = False
+    for line in result.stdout.splitlines():
+        sha, _, stamp = line[1:].partition(" ")
+        if line.startswith("-"):
+            reaches = reaches or sha == base_head
+        elif (value := origin_history.seconds(stamp)) is not None:
+            added.append(value)
+    if not reaches:
+        return None
+    return sorted(base + origin_history.author_dates(added))
 
 
 def commit_author_timestamps_touching_pathspecs(
@@ -1586,9 +1619,10 @@ def commit_author_timestamps_touching_pathspecs(
 
     `pathspecs` must already be repo-root-relative forward-slash specs (the
     output of `resolve_repo_pathspecs`). The path-filtered analogue of
-    `commit_author_timestamps`: same ``--format=%aI`` author-date source, so
-    a caller can `bisect_right` the result against a `since` instant and get
-    a count that lives in the SAME date space as the unfiltered bisect — no
+    `commit_author_timestamps`: the same author dates (``%aI`` here, ``%at``
+    there: one instant either way), so a caller can `bisect_right` the
+    result against a `since` instant and get a count that lives in the SAME
+    date space as the unfiltered bisect — no
     committer-vs-author mismatch. That is the whole point: `commits_touching_
     pathspecs` counts on COMMITTER date (git's ``--since``), which a rebase
     can inflate past the author-date truth, forcing a downstream clamp;

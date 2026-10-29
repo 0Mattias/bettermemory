@@ -621,6 +621,34 @@ the candidates' testing.
   second leg with discovery declining, and the real Windows leg runs
   them. (`src/bettermemory/githead.py`, `src/bettermemory/origin.py`,
   `src/bettermemory/origin_gitfiles.py`)
+- **A moved head reads only the commits it adds, and a failed history
+  read is not retried for every row.** The commit-drift legs read the
+  author date of every commit a head reaches, memoised per root and head,
+  so each commit that landed made the next search read the whole history
+  again, up to 16 whole lists per root were held at about 106 bytes a
+  commit, and a read that failed (it fails at its 5 s ceiling on a long
+  enough history) was made again by every row that needed it. A head
+  whose earlier head is its ancestor now reads only `<earlier>..<head>`
+  and shares the earlier list's dates, where the shallow, graft,
+  replacement and config files read as they did; a failure, and a history
+  longer than the memo holds, is remembered for its root and head for a
+  minute (a call meanwhile answers None and counts the failure, so nothing
+  is kept from it); the dates are read as `%at` into UTC datetimes; and
+  the entries hold at most two million dates together. Off POSIX and in
+  another account's repository, where git's discovery is not read from
+  the files, the root and the head are those the repository's files name
+  without the ownership check, so the memo and the extension hold there
+  too; under a variable that moves git's discovery the history is still
+  read whole. Measured on synthetic linear histories
+  (macOS, Python 3.11): the whole read of 500,000 commits went from 2.90 s
+  to 2.52 s, its held list from 116 to 56 bytes a commit and its peak
+  from 223 to 119; a head moved by one commit went from a whole read
+  (2.97 s) to 21 ms; ten rows asking while the read fails spawned ten
+  reads and spawn one. The read stays whole on a head's first sight: the
+  drift counts are exact author-date counts, which no bound on git's walk
+  (by committer date or by count) keeps exact.
+  (`src/bettermemory/origin.py`, `src/bettermemory/origin_history.py`,
+  `src/bettermemory/githead.py`)
 
 #### Known limitations
 
