@@ -58,7 +58,10 @@ def add_subparser(
         "--transcripts",
         default=None,
         metavar="DIR",
-        help="The transcripts directory. Default: ~/.claude/projects.",
+        help=(
+            "The transcripts directory. Default: projects in Claude Code's"
+            " config directory (~/.claude/projects)."
+        ),
     )
     samples.add_argument("--json", action="store_true", help="Emit JSON.")
 

@@ -715,11 +715,14 @@ follows the candidates' testing.
   `projects` in Claude Code's configuration directory
   (`claude_paths.transcripts_dir`), which the variable moves as it moves
   the settings and the global config; without it the directory is
-  `~/.claude/projects` as before. `--transcripts` still overrides it, and
-  its help still names the default path.
+  `~/.claude/projects` as before. `--transcripts` still overrides it,
+  and its help now gives the default as `projects` in Claude Code's
+  config directory (`~/.claude/projects`).
   (`src/bettermemory/claude_paths.py`,
   `src/bettermemory/review_samples.py`,
   `src/bettermemory/recall_review.py`,
+  `src/bettermemory/cli/review_cmd.py`,
+  `src/bettermemory/cli/recall_cmd.py`,
   `tests/test_review_samples_cli.py`, `tests/test_recall_review.py`)
 
 #### Fixed
