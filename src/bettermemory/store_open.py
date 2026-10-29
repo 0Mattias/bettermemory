@@ -11,6 +11,9 @@ in ``Store.open``'s docstring. ``store`` imports this only when a store
 is opened. The names ``store`` re-exports, and its ``log``, are read
 through ``store`` when the steps run, so a patch on ``store`` reaches the
 open; names ``store`` does not re-export come from their own modules.
+
+The steps are apart from ``store`` so that splitting ``Store.open``
+(ENG-97) keeps ``store`` under the package's 2,000-line bound (ENG-96).
 """
 
 from __future__ import annotations

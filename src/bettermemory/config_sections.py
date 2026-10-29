@@ -8,6 +8,10 @@ returns the section's settings, coerced by ``config``'s helpers with the
 same defaults, labels and notices. ``config`` imports these only when
 a file is read, and they read ``config``'s names through the module when
 they run, so a patch on ``config`` reaches them.
+
+The builders are apart from ``config`` so that splitting
+``_config_from_data`` (ENG-97) keeps ``config`` under the package's
+2,000-line bound (ENG-96).
 """
 
 from __future__ import annotations

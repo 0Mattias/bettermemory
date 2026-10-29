@@ -8,6 +8,11 @@ that ``backup._apply_restore`` carries out. The order and why are in
 ``backup``'s module docstring. ``backup`` imports this only when a restore
 runs, and it reads ``backup``'s names through the module when it runs, so
 a patch on ``backup`` reaches it.
+
+The plan is apart from ``backup`` so that splitting ``restore_bundle``
+(ENG-97) keeps ``backup`` under the package's 2,000-line bound (ENG-96).
+This module is not the ``<store_id>.backup_restore.json`` record a
+restore writes (``backup.restore_record_path``).
 """
 
 from __future__ import annotations

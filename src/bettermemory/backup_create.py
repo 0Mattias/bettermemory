@@ -7,6 +7,10 @@ origin anchor and signs it when the store's key is held. The bundle's
 format is in ``backup``'s module docstring. ``backup`` imports these only
 when a backup runs, and they read ``backup``'s names through the module
 when they run, so a patch on ``backup`` reaches them.
+
+These steps are apart from ``backup`` so that splitting
+``create_backup`` (ENG-97) keeps ``backup`` under the package's
+2,000-line bound (ENG-96).
 """
 
 from __future__ import annotations

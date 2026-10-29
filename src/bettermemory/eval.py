@@ -42,8 +42,13 @@ Three rates the existing event log makes computable today:
   contract's blind spot: turns where the model should have searched
   but didn't.
 
-The methodology is described in ``docs/eval.md``. This module owns the
-pure computation; the CLI wrapper lives in ``server.py``.
+The methodology is described in ``docs/eval.md``. This module computes
+the rates and composes the reports; its siblings, kept apart for the
+package's 2,000-line bound (ENG-96), hold the rest: ``eval_model`` the
+model the computations build on, ``eval_rates`` the walk and the counts
+behind ``compute_eval`` (apart since ENG-97 split that function), and
+``eval_render`` the renderers. None of them imports this module at run
+time. The CLI wrapper is ``cli/eval.py``.
 
 All numerator/denominator counts are stored on the report so consumers
 can recompute (or weight) the rates differently. Confidence intervals

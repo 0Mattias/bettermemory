@@ -112,6 +112,15 @@ every writing open refuses the part-restored store until a restore
 finishes or `backup unlock` removes it (`restore_lock.unlock`). A writer
 that opens without `store._connect` is not held off; none in this
 package does.
+
+The parts. Three modules beside this one hold the steps of its entry
+points, so that splitting them (ENG-97) keeps this module under the
+package's 2,000-line bound (ENG-96): `backup_create` fills the bundle
+for `create_backup`, `backup_verify` holds the checks `verify_bundle`
+runs, and `backup_restore` reads the plan `restore_bundle` carries out.
+This module imports each only inside the function that needs it, and
+each reads this module's names through it when it runs, so a patch here
+reaches them.
 """
 
 from __future__ import annotations

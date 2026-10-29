@@ -6,6 +6,10 @@ resolves the buffered audit telemetry against the invalidation markers
 (``_resolve_audit_telemetry``) and lists the cold-endorsement rows
 (``_cold_endorsement_rows``); ``eval`` builds the report from what they
 return. The semantics are documented on ``compute_eval``.
+
+This module is apart from ``eval`` so that splitting ``compute_eval``
+(ENG-97) keeps ``eval`` under the package's 2,000-line bound (ENG-96).
+``eval`` imports it at module level; nothing here imports ``eval``.
 """
 
 from __future__ import annotations

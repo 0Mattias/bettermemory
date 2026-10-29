@@ -19,6 +19,12 @@ An organisation-managed config (`managed.py`: a file at a fixed system
 path, on Windows a registry value under HKEY_LOCAL_MACHINE) is read after
 it, and every key it sets is pinned: the user file's value for that key is
 ignored (`_apply_managed`).
+
+The section builders. `config_sections` builds the longer sections for
+`_config_from_data`, so that splitting that function (ENG-97) keeps this
+module under the package's 2,000-line bound (ENG-96). This module
+imports it only when a file is read, and it reads this module's names
+through it when it runs, so a patch here reaches it.
 """
 
 from __future__ import annotations

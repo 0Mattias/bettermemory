@@ -11,6 +11,10 @@ signature (``_check_keys_and_signature``), then runs the store's own
 imports these only when a bundle is verified, and they read ``backup``'s
 names through the module when they run, so a patch on ``backup`` reaches
 them.
+
+These checks are apart from ``backup`` so that splitting
+``verify_bundle`` (ENG-97) keeps ``backup`` under the package's
+2,000-line bound (ENG-96).
 """
 
 from __future__ import annotations
