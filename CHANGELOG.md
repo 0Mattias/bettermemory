@@ -628,11 +628,14 @@ follows the candidates' testing.
   inside a backup bundle (or a store file with other names, hard links),
   and a store a restore holds or did not finish. Either ends the hook,
   exit 0, with nothing for the model and the refusal the store's open
-  would give as its one stderr line, and no daemon is started. A hook
-  during a restore no longer waits 8 s on the restore's spawn lock to
-  report that no daemon could be reached, and a hook on a bundle, or
-  after a restore that did not finish, no longer starts a daemon that
-  exits on the store.
+  would give as its one stderr line, and no daemon is started. Once a
+  restore holds its lock, which it takes after it has verified the
+  bundle, a hook ends at once with that refusal instead of waiting 8 s
+  on the restore's spawn lock to report that no daemon could be reached.
+  A hook that arrives while the restore is still verifying the bundle
+  waits up to 8 s, as for any holder of the store's lock, and ends with
+  that line. A hook on a bundle, or after a restore that did not
+  finish, no longer starts a daemon that exits on the store.
   `restore_lock.writes_refused`, which nothing called, is removed.
   `hook.main` and `hook.prompt_main`, which the bodies called, and
   `hook.run_prompt_recall`, which `prompt_main` hands the prompt to,

@@ -762,10 +762,16 @@ def test_a_console_hook_refuses_a_restore_that_did_not_finish(
 def test_a_console_hook_refuses_a_running_restore_without_waiting(
     store_file: Path, child_env: dict[str, str], tmp_path: Path
 ) -> None:
-    """A restore holds what `backup restore` holds: the spawn and daemon
-    locks and the restore lock. The hook used to wait out its 8 s for the
-    spawn lock and end with "no daemon could be reached or started"; it
-    now says the restore runs, at once, and starts nothing."""
+    """The window from the restore lock on: `backup restore` takes the
+    spawn and daemon locks first, verifies the bundle and plans the swap,
+    and only then takes the restore lock, which it holds with the other
+    two until the restore ends. Here all three are held, as from that
+    point. The hook used to wait out its 8 s for the spawn lock and end
+    with "no daemon could be reached or started"; it now says the restore
+    runs, at once, and starts nothing. Before the restore lock, while the
+    bundle is verified, nothing marks a restore, and a hook still waits
+    up to 8 s on the spawn lock and ends with that line, as for any
+    holder of the store's lock; this test does not cover that window."""
     from bettermemory import _daemon_client, restore_lock
 
     state_dir = tmp_path / "state"
@@ -776,7 +782,7 @@ def test_a_console_hook_refuses_a_running_restore_without_waiting(
         held = restore_lock.acquire(store_file, wait=0)
         assert held is not None
         try:
-            held.mark(bundle=str(tmp_path / "bundle"), stage="verifying the bundle")
+            held.mark(bundle=str(tmp_path / "bundle"), stage="moving the store aside")
             started = time.monotonic()
             hook = _console_hook(child_env, "prompt")
             took = time.monotonic() - started
