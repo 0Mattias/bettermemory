@@ -79,6 +79,7 @@ from .log import (
     KeyRing,
     KeyUnreadableError,
     LogRow,
+    append_history_replaced,
     chain_segments,
     fingerprint,
     last_row,
@@ -1146,7 +1147,9 @@ def _accept(
     2. the store opened as its owner opens it (a missing or foreign key
        settled, with its own ``rekey`` row);
     3. the ``history_accepted`` row, naming the anchor 4 writes (the first
-       row of the earliest segment a held key signs, `_first_held`);
+       row of the earliest segment a held key signs, `_first_held`),
+       appended as a restore's row is (`log.append_history_replaced`): it
+       carries the record's entry of 5, its kind and this build's version;
     4. the anchor replaced (`log.KeyRing.replace_origin`), then the head
        moved to the row;
     5. the rewind record.
@@ -1190,23 +1193,31 @@ def _accept(
         except OSError:
             bound = None
         report["binding"]["after"] = None if bound is None else str(bound)
-        with store._transaction() as tx:
-            row = store._append(
-                tx,
-                HISTORY_ACCEPTED,
-                {
-                    "origin_before": report["origin"]["before"],
-                    "origin_after": report["origin"]["after"],
-                    "head_before": _head_dict(head_before),
-                    "log_end_before": report["log_end_before"],
-                    "binding_before": report["binding"]["before"],
-                    "binding_after": report["binding"]["after"],
-                    "origin_status_before": report["fit"]["origin"]["status"],
-                    "head_status_before": report["fit"]["head"]["status"],
-                },
-                session=None,
-            )
-        report["seq"] = row.seq
+        stamp = isoformat_utc(moment.astimezone(timezone.utc))
+        log_end = report["log_end_before"]
+        entry: dict[str, Any] = {
+            "kind": HISTORY_ACCEPTED,
+            "row": None,
+            "restored_at": stamp,
+            "accepted_history": True,
+            "store": str(store_file),
+            "store_id": store.store_id,
+            "replaced_store_id": store.store_id,
+            "head_before": _head_dict(head_before),
+            "head_after": log_end,
+            "log_end_before": log_end,
+            "origin_before": report["origin"]["before"],
+            "origin_after": report["origin"]["after"],
+            "binding_before": report["binding"]["before"],
+            "binding_after": report["binding"]["after"],
+            "origin_status_before": report["fit"]["origin"]["status"],
+            "head_status_before": report["fit"]["head"]["status"],
+        }
+        row = append_history_replaced(store, HISTORY_ACCEPTED, entry)
+        if row is None:
+            raise RuntimeError("the store opened for reading only")
+        entry["row"] = row
+        entry["seq"] = report["seq"] = row["seq"]
     except (ValueError, sqlite3.Error, OSError, RuntimeError) as exc:
         store.close()
         if rebound:
@@ -1222,15 +1233,14 @@ def _accept(
     try:
         ring.replace_origin(anchor)
         step = "moving the head checkpoint to the acceptance row"
-        stamp = isoformat_utc(moment.astimezone(timezone.utc))
-        _set_head(ring, Head(seq=row.seq, mac=row.mac, ts=stamp))
+        _set_head(ring, Head(seq=row["seq"], mac=row["mac"], ts=stamp))
     except OSError as exc:
         with contextlib.suppress(OSError):
             ring.replace_origin(origin_before)
         store.close()
         report["status"] = FAILED
         report["detail"] = (
-            f"the acceptance is recorded at seq {row.seq}, and {step} failed "
+            f"the acceptance is recorded at seq {row['seq']}, and {step} failed "
             f"({exc}); the anchor and head are as they were: run `bettermemory "
             "log accept-history --yes` again to apply it"
         )
@@ -1238,27 +1248,8 @@ def _accept(
     report["status"] = DONE
     try:
         report["head"]["after"] = _head_dict(ring.read_head())
-        log_end = report["log_end_before"]
         record = restore_record_path(root, store.store_id)
-        _append_record(
-            record,
-            {
-                "restored_at": isoformat_utc(moment.astimezone(timezone.utc)),
-                "accepted_history": True,
-                "store": str(store_file),
-                "store_id": store.store_id,
-                "replaced_store_id": store.store_id,
-                "head_before": _head_dict(head_before),
-                "head_after": log_end,
-                "log_end_before": log_end,
-                "origin_before": report["origin"]["before"],
-                "origin_after": report["origin"]["after"],
-                "binding_before": report["binding"]["before"],
-                "binding_after": report["binding"]["after"],
-                "seq": report["seq"],
-            },
-            utc_stamp(moment),
-        )
+        _append_record(record, entry, utc_stamp(moment))
         report["record"] = str(record)
         store._forget_segments()
         report["log"] = store.log_verify()["status"]

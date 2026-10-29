@@ -26,12 +26,18 @@ from typing import Any
 
 import pytest
 
-from bettermemory import _daemon_client
+from bettermemory import __version__, _daemon_client
 from bettermemory import key_lifecycle as lifecycle
 from bettermemory import store as store_module
 from bettermemory.audit_export import rewinds_across
 from bettermemory.cli import main as cli_main
-from bettermemory.log import HISTORY_ACCEPTED, HistoryOrigin, KeyRing
+from bettermemory.log import (
+    HISTORY_ACCEPTED,
+    HistoryOrigin,
+    KeyRing,
+    history_replaced_kind,
+    history_replaced_row,
+)
 from bettermemory.store import STORE_FILENAME, Store
 
 POSIX_ONLY = pytest.mark.skipif(sys.platform == "win32", reason="symbolic links")
@@ -143,6 +149,41 @@ def test_a_store_copied_over_again_is_accepted_on_the_record(
         (keys_dir / f"{store_id}.backup_restore.json").read_text(encoding="utf-8")
     )["restores"]
     assert restores[-1]["accepted_history"] is True
+    # One contract with a restore's row (`log.append_history_replaced`):
+    # the row carries its entry, its kind and this build; the entry names
+    # the row, so `log export` and `memory history` read it as a restore's.
+    assert record["kind"] == HISTORY_ACCEPTED
+    assert record["engine_version"] == __version__
+    assert record["head_after"] == record["log_end_before"]
+    assert record["head_before"] == restores[-1]["head_before"]
+    assert history_replaced_kind(restores[-1]) == HISTORY_ACCEPTED
+    conn = sqlite3.connect(str(here))
+    try:
+        [(seq, mac)] = conn.execute(
+            "SELECT seq, mac FROM log WHERE kind = ?", (HISTORY_ACCEPTED,)
+        ).fetchall()
+    finally:
+        conn.close()
+    assert history_replaced_row(restores[-1]) == {"seq": seq, "mac": mac}
+    assert ring.read_head().seq == seq  # type: ignore[union-attr]
+
+
+def test_a_store_this_build_can_only_read_is_not_accepted(
+    tmp_path: Path, keys_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`log.append_history_replaced` appends nothing to a store opened for
+    reading only (its versions keep this build to reading); the acceptance
+    is then not recorded, and the anchor and head are as they were."""
+    path, store_id = _older_copy_put_back(tmp_path)
+    ring = KeyRing(keys_dir, store_id)
+    origin_before, head_before, _ = _ring_state(ring)
+    monkeypatch.setattr(lifecycle, "append_history_replaced", lambda *a, **k: None)
+    report = lifecycle.accept_history(path, apply=True)
+    assert report["status"] == "failed"
+    assert "reading only" in report["detail"]
+    assert "not touched" in report["detail"]
+    assert _rows(path, HISTORY_ACCEPTED) == []
+    assert _ring_state(ring)[:2] == (origin_before, head_before)
 
 
 def test_an_older_copy_put_back_rewinds_the_head_on_the_record(

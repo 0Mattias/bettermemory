@@ -120,29 +120,30 @@ follows the candidates' testing.
   `src/bettermemory/backup.py`, `docs/api.md`, `tests/test_key_lifecycle.py`,
   `tests/test_daemon_locks_shared.py`)
 
-- **`bettermemory log accept-history [--yes]`: a replaced history
-  accepted on the record (ENG-106).** A store file copied over this host's
-  copy again, an origin anchor from before rc13 whose key was lost, or an
-  older copy put back by hand reads `tampered` for good, and the recovery
-  was deleting `<store_id>.origin` and `<store_id>.head` by hand. The
-  command does what that did, under the store's daemon and spawn locks,
-  in an order that leaves a recorded acceptance or none after a crash at
-  any step: the key ring is bound to this file, the store is opened as
-  its owner opens it (which settles a missing or foreign key), a new
-  control kind, `history_accepted`, signed with the store's key, records
-  the anchor, head and binding before and after and the log's end
-  before, then the anchor moves to the first row of the earliest segment
-  a held key signs and the head to the row, and last the same entry goes
-  into the rewind record beside the head, so `log export` warns a cursor
-  past the old end as after a restore. A failure before the row puts the
-  binding back and touches neither the anchor nor the head; one after it
-  keeps the head, puts the anchor back and says the acceptance is
-  recorded, and running the command again applies it. Refused while a daemon
-  holds the store or for a key file this user cannot read; nothing to
-  accept changes nothing; without `--yes`, the plan (exit 3).
-  (`src/bettermemory/key_lifecycle.py`, `src/bettermemory/cli/log_cmd.py`,
-  `src/bettermemory/log.py`, `docs/api.md`, `tests/test_accept_history.py`,
-  `tests/test_log_export.py`)
+- **`bettermemory log accept-history [--yes]`: a replaced history accepted
+  on the record (ENG-106).** A store file copied over this host's copy
+  again, an origin anchor from before rc13 whose key was lost, or an older
+  copy put back by hand reads `tampered` for good, and the recovery was
+  deleting `<store_id>.origin` and `<store_id>.head` by hand. The command
+  does what that did, under the store's daemon and spawn locks, in an order
+  that leaves a recorded acceptance or none after a crash at any step: the
+  key ring is bound to this file, the store is opened as its owner opens it
+  (which settles a missing or foreign key), a new control kind,
+  `history_accepted`, signed with the store's key and appended as a
+  restore's row is (`log.append_history_replaced`: the row carries its
+  entry, its `kind` and `engine_version`), records the anchor, head and
+  binding before and after and the log's end before, then the anchor moves
+  to the first row of the earliest segment a held key signs and the head to
+  the row, and last the same entry, naming its `kind` and `row`, goes into
+  the rewind record beside the head, so `log export` warns a cursor past the
+  old end as after a restore. A failure before the row puts the binding back
+  and touches neither the anchor nor the head; one after it keeps the head,
+  puts the anchor back and says the acceptance is recorded, and running the
+  command again applies it. Refused while a daemon holds the store or for a
+  key file this user cannot read; nothing to accept changes nothing; without
+  `--yes`, the plan (exit 3). (`src/bettermemory/key_lifecycle.py`,
+  `src/bettermemory/cli/log_cmd.py`, `src/bettermemory/log.py`,
+  `docs/api.md`, `tests/test_accept_history.py`, `tests/test_log_export.py`)
 - **`bettermemory doctor` names the key rings whose store is gone, and
   `--clear-orphan-keys --yes` moves them to a quarantine (ENG-106).** One
   keys directory serves every store on the host, and a store deleted

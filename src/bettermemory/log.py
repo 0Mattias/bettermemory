@@ -181,6 +181,13 @@ CONTROL_KINDS = CONTROL_KINDS | {INDEX_REBUILT}
 # made current, with what its record keeps (`backup.restore_bundle`).
 STORE_RESTORED = "store_restored"
 
+# `history_accepted`: `bettermemory log accept-history --yes` (ENG-106)
+# accepted the store file's history as it stands. The anchor, head and
+# binding it replaced and the ones it set, and the log's end before, are
+# the row's payload, as its record entry names them
+# (`key_lifecycle.accept_history`).
+HISTORY_ACCEPTED = "history_accepted"
+
 # The rows that say a store's history was replaced, one contract for
 # both: `store_restored`, and `history_accepted` (`bettermemory log
 # accept-history --yes`, ENG-106: the store file's history accepted as
@@ -193,7 +200,7 @@ STORE_RESTORED = "store_restored"
 HISTORY_REPLACED: Mapping[str, tuple[str, str]] = MappingProxyType(
     {
         STORE_RESTORED: ("a restore", "rewound"),
-        "history_accepted": ("an accepted history", "accepted"),
+        HISTORY_ACCEPTED: ("an accepted history", "accepted"),
     }
 )
 CONTROL_KINDS = CONTROL_KINDS | frozenset(HISTORY_REPLACED)
@@ -207,13 +214,6 @@ CONTROL_KINDS = CONTROL_KINDS | frozenset(HISTORY_REPLACED)
 KEY_IMPORTED = "key_imported"
 KEY_ADOPTED = "key_adopted"
 CONTROL_KINDS = CONTROL_KINDS | frozenset({KEY_IMPORTED, KEY_ADOPTED})
-
-# `bettermemory log accept-history --yes` (ENG-106): the store file's history
-# accepted as it stands, on the record. The origin anchor and the head
-# checkpoint it replaced, and the ones the owner's open wrote after it,
-# are the row's payload, as a restore's record names them.
-HISTORY_ACCEPTED = "history_accepted"
-CONTROL_KINDS = CONTROL_KINDS | frozenset({HISTORY_ACCEPTED})
 
 # A retired key is filed under the first characters of its fingerprint.
 _RETIRED_PREFIX_CHARS = 16
@@ -1425,7 +1425,7 @@ def history_replaced_kind(entry: Mapping[str, Any]) -> str:
     if isinstance(kind, str) and kind in HISTORY_REPLACED:
         return kind
     if entry.get("accepted_history") is True:
-        return "history_accepted"
+        return HISTORY_ACCEPTED
     return STORE_RESTORED
 
 
