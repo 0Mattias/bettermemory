@@ -3082,13 +3082,13 @@ class TestWindowedEventCounts:
 # `WideningDetailReport`'s JSON. Reviewing by eye clearly does not scale
 # over a 3k-line module, so pin the convention mechanically instead.
 #
-# The convention: in eval.py, `total_events_scanned` is the all-time tally
+# The convention: in eval*.py, `total_events_scanned` is the all-time tally
 # and `events_in_window` is its window-scoped twin. Anything that declares
 # or publishes the former must declare or publish the latter beside it, so
 # a reader (or a JSON consumer) can tell which number they are holding.
 #
 # Scope, stated no more strongly than it is enforced: these scans key off
-# those two exact names inside src/bettermemory/eval.py. A future surface
+# those two exact names inside src/bettermemory/eval*.py. A future surface
 # that invents a differently-named event tally is NOT caught — the scans
 # pin the convention, they do not prove the absence of every possible
 # all-time-under-a-window-label bug. `ReportDocument.total_events` is one
@@ -3101,8 +3101,11 @@ _WINDOW_FIELD = "events_in_window"
 
 
 def _eval_module_ast() -> ast.Module:
-    src = Path(__file__).resolve().parents[1] / "src" / "bettermemory" / "eval.py"
-    return ast.parse(src.read_text(encoding="utf-8"))
+    pkg = Path(__file__).resolve().parents[1] / "src" / "bettermemory"
+    body: list[ast.stmt] = []
+    for src in sorted(pkg.glob("eval*.py")):
+        body.extend(ast.parse(src.read_text(encoding="utf-8")).body)
+    return ast.Module(body=body, type_ignores=[])
 
 
 def _annotated_field_names(cls: ast.ClassDef) -> set[str]:
@@ -3142,16 +3145,18 @@ class TestEventCountTwinEnumeration:
                 missing.append(node.name)
         # Non-vacuity: the scan actually finds the known surfaces. Kept as
         # a floor rather than an exact list so adding a rollup doesn't
-        # force an unrelated test edit.
+        # force an unrelated test edit. `_ReplayableAudits` is defined in
+        # eval_model.py, so its entry proves the scan reaches past eval.py.
         assert {
             "EvalReport",
             "ThresholdSweepReport",
             "WideningPreviewReport",
             "WideningDetailReport",
             "ToolUsageReport",
+            "_ReplayableAudits",
         } <= set(declaring)
         assert not missing, (
-            f"class(es) {sorted(missing)} in eval.py declare "
+            f"class(es) {sorted(missing)} in eval*.py declare "
             f"{_ALLTIME_FIELD!r} (an all-time tally: the invalidation "
             f"markers resolve ahead of the window filter, so the walk "
             f"cannot stop at the window edge) without the window-scoped "

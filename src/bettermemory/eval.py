@@ -94,6 +94,7 @@ from .eval_model import (
     resolve_window as resolve_window,
     surface_rule_split,
     _canonical_top_hit_id,
+    _collect_replayable_audits,
     _package_version,
     _parse_ts as _parse_ts,
     _probe_query_display,
@@ -144,7 +145,7 @@ class EvalReport:
     # from memory (an earlier version of this comment guessed, and was
     # wrong about which surfaces publish a count).
     #
-    # Dataclasses in this module declaring `total_events_scanned`, all
+    # Dataclasses in the eval*.py family declaring `total_events_scanned`, all
     # six of which now also declare `events_in_window`: `EvalReport`,
     # `ThresholdSweepReport`, `WideningPreviewReport`,
     # `WideningDetailReport`, `ToolUsageReport`, and the internal
@@ -170,7 +171,7 @@ class EvalReport:
     #
     # `tests/test_eval.py::TestWindowedEventCounts` pins the four text
     # renderers and the detail JSON; `TestEventCountTwinEnumeration`
-    # AST-scans this module so a sixth surface cannot be added without
+    # AST-scans eval*.py so a sixth surface cannot be added without
     # its twin.
     events_in_window: int
 
@@ -1168,143 +1169,6 @@ class WideningPreviewReport:
             "v1_baseline_flagged": self.v1_baseline_flagged,
             "rows": [r.to_dict() for r in self.rows],
         }
-
-
-@dataclass
-class _ReplayableAudits:
-    """Shared walk result for the widening lanes (counting + detail).
-
-    One filter pipeline feeding both `compute_widening_preview` and
-    `compute_widening_detail` keeps the two surfaces in lockstep — a
-    turn the counting lane includes is exactly a turn the detail lane
-    can show, so "N flagged" and the list of N can never disagree.
-    """
-
-    total_events_scanned: int
-    # Window-scoped twin — the widening renderers label their counts
-    # "— last {window}", so the preview report reads this, not the
-    # all-time tally.
-    events_in_window: int
-    with_features: int
-    without_features: int
-    repeats_skipped: int
-    # Replayable audits dropped because their `ts` predates the latest
-    # `silent_miss_cutoff` marker in the stream.
-    cutoff_retracted: int
-    # One (event, top_hits, recent_retrieval_count) triple per
-    # replayable audit, in stream order.
-    rows: list[tuple[dict[str, Any], list[dict[str, Any]], int]]
-
-
-def _collect_replayable_audits(
-    events: Iterable[dict[str, Any]],
-    *,
-    since: timedelta | None,
-    now: datetime,
-) -> _ReplayableAudits:
-    """Filter the event stream down to replayable audited turns.
-
-    Miss-capable (`verdict != "no_signal"`), non-repeat
-    `turn_audited` events carrying a non-empty `top_hits` payload,
-    minus those retracted by the latest `silent_miss_cutoff` marker.
-    Materialised (not a generator) because both consumers need the
-    skip counters alongside the rows.
-
-    The cutoff is a GLOBAL marker resolved after the walk, with the
-    same max-semantics `compute_eval` and `health` apply: the latest
-    `cutoff_ts` wins wherever it sits in the stream (an earlier cutoff
-    seen later cannot undo a later one), it governs even when the
-    marker event itself falls outside the `since` window, and once a
-    cutoff exists an audit with an unparseable `ts` drops too — the
-    same conservative read the rate surfaces take. Rows are therefore
-    buffered with their timestamps and filtered once the stream ends.
-    """
-    cutoff: datetime | None = (now - since) if since is not None else None
-    total_events_scanned = 0
-    events_in_window = 0
-    without_features = 0
-    repeats_skipped = 0
-    latest_miss_cutoff: datetime | None = None
-    candidates: list[
-        tuple[dict[str, Any], list[dict[str, Any]], int, datetime | None]
-    ] = []
-    for ev in events:
-        if not isinstance(ev, dict):
-            continue
-        total_events_scanned += 1
-        # Window membership decided up front — BEFORE the kind dispatch
-        # below `continue`s — so `events_in_window` covers exactly the
-        # population `total_events_scanned` does, only window-scoped.
-        # Same predicate as the per-event filter a few lines down.
-        if cutoff is None:
-            events_in_window += 1
-        else:
-            window_ts = _parse_ts(ev.get("ts"))
-            if window_ts is not None and window_ts >= cutoff:
-                events_in_window += 1
-        kind = ev.get("kind")
-        if kind == "silent_miss_cutoff":
-            # Resolved regardless of the window — a bulk retraction
-            # logged last week still invalidates the turns it names. A
-            # malformed `cutoff_ts` parses to None and is ignored.
-            parsed_cutoff = _parse_ts(ev.get("cutoff_ts"))
-            if parsed_cutoff is not None and (
-                latest_miss_cutoff is None or parsed_cutoff > latest_miss_cutoff
-            ):
-                latest_miss_cutoff = parsed_cutoff
-            continue
-        if kind != "turn_audited":
-            continue
-        ts = _parse_ts(ev.get("ts"))
-        if cutoff is not None and (ts is None or ts < cutoff):
-            continue
-        if ev.get("repeat"):
-            repeats_skipped += 1
-            continue
-        if ev.get("verdict") == "no_signal":
-            continue
-        top_hits = ev.get("top_hits")
-        if not isinstance(top_hits, list) or not top_hits:
-            without_features += 1
-            continue
-        # Element guard, not just the container: the event log is
-        # plaintext + git-synced + hand-editable, so a well-formed list
-        # whose FIRST entry isn't a dict (`top_hits=["junk"]`) clears the
-        # list check above but detonates at `top_hits[0].get(...)` — in
-        # every replay rule (`_rule_v1_top1_high` / the `WIDENING_RULES`)
-        # AND in the detail lane's evidence read. Validating the top hit
-        # at this single choke point fixes preview, detail, and every
-        # rule at once, mirroring `events._event_id_items`'
-        # container-plus-element discipline. The top hit is the only
-        # element any widening consumer reads, so guarding it suffices; a
-        # non-dict top hit means the turn carries no usable features, so
-        # it counts as feature-less alongside the pre-3.14 / no-hit rows.
-        if not isinstance(top_hits[0], dict):
-            without_features += 1
-            continue
-        recent = ev.get("recent_retrieval_count")
-        # `bool` ⊂ `int` — same caveat as `_silent_miss_from_event`.
-        if not isinstance(recent, int) or isinstance(recent, bool):
-            recent = 0
-        candidates.append((ev, top_hits, recent, ts))
-    cutoff_retracted = 0
-    rows: list[tuple[dict[str, Any], list[dict[str, Any]], int]] = []
-    for ev, top_hits, recent, row_ts in candidates:
-        if latest_miss_cutoff is not None and (
-            row_ts is None or row_ts < latest_miss_cutoff
-        ):
-            cutoff_retracted += 1
-            continue
-        rows.append((ev, top_hits, recent))
-    return _ReplayableAudits(
-        total_events_scanned=total_events_scanned,
-        events_in_window=events_in_window,
-        with_features=len(rows),
-        without_features=without_features,
-        repeats_skipped=repeats_skipped,
-        cutoff_retracted=cutoff_retracted,
-        rows=rows,
-    )
 
 
 def compute_widening_preview(

@@ -92,6 +92,20 @@ the candidates' testing.
   and the CLI output do not change. (`src/bettermemory/health.py`,
   `src/bettermemory/health_model.py`, `src/bettermemory/health_stats.py`,
   `src/bettermemory/health_render.py`)
+- **The eval module is split into three files.** `eval.py` was 4,040
+  lines. The pieces the rates are built from (`RateCI` and the Wilson
+  interval, the row dataclasses, the threshold and widening rule
+  registries, the widening lanes' shared walk, the `--since` and
+  `--until` parsing, the recall surfaces' split on each show's rule, and
+  the tool-usage kind map) move to `eval_model.py`, and the text and
+  markdown renderers to `eval_render.py`. `eval.py` (1,846 lines) keeps
+  the report classes, the admin-recorded classification and every
+  `compute_*`, and re-exports every name a caller imports from
+  `bettermemory.eval`, so no import path changes and every report and
+  JSON payload reads byte for byte as before. `test_eval`'s twin-count
+  scan now reads every `eval*.py`. (`src/bettermemory/eval.py`,
+  `src/bettermemory/eval_model.py`, `src/bettermemory/eval_render.py`,
+  `tests/test_eval.py`, `docs/eval.md`)
 
 #### Fixed
 

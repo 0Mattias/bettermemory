@@ -5,8 +5,10 @@ plain-text rendering of each mode (the rate trio, the threshold sweep,
 the widening preview and its detail, the tool-usage rollup) and the
 markdown of `eval --report`, whose content contract the canary test in
 tests/test_eval.py pins. The report classes stay in `eval.py` and are
-imported here for type checking only; `RateCI` and `EARLIER_RULES` come
-from `eval_model.py`. `eval.py` re-exports every public renderer, so
+imported here for type checking only, so the renderers' annotations do
+not resolve at run time (`typing.get_type_hints` raises on them; nothing
+reads them that way); `RateCI` and `EARLIER_RULES` come from
+`eval_model.py`. `eval.py` re-exports every public renderer, so
 `from bettermemory.eval import render_text` reads as before.
 """
 
