@@ -109,10 +109,15 @@ follows the candidates' testing.
   a file this user cannot read, an import that would leave the ring
   without the store's own key, and a daemon serving or starting for the
   store or the bound file (`adopt`, `rotate`). None of the commands opens the store
-  as its owner, so none replaces a missing key.
+  as its owner, so none replaces a missing key. They take the daemon and
+  spawn locks as `backup restore` does, through one
+  `_daemon_client.daemon_locks` (the two were copies of one loop), whose
+  refusal names `bettermemory down` and the command to run again.
   (`src/bettermemory/key_lifecycle.py`, `src/bettermemory/cli/key_cmd.py`,
   `src/bettermemory/cli/__init__.py`, `src/bettermemory/store_keys.py`,
-  `src/bettermemory/log.py`, `docs/api.md`, `tests/test_key_lifecycle.py`)
+  `src/bettermemory/log.py`, `src/bettermemory/_daemon_client.py`,
+  `src/bettermemory/backup.py`, `docs/api.md`, `tests/test_key_lifecycle.py`,
+  `tests/test_daemon_locks_shared.py`)
 
 - **`bettermemory log accept-history [--yes]`: a replaced history
   accepted on the record (ENG-106).** A store file copied over this host's

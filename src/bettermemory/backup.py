@@ -1550,41 +1550,15 @@ def _self_signed_refusal(verification: Mapping[str, Any], keys_root: Path) -> st
     )
 
 
-@contextlib.contextmanager
-def _daemon_locks(state_dir: Path, store_file: Path) -> Iterator[str | None]:
-    """Hold the store's spawn lock and its daemon lock for the block, or
-    yield the reason they could not be taken. The daemon lock is what a
-    serving daemon holds for its whole life, so taking it proves none
-    serves and keeps one from starting to; the spawn lock keeps a hook or
-    the shim's first call from spawning one meanwhile, which would open the
-    store before it found the lock taken."""
+def _daemon_locks(
+    state_dir: Path, store_file: Path
+) -> contextlib.AbstractContextManager[str | None]:
+    """The store's spawn lock and daemon lock for the block, or the reason
+    they could not be taken (`_daemon_client.daemon_locks`, which the `key`
+    commands take too)."""
     from . import _daemon_client as client
 
-    held: list[Any] = []
-    reason: str | None = None
-    try:
-        ensure_owner_only_dir(state_dir, parents=True)
-        for lock_path, what in (
-            (client.spawn_lock_file_for(state_dir, store_file), "is starting"),
-            (client.lock_file_for(state_dir, store_file), "serves"),
-        ):
-            handle = client.try_lock(lock_path)
-            if handle is None:
-                reason = (
-                    f"a bettermemory daemon {what} {store_file} (it holds "
-                    f"{lock_path}); close every session using bettermemory "
-                    "(Claude Code, Codex, ...), run `bettermemory down`, then "
-                    "run the restore again"
-                )
-                break
-            held.append(handle)
-    except OSError as exc:
-        reason = f"the daemon locks under {state_dir} cannot be taken: {exc}"
-    try:
-        yield reason
-    finally:
-        for handle in reversed(held):
-            client.release_lock(handle)
+    return client.daemon_locks(state_dir, [store_file], command="backup restore")
 
 
 def _take_restore_lock(

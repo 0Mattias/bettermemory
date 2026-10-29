@@ -52,6 +52,7 @@ connection it opens the same way (`shim._ProvingBackend`).
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import hashlib
 import hmac
@@ -68,7 +69,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, NamedTuple, TypeGuard
@@ -410,6 +411,59 @@ def release_lock(handle: Any) -> None:
         pass
     finally:
         handle.close()
+
+
+@contextlib.contextmanager
+def daemon_locks(
+    state_dir: Path, store_files: Sequence[Path], *, command: str
+) -> Iterator[str | None]:
+    """Hold the spawn lock and the daemon lock (`spawn_lock_file_for`,
+    `lock_file_for`) of each store file in ``store_files`` for the block,
+    or yield why they could not be taken. The daemon lock is what a serving
+    daemon holds for its whole life, so taking it proves none serves and
+    keeps one from starting to; the spawn lock keeps a hook or the shim's
+    first call from spawning one meanwhile, which would open the store
+    before it found the lock taken.
+
+    The one way a command that changes a store's file or its key ring
+    under a daemon takes them: `backup restore` (`backup._daemon_locks`)
+    and the `key` and `log accept-history` commands
+    (`key_lifecycle.daemon_locks`). The reason names `bettermemory down`
+    and ``command``, the command to run again."""
+    from ._fsutil import ensure_owner_only_dir
+
+    held: list[Any] = []
+    seen: set[Path] = set()
+    reason: str | None = None
+    try:
+        ensure_owner_only_dir(state_dir, parents=True)
+        for store_file in store_files:
+            for lock_path, what in (
+                (spawn_lock_file_for(state_dir, store_file), "is starting"),
+                (lock_file_for(state_dir, store_file), "serves"),
+            ):
+                if lock_path in seen:
+                    continue
+                seen.add(lock_path)
+                handle = try_lock(lock_path)
+                if handle is None:
+                    reason = (
+                        f"a bettermemory daemon {what} {store_file} (it holds "
+                        f"{lock_path}); close every session using bettermemory "
+                        "(Claude Code, Codex, ...), run `bettermemory down`, then "
+                        f"run `bettermemory {command}` again"
+                    )
+                    break
+                held.append(handle)
+            if reason is not None:
+                break
+    except OSError as exc:
+        reason = f"the daemon locks under {state_dir} cannot be taken: {exc}"
+    try:
+        yield reason
+    finally:
+        for handle in reversed(held):
+            release_lock(handle)
 
 
 # ---------------------------------------------------------------------------
@@ -1722,6 +1776,7 @@ __all__ = [
     "acquire_lock",
     "canonical_store_path",
     "daemon_env_for",
+    "daemon_locks",
     "daemon_process_env",
     "enter_state_dir",
     "ensure_daemon",

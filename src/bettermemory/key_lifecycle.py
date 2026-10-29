@@ -202,49 +202,17 @@ def _same_path(a: Path, b: Path) -> bool:
         return False
 
 
-@contextlib.contextmanager
 def daemon_locks(
     state_dir: Path, store_files: Sequence[Path], *, command: str
-) -> Iterator[str | None]:
-    """Hold the spawn lock and the daemon lock of each store file in
-    ``store_files`` for the block, or yield why they could not be taken: a
+) -> contextlib.AbstractContextManager[str | None]:
+    """The spawn lock and the daemon lock of each store file in
+    ``store_files`` for the block, or why they could not be taken
+    (`_daemon_client.daemon_locks`, which `backup restore` takes too): a
     daemon serving one of them, or starting to, would go on signing with
-    the ring the command changes. Taken as `backup restore` takes its
-    store's (`backup._daemon_locks`); the reason names ``command``."""
+    the ring the command changes. The reason names ``command``."""
     from . import _daemon_client as client
 
-    held: list[Any] = []
-    seen: set[Path] = set()
-    reason: str | None = None
-    try:
-        ensure_owner_only_dir(state_dir, parents=True)
-        for store_file in store_files:
-            for lock_path, what in (
-                (client.spawn_lock_file_for(state_dir, store_file), "is starting"),
-                (client.lock_file_for(state_dir, store_file), "serves"),
-            ):
-                if lock_path in seen:
-                    continue
-                seen.add(lock_path)
-                handle = client.try_lock(lock_path)
-                if handle is None:
-                    reason = (
-                        f"a bettermemory daemon {what} {store_file} (it holds "
-                        f"{lock_path}); close every session using bettermemory "
-                        "(Claude Code, Codex, ...), run `bettermemory down`, then "
-                        f"run `bettermemory {command}` again"
-                    )
-                    break
-                held.append(handle)
-            if reason is not None:
-                break
-    except OSError as exc:
-        reason = f"the daemon locks under {state_dir} cannot be taken: {exc}"
-    try:
-        yield reason
-    finally:
-        for handle in reversed(held):
-            client.release_lock(handle)
+    return client.daemon_locks(state_dir, store_files, command=command)
 
 
 def _append_row(store: Store, kind: str, payload: dict[str, Any]) -> int:
