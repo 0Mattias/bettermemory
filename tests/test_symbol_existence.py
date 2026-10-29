@@ -318,9 +318,9 @@ def test_a_recorded_root_this_machine_cannot_see_makes_the_check_inert(
     against one would mark every citation in every synced memory absent
     at once, and the alarm would be about the sync rather than about any
     claim. `origin` records the opposite direction for the auto-scope
-    filter and `verify` records it again for path drift — both times
-    because over-reporting is THEIR safe direction. It is not this
-    one's."""
+    filter and `verify_candidates` records it again for path drift —
+    both times because over-reporting is THEIR safe direction. It is not
+    this one's."""
     gone = tmp_path / "never-existed"
     assert not check_symbol_citations(
         "`vanished_helper` in `pkg/mod.py`", worktree_root=gone

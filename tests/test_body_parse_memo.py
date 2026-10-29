@@ -1,4 +1,5 @@
-"""The body parse memo (`verify._CANDIDATES`, `verify._ANCHORS`).
+"""The body parse memo (`verify_candidates._CANDIDATES`,
+`verify_candidates._ANCHORS`).
 
 A verdict reads a memory's body twice: the path drift leg extracts its
 path candidates, and the commit leg extracts them again with the relative

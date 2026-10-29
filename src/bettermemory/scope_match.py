@@ -236,7 +236,7 @@ def _project_root_matches(
             continue
         if folded_root.lower() in lowered_declared_roots and _home_ignores_case(root):
             # CASE leg of the same identity check, mirroring the
-            # byte-then-probe pairing of `verify._is_under_home`:
+            # byte-then-probe pairing of `verify_candidates._is_under_home`:
             # the folded comparison above settles every store on its
             # own, and only a case-modulo collision asks the
             # filesystem (`_home_ignores_case` — generic over any
@@ -368,7 +368,7 @@ def collect_project_roots(memories: Iterable[Memory]) -> dict[str, str]:
     is omitted — we have no signal to populate the value.
 
     SEPARATORS: the degenerate-root guard folds both comparands
-    through `verify._fold_altsep` (alternate separator → primary,
+    through `verify_candidates._fold_altsep` (alternate separator → primary,
     identity on POSIX), so on Windows a home cwd spelled with the
     forward slashes the OS accepts (``C:/Users/me``, or a mixed
     spelling) is dropped exactly like the backslash-canonical form
@@ -383,8 +383,8 @@ def collect_project_roots(memories: Iterable[Memory]) -> dict[str, str]:
     spells home only modulo case (the lowercase drive letter some
     shells record, a re-cased ``/users/me`` segment in a hand-edited
     store) is dropped only when the filesystem confirms home's volume
-    folds case — `verify._home_ignores_case`, the same probe
-    `verify._is_under_home` pairs with its fold, asked lazily and at
+    folds case — `verify_candidates._home_ignores_case`, the same probe
+    `verify_candidates._is_under_home` pairs with its fold, asked lazily and at
     most once per call. On a folding volume such a spelling IS the
     home directory, and byte equality let it through as a store-wide
     prefix-matching root; on a case-sensitive volume it is genuinely a
@@ -487,21 +487,21 @@ def _home_alias(path: str) -> str | None:
     `origin.cwd` (the substrate for `collect_project_roots`) is always
     absolute — both spellings have to be searchable.
 
-    SEPARATORS: home and `path` are folded through `verify._fold_altsep`
-    (alternate separator → primary) before the prefix check, so on
-    Windows the forward-slash and mixed spellings the OS accepts
-    (``C:/Users/me/work``, ``C:\\Users\\me/work``) read as home-rooted
+    SEPARATORS: home and `path` are folded through
+    `verify_candidates._fold_altsep` (alternate separator → primary) before the
+    prefix check, so on Windows the forward-slash and mixed spellings the OS
+    accepts (``C:/Users/me/work``, ``C:\\Users\\me/work``) read as home-rooted
     exactly like the backslash-canonical form. The raw ``home + os.sep``
     comparison used to misread those spellings as not home-rooted and
     silently skip the alias search — the same false-negative class
-    `verify._is_under_home` shed. On POSIX ``os.altsep`` is None, the
-    fold is the identity, and a ``\\`` stays an ordinary filename
+    `verify_candidates._is_under_home` shed. On POSIX ``os.altsep`` is None,
+    the fold is the identity, and a ``\\`` stays an ordinary filename
     character, never a separator.
 
     CASE: the folded prefix check is byte-first, and a prefix that
     spells home only modulo case contracts only when the filesystem
-    confirms home's volume folds case (`verify._home_ignores_case`,
-    the probe `verify._is_under_home` pairs with its own fold). On a
+    confirms home's volume folds case (`verify_candidates._home_ignores_case`,
+    the probe `verify_candidates._is_under_home` pairs with its own fold). On a
     default macOS APFS volume ``/users/me/work`` IS home-rooted, and
     the byte check silently skipped the alias search for it — the same
     false-negative class the separator fold above closed. The prefix
@@ -595,7 +595,7 @@ def _declared_root_spans(
     the parent scope.
 
     SEPARATORS: the search runs over the FOLDED body with FOLDED
-    needles (`verify._fold_altsep`; identity on POSIX). A raw
+    needles (`verify_candidates._fold_altsep`; identity on POSIX). A raw
     `body.find` probed only each root's verbatim spelling plus its
     single-spelling tilde alias, so a body citing a declared root in
     the other separator family yielded no span and the parent's name
@@ -668,7 +668,7 @@ def _declared_root_covers(
     the parent but *outside* the declared child's root fails the
     prefix check (or the body probe) and still flags the parent.
 
-    SEPARATORS: both comparisons fold through `verify._fold_altsep`
+    SEPARATORS: both comparisons fold through `verify_candidates._fold_altsep`
     (alternate separator → primary, identity on POSIX). The
     store-vs-store prefix check (`dr` extends `root`) folds both
     stored spellings, so on Windows a declared child root recorded in

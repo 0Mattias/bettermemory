@@ -16,8 +16,8 @@ The parts, per memory:
 
 - `verification`: the calendar status (`verify.compute_verification_
   status`) at the caller's `now` and `stale_after_days`;
-- `path_drift`: the claim-anchored path report (`verify.detect_path_
-  drift`), stats only;
+- `path_drift`: the claim-anchored path report
+  (`verify_anchoring.detect_path_drift`), stats only;
 - `commit_drift`: the commit leg as `memory_show` emits it
   (`verify.commit_drift_status` over the memoised `ResolvedCommitDrift`),
   None where the leg does not apply;
@@ -51,8 +51,8 @@ its payload's directory.
 So is the claims' anchoring (design 3.6): `anchoring` reads each homed
 record's path claims at its home checkout's live view, translated across
 its recorded views, or in a stand-in that confirms by presence and never
-convicts (`verify.Anchoring`). A record with no home row, and every record
-when no anchoring is passed, is read at its recorded root as before.
+convicts (`verify_anchoring.Anchoring`). A record with no home row, and every
+record when no anchoring is passed, is read at its recorded root as before.
 """
 
 from __future__ import annotations

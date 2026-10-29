@@ -1,4 +1,5 @@
-"""Tests for verify.py — path-drift detection on memory bodies.
+"""Tests for verify.py and its parts — path-drift detection on memory
+bodies (`verify_anchoring.detect_path_drift`).
 
 Detection is the load-bearing piece. Existence checks against the real
 filesystem use temp paths fixture-style (paths created/deleted in the

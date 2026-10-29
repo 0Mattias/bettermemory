@@ -1,9 +1,9 @@
 """verify's reads of a repository's own files where githead's discovery
 declines, and under other spellings of the same paths (design 3.6, E18 c).
 
-`verify.holds_commit` (a cited commit in the caller's store) and
-`verify._absent_by_sparsity` (a path a sparse cone leaves out) find the
-repository through `githead.locate`. `githead.find_gitdir` and
+`verify_anchoring.holds_commit` (a cited commit in the caller's store) and
+`verify_anchoring._absent_by_sparsity` (a path a sparse cone leaves out) find
+the repository through `githead.locate`. `githead.find_gitdir` and
 `githead.gitdir_at` decline off POSIX (`githead._POSIX`), so on Windows
 neither read answered before; every test here runs with that decline.
 Each read is then given its path spelled another way than the

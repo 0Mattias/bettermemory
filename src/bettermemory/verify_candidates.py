@@ -233,11 +233,12 @@ _RELATIVE_CITATION_RE = re.compile(
 # single `git rev-list` invocation, not a stat() per retrieval.
 _MAX_ANCHOR_CITATIONS = 24
 
-# Stat budget for the ANCHORED CITATION pass (`_check_anchored_citations`),
-# reconciling the two caps above rather than picking one. They are
-# different currencies: `_MAX_ANCHOR_CITATIONS` (24) bounds pathspec
-# STRINGS handed to one `git log` invocation, while every citation checked
-# here costs a `stat()` on the hottest retrieval path — the same currency
+# Stat budget for the ANCHORED CITATION pass
+# (`verify_anchoring._check_anchored_citations`), reconciling the two caps
+# above rather than picking one. They are different currencies:
+# `_MAX_ANCHOR_CITATIONS` (24) bounds pathspec STRINGS handed to one
+# `git log` invocation, while every citation that pass checks costs a
+# `stat()` on the hottest retrieval path — the same currency
 # `_MAX_PATHS_PER_BODY` (8) already prices. So the citation pass borrows
 # the stat cap, not the anchor cap, and gets its own budget rather than
 # sharing the body extractor's: a body that already spent all eight slots

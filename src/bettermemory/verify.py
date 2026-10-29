@@ -1,9 +1,11 @@
 """Staleness signals for retrieved memories.
 
-Three concepts live here, all surfaced on retrieval so a consuming model
-can self-triage before relying on stored content:
+Three concepts, all surfaced on retrieval so a consuming model can
+self-triage before relying on stored content. The first lives in
+`verify_anchoring`, which this module re-exports; the other two live here.
 
-1. **Path drift** (`detect_path_drift`, `PathDriftReport`). A memory body
+1. **Path drift** (`verify_anchoring.detect_path_drift`,
+   `PathDriftReport`). A memory body
    that names a file path is making a verifiable claim — "this path
    exists on disk and is the thing I'm describing." Filesystems move on,
    projects reorganise, scripts get renamed — claims like that go stale

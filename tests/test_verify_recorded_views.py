@@ -1,8 +1,8 @@
 """verify's anchoring and the membership model read "below a recorded view"
 by one rule.
 
-`verify.Anchoring.translate` asks whether a path lies under a recorded
-view before it hands the path to the model to translate. Its own test
+`verify_anchoring.Anchoring.translate` asks whether a path lies under a
+recorded view before it hands the path to the model to translate. Its own test
 checked "/" and the platform's separator while the model's checks either
 slash, so on POSIX a path recorded on Windows below a backslash view was
 never translated: it was stat'd as spelled and an attested one read as a

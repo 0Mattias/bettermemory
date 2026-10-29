@@ -530,11 +530,11 @@ def test_nested_roots_parent_path_outside_child_still_flags() -> None:
 # ---------------------------------------------------------------------------
 # _home_alias — separator folding (Windows spellings)
 #
-# Sibling of the gap `verify._is_under_home` shed: `_home_alias` used to
-# compare raw strings against `home + os.sep`, so a forward-slash or
+# Sibling of the gap `verify_candidates._is_under_home` shed: `_home_alias`
+# used to compare raw strings against `home + os.sep`, so a forward-slash or
 # mixed Windows spelling of a home-rooted project root read as NOT
 # home-rooted and the tilde-alias search was silently skipped. Closed by
-# folding both comparands through `verify._fold_altsep` before the
+# folding both comparands through `verify_candidates._fold_altsep` before the
 # prefix check. Windows semantics are exercised from any platform via
 # explicit `ntpath` values (`_simulate_windows_home`); on a real Windows
 # runner the same monkeypatches are identity writes.
@@ -837,14 +837,15 @@ def test_pass1_token_still_fires_outside_child_tree_other_family(
 # drive letter some shells record into a synced store, a re-cased segment
 # in a hand-edited one) slipped the degenerate-home guard and lost the
 # shared/nested-root suppressions. Closed by mirroring the byte-then-probe
-# pairing of `verify._is_under_home`: bytes first, and only a case-modulo
-# match asks the filesystem (`verify._home_ignores_case`) whether the
-# anchoring directory's volume folds case. Like verify's own case test,
-# the follows-the-filesystem tests below assert BOTH directions against
-# the live volume — case sensitivity is a per-volume property, so neither
-# branch can be pinned by platform. The probe fails closed: a directory
-# absent from the local filesystem keeps byte semantics (the disclosed
-# residue for cross-machine stores), pinned by the unprobeable-store test.
+# pairing of `verify_candidates._is_under_home`: bytes first, and only a
+# case-modulo match asks the filesystem
+# (`verify_candidates._home_ignores_case`) whether the anchoring directory's
+# volume folds case. Like verify's own case test, the follows-the-filesystem
+# tests below assert BOTH directions against the live volume — case sensitivity
+# is a per-volume property, so neither branch can be pinned by platform. The
+# probe fails closed: a directory absent from the local filesystem keeps byte
+# semantics (the disclosed residue for cross-machine stores), pinned by the
+# unprobeable-store test.
 # ---------------------------------------------------------------------------
 
 

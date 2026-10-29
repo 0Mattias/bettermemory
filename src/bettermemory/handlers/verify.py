@@ -3,9 +3,9 @@
 A verify reads the record's claims where design 3.6 reads them: at its
 home checkout's live view, translated across its recorded views, or in a
 stand-in checkout that confirms by presence and never convicts
-(`verify.ClaimAnchor`, from `_shared.caller_anchoring`). A record with no
-home row is homed at the caller's resolution when the caller's checkout is
-the tree it was read at, and the caller's HEAD is recorded as a witness of
+(`verify_anchoring.ClaimAnchor`, from `_shared.caller_anchoring`). A record
+with no home row is homed at the caller's resolution when the caller's checkout
+is the tree it was read at, and the caller's HEAD is recorded as a witness of
 the caller's project, in the transaction that writes the stamp (design
 8.1).
 """
@@ -158,7 +158,7 @@ def _refuse_unverifiable_stored_attestations(
       `unverifiable_attestations` skip them). A synced replica carries
       the origin host's `worktree_root`; joining relatives onto a dead
       root would refuse every replica re-verify wholesale — the
-      constant-function failure `verify._worktree_root_is_live`
+      constant-function failure `verify_anchoring._worktree_root_is_live`
       documents — so an invisible tree reads as could-not-ask, never as
       a counterexample.
 

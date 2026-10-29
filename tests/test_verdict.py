@@ -149,7 +149,7 @@ def _memoised(
 def _shown_verdict(memory_dir: Path, memory: Memory, caller: Origin) -> MemoryVerdict:
     """The verdict as `memory_show` computes it for a caller standing at
     `caller.cwd`: its claims anchored for the caller resolved there
-    (`verify.Anchoring`, design 3.6), and its commit leg counted only
+    (`verify_anchoring.Anchoring`, design 3.6), and its commit leg counted only
     where the LINKS surface admits the record's home and that home is a
     project's (`Admission.drift_counts`, design 3.5)."""
     assert caller.cwd is not None

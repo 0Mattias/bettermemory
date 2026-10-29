@@ -421,8 +421,8 @@ def _init_repo(path: Path, *, remote: str = _FAKE_REPO_REMOTE) -> None:
     """Tmp-repo helper mirroring `tests/test_server_commit_drift.py` so
     `attach_commit_drift_counts` has a real cwd to shell `git log`
     against. One commit is enough for `commit_author_timestamps` to
-    return a non-None list, which is the gate for the recompute at
-    `_response.py:406` to fire."""
+    return a non-None list, which is the gate for the recompute
+    (`_response._stamp_hit_drift`) to fire."""
     subprocess.run(
         ["git", "init", "--initial-branch=main"],
         cwd=path,
@@ -598,12 +598,11 @@ async def test_staleness_verdict_via_show(stale_server: Any, status: str) -> Non
     """Every member of ``_VERDICT_RAISE_STATUSES`` must drive
     ``memory_show``'s ``staleness_verdict`` to ``spot_check_required``
     with a non-null ``verification.recommendation``. Routes through
-    ``compute_staleness_verdict`` at ``verify.py:848`` (the canonical
-    gate). A silent drop of either member here lets the loudest
-    re-verify signal — the verdict consumers branch on first — fall
-    through to the drift-only ``spot_check_recommended`` or even
-    ``fresh``, treating an unverified or expired memory as ground
-    truth."""
+    ``verify.compute_staleness_verdict`` (the canonical gate). A silent
+    drop of either member here lets the loudest re-verify signal — the
+    verdict consumers branch on first — fall through to the drift-only
+    ``spot_check_recommended`` or even ``fresh``, treating an
+    unverified or expired memory as ground truth."""
     memory_id = await _write_memory_in_state(stale_server, status=status)
     shown = await _call(stale_server, "memory_show", id=memory_id)
 
@@ -620,7 +619,7 @@ async def test_staleness_verdict_via_show(stale_server: Any, status: str) -> Non
 async def test_staleness_verdict_via_search(stale_server: Any, status: str) -> None:
     """Mirror of ``test_staleness_verdict_via_show`` on the
     ``memory_search`` surface. ``hit_to_dict`` in ``_response.py`` also
-    routes through ``compute_staleness_verdict`` (``verify.py:848``);
+    routes through ``verify.compute_staleness_verdict``;
     a silent drop there is independent of the ``memory_show`` path and
     would lower the top-hit verdict on every retrieval. Locks the
     search side of the contract too."""
@@ -647,16 +646,18 @@ async def test_staleness_verdict_via_search(stale_server: Any, status: str) -> N
 async def test_staleness_verdict_stale_survives_commit_drift_recompute(
     memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Pins the duplicate of the raise-status gate at ``_response.py:406``.
+    """Pins the raise-status gate of the commit-drift recompute
+    (``_response._stamp_hit_drift``).
 
     ``hit_to_dict`` initialises ``staleness_verdict`` from verification
     + path-drift only; ``attach_commit_drift_counts`` re-derives the
     verdict per hit once the per-search commit-timestamp list has been
-    read. The recompute uses its own copy of the
+    read. The recompute once kept its own copy of the
     ``{"never", "stale"}`` membership check — the silent-drop hazard
-    the loop targets. If the recompute's gate drifts from
-    ``compute_staleness_verdict``'s gate, a stale memory whose
-    ``origin.repo`` matches the caller's would re-land on
+    the loop targets — and now calls ``verify.verdict_from_signals``,
+    the ladder ``compute_staleness_verdict`` uses. If the recompute's
+    gate drifts from ``compute_staleness_verdict``'s gate, a stale
+    memory whose ``origin.repo`` matches the caller's would re-land on
     ``spot_check_recommended`` (or ``fresh``) the moment commit-drift
     becomes computable, while the same memory's ``memory_show``
     verdict stays ``spot_check_required`` — silent divergence between
@@ -692,12 +693,12 @@ async def test_staleness_verdict_stale_survives_commit_drift_recompute(
     # `commit_drift_count` is present iff `attach_commit_drift_counts`
     # actually ran the recompute against this hit — that's the gate
     # we're trying to exercise. Absence here means the test setup
-    # didn't reach `_response.py:406` and the regression case isn't
+    # didn't reach `_response._stamp_hit_drift` and the regression case isn't
     # being checked.
     assert "commit_drift_count" in hit, (
         "test setup failed: attach_commit_drift_counts did not recompute "
-        "the verdict for this hit, so the duplicate raise-status gate "
-        "at _response.py:406 wasn't exercised"
+        "the verdict for this hit, so the recompute's raise-status gate "
+        "(_response._stamp_hit_drift) wasn't exercised"
     )
     assert hit["verification"]["status"] == "stale"
     assert hit["staleness_verdict"] == "spot_check_required"
@@ -753,8 +754,8 @@ async def test_staleness_verdict_matches_across_show_and_search(
 # ``_VERDICT_FRESH`` / ``_VERDICT_RECOMMENDED`` / ``_VERDICT_REQUIRED``;
 # the per-search recompute at
 # ``ResponseBuilder.attach_commit_drift_counts`` in ``_response.py``
-# imports the same constants and re-emits them after folding commit
-# drift into the verdict. A rename of any tier in ``verify.py`` that
+# re-emits them through ``verify.verdict_from_signals`` after folding
+# commit drift into the verdict. A rename of any tier in ``verify.py`` that
 # didn't reach the recompute would silently desync the
 # ``memory_search`` top-hit verdict from the ``memory_show`` verdict
 # for the same memory — the same divergence-hazard the input-side pin
@@ -779,19 +780,20 @@ async def test_staleness_verdict_matches_across_show_and_search(
 #   recompute path is reached via the same fake-``capture_origin`` +
 #   tmp-git-repo pattern as
 #   ``test_staleness_verdict_stale_survives_commit_drift_recompute``,
-#   so the assertion exercises the exact site (``_response.py:415``)
-#   the OUTPUT-side hazard lives at.
+#   so the assertion exercises the exact site
+#   (``_response._stamp_hit_drift``) the OUTPUT-side hazard lives at.
 #
 # Negative-control: temporarily replacing ``_VERDICT_REQUIRED`` in
 # ``verify.py`` with ``"verify_now"`` fails
 # ``test_staleness_verdict_tier_string_values_unchanged`` (wire value
 # flipped) and the cross-surface test (both surfaces now emit
 # ``"verify_now"``, but the constant assertion still matches — caught
-# by the wire-value pin). Temporarily flipping only the literal at
-# ``_response.py:415`` to ``"verify_now"`` without touching the
-# constant fails the cross-surface test only (``memory_show`` still
-# emits ``_VERDICT_REQUIRED`` value, the recompute site emits the
-# stale literal) — the exact desync the queue item targets.
+# by the wire-value pin). Temporarily making the recompute
+# (``_response._stamp_hit_drift``) emit a literal ``"verify_now"``
+# without touching the constant fails the cross-surface test only
+# (``memory_show`` still emits ``_VERDICT_REQUIRED`` value, the
+# recompute site emits the stale literal) — the exact desync the queue
+# item targets.
 
 
 def test_staleness_verdict_tier_string_values_unchanged() -> None:
@@ -820,8 +822,8 @@ async def test_staleness_verdict_string_matches_constant_across_show_and_search(
     diverging string between the two surfaces, even when both
     surfaces still produce a syntactically-valid verdict tier.
     Routes through the recompute path (fake-``capture_origin`` +
-    tmp-git-repo) so the assertion exercises ``_response.py:415``,
-    the OUTPUT-side hazard site."""
+    tmp-git-repo) so the assertion exercises
+    ``_response._stamp_hit_drift``, the OUTPUT-side hazard site."""
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)
@@ -842,13 +844,13 @@ async def test_staleness_verdict_string_matches_constant_across_show_and_search(
     assert hit is not None, f"seeded memory {memory_id!r} missing from search results"
     # Recompute gate: presence of `commit_drift_count` proves
     # `attach_commit_drift_counts` actually ran on this hit — i.e. the
-    # OUTPUT-side emission site at `_response.py:415` was reached.
+    # OUTPUT-side emission site in `_response._stamp_hit_drift` was reached.
     # Absence means the test setup silently bypassed the recompute and
     # the regression case isn't being checked.
     assert "commit_drift_count" in hit, (
         "test setup failed: attach_commit_drift_counts did not recompute "
         "the verdict for this hit, so the OUTPUT-side tier-string "
-        "emission at _response.py:415 wasn't exercised"
+        "emission in _response._stamp_hit_drift wasn't exercised"
     )
     # Both surfaces must emit the *shared constant value*, not just a
     # syntactically-valid verdict tier. A single-site stale literal
@@ -1686,7 +1688,7 @@ async def test_verify_passing_empty_list_clears_prior(
 # Path-drift provenance on the wire — evidence stays, escalation narrows
 # ---------------------------------------------------------------------------
 #
-# `verify.py`'s unit tests pin the split itself. These pin the half that
+# `tests/test_verify.py` pins the split itself. These pin the half that
 # unit tests structurally cannot: that the new bucket TRAVELS. A bucket
 # that exists on `PathDriftReport` and never reaches a tool caller is the
 # failure mode `dropped_as_route`'s reach note documents — it has to ride

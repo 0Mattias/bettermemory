@@ -728,8 +728,8 @@ def compute_health(
     checkout as `memory_show` takes it; without it every record whose
     origin repo matches the caller's is a candidate. `anchoring` reads
     `cross_repo_drift`'s homed groups where design 3.6 resolves their
-    cited commit (`verify.ClaimAnchor.commit_root`); a record with no home
-    row, and every record without it, is read as before.
+    cited commit (`verify_anchoring.ClaimAnchor.commit_root`); a record with no
+    home row, and every record without it, is read as before.
     `memory_admin(health)` passes both, resolved for the request's
     caller; `bettermemory health` passes neither, since resolving the
     caller registers the checkout and the CLI report writes nothing.
@@ -969,7 +969,7 @@ def _recorded_root_reachable(
         # directory: unreachable rather than absent. `os.path.isdir`
         # swallows the OSError that `Path.is_dir()` would re-raise
         # — the same choice, for the same reason, that
-        # `verify._worktree_root_is_live` writes down.
+        # `verify_anchoring._worktree_root_is_live` writes down.
         skipped.append(
             {
                 "repo": repo,
@@ -1186,7 +1186,7 @@ def _compute_cross_repo_drift(
     nothing".
 
     With `anchoring`, a homed record is grouped where design 3.6 resolves
-    its cited commit (`verify.ClaimAnchor.commit_root`): its home
+    its cited commit (`verify_anchoring.ClaimAnchor.commit_root`): its home
     checkout's live view, which the membership model recognised by its
     object, so no re-identification runs; else the caller's checkout when
     it holds the commit. With neither, the record is listed in `skipped`
@@ -1405,7 +1405,7 @@ def _drift_rows_by_root(
     anchoring: Anchoring | None,
 ) -> tuple[list[CommitDriftRow], int]:
     """`_drift_rows_for_candidates` with each candidate counted at the root
-    its cited commit resolves at (design 3.6, `verify.ClaimAnchor.
+    its cited commit resolves at (design 3.6, `verify_anchoring.ClaimAnchor.
     commit_root`), and the count of candidates no live store here could
     resolve. A candidate with no home row, and every candidate without
     `anchoring`, is counted at the caller's directory as before; so is a

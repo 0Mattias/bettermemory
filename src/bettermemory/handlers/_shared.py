@@ -18,8 +18,8 @@ the test suite wants to override.
 The caller's root for a record's claims is resolved here once for every
 handler that reads claims (`caller_anchoring`, design 3.6): the caller
 resolved by `location.resolve_caller` and the membership model that
-resolved it, from which `verify.Anchoring` reads each record's anchor.
-Nothing here compares a recorded worktree with the caller's directory.
+resolved it, from which `verify_anchoring.Anchoring` reads each record's
+anchor. Nothing here compares a recorded worktree with the caller's directory.
 """
 
 from __future__ import annotations

@@ -4,8 +4,8 @@ design 8.3).
 E14's eighteen checks, one test each, named by case: the rc3 column runs
 `detect_path_drift` at the record's recorded worktree (the reading a record
 with no home row still gets), the anchored column reads the same claims
-through `verify.Anchoring` over the membership model. Then E18 (c), the
-cited commit, a project with no live checkout, a folder checkout, and the
+through `verify_anchoring.Anchoring` over the membership model. Then E18 (c),
+the cited commit, a project with no live checkout, a folder checkout, and the
 home and witness `memory_verify` records with its stamp.
 
 Every repository is built with git under ``tmp_path`` with a neutral
@@ -115,8 +115,9 @@ def _remove(path: Path) -> None:
 def discovery(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     """githead's discovery as this platform has it, and declining as it does
     off POSIX (`githead._POSIX`): `find_gitdir` and `gitdir_at` then answer
-    None for every path, as on Windows, and verify's sparse-checkout and
-    cited-commit reads go on through `githead.locate`."""
+    None for every path, as on Windows, and verify_anchoring's
+    sparse-checkout and cited-commit reads go on through
+    `githead.locate`."""
     if request.param == "declined":
         monkeypatch.setattr(githead, "_POSIX", False)
 

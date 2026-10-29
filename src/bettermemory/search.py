@@ -1004,10 +1004,10 @@ def _build_hit(
 ) -> MemoryHit:
     """Construct a MemoryHit from a scored memory.
 
-    `anchor` is where the record's claims are read (`verify.ClaimAnchor`,
-    design 3.6): a homed record's at its anchor, as `memory_show` reads
-    them; with None (a record with no home row, or a search with no
-    anchoring) at the worktree its origin recorded.
+    `anchor` is where the record's claims are read
+    (`verify_anchoring.ClaimAnchor`, design 3.6): a homed record's at its
+    anchor, as `memory_show` reads them; with None (a record with no home row,
+    or a search with no anchoring) at the worktree its origin recorded.
 
     `detect_path_drift` is the only call here that touches the
     filesystem — one regex pass + up to 8 stat() calls per hit — and
@@ -1778,7 +1778,7 @@ def search(
       byte, as is every call with the flag off, so `conversational=False`
       reproduces the pre-6.1.0 ranking exactly.
 
-    - `anchoring`: the request's claim anchoring (`verify.Anchoring`,
+    - `anchoring`: the request's claim anchoring (`verify_anchoring.Anchoring`,
       design 3.6). Each hit's path drift reads a homed record's claims at
       its anchor, the reading `memory_show` and the expanded top hit
       take, so one memory reads one verdict on every hit of a search and
