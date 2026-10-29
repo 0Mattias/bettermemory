@@ -1229,6 +1229,20 @@ the candidates' testing.
   store off the hook path; the attestation now reads at this machine's
   checkout of the project, on either kind of host.
   (`src/bettermemory/_paths.py`, `src/bettermemory/verify_anchoring.py`)
+- **An attestation spelled with `$HOME` counts the commits that changed
+  its file.** The commit-drift anchors handed each attestation to the
+  pathspec resolver as spelled. `~/proj/src/x.py` resolved, but
+  `$HOME/proj/src/x.py`, which the body scan and the write gate read as
+  the same path, reached the resolver as a relative path, was joined
+  onto the repository root and became a pathspec no commit touches: the
+  count read not applicable, which neither demotes nor escalates, so a
+  calendar-fresh record whose attested file had changed read fresh. An
+  absolute or home attestation now passes the validator the body scan
+  applies to its own candidates before it becomes an anchor (`$HOME/` and
+  `${HOME}/` read as `~/`, trailing punctuation and a `:line` suffix
+  go), so the `$HOME`, `${HOME}`, `~` and absolute spellings of one file
+  are one anchor and each counts the commit, on both bases.
+  (`src/bettermemory/verify.py`)
 
 #### Known limitations
 

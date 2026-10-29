@@ -162,7 +162,6 @@ from .verify_candidates import (
     _escapes_root,
     _keep_parse,
     _recall_parse,
-    _refused_spelling,
 )
 from .verify_candidates import (
     _ANCHORS as _ANCHORS,
@@ -527,7 +526,9 @@ def commit_drift_anchor_paths(
     Union, in order, of:
 
     1. `verified_paths` attestations (the caller explicitly named these
-       as the claims they spot-checked — the strongest anchor signal);
+       as the claims they spot-checked — the strongest anchor signal),
+       an absolute or home spelling validated as the body scan validates
+       its candidates (`_attested_anchor`);
     2. absolute/`~` path candidates cited in the body (the same
        extractor path drift uses, `_extract_candidates`);
     3. repo-relative citations (`src/x.py:12`, `docs/y.md`,
@@ -579,17 +580,9 @@ def _anchor_paths(body: str, attested: tuple[str, ...]) -> tuple[str, ...]:
         anchors.append(candidate)
 
     for raw in attested:
-        # The path gate (ENG-164): an anchor is resolved into a pathspec
-        # (`resolve_repo_pathspecs`), which resolves it on the disk, so a
-        # network or device spelling, or a relative one that climbs out of
-        # the repository, is no anchor. The body's candidates passed the
-        # gate in the scan.
-        spelled = raw.strip()
-        if _refused_spelling(spelled) or (
-            not _is_absolute_attestation(spelled) and _escapes_root(spelled)
-        ):
-            continue
-        _add(raw)
+        anchor = _attested_anchor(raw)
+        if anchor is not None:
+            _add(anchor)
     if body:
         for path, _, _ in _extract_candidates(body):
             _add(path)
@@ -605,6 +598,29 @@ def _anchor_paths(body: str, attested: tuple[str, ...]) -> tuple[str, ...]:
             if len(seen) > before:
                 relative_added += 1
     return tuple(anchors)
+
+
+def _attested_anchor(raw: str) -> str | None:
+    """The attestation `raw` as a commit-drift anchor, or None when it
+    names nothing in a repository.
+
+    An absolute or home spelling passes the validator the body scan
+    applies to its own candidates (`_normalize_candidate`): ``$HOME/`` and
+    ``${HOME}/`` become ``~/``, trailing punctuation and a ``:line``
+    suffix go, and the path gate refuses a network or device spelling,
+    since the pathspec resolver (`resolve_repo_pathspecs`) resolves each
+    anchor on the disk. Unnormalised, ``$HOME/proj/src/x.py`` reached the
+    resolver as a relative path, was joined onto the repository root and
+    became a pathspec no commit touches, so a record whose attested file
+    changed read not-applicable, where ``~/proj/src/x.py`` counted the
+    commit (ENG-167). A relative spelling is a repository path as it
+    stands, unless it climbs out of the root (`_escapes_root`)."""
+    spelled = raw.strip()
+    if not spelled:
+        return None
+    if _is_absolute_attestation(spelled):
+        return _normalize_candidate(spelled)
+    return None if _escapes_root(spelled) else spelled
 
 
 @dataclass(frozen=True)
