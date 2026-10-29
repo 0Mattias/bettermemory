@@ -596,7 +596,7 @@ def test_an_edit_of_a_spelling_table_moves_the_fingerprint(
         plurals[word] = word[:-1]
     elif edit == "acronym_plural_removed":
         del plurals[word]
-    patches = {
+    patches: dict[str, list[tuple[str, object]]] = {
         "stem_exception": [("_STEM_EXCEPTIONS", lexicon._STEM_EXCEPTIONS | {word})],
         "stopword": [
             ("_STOPWORDS_EN", lexicon._STOPWORDS_EN | {word}),
@@ -604,10 +604,10 @@ def test_an_edit_of_a_spelling_table_moves_the_fingerprint(
         ],
         "acronym_plural": [("_ACRONYM_PLURALS", plurals)],
         "acronym_plural_removed": [("_ACRONYM_PLURALS", plurals)],
-    }[edit]
+    }
     live = tokenizer_fingerprint.__wrapped__()
     before = fts_index_text(word)
-    for name, value in patches:
+    for name, value in patches[edit]:
         monkeypatch.setattr(search_lexicon, name, value)
     assert fts_index_text(word) != before
     assert tokenizer_fingerprint.__wrapped__() != live

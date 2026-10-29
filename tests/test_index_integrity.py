@@ -344,7 +344,7 @@ def test_doctor_opens_the_store_once_for_the_store_and_index_checks(
     real = store_module.Store.__dict__["open"].__func__
     opened: list[Path] = []
 
-    def counting(cls: type, path: Path, *args: object, **kwargs: object) -> object:
+    def counting(cls: type, /, path: Path, *args: object, **kwargs: object) -> object:
         opened.append(Path(path).resolve())
         return real(cls, path, *args, **kwargs)
 
