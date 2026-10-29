@@ -59,8 +59,8 @@ def _load_depends_targets(
         try:
             target = store.load_one(tid)
         except (MemoryNotFoundError, TombstonedError, OSError):
-            # Same silent-skip semantics as the existing
-            # prefilter-miss branch below: a deleted or
+            # Same silent-skip semantics as the prefilter-miss
+            # branch in `_resolve_depends`: a deleted or
             # tombstoned target is best-effort dropped from
             # auto-pull. The link still exists on disk for
             # explicit `memory_show` investigation.
@@ -78,7 +78,7 @@ def _load_depends_targets(
             # `handlers/search.py`.
             continue
         # Apply the caller's scope/origin filter at load time
-        # — must mirror the per-target check below so a
+        # — must mirror the per-target check in `_resolve_depends` so a
         # targeted load can't sneak a session-disabled or
         # cross-project target into the side-map. Without
         # this, the targeted-load path would reintroduce the
@@ -114,7 +114,7 @@ def _resolve_depends(
             # Not in the loaded candidate set (the target may be
             # outside the search's auto-scope, just not in the
             # FTS5 prefilter, or — when `store` was supplied —
-            # dropped by the targeted-load filter above as
+            # dropped by the targeted-load filter in `_load_depends_targets` as
             # tombstoned / scope-excluded / cross-project).
             # Skip silently — the link still exists on disk
             # and `memory_show` will surface it; auto-pull is

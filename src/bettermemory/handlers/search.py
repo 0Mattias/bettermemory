@@ -680,8 +680,8 @@ def _rank_pool(
 ) -> tuple[list[MemoryHit], dict[str, str]]:
     """Take the pool and the request; return the ranked hits and each hit's leg."""
     # Filled by `run_search` with `{memory_id: lexical|expansion}` for
-    # the returned hits — see `search.search`'s `matched_leg_out` note for
-    # why the leg travels as an out-parameter rather than a `MemoryHit`
+    # the returned hits — see the note in `search_steps._record_matched_legs`
+    # for why the leg travels as an out-parameter rather than a `MemoryHit`
     # field.
     matched_leg: dict[str, str] = {}
     hits = run_search(

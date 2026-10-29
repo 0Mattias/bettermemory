@@ -122,7 +122,7 @@ def _show_verdict(deps: ToolHandlers, memory: Memory) -> MemoryVerdict:
     # The verdict escalates on the claim-anchored path subset only:
     # attested paths that vanished, and citations resolved against this
     # memory's own recorded worktree. The full `missing` list is still
-    # emitted below in the `path_drift` block — prose absences stay
+    # emitted in `_show_response`'s `path_drift` block — prose absences stay
     # visible as evidence, they just no longer raise the tier. Rationale
     # and the 15-vs-3 measurement live on `verdict_from_signals`.
     # The caller is resolved once (design 3.1): its anchoring reads the

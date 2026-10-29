@@ -1465,9 +1465,10 @@ def _rescue_fuse(
             # the base fusion, so the result reproduces
             # a lane-on query whose leg found nothing — the
             # same shape the lane already has when `exp_terms`
-            # comes back empty. The filler floor above is keyed
-            # on `rescue_expansion`, not on the leg, so it
-            # stays. See `_RESCUE_LEG_MIN_EVIDENCE`.
+            # comes back empty. The filler floor
+            # (`search_steps._hybrid_corpus_stats`) is keyed on
+            # `rescue_expansion`, not on the leg, so it stays.
+            # See `_RESCUE_LEG_MIN_EVIDENCE`.
             leg_weight = (
                 _leg_evidence_weight(_leg_top_evidence(exp_leg)) if exp_leg else 0.0
             )

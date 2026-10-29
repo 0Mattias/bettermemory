@@ -829,9 +829,10 @@ def _record_stop_rows(
     #
     # The turn's own audit row, after its settlements so it carries their
     # count (`settled_count`, ENG-108), and before the past turns' walk
-    # below, which reads it to leave this turn alone. Nothing between the
-    # two reads it: the settlements read `recent` and the live segment,
-    # and the unanswered-review window was read above.
+    # (`_settle_stop_interrupted`), which reads it to leave this turn alone.
+    # Nothing between the two reads it: the settlements read `recent` and
+    # the live segment, and `_audit_turn` read the unanswered-review window
+    # before them.
     recorder.record(
         "turn_audited",
         **turn_audited_fields(
@@ -922,7 +923,7 @@ def _settle_stop_interrupted(
 
     # Best effort, as every settlement is, and last: a past turn's audit
     # never costs the Stop its own rows, and a slow walk delays only the
-    # past turns' rows, never this turn's settlements above.
+    # past turns' rows, never this turn's settlements (`_settle_stop_turn`).
     try:
         settle_interrupted(
             store=store,

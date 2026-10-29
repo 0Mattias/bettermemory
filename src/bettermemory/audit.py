@@ -1156,7 +1156,7 @@ def _created_before_shield(
     # and is exactly the freshest, most-likely-relevant content a
     # failed search should be flagged over. If the filter empties the
     # candidate list, `run_search` returns no hits and the
-    # no_signal-with-probe_query branch below reports it.
+    # no_signal-with-probe_query branch in `probe_for_miss` reports it.
     creation_cutoff = now - timedelta(seconds=creation_shield_seconds)
     return [m for m in memories if (ensure_utc(m.created) or now) <= creation_cutoff]
 

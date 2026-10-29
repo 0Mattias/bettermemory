@@ -641,8 +641,8 @@ def _user_claim_gate(
     """Take the edited body; return the gate's refusal, or None, and the phrases waved through."""
     # User-claim gate — mirror `UserClaimGate` (handlers/write_gates.py) so a
     # claim ABOUT THE USER can't reach a `fact` / `ambient` record by
-    # EDITING one. Same laundering shape the credential gate above closes
-    # for secrets: `memory_write` hard-refuses this body, so without the
+    # EDITING one. Same laundering shape `_credential_gate` closes for
+    # secrets: `memory_write` hard-refuses this body, so without the
     # mirror a caller writes an innocuous body, updates it to the claim,
     # and the claim reads back as an established fact under a label that
     # hides it from anyone correcting inferences. Runs AFTER the
@@ -762,8 +762,8 @@ def _truncation_gate(
         and looks_truncated(new_body)
         and not acknowledge_truncation
     ):
-        # Lengths only, never body text — same redaction discipline the
-        # credential gate above keeps, since a truncated body is exactly
+        # Lengths only, never body text — same redaction discipline
+        # `_credential_gate` keeps, since a truncated body is exactly
         # as likely to carry a secret as any other.
         deps.recorder.record(
             "update",
@@ -830,14 +830,15 @@ def _new_links(
                     f"links[{i}].target_id cannot equal the memory's own id "
                     f"(self-links are incoherent)"
                 )
-        # Mirror Memory._check_links's 64-entry cap. `model_copy(update=...)`
-        # below SKIPS field validators, so without this check an over-cap
-        # links list writes to disk as status="committed" but then SILENTLY
-        # VANISHES from every read surface: _load_path re-validates through the
-        # Memory(...) ctor, hits the cap ValueError, and load_all/load_one
-        # catch-and-skip the now-unparseable record. Same model_copy-skips-
-        # validators bypass already guarded for scopes (_validate_scope_count
-        # above) and verified_* (_MAX_VERIFIED_ENTRIES in handlers/verify.py).
+        # Mirror Memory._check_links's 64-entry cap. `memory_update`'s
+        # `model_copy(update=...)` SKIPS field validators, so without this
+        # check an over-cap links list writes to disk as status="committed"
+        # but then SILENTLY VANISHES from every read surface: _load_path
+        # re-validates through the Memory(...) ctor, hits the cap ValueError,
+        # and load_all/load_one catch-and-skip the now-unparseable record.
+        # Same model_copy-skips-validators bypass already guarded for scopes
+        # (_validate_scope_count in _new_scopes) and verified_*
+        # (_MAX_VERIFIED_ENTRIES in handlers/verify.py).
         if len(parsed_links) > 64:
             raise ValueError(
                 f"links list capped at 64 entries (got {len(parsed_links)})"
@@ -957,7 +958,8 @@ def _commit_update(
         # memory_verify bumps last_verified_at WITHOUT bumping `updated`, so
         # Store.update's `updated` CAS would pass and the stale snapshot would
         # win. preserve_verification keeps the freshest on-disk verification.
-        # Content edits already reset those fields above, so they don't.
+        # Content edits already reset those fields in `_update_fields`, so
+        # they don't.
         updated = deps.store.update(
             merged,
             preserve_verification=content is None,
@@ -965,7 +967,7 @@ def _commit_update(
         )
     except ConcurrentUpdateError as exc:
         # W2: another agent landed an update between this handler's
-        # `load_one` snapshot above and the under-lock CAS in
+        # `load_one` snapshot in `memory_update` and the under-lock CAS in
         # `Store.update`. The handler doesn't auto-retry — the caller's
         # disjoint edit may now conflict with the winner's change in a
         # way only the caller can reconcile (e.g. both edited the same

@@ -649,8 +649,8 @@ def _stamp_or_stale(
         raise ValueError(str(exc)) from exc
     except ConcurrentUpdateError as exc:
         # W8: another agent landed a verify between this handler's
-        # `load_one` snapshot above and the under-lock CAS in
-        # `Store.mark_verified`. The handler doesn't auto-retry — the
+        # `load_one` snapshot (`_load_verify_snapshot`) and the under-lock
+        # CAS in `Store.mark_verified`. The handler doesn't auto-retry — the
         # caller's attestation may now conflict with the winner's (e.g.
         # both attested different `verified_paths` entries) in a way
         # only the caller can reconcile. Surface as a structured

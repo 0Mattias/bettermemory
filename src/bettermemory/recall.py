@@ -1184,8 +1184,9 @@ def _print_brief(
     for memory_id, note in selection.notes.items():
         marks[memory_id] = f"{marks[memory_id]} {note}" if memory_id in marks else note
     # The cooldown decides atomically: a concurrent prompt of the same
-    # session may have shown some of these ids since `view` was read, and
-    # what the claim keeps is noted as shown before anything is printed.
+    # session may have shown some of these ids since `_open_brief_segment`
+    # read the segment's view, and what the claim keeps is noted as shown
+    # before anything is printed.
     kept_standing, kept_work, segment = state.claim_brief(
         key,
         [memory.id for memory in selection.standing],
@@ -1832,7 +1833,8 @@ def _deliver_recall(
             "nothing_rendered", [{"id": p.id, "reason": "cap"} for p in pointers]
         )
     # The cooldown decides atomically: a concurrent prompt of the same
-    # session may have shown some of these ids since `view` was read.
+    # session may have shown some of these ids since `prompt_recall` read
+    # the segment's view.
     event_id = generate_ulid()
     claimed, segment = state.claim_delivery(
         turn.key, shown_ids, now=turn.now, event_id=event_id

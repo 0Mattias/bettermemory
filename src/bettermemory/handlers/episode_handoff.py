@@ -346,20 +346,20 @@ def _emit_episodes(
     resolved_session_id = pick.session_id
     chosen = pick.chosen
     # `note_floor_only` may already be True from the auto-resolution walk
-    # (the immediately-prior session of the checkout was floor-only, whether or
-    # not we then rewound to an older real session). The explicit-
-    # `prior_session_id` path bypasses that walk, so we derive the
-    # floor-only determination for a named session below.
+    # in `_auto_pick` (the immediately-prior session of the checkout was
+    # floor-only, whether or not we then rewound to an older real session).
+    # The explicit-`prior_session_id` path bypasses that walk, so we derive
+    # the floor-only determination for a named session below.
     if resolved_session_id is not None:
         # An explicit `prior_session_id` flows in verbatim (the
-        # auto-resolution branch above only ever assigns a session_id
-        # that already round-tripped through `list_by_session`). A
-        # caller-supplied id — e.g. a child agent passed a mistyped or
+        # auto-resolution branch in `_auto_pick` only ever assigns a
+        # session_id that already round-tripped through `list_by_session`).
+        # A caller-supplied id — e.g. a child agent passed a mistyped or
         # path-shaped parent id — can fail `_session_dir`'s
         # `[A-Za-z0-9_-]` validator with a ValueError. On the /loop
         # iteration-entry hot path that should degrade to the graceful
         # `episodes: []` shape, not surface a raw ValueError, matching
-        # how the auto-resolution walk (above) and `episode_search`
+        # how the auto-resolution walk (`_auto_pick`) and `episode_search`
         # handle an invalid session_id. The validator fails closed, so
         # this is not a traversal — just a loud-vs-quiet failure-mode
         # choice, and quiet is what every other episode read does.
