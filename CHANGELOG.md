@@ -1087,6 +1087,13 @@ the candidates' testing.
   took 25.9 ms and 104 reads, now 12.7 ms and 5.
   (`src/bettermemory/membership.py`, `src/bettermemory/membership_resolve.py`,
   `src/bettermemory/membership_queries.py`)
+- **A location's lock is kept while a thread has taken it.** The table of
+  per-location locks evicted every lock not locked when it was full, and
+  a lock one resolution had taken but not yet acquired is not locked: the
+  next resolution of that location minted another lock and ran beside the
+  first (ENG-160). Each lock now counts the threads that hold it or wait
+  for it, and only one no thread has taken is evicted.
+  (`src/bettermemory/location.py`)
 
 #### Known limitations
 

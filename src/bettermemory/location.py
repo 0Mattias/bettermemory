@@ -1462,8 +1462,17 @@ def _recorded(store: Store, model: Membership, identity: MachineIdentity) -> Non
 # Resolution
 # ---------------------------------------------------------------------------
 
+
+@dataclass
+class _Held:
+    """A location's lock and the threads that hold it or wait for it."""
+
+    lock: threading.Lock
+    users: int = 0
+
+
 _LOCKS_GUARD = threading.Lock()
-_LOCKS: dict[str, threading.Lock] = {}
+_LOCKS: dict[str, _Held] = {}
 
 
 @contextlib.contextmanager
@@ -1477,14 +1486,23 @@ def _location_lock(loc: Location) -> Iterator[None]:
     else:
         name = f"{loc.machine}:{loc.root or loc.cwd}"
     with _LOCKS_GUARD:
-        lock = _LOCKS.get(name)
-        if lock is None:
+        held = _LOCKS.get(name)
+        if held is None:
             if len(_LOCKS) >= CACHE_CAP * 4:
-                for stale in [k for k, v in _LOCKS.items() if not v.locked()]:
+                # Only a lock no thread has taken (ENG-160): one taken here
+                # but not yet acquired is unlocked, and evicting it let the
+                # next resolution of its location mint another and run
+                # beside the first.
+                for stale in [k for k, v in _LOCKS.items() if not v.users]:
                     del _LOCKS[stale]
-            lock = _LOCKS[name] = threading.Lock()
-    with lock:
-        yield
+            held = _LOCKS[name] = _Held(threading.Lock())
+        held.users += 1
+    try:
+        with held.lock:
+            yield
+    finally:
+        with _LOCKS_GUARD:
+            held.users -= 1
 
 
 def _cwd_of(cwd: str | os.PathLike[str] | None) -> str | None:
