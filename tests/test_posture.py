@@ -573,8 +573,91 @@ def test_project_store_in_a_working_tree(
     report = audit()
     tracked = _by_id(report, "store.git")
     assert tracked.status == "high"
-    assert tracked.fix is not None and "git rm -r --cached" in tracked.fix
+    assert tracked.fix is not None
+    assert "git rm --cached -- .claude-memory/memory.sqlite" in tracked.fix
+    assert tracked.details["tracked_files"] == [".claude-memory/memory.sqlite"]
     assert report.exit_code == 1
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+def test_a_tracked_file_beside_an_ignored_store_is_not_the_store(
+    tmp_path: Path, layout: Layout, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-185. Whether the store is tracked was asked of its directory, so
+    a tracked README in .claude-memory beside an ignored store file read as
+    a tracked store: high, "treat what was pushed as disclosed". What git
+    tracks there is sorted now: the store's content (its file, copies and
+    backups) makes it tracked, and anything else is only named, in
+    ``other_tracked``."""
+    _git_env(tmp_path, monkeypatch)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    monkeypatch.delenv(_config.ENV_DIR_OVERRIDE)
+    monkeypatch.chdir(repo)
+    Store.create(repo / ".claude-memory").close()
+    (repo / ".claude-memory" / "README.md").write_text("notes\n", encoding="utf-8")
+    (repo / ".gitignore").write_text(
+        ".claude-memory/memory.sqlite*\n", encoding="utf-8"
+    )
+    _git(repo, "add", ".gitignore", ".claude-memory/README.md")
+    store = _by_id(audit(), "store.git")
+    assert store.status == "info", store.to_json()
+    assert store.details["tracked"] is False
+    assert store.details["ignored"] is True
+    assert store.details["other_tracked"] == [".claude-memory/README.md"]
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+@pytest.mark.parametrize("what", ["bundle key", "pre-restore copy", "orphaned copy"])
+def test_a_tracked_copy_or_backup_of_an_ignored_store_reads_tracked(
+    what: str, tmp_path: Path, layout: Layout, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-185 (review fold D1). Narrowing "tracked" to the store file and
+    its -wal and -shm let the store's other content through: a backup
+    bundle under ``backups/`` (with ``--include-key``, the signing key) or a
+    full copy of the store (restore's ``.pre-restore-<stamp>``, the daemon's
+    ``.orphaned-<stamp>.sqlite``) committed beside an ignored store file
+    read "ignored", information, where the whole-directory check had read
+    high. The store's content is its file, its copies and its backups, and
+    any of them tracked is high, with a fix naming them."""
+    _git_env(tmp_path, monkeypatch)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    monkeypatch.delenv(_config.ENV_DIR_OVERRIDE)
+    monkeypatch.chdir(repo)
+    store_dir = repo / ".claude-memory"
+    Store.create(store_dir).close()
+    (repo / ".gitignore").write_text(
+        "*.sqlite\n*.sqlite-wal\n*.sqlite-shm\n", encoding="utf-8"
+    )
+    if what == "bundle key":
+        bundle = store_dir / "backups" / "20261028T120000Z"
+        bundle.mkdir(parents=True)
+        (bundle / "store.key").write_bytes(b"\x01" * 32)
+        (bundle / "manifest.json").write_text("{}", encoding="utf-8")
+        added = [".claude-memory/backups"]
+        expected_fix = "git rm -r --cached -- .claude-memory/backups"
+        expected_files = [
+            ".claude-memory/backups/20261028T120000Z/manifest.json",
+            ".claude-memory/backups/20261028T120000Z/store.key",
+        ]
+    else:
+        name = (
+            f"{STORE_FILENAME}.pre-restore-20261028T120000Z"
+            if what == "pre-restore copy"
+            else f"{STORE_FILENAME}.orphaned-20261028T120000Z.sqlite"
+        )
+        (store_dir / name).write_bytes(b"SQLite format 3\x00")
+        added = [f".claude-memory/{name}"]
+        expected_fix = f"git rm --cached -- .claude-memory/{name}"
+        expected_files = [f".claude-memory/{name}"]
+    _git(repo, "add", "-f", ".gitignore", *added)
+    store = _by_id(audit(), "store.git")
+    assert store.status == "high", store.to_json()
+    assert store.fix is not None and expected_fix in store.fix
+    assert store.details["tracked_files"] == expected_files
 
 
 def test_git_that_cannot_run_is_skipped(

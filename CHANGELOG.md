@@ -541,6 +541,18 @@ the candidates' testing.
   has no effect on Linux, where a sandboxed command's localhost is its
   own; it is information there and a warning on macOS.
   (`src/bettermemory/posture.py`, `docs/installation.md`)
+- **A tracked file beside an ignored store no longer reads as a tracked
+  store.** `store.git` asked git whether anything under the store's
+  directory was tracked, so a committed `.claude-memory/README.md` beside
+  an ignored store file read high, "treat what was pushed as disclosed".
+  The audit now sorts what git tracks there: the store's content (the
+  store file with its `-wal` and `-shm`, a copy of it such as a
+  pre-restore or orphaned copy, and anything under `backups/`, where a
+  bundle can hold the signing key) reads high, with a fix naming those
+  files (`git rm --cached -- ...`, `git rm -r --cached -- .../backups`),
+  and any other tracked file is only named. The keys directory, which
+  holds nothing but the ring, is still judged whole.
+  (`src/bettermemory/posture.py`)
 
 #### Known limitations
 

@@ -705,8 +705,20 @@ def _placement(store_dir: Path, keys_dir: Path) -> Finding:
 
 
 def _where(store_dir: Path, store_file: Path, keys_dir: Path) -> Iterator[Finding]:
-    store_probe = store_file if _presence(store_file)[0] else store_dir
-    yield git_finding("store.git", "store", store_dir, store_probe, ignored_ok=True)
+    # What makes the store tracked is the store's content, not whatever
+    # else sits in its directory: a tracked README beside an ignored store
+    # file is no store in the repository, a tracked backup bundle or a
+    # copy of the store is (`git_finding`'s `store_name`).
+    has_store = _presence(store_file)[0]
+    store_probe = store_file if has_store else store_dir
+    yield git_finding(
+        "store.git",
+        "store",
+        store_dir,
+        store_probe,
+        ignored_ok=True,
+        store_name=store_file.name,
+    )
     yield git_finding(
         "keys.git", "keys directory", keys_dir, keys_dir, ignored_ok=False
     )
@@ -745,15 +757,42 @@ def _where(store_dir: Path, store_file: Path, keys_dir: Path) -> Iterator[Findin
         )
 
 
+def _store_content(name: str, store: str, backups: str) -> bool:
+    """Whether a tracked path (relative to the working tree, in POSIX form)
+    is the store's content: the store file `store`, its ``-wal`` and
+    ``-shm``, a copy named after it (restore's ``<store>.pre-restore-<stamp>``
+    copies with their ``-wal`` and ``-shm``, the daemon's
+    ``<store>.orphaned-<stamp>.sqlite`` saves), or anything under the store's
+    `backups` directory, where `backup create` puts its bundles by default
+    (a snapshot, a head, and with ``--include-key`` the signing key)."""
+    return (
+        name in (store, store + "-wal", store + "-shm")
+        or name.startswith(store + ".")
+        or name.startswith(backups + "/")
+    )
+
+
 def git_finding(
-    finding_id: str, label: str, directory: Path, probe: Path, *, ignored_ok: bool
+    finding_id: str,
+    label: str,
+    directory: Path,
+    probe: Path,
+    *,
+    ignored_ok: bool,
+    store_name: str | None = None,
 ) -> Finding:
     """Whether `directory` sits in a git working tree, and if so whether
-    git tracks it or ignores `probe` (the store file, or the directory).
-    Tracked is high: the store or the key goes wherever the repository
-    goes. Not ignored is a warning: one ``git add -A`` away. Ignored is
-    information for the store (``ignored_ok``) and a warning for the keys,
-    which belong in no working tree at all."""
+    git tracks its content or ignores `probe` (the store file, or the
+    directory). Git lists every tracked file under `directory`, as literal
+    pathspecs. For the keys directory (`store_name` None), which holds
+    nothing but the ring, every one is content. For the store, the content
+    is the file named `store_name`, its copies and its backups
+    (`_store_content`); any other tracked file (a README, a .gitignore) is
+    named in ``details["other_tracked"]`` and changes nothing. Tracked
+    content is high: the store, a copy, a bundle or the key goes wherever
+    the repository goes. Not ignored is a warning: one ``git add -A`` away.
+    Ignored is information for the store (``ignored_ok``) and a warning for
+    the keys, which belong in no working tree at all."""
     if not os.path.isdir(directory):
         return Finding(finding_id, "ok", f"no {label} at {directory} yet")
     top_run = run_git(["rev-parse", "--show-toplevel"], cwd=directory, timeout=2.0)
@@ -769,20 +808,47 @@ def git_finding(
         relative_probe = probe.resolve().relative_to(top).as_posix()
     except ValueError:
         return Finding(finding_id, "ok", f"the {label} is not in a git working tree")
-    tracked = run_git(
-        ["ls-files", "--error-unmatch", "--", relative_dir], cwd=top, timeout=2.0
+    listed = run_git(
+        ["--literal-pathspecs", "ls-files", "-z", "--", relative_dir],
+        cwd=top,
+        timeout=2.0,
     )
-    if tracked is not None and tracked.returncode == 0:
+    tracked: list[str] = []
+    if listed is not None and listed.returncode == 0:
+        tracked = [name for name in listed.stdout.split("\0") if name]
+    if store_name is None:
+        content, backups = tracked, ""
+    else:
+        prefix = "" if relative_dir == "." else relative_dir + "/"
+        from .backup import BACKUPS_DIR_NAME
+
+        backups = prefix + BACKUPS_DIR_NAME
+        store = prefix + store_name
+        content = [name for name in tracked if _store_content(name, store, backups)]
+        other = [name for name in tracked if name not in content]
+        if other:
+            details["other_tracked"] = other[:20]
+    if content:
         details["tracked"] = True
+        details["tracked_files"] = content[:20]
+        if store_name is None:
+            remove = f"git rm -r --cached {shlex.quote(relative_dir)}"
+        else:
+            singles = [name for name in content if not name.startswith(backups + "/")]
+            steps = []
+            if singles:
+                steps.append(
+                    "git rm --cached -- " + " ".join(shlex.quote(n) for n in singles)
+                )
+            if len(singles) < len(content):
+                steps.append(f"git rm -r --cached -- {shlex.quote(backups)}")
+            remove = " and ".join(steps)
         return Finding(
             finding_id,
             "high",
             f"the {label} {directory} is tracked by the git repository at {top}",
             path=str(directory),
-            fix=(
-                f"git rm -r --cached {shlex.quote(relative_dir)}, ignore it, and "
-                "treat what was pushed as disclosed"
-            ),
+            fix=f"{remove}, ignore it, and treat what was pushed as disclosed",
             details=details,
         )
     ignored = run_git(
