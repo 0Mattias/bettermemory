@@ -129,6 +129,7 @@ def _run_size(n: int, *, search_repeats: int, load_repeats: int) -> dict[str, An
     """Bench one corpus size. Returns a dict with the timings + corpus
     metadata. Creates and tears down its own tmp directory."""
     bench_dir = Path(tempfile.mkdtemp(prefix=f"bm-bench-{n}-"))
+    store: Store | None = None
     try:
         # The key goes under the bench directory and is removed with it,
         # never under the user's keys directory (ENG-106).
@@ -172,6 +173,10 @@ def _run_size(n: int, *, search_repeats: int, load_repeats: int) -> dict[str, An
             "search_ms": search_stats,
         }
     finally:
+        # Closed before the directory goes: Windows keeps a directory whose
+        # store file is still open, and the key would stay with it.
+        if store is not None:
+            store.close()
         shutil.rmtree(bench_dir, ignore_errors=True)
 
 
