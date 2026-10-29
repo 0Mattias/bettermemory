@@ -341,8 +341,8 @@ cold-endorsement list and recent silent-miss candidates. An 8.x store's
 events are read once `bettermemory migrate v8` has imported them.
 `--json` for machine-readable output. The compute layer is
 `src/bettermemory/eval.py` (`compute_eval` / `parse_since` /
-`render_text`, with the window parsing in `eval_model.py`) for callers
-outside the CLI.
+`render_text`, with the window parsing in `eval_model.py` and the
+renderers in `eval_render.py`) for callers outside the CLI.
 
 The default report also breaks the audit telemetry down per model
 (`by_model`, from the `client_model` stamp the Stop hook reads off the
