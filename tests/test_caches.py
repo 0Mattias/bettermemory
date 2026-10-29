@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from typing import Any, cast
 
 import pytest
 
-from bettermemory import _caches, origin
+from bettermemory import _caches, origin, origin_gitfiles
 
 
 @pytest.fixture
@@ -73,3 +74,22 @@ def test_clear_all_empties_the_reachable_walk_memo() -> None:
     )
     _caches.clear_all()
     assert not origin._WALK_MEMO
+
+
+def test_clear_all_empties_the_git_file_memos() -> None:
+    """origin_gitfiles registers the clearers of its three memos when it
+    is imported: the config facts per config file, the paths that were not
+    a directory, and the index entries per git directory."""
+    clearers = (
+        origin_gitfiles._clear_config_memo,
+        origin_gitfiles._clear_not_a_directory,
+        origin_gitfiles._clear_index_memo,
+    )
+    assert [c for c in clearers if c not in _caches._CLEARERS] == []
+    origin_gitfiles._CONFIG_MEMO["/repo/.git/config"] = cast(Any, None)
+    origin_gitfiles._NOT_A_DIRECTORY["/nowhere"] = None
+    origin_gitfiles._INDEX_MEMO["/repo/.git"] = cast(Any, None)
+    _caches.clear_all()
+    assert not origin_gitfiles._CONFIG_MEMO
+    assert not origin_gitfiles._NOT_A_DIRECTORY
+    assert not origin_gitfiles._INDEX_MEMO
