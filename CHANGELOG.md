@@ -1303,6 +1303,16 @@ the candidates' testing.
   `path_drift=False` for a caller that reads only the ranking, and the
   brief passes it; `memory_search` reads drift as before.
   (`src/bettermemory/search.py`, `src/bettermemory/recall_brief.py`)
+- **The estate check runs git in at most eight foreign roots per run.**
+  The cross-repo drift check capped the roots it walks at eight, but a
+  root skipped after `capture` (no checkout identified there, or another
+  repository's) did not count, and `capture` runs several git processes.
+  A store with records from many foreign directories that no longer
+  re-identify ran git in every one of them. A root now takes a place when
+  git first runs there; a worktree gone or unreadable, decided on a stat
+  alone, still takes none, and the roots past the cap are listed as
+  skipped. With twelve foreign roots that do not re-identify, `capture`
+  runs 8 times, not 12. (`src/bettermemory/health.py`)
 
 #### Known limitations
 

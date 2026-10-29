@@ -682,20 +682,24 @@ def _compute_cross_repo_drift(
     is skipped with its reason rather than misread), and judged by the
     same claim-anchored legs through `_drift_rows_for_candidates`.
 
-    Bounds and silences: `_CROSS_REPO_MAX_ROOTS` caps the roots git is
-    walked in per run (cheap skips don't consume it; over-cap groups
-    are listed as skipped, never dropped). A verified record whose
-    origin names no repo or no worktree_root cannot be grouped at all —
-    there is nothing to resolve and no anchor to count against — so it
-    is COUNTED as `unanchorable` rather than dropped. It used to fall
-    out of a bare `continue` above the `skipped` list, which is how a
-    partial estate came to read as a complete one: on the maintainer's
-    own store that silence covered 107 verified records, 22% of it.
-    `None` only when there is nothing to report on either axis — no
-    foreign claim-anchored verified candidate AND nothing unanchorable —
-    the same philosophy as `commit_drift_debt`'s None. A walked clean
-    group IS emitted, with zero rows: "checked N, clean" and "didn't
-    check" must not read the same, and neither must "checked nothing".
+    Bounds and silences: `_CROSS_REPO_MAX_ROOTS` caps the roots git runs
+    in per run: a root takes a place when git first runs there, whether
+    or not it re-identifies as a checkout of the recorded repo, since
+    `capture` alone runs several git processes (ENG-169 G6). The skips
+    decided on a stat alone (a worktree gone or unreadable) take none;
+    over-cap groups are listed as skipped, never dropped. A verified
+    record whose origin names no repo or no worktree_root cannot be
+    grouped at all — there is nothing to resolve and no anchor to count
+    against — so it is COUNTED as `unanchorable` rather than dropped. It
+    used to fall out of a bare `continue` above the `skipped` list,
+    which is how a partial estate came to read as a complete one: on the
+    maintainer's own store that silence covered 107 verified records,
+    22% of it. `None` only when there is nothing to report on either
+    axis — no foreign claim-anchored verified candidate AND nothing
+    unanchorable — the same philosophy as `commit_drift_debt`'s None. A
+    walked clean group IS emitted, with zero rows: "checked N, clean" and
+    "didn't check" must not read the same, and neither must "checked
+    nothing".
 
     With `anchoring`, a homed record is grouped where design 3.6 resolves
     its cited commit (`verify.ClaimAnchor.commit_root`): its home
@@ -873,6 +877,7 @@ def _compute_cross_repo_drift(
                 }
             )
             continue
+        walked += 1
         live = capture(root)
         if live.repo is None or not repos_match(repo, live.repo):
             # `repo is None` is THREE outcomes wearing one value, and
@@ -911,7 +916,6 @@ def _compute_cross_repo_drift(
                 }
             )
             continue
-        walked += 1
         timestamps = commit_author_timestamps(root)
         if timestamps is None:
             skipped.append(
