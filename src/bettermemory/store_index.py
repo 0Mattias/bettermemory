@@ -24,6 +24,8 @@ its schedule and at shutdown (`optimize`).
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import functools
 import json
 import logging
@@ -32,7 +34,7 @@ import sqlite3
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Callable, Collection, Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -532,7 +534,43 @@ def _first_told(*told: str) -> bool:
         return True
 
 
+#: What a drift warning names instead of the file the open read, while
+#: set (`drift_named`).
+_DRIFT_SUBJECT: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "_DRIFT_SUBJECT", default=None
+)
+
+
+@contextlib.contextmanager
+def drift_named(subject: str) -> Iterator[None]:
+    """While inside, an open that finds its index spelled by another
+    tokenizer names `subject` instead of the file it opened, and says
+    what holds for it: `backup verify` opens a private copy of a bundle's
+    snapshot, whose path means nothing to its reader, and which no open
+    of this build re-spells; a store restored from the bundle is
+    re-spelled at its own owner's first open. Said once a process per
+    subject and pair of fingerprints."""
+    token = _DRIFT_SUBJECT.set(subject)
+    try:
+        yield
+    finally:
+        _DRIFT_SUBJECT.reset(token)
+
+
 def _tell_drift(path: Path, stored: str | None, live: str, why: str) -> None:
+    subject = _DRIFT_SUBJECT.get()
+    if subject is not None:
+        if _first_told(subject, stored or "", live):
+            log.warning(
+                "%s: its search index is spelled by tokenizer %s and this "
+                "build's is %s; it is read as it stands, and a store restored "
+                "from it is re-spelled at that store's first writing open by "
+                "its owner",
+                subject,
+                (stored or "none")[:16],
+                live[:16],
+            )
+        return
     if not _first_told(str(path), stored or "", live):
         return
     log.warning(

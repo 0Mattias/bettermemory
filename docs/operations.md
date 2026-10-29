@@ -402,7 +402,9 @@ that copy it also runs the two checks `doctor`'s `index` check runs
 one, so the bundle reads `mismatched` and `restore` refuses it; an index
 that does not match its rows is `index_drift`, which leaves the verdict
 as it is, since the records are whole, and names the repair: restore,
-then `bettermemory index rebuild`. Exit 0
+then `bettermemory index rebuild`. A snapshot an older tokenizer spelled
+is no problem: one warning names the bundle's store, and a store restored
+from it is re-spelled at its owner's first writing open. Exit 0
 ok; 1 mismatched or tampered; 2 unverifiable, when the key is held
 nowhere, the manifest is unsigned, or it is signed only by a key the
 bundle carries (signature `self_signed`: anyone who can write a bundle

@@ -11,6 +11,7 @@ Search is read through `Store.query_candidates`, the FTS5 prefilter.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import sys
 from pathlib import Path
@@ -351,6 +352,31 @@ def test_backup_verify_reports_an_index_drift_and_its_repair(
     code, out, _ = _run_cli(["backup", "verify", str(bundle)], monkeypatch, capsys)
     assert code == 0
     assert "index_drift: detail " in out
+
+
+def test_backup_verify_names_the_bundle_for_an_older_tokenizers_index(
+    tmp_path: Path, keys_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A snapshot an older tokenizer spelled verifies ok with no problem
+    (a restored store's owner's open re-spells it). Its warning names the
+    bundle's store, not the private copy the verification opened, and says
+    what holds for a bundle."""
+    from .test_store_tokenizer import OLD_FINGERPRINT, _old_store
+
+    path, _ = _old_store(tmp_path, keys_dir)
+    bundle = Path(create_backup(path, keys_dir=keys_dir)["bundle"])
+    caplog.set_level(logging.WARNING, logger="bettermemory.store")
+    report = verify_bundle(bundle, keys_dir=keys_dir)
+    assert report["status"] == "ok", report["problems"]
+    assert report["problems"] == []
+    told = [
+        r.getMessage() for r in caplog.records if "spelled by tokenizer" in r.message
+    ]
+    assert len(told) == 1, told
+    assert told[0].startswith(f"the store in bundle {bundle}: ")
+    assert OLD_FINGERPRINT[:16] in told[0]
+    assert "restored from it is re-spelled" in told[0]
+    assert str(path) not in told[0]
 
 
 def test_backup_verify_reads_a_damaged_page_as_an_unreadable_snapshot(

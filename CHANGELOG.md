@@ -1925,6 +1925,9 @@ follows the candidates' testing.
   page in 20 of the store's 43 indexes was one the log check never
   reads, and such a bundle read `ok` before. An index drift there is
   `index_drift`, naming the repair and leaving the verdict as it is.
+  A snapshot an older tokenizer spelled is no problem there, and its one
+  warning names the bundle's store rather than the private copy the
+  verification opens.
   Measured on 5,000 memories (15 MB): quick_check 0.014 s, the index
   check 0.026 s. (`src/bettermemory/store_index.py`,
   `src/bettermemory/doctor.py`, `src/bettermemory/backup.py`,

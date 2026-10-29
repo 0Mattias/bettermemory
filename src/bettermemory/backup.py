@@ -832,7 +832,7 @@ def verify_bundle(bundle: Path, *, keys_dir: Path | None = None) -> dict[str, An
     reads ``self_signed``). Reads the bundle and writes nothing to it: the
     log verification runs on a copy in a private temporary directory."""
     from . import store as _store
-    from .store_index import index_problems
+    from .store_index import drift_named, index_problems
 
     bundle = Path(bundle)
     keys_root = Path(keys_dir) if keys_dir is not None else _store.resolve_keys_dir()
@@ -1025,9 +1025,10 @@ def verify_bundle(bundle: Path, *, keys_dir: Path | None = None) -> dict[str, An
                 seq=origin.seq, mac=origin.mac, key_fingerprint=origin.key_fingerprint
             )
         try:
-            opened = _store.Store.open(
-                copy, keys_dir=scratch_ring.keys_dir, allow_rekey=False
-            )
+            with drift_named(f"the store in bundle {bundle}"):
+                opened = _store.Store.open(
+                    copy, keys_dir=scratch_ring.keys_dir, allow_rekey=False
+                )
             try:
                 log_report = opened.log_verify()
                 problems.extend(index_problems(opened))
