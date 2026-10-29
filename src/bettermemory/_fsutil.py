@@ -68,10 +68,11 @@ named (`ValueError`, not OOM), and the byte-vs-char trap is impossible
 because the helpers open in binary mode.
 
 * `bounded_read(path, max_bytes)` — read a file's full contents in
-  binary mode; raise `ValueError` if the file exceeds the cap. Stat-
-  checks first so an over-cap file is rejected before the allocation.
-  Use for files where over-cap is a malformed-input signal (config,
-  frontmatter, JSON payloads).
+  binary mode; raise `ValueError` if the file exceeds the cap or is not
+  a regular file. Stat-checks the open descriptor first, so an over-cap
+  file is rejected before the allocation and a FIFO or a terminal before
+  a read that would block. Use for files where over-cap is a
+  malformed-input signal (config, frontmatter, JSON payloads).
 * `bounded_stream_read(stream, max_bytes)` — read up to `max_bytes`
   from an open binary stream and raise `ValueError` if the stream
   carries more. Detects over-cap by attempting one extra byte after
@@ -404,11 +405,25 @@ def bounded_read(path: Path, max_bytes: int) -> bytes:
     Use for inputs where over-cap is a malformed-input signal —
     frontmatter, config files, JSON payloads. A transcript is read from
     its end by ``transcript.ReverseLines``, which budgets its own walk.
+
+    Anything but a regular file is refused with ``ValueError`` before a
+    byte is read: a FIFO, or a link to ``/dev/stdin`` or ``/dev/tty``, has
+    no size to cap and would block the read until a writer or the terminal
+    ends it (a repository can ship a settings file that is such a link).
+    The open is non-blocking (``O_NONBLOCK`` where the platform has it), so
+    opening a FIFO with no writer returns at once; the type is read from
+    the open descriptor, so the file checked is the file read.
     """
-    size = path.stat().st_size
-    if size > max_bytes:
-        raise ValueError(f"{path}: file size {size} exceeds cap {max_bytes} bytes")
-    with path.open("rb") as fh:
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+    fd = os.open(path, flags)
+    with open(fd, "rb", closefd=True) as fh:
+        found = os.fstat(fh.fileno())
+        if not stat.S_ISREG(found.st_mode):
+            raise ValueError(f"{path}: not a regular file; not read")
+        if found.st_size > max_bytes:
+            raise ValueError(
+                f"{path}: file size {found.st_size} exceeds cap {max_bytes} bytes"
+            )
         return fh.read(max_bytes)
 
 

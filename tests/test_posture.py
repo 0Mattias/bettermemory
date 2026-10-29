@@ -1214,6 +1214,30 @@ def test_unspecified_address_and_the_domains_lock(layout: Layout) -> None:
     assert "claude.sandbox.network" not in _ids(audit(platform="linux"))
 
 
+def test_a_settings_file_that_is_no_regular_file_is_refused(tmp_path: Path) -> None:
+    """ENG-185 (review fold G5). The audit's settings reader shares the
+    bounded reader: a settings file linked to a FIFO is an error the audit
+    reports, not a read that blocks."""
+    import threading
+
+    if sys.platform == "win32":
+        pytest.skip("needs os.mkfifo")
+    fifo = tmp_path / "fifo"
+    os.mkfifo(fifo)
+    settings = tmp_path / "settings.json"
+    settings.symlink_to(fifo)
+    read: list[tuple[object, str | None]] = []
+    worker = threading.Thread(
+        target=lambda: read.append(posture.read_settings(settings)), daemon=True
+    )
+    worker.start()
+    worker.join(5)
+    assert not worker.is_alive(), "the audit's settings read blocked on a FIFO"
+    document, error = read[0]
+    assert document is None
+    assert error is not None and "not a regular file" in error
+
+
 @posix_only
 def test_unreadable_settings_file_is_a_warning(layout: Layout) -> None:
     path = layout.home / ".claude" / "settings.json"

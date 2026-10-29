@@ -47,6 +47,12 @@ either, and stays `sandbox_settings.claude_managed_settings_path`'s.
 Every function reads the environment and the home directory when called,
 so a test that points ``HOME`` or ``CLAUDE_CONFIG_DIR`` at a scratch
 directory moves every answer with it.
+
+The settings files and a project's ``.mcp.json`` are read through one
+bounded reader, `read_settings_text`: a project's files are whatever the
+repository ships, and the audit and doctor read them in every checkout
+they run in. The global config is not held to that bound: Claude Code
+writes it alone, and it grows with the state it keeps per project.
 """
 
 from __future__ import annotations
@@ -55,6 +61,8 @@ import os
 import stat
 import unicodedata
 from pathlib import Path
+
+from ._fsutil import bounded_read
 
 #: The variable that moves Claude Code's configuration directory.
 CLAUDE_CONFIG_DIR_ENV = "CLAUDE_CONFIG_DIR"
@@ -84,6 +92,13 @@ LOCAL_SETTINGS_NAME = "settings.local.json"
 CLAUDE_DIR_NAME = ".claude"
 #: A project's MCP servers (the project scope).
 PROJECT_MCP_NAME = ".mcp.json"
+#: The most of a settings file or a project's ``.mcp.json`` a reader takes:
+#: small enough that a file a repository ships cannot make the audit or
+#: doctor hold more than this, and over a thousand times the block
+#: `bettermemory security sandbox` prints (736 bytes for its four
+#: directories under a scratch home). How large hand-kept settings files
+#: run is not measured; a refused file is named, never misread.
+SETTINGS_CAP_BYTES = 1 << 20
 
 
 def _override(*, nfc: bool) -> Path | None:
@@ -179,6 +194,17 @@ def project_mcp_path(project: Path) -> Path:
     return project / PROJECT_MCP_NAME
 
 
+def read_settings_text(path: Path, cap: int = SETTINGS_CAP_BYTES) -> str:
+    """The text of a settings file or a project's ``.mcp.json``, at most
+    `cap` bytes (`SETTINGS_CAP_BYTES`), decoded as UTF-8. Raises
+    FileNotFoundError when the file is not there, ValueError when it is
+    over the cap, not a regular file (a FIFO, a link to a terminal) or not
+    UTF-8 (UnicodeDecodeError), OSError when it cannot be read. A file over
+    the cap is refused from its size, and one that is not a regular file
+    from its type, never read (`_fsutil.bounded_read`)."""
+    return bounded_read(path, cap).decode("utf-8")
+
+
 def _same_path(a: Path, b: Path | None) -> bool:
     if b is None:
         return False
@@ -233,6 +259,7 @@ __all__ = [
     "LEGACY_GLOBAL_CONFIG_NAME",
     "LOCAL_SETTINGS_NAME",
     "PROJECT_MCP_NAME",
+    "SETTINGS_CAP_BYTES",
     "SETTINGS_NAME",
     "config_dir",
     "config_dir_override",
@@ -242,6 +269,7 @@ __all__ = [
     "oauth_suffix",
     "project_mcp_path",
     "project_settings_paths",
+    "read_settings_text",
     "settings_for_mcp_config",
     "user_settings_path",
 ]

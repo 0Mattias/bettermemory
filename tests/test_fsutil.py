@@ -95,6 +95,38 @@ class TestBoundedRead:
         path.write_bytes(b"")
         assert bounded_read(path, max_bytes=1024) == b""
 
+    def test_a_fifo_is_refused_without_blocking(self, tmp_path: Path) -> None:
+        """ENG-185 (review fold G5). A FIFO, or a link to one (or to
+        /dev/stdin or /dev/tty), has a stat size of 0, so the cap passed it
+        and the read blocked until a writer or the terminal ended it: a
+        repository's settings file linked to one held `doctor` and
+        `security audit`. Anything but a regular file is refused before a
+        byte is read, and the open does not block."""
+        import threading
+
+        if sys.platform == "win32":
+            pytest.skip("needs os.mkfifo")
+        fifo = tmp_path / "fifo"
+        os.mkfifo(fifo)
+        link = tmp_path / "settings.json"
+        link.symlink_to(fifo)
+        outcome: list[BaseException | bytes] = []
+
+        def read() -> None:
+            try:
+                outcome.append(bounded_read(link, max_bytes=1024))
+            except BaseException as exc:  # noqa: BLE001 - recorded for the assert
+                outcome.append(exc)
+
+        worker = threading.Thread(target=read, daemon=True)
+        worker.start()
+        worker.join(5)
+        assert not worker.is_alive(), "bounded_read blocked on a FIFO"
+        assert len(outcome) == 1 and isinstance(outcome[0], ValueError)
+        assert "not a regular file" in str(outcome[0])
+        with pytest.raises(ValueError, match="not a regular file"):
+            bounded_read(Path(os.devnull), max_bytes=1024)
+
 
 class TestBoundedStreamRead:
     def test_under_cap_returns_full(self) -> None:

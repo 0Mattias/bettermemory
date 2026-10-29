@@ -84,6 +84,10 @@ class ClientPaths:
     description: str
     paths: tuple[Path, ...]
     format: str = FORMAT_MCP_SERVERS_JSON
+    #: The paths that are project-scoped: files in the working directory, a
+    #: repository's, which doctor reads through the bounded reader
+    #: (`claude_paths.read_settings_text`). The others are the user's own.
+    project_paths: tuple[Path, ...] = ()
 
 
 def _claude_code_paths() -> ClientPaths:
@@ -92,13 +96,12 @@ def _claude_code_paths() -> ClientPaths:
     # set: `claude_paths`), and `./.mcp.json` (project root) for
     # project-scope. We default to user scope on auto-patch — most
     # strangers want "this works everywhere", not "this works in one repo".
+    project = claude_paths.project_mcp_path(Path.cwd())
     return ClientPaths(
         name="claude-code",
         description="Claude Code CLI",
-        paths=(
-            claude_paths.global_config_path(),
-            claude_paths.project_mcp_path(Path.cwd()),
-        ),
+        paths=(claude_paths.global_config_path(), project),
+        project_paths=(project,),
     )
 
 
@@ -134,13 +137,12 @@ def _claude_desktop_paths() -> ClientPaths:
 def _cursor_paths() -> ClientPaths:
     # Cursor: user-scope at `~/.cursor/mcp.json`; project-scope at
     # `<repo>/.cursor/mcp.json`. Same pattern as Claude Code.
+    project = Path.cwd() / ".cursor" / "mcp.json"
     return ClientPaths(
         name="cursor",
         description="Cursor",
-        paths=(
-            Path.home() / ".cursor" / "mcp.json",
-            Path.cwd() / ".cursor" / "mcp.json",
-        ),
+        paths=(Path.home() / ".cursor" / "mcp.json", project),
+        project_paths=(project,),
     )
 
 
@@ -1441,7 +1443,10 @@ def patch_hermes_config(
 
 
 def read_server_entries(
-    path: Path, *, config_format: str = FORMAT_MCP_SERVERS_JSON
+    path: Path,
+    *,
+    config_format: str = FORMAT_MCP_SERVERS_JSON,
+    max_bytes: int | None = None,
 ) -> dict[str, Any]:
     """The server map of one client config, read by document shape: the
     object under `mcpServers` for the JSON clients, the mapping under
@@ -1449,8 +1454,17 @@ def read_server_entries(
     absent key read as an empty map — nothing registered — while a file
     that does not parse raises ValueError, so `doctor` can tell "nothing
     here" from "cannot read", the distinction its `unreadable` finding
-    exists for. OSError and UnicodeDecodeError propagate untouched."""
-    text = path.read_text(encoding="utf-8")
+    exists for. OSError and UnicodeDecodeError propagate untouched.
+    `max_bytes` bounds the read (`claude_paths.read_settings_text`) for a
+    file a repository ships; a file over it raises ValueError unread.
+    Anything but a regular file (a FIFO, a link to a terminal) raises
+    ValueError unread either way: the read would block."""
+    if max_bytes is not None:
+        text = claude_paths.read_settings_text(path, max_bytes)
+    elif not stat.S_ISREG(os.stat(path).st_mode):
+        raise ValueError(f"{path}: not a regular file; not read")
+    else:
+        text = path.read_text(encoding="utf-8")
     data: Any
     if config_format == FORMAT_HERMES_YAML:
         try:

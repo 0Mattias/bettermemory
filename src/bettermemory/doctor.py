@@ -1211,10 +1211,21 @@ def _hook_commands(hooks: object) -> Iterator[tuple[str, str]]:
                     yield event, command
 
 
-def _read_json_object(path: Path) -> dict[str, Any]:
+def _read_json_object(path: Path, *, bounded: bool = True) -> dict[str, Any]:
     """A JSON file's root object; {} for an empty file or a non-object
-    root. Raises OSError or ValueError when it cannot be read or parsed."""
-    text = path.read_text(encoding="utf-8")
+    root. Raises OSError or ValueError when it cannot be read or parsed.
+
+    Bounded (the default), it is read through Claude Code's one bounded
+    reader (`claude_paths.read_settings_text`), which the audit reads the
+    same files through: a settings file and a project's ``.mcp.json`` are
+    whatever the repository doctor runs in ships, and one over the cap is
+    refused unread. Only the global config is read whole: Claude Code
+    alone writes it, and it grows with the state kept per project."""
+    text = (
+        claude_paths.read_settings_text(path)
+        if bounded
+        else path.read_text(encoding="utf-8")
+    )
     data = json.loads(text) if text.strip() else {}
     return data if isinstance(data, dict) else {}
 
@@ -1229,7 +1240,7 @@ def _claude_registrations(cwd: Path | None, binary: str) -> list[str]:
     user_json = claude_paths.global_config_path()
     sources: list[tuple[str, object]] = []
     with contextlib.suppress(OSError, ValueError):
-        data = _read_json_object(user_json)
+        data = _read_json_object(user_json, bounded=False)
         sources.append((str(user_json), data.get("mcpServers")))
         projects = data.get("projects")
         if cwd is not None and isinstance(projects, Mapping):
@@ -1286,7 +1297,10 @@ def check_claude_code(ctx: _Context) -> Check:
     hooks: dict[str, list[str]] = {}
     hook_sources: list[str] = []
     for path in settings:
-        if not path.is_file():
+        # A path that is there but no regular file (a FIFO, a link to a
+        # terminal) is read, and refused by the bounded reader with a
+        # finding, rather than passed over in silence.
+        if not path.exists():
             continue
         try:
             data = _read_json_object(path)
@@ -1426,13 +1440,25 @@ def check_clients(ctx: _Context) -> Check:
         except OSError:
             continue
         for index, path in enumerate(dict.fromkeys(client.paths)):
-            if not path.is_file():
+            # As in the claude_code check: a path that is there but no
+            # regular file is named as unreadable (`read_server_entries`).
+            if not path.exists():
                 continue
             init_command = f"`bettermemory init --client {name}" + (
                 "`" if index == 0 else f" --config-path {path}`"
             )
+            # A project-scoped path (`init.ClientPaths.project_paths`) is in
+            # the working directory, a repository's file: read through the
+            # bounded reader the claude_code check uses.
+            cap = (
+                claude_paths.SETTINGS_CAP_BYTES
+                if path in client.project_paths
+                else None
+            )
             try:
-                servers = read_server_entries(path, config_format=client.format)
+                servers = read_server_entries(
+                    path, config_format=client.format, max_bytes=cap
+                )
             except (OSError, UnicodeDecodeError, ValueError) as exc:
                 files.append({"client": name, "path": str(path), "entries": None})
                 findings.append(

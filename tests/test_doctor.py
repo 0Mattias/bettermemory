@@ -29,7 +29,7 @@ from typing import Any
 import pytest
 
 import bettermemory
-from bettermemory import _daemon_client, doctor
+from bettermemory import _daemon_client, claude_paths, doctor
 from bettermemory import config as _config
 from bettermemory.cli import _build_parser
 from bettermemory.cli import main as cli_main
@@ -1240,6 +1240,133 @@ def test_claude_code_is_read_where_claude_config_dir_points(
     assert check.status == "warn"
     assert "no bettermemory hooks" in check.summary
     assert str(config_dir / "settings.json") in (check.remedy or "")
+
+
+def _over_the_cap(data: dict[str, Any]) -> str:
+    """`data` as valid JSON, padded past `claude_paths.SETTINGS_CAP_BYTES`."""
+    return json.dumps({"pad": "x" * claude_paths.SETTINGS_CAP_BYTES, **data})
+
+
+_REGISTERED = {"mcpServers": {"bettermemory": {"command": "bettermemory", "args": []}}}
+
+
+def test_a_project_settings_file_over_the_cap_is_refused_unread(env: Env) -> None:
+    """ENG-185 H7. doctor read a project's settings files whole
+    (`path.read_text`), where the audit holds the same files to
+    `claude_paths.SETTINGS_CAP_BYTES`: a repository could ship one of any
+    size, and doctor run in it loaded all of it. One bounded reader serves
+    both now; a file over the cap is named as unreadable and what it says
+    (here, that the plugin is off) is not taken."""
+    env.plugin()
+    project = env.tmp / "proj"
+    settings = project / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text(
+        _over_the_cap({"enabledPlugins": {"bettermemory@bettermemory": False}}),
+        encoding="utf-8",
+    )
+    check = env.checks(cwd=project)["claude_code"]
+    assert check.status == "warn", check
+    assert check.summary.startswith(f"{settings} cannot be read: ")
+    assert f"exceeds cap {claude_paths.SETTINGS_CAP_BYTES} bytes" in check.summary
+    assert check.details["plugin_enabled"] is True
+    assert check.details["plugin_source"] == str(env.home / ".claude" / "settings.json")
+
+
+def test_a_project_mcp_json_over_the_cap_is_refused_unread(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-185 H7. The project's ``.mcp.json`` is a repository's file too:
+    the claude_code check and the clients check read it through the same
+    bounded reader, so one over the cap registers nothing and the clients
+    check names it."""
+    env.put_on_path("bettermemory")
+    env.settings({"hooks": _hooks(_ALL_HOOKS)})
+    project = env.tmp / "proj"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    mcp_json = _client_path("claude-code", 1)
+    mcp_json.write_text(_over_the_cap(_REGISTERED), encoding="utf-8")
+    checks = env.checks(cwd=Path.cwd())
+    claude = checks["claude_code"]
+    assert claude.details["mcp_registrations"] == []
+    assert claude.status == "warn"
+    assert "no bettermemory MCP server registered" in claude.summary
+    clients = checks["clients"]
+    assert clients.status == "warn"
+    assert clients.summary.startswith(f"claude-code: {mcp_json} cannot be read: ")
+    assert "exceeds cap" in clients.summary
+    assert clients.details["files"] == [
+        {"client": "claude-code", "path": str(mcp_json), "entries": None}
+    ]
+
+
+def test_a_project_settings_file_that_is_no_regular_file_is_refused(
+    env: Env,
+) -> None:
+    """ENG-185 (review fold G5). A repository can ship its ``.mcp.json`` or
+    ``.claude/settings.json`` as a link to a FIFO (or to /dev/stdin or
+    /dev/tty). The stat size is 0, so the cap let it through, and doctor's
+    registration scan blocked in the read of the ``.mcp.json``; a settings
+    file or client config that was no regular file was passed over without
+    a word. Each is named as unreadable now, without a read."""
+    import threading
+
+    if sys.platform == "win32":
+        pytest.skip("needs os.mkfifo")
+    env.plugin()
+    project = env.tmp / "proj"
+    settings = project / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    mcp_json = project / ".mcp.json"
+    for name in ("fifo-settings", "fifo-mcp"):
+        os.mkfifo(env.tmp / name)
+    settings.symlink_to(env.tmp / "fifo-settings")
+    mcp_json.symlink_to(env.tmp / "fifo-mcp")
+    env.monkeypatch.chdir(project)
+    found: list[dict[str, doctor.Check]] = []
+    worker = threading.Thread(
+        target=lambda: found.append(env.checks(cwd=project)), daemon=True
+    )
+    worker.start()
+    worker.join(10)
+    assert not worker.is_alive(), "doctor blocked on a FIFO"
+    claude = found[0]["claude_code"]
+    assert claude.status == "warn"
+    assert claude.summary.startswith(f"{settings} cannot be read: ")
+    assert "not a regular file" in claude.summary
+    assert claude.details["mcp_registrations"] == []
+    clients = found[0]["clients"]
+    assert clients.status == "warn"
+    assert "not a regular file" in clients.summary
+
+
+def test_a_user_scope_config_is_read_whole(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENG-185 H7, the other side. The global config and a client's
+    user-scope file are not a repository's: Claude Code alone writes
+    ``.claude.json``, which grows with the state it keeps per project, so
+    neither is held to the cap, and a large one still registers."""
+    env.put_on_path("bettermemory")
+    env.settings({"hooks": _hooks(_ALL_HOOKS)})
+    monkeypatch.chdir(env.tmp)
+    global_config = env.home / ".claude.json"
+    global_config.write_text(_over_the_cap(_REGISTERED), encoding="utf-8")
+    cursor = _client_path("cursor")
+    cursor.parent.mkdir(parents=True)
+    cursor.write_text(_over_the_cap(_REGISTERED), encoding="utf-8")
+    checks = env.checks()
+    assert checks["claude_code"].status == "ok", checks["claude_code"]
+    assert checks["claude_code"].details["mcp_registrations"] == [str(global_config)]
+    assert checks["clients"].details["files"] == [
+        {
+            "client": "claude-code",
+            "path": str(global_config),
+            "entries": ["bettermemory"],
+        },
+        {"client": "cursor", "path": str(cursor), "entries": ["bettermemory"]},
+    ]
 
 
 def test_the_plugin_enabled_is_ok(env: Env) -> None:

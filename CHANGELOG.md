@@ -553,6 +553,21 @@ the candidates' testing.
   and any other tracked file is only named. The keys directory, which
   holds nothing but the ring, is still judged whole.
   (`src/bettermemory/posture.py`)
+- **doctor holds a repository's Claude Code files to the audit's cap.**
+  doctor read a project's `.claude/settings*.json`, its `.mcp.json` and
+  a project-scoped client config (`.cursor/mcp.json`) whole, while the
+  audit read the same settings files through a 1 MiB cap: a repository
+  could ship a file of any size and `bettermemory doctor`, run in it,
+  loaded all of it; one shipped as a link to a FIFO or a terminal held
+  `doctor` and `security audit` in the read. Both now read through one
+  bounded reader, `claude_paths.read_settings_text`: a file over the cap,
+  or one that is no regular file, is named as unreadable without being
+  read. The global config (`~/.claude.json`) and a client's user-scope
+  file are still read whole, once they are regular files: Claude Code
+  alone writes the global config, which grows with the state it keeps per
+  project. (`src/bettermemory/claude_paths.py`,
+  `src/bettermemory/_fsutil.py`, `src/bettermemory/doctor.py`,
+  `src/bettermemory/init.py`, `src/bettermemory/posture.py`)
 
 #### Known limitations
 

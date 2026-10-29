@@ -78,7 +78,7 @@ from pathlib import Path
 from typing import Any
 
 from . import _daemon_client, claude_paths, sandbox_settings
-from ._fsutil import bounded_read, sqlite_file_uri
+from ._fsutil import sqlite_file_uri
 from ._git import run_git
 from .config import (
     ENV_DIR_OVERRIDE,
@@ -92,10 +92,6 @@ from .log import STORE_ID_PATTERN, KeyRing, KeyUnreadableError, fingerprint
 #: Every status a finding can carry, mildest first.
 STATUSES: tuple[str, ...] = ("ok", "info", "skip", "warn", "high")
 _EXIT_FOR: dict[str, int] = {"high": 1, "warn": 2}
-
-#: The cap on a Claude Code settings file the audit reads: far above any
-#: real one, small enough that a hostile file cannot exhaust memory.
-_SETTINGS_CAP_BYTES = 1 << 20
 
 #: The overrides an operator should know are in effect: each moves a
 #: directory away from the platform default, and the hooks and the MCP
@@ -1226,16 +1222,21 @@ def _settings(config: Config) -> Iterator[Finding]:
 def read_settings(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     """A Claude Code settings file as a dict, ``(None, None)`` when it is
     absent, ``(None, why)`` when it cannot be read or is not a JSON
-    object. Read, never written."""
+    object. Read, never written, through Claude Code's one bounded reader
+    (`claude_paths.read_settings_text`, at most
+    `claude_paths.SETTINGS_CAP_BYTES`), which doctor reads the same
+    files through."""
     try:
-        raw = bounded_read(path, _SETTINGS_CAP_BYTES)
+        text = claude_paths.read_settings_text(path)
     except FileNotFoundError:
         return None, None
+    except UnicodeDecodeError as exc:
+        return None, f"not JSON ({exc})"
     except (OSError, ValueError) as exc:
         return None, str(exc)
     try:
-        data = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError) as exc:
+        data = json.loads(text)
+    except ValueError as exc:
         return None, f"not JSON ({exc})"
     if not isinstance(data, dict):
         return None, "not a JSON object"
