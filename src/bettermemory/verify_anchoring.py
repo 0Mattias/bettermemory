@@ -690,9 +690,15 @@ def _clear_skip_memo() -> None:
 
 def _skip_index(found: GitDir) -> _SkipIndex | None:
     """The `_SkipIndex` of the index of the working tree `found` names, read
-    from the open file and memoised on its stamp; None where there is no
-    index, where a read fails, and where the index is not read exactly
-    (`_parse_skip_index`, or an object format this does not know)."""
+    whole and memoised on its stamp; None where there is no index, where a
+    read fails, and where the index is not read exactly (`_parse_skip_index`,
+    or an object format this does not know). The stamp is `githead.stamp`,
+    taken before and after the read, by one call on every platform: a stamp
+    taken from the open file (`os.fstat`) and compared with one of the path
+    (`os.stat`) never matched on Windows, where the two read the change
+    time from different sources, so the index was parsed on every call. A
+    stamp that moved during the read answers with what was read and leaves
+    the memo alone, so the next read starts from the new stamp."""
     path = found.gitdir / "index"
     config = found.commondir / "config"
     key = os.fspath(path)
@@ -706,28 +712,19 @@ def _skip_index(found: GitDir) -> _SkipIndex | None:
                 _SKIP_MEMO.move_to_end(key)
                 return held[1]
         text = config.read_bytes() if current[1] is not None else b""
-        with open(path, "rb") as handle:
-            status = os.fstat(handle.fileno())
-            data = handle.read()
+        data = path.read_bytes()
+        settled = (stamp(path), stamp(config)) == current
     except (OSError, ValueError):
         return None
-    read = (
-        (
-            status.st_mtime_ns,
-            status.st_ctime_ns,
-            status.st_size,
-            status.st_ino,
-            status.st_mode,
-        ),
-        current[1],
-    )
     hash_len = _INDEX_HASH_LEN.get(_config_object_format(text))
     try:
         index = None if hash_len is None else _parse_skip_index(data, hash_len)
     except _IndexDeclined:
         index = None
+    if not settled:
+        return index
     with _SKIP_MEMO_LOCK:
-        _SKIP_MEMO[key] = (read, index)
+        _SKIP_MEMO[key] = (current, index)
         _SKIP_MEMO.move_to_end(key)
         while len(_SKIP_MEMO) > _SKIP_MEMO_CAP:
             _SKIP_MEMO.popitem(last=False)

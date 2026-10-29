@@ -1313,6 +1313,14 @@ the candidates' testing.
   alone, still takes none, and the roots past the cap are listed as
   skipped. With twelve foreign roots that do not re-identify, `capture`
   runs 8 times, not 12. (`src/bettermemory/health.py`)
+- **The sparsity index memo holds on Windows.** The memo of the parsed
+  index (ENG-169 G1) was keyed on a stamp read from the open file
+  (`os.fstat`) and looked up with a stamp of the path (`os.stat`); on
+  Windows the two read the change time from different sources, so the
+  memo never held there and the index was parsed on every absent path.
+  Both stamps are now read by `githead.stamp`, before and after the
+  read, and a stamp that moved during the read leaves the memo alone.
+  (`src/bettermemory/verify_anchoring.py`)
 
 #### Known limitations
 

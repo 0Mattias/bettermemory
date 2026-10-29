@@ -52,9 +52,13 @@ def _note(seen: list[str], path: Any) -> None:
 @pytest.fixture
 def stats(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Every stat and lstat of a path on the hung mount, recorded (and
-    then answered, so a failing test reports rather than hangs)."""
+    then answered, so a failing test reports rather than hangs), and every
+    existence read: on Windows since Python 3.12, `os.path.exists` and
+    `os.path.lexists` (which `Path.exists` calls from 3.13) read the path
+    through ``nt._path_exists``, not through `os.stat`."""
     seen: list[str] = []
     real_stat, real_lstat = os.stat, os.lstat
+    real_exists, real_lexists = os.path.exists, os.path.lexists
 
     def stat(path: Any, *args: Any, **kwargs: Any) -> os.stat_result:
         _note(seen, path)
@@ -64,8 +68,18 @@ def stats(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         _note(seen, path)
         return real_lstat(path, *args, **kwargs)
 
+    def exists(path: Any) -> bool:
+        _note(seen, path)
+        return real_exists(path)
+
+    def lexists(path: Any) -> bool:
+        _note(seen, path)
+        return real_lexists(path)
+
     monkeypatch.setattr(os, "stat", stat)
     monkeypatch.setattr(os, "lstat", lstat)
+    monkeypatch.setattr(os.path, "exists", exists)
+    monkeypatch.setattr(os.path, "lexists", lexists)
     return seen
 
 
