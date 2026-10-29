@@ -1053,3 +1053,24 @@ def optimize(store: Store, *, why: str) -> bool:
         time.monotonic() - started,
     )
     return True
+
+
+def optimize_apart(store: Store, why: str) -> bool:
+    """`optimize` on a connection of its own (`Store.reopen`, busy timeout
+    0), opened, run and closed on the calling thread: for a caller that
+    must not block the thread `store`'s connection serves. The daemon
+    runs it in its event loop's executor, since the first run on a store
+    with no statistics counts every table (measured on synthetic stores:
+    1.8 ms at 5,000 memories, 399 ms at 50,000, 1.8 s at 250,000).
+    `PRAGMA optimize` looks at every table on any connection (0x10000),
+    so a fresh one analyses what the daemon's would. A store that does
+    not open again is logged and skipped. Returns whether it ran."""
+    try:
+        other = store.reopen(busy_timeout=0)
+    except (sqlite3.Error, ValueError, OSError) as exc:
+        log.info("store %s: PRAGMA optimize (%s) skipped: %s", store.path, why, exc)
+        return False
+    try:
+        return optimize(other, why=why)
+    finally:
+        other.close()

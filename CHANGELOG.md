@@ -62,16 +62,18 @@ follows the candidates' testing.
 - **The daemon runs `PRAGMA optimize` on a schedule and at shutdown.**
   Nothing ever analysed a store, so SQLite planned every query without
   statistics however large the store grew. The daemon now runs
-  `PRAGMA optimize(0x10002)` on its own connection as it starts serving,
-  every hour (`daemon.OPTIMIZE_EVERY_SECONDS`) and at shutdown, after
-  the workers have stopped and before the store closes. 0x10000 has it
-  look at every table, since the daemon's own connection queries little;
-  an hour follows SQLite's advice for connections held open for days
-  (every few hours to once a day) at no cost that shows: on 5,000
-  memories the first run took 2.4 ms and a run with nothing to do 5.5
-  us. The schedule is the event loop's (`loop.call_later`), the thread
-  the store's connection serves, not the store watch's thread, which
-  holds nothing of the store and does not run on Windows. A run sets the
+  `PRAGMA optimize(0x10002)` as it starts serving and every hour
+  (`daemon.OPTIMIZE_EVERY_SECONDS`), in its event loop's executor on a
+  connection of its own, so the loop answers while it runs, and at
+  shutdown on the store's connection, after the workers have stopped and
+  before the store closes. 0x10000 has it look at every table, not only
+  those its connection queried; an hour follows SQLite's advice for
+  connections held open for days (every few hours to once a day). The
+  first run on a store counts every table: 2.4 ms at 5,000 memories in a
+  scratch run, and on synthetic stores 399 ms at 50,000 and 1.8 s at
+  250,000; a run with nothing to do takes microseconds. The next run is
+  armed once one is done, not on the store watch's thread, which holds
+  nothing of the store and does not run on Windows. A run sets its
   connection's busy timeout to 0, so a store another connection is
   writing is skipped, not waited on. (`src/bettermemory/daemon.py`,
   `src/bettermemory/store_index.py`, `docs/operations.md`,

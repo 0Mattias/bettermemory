@@ -993,17 +993,20 @@ def build_app(
 #: tests lower it.
 STORE_WATCH_SECONDS = 30.0
 
-#: How often, in seconds, the daemon runs ``PRAGMA optimize`` on its own
-#: connection (`store_index.optimize`), besides once as it starts serving
-#: and once at shutdown (ENG-100). SQLite's advice for a connection held
-#: open for days is to run it periodically, every few hours to once a day;
-#: an hour bounds how long a daemon plans against missing or stale
-#: statistics after a large import at no cost that shows (measured on
-#: 5,000 memories: 2.4 ms when it analysed every table, 5.5 us when nothing
-#: needed it). Scheduled on the event loop (`loop.call_later`), the thread
-#: the store's connection serves, rather than on the watch's thread, which
-#: must hold nothing of the store and does not run on Windows. Read when
-#: `serve` starts; tests lower it.
+#: How often, in seconds, the daemon runs ``PRAGMA optimize``, besides
+#: once as it starts serving and once at shutdown (ENG-100). SQLite's
+#: advice for a connection held open for days is to run it periodically,
+#: every few hours to once a day; an hour bounds how long a daemon plans
+#: against missing or stale statistics after a large import. A run with
+#: nothing to analyse costs microseconds; the first on a store with no
+#: statistics counts every table (1.8 ms at 5,000 memories, 399 ms at
+#: 50,000, 1.8 s at 250,000), so the scheduled runs go off the event loop,
+#: in its executor on a connection of their own
+#: (`store_index.optimize_apart`), and the next is armed once one is done
+#: (`loop.call_later`). The watch's thread is not used: it must hold
+#: nothing of the store and does not run on Windows. The shutdown run is
+#: on the store's own connection, once the loop has stopped serving. Read
+#: when `serve` starts; tests lower it.
 OPTIMIZE_EVERY_SECONDS = 3600.0
 
 
@@ -1551,12 +1554,21 @@ def _serve_locked(
             pass
 
     def optimize() -> None:
-        # On the loop, the thread `store`'s connection serves; the next run
-        # is armed whatever this one did (`store_index.optimize`).
-        _store_index.optimize(store, why="schedule")
-        holder["optimizer"] = holder["loop"].call_later(
-            OPTIMIZE_EVERY_SECONDS, optimize
+        # Off the loop, on a connection of its own: the first run on a
+        # large store counts every table (`store_index.optimize_apart`).
+        holder["optimizing"] = holder["loop"].run_in_executor(
+            None, _store_index.optimize_apart, store, "schedule"
         )
+        holder["optimizing"].add_done_callback(optimized)
+
+    def optimized(run: asyncio.Future[bool]) -> None:
+        # The next run is armed once this one is done, so two never overlap.
+        if not run.cancelled() and run.exception() is not None:
+            log.warning("PRAGMA optimize on %s failed: %s", store.path, run.exception())
+        if not holder.get("stopping"):
+            holder["optimizer"] = holder["loop"].call_later(
+                OPTIMIZE_EVERY_SECONDS, optimize
+            )
 
     watch = _StoreWatch(Path(store.path), store_gone, interval=STORE_WATCH_SECONDS)
     app = build_app(
@@ -1575,7 +1587,12 @@ def _serve_locked(
             async with built_lifespan(served) as started:
                 yield started
         finally:
+            holder["stopping"] = True
             holder["optimizer"].cancel()
+            if "optimizing" in holder:
+                # A run in flight ends on its own connection before the
+                # store is closed.
+                await asyncio.wait([holder["optimizing"]])
             watch.stop()
             settle()
 

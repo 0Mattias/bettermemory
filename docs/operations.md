@@ -107,14 +107,17 @@ starting or busy daemon is never hidden, and removed once that process
 is gone.
 
 The daemon keeps SQLite's query planner statistics current (ENG-100): it
-runs `PRAGMA optimize` on its own connection as it starts serving, every
-hour after that, and once more at shutdown, after its workers have
-stopped and before the store is closed. A run analyses only a table whose
-statistics are missing or behind its size, and writes them to
-`sqlite_stat1`, a table every opener admits; on 5,000 memories it took
-2.4 ms the first time and 5.5 us when nothing needed it. It never waits
-for the write lock: while another connection writes, the run is skipped
-and the next one tries again.
+runs `PRAGMA optimize` as it starts serving and every hour after that, on
+a connection of its own off the event loop, so requests are answered
+while it runs, and once more at shutdown on the store's connection, after
+its workers have stopped and before the store is closed. A run analyses
+only a table whose statistics are missing or behind its size, and writes
+them to `sqlite_stat1`, a table every opener admits. The first run on a
+store counts every table: on synthetic stores it took 1.8 ms for 5,000
+memories (a 20 MB file), 399 ms for 50,000 (193 MB) and 1.8 s for 250,000
+(963 MB); a run with nothing to analyse takes 0.01 to 0.08 ms. It never
+waits for the write lock: while another connection writes, the run is
+skipped and the next one tries again.
 
 ### A store another release wrote
 
