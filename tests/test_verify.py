@@ -1360,7 +1360,7 @@ def test_verification_just_under_threshold_is_fresh() -> None:
 def test_verification_naive_datetime_treated_as_utc() -> None:
     """A timezone-naive last_verified_at (legacy frontmatter, hand
     edits) doesn't blow up — it's treated as UTC for the comparison.
-    Mirrors the convention search._recency_factor uses for the same
+    Mirrors the convention search_bm25._recency_factor uses for the same
     reason."""
     naive = (_NOW - timedelta(days=10)).replace(tzinfo=None)
     status = compute_verification_status(naive, now=_NOW)

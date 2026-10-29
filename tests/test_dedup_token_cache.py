@@ -18,6 +18,7 @@ from typing import Any, TypeVar
 import pytest
 
 import bettermemory.search as search_module
+import bettermemory.search_dedup as search_dedup
 import bettermemory.supersession as supersession_module
 from bettermemory import _caches
 from bettermemory.models import Memory
@@ -111,7 +112,7 @@ def tokenised(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         calls.append(text)
         return real(text)
 
-    monkeypatch.setattr(search_module, "_raw_content_token_set", counting)
+    monkeypatch.setattr(search_dedup, "_raw_content_token_set", counting)
     return calls
 
 
@@ -121,7 +122,7 @@ def _uncached(monkeypatch: pytest.MonkeyPatch) -> None:
     def bypass(text: str) -> frozenset[str]:
         return frozenset(_raw_content_token_set(text))
 
-    monkeypatch.setattr(search_module, "raw_content_tokens", bypass)
+    monkeypatch.setattr(search_dedup, "raw_content_tokens", bypass)
     monkeypatch.setattr(supersession_module, "raw_content_tokens", bypass)
 
 
@@ -163,6 +164,8 @@ def test_find_similar_identical_cold_and_warm_on_fixture_store(
         _uncached(patch)
         clear_raw_token_set_cache()
         assert _run_all(_similar, existing) == cold
+        # The bypass reaches find_similar's reader: the run fills no cache entry.
+        assert not search_module._RAW_TOKEN_SETS
 
     # The fixture exercises both bands and the empty case, so the equality
     # above covers every branch of the scorer's output.
@@ -249,7 +252,7 @@ def test_rewritten_body_gets_new_entry(
 
 def test_cache_bounded_and_registered(monkeypatch: pytest.MonkeyPatch) -> None:
     cap = 4
-    monkeypatch.setattr(search_module, "RAW_TOKEN_SET_ENTRIES", cap)
+    monkeypatch.setattr(search_dedup, "RAW_TOKEN_SET_ENTRIES", cap)
     texts = [f"note {i} about the gateway-{i} canary rollout" for i in range(12)]
     for i, text in enumerate(texts):
         assert raw_content_tokens(text) == frozenset(_raw_content_token_set(text))

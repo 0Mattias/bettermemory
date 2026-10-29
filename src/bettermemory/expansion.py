@@ -16,10 +16,11 @@ by ("the code is the model"):
   (`fts_index_text`) never changes, so no `tokenizer_fingerprint` /
   schema-version ceremony attaches to a table edit.
 
-Consumers: `search.search()` builds stemmed lookup structures once via
-`build_tables` (the stemmer lives in `search_lexicon.py`; taking it as a
-callable keeps this module import-cycle-free and lets tests drive the
-raw tables with an identity stem). Nothing else may import the raw
+Consumers: `search_bm25` builds the stemmed lookup structures once, at
+import, via `build_tables` (the stemmer lives in `search_lexicon.py`;
+taking it as a callable keeps this module import-cycle-free and lets
+tests drive the raw tables with an identity stem). Nothing else may
+import the raw
 tables for ranking — one build site is what keeps query-side and
 test-side views identical.
 

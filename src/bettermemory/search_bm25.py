@@ -11,6 +11,9 @@ builds `_MemoryTokens` and the fusion, and re-exports the names tests and
 other modules import from it. Its `_score_bm25` calls `compute_idf` under
 the `search` name, so a patch of `search.compute_idf` reaches it. Every
 tokenize call here goes through `search_lexicon` as `_lexicon.tokenize`.
+This module lives apart from `search.py` to keep each module under the
+package's 2,000-line bound (ENG-96); from the family it imports
+`search_lexicon` alone, and `search.py` imports it.
 """
 
 from __future__ import annotations

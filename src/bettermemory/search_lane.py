@@ -11,6 +11,9 @@ The lane's section in `search.py` describes both repairs and keeps what
 tests patch: the rerank and the pricing gate, with the constants they
 read (`_CONV_WINDOW_BOOST` and kin). `search.py` re-exports the names
 tests and other modules import from it.
+This module lives apart from `search.py` to keep each module under the
+package's 2,000-line bound (ENG-96); from the family it imports
+`search_lexicon` alone, and `search.py` imports it.
 """
 
 from __future__ import annotations

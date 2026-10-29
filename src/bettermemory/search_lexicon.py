@@ -10,7 +10,11 @@ the persisted format and needs the schema bump that function describes.
 `search.py` re-exports the names tests and other modules import from it.
 Readers in `search.py` and its other `search_*` modules call
 `_lexicon.tokenize(...)` through this module, so one patch of
-`search_lexicon.tokenize` reaches every caller.
+`search_lexicon.tokenize` reaches every caller in the family (a module
+outside it, such as `audit`, binds its own name). This module lives
+apart from `search.py` to keep each module under the package's
+2,000-line bound (ENG-96); it imports nothing from the family, which
+imports it.
 """
 
 from __future__ import annotations

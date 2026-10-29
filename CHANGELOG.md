@@ -106,6 +106,19 @@ the candidates' testing.
   scan now reads every `eval*.py`. (`src/bettermemory/eval.py`,
   `src/bettermemory/eval_model.py`, `src/bettermemory/eval_render.py`,
   `tests/test_eval.py`, `docs/eval.md`)
+- **`search.py` is split into five modules.** The ranker keeps `search()`,
+  the fusion, the snippet and token caches and the conversational rerank,
+  and goes from 4,305 lines to 1,686. Beside it, `search_lexicon` holds
+  the tokenizer and the FTS index text, `search_bm25` the keyword and
+  BM25 scorers, `search_lane` the conversational lane's temporal reading
+  and the per-hit labels, and `search_dedup` the write-time dedup. Every
+  name imported from `bettermemory.search` still is, as the same object;
+  the code moved unchanged and the tokenizer's fingerprint is the same,
+  so no index is rebuilt and every ranking reads as before. A test that
+  patches the tokenizer or the dedup cache now patches the module that
+  reads it. (`src/bettermemory/search.py`,
+  `src/bettermemory/search_lexicon.py`, `src/bettermemory/search_bm25.py`,
+  `src/bettermemory/search_lane.py`, `src/bettermemory/search_dedup.py`)
 
 #### Fixed
 

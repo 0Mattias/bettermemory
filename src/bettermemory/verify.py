@@ -2846,7 +2846,7 @@ def compute_verification_status(
     a single timestamp across a multi-hit retrieval (consistent with how
     `search.search` threads its own `now`) and tests can pin time. A
     timezone-naive `last_verified_at` is treated as UTC, matching the
-    convention `search._recency_factor` uses — every datetime in the
+    convention `search_bm25._recency_factor` uses — every datetime in the
     store is UTC-aware in practice, but defensive normalisation keeps a
     legacy file from raising.
 
