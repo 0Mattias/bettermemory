@@ -375,8 +375,11 @@ def test_the_old_one_hit_recall_is_not_a_show() -> None:
 def test_the_surface_leaves_the_trio_as_it_was() -> None:
     """Shows, settlements, segments, unanswered reviews and grades change
     no count of the trio: a settlement is a `use` carrying a `surface`,
-    left out of applied_total, the helped numerator and the cold
-    bucket, so the published series stays one."""
+    left out of applied_total and the helped numerator, so the published
+    series stays one. A settlement is a recorded use of its memory, so it
+    takes that memory out of the cold-endorsement bucket, as it does in
+    the health report (`health.endorsement_tier`, ENG-170): the bucket
+    loses the settled memories and nothing else changes."""
     from bettermemory.eval import compute_eval
 
     added = [
@@ -404,7 +407,15 @@ def test_the_surface_leaves_the_trio_as_it_was() -> None:
         before = compute_eval(legacy_memories(), base, now=NOW, since=since)
         after = compute_eval(legacy_memories(), base + added, now=NOW, since=since)
         assert after.surfaces is not None
-        assert _without_counts(after) == _without_counts(before)
+        trio_before, trio_after = _without_counts(before), _without_counts(after)
+        cold_before = trio_before.pop("cold_endorsement_memories")
+        cold_after = trio_after.pop("cold_endorsement_memories")
+        assert trio_after == trio_before
+        if since is None:
+            assert MEM_A in {row["id"] for row in cold_before["rows"]}
+        assert {row["id"] for row in cold_after["rows"]} == {
+            row["id"] for row in cold_before["rows"]
+        } - {MEM_A, MEM_C}
 
 
 def test_a_settlement_moves_no_rate_and_no_tool_call() -> None:

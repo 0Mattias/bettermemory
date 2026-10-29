@@ -112,7 +112,7 @@ from .eval_render import (
     render_widening_preview_text,
 )
 from .health import _HOOKLESS_REASON  # one sentence, shared — see its comment
-from .health import applied_tier as _applied_tier
+from .health import endorsement_tier as _endorsement_tier
 from .health import is_hook_telemetry_event
 from .models import Memory, first_summary_line
 from .time_utils import isoformat_utc_optional
@@ -587,29 +587,28 @@ def compute_eval(
             # into `show_count`, never `retrieval_count`.
             retrieval_occurrences += 1
         elif kind == "use":
-            outcome = ev.get("outcome")
-            if outcome != "applied":
-                continue
-            if is_settlement(ev):
-                # A pointer's settlement (`recall.settle_shown`): the
-                # surfaces section counts it, the trio does not, so the
-                # published series keeps one definition across the
-                # recall surface's arrival.
-                continue
-            ids = ev.get("ids") or ev.get("memory_ids") or []
-            if not isinstance(ids, list):
-                continue
-            # Tiering via the shared `health.applied_tier` — auto /
+            # Tiering via the shared `health.endorsement_tier`: None for
+            # an outcome other than applied, else `applied_tier`'s auto /
             # hook / model, with the strict `auto is True` identity
             # comparison (a stray truthy `auto=1` / `auto="true"` reads
             # as NON-auto, same as missing/None, so we never silently
             # relabel borderline data as the server closing the loop).
             # Shared rather than re-derived here: this module and
             # `health._StatsAccumulator._handle_use` publish the same
-            # split under different names, and the hand-mirrored version
-            # of this comment used to cite a health.py line number that
-            # had been wrong for several releases.
-            tier = _applied_tier(ev)
+            # split under different names, and the per-memory tallies
+            # below are the cold-endorsement bucket health lists too.
+            tier = _endorsement_tier(ev)
+            if tier is None:
+                continue
+            # A pointer's settlement (`recall.settle_shown`) feeds the
+            # per-memory tallies, as health's do (`endorsement_tier`),
+            # and not the trio: the surfaces section counts it, so the
+            # published series keeps one definition across the recall
+            # surface's arrival.
+            settlement = is_settlement(ev)
+            ids = ev.get("ids") or ev.get("memory_ids") or []
+            if not isinstance(ids, list):
+                continue
             is_auto = tier == "auto"
             raw_excerpts = ev.get("claim_excerpts")
             # claim_excerpts is parallel to ids; entries may be None.
@@ -646,16 +645,19 @@ def compute_eval(
             for mid, excerpt in seen_ids.items():
                 if not passes_scope(mid):
                     continue
-                applied_total += 1
                 if is_auto:
                     auto_applied_count[mid] = auto_applied_count.get(mid, 0) + 1
                 else:
+                    explicit_applied_count[mid] = explicit_applied_count.get(mid, 0) + 1
+                if settlement:
+                    continue
+                applied_total += 1
+                if not is_auto:
                     applied_explicit += 1
                     if tier == "hook":
                         applied_hook += 1
                     else:
                         applied_model += 1
-                    explicit_applied_count[mid] = explicit_applied_count.get(mid, 0) + 1
                     if isinstance(excerpt, str) and excerpt.strip():
                         explicit_endorsements_with_excerpt += 1
         elif kind in ("turn_audited", "search_miss"):

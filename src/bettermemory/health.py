@@ -106,6 +106,7 @@ from .health_model import (
     _is_dead_weight,
     _is_weakly_endorsed,
     applied_tier,
+    endorsement_tier as endorsement_tier,
     is_hook_telemetry_event,
 )
 from .health_stats import (

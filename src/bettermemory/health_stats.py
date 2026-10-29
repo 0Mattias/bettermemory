@@ -45,7 +45,7 @@ from .health_model import (
     _RECOMMENDATION_ROW_CAP,
     _RECOMMENDATION_SIZE_FLOOR,
     _iso,
-    applied_tier,
+    endorsement_tier,
     is_hook_telemetry_event,
 )
 
@@ -392,16 +392,17 @@ class _StatsAccumulator:
                 if mid not in self._tombstoned_ids:
                     self._orphan_use_events += 1
                 continue
-            if outcome == "applied":
+            tier = endorsement_tier(ev)
+            if tier is not None:
                 stats.applied_count += 1
-                # Tiering via the shared `applied_tier` (see its
-                # docstring for the auto / hook / model rule and why
-                # the third tier is a fall-through). `explicit` stays
-                # exactly what it always was — everything not auto —
-                # so `endorsement_ratio`, `_is_weakly_endorsed` and the
+                # Tiering via the shared `endorsement_tier`, the one
+                # definition eval's cold-endorsement rows read too (a
+                # pointer's settlement counts; see its docstring), and
+                # `applied_tier`'s auto / hook / model rule. `explicit`
+                # stays exactly what it always was — everything not auto
+                # — so `endorsement_ratio`, `_is_weakly_endorsed` and the
                 # published eval rate all keep their meaning; the
                 # hook/model pair below decomposes it.
-                tier = applied_tier(ev)
                 if tier == "auto":
                     stats.auto_applied_count += 1
                 else:

@@ -241,6 +241,29 @@ def applied_tier(ev: dict[str, Any]) -> str:
     return "model"
 
 
+def endorsement_tier(ev: dict[str, Any]) -> str | None:
+    """The tier (`applied_tier`) a ``use`` event adds to its memories'
+    per-memory applied tallies, or None when it adds none (another
+    outcome, another kind).
+
+    The one definition the cold-endorsement bucket is read under, in
+    `health.compute_health` and `eval.compute_eval` alike: every applied
+    use counts, and a shown pointer's settlement (`recall.is_settlement`,
+    `recall.settle_shown`) is one. A settlement is the containment
+    matcher finding the pointer's memory in the reply, the same ``hook``
+    tier the matcher gives a retrieval it matched, so it is a recorded
+    use of the memory and the memory is not "never endorsed". The two
+    reports disagreed here: health counted the settlement and listed a
+    memory retrieved, auto-applied and then settled 0 times, while eval
+    skipped every settlement and listed it once. The eval's rate trio
+    still leaves settlements out (its published series keeps one
+    definition across the recall surface's arrival); that is a decision
+    about the trio's counters, not about whether the memory was used."""
+    if ev.get("kind") != "use" or ev.get("outcome") != "applied":
+        return None
+    return applied_tier(ev)
+
+
 @dataclass
 class TelemetryCoverage:
     """Whether the walked event log carries Stop-hook settlement telemetry.

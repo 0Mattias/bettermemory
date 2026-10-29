@@ -820,6 +820,20 @@ the candidates' testing.
   within the threshold of the diagonal. A 4,000-character scope and its
   one-edit typo took the report 3.95 s before and take 0.011 s.
   (`src/bettermemory/health_stats.py`, `src/bettermemory/health.py`)
+- **`health` and `eval` list the same cold-endorsement memories when a
+  pointer was settled.** A memory the ranker kept retrieving, whose
+  applies were all the auto fallback until the Stop found it in a reply
+  through a shown pointer (a settlement), read as endorsed in the health
+  report and as cold in `bettermemory eval`: health counted the
+  settlement as a use of the memory and eval skipped every settlement,
+  so the two reports answered one question 0 and 1. Both now read one
+  definition of a use for the bucket, every applied `use` with a
+  settlement included, since it is the Stop finding the memory's
+  content in the reply. The eval's three rates still leave settlements
+  out, so the published series is unchanged. The API reference's
+  definition of `cold_endorsement_memories` now states it.
+  (`src/bettermemory/health_model.py`, `src/bettermemory/health_stats.py`,
+  `src/bettermemory/eval.py`, `docs/eval.md`, `docs/api.md`)
 
 #### Known limitations
 

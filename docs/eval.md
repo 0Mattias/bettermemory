@@ -74,7 +74,10 @@ one floor (the 2026-08-30 recalibration of
 the store's own explicit-endorse rate per search delivery; parity with
 eval's default is test-pinned), one counting basis (search deliveries
 only; `memory_show` occurrences feed the rate denominators but not
-the floor), and one honesty gate (with zero
+the floor), one definition of a use (`health.endorsement_tier`: every
+applied `use`, a pointer's settlement included, since the settlement is
+the Stop finding the memory in the reply; only the three rates leave the
+settlement out), and one honesty gate (with zero
 Stop-hook settlement telemetry in the log the bucket is suppressed and
 says so, rather than reporting an unwired hook as acknowledge-debt).
 
