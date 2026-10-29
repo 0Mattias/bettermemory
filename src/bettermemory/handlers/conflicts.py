@@ -32,10 +32,10 @@ rewrites memories has to be as visible in the log as every other
 mutating operation, and the compatible branch mutates just as surely as
 the contradiction branch does.
 
-Scans are cheap to trigger here (`scan=True`) and also run
-automatically on every APPLYING consolidate pass (memory_curate /
-the Stop-hook auto path), so the queue fills itself during normal
-curation; this tool is mainly the drain.
+Scans run here (`scan=True`), the one caller of
+`conflicts.scan_conflicts`. 8.x also scanned on every applying
+consolidate pass, so its queue filled itself during curation; 9.0
+removed that pass, and a scan is now a call to this tool.
 """
 
 from __future__ import annotations
@@ -205,13 +205,13 @@ def _render_pending(
     still count — the total is deliberately allowed to exceed
     `len(rows)`, which is how a caller learns to raise `max_results`.
 
-    The judgeable/omitted split itself is `conflicts.split_judgeable`,
-    shared with `memory_scope_overview`'s `curation_pending.conflicts`
-    counter — the session-start cue that sends the model *here*. Each
-    surface supplies its own liveness authority (per-row `load_one`
-    below; a full-corpus snapshot there) but neither owns the rule,
-    because a cue that points at an empty list is the same phantom
-    count in a second place.
+    The judgeable/omitted split itself is `conflicts.split_judgeable`.
+    It was shared with `memory_scope_overview`'s
+    `curation_pending.conflicts` counter, the session-start cue that
+    sent the model here, until 9.0 removed that tool; the rule stays
+    apart from this surface's liveness authority (per-row `load_one`
+    below) so a second count would share it, because a cue that points
+    at an empty list is the same phantom count in a second place.
 
     Dead rows are reported, never GC'd here. `upsert_scan` stays the
     queue's only garbage collector: it rules on liveness from one

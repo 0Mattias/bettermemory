@@ -63,10 +63,11 @@ on the next full-corpus upsert — a conflict with a dead side is moot.
 applying pass calls it unconditionally: a pass that only
 upserted when it had fresh candidates would strand those rows in the
 file indefinitely. Until a scan collects one, no surface that counts
-arbitration WORK advertises it — `split_judgeable` is the shared filter
-both the `memory_conflicts` listing and `memory_scope_overview`'s
-`curation_pending.conflicts` count run their rows through — but each of
-them re-pays a liveness check on it every time they report. The counts
+arbitration WORK advertises it — `split_judgeable` is the filter the
+`memory_conflicts` listing runs its rows through, as
+`memory_scope_overview`'s `curation_pending.conflicts` count did until
+9.0 removed that tool — but the listing re-pays a liveness check on it
+every time it reports. The counts
 that DO still see such a row say so in their names — `upsert_scan`'s
 `pending_rows_on_disk` and `conflicts_pending_count` — because both
 count the file, and a name shared with a judgeable count would make one
@@ -938,16 +939,13 @@ def split_judgeable(
     resolving to nothing teaches the model to stop following it.
 
     Every surface that reports a pending count runs its rows through
-    here: `memory_conflicts`'s `pending_total` (and the list beside it)
-    and `memory_scope_overview`'s `curation_pending.conflicts`. They
-    hold different liveness authorities — per-row `store.load_one` vs.
-    membership in the full-corpus `load_all` snapshot the overview
-    already paid for — which is exactly why the *predicate* is shared
-    rather than each surface re-deriving it: the two counts point at
-    each other, and the whole point of the fix is that they agree.
-    (The two authorities coincide by construction: `load_one` walks the
-    same active set `load_all` materialises and refuses anything
-    `load_all` skips.)
+    here: `memory_conflicts`'s `pending_total` and the list beside it.
+    `memory_scope_overview`'s `curation_pending.conflicts` did too, with
+    another liveness authority (membership in a full-corpus snapshot,
+    where the listing loads per row), until 9.0 removed that tool. The
+    *predicate* stays apart from the authority so a second count shares
+    it rather than re-deriving it: counts that point at each other must
+    agree.
 
     `is_active` is called left-to-right and short-circuits, so an
     authority that pays real I/O per member does not price the second

@@ -668,7 +668,7 @@ def search_miss_fields(
     Surfaced so ``memory_acknowledge_miss`` can reference one specific
     miss for resolution (the per-event escape hatch documented in T4 —
     distinct from the bulk ``silent_miss_cutoff`` written by
-    ``bettermemory consolidate --acknowledge-misses-before``, which
+    ``memory_admin(action="acknowledge_miss", before=...)``, which
     wipes EVERY pre-cutoff miss). When omitted a fresh ULID is
     generated; callers should not pass an explicit value outside of
     tests that pin specific ids.

@@ -355,8 +355,9 @@ def cli_recorder(
     definition, in `eval`, and the parity scan there refuses a second
     copy anywhere in `src/`); `tests/test_cli_smoke.py` scans every
     call site against the real constant instead. `session_id` lets a
-    command reuse the id it already stamped on tombstones (consolidate);
-    the default mints a fresh one. `triggered_from` marks an
+    command reuse an id it already stamped (8.x's `consolidate` did, on
+    its tombstones); no command passes one now, and the default mints a
+    fresh one. `triggered_from` marks an
     out-of-process writer on every event (`AttributedRecorder` says why);
     only `bettermemory capture` sets it.
     """
@@ -380,13 +381,12 @@ def parse_iso_cutoff(
 ) -> tuple[datetime, str]:
     """Parse an operator-supplied ISO timestamp, or exit 1 explaining why not.
 
-    Shared by `consolidate --acknowledge-misses-before` and `rollback
-    --since`. It lives here rather than inline in either caller because
-    the careful part is the edge cases, and a second hand-rolled copy is
-    how the two spellings drift apart: both accept `Z` and explicit
-    offsets, both reject naive input, and both hint the midnight-UTC
-    spelling for a bare date. Returns the parsed aware datetime plus its
-    canonical UTC-`Z` rendering, so callers that persist the value all
+    Used by `rollback --since`; 8.x's `consolidate
+    --acknowledge-misses-before` shared it. It lives here rather than
+    inline in its caller because the careful part is the edge cases: it
+    accepts `Z` and explicit offsets, rejects naive input, and hints the
+    midnight-UTC spelling for a bare date. Returns the parsed aware datetime
+    plus its canonical UTC-`Z` rendering, so callers that persist the value all
     persist one representation.
 
     `flag` prefixes every message, so the error names the flag the

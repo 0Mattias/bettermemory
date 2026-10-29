@@ -6,7 +6,7 @@ MCP-wiring module and the CLI ``main()`` shim. After the CLI extraction
 into ``bettermemory.cli`` (Round-2 audit finding H10) the CLI package
 needed ``build_server`` from ``cli/serve.py:run_serve``; a top-level
 ``from ..server import build_server`` would have re-opened a load-time
-cycle because ``server.py`` imports back from ``cli.consolidate`` and
+cycle because ``server.py`` imported back from ``cli.consolidate`` and
 ``cli.export`` at the bottom to preserve historical test re-exports.
 That cycle was previously dodged with a lazy ``from ..server import
 build_server`` inside ``run_serve`` and a comment explaining it. This

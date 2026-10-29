@@ -142,23 +142,19 @@ class Category(str, Enum):
 # the user — the class where misattribution sticks — is another that
 # nothing has measured. Until it is made, the label is set only where
 # a claim about the user is filed as one (``memory_write``, an
-# accepted proposal, an ingested ``type: user`` file). Two production
-# sites need the same set:
+# ingested ``type: user`` file). The production site that reads the
+# set is ``handlers.update.memory_update``'s ``category`` retag gate:
+# ``fact`` and ``ambient`` only; a claim about the user is filed
+# through ``memory_write`` instead. 8.x's ``llm`` validators, the
+# proposable set for an LLM running ``consolidate --llm``, were the
+# second until 9.0 removed them.
 #
-# - ``handlers.update.memory_update``'s ``category`` retag gate:
-#   ``fact`` and ``ambient`` only; a claim about the user is filed
-#   through ``memory_write`` instead.
-# - ``llm._validate_demote`` and ``llm._validate_propose_new``: the
-#   proposable set for an LLM running ``consolidate --llm`` is the
-#   same ``{fact, ambient}``.
-#
-# Shared here (alongside the ``Category`` enum that defines the
-# universe of values) so silent divergence between the two sites
-# can't happen — and so adding a fourth ``Category`` member ships
+# Kept here (alongside the ``Category`` enum that defines the
+# universe of values) so adding a fourth ``Category`` member ships
 # the decision about whether it's automation-eligible to one place.
 # Enum-anchored (not bare string literals) so renaming a member is
-# caught by mypy at the import site. Pinned by ``_EXPECTED_
-# PROPOSABLE_CATEGORIES`` in ``tests/test_llm.py`` and
+# caught by mypy at the import site. Pinned by
+# ``_EXPECTED_UPDATE_PROPOSABLE_CATEGORIES`` in
 # ``tests/test_server.py``.
 _PROPOSABLE_CATEGORIES: frozenset[str] = frozenset(
     {Category.FACT.value, Category.AMBIENT.value}

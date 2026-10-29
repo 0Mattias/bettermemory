@@ -102,9 +102,9 @@ def run(args: argparse.Namespace) -> None:
     # can select every record an agent ever wrote, with no per-record
     # justification beyond authorship — so it takes the strictest
     # posture already in the tree rather than a weaker one. Exiting
-    # non-zero (where `consolidate --llm` merely warns) is the one place
-    # this goes further: a script that asked to commit and did not must
-    # not read as success.
+    # non-zero rather than warning is the one place this goes further:
+    # a script that asked to commit and did not must not read as
+    # success.
     if args.apply and not args.yes:
         report.refusal_reason = (
             "--apply requires --yes as well. This would have removed "

@@ -6,18 +6,18 @@ it, 7.14.0 pivoted the store by it in `memory_health`. This removes by
 it: one agent's contributions leave the active set, everyone else's
 stay, and `tombstones restore` puts any of them back.
 
-**Why this is not `consolidate --by-actor`.** `consolidate` runs its
-four structural passes unconditionally before any mode flag fires, and
-its mode vocabulary is documented as extending those passes — so a
-destructive rollback riding along would mean "roll back this one agent"
-also committed whole-store dedup tombstones and category demotions.
-Beyond that mechanical trap, every other flag on `consolidate` is a
-pass-tuning parameter, so `--by-actor` sitting among them reads as a
-scope filter ("run the passes over only this actor's memories") rather
-than as a removal — a plausible, wrong and destructive misreading that
-no help text fully repairs. And nothing here is consolidation: nothing
-is merged, deduplicated, or judged. It is operator-specified bulk
-removal with an undo, so it gets its own command.
+**Why this was not `consolidate --by-actor` (8.x).** `consolidate` ran
+its four structural passes unconditionally before any mode flag fired,
+and its mode vocabulary was documented as extending those passes — so
+a destructive rollback riding along would have meant "roll back this
+one agent" also committed whole-store dedup tombstones and category
+demotions. Beyond that mechanical trap, every other flag on
+`consolidate` was a pass-tuning parameter, so `--by-actor` sitting
+among them would have read as a scope filter ("run the passes over only this
+actor's memories") rather than as a removal — a plausible, wrong and
+destructive misreading that no help text fully repairs. And nothing here is
+consolidation: nothing is merged, deduplicated, or judged. It is
+operator-specified bulk removal with an undo, so it gets its own command.
 
 **What "contribution" means here, precisely.** `actor` is stamped at
 write time and is never restamped: `Store.update` takes no actor. So
@@ -173,7 +173,7 @@ def tombstone_reason(client: str, since: str | None) -> str:
 
     Names both the actor and the window, so the rollback is auditable
     from `tombstones list` alone without joining the event log — the
-    same house shape `consolidate`'s reasons use (`"<command> <mode>:
+    same house shape 8.x's `consolidate` reasons used (`"<command> <mode>:
     <why>"`). The window is spelled out even when absent, because
     "all time" and "a window the reason forgot to record" must not read
     the same.
@@ -259,11 +259,10 @@ def apply_rollback(
 
     Mutates and returns the same report. No event is recorded: a
     tombstone leaves the active set, and `Store.tombstone` already
-    captures the reason and the session on the tombstone frontmatter,
-    which is what `tombstones list` reads. That mirrors `consolidate`'s
-    posture exactly — its dedup pass records `consolidate_update` for
-    the keeper it rewrites and records nothing for the record it
-    removes.
+    captures the reason and the session on the tombstone, which is what
+    `tombstones list` reads. That mirrors 8.x's `consolidate` posture
+    exactly — its dedup pass recorded `consolidate_update` for the
+    keeper it rewrote and recorded nothing for the record it removed.
 
     One failure never aborts the pass; each is collected so a partial
     run reports precisely which records did not move.

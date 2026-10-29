@@ -890,7 +890,8 @@ def _query_biased_snippet(body: str, matched: list[str], max_chars: int = 200) -
 
     Only `_build_hit` calls this. `snippet_for` keeps its head-of-body
     contract for every other consumer — write-time dedup's `SimilarHit`,
-    consolidate's summaries — none of which have a query to bias toward.
+    the conflict, supersession and rollback summaries — none of which
+    have a query to bias toward.
 
     Falls back to `snippet_for` by DELEGATING to it, never by re-deriving
     it, whenever biasing is impossible or pointless: short body, no

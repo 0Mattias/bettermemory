@@ -576,8 +576,9 @@ def _anchored_new_reference(text: str, match: re.Match[str]) -> bool:
     number, a proper noun, a compound with a digit or three parts). See
     the `_PATTERN_OVERRIDES` comment for the shape and the evidence. The
     vocabulary is the write-time supersession detector's, imported lazily
-    because that module reaches this one through `consolidate` and
-    `health`."""
+    as it was when that module reached this one through 8.x's
+    `consolidate`; neither `supersession` nor `search` imports this
+    module now."""
     from .search import _raw_content_token_set
     from .supersession import anchor_tokens, change_cues
 

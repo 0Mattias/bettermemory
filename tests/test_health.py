@@ -2020,10 +2020,11 @@ def test_is_hook_telemetry_event_truth_table() -> None:
     assert not covered({"kind": "turn_audited"})
 
     # `auto_consolidate` carries `triggered_from="stop_hook"` as well
-    # (`consolidate.py`), and is excluded by the `kind` gate on purpose:
-    # that pass is opt-in-gated, so counting it would make coverage a
-    # function of `[consolidate]` config rather than of whether
-    # settlement runs. Pinned so a future widening to "anything stamped
+    # (8.x's `consolidate.py` wrote it; a migrated log keeps the rows),
+    # and is excluded by the `kind` gate on purpose: that pass was
+    # opt-in-gated, so counting it would make coverage a function of
+    # 8.x's `[consolidate]` config rather than of whether settlement
+    # runs. Pinned so a future widening to "anything stamped
     # stop_hook" is a decision rather than a slip.
     assert not covered({"kind": "auto_consolidate", "triggered_from": "stop_hook"})
 
