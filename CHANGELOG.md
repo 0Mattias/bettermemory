@@ -877,6 +877,21 @@ the candidates' testing.
   range" with no flag named. A later `--until` stays accepted, since it
   only says "up to now". (`src/bettermemory/eval_model.py`,
   `src/bettermemory/cli/eval.py`)
+- **The health report's endorsement grace, cross-repo root cap and
+  recommendation floor say what evidence chose them.** Each carried a
+  reason and no evidence, and the two-day endorsement grace cited a lag
+  measured in memory-tool turns and a 30-minute token lifetime, so a
+  reader could not tell whether two days was measured or chosen. Each
+  now states its evidence: none for any of the three values. The grace
+  is margin over a 30-minute bound the code fixes (every automatic
+  settlement lands within it or never), with no store's settlement lag
+  measured; the cap of 8 roots bounds a report's base walks to 8
+  `git log` calls, 40 s at their 5 s timeout (not a walked root's
+  per-row calls, nor the capture each foreign group runs before the cap
+  is read), and the base call over this repository's 2,006 commits took
+  0.03 s (median of 7 on 2026-10-28); the floor of 3 is a judgement, and
+  hides no row, only its digest line. No value changed.
+  (`src/bettermemory/health_model.py`)
 
 #### Known limitations
 

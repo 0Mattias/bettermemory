@@ -33,14 +33,25 @@ from .verify import BASIS_AUTHOR_DATE
 # report kept counting dead rows the demotion pass (correctly) refused
 # to drain. `_is_dead_weight` below carries all three gates.
 
-# Endorsement grace: the auto-applied endorsement structurally lags
-# every retrieval by >= 2 memory-tool turns (session.py's use-token
-# TTL), and dies with the server session — a retrieval in a session's
-# final turns produces no `use(applied)` event at all until a later
-# session re-retrieves. A memory's earliest timestamped retrieval must
-# be at least this old before applied == 0 may count against it;
-# otherwise the retrieval that proves the ranker works would be counted
-# as evidence against the memory at the very Stop hook that fired it.
+# Endorsement grace: a retrieval's endorsement lands after it, never
+# with it. A memory's earliest timestamped retrieval must be at least
+# this old before applied == 0 may count against it; otherwise the
+# retrieval that proves the ranker works would be counted as evidence
+# against the memory at the very Stop hook that fired it.
+#
+# Evidence: none in days. What the code fixes bounds the lag in
+# minutes: the Stop hook settles a turn's retrievals at turn end,
+# looking back `audit.ATTRIBUTION_LOOKBACK_SECONDS` (600 s); the
+# in-process auto-commit fires after `session.DEFAULT_USE_TOKEN_TTL_TURNS`
+# (2) memory-tool turns and `session.AUTO_COMMIT_MIN_AGE_SECONDS`
+# (600 s); and a token still pending at `_PENDING_USE_TOKEN_TTL_SECONDS`
+# (30 min) is evicted before the auto-commit can read it. So an
+# automatic settlement lands within 30 minutes of its retrieval or not
+# at all (an explicit `memory_record_use` may come later, but it is not
+# the lag this waits for). The two days are margin over that bound, for
+# writers whose clocks disagree and a log read before its last turn
+# settled; no store's settlement lag has been measured, and lowering the
+# value toward 30 minutes wants that measurement first.
 _ENDORSEMENT_GRACE_DAYS = 2
 
 
@@ -877,11 +888,20 @@ class CommitDriftDebt:
 
 # Cap on distinct foreign worktrees a single health run walks git in.
 # Each walked root costs one full `git log --format=%aI` plus the
-# per-drifting-row narrowing calls, all under the drift legs' 5s
-# ceiling — an unbounded estate would turn the deep report into a
+# per-drifting-row narrowing calls, each under the drift legs' 5 s
+# timeout — an unbounded estate would turn the deep report into a
 # multi-second git crawl. Cheap skips (missing directory, moved repo)
 # never consume the cap; groups past it are listed as skipped rather
 # than silently dropped, so "covered everything" is never implied.
+#
+# Evidence: none for 8 itself; no estate's root count was measured.
+# What it buys is a bound on the base walks: at most 8 base `git log`
+# calls per report, 40 s if every one ran to its timeout. It does not
+# bound a walked root's per-row narrowing calls, nor the
+# `origin.capture` each foreign group runs before the cap is consulted.
+# Measured on 2026-10-28, the base call over this repository's 2,006
+# commits took 0.03 s (median of 7), so 8 roots of that size cost about
+# 0.24 s.
 _CROSS_REPO_MAX_ROOTS = 8
 
 
@@ -1169,6 +1189,11 @@ _RECOMMENDATION_ROW_CAP = 10
 # contradicted and rare_scopes recommendations use floor=1 because
 # even a single instance is actionable (one stuck contradiction is
 # still a stuck contradiction; one typo singleton is still a typo).
+#
+# Evidence: none. 3 is a judgement of when a bucket is worth a nudge;
+# nothing has measured whether the model acts on a recommendation
+# differently by its size. The rows below the floor are still in their
+# buckets, so the floor hides no finding, only its digest line.
 _RECOMMENDATION_SIZE_FLOOR = 3
 
 # Closed set of recommendation kinds. Exhaustive enumeration so a
