@@ -1107,9 +1107,14 @@ codec; `rollback.py` removes one actor's writes and leaves everyone
 else's; `init.py` and `_install_hints.py` are client onboarding.
 
 **Operations.** The commands an operator runs, every one of them
-read-only except a restore. `backup.py` is `bettermemory backup`
-(`cli/backup_cmd.py`): the bundle, its signed manifest, its verification
-on a private copy and the restore. `audit_export.py` and `anchor.py` are
+read-only except a restore and `backup unlock`. `backup.py` is
+`bettermemory backup` (`cli/backup_cmd.py`): the bundle, its signed
+manifest, its verification on a private copy and the restore, which
+appends a signed `store_restored` row to the restored log.
+`restore_lock.py` is the restore lock, on the store's directory, which a
+restore holds for its length and every writing open takes shared in
+`store._connect`, and the record a restore that did not finish leaves,
+which `backup unlock` removes. `audit_export.py` and `anchor.py` are
 `log export` and `log anchor` and the anchors `log verify --anchor`
 checks (`cli/log_cmd.py`). `history.py` is `memory history`
 (`cli/memory_move_cmd.py`), and `cli/stats_cmd.py` the usage report.
@@ -1506,8 +1511,10 @@ records the pinned `section.key` names, which `config show` labels
   9.0.0rc13: the first owner's open after the upgrade binds it to the
   file it opens, which may be a second file that borrowed the store's
   id (Provenance, above).
-- A restore is guarded against the daemon and the spawn lock only;
-  close every session before `backup restore --yes`.
+- A restore holds off every writing open through `store._connect`
+  (`restore_lock.py`); on Windows an opener holds the lock only for its
+  check, and a process writing the file through a connection of its own
+  is not held off.
 - The store's version keys are only what the file says. `meta` is not
   covered by the log's MACs, so an editor of the file can raise a minimum
   to keep builds out, or lower one. Builds from before the contract

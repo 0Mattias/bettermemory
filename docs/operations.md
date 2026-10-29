@@ -460,9 +460,10 @@ whatever can write the store can write it.
 To restore:
 
 1. Close every session that uses the store, then run `bettermemory down`.
-   Restore refuses while the daemon's lock or the spawn lock is held, but
-   `serve`, the shim's in-process fallback and the writing CLI commands
-   open the store without those locks, so close them too.
+   Restore refuses while the daemon's lock or the spawn lock is held, and
+   while any other process has the store open (`serve`, the shim's
+   in-process fallback, a hook, a CLI command); once it runs, every
+   writing open is refused until it ends (the restore lock, below).
 2. `bettermemory backup restore BUNDLE` verifies the bundle (it refuses
    one that does not verify, and one signed only by a key it carries
    unless `--trust-bundle-key` is given) and prints the plan: the files

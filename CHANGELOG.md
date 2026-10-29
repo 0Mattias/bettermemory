@@ -2243,7 +2243,10 @@ follows the candidates' testing.
   made only by a restore, is the lock, an opener checks it when it is
   there and only for its check, and Windows' refusal to rename an open
   file stays the backstop.
-  `store.py` gains one line. (`src/bettermemory/restore_lock.py`,
+  `store.py` gains one line. This closes the 9.0.0rc12 Known limitation
+  "A restore is guarded only against the daemon and spawn locks" (its
+  other half, the text output that did not show the origin anchor, is
+  closed under Changed). (`src/bettermemory/restore_lock.py`,
   `src/bettermemory/store.py`, `src/bettermemory/backup.py`,
   `src/bettermemory/cli/backup_cmd.py`, `docs/api.md`,
   `docs/operations.md`, `tests/test_restore_lock.py`)
@@ -2261,7 +2264,10 @@ follows the candidates' testing.
   them, a backup bundle's snapshot among them: copy memory.sqlite to a
   directory of its own first and point BETTERMEMORY_DIR or `[storage]
   directory` at that directory`. A store file the user hard-linked on
-  purpose is refused the same way. (`src/bettermemory/backup.py`,
+  purpose is refused the same way. This closes what was left of the
+  9.0.0rc12 Known limitation "Only some readers refuse a backup bundle's
+  file": that nothing checked a hard link named through
+  `BETTERMEMORY_DIR`. (`src/bettermemory/backup.py`,
   `SECURITY.md`, `docs/operations.md`, `tests/test_bundle_guard.py`)
 - **A restore onto a host with no copy of the store still warns a
   rewound cursor.** A restore recorded where the log it replaced ended
@@ -2579,10 +2585,11 @@ follows the candidates' testing.
   is read; a refused file is left with what that wrote. Admitting
   through a read-only connection before the writing open would leave it
   as it was; the openers do not do that yet.
-- **`backup` still reads a store through connections of its own.** The
-  restore plan's read of the store id and of the log's last seq, and the
-  online-backup copy `backup create` takes, do not admit the file first;
-  `src/bettermemory/backup.py` was outside this change.
+- **`backup create` still reads a store through a connection of its
+  own.** The online-backup copy `backup create` takes does not admit the
+  file first. (The restore's reads of the store id and of the log's last
+  seq go through the read-only open, which admits it, since this
+  release.)
 - **A lock wait comes before the deadline.** The deadline counts from a
   statement's first progress callback, so a wait for another
   connection's lock is bounded by the 5 s busy timeout, not by it.
@@ -2687,6 +2694,49 @@ follows the candidates' testing.
   only.** `memory_update`'s `transient_warning` and its
   `markers_acknowledged` are audit rows now, but the override rate does
   not read update rows, as before.
+- **A restore holds off only the writers that open through
+  `store._connect`.** Every writing opener in this package does; a
+  process that writes the file with its own SQLite connection is not
+  held off. The read-only commands (`log verify`, `log export`, `stats`,
+  `memory history`, `doctor`) are not held off either: one that runs
+  while a restore does may read the store between its steps and report
+  what it saw then.
+- **On Windows a writing open holds the restore lock only for its
+  check.** Windows cannot lock a directory and `msvcrt` has no shared
+  lock, so the lock there is the record file a restore makes: an opener
+  that finds no record file goes on, and one that finds it takes its
+  lock, reads the record and gives the lock back, before SQLite opens
+  the file. An opener that checks just before a restore takes the lock,
+  and opens the file just after the restore's probe, is not seen;
+  Windows' refusal to rename a store file another process has open
+  stops the swap only when the open came first.
+- **The probe does not see an idle connection to a rollback-journal
+  store.** A store in rollback-journal mode (copied in by hand and not
+  opened since) whose opener has switched it to WAL and not yet read
+  holds no SQLite lock in that moment, so the restore's probe passes.
+- **After a restore onto a host with no copy of the store, `log export`
+  warns every cursor past the restored head.** Where the replaced log
+  ended is not known there, so a cursor taken after the restore, past
+  its head, is warned too, with the same advice; the batches' `prev_mac`
+  link tells the two apart.
+- **A restore that fails between its record and its row leaves an entry
+  with no row.** The restore record is written before the restored store
+  is opened to append the `store_restored` row; a failure in between
+  reports the restore failed and keeps the restore lock's record, and
+  running the restore again writes both.
+- **A restored store this build reads only gets no `store_restored`
+  row.** A store restored under a build that has a schema step waiting
+  on it opens for reading only and writes nothing, so the restore
+  appends no row; the record beside the head keeps the entry, and the
+  writing open that later runs the step does not add one.
+- **`backup create --out` checks the named directory and its parent
+  only.** A directory two levels or more inside a bundle is not
+  refused.
+- **A `backup create` with an unreadable key still writes a bundle.** It
+  is unsigned and the warning names the key file, exit 0, as for a key
+  that is not held; a scheduled backup keeps writing unverifiable
+  bundles until the file reads again. With `--include-key` it is
+  refused.
 
 ### 9.0.0rc13
 
