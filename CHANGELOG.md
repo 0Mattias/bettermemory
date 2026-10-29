@@ -2717,21 +2717,25 @@ follows the candidates' testing.
 
 #### Internal
 
-- **v8-era comments, an unused module and the membership design.**
-  Comments and docstrings that still described the v8 markdown
-  directory and its derived index describe the SQLite store;
-  `_decorators.py`, which nothing imported, is deleted; and the design
-  the membership code cites by number is in the repository as
+- **v8-era comments, an unused module, the membership design and the
+  v8 import graph.** Comments and docstrings that still described the
+  v8 markdown directory and its derived index describe the SQLite
+  store; `_decorators.py`, which nothing imported, is deleted; the
+  design the membership code cites by number is in the repository as
   `docs/membership-design.md`, redacted, with
   `tests/test_design_citations.py` holding every `design N.N` and
-  `decision Dn` or `Bn` citation to a section or decision it holds.
+  `decision Dn` or `Bn` citation to a section or decision it holds; and
+  `tests/test_v8_import_graph.py` pins that no module but `v8.py`,
+  `migrate_v8.py` and `cli/migrate.py` (which exists only for `migrate
+  v8`) imports the first two, apart from `mirror.py`, which imports
+  `v8` today and which it names.
   (`src/bettermemory/models.py`, `src/bettermemory/_response.py`,
   `src/bettermemory/_fsutil.py`, `src/bettermemory/backup.py`,
   `src/bettermemory/init.py`, `src/bettermemory/cli/_common.py`,
   `src/bettermemory/cli/export.py`, `src/bettermemory/handlers/`,
   `src/bettermemory/_decorators.py`, `docs/membership-design.md`,
   `docs/internals.md`, `CONTRIBUTING.md`,
-  `tests/test_design_citations.py`)
+  `tests/test_design_citations.py`, `tests/test_v8_import_graph.py`)
 
 #### Known limitations
 
