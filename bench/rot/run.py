@@ -848,9 +848,11 @@ def memoized_git_reads() -> Generator[dict[str, int]]:
     `compute_commit_drift`, `compute_verification_status`,
     `detect_path_drift` or `resolve_commit_drift_count` is touched, so
     the claim that the function under test is the SHIPPED one survives
-    intact. The cache is installed on `bettermemory.verify`'s own module
-    globals — the names its callers resolve at call time — and removed
-    again on exit, so it cannot leak into anything else in the process.
+    intact. The cache is installed on the module globals of
+    `bettermemory.verify` and `bettermemory.verify_basis` (the commit-drift
+    count's two reads) — the names their callers resolve at call time — and
+    removed again on exit, so it cannot leak into anything else in the
+    process.
 
     `tests/test_bench_rot.py` pins the only guarantee that matters: a
     memoized and an unmemoized run of the same pinned window produce
@@ -858,18 +860,18 @@ def memoized_git_reads() -> Generator[dict[str, int]]:
     not an optimisation.
     """
     from bettermemory import verify as _verify
+    from bettermemory import verify_basis as _verify_basis
 
     calls = {"hits": 0, "misses": 0}
-    originals = {
-        name: getattr(_verify, name)
-        for name in (
-            "commit_author_timestamps",
-            "commit_author_timestamps_touching_pathspecs",
-            "repo_toplevel",
-            "repo_toplevel_and_head",
-            "resolve_repo_pathspecs",
-        )
+    # Each name on the module that resolves it at call time.
+    homes = {
+        "commit_author_timestamps": _verify_basis,
+        "commit_author_timestamps_touching_pathspecs": _verify,
+        "repo_toplevel": _verify,
+        "repo_toplevel_and_head": _verify_basis,
+        "resolve_repo_pathspecs": _verify,
     }
+    originals = {name: getattr(home, name) for name, home in homes.items()}
 
     def _memoize(func: Any) -> Any:
         cache: dict[Any, Any] = {}
@@ -984,7 +986,7 @@ def memoized_git_reads() -> Generator[dict[str, int]]:
 
     try:
         for name, func in originals.items():
-            setattr(_verify, name, _memoize(func))
+            setattr(homes[name], name, _memoize(func))
         # Memoized too, not just replaced: the index makes one CALL cheap,
         # memoization makes the thousands of repeat calls free.
         setattr(
@@ -993,7 +995,7 @@ def memoized_git_reads() -> Generator[dict[str, int]]:
         yield calls
     finally:
         for name, func in originals.items():
-            setattr(_verify, name, func)
+            setattr(homes[name], name, func)
 
 
 def collect_rows(

@@ -907,23 +907,24 @@ def test_memoized_and_unmemoized_runs_agree_exactly(tmp_path: Path) -> None:
 
 
 def test_memoization_is_removed_again_afterwards() -> None:
-    """The cache is installed on `bettermemory.verify`'s own globals, so it
-    must come off again — a wrapper left in place would silently serve
-    stale git state to anything else running in the same process."""
-    from bettermemory import verify
+    """The cache is installed on the globals of `bettermemory.verify` and
+    `bettermemory.verify_basis`, so it must come off again — a wrapper left
+    in place would silently serve stale git state to anything else running
+    in the same process."""
+    from bettermemory import verify, verify_basis
 
-    names = (
-        "commit_author_timestamps",
-        "commit_author_timestamps_touching_pathspecs",
-        "repo_toplevel",
-        "resolve_repo_pathspecs",
+    homes = (
+        (verify_basis, "commit_author_timestamps"),
+        (verify, "commit_author_timestamps_touching_pathspecs"),
+        (verify, "repo_toplevel"),
+        (verify, "resolve_repo_pathspecs"),
     )
-    before = {n: getattr(verify, n) for n in names}
+    before = {n: getattr(m, n) for m, n in homes}
     with rot.memoized_git_reads():
-        assert all(getattr(verify, n) is not before[n] for n in names), (
+        assert all(getattr(m, n) is not before[n] for m, n in homes), (
             "memoization did not install"
         )
-    assert all(getattr(verify, n) is before[n] for n in names), (
+    assert all(getattr(m, n) is before[n] for m, n in homes), (
         "memoization leaked past its context manager"
     )
 
