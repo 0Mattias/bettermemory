@@ -949,6 +949,37 @@ class NotFoundError(KeyError):
     """No record with that key in the table asked."""
 
 
+class UnknownFieldsError(ValueError):
+    """A mutation of a record whose last put carries fields this build's
+    model does not define (a later build wrote them). The model would drop
+    them on the way back, and with them any rule that ties them to the
+    fields this build edits, so the record is left as it is (ENG-107).
+    `fields` names them and `kind` the mutation refused, which the
+    message says in the words of the call that made it (`_REFUSED`)."""
+
+    #: What a refused mutation was, as the call that made it says it.
+    _REFUSED = {
+        "memory_put": "the change",
+        "memory_delete": "the removal",
+        "tombstone_put": "the change to the removed record",
+        "tombstone_delete": "the restore, purge or prune",
+    }
+
+    def __init__(self, record_id: str, kind: str, fields: list[str]) -> None:
+        self.record_id = record_id
+        self.kind = kind
+        self.fields = fields
+        shown = ", ".join(repr(name)[:66] for name in fields[:8])
+        more = f" and {len(fields) - 8} more" if len(fields) > 8 else ""
+        refused = self._REFUSED.get(kind, "the change")
+        super().__init__(
+            f"record {record_id} was last written by a build that defines "
+            f"fields this one does not ({shown}{more}); this build would drop "
+            f"them, so it refuses {refused}: upgrade bettermemory to change "
+            "the record"
+        )
+
+
 class StoreVersionError(ValueError):
     """The store needs a newer build to open it: its minimum reader
     revision is above this build's `SCHEMA_REVISION`, or a version key in

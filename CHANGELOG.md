@@ -1436,6 +1436,25 @@ the candidates' testing.
   schema's order, which also keeps a table rebuilt with its columns in
   another order comparable. An edit to a column this build knows is still
   caught. (`src/bettermemory/store_rows.py`, `tests/test_fold_columns.py`)
+- **An older build refuses to rewrite a record a later build wrote with
+  fields it does not define, where it dropped them.** `Memory` reads with
+  pydantic's default `extra='ignore'`, so a field a later 9.x adds was lost
+  the first time an older `memory_update`, verify, corroboration, removal
+  or restore wrote the record back. Every mutation of a memory or a
+  tombstone now reads the payload of the record's last put (through
+  `log_by_mac`, one indexed read: a refold of 5,000 memories and an
+  update measured within run-to-run noise of the build before) and,
+  when it names a field the model does not define, refuses with
+  `UnknownFieldsError`, a `ValueError` naming the fields, which a tool
+  call returns as a refusal; a purge refuses too, and a prune or a scope
+  rename leaves such a removed record and goes on to the rest. Refusing was
+  chosen over round-tripping the field: an older writer that kept the
+  bytes would still break what the later build ties to the fields it
+  edits (a body edit clears the verification it vouched for). The fold is
+  unchanged: its scratch log is empty, so the check finds nothing there.
+  (`src/bettermemory/store_rows.py`, `src/bettermemory/store_schema.py`,
+  `src/bettermemory/store_records.py`, `CONTRIBUTING.md`,
+  `docs/internals.md`, `docs/api.md`, `tests/test_unknown_fields.py`)
 
 #### Known limitations
 
@@ -1599,6 +1618,14 @@ the candidates' testing.
   `bettermemory service install` run again after an upgrade, which stops
   the daemon serving the store and starts the new build's, ends it.
   (`src/bettermemory/store_schema.py`, `src/bettermemory/store.py`)
+- **The refusal of an unknown field covers memories and tombstones
+  only.** An episode or a membership row a later build wrote with a field
+  this build does not define is still written back without it, a field
+  a later build adds beside the record in a put's payload (rather than in
+  the record) is not looked at, and a record that arrives from outside
+  the store (an import of a later build's export) is read through the
+  model and loses the field before any row exists to check.
+  (`src/bettermemory/store_rows.py`)
 
 ### 9.0.0rc13
 

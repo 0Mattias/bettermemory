@@ -1122,6 +1122,18 @@ newest, in one `BEGIN IMMEDIATE` taken only when something changes; a
 store that cannot be written then is left as it is, and the next writing
 open records them.
 
+A record a later build wrote may carry fields this build's models do not
+define; the models read past them (pydantic's `extra='ignore'`). Every
+mutation of a memory or a tombstone (`store_rows._apply_mutation`: a put,
+a removal, a restore, a purge or a prune) first reads the payload of the
+log row each of the record's rows points at (`log_mac`, through
+`log_by_mac`) and refuses with `UnknownFieldsError` when it names a field
+this build does not define, so an older build never writes such a record
+back without the field. The fold replays into a scratch database whose log
+is empty, where the check finds nothing, and it reads only the columns
+this build's schema gives each table, by name, so a column a later build
+added is not compared.
+
 The store resolves to `$BETTERMEMORY_DIR` if set, else
 `[storage] directory` in `config.toml` if set, else `./.claude-memory/`
 if it exists (unless `[storage] cwd_store = false`), else

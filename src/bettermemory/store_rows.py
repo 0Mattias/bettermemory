@@ -42,6 +42,7 @@ from .store_schema import (
     _TABLE_KEYS,
     _VERIFICATION_LISTS,
     _WRITABLE_PROVENANCE,
+    UnknownFieldsError,
     _MembershipTable,
 )
 
@@ -440,6 +441,60 @@ def _verification_row(row: sqlite3.Row) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+#: The record a put of each record kind carries, and the model that
+#: defines its fields.
+_RECORD_PUTS: dict[str, tuple[str, type[Memory] | type[TombstonedMemory]]] = {
+    "memory_put": ("memory", Memory),
+    "tombstone_put": ("tombstone", TombstonedMemory),
+}
+
+
+def _unknown_record_fields(conn: sqlite3.Connection, record_id: str) -> list[str]:
+    """The fields of the record `record_id` that this build's models do not
+    define, as its rows were last put: the payload of the log row each of
+    its rows (the active one and the tombstone) points at by ``log_mac``,
+    found through ``log_by_mac``. Empty for a new record, for one an
+    earlier or this build wrote, and on a connection whose log does not
+    hold those rows (the fold's scratch database)."""
+    unknown: set[str] = set()
+    for kind, payload in conn.execute(
+        "SELECT kind, payload FROM log WHERE mac IN ("
+        "SELECT log_mac FROM memories WHERE id = ? "
+        "UNION ALL SELECT log_mac FROM tombstones WHERE id = ?)",
+        (record_id, record_id),
+    ):
+        carried = _RECORD_PUTS.get(str(kind))
+        if carried is None:
+            continue
+        key, model = carried
+        try:
+            record = json.loads(payload).get(key)
+        except (ValueError, AttributeError):
+            continue
+        if isinstance(record, dict):
+            unknown.update(
+                str(name) for name in record if name not in model.model_fields
+            )
+    return sorted(unknown)
+
+
+def _refuse_unknown_fields(conn: sqlite3.Connection, record_id: str, kind: str) -> None:
+    """Raise `UnknownFieldsError` when the record `record_id` carries fields
+    this build's models do not define (`_unknown_record_fields`). Every
+    mutation of a memory or a tombstone asks first (ENG-107): this build's
+    model would drop such fields on an update, a verify or a corroboration,
+    carry the record into a tombstone or back without them on a removal or
+    a restore, and keep none of the rules that tie them to the fields it
+    edits, so an older writer refuses rather than rewrite a later build's
+    record. A prune and a purge are refused too: an older build leaves a
+    later build's record to that build. The check runs on the live write
+    path and in the fold alike, and finds nothing in the fold, whose
+    scratch log is empty: a row the live path wrote replays as it was."""
+    unknown = _unknown_record_fields(conn, record_id)
+    if unknown:
+        raise UnknownFieldsError(record_id, kind, unknown)
+
+
 def _apply_mutation(
     conn: sqlite3.Connection,
     kind: str,
@@ -451,9 +506,12 @@ def _apply_mutation(
     the MAC of the row being applied, stamped on the record it puts. Raises
     ValueError, KeyError, TypeError or a pydantic ValidationError on a
     payload that does not carry what the kind needs; the fold reports
-    those rows as ``payload_invalid``."""
+    those rows as ``payload_invalid``. A mutation of a record a later build
+    wrote with fields this build does not define raises
+    `UnknownFieldsError` (`_refuse_unknown_fields`)."""
     if kind == "memory_put":
         memory = Memory.model_validate(payload["memory"])
+        _refuse_unknown_fields(conn, memory.id, kind)
         provenance = str(payload["provenance"])
         if provenance not in _WRITABLE_PROVENANCE:
             raise ValueError(f"unknown provenance {provenance!r}")
@@ -465,9 +523,11 @@ def _apply_mutation(
             log_mac=log_mac,
         )
     elif kind == "memory_delete":
+        _refuse_unknown_fields(conn, str(payload["id"]), kind)
         conn.execute("DELETE FROM memories WHERE id = ?", (str(payload["id"]),))
     elif kind == "tombstone_put":
         dead = TombstonedMemory.model_validate(payload["tombstone"])
+        _refuse_unknown_fields(conn, dead.id, kind)
         provenance = str(payload["provenance"])
         if provenance not in _WRITABLE_PROVENANCE:
             raise ValueError(f"unknown provenance {provenance!r}")
@@ -485,6 +545,7 @@ def _apply_mutation(
             log_mac=log_mac,
         )
     elif kind == "tombstone_delete":
+        _refuse_unknown_fields(conn, str(payload["id"]), kind)
         conn.execute("DELETE FROM tombstones WHERE id = ?", (str(payload["id"]),))
     elif kind == "episode_put":
         _write_episode_row(

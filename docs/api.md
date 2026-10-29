@@ -115,6 +115,8 @@ Preserves `id`, `created`, `source`. Bumps `updated`. Content changes reset `las
 
 Optimistic-concurrency CAS. The handler reads the record when the call arrives, and the store refuses the write when another writer landed an update between that read and the commit. The guard does not cover an edit composed from an older `memory_show`: the call carries no expected `updated`, so re-read a record another agent may be changing before you edit it. Returns `{"status": "stale", "memory_id", "current_updated", "hint"}`; `current_updated` is the stored `updated` at the moment the CAS failed. No partial write. Re-fetch with `memory_show` and retry the edit on top of the current record; do not auto-retry from the same caller stack, the conflict may need reconciliation. Distinct from the not-found and tombstoned `ValueError` paths, which surface as raised exceptions.
 
+A record a later bettermemory wrote with a field this build does not define is not rewritten: the call fails with a refusal naming the fields (`record <id> was last written by a build that defines fields this one does not (...)`) and writes nothing, where an older build dropped the field. `memory_verify`, a dedup corroboration, `memory_remove` and `memory_admin(action="restore")` refuse such a record the same way; `bettermemory tombstones prune` leaves such a removed record for the build that wrote it and prunes the rest, and a scope rename lists it under `failed`. Since 9.0.0rc14.
+
 ### Inter-memory links
 
 `links: list[MemoryLink]` is persisted on the record. Each `MemoryLink` is `{type, target_id, note?}`:

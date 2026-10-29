@@ -56,6 +56,7 @@ from .store_schema import (
     StandingAnswer,
     TombstoneRow,
     TombstonedError,
+    UnknownFieldsError,
     _scopes_after_rename,
 )
 from .store_rows import (
@@ -1027,8 +1028,14 @@ def rename_scope(
             "corroborations": int(raw["corroborations"]),
             "last_corroborated": raw["last_corroborated"],
         }
-        with self._transaction() as tx:
-            self._mutate(tx, "tombstone_put", payload, session=session)
+        try:
+            with self._transaction() as tx:
+                self._mutate(tx, "tombstone_put", payload, session=session)
+        except UnknownFieldsError as exc:
+            # A later build's removed record: left to that build, and the
+            # rename goes on to the rest.
+            failed.append({"id": dead.id, "reason": str(exc)})
+            return
         result["tombstoned"].append(dead.id)
 
     self._in_chunks(
@@ -1065,6 +1072,10 @@ def prune_tombstones(
     (`_in_chunks`), each tombstone's age read again under its chunk's
     write lock, so one restored or replaced meanwhile is left alone.
 
+    A tombstone a later build wrote with a field this build does not
+    define (`UnknownFieldsError`) is left for that build, and the prune
+    goes on to the rest.
+
     A failure part way raises, and the ids are not returned: the chunks
     committed before it stay committed (those tombstones are gone),
     the failing chunk is rolled back, and the rest are still there.
@@ -1083,8 +1094,11 @@ def prune_tombstones(
         ).fetchone()
         if raw is None or _row_to_tombstone(raw).removed >= cutoff:
             return
-        with self._transaction() as tx:
-            self._mutate(tx, "tombstone_delete", {"id": memory_id}, session=session)
+        try:
+            with self._transaction() as tx:
+                self._mutate(tx, "tombstone_delete", {"id": memory_id}, session=session)
+        except UnknownFieldsError:
+            return
         pruned.append(memory_id)
 
     self._in_chunks([memory_id for _, memory_id in doomed], prune)
