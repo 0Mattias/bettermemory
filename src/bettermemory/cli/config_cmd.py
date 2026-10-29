@@ -470,7 +470,19 @@ def show_report() -> dict[str, Any]:
             if f"{section}.{key}" in config.managed_keys:
                 entry["source"] = MANAGED
                 where = (section, key)
-                if where in user_raw and user_raw[where] != managed_raw.get(where):
+                # The user's line is named unless it reads as the pin,
+                # compared as the loader compares it.
+                if where in user_raw and not (
+                    where in managed_raw
+                    and _config.line_reads_as_pin(
+                        section,
+                        key,
+                        user_raw[where],
+                        managed_raw[where],
+                        config_path=user.path,
+                        managed_path=managed.path,
+                    )
+                ):
                     entry["user_value"] = user_raw[where]
             elif (section, key) in user_raw:
                 written = user_raw[(section, key)]
@@ -957,9 +969,14 @@ def _section_findings(
     *,
     catalogue: Mapping[str, tuple[str, ...]],
     pinned: Mapping[tuple[str, str], Any],
+    managed_path: _config.ConfigSource,
 ) -> list[Finding]:
     """Every line of one known section: removed, renamed, unknown, pinned
-    by the managed file (in the user's file), or a value to check."""
+    by the managed file (in the user's file), or a value to check. A
+    pinned line is noted unless it reads as the pin, compared as the
+    loader's own notice compares it (`config.line_reads_as_pin`), so
+    ``strict_provenance = 1`` under a pinned ``true`` is noted and
+    ``"true"`` is not."""
     findings: list[Finding] = []
     lines = dict(table)
     for (alias_section, old), new in _ALIASES.items():
@@ -1012,7 +1029,14 @@ def _section_findings(
         elif key not in catalogue[section]:
             findings.append(_unknown_key(file.role, section, key, catalogue))
         elif (section, key) in pinned:
-            if value != pinned[(section, key)]:
+            if not _config.line_reads_as_pin(
+                section,
+                key,
+                value,
+                pinned[(section, key)],
+                config_path=path,
+                managed_path=managed_path,
+            ):
                 findings.append(
                     Finding(
                         NOTE,
@@ -1031,7 +1055,10 @@ def _section_findings(
 
 
 def _file_findings(
-    file: ConfigFile, *, pinned: Mapping[tuple[str, str], Any]
+    file: ConfigFile,
+    *,
+    pinned: Mapping[tuple[str, str], Any],
+    managed_path: _config.ConfigSource,
 ) -> list[Finding]:
     """Every finding in one parsed file. The managed loader refuses any
     top-level value that is not a table (`managed.read_managed`), so in
@@ -1065,7 +1092,13 @@ def _file_findings(
         elif name in catalogue and isinstance(value, dict):
             findings.extend(
                 _section_findings(
-                    file, file.path, name, value, catalogue=catalogue, pinned=pinned
+                    file,
+                    file.path,
+                    name,
+                    value,
+                    catalogue=catalogue,
+                    pinned=pinned,
+                    managed_path=managed_path,
                 )
             )
         elif name in catalogue:
@@ -1087,8 +1120,10 @@ def check_report() -> dict[str, Any]:
     failure the per-line checks do not model), its message is a finding of
     its own, so a config that does not load can never check clean."""
     user, managed = read_files()
-    findings = _file_findings(user, pinned=raw_settings(managed.data))
-    findings += _file_findings(managed, pinned={})
+    findings = _file_findings(
+        user, pinned=raw_settings(managed.data), managed_path=managed.path
+    )
+    findings += _file_findings(managed, pinned={}, managed_path=managed.path)
     load_error: str | None = None
     with _held_notices():
         try:

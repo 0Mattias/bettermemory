@@ -518,22 +518,30 @@ names the error, and `bettermemory config show` labels each setting
 `managed`, `user` or `default`. `config check` reads only the fixed
 location, so a candidate is checked where it is deployed.
 
-A user's config.toml line for a pinned key is ignored. When its value
-differs from the pinned value and from the code's own default for that
-key, each process logs one warning naming both sources, on stderr for a
-hook, until the line is deleted. A line that restates the default draws
-none. The config.toml a first run writes sets nothing: every setting is
+A user's config.toml line for a pinned key is ignored. When the loader
+would read it as something other than the pinned value, and it is not
+the code's own default for that key, each process logs one warning
+naming both sources, on stderr for a hook, until the line is deleted.
+Against the pin a line is compared as the loader would load it on its
+own (since 9.0.0rc14): `"true"` under a pinned `true` draws no warning,
+while `1` under a pinned `true` draws one, since a boolean reads the
+integer as its default and a `[policy]` switch or `cwd_store` refuses
+it; so does a line the loader reads only through a fallback, a clamp or
+a lossy coercion (`checkpoint_tokens = 100` under a pinned `500`, `port
+= 7400.9` under a pinned `7400`). A line that restates
+the default draws none. The config.toml a first run writes sets nothing: every setting is
 commented out, so the code's defaults apply and a pin finds no line. One
 an earlier release wrote spells every key it knew at that release's
 default; a line that is still today's default, `[telemetry] enabled =
-true` among them, draws no warning when a pin overrides it. Lines are
-compared as written, but `[behavior] prompt_recall`, which releases
-3.41.0 to 8.0.0 wrote as `true`, is compared as the loader reads it
-(`true`, `"yes"`, `"on"` and `"1"` are `project`; `false`, `"no"`,
-`"off"`, `"0"` and `""` are `off`; strings in any case): a line that
-reads as the default or as the pinned value draws none. `config
-check` still reports every ignored line as a note, and `config show`
-names it. Such a file also keeps those values for the user where
+true` among them, draws no warning when a pin overrides it. Against the
+default, lines are compared as written, but `[behavior] prompt_recall`,
+which releases 3.41.0 to 8.0.0 wrote as `true`, is compared as the
+loader reads it (`true`, `"yes"`, `"on"` and `"1"` are `project`;
+`false`, `"no"`, `"off"`, `"0"` and `""` are `off`; strings in any
+case): a line that reads as the default draws none. `config check`
+reports every ignored line that does not read as the pin as a note,
+and `config show` names its value, by the same comparison against the
+pin: `1` under a pinned `true` is in both, `"true"` in neither. Such a file also keeps those values for the user where
 nothing pins them: delete the lines nobody chose, and a later release's
 changed default reaches the account.
 

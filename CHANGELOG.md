@@ -1321,6 +1321,25 @@ the candidates' testing.
   Both stamps are now read by `githead.stamp`, before and after the
   read, and a stamp that moved during the read leaves the memo alone.
   (`src/bettermemory/verify_anchoring.py`)
+- **A user line for a pinned key is compared with the pin as the loader
+  reads it.** The pinned-key warning was skipped for a line equal to the
+  managed file's in Python's sense, so `strict_provenance = 1` under a
+  pinned `true` drew none, though the loader reads that line as the
+  default `false`, and `forbid_force = 1` none, though the loader refuses
+  it; `"true"` under a pinned `true`, which loads as the pin, drew one.
+  The loader now reads the line alone, logging nothing, and the line
+  restates the pin only when it loads to the pinned value with no
+  refusal, fallback, clamp or lossy coercion: a boolean's silent
+  fallback on `1` or `"ture"` counts, even where it lands on the pinned
+  value, and so do `port = 7400.9` (truncated) and a boolean read as a
+  number. Each coercion notes these itself, so the verdict holds with
+  warnings disabled. `config check`'s `pinned` note and `config show`'s
+  user value use the same comparison (`config.line_reads_as_pin`), so
+  the three agree. Against the default a line is compared as before.
+  The rc13 review raised this, older than rc13 (ENG-93 item 5), and it
+  is closed. (`src/bettermemory/config.py`,
+  `src/bettermemory/cli/config_cmd.py`, `docs/operations.md`,
+  `docs/internals.md`, `tests/test_pin_notice_as_loaded.py`)
 
 #### Known limitations
 

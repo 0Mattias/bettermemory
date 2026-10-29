@@ -27,11 +27,15 @@ import os
 import sys
 import tomllib
 from collections.abc import Callable
+from contextvars import ContextVar
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
-from typing import Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 import platformdirs
+
+if TYPE_CHECKING:
+    import logging
 
 from . import managed as _managed
 from ._fsutil import atomic_write_bytes
@@ -707,6 +711,35 @@ def _warn_on_system_dir(source: str, resolved: Path) -> None:
 _TRUE_STRINGS = frozenset({"true", "1", "yes", "on"})
 _FALSE_STRINGS = frozenset({"false", "0", "no", "off", ""})
 
+#: Set while `_read_alone` reads one line alone. Every way the loader does
+#: not take the line as written lands in the list: each coercion notes its
+#: fallback, clamp or lossy reading (`_trial_note`), whether or not the
+#: logging configuration lets its warning through, and `_trial_filter`
+#: keeps the warnings off the log. None otherwise.
+_TRIAL: ContextVar[list[str] | None] = ContextVar("config_trial", default=None)
+
+
+def _trial_note(what: str) -> None:
+    """Record, inside `_read_alone`'s read, that the loader did not take
+    the line as written; outside one, nothing."""
+    notes = _TRIAL.get()
+    if notes is not None:
+        notes.append(what)
+
+
+def _trial_filter(record: logging.LogRecord) -> bool:
+    """The `bettermemory.config` logger's filter. Inside `_read_alone`'s
+    read a warning is a note on the line, never logged: the line is
+    dropped unread. Outside one every record passes. A ContextVar, so a
+    read in one thread hides nothing another thread logs. The coercions
+    note their own fallbacks too, since a disabled logger or level never
+    reaches a filter."""
+    notes = _TRIAL.get()
+    if notes is None:
+        return True
+    notes.append(record.getMessage())
+    return False
+
 
 def _coerce_bool(value: object, default: bool) -> bool:
     """Coerce a TOML-sourced value to bool without the str trap.
@@ -719,6 +752,9 @@ def _coerce_bool(value: object, default: bool) -> bool:
       which is the bug this helper exists to prevent (a quoted
       ``conversational = "false"`` must stay False).
     - Anything else (int, None, list, ...) falls back to ``default``.
+
+    The fallback logs nothing, as before; a pinned user line read through
+    `_read_alone` still learns it was not read as written.
     """
     if isinstance(value, bool):
         return value
@@ -728,7 +764,8 @@ def _coerce_bool(value: object, default: bool) -> bool:
             return True
         if token in _FALSE_STRINGS:
             return False
-        return default
+    if value is not None:
+        _trial_note(f"{value!r} is no boolean spelling")
     return default
 
 
@@ -753,14 +790,18 @@ def _coerce_int(
     ``load_config``. Valid-input behaviour is identical to the prior bare
     ``int(...)``: a real int (or bool, an int subclass) passes through; a
     numeric string parses; a float truncates. ``None`` (key absent) yields
-    ``default``."""
+    ``default``. A boolean, and a float the truncation changes, are noted
+    as not read as written (`_trial_note`)."""
     if value is None:
         return default
     if isinstance(value, bool):
+        _trial_note(f"{value!r} read as the integer {int(value)}")
         return int(value)
     if isinstance(value, int):
         return value
     if isinstance(value, float):
+        if int(value) != value:
+            _trial_note(f"{value!r} truncated to {int(value)}")
         return int(value)
     if isinstance(value, str):
         try:
@@ -784,6 +825,7 @@ def _clamp_checkpoint_tokens(value: int, *, config_path: ConfigSource | None) ->
     value in one knob must not take the server down."""
     if value >= MIN_CHECKPOINT_TOKENS:
         return value
+    _trial_note(f"checkpoint_tokens {value} clamped")
     import logging
 
     logging.getLogger("bettermemory.config").warning(
@@ -836,6 +878,7 @@ def _coerce_search_mode(value: object, *, config_path: ConfigSource | None) -> s
     normalised = str(value).strip().lower()
     if normalised in _SEARCH_MODES:
         return normalised
+    _trial_note(f"search_mode {value!r} fell back")
     import logging
 
     logging.getLogger("bettermemory.config").warning(
@@ -889,6 +932,7 @@ def _coerce_prompt_recall(value: object, *, config_path: ConfigSource | None) ->
     mode = _prompt_recall_spelling(value)
     if mode is not None:
         return mode
+    _trial_note(f"prompt_recall {value!r} fell back")
     import logging
 
     logging.getLogger("bettermemory.config").warning(
@@ -905,10 +949,12 @@ def _coerce_float(
 ) -> float:
     """Coerce a TOML value to ``float``, raising a located ValueError on a
     non-numeric value (cf. ``_coerce_int``). Valid-input behaviour matches
-    the prior bare ``float(...)``."""
+    the prior bare ``float(...)``; a boolean is noted as not read as
+    written (`_trial_note`)."""
     if value is None:
         return default
     if isinstance(value, bool):
+        _trial_note(f"{value!r} read as the number {float(value)}")
         return float(value)
     if isinstance(value, (int, float)):
         return float(value)
@@ -1423,9 +1469,9 @@ def _apply_managed(
     Every remaining key that names a setting of `Config` is pinned. The
     user's value for it is dropped BEFORE the user's file is parsed, so a
     pinned key the user mistyped cannot fail the load: it is ignored, not
-    read. A user value that differs from the pinned one gets one notice
-    per key, naming both files (`_warn_pinned_key`), unless it is the
-    code's own default for the key (`_restates_pin_or_default`): such a
+    read. A user value the loader would not read as the pinned one gets
+    one notice per key, naming both files (`_warn_pinned_key`), unless it
+    is the code's own default for the key (`_restates_pin_or_default`): such a
     line restates the default and expresses no choice the pin overrides,
     and a config.toml an earlier release wrote spelled every key at its
     default, so every process, every hook among them, would warn about a
@@ -1482,7 +1528,7 @@ def _apply_managed(
                 section,
                 key,
                 user_value,
-                managed_raw=managed_data[section][key],
+                config_path=config_path,
                 pinned=getattr(getattr(pinned, section), key),
                 default=getattr(getattr(defaults, section), key),
             ):
@@ -1505,7 +1551,8 @@ def _apply_managed(
 #: value, each with what a raw value spells: the value the loader reads it
 #: as, or None for one it does not recognise (which the loader replaces
 #: with the default and warns about). `_restates_pin_or_default` compares
-#: a pinned user line for such a key as read, not as written.
+#: a pinned user line for such a key with the default as read, not as
+#: written; against the pin every key is compared as read (`_reads_as_pin`).
 #:
 #: Found by loading every release's `DEFAULT_CONFIG`, v1.4.1 to 9.0.0rc12,
 #: against `Config()`, and reading each normalisation `_config_from_data`
@@ -1518,7 +1565,7 @@ def _apply_managed(
 #: replaces with the default through the fallback a typo takes, so it
 #: spells no current value; ``search_mode = "keyword"``, which 2.x wrote,
 #: is a mode of its own; and a boolean's string spellings (``"true"``) are
-#: a coercion the user chose, compared as written as before.
+#: a coercion the user chose, compared with the default as written.
 _LEGACY_SPELLINGS: dict[tuple[str, str], Callable[[object], object | None]] = {
     ("behavior", "prompt_recall"): _prompt_recall_spelling,
 }
@@ -1529,30 +1576,102 @@ def _restates_pin_or_default(
     key: str,
     raw: object,
     *,
-    managed_raw: object,
+    config_path: ConfigSource,
     pinned: object,
     default: object,
 ) -> bool:
     """Whether a user's line for a pinned key expresses no choice the pin
-    overrides: it is the managed file's own line (`managed_raw`), or the
-    code's default (`_restates_default`).
+    overrides: the loader reads it as the pinned value (`_reads_as_pin`),
+    or it is the code's default (`_restates_default`).
 
-    A key with a legacy spelling (`_LEGACY_SPELLINGS`) is compared as the
-    loader reads it, against the pinned value as loaded (`pinned`) and the
-    default: ``prompt_recall = true``, in every config.toml v3.41.0 to
-    v8.0.0 wrote, reads as ``"project"`` and restates the default, and
-    ``false`` under a pin of ``"off"`` restates the pin. A spelling that
-    reads as another value is a choice, and so is one the reader does not
-    recognise: the line is dropped unread, so the notice is the only word
-    a mistyped value gets. The reader logs nothing, so the coercion's own
-    fallback warning is not raised for a line that is never read."""
-    if raw == managed_raw:
+    Against the pin the line is compared as the loader would load it, not
+    as written. Compared as written, Python's ``1 == True`` took
+    ``strict_provenance = 1`` under a pinned ``true`` for the managed
+    file's own line, though the loader reads it as the default ``false``,
+    and ``forbid_force = 1`` too, though the loader refuses it; and
+    ``"true"`` under a pinned ``true``, which loads as the pin, drew the
+    notice.
+
+    Against the default, a key with a legacy spelling (`_LEGACY_SPELLINGS`)
+    is compared as the loader reads it: ``prompt_recall = true``, in every
+    config.toml v3.41.0 to v8.0.0 wrote, reads as ``"project"`` and
+    restates the default. A spelling that reads as another value is a
+    choice, and so is one the reader does not recognise: the line is
+    dropped unread, so the notice is the only word a mistyped value gets.
+    Neither reading logs anything, so the coercion's own fallback warning
+    is not raised for a line that is never read."""
+    if _reads_as_pin(section, key, raw, config_path=config_path, pinned=pinned):
         return True
     spelling = _LEGACY_SPELLINGS.get((section, key))
     if spelling is not None:
         read = spelling(raw)
-        return read is not None and (read == pinned or read == default)
+        return read is not None and read == default
     return _restates_default(raw, default)
+
+
+def _reads_as_pin(
+    section: str, key: str, raw: object, *, config_path: ConfigSource, pinned: object
+) -> bool:
+    """Whether the loader, reading a user's line for a pinned key alone,
+    takes it as written and loads the pinned value (`pinned`, the managed
+    line as loaded).
+
+    One the loader refuses (``forbid_force = 1``, ``port = "seven"``,
+    ``port = inf``), or reads only through a fallback, a clamp or a lossy
+    coercion (``enabled = 1``, which a boolean reads as its default;
+    ``search_mode = "semantic"``; ``checkpoint_tokens = 100``; ``port =
+    7400.9``), is not read as written and restates no pin, even where what
+    it lands on is the pinned value."""
+    try:
+        read, notes = _read_alone(section, key, raw, config_path)
+    except Exception:  # noqa: BLE001 - every refusal reads as not the pin
+        return False
+    return not notes and read == pinned
+
+
+def _read_alone(
+    section: str, key: str, raw: object, config_path: ConfigSource
+) -> tuple[object, list[str]]:
+    """What the loader reads `raw` as for ``[section] key``, parsed through
+    the loader itself (`_config_from_data`) in a table of its own, and
+    every way it did not take the line as written (`_TRIAL`). Raises what
+    the loader raises. Logs nothing (`_trial_filter`), and a table holding
+    one current key of a known section reaches none of the one-shot
+    notices, so their guards are untouched."""
+    import logging
+
+    logging.getLogger("bettermemory.config").addFilter(_trial_filter)
+    notes: list[str] = []
+    token = _TRIAL.set(notes)
+    try:
+        read = _config_from_data({section: {key: raw}}, config_path)
+    finally:
+        _TRIAL.reset(token)
+    return getattr(getattr(read, section), key), notes
+
+
+def line_reads_as_pin(
+    section: str,
+    key: str,
+    user_raw: object,
+    managed_raw: object,
+    *,
+    config_path: ConfigSource,
+    managed_path: ConfigSource,
+) -> bool:
+    """Whether a user's config.toml line for a key the managed config pins
+    reads as the pin, compared as the loader's notice compares it
+    (`_reads_as_pin`), for `bettermemory config check` (a `pinned` note on
+    every line that does not) and `config show` (the user's value beside
+    the pinned one). The managed line is read alone as the loader reads
+    it; one the loader refuses is compared as written, type and all,
+    since the managed config then does not load, which `config check`
+    reports itself."""
+    try:
+        pinned, _ = _read_alone(section, key, managed_raw, managed_path)
+    except Exception:  # noqa: BLE001 - the whole load reports the managed line
+        return type(user_raw) is type(managed_raw) and user_raw == managed_raw
+    return _reads_as_pin(section, key, user_raw, config_path=config_path, pinned=pinned)
 
 
 def _restates_default(raw: object, default: object) -> bool:

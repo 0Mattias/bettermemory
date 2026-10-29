@@ -1244,16 +1244,25 @@ unpaired surrogate refused as the file refuses bytes that are not UTF-8;
 errors and reports name it `registry
 HKLM\SOFTWARE\Policies\bettermemory\ManagedConfig`. It is read after the
 user's file, and every key it sets is pinned: the user's value is
-ignored, with one logged notice per key whose value differs from the
-pinned one and is not the code's own default for the key
-(`config._restates_pin_or_default`), and a list replaces the user's
-whole. The value is compared as written (`_restates_default`, a boolean
-restating only a boolean), except for a key with a legacy spelling
-(`_LEGACY_SPELLINGS`): `[behavior] prompt_recall`, which 3.41.0 to
-8.0.0 wrote as `true`, is compared as `_prompt_recall_spelling` reads
-it, against the pinned value as loaded and the default, so `true` (read
-as `project`) restates the default and a spelling it does not read
-still draws the notice. Unknown sections and keys in it are ignored, as in config.toml,
+ignored, with one logged notice per key whose value the loader would
+not read as the pinned one and is not the code's own default for the
+key (`config._restates_pin_or_default`), and a list replaces the user's
+whole. Against the pin, the line is read alone by the loader itself
+(`_reads_as_pin`, since 9.0.0rc14): it restates the pin only when it
+loads, with no refusal, fallback, clamp or lossy coercion, to the pinned
+value as loaded, so `"true"` under a pinned `true` draws no notice and
+`1` under one does (a boolean reads the integer as its default, a switch
+refuses it). That read logs nothing: a context variable collects a note
+from each coercion that does not take the line as written (whatever the
+logging configuration), and a filter on the `bettermemory.config`
+logger keeps their warnings off the log. `config check` and `config
+show` ask the same question through `config.line_reads_as_pin`. Against the
+default, the value is compared as written (`_restates_default`, a
+boolean restating only a boolean), except for a key with a legacy
+spelling (`_LEGACY_SPELLINGS`): `[behavior] prompt_recall`, which
+3.41.0 to 8.0.0 wrote as `true`, is compared as `_prompt_recall_spelling`
+reads it, so `true` (read as `project`) restates the default and a
+spelling it does not read still draws the notice. Unknown sections and keys in it are ignored, as in config.toml,
 but a top-level value outside a section is an error. It fails closed: a
 file that exists but cannot be read, does not parse or holds an invalid
 value stops the load with an error naming it. `Config.managed_keys`
