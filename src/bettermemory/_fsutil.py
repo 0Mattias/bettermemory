@@ -3,10 +3,12 @@
 Two concerns live here, both narrow:
 
 **Durability (`fsync_file`, `fsync_dir`, `atomic_write_bytes`).** The
-small files beside the store (the key ring's key, head, origin and
-binding files, the machine id, configs, export and mirror output) are
-written `write to .tmp → rename to target`. POSIX guarantees the rename itself is atomic, but the rename only updates
-the directory entry; the page cache holding the file's bytes (and the
+small files this package writes outside the store (the key ring's key,
+head, origin and binding files, the machine id, configs, and what
+`export`, `export --mirror` and `log anchor --out` write where they are
+told) are written `write to .tmp → rename to target`. POSIX guarantees
+the rename itself is atomic, but the rename only updates the directory
+entry; the page cache holding the file's bytes (and the
 directory's own metadata) can still be lost on power loss between the
 rename returning and the kernel flushing dirty pages. Without an
 explicit fsync we can end up with a zero-byte file at the target path
@@ -30,9 +32,10 @@ exists, the data backing it never reached disk.
   (privacy-critical 0o600 payloads — no world-readable window at the
   visible name). The privacy-critical writers route through the
   `mode_before_rename` form: the key ring (`log.py`), the machine id,
-  the key lifecycle, backup bundles and the v8 mirror's memory and
-  episode files, so the durable-private-write discipline has one
-  definition. The plain callers that pass neither mode (`config.py`'s
+  the key lifecycle, backup bundles, the v8 mirror's memory and
+  episode files and its marker, and the anchor `log anchor --out`
+  writes (`cli/log_cmd.py`), so the durable-private-write discipline
+  has one definition. The plain callers that pass neither mode (`config.py`'s
   default-config writer, `cli/export.py`'s `-o` output writer, the
   membership export and the service units) inherit
   `NamedTemporaryFile`'s 0o600 default, which is strictly safe
