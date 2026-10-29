@@ -20,8 +20,13 @@ not count, since it bound the original before the patch was placed.
 from __future__ import annotations
 
 import ast
+import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 import bettermemory
 
@@ -245,3 +250,246 @@ def test_every_patched_name_has_a_reader() -> None:
                     )
     assert sites > 400, sites
     assert unread == [], "\n".join(unread)
+
+
+# ---------------------------------------------------------------------------
+# Parts: modules split out of another (ENG-97)
+# ---------------------------------------------------------------------------
+
+
+def _is_type_checking(test: ast.expr) -> bool:
+    return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+        isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+    )
+
+
+def _tree(path: Path) -> ast.Module:
+    return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+
+@dataclass
+class _Imports(ast.NodeVisitor):
+    """The package modules a module imports as it is imported (`eager`), and
+    those it imports only inside a function or for type checking (`lazy`)."""
+
+    current: str
+    is_package: bool
+    eager: set[str] = field(default_factory=set)
+    lazy: set[str] = field(default_factory=set)
+    depth: int = 0
+
+    def visit_If(self, node: ast.If) -> None:
+        if not _is_type_checking(node.test):
+            self.generic_visit(node)
+            return
+        self.depth += 1
+        for stmt in node.body:
+            self.visit(stmt)
+        self.depth -= 1
+        for stmt in node.orelse:
+            self.visit(stmt)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self.depth += 1
+        self.generic_visit(node)
+        self.depth -= 1
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self.depth += 1
+        self.generic_visit(node)
+        self.depth -= 1
+
+    def _add(self, module: str) -> None:
+        (self.lazy if self.depth else self.eager).add(module)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            if alias.name in MODULES:
+                self._add(alias.name)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        base = (
+            _resolve(self.current, node.level, node.module, self.is_package)
+            if node.level
+            else (node.module or "")
+        )
+        for alias in node.names:
+            full = f"{base}.{alias.name}"
+            if full in MODULES:
+                self._add(full)
+            elif base in MODULES:
+                self._add(base)
+
+
+def _parts() -> dict[str, str]:
+    """{part: module}: each module split out of another. Only that module
+    imports it, and only inside a function (or for type checking), while
+    the part imports that module as it is imported."""
+    found: dict[str, _Imports] = {}
+    for module, path in MODULES.items():
+        imports = _Imports(module, path.name == "__init__.py")
+        imports.visit(_tree(path))
+        found[module] = imports
+    importers: dict[str, set[str]] = {}
+    for module, imports in found.items():
+        for target in imports.eager | imports.lazy:
+            importers.setdefault(target, set()).add(module)
+    parts: dict[str, str] = {}
+    for part, owners in importers.items():
+        if len(owners) != 1:
+            continue
+        (owner,) = owners
+        if owner != part and owner in found[part].eager:
+            parts[part] = owner
+    return parts
+
+
+def _bound_at_import(body: list[ast.stmt]) -> set[str]:
+    """The names a module's top level binds as it is imported, outside
+    `if TYPE_CHECKING:`."""
+    bound: set[str] = set()
+    for node in body:
+        if isinstance(node, ast.If):
+            if not _is_type_checking(node.test):
+                bound |= _bound_at_import(node.body)
+            bound |= _bound_at_import(node.orelse)
+        elif isinstance(node, ast.Try):
+            for block in (node.body, node.orelse, node.finalbody):
+                bound |= _bound_at_import(block)
+            for handler in node.handlers:
+                bound |= _bound_at_import(handler.body)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            bound |= {a.asname or a.name.split(".")[0] for a in node.names}
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound.add(node.name)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                bound |= {n.id for n in ast.walk(target) if isinstance(n, ast.Name)}
+    return bound
+
+
+def _binds_at_import(tree: ast.Module, current: str, name: str) -> bool:
+    """Whether a module binds `name` as it is imported and reads that
+    binding at run time, so a patch placed on another module's `name`
+    later never reaches it."""
+    reads = _Reads(_bindings(tree, current, False), current, False)
+    reads.visit(tree)
+    return name in reads.names and name in _bound_at_import(tree.body)
+
+
+def test_no_part_binds_a_name_patched_on_its_module() -> None:
+    """A part split out of a module reads that module's names when it runs,
+    so a patch on `module.name` reaches the readers the split moved, and a
+    part first imported under a patch does not keep the fake. A part that
+    binds a name patched on its module as it is imported fails here."""
+    parts = _parts()
+    owners = set(parts.values())
+    assert {f"{PACKAGE}.backup", f"{PACKAGE}.config", f"{PACKAGE}.store"} <= owners
+    trees = {part: _tree(MODULES[part]) for part in parts}
+    early: list[str] = []
+    for top in PATCHING:
+        for path in _files(top):
+            for line, module, name in _patch_sites(path):
+                for part, owner in parts.items():
+                    if owner == module and _binds_at_import(trees[part], part, name):
+                        rel = path.relative_to(ROOT).as_posix()
+                        early.append(
+                            f"{rel}:{line} patches {module}.{name}, but {part} "
+                            f"binds {name} as it is imported"
+                        )
+    assert early == [], "\n".join(early)
+
+
+#: The review's cases (ENG-97 set B, M1): a name a part reads, which no test
+#: patched when the part bound it at import, and the binding it had then.
+REVIEW_CASES = (
+    (
+        f"{PACKAGE}.backup",
+        "_store_facts",
+        f"{PACKAGE}.backup_restore",
+        "from .backup import _store_facts",
+    ),
+    (
+        f"{PACKAGE}.config",
+        "_coerce_float",
+        f"{PACKAGE}.config_sections",
+        "from .config import _coerce_float",
+    ),
+    (
+        f"{PACKAGE}.store",
+        "key_state",
+        f"{PACKAGE}.store_open",
+        "from .store_keys import key_state",
+    ),
+)
+
+
+@pytest.mark.parametrize(("module", "name", "part", "binding"), REVIEW_CASES)
+def test_the_rule_refuses_the_binding_each_review_case_had(
+    module: str, name: str, part: str, binding: str
+) -> None:
+    """Each part now reads the name through its module when it runs, and
+    the binding it had before is one the rule above refuses."""
+    assert _parts()[part] == module
+    assert (module, name) in _reads_of(MODULES[part], part, False).attrs
+    assert not _binds_at_import(_tree(MODULES[part]), part, name)
+    before = ast.parse(f"{binding}\n\n\ndef reader() -> object:\n    return {name}\n")
+    assert _binds_at_import(before, part, name)
+
+
+def _spy(real: Callable[..., Any], callers: list[str]) -> Callable[..., Any]:
+    """`real`, noting the module of each caller."""
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        callers.append(str(sys._getframe(1).f_globals.get("__name__")))
+        return real(*args, **kwargs)
+
+    return spy
+
+
+def test_a_patch_on_backup_reaches_the_restore_plan(
+    tmp_path: Path, keys_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bettermemory import backup, backup_restore
+    from bettermemory.store import STORE_FILENAME, Store
+
+    store_file = tmp_path / "store" / STORE_FILENAME
+    Store.create(store_file, keys_dir=keys_dir).close()
+    bundle = Path(backup.create_backup(store_file, keys_dir=keys_dir)["bundle"])
+    # The part is loaded before the patch, as in a process that restored once.
+    assert backup_restore.__name__ in sys.modules
+    callers: list[str] = []
+    monkeypatch.setattr(backup, "_store_facts", _spy(backup._store_facts, callers))
+    report = backup.restore_bundle(bundle, store_file, apply=False, keys_dir=keys_dir)
+    assert report["status"] == "planned", report["detail"]
+    assert f"{PACKAGE}.backup_restore" in callers
+
+
+def test_a_patch_on_config_reaches_the_section_builders(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bettermemory import config, config_sections
+
+    # The part is loaded before the patch, as in a process that read a config.
+    assert config_sections.__name__ in sys.modules
+    callers: list[str] = []
+    monkeypatch.setattr(config, "_coerce_float", _spy(config._coerce_float, callers))
+    config_sections._behavior_config({}, tmp_path / "config.toml")
+    assert f"{PACKAGE}.config_sections" in callers
+
+
+def test_a_patch_on_store_reaches_the_open_steps(
+    tmp_path: Path, keys_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bettermemory import store, store_open
+    from bettermemory.store import STORE_FILENAME, Store
+
+    path = tmp_path / STORE_FILENAME
+    Store.create(path, keys_dir=keys_dir).close()
+    # The part is loaded before the patch, as in a process that opened a store.
+    assert store_open.__name__ in sys.modules
+    callers: list[str] = []
+    monkeypatch.setattr(store, "key_state", _spy(store.key_state, callers))
+    Store.open(path, keys_dir=keys_dir).close()
+    assert f"{PACKAGE}.store_open" in callers
