@@ -1,4 +1,4 @@
-"""The recall surface's session cooldown (`recall.RecallState`).
+"""The recall surface's session cooldown (`recall_state.RecallState`).
 
 Per (harness, session id): the segment, the ids shown in it and its
 delivery count. A SessionStart with source ``clear`` opens a new segment,

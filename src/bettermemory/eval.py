@@ -1344,7 +1344,7 @@ def compute_tool_usage(
             continue
         if is_settlement(ev):
             # A pointer's settlement, recorded by the Stop
-            # (`recall.settle_shown`): no tool was called.
+            # (`recall_settle.settle_shown`): no tool was called.
             continue
         mapped_tool = _TOOL_EVENT_KIND_TO_TOOL.get(kind)
         if mapped_tool is not None:

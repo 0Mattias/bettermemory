@@ -394,7 +394,7 @@ def surface_rule_split(
 ) -> tuple[dict[str, Any], dict[str, int]]:
     """The recall surfaces' tallies over [start, end), split on the rule
     each show row carries, never on a clock (design 8.11): the current
-    rule (`recall.RULE`, rs-v5: delivery decided by membership) and the
+    rule (`recall_state.RULE`, rs-v5: delivery decided by membership) and the
     earlier rules together (`EARLIER_RULES`; a show with no rule is
     earlier). Each group carries the rules its shows named and, per
     surface (None for a window holding none of the surface's rows), the
@@ -1205,8 +1205,8 @@ TOOLS_WITHOUT_TELEMETRY: tuple[str, ...] = ()
 #
 # ``review_unanswered`` is the Stop's count of the write-review chains
 # the conversation left open since its previous turn
-# (`recall.review_unanswered`). A hook record, not a tool call, and not a
-# retrieval kind.
+# (`recall_settle.review_unanswered`). A hook record, not a tool call, and not
+# a retrieval kind.
 #
 # ``segment_opened`` is a hook's record of what a compact or clear did to
 # the session's recall segment when no brief row carried it: the

@@ -26,7 +26,7 @@ brief row's). The clause is read over the session's keys, as the
 prediction means it; a subagent's shows and repeats print on their own
 line. A repeat show is one whose id was already shown under the same
 key, by either surface, with the most recent earlier show within
-`recall.STATE_IDLE_SECONDS` (24 hours) of it. A show across a longer gap
+`recall_state.STATE_IDLE_SECONDS` (24 hours) of it. A show across a longer gap
 is counted on its own line, "re-shows past the idle window", and is not
 a repeat: the daemon drops a session idle past that many seconds and
 rebuilds it from the log's rows of the last 24 hours, so an id shown more

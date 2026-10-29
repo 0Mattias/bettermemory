@@ -14,12 +14,12 @@ in two so the count can be read again by anyone holding the fixture:
            M4's way: the repository most memories written in that
            worktree carry, else the checkout's git remote, else none), a
            frozen project map (for each caller, which hit memories
-           rc3's rule admits (`recall._rc3_in_project`), read once since it touches the
-           filesystem), the hit memories' static facts (created, category,
-           origin, provenance label, summary length) and the timelines the
-           as-of reads need (contradicted uses, updates and verifies, the
-           session's retrievals and writes, conflict rows). No body, no
-           summary, no snippet and no prompt is written into it.
+           rc3's rule admits (`recall_admission._rc3_in_project`), read once
+           since it touches the filesystem), the hit memories' static facts
+           (created, category, origin, provenance label, summary length) and
+           the timelines the as-of reads need (contradicted uses, updates and
+           verifies, the session's retrievals and writes, conflict rows). No
+           body, no summary, no snippet and no prompt is written into it.
   run      replay the fixture under a rule and write counts and rates.
 
 The rules, from M4's to the built one, each step changing one thing so a
@@ -37,10 +37,11 @@ count that moves can be traced to the step that moved it:
              (created before the turn) and no contradicted use was open at
              the turn (no update or verify of it between that use and the
              turn).
-  project    asof with rc3's built candidate gate (`recall._rc3_in_project`) on
-             the frozen caller (which also applies `worktrees_match`), and
-             no ambient exclusion, which the built prompt recall does not
-             make (the brief does).
+  project    asof with rc3's built candidate gate
+             (`recall_admission._rc3_in_project`) on the frozen caller
+             (which also applies `worktrees_match`), and no ambient
+             exclusion, which the built prompt recall does not make (the
+             brief does).
   rs-v1      project with the built segment gate: the ids shown in the
              segment, plus `recall._seen_in_log` over the retrievals,
              writes and updates before the turn (the session's own since
@@ -48,8 +49,8 @@ count that moves can be traced to the step that moved it:
              twelve per segment and the three per block; the block rendered by
              `recall.render_recall_block` with the summary at its length,
              the snippet at its 100-character cap and the as-of disputed
-             mark (`recall.disputed_marks` over the pairs pending at the
-             turn).
+             mark (`recall_admission.disputed_marks` over the pairs pending at
+             the turn).
 
 The old log carries no segment boundary (a compact or clear left nothing
 then), so each session is one segment, opened at its first audited turn.
@@ -359,8 +360,8 @@ def _stamp(value: str) -> datetime:
 
 def _contradiction_open_at(memory_id: str, ts: str, fixture: Mapping[str, Any]) -> bool:
     """Whether a contradicted use of `memory_id` before `ts` had no update
-    or verify after it and before `ts`: `recall._contradiction_open` read
-    as of the turn."""
+    or verify after it and before `ts`: `recall_admission._contradiction_open`
+    read as of the turn."""
     uses = [stamp for stamp in fixture["contradicted"].get(memory_id, []) if stamp < ts]
     if not uses:
         return False

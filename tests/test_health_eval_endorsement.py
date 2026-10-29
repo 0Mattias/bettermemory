@@ -2,7 +2,7 @@
 
 `health_model.endorsement_tier` decides which `use` events feed a memory's
 per-memory applied tallies, and both `compute_health` and `compute_eval`
-read it: a shown pointer's settlement (`recall.settle_shown`, a `use`
+read it: a shown pointer's settlement (`recall_settle.settle_shown`, a `use`
 naming the surface that showed it) is a recorded use of the memory, so a
 memory retrieved, auto-applied and then settled is not cold-endorsed on
 either report. Eval's rate trio still leaves the settlement out.
@@ -55,7 +55,7 @@ def _auto(mid: str) -> dict[str, Any]:
 
 
 def _settlement(mid: str) -> dict[str, Any]:
-    """A pointer's settlement as `recall.settle_shown` records it."""
+    """A pointer's settlement as `recall_settle.settle_shown` records it."""
     return {
         "ts": _TS,
         "session": "s",

@@ -33,7 +33,7 @@ opened it, so each worker opens its own connection to the store once
 (`Store.reopen`), keeps it for the daemon's life and closes it when the
 app shuts down; a tool body runs over a copy of the handler bundle bound
 to its worker's connection (`ToolHandlers.with_store`). The recall
-surface's per-session state (`recall.RecallState`) is the daemon's, one
+surface's per-session state (`recall_state.RecallState`) is the daemon's, one
 for its lifetime, lock-guarded, as is each MCP session's state
 (`session.SessionState.lock`): two tool calls of one session may run on
 two workers at once.

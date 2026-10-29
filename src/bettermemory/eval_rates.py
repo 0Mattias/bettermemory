@@ -169,7 +169,7 @@ def _count_use(
     tier = _endorsement_tier(ev)
     if tier is None:
         return
-    # A pointer's settlement (`recall.settle_shown`) feeds the
+    # A pointer's settlement (`recall_settle.settle_shown`) feeds the
     # per-memory tallies, as health's do (`endorsement_tier`),
     # and not the trio: the surfaces section counts it, so the
     # published series keeps one definition across the recall

@@ -2,7 +2,7 @@
 
 The Stop's audit row says how many memories the audit of its turn
 settled as used: the retrievals `hook._emit_hook_attributions` settled
-plus the shown pointers `recall.settle_shown` settled, one `use` row
+plus the shown pointers `recall_settle.settle_shown` settled, one `use` row
 each. The Stop records the row after its settlements, so the count is
 theirs, and before the walk over the session's interrupted turns, whose
 own rows carry zero (their pointers stay pending).

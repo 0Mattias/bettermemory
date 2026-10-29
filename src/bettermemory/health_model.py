@@ -254,8 +254,8 @@ def endorsement_tier(ev: dict[str, Any]) -> str | None:
 
     The one definition the cold-endorsement bucket is read under, in
     `health.compute_health` and `eval.compute_eval` alike: every applied
-    use counts, and a shown pointer's settlement (`recall.is_settlement`,
-    `recall.settle_shown`) is one. A settlement is the containment
+    use counts, and a shown pointer's settlement (`recall_state.is_settlement`,
+    `recall_settle.settle_shown`) is one. A settlement is the containment
     matcher finding the pointer's memory in the reply, the same ``hook``
     tier the matcher gives a retrieval it matched, so it is a recorded
     use of the memory and the memory is not "never endorsed". The two

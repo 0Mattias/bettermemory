@@ -374,13 +374,13 @@ def run_audit(
     under-attribute real work. Inspection gets a dry run instead.
 
     After the real retrievals are settled, the recall surface's shown
-    pointers are (`recall.settle_shown`); then the turn's `turn_audited`
+    pointers are (`recall_settle.settle_shown`); then the turn's `turn_audited`
     row is recorded, carrying how many memories the two settled
     (`settled_count`), and its `search_miss`; then the reviews the
     session left open since its previous turn are counted
-    (`recall.review_unanswered`); last, the session's interrupted turns
-    are audited (`recall.settle_interrupted`), best effort, so a slow walk
-    delays only their rows. `state` is the daemon's recall state;
+    (`recall_settle.review_unanswered`); last, the session's interrupted turns
+    are audited (`recall_settle.settle_interrupted`), best effort, so a slow
+    walk delays only their rows. `state` is the daemon's recall state;
     the in-process path passes None and the state is rebuilt from the
     log. `harness` names the session's harness (the recall's key) and
     `prompt_id` the harness turn, stamped on a settlement and, with
@@ -396,7 +396,7 @@ def run_audit(
     when none is stamped.
 
     The probe's pool is the caller's: its membership is resolved
-    (`recall.caller_admission`, from what the hook `posted`, else at
+    (`recall_admission.caller_admission`, from what the hook `posted`, else at
     `cwd`) and the POOL_PREFILTER admission built from it (design 3.5).
     A caller whose resolution raised, read nothing, or is deferred is
     admitted nothing, so its probe ranks nothing and reports

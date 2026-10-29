@@ -136,7 +136,7 @@ if TYPE_CHECKING:
 # front of the model before the turn began, so the turn is not a
 # SILENT miss whatever the model does next. Delivery itself no longer
 # reads this shield: the recall surface's own per-session cooldown
-# (`recall.RecallState`) bounds it, so a session using memory still
+# (`recall_state.RecallState`) bounds it, so a session using memory still
 # gets pointers it has not seen. All four put memory content in front
 # of the model, so a turn where any of them fired shouldn't trip the
 # miss probe. Other event kinds (`use`, `verify`, etc.) are
@@ -485,8 +485,8 @@ _VALID_NO_SIGNAL_REASON: frozenset[str] = frozenset({NO_OWNER_PROMPT})
 # `last_assistant_message`, or the transcript's newest assistant text when
 # the payload carried none. None (no reply at all) writes no key.
 # "interrupted" (RS-F7 part 6): the turn ended with no Stop; a later hook
-# audited it from the transcript (`recall.settle_interrupted`), its reply the
-# partial one the transcript holds.
+# audited it from the transcript (`recall_settle.settle_interrupted`), its
+# reply the partial one the transcript holds.
 _VALID_REPLY_SOURCE: frozenset[str] = frozenset({"payload", "tail", "interrupted"})
 
 
@@ -581,8 +581,8 @@ def turn_audited_fields(
     - ``settled_count``: how many memories the audit of this turn settled
       as used (ENG-108): the Stop's retrieval settlement, attributed and
       auto (`hook._emit_hook_attributions`), plus the shown pointers its
-      reply used (`recall.settle_shown`), each one ``use`` row. Zero for a
-      turn that settled nothing: no owner prompt, no reply, nothing
+      reply used (`recall_settle.settle_shown`), each one ``use`` row. Zero for
+      a turn that settled nothing: no owner prompt, no reply, nothing
       pending, or an interrupted turn, whose pointers stay pending. The
       Stop records its row after the settlements so the count is the
       settlements' own, and a reader joins a turn to its settlements

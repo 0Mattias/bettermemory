@@ -1,4 +1,4 @@
-"""The disputed mark on recall pointers (`recall.disputed_marks`).
+"""The disputed mark on recall pointers (`recall_admission.disputed_marks`).
 
 A memory is disputed when it is either member of a conflicts row whose
 status is ``pending``, whatever the detector (polarity, numeric, value,
