@@ -138,6 +138,7 @@ from ._fsutil import (
 from .config import STORE_FILENAME
 from .log import (
     REKEY,
+    STORE_ID_PATTERN,
     Head,
     HistoryOrigin,
     KeyRing,
@@ -170,13 +171,15 @@ _MANIFEST_MAC_CONTEXT = b"bettermemory-backup-manifest-v1\x00"
 #: A manifest is a few kilobytes; anything past this is not one.
 _MANIFEST_CAP_BYTES = 1 << 20
 _DIGEST_CHUNK = 1 << 20
-#: A store id: `Store.create` makes 32 hex digits, and this takes any name
-#: of letters, digits, ``_`` and ``-``. The id names the files of the key
-#: ring (`log.KeyRing`), in the bundle and in the keys directory, so an id
-#: carrying a separator or ``..`` would steer create's key and head writes
-#: out of the bundle and restore's out of the keys directory. A snapshot
-#: or a manifest that names any other id is not a bundle this reads.
-_STORE_ID_RE = re.compile(r"[0-9A-Za-z_-]{1,128}")
+#: A store id: the 32 lowercase hex digits `Store.create` mints, the one
+#: shape the key ring takes (`log.STORE_ID_PATTERN`; `log.KeyRing` raises
+#: ValueError on any other). The id names the ring's files, in the bundle
+#: and in the keys directory, so an id carrying a separator or ``..``
+#: would steer create's key and head writes out of the bundle and
+#: restore's out of the keys directory. A snapshot or a manifest that
+#: names any other id is not a bundle this reads, and is refused as one
+#: before a key ring is built from it.
+_STORE_ID_RE = STORE_ID_PATTERN
 #: A SHA-256 or HMAC-SHA256 hex digest: every file hash, key fingerprint
 #: and MAC a manifest holds. Each is held to this shape before anything
 #: compares it, and compared as bytes (`log.same_mac`) as well, so a value

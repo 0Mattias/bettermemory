@@ -446,8 +446,12 @@ the candidates' testing.
   test pinning it to the one `Store.open` refuses a store by, and the
   ring lists its own retired keys. The audit reports a malformed id as
   one high `key.match` finding ("every opener refuses this store") and
-  runs no ring check from it.
-  (`src/bettermemory/log.py`, `src/bettermemory/posture.py`)
+  runs no ring check from it. Backup holds a bundle's and a store's id to
+  the same pattern, so a manifest or snapshot naming any other id (rc13
+  took any 1 to 128 letters, digits, `_` or `-`) is `manifest_invalid`,
+  and restore and create refuse it.
+  (`src/bettermemory/log.py`, `src/bettermemory/posture.py`,
+  `src/bettermemory/backup.py`, `docs/api.md`)
 - **`init` and `doctor` find Claude Code's files where `CLAUDE_CONFIG_DIR`
   puts them.** Claude Code keeps its global config (`.claude.json`, the
   user-scope MCP servers and the project registry) and its user settings

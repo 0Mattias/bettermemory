@@ -762,6 +762,54 @@ def test_a_store_id_that_names_a_path_is_refused_everywhere(
     assert found - {(bundle / planted_head.name).resolve()} == laid
 
 
+@pytest.mark.parametrize("odd", ["planted", "A" * 32, "0" * 31, "0" * 33])
+def test_a_store_id_no_store_mints_is_refused_not_raised(
+    odd: str, bundle: Path, store_file: Path, keys_dir: Path, tmp_path: Path
+) -> None:
+    """ENG-173, backup's side. The key ring takes only the 32 lowercase hex
+    digits `Store.create` mints (`log.STORE_ID_PATTERN`). Backup's own
+    pattern took any name of letters, digits, ``_`` and ``-``, so an id
+    such as ``planted`` passed it and reached `KeyRing`, whose ValueError
+    escaped verify, restore and create as a crash instead of their own
+    refusals. Here a holder of the key builds a bundle whose snapshot and
+    signed manifest agree on such an id: verify reads the manifest as
+    invalid, restore refuses it, and create refuses a live store whose meta
+    names one."""
+    manifest = _manifest(bundle)
+    store_id = manifest["store_id"]
+    key = _key(keys_dir, store_id)
+    conn = sqlite3.connect(str(bundle / STORE_FILENAME))
+    conn.execute("UPDATE meta SET value = ? WHERE key = 'store_id'", (odd,))
+    conn.commit()
+    conn.close()
+    head = bundle / f"{store_id}.head"
+    head.rename(bundle / f"{odd}.head")
+    (bundle / f"{odd}.key").write_bytes(key)
+    manifest["store_id"] = odd
+    del manifest["files"][head.name]
+    _rehash(bundle, manifest, STORE_FILENAME, f"{odd}.head")
+    manifest["mac"] = manifest_mac(key, manifest)
+    _write_manifest(bundle, manifest)
+
+    report = verify_bundle(bundle)
+    assert report["status"] == "mismatched"
+    assert "manifest_invalid" in _problems(report)
+
+    victim = tmp_path / "victim"
+    report = restore_bundle(
+        bundle, victim / "store" / STORE_FILENAME, apply=True, keys_dir=victim / "keys"
+    )
+    assert report["status"] == "refused"
+    assert not (victim / "store" / STORE_FILENAME).exists()
+
+    conn = sqlite3.connect(str(store_file))
+    conn.execute("UPDATE meta SET value = ? WHERE key = 'store_id'", (odd,))
+    conn.commit()
+    conn.close()
+    with pytest.raises(BackupError, match="not one"):
+        create_backup(store_file)
+
+
 # ---------------------------------------------------------------------------
 # restore
 # ---------------------------------------------------------------------------
@@ -1385,7 +1433,8 @@ def test_a_store_with_no_log_is_not_backed_up(tmp_path: Path) -> None:
     with pytest.raises(BackupError, match="no store id"):
         create_backup(path)
     conn.executemany(
-        "INSERT INTO meta VALUES (?, ?)", [("store_id", "s"), ("key_fingerprint", "f")]
+        "INSERT INTO meta VALUES (?, ?)",
+        [("store_id", "0" * 32), ("key_fingerprint", "f")],
     )
     conn.execute(
         "INSERT INTO log(kind, ts, payload, prev_mac, mac) "
