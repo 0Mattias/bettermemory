@@ -59,6 +59,23 @@ follows the candidates' testing.
   store never changes what it inspects. (`src/bettermemory/cli/index_cmd.py`,
   `src/bettermemory/cli/__init__.py`, `src/bettermemory/store_index.py`,
   `docs/api.md`, `docs/operations.md`, `tests/test_index_integrity.py`)
+- **The daemon runs `PRAGMA optimize` on a schedule and at shutdown.**
+  Nothing ever analysed a store, so SQLite planned every query without
+  statistics however large the store grew. The daemon now runs
+  `PRAGMA optimize(0x10002)` on its own connection as it starts serving,
+  every hour (`daemon.OPTIMIZE_EVERY_SECONDS`) and at shutdown, after
+  the workers have stopped and before the store closes. 0x10000 has it
+  look at every table, since the daemon's own connection queries little;
+  an hour follows SQLite's advice for connections held open for days
+  (every few hours to once a day) at no cost that shows: on 5,000
+  memories the first run took 2.4 ms and a run with nothing to do 5.5
+  us. The schedule is the event loop's (`loop.call_later`), the thread
+  the store's connection serves, not the store watch's thread, which
+  holds nothing of the store and does not run on Windows. A run sets the
+  connection's busy timeout to 0, so a store another connection is
+  writing is skipped, not waited on. (`src/bettermemory/daemon.py`,
+  `src/bettermemory/store_index.py`, `docs/operations.md`,
+  `tests/test_daemon_optimize.py`)
 
 #### Changed
 

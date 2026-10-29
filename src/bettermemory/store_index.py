@@ -18,7 +18,8 @@ index text is spelled by, compared at every open with this build's
 re-spelling an owner's open runs when they differ (`rebuild_index`),
 which `bettermemory index rebuild` runs on demand (`cli/index_cmd.py`),
 and the checks `doctor` and `backup verify` run on the file's pages and
-the index (`index_report`).
+the index (`index_report`); and the ``PRAGMA optimize`` the daemon runs on
+its schedule and at shutdown (`optimize`).
 """
 
 from __future__ import annotations
@@ -903,3 +904,44 @@ def index_problems(store: Store) -> list[dict[str, Any]]:
             }
         )
     return problems
+
+
+# -- the query planner's statistics (ENG-100) -----------------------------
+
+#: The bits ``PRAGMA optimize`` runs with: 0x02, analyse the tables that
+#: may benefit, and 0x10000, look at every table, not only those this
+#: connection queried. The daemon's own connection queries little (its
+#: workers' connections do the reading), so without 0x10000 it would
+#: analyse nothing. SQLite added the bit in 3.46.0; an older one ignores it.
+OPTIMIZE_MASK = 0x10002
+
+
+def optimize(store: Store, *, why: str) -> bool:
+    """``PRAGMA optimize`` on `store`'s connection, for the daemon (`why`:
+    ``schedule`` or ``shutdown``, for the log). It analyses only a table
+    whose statistics are missing or behind its size, under the bounded
+    `analysis_limit` SQLite sets for it, so it is cheap: 2.4 ms the first
+    time on 5,000 memories, 5.5 us when nothing needs it (ENG-100). An
+    analysis writes ``sqlite_stat1``, which needs the write lock: the
+    connection's busy timeout is 0 for the call, so a store another
+    connection is writing is skipped rather than waited on, and the next
+    run tries again. Returns whether it ran; a store busy, read-only by
+    its versions or closed is logged and skipped."""
+    started = time.monotonic()
+    try:
+        wait = store.busy_timeout
+        store.set_busy_timeout(0)
+        try:
+            store.conn.execute(f"PRAGMA optimize({OPTIMIZE_MASK})")
+        finally:
+            store.set_busy_timeout(wait)
+    except (sqlite3.Error, ValueError) as exc:
+        log.info("store %s: PRAGMA optimize (%s) skipped: %s", store.path, why, exc)
+        return False
+    log.debug(
+        "store %s: PRAGMA optimize (%s) in %.6f s",
+        store.path,
+        why,
+        time.monotonic() - started,
+    )
+    return True

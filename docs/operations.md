@@ -106,6 +106,16 @@ does not answer is kept while its process holds the store's lock, so a
 starting or busy daemon is never hidden, and removed once that process
 is gone.
 
+The daemon keeps SQLite's query planner statistics current (ENG-100): it
+runs `PRAGMA optimize` on its own connection as it starts serving, every
+hour after that, and once more at shutdown, after its workers have
+stopped and before the store is closed. A run analyses only a table whose
+statistics are missing or behind its size, and writes them to
+`sqlite_stat1`, a table every opener admits; on 5,000 memories it took
+2.4 ms the first time and 5.5 us when nothing needed it. It never waits
+for the write lock: while another connection writes, the run is skipped
+and the next one tries again.
+
 ### A store another release wrote
 
 A store records the schema revision a build must read to open it and
