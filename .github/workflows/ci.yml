@@ -119,6 +119,27 @@ jobs:
       - name: Test
         run: uv run pytest --cov=bettermemory --cov-report=term-missing --cov-fail-under=80 -q
 
+      # The UNC (\\localhost\C$\...), verbatim (\\?\C:\...) and device
+      # (\\.\C:\...) path opens in tests/test_sqlite_uri.py run only on
+      # Windows, at four sites each (store, posture, backup, daemon), and the
+      # UNC case skips where the runner's admin share does not answer. The
+      # suite above runs them under -q, which counts a skip and drops its
+      # reason. This step runs the file again with -v and -rs, so the log
+      # holds one PASSED or SKIPPED line per test, then a "short test
+      # summary info" block with a line per skip reason (n tests skipped
+      # with it),
+      #   SKIPPED [n] tests/test_sqlite_uri.py:<line>: <reason>
+      # Every Windows host skips two POSIX-only cases ("a //server path on
+      # Windows is a network lookup", "'?' cannot be in a Windows file
+      # name"); the UNC case is listed only if "the admin share does not
+      # answer here: <error>", and the server-authority case only if "this
+      # SQLite passes a URI's authority on as a UNC name". The last line is
+      # "N passed, M skipped". The step runs when the suite above failed
+      # too, so a red leg still says which of the path tests ran.
+      - name: Windows path tests (UNC, verbatim and device paths)
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        run: uv run pytest -p no:cacheprovider -v -rs tests/test_sqlite_uri.py
+
   install-from-constraints:
     name: install from declared constraints
     runs-on: ubuntu-latest

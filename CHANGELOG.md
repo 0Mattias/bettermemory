@@ -2592,6 +2592,20 @@ follows the candidates' testing.
   `docs/installation.md`, `docs/operations.md`, `SECURITY.md`,
   `docs/internals.md`, `tests/test_key_runbook.py`,
   `tests/test_key_state.py`, `tests/test_posture.py`)
+- **CI's Windows leg prints the UNC, verbatim and device path tests'
+  skips with their reasons (ENG-93).** The opens of a store through
+  `\\localhost\C$\...`, `\\?\C:\...` and `\\.\C:\...` in
+  `tests/test_sqlite_uri.py` run only on Windows, and the UNC one skips
+  where the runner's admin share does not answer; the suite's `-q` run
+  counted those skips without a reason, so a leg where every UNC case
+  skipped read as green as one where each ran. After the suite, the test
+  job's Windows leg runs that file again with `-v -rs`, also when the
+  suite failed: a PASSED or SKIPPED line per test, then a `SKIPPED [n]
+  tests/test_sqlite_uri.py:<line>: <reason>` line per skip reason (two
+  POSIX-only cases on every Windows host, the UNC case only if "the
+  admin share does not answer here"), then the passed and skipped
+  counts. (`.github/workflows/ci.yml`,
+  `tests/test_ci_workflow_windows_paths.py`)
 
 #### Known limitations
 
