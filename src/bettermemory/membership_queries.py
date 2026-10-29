@@ -318,24 +318,30 @@ def health(self: Membership) -> Health:
         else:
             counts[row.kind] += 1
     checkouts = self._checkouts()
-    without = sorted(
-        k.id
+    here = [
+        k
         for k in checkouts
-        if k.machine == self.machine
-        and k.kind != UNRESOLVED
-        and not k.retired
-        and self.live_view(k) is None
-    )
+        if k.machine == self.machine and k.kind != UNRESOLVED and not k.retired
+    ]
+    with self.liveness_held():
+        # Every view's liveness in one batch, each read bounded (ENG-159).
+        self.prefetch_liveness([(k, v) for k in here for v in k.views_on(self.machine)])
+        without = sorted(k.id for k in here if self.live_view(k) is None)
+    gone = [
+        p
+        for p in self.projects()
+        if p.provisional in UNRESOLVED_STATES and p.merged_into is None
+    ]
+    # One read of the homes for every such project (ENG-159).
+    records = self._records_by_project([p.id for p in gone])
     unresolved: list[UnresolvedProject] = []
-    for p in self.projects():
-        if p.provisional not in UNRESOLVED_STATES or p.merged_into is not None:
-            continue
+    for p in gone:
         k = next(
             (x for x in checkouts if x.kind == UNRESOLVED and x.project == p.id),
             None,
         )
         newest = k.newest_view if k is not None else None
-        memories, episodes = self._record_counts(p.id)
+        memories, episodes = records.get(p.id, (0, 0))
         unresolved.append(
             UnresolvedProject(
                 project=p.id,

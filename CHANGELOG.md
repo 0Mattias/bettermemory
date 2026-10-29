@@ -1069,6 +1069,24 @@ the candidates' testing.
   names the windows left. (`src/bettermemory/location.py`,
   `src/bettermemory/membership.py`, `src/bettermemory/membership_records.py`,
   `src/bettermemory/checkout_token.py`)
+- **The members of every project are read in one pass.** A project's
+  members (itself and the projects merged into it) were found by a pass
+  over every project per call, and the rules that ask it of every
+  project read it per project with their own store reads besides: a
+  commit-less repository's first sight read each project's witnesses and
+  checkouts in turn, inside the resolution's write transaction, and
+  health read each provisional project's record counts in turn (ENG-159).
+  The members index is now built in one pass and kept while the projects
+  read are; the content candidates read the witnesses and the checkouts
+  of every project in one read each, and health the homes of every
+  provisional project in one read and its views' liveness in one batch.
+  Measured on a synthetic store of 400 projects (300 commit-less
+  repositories, 100 provisional projects of unreadable writes, a record
+  each): a commit-less first sight's content candidates took 50.7 ms and
+  1,200 store reads inside the transaction, now 7.0 ms and 3; health
+  took 25.9 ms and 104 reads, now 12.7 ms and 5.
+  (`src/bettermemory/membership.py`, `src/bettermemory/membership_resolve.py`,
+  `src/bettermemory/membership_queries.py`)
 
 #### Known limitations
 

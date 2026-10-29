@@ -344,16 +344,10 @@ def _liveness_plan(self: Membership, loc: Location) -> list[tuple[Checkout, View
         if bound is not None:
             add(self._checkouts_of(bound))
         if not loc.born and not loc.token and loc.manifest is not None:
-            witnessed = {self._canon(str(r["project"])) for r in self._witness_rows()}
+            witnessed = self._witnessed()
             bare = [p.id for p in self.projects() if p.id not in witnessed]
-            if bare:
-                add(
-                    [
-                        x
-                        for x in self._checkouts(column_in=("project", bare))
-                        if x.machine == loc.machine
-                    ]
-                )
+            for ks in self._checkouts_by_project(bare, machine=loc.machine).values():
+                add(ks)
     except Exception:  # noqa: BLE001 - the ladder reads what the plan missed
         pass
     return list(pairs.values())
@@ -881,10 +875,13 @@ def _content_candidates(
     if loc.born or loc.token or mine is None:
         return []
     out: list[str] = []
-    for p in self.projects():
-        if p.tenant != tenant or self._has_witnesses(p.id):
-            continue
-        ks = [k for k in self._checkouts_of(p.id) if k.machine == loc.machine]
+    # One read of the witnesses and one of the checkouts for every project
+    # (ENG-159), where each project read its own, and its members, again.
+    witnessed = self._witnessed()
+    bare = [p for p in self.projects() if p.tenant == tenant and p.id not in witnessed]
+    held = self._checkouts_by_project([p.id for p in bare], machine=loc.machine)
+    for p in bare:
+        ks = held.get(p.id, [])
         if not ks or any(self.view_state(k) == LIVE for k in ks):
             continue
         for k in ks:

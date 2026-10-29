@@ -278,6 +278,9 @@ class Membership:
         self._now = now
         self._session = session
         self._projects: dict[str, Project] | None = None
+        #: The members of every project, built from `_projects` in one pass
+        #: (`_members_index`, ENG-159), with the projects it was built from.
+        self._index: tuple[dict[str, Project], dict[str, tuple[str, ...]]] | None = None
         self._rows: list[int] = []
         self._remint: str | None = None
         #: Liveness read before the write transaction (ENG-156), by what
@@ -470,9 +473,47 @@ class Membership:
 
     def _members(self, project_id: str) -> list[str]:
         """Every project id that stands for `project_id` (itself and the
-        projects merged into it)."""
-        target = self._canon(project_id)
-        return sorted(p for p in self._all_projects() if self.canonical(p) == target)
+        projects merged into it), read from the members index."""
+        return list(self._members_index().get(self._canon(project_id), ()))
+
+    def _members_index(self) -> dict[str, tuple[str, ...]]:
+        """{project: every project id that stands for it}, every project's
+        built in one pass over the projects and kept while they are the
+        ones read (ENG-159): `_members` was a pass over every project per
+        call, and the rules that ask it of every project (the content
+        candidates, health's record counts) read the projects squared."""
+        projects = self._all_projects()
+        if self._index is None or self._index[0] is not projects:
+            groups: dict[str, list[str]] = defaultdict(list)
+            for pid in projects:
+                groups[self._canon(pid)].append(pid)
+            self._index = (projects, {k: tuple(sorted(v)) for k, v in groups.items()})
+        return self._index[1]
+
+    def _witnessed(self) -> set[str]:
+        """The projects (merges followed) with a witness commit, in one read
+        of the witness rows (ENG-159)."""
+        return {
+            self._canon(str(r["project"]))
+            for r in self._store.membership_rows("project_witnesses")
+        }
+
+    def _checkouts_by_project(
+        self, project_ids: Collection[str], *, machine: str | None = None
+    ) -> dict[str, list[Checkout]]:
+        """{project: its checkouts (`_checkouts_of`), on `machine` when
+        given} for every project of `project_ids`, in one read (ENG-159)."""
+        index = self._members_index()
+        wanted = {self._canon(pid) for pid in project_ids}
+        members = [m for pid in wanted for m in index.get(pid, ())]
+        out: dict[str, list[Checkout]] = {pid: [] for pid in wanted}
+        if not members:
+            return out
+        for k in self._checkouts(column_in=("project", members)):
+            if k.kind == UNRESOLVED or (machine is not None and k.machine != machine):
+                continue
+            out.setdefault(self._canon(k.project), []).append(k)
+        return out
 
     def _name(self, project_id: str) -> str:
         pid = self._canon(project_id)
@@ -481,6 +522,7 @@ class Membership:
     def _put_project(self, p: Project) -> None:
         self._put("project", _project_row(p))
         self._all_projects()[p.id] = p
+        self._index = None
 
     def _mint_project(
         self,
@@ -1501,11 +1543,26 @@ class Membership:
 
     def _record_counts(self, project_id: str) -> tuple[int, int]:
         """(memories, episodes) whose homes name the project."""
-        rows = self._store.membership_rows(
-            "homes", column_in=("project", self._members(project_id))
+        return self._records_by_project([project_id]).get(
+            self._canon(project_id), (0, 0)
         )
-        memories = sum(1 for r in rows if r["kind"] == "memory")
-        return memories, len(rows) - memories
+
+    def _records_by_project(
+        self, project_ids: Collection[str]
+    ) -> dict[str, tuple[int, int]]:
+        """{project: (memories, episodes) whose homes name it} for every
+        project of `project_ids`, in one read of the homes (ENG-159)."""
+        index = self._members_index()
+        wanted = {self._canon(pid) for pid in project_ids}
+        members = [m for pid in wanted for m in index.get(pid, ())]
+        counts: dict[str, list[int]] = {pid: [0, 0] for pid in wanted}
+        if members:
+            for r in self._store.membership_rows(
+                "homes", column_in=("project", members)
+            ):
+                tally = counts.setdefault(self._canon(str(r["project"])), [0, 0])
+                tally[0 if r["kind"] == "memory" else 1] += 1
+        return {pid: (m, e) for pid, (m, e) in counts.items()}
 
     # -- homes, why --------------------------------------------------------------------------
 
