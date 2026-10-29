@@ -973,7 +973,7 @@ request; on the wire path its middleware asks a roots-capable client
 where it works, once per connection. `session.py` resolves the
 per-client `SessionState` for the request (disabled scopes, use
 tokens), keyed on that caller, and `_response.py` shapes what goes back
-on the wire. `_decorators.py` and `time_utils.py` are cross-cutting.
+on the wire. `time_utils.py` is cross-cutting.
 
 **Write path.** `handlers/write.py` first lets `policy.py` refuse a
 call that passes an escape hatch `[policy]` forbids, then checks
