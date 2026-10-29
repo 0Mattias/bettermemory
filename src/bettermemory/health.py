@@ -589,20 +589,6 @@ def _health_report(
     by_id = census.by_id
     marker_stats = _marker_stats(rollups)
 
-    # Re-bind the per-event accumulator-derived names back into the
-    # local scope so the remaining rollup logic (dead_weight, cold,
-    # contradicted, etc.) reads with the pre-refactor variable names.
-    # No behavior change — every name maps 1:1 to the accumulator's
-    # corresponding field.
-    total_events = rollups.total_events
-    orphan_use_events = rollups.orphan_use_events
-    silent_miss_audited = rollups.silent_miss_audited
-    silent_miss_events = rollups.silent_miss_events
-    latest_miss_cutoff = rollups.latest_miss_cutoff
-    acknowledged_miss_event_ids = rollups.acknowledged_miss_event_ids
-    resolution_events_by_id = rollups.resolution_events_by_id
-    sessions = rollups.sessions
-
     scope_distribution = Counter(
         scope for stats in by_id.values() for scope in stats.scopes
     )
@@ -637,7 +623,7 @@ def _health_report(
         cutoff,
         heavily_used_min_applied,
         heavily_used_top_k,
-        resolution_events_by_id,
+        rollups.resolution_events_by_id,
     )
 
     scope_health, rare_scopes = _scope_buckets(
@@ -680,8 +666,8 @@ def _health_report(
         generated_at=now,
         window_days=window_days,
         total_active_memories=len(by_id),
-        total_events=total_events,
-        distinct_sessions=len(sessions),
+        total_events=rollups.total_events,
+        distinct_sessions=len(rollups.sessions),
         dead_weight=dead_weight,
         cold_memories=cold_memories,
         heavily_used=heavily_used,
@@ -691,22 +677,22 @@ def _health_report(
         scope_health=scope_health,
         rare_scopes=rare_scopes,
         actor_slices=actor_slices,
-        orphan_use_events=orphan_use_events,
+        orphan_use_events=rollups.orphan_use_events,
         verification_debt=verification_debt,
         commit_drift_debt=commit_drift_debt,
         cross_repo_drift=cross_repo_drift,
         silent_misses=_silent_miss_stats(
-            audited=silent_miss_audited,
-            miss_events=silent_miss_events,
-            cutoff=latest_miss_cutoff,
+            audited=rollups.silent_miss_audited,
+            miss_events=rollups.silent_miss_events,
+            cutoff=rollups.latest_miss_cutoff,
             tombstoned_ids=tombstoned_ids,
-            acknowledged_event_ids=acknowledged_miss_event_ids,
+            acknowledged_event_ids=rollups.acknowledged_miss_event_ids,
         ),
         recent_silent_misses=_build_recent_silent_misses(
-            silent_miss_events,
-            cutoff=latest_miss_cutoff,
+            rollups.silent_miss_events,
+            cutoff=rollups.latest_miss_cutoff,
             tombstoned_ids=tombstoned_ids,
-            acknowledged_event_ids=acknowledged_miss_event_ids,
+            acknowledged_event_ids=rollups.acknowledged_miss_event_ids,
         ),
         cold_endorsement_memories=cold_endorsement_memories,
         telemetry_coverage=telemetry_coverage,
@@ -1072,6 +1058,82 @@ def _recorded_root_group(
     )
 
 
+def _walk_cross_repo_roots(
+    *,
+    groups: dict[tuple[str, str], list[MemoryStats]],
+    homed: dict[tuple[str, str], list[MemoryStats]],
+    unconfirmed: dict[tuple[str, str], str],
+    anchor_paths_by_id: dict[str, tuple[str, ...]],
+    claims_by_id: dict[str, tuple[str, ...]] | None,
+    verified_head_by_id: dict[str, str | None] | None,
+) -> tuple[list[CrossRepoDriftGroup], list[dict[str, str]]]:
+    """Walk the grouped roots, largest first, within the per-run cap; returns the groups judged and the roots skipped, with why."""
+    ordered = sorted(
+        [(key, members, False) for key, members in groups.items()]
+        + [(key, members, True) for key, members in homed.items()],
+        key=lambda entry: len(entry[1]),
+        reverse=True,
+    )
+    out_groups: list[CrossRepoDriftGroup] = []
+    skipped: list[dict[str, str]] = [
+        {
+            "repo": repo,
+            "worktree_root": worktree,
+            "reason": f"unconfirmed: no live checkout holds its cited commit ({rule})",
+        }
+        for (repo, worktree), rule in unconfirmed.items()
+    ]
+    walked = 0
+    for (repo, worktree), candidates, is_live_view in ordered:
+        if walked >= _CROSS_REPO_MAX_ROOTS:
+            skipped.append(
+                {
+                    "repo": repo,
+                    "worktree_root": worktree,
+                    "reason": "past the per-run root cap",
+                }
+            )
+            continue
+        root = Path(worktree)
+        if is_live_view:
+            walked += 1
+            group = _cross_repo_group(
+                repo,
+                worktree,
+                candidates,
+                anchor_paths_by_id=anchor_paths_by_id,
+                claims_by_id=claims_by_id,
+                verified_head_by_id=verified_head_by_id,
+            )
+            if group is None:
+                skipped.append(
+                    {
+                        "repo": repo,
+                        "worktree_root": worktree,
+                        "reason": "git unreachable in the home checkout",
+                    }
+                )
+            else:
+                out_groups.append(group)
+            continue
+        if not _recorded_root_reachable(repo, worktree, root, skipped):
+            continue
+        walked += 1
+        group = _recorded_root_group(
+            repo,
+            worktree,
+            root,
+            candidates,
+            skipped,
+            anchor_paths_by_id=anchor_paths_by_id,
+            claims_by_id=claims_by_id,
+            verified_head_by_id=verified_head_by_id,
+        )
+        if group is not None:
+            out_groups.append(group)
+    return out_groups, skipped
+
+
 def _compute_cross_repo_drift(
     *,
     by_id: dict[str, MemoryStats],
@@ -1145,69 +1207,14 @@ def _compute_cross_repo_drift(
             return CrossRepoDrift(unanchorable=unanchorable)
         return None
 
-    ordered = sorted(
-        [(key, members, False) for key, members in groups.items()]
-        + [(key, members, True) for key, members in homed.items()],
-        key=lambda entry: len(entry[1]),
-        reverse=True,
+    out_groups, skipped = _walk_cross_repo_roots(
+        groups=groups,
+        homed=homed,
+        unconfirmed=unconfirmed,
+        anchor_paths_by_id=anchor_paths_by_id,
+        claims_by_id=claims_by_id,
+        verified_head_by_id=verified_head_by_id,
     )
-    out_groups: list[CrossRepoDriftGroup] = []
-    skipped: list[dict[str, str]] = [
-        {
-            "repo": repo,
-            "worktree_root": worktree,
-            "reason": f"unconfirmed: no live checkout holds its cited commit ({rule})",
-        }
-        for (repo, worktree), rule in unconfirmed.items()
-    ]
-    walked = 0
-    for (repo, worktree), candidates, is_live_view in ordered:
-        if walked >= _CROSS_REPO_MAX_ROOTS:
-            skipped.append(
-                {
-                    "repo": repo,
-                    "worktree_root": worktree,
-                    "reason": "past the per-run root cap",
-                }
-            )
-            continue
-        root = Path(worktree)
-        if is_live_view:
-            walked += 1
-            group = _cross_repo_group(
-                repo,
-                worktree,
-                candidates,
-                anchor_paths_by_id=anchor_paths_by_id,
-                claims_by_id=claims_by_id,
-                verified_head_by_id=verified_head_by_id,
-            )
-            if group is None:
-                skipped.append(
-                    {
-                        "repo": repo,
-                        "worktree_root": worktree,
-                        "reason": "git unreachable in the home checkout",
-                    }
-                )
-            else:
-                out_groups.append(group)
-            continue
-        if not _recorded_root_reachable(repo, worktree, root, skipped):
-            continue
-        walked += 1
-        group = _recorded_root_group(
-            repo,
-            worktree,
-            root,
-            candidates,
-            skipped,
-            anchor_paths_by_id=anchor_paths_by_id,
-            claims_by_id=claims_by_id,
-            verified_head_by_id=verified_head_by_id,
-        )
-        if group is not None:
-            out_groups.append(group)
     if not out_groups and not skipped:
         return None
     return CrossRepoDrift(
